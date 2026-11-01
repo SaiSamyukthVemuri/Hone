@@ -1,0 +1,8 @@
+{
+  "migration": "0254",
+  "requires_before_max": "0257",
+  "tables": ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"],
+  "preflight": {"sql": "g12-preflight.sql", "fields": ["tables_present", "helpers_ok", "replaced_ok", "new_objects_absent", "columns_ok"]},
+  "verify_sql": ["c01_functions-exist.sql", "c02_function-bodies.sql", "c03_read-policies.sql"],
+  "verify_label": "history, 2 verify checks and the owner-only read-policy proof"
+}

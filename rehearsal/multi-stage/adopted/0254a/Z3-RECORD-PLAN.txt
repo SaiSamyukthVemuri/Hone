@@ -1,0 +1,32 @@
+PREPARATION ONLY / HELD. Z3 record plan for 0254 applied BELOW the hosted max (after 0257). Nothing here is applied, merged or approved.
+
+WHAT THE RECORD MUST SAY (docs only; hosted state is declared ONLY in docs/production/migration-state.json)
+ 1. hosted_migration_max stays "0257" (an apply of 0254 does not move the max).
+ 2. hosted_applied_at stays null (supabase_migrations.schema_migrations has no timestamp column; the same limitation as the 0248 and 0257 records).
+ 3. hosted_out_of_order becomes exactly (today it is 0248:[0247] and 0257:[0247,0249..0256]; 0254 leaves 0257's list and gets its own entry):
+      {"version":"0248","unhosted_below":["0247"]}
+      {"version":"0254","unhosted_below":["0247","0249","0250","0251","0252","0253"]}
+      {"version":"0257","unhosted_below":["0247","0249","0250","0251","0252","0253","0255","0256"]}
+    The rule scripts/migration-state.mjs evaluateOutOfOrder must pass with these (a version below the max may be applied; each entry lists the repo versions below it that are NOT hosted).
+ 4. hosted_note / ledger block: 0254 applied OUT OF ORDER, below the hosted max 0257, by ONE `db push --include-all` of a 248-file stage bundle (migrations-stage0254a.tar sha cb781e43 v1; the v2 tar is unchanged,
+    sha cb781e43..., list 446b637c...), the dry run listing exactly 0254; the sealed file sha256 77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23 (bytes unchanged from #1226). State the hole set above.
+    Hosted history 247 -> 248 rows, max 0257, 0254 once, 0247/0249..0253/0255/0256 absent. Say plainly that no server apply instant exists.
+ 5. docs/production/current-state.md and the capability register: whatever refers to 0254 as "held / unapplied" is updated in the same change; historical apply records are NOT rewritten.
+ 6. The record text must be derived from the stage receipt and the read-back (rows, max, 0254 once, owner-only policy proof), never from this plan.
+
+ORDER (Insurance Z3)
+ a. Sam lifts the 0254 hold and approves the concrete package; the apply runs; the read-back is APPLIED+VERIFIED; the reconcile archives the marker.
+ b. #1226 (branch team/stage-0254-carry, head 464ac549 at this writing: the sealed 0254 file + code, byte-equal migration tree to the bundle) merges to production through the normal process.
+    It must land BEFORE any later stage package is built: a hosted version with no local file stops the CLI, and a changed 0254 would hide as already applied.
+ c. The record change (items 1-5) rides with #1226 if OPS wants one PR, or is its own docs-only record PR on top. Either way it is written from the receipt.
+ d. migration-state / canonical-production-facts tests: `hosted_out_of_order` tests already cover the shape; the 0254 entry is the only new fixture. Run `npm run migration:state` and the two tests named in scripts/migration-state.mjs's header.
+
+LATER STAGES MUST CARRY 0254 BY SHA (each stage's list pins it exactly as the 0254a list pins 0257)
+ Hosted set after this stage (248): 0001..0246 less 0158 (245 files), 0248, 0254, 0257.
+ Every later stage bundle = those 248 files byte-for-byte (0248 and 0257 as hosted, 0254 as sealed, sha 77f34d5c...) PLUS its own target(s). Never the held 0247, 0249..0253, 0255, 0256 unless that stage is theirs.
+   - stage 0258  : 248 + 0258 = 249 files; target above the max, so a plain push is enough ONLY if no unhosted file below the max remains in the bundle (it must not).
+   - stage 0266  : 248 + (0258 if applied before it) + 0266; same rule.
+   - stage 0271  : 248 + any earlier applied stage + 0271 (HON-48 schedule signal); same rule.
+ Expected-count arithmetic for each stage's gate is recomputed at stage time from the then-hosted history; sizes above are a pattern, not a pin. 0247 and 0249..0253 stay out of every bundle until their own approval.
+ If a later target is itself BELOW the max (e.g. a held 0249..0253 file), it needs the same --include-all treatment and its own review; this package does not cover it.
+VERIFIED: evaluateOutOfOrder (scripts/migration-state.mjs) returns no undeclared gaps and no invalid declarations for the item-3 list on the #1226 head 464ac549 tree (hostedMax 0257).

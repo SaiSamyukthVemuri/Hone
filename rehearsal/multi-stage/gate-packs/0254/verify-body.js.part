@@ -1,0 +1,16 @@
+const c1 = rows("c01_functions-exist");
+if (sha(canon(c1)) !== EXPECT.functions_exist) fail(`c01 functions-exist: result sha256 ${sha(canon(c1))} is not the expected ${EXPECT.functions_exist}`);
+console.log("PASS functions-exist: result sha256 equals the expected one (the five 0254 functions exist)");
+const c2 = rows("c02_function-bodies");
+if (sha(canon(c2)) !== EXPECT.function_bodies) fail(`c02 function-bodies: result sha256 ${sha(canon(c2))} is not the expected ${EXPECT.function_bodies}`);
+if (c2.length !== 5 || c2.some((x) => BODY_MD5[x.proname] !== x.md5)) fail("c02: a body md5 is not the sealed one");
+console.log("PASS function-bodies: result sha256 equals the expected one; the five body md5 values are the sealed ones");
+const c3 = rows("c03_read-policies");
+const want = ["appointment_settlements", "manual_fee_charge_attempts", "payment_charge_attempts"];
+const names = c3.map((x) => x.table_name).sort();
+if (c3.length !== 3 || JSON.stringify(names) !== JSON.stringify(want)) fail("c03: the three tables do not each have exactly one SELECT policy");
+for (const x of c3) {
+  if (!/_owner_/.test(String(x.polname))) fail(`c03: the SELECT policy on ${x.table_name} is not an owner policy`);
+  if (!isTrue(x.uses_owner) || isTrue(x.uses_member)) fail(`c03: the SELECT policy on ${x.table_name} is not owner-only (uses_owner ${x.uses_owner}, uses_member ${x.uses_member})`);
+}
+console.log("PASS read-policies: each of the three tables has exactly one SELECT policy, owner-gated (is_studio_owner), none uses is_studio_member");
