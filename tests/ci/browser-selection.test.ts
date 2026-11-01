@@ -233,7 +233,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // the /calendar paths already select. RECORDED AS A DECISION per the note above. Cost: ZERO executed cases in this lane: both files
     // self-skip unless CAL_LAYOUT_E2E=1 (the matrix is ~11 min of serial browser time, run locally at a PR's exact head), so a targeted
     // lane lists them and executes nothing.
-        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(46);
+    // Now 47: calendar-sidebar.spec.ts joined `calendar` on the same terms: opt-in (CAL_SIDEBAR_E2E=1), ZERO executed cases in this lane.
+        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(47);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
