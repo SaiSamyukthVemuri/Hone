@@ -165,7 +165,7 @@ describe("5. dashboard: worklist first", () => {
     const today = DASH.indexOf("{dayHeading(selectedDayLocal, todayLocal)}");
     const snapshot = DASH.indexOf("<PracticeSnapshot");
     // Part 2B: the four To-do sub-sections became one list.
-    const attention = DASH.indexOf("<DashboardTodoList");
+    const attention = DASH.indexOf("<NeedsAttentionSection");
     const booking = DASH.indexOf("<BookingSetupCard");
     const birthdays = DASH.indexOf("<BirthdaysThisMonth");
     expect(today).toBeGreaterThan(-1);
@@ -231,7 +231,7 @@ describe("5. dashboard: worklist first", () => {
     );
     expect(DASH).not.toMatch(/<ActionNeeded/);
     expect(DASH).toMatch(/attention: clientsNeedingAttention/);
-    expect(DASH).toMatch(/<DashboardTodoList todo=\{dashboardTodo\} \/>/);
+    expect(DASH).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
     // Loaded exactly once — the split must not have introduced a second read.
     expect(DASH.match(/getClientsNeedingAttention\(/g) ?? []).toHaveLength(1);
   });

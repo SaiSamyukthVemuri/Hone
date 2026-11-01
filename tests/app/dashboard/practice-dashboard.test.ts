@@ -154,7 +154,15 @@ describe("summarizeProcedureCompleteness", () => {
       aftercareNotMarked: 0,
       // Part 2B: the non-itemized half of `incompleteRecords`.
       recordsMissingDetails: 0,
+      // WS-DB: the itemized list of the same records; empty when none.
+      detailGaps: [],
     });
+  });
+
+  it("detailGaps itemizes exactly the records recordsMissingDetails counts", () => {
+    const m = summarizeProcedureCompleteness([record({}), record({ operatorName: null })]);
+    expect(m.recordsMissingDetails).toBe(1);
+    expect(m.detailGaps).toHaveLength(m.recordsMissingDetails);
   });
 
   it("missing lot, aftercare, or demographics flag the record", () => {
