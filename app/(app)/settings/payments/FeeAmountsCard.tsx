@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { updateStudioFeeAmountsAction } from "./fee-amounts-actions";
 
 // Owner-only Cancellation/no-show fee amount settings (PR #145).
@@ -33,6 +34,14 @@ export function FeeAmountsCard({
   const [noShow, setNoShow] = useState(
     centsToDollarsInput(initialNoShowCents),
   );
+  const [saved, setSaved] = useState({
+    lateCancel: centsToDollarsInput(initialLateCancelCents),
+    noShow: centsToDollarsInput(initialNoShowCents),
+  });
+  useUnsavedChangesGuard(
+    "payment-fees",
+    lateCancel !== saved.lateCancel || noShow !== saved.noShow,
+  );
   const [pending, startTransition] = useTransition();
   const [status, setStatus] = useState<
     null | { kind: "ok" } | { kind: "error"; message: string }
@@ -50,6 +59,7 @@ export function FeeAmountsCard({
         setStatus({ kind: "error", message: r.error });
         return;
       }
+      setSaved({ lateCancel, noShow });
       setStatus({ kind: "ok" });
     });
   }

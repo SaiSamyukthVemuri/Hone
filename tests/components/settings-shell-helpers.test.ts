@@ -121,3 +121,18 @@ describe("Insurance #1293 follow-ups (U4, U5)", () => {
     expect(src).not.toMatch(/\buseEffect\(/);
   });
 });
+
+describe("Insurance #1297 U3: edit-then-save forms register with the unsaved guard", () => {
+  const read = (rel: string) =>
+    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+  it.each([
+    ["app/(app)/settings/profile/ProfileForm.tsx", "profile-details"],
+    ["app/(app)/settings/payments/FeeAmountsCard.tsx", "payment-fees"],
+    ["app/(app)/settings/team/InviteForm.tsx", "team-invite"],
+    ["app/(app)/settings/tracking/TrackingProviderForm.tsx", "tracking-"],
+  ])("%s registers a dirty key", (file, key) => {
+    const src = read(file);
+    expect(src).toMatch(/useUnsavedChangesGuard\(/);
+    expect(src).toContain(key);
+  });
+});
