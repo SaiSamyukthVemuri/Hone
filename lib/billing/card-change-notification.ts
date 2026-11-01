@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensurePractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Card-on-file change notification (Chloe's ask): when a client adds or
@@ -173,14 +174,16 @@ export async function ensureCardChangeNotification(
     throw new Error(`card_change_owner_lookup_failed:${dbErrorCode(ownerErr)}`);
   }
   if (!owner) {
-    console.error(
-      JSON.stringify({
-        event: "card_change_notice_skipped_no_active_owner",
-        studioId,
-        setupIntentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    // OPS Z2 ruling: owner-only is the rule, so nobody else is told. The skip
+    // is recorded as a durable ops alert (never throws, redacts centrally) with
+    // the studio and SetupIntent ids only: no client, brand or last four.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "card_change_notice_skipped_no_active_owner",
+      message: "A card-change notice was not delivered: the studio has no active owner.",
+      studioId,
+      safeDetails: { setupIntentId },
+    });
     return { eventType, deduped: false, skipped: "no_active_owner" as const };
   }
 
