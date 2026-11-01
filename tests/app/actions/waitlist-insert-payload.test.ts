@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Hosted public.waitlist has no `source` column (R1, 2026-10-31), so an insert
+// Hosted public.waitlist has no `source` column (R1, 2026-11-01), so an insert
 // that names it fails with PGRST204 and the signup is lost. The action sends the
 // email only; where the column exists its default ('landing', migration 0004)
 // fills it.
@@ -17,6 +17,13 @@ vi.mock("@/lib/rate-limit/public", () => ({
 
 import { submitWaitlistEntry } from "@/app/actions/waitlist";
 
+// The ONLY proven fact about hosted public.waitlist (R1, 2026-11-01) is that
+// `source` is ABSENT. Every other column is unverified until the catalog JSON
+// arrives (the count reads cannot prove one: the table has 0 rows). So the
+// payload must be the smallest the feature needs, the email alone, and must
+// never name a column that is not proven. Widen it only with hosted evidence.
+const PROVEN_ABSENT_ON_HOSTED = ["source"];
+
 beforeEach(() => {
   insert.mockReset();
 });
@@ -28,6 +35,15 @@ describe("submitWaitlistEntry insert payload", () => {
       ok: true,
     });
     expect(insert).toHaveBeenCalledWith({ email: "person@example.com" });
+  });
+
+  it("names only the email and never a column proven absent on hosted", async () => {
+    insert.mockResolvedValue({ error: null });
+    await submitWaitlistEntry("a@b.co");
+    const keys = Object.keys(insert.mock.calls[0][0]);
+    expect(keys).toEqual(["email"]);
+    for (const absent of PROVEN_ABSENT_ON_HOSTED)
+      expect(keys).not.toContain(absent);
   });
 
   it("treats a duplicate as success", async () => {
