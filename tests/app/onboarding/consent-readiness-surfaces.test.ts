@@ -391,7 +391,7 @@ describe("launch checklist surfaces consent readiness", () => {
     expect(LAUNCH).toContain("Create a treatment consent form and make it live");
     // "Consent forms" is the settings nav label; the copy must match it.
     expect(LAUNCH).toContain("Open Consent forms");
-    expect(read("app/(app)/settings/layout.tsx")).toContain(
+    expect(read("lib/settings/nav-registry.ts")).toContain(
       'label: "Consent forms"',
     );
   });

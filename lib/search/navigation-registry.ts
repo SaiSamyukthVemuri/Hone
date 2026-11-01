@@ -283,7 +283,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     href: "/settings/launch",
     description: "Ready-for-booking checklist before your first real client",
     keywords: ["ready for booking checklist", "launch", "go live", "ready", "readiness", "checklist", "before booking", "first booking", "setup checklist"],
-    visibility: "practitioner",
+    visibility: "owner",
     priority: 220,
   },
   {
@@ -600,7 +600,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings-birthday-color",
     title: "Birthday reminder color",
     category: "Settings",
-    href: "/settings/studio#birthday-color",
+    href: "/settings/calendar#birthday-color",
     description: "The accent colour used for birthday reminders",
     keywords: ["birthday", "birthday reminder", "birthday color", "birthday colour", "birthdays"],
     visibility: "owner",
@@ -610,7 +610,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings-time-format",
     title: "Time format",
     category: "Settings",
-    href: "/settings/studio#time-format",
+    href: "/settings/calendar#time-format",
     description: "Whether times show as 12-hour or 24-hour inside Hone",
     keywords: ["time format", "24 hour", "24 hour clock", "12 hour", "am pm", "military time", "clock"],
     visibility: "owner",
@@ -881,9 +881,9 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
   },
   {
-    route: "/settings/calendar",
+    route: "/settings",
     reason:
-      "Redirect-only alias kept for old bookmarks; breaks & blocks were consolidated into /settings/availability, which is what search advertises.",
+      "Index route with no content of its own: it only redirects to /settings/profile. Each settings page is registered individually.",
   },
   {
     route: "/settings/waitlist",

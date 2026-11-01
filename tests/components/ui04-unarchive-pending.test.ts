@@ -21,7 +21,7 @@ const code = (p: string) =>
     .replace(/^\s*\/\/.*$/gm, "");
 
 const EDIT = code("app/(app)/clients/[id]/edit/page.tsx");
-const LIST = code("app/(app)/clients/ArchivedClientsList.tsx");
+const LIST = code("app/(app)/clients/UnarchiveRowControl.tsx");
 const ARCHIVE = code("app/(app)/clients/[id]/edit/ArchiveClientControl.tsx");
 
 describe("UI-04: both unarchive controls report their own progress", () => {

@@ -1,18 +1,20 @@
 // HON-48: the team day view's column geometry, in one place so the page and
 // its tests share one rule.
 //
-// Every practitioner column is the SAME fixed width, whatever the count. The
-// old `minmax(9rem, 1fr)` track let a lone column stretch across the whole
-// screen and made every column's width depend on how many were showing. With a
-// fixed track the grid is as wide as its columns: one practitioner is a normal
-// compact column, more practitioners make the calendar grow, and more columns
-// than the screen holds scroll sideways inside the scroll box instead of being
-// squeezed unreadable.
+// The columns FILL the available width: `minmax(MIN, 1fr)`. One selected
+// practitioner is a single day schedule that uses the whole calendar area (no
+// narrow column inside an empty container); several share the width equally. A
+// column never gets narrower than TEAM_DAY_COLUMN_MIN_WIDTH_REM, so once the
+// selected practitioners no longer fit, the grid grows past the box and scrolls
+// sideways inside the scroll box instead of squeezing every column unreadable.
+// This replaces the fixed 13rem track (which left a lone column compact beside a
+// large empty area); the earlier `minmax(9rem, 1fr)` problem was only its minimum.
 
 export const TEAM_DAY_RAIL_PX = 60;
-export const TEAM_DAY_COLUMN_WIDTH_REM = 13;
+/** The narrowest a practitioner column may get before the grid scrolls sideways. */
+export const TEAM_DAY_COLUMN_MIN_WIDTH_REM = 12;
 
 export function teamDayGridTemplate(columnCount: number): string {
   const n = Number.isFinite(columnCount) ? Math.max(1, Math.floor(columnCount)) : 1;
-  return `${TEAM_DAY_RAIL_PX}px repeat(${n}, ${TEAM_DAY_COLUMN_WIDTH_REM}rem)`;
+  return `${TEAM_DAY_RAIL_PX}px repeat(${n}, minmax(${TEAM_DAY_COLUMN_MIN_WIDTH_REM}rem, 1fr))`;
 }

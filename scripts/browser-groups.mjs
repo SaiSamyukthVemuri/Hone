@@ -271,6 +271,7 @@ export const BROWSER_GROUPS = {
       // requirement (self-skips in CI without storage-api). Does not add to
       // the sessions targeted-lane cost pin.
       "fett-client-portrait.spec.ts",
+      "fett-session-photos-handoff.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -363,6 +364,10 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // HON-58 / #1292: the clients directory click journey (search, filter, sort, page,
+      // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
+      // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
+      "clients-directory-journey.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a

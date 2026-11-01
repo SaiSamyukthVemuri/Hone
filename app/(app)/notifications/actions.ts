@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 
 // PR #164. Practitioner notification center actions.
 //
@@ -19,7 +20,7 @@ export type MarkAllReadResult =
   | { ok: false; error: string };
 
 export async function markAllNotificationsAsReadAction(): Promise<MarkAllReadResult> {
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
   // Stamp read_at on every unread row scoped to the authenticated
   // studio. The .eq("studio_id", studio.id) is the server-resolved
@@ -27,12 +28,15 @@ export async function markAllNotificationsAsReadAction(): Promise<MarkAllReadRes
   // means a member can only mark their own studio's rows read,
   // and only the unread ones receive a new timestamp.
   const nowIso = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("practitioner_notifications")
-    .update({ read_at: nowIso })
-    .eq("studio_id", studio.id)
-    .is("read_at", null)
-    .select("id");
+  // WS-D: a non-owner cannot touch rows they cannot read (card-on-file notifications are owner-only).
+  const { data, error } = await scopeNotificationsToViewer(
+    supabase
+      .from("practitioner_notifications")
+      .update({ read_at: nowIso })
+      .eq("studio_id", studio.id)
+      .is("read_at", null),
+    practitioner.role === "owner",
+  ).select("id");
   if (error) {
     return {
       ok: false,

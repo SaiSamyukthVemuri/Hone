@@ -1490,8 +1490,9 @@ export type PractitionerNotificationEventType =
   // Card-on-file changes, written server-side from the setup_intent.succeeded
   // webhook arm. card_added = first card ever saved for the (studio, client,
   // Stripe mode); card_replaced = a prior card row existed for that pair+mode.
-  // Studio-wide (practitioner_id null). Deduped on the mode-scoped SetupIntent
-  // business key.
+  // OWNER-ONLY (WS-D): targeted at the owner's practitioner row and excluded from
+  // every other role's reads (lib/notifications/owner-only-events.ts). Deduped on
+  // the mode-scoped SetupIntent business key.
   | "card_added"
   | "card_replaced";
 

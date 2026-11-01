@@ -830,6 +830,9 @@ async function handleSetupIntentSucceeded(
     previousCardRetiredId: saved.previous_card_id ?? null,
     cardChangeNotification: notif.eventType,
     cardChangeNotificationDeduped: notif.deduped,
+    // Set when no notice was made (the studio has no active owner), so the
+    // result does not read as if one had been created.
+    cardChangeNotificationSkipped: notif.skipped ?? null,
   };
 }
 
