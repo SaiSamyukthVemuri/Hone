@@ -87,6 +87,11 @@ jobs:
           for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
             REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/$q" ONLY_A=1 bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "$q" | tail -2
           done
+      - name: S2 (0274) package, one plain push of a single file after the S1 history, real CLI
+        shell: bash
+        run: |
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s2.json "$RUNNER_TEMP/s2-pkg"
+          REHEARSAL_OUT="$RUNNER_TEMP/s2-push-out" bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/s2-pkg" full
       - name: H1 control, an unreadable plan is a FAIL and only a really empty sequence is a no-op
         shell: bash
         env:
@@ -151,6 +156,11 @@ jobs:
         run: |
           bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
           REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/empty" ONLY_A=1 bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "drop-0258+0266+0272"
+      - name: S2 (0274) package, one plain push of a single file after the S1 history, real CLI
+        shell: bash
+        run: |
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s2.json "$RUNNER_TEMP/s2-pkg"
+          REHEARSAL_OUT="$RUNNER_TEMP/s2-push-out" bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/s2-pkg" full
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
