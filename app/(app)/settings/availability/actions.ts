@@ -17,6 +17,7 @@ import {
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { OWN_HOURS_NOT_AVAILABLE_MESSAGE, practitionerOwnHoursEnabled } from "@/lib/settings/practitioner-own-hours";
 
 // Typed result used by every action that can hit the unified shadow's
 // gist exclusion (sqlstate 23P01). Owner-facing UI displays
@@ -235,6 +236,7 @@ async function resolveScopedActor(formData: FormData): Promise<ScopedActor> {
   if (practitioner.role !== "practitioner" || practitioner.active !== true) {
     return { ok: false, error: "Only studio owners can change availability." };
   }
+  if (!practitionerOwnHoursEnabled()) return { ok: false, error: OWN_HOURS_NOT_AVAILABLE_MESSAGE };
   const target = trimmed(formData.get("practitioner_id"));
   if (!target || target !== practitioner.id) {
     return { ok: false, error: "You can only change your own working hours." };

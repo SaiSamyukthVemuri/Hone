@@ -6,6 +6,7 @@ import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
+import { practitionerOwnHoursEnabled } from "./practitioner-own-hours";
 import type { SettingsNavEntry } from "./nav";
 
 // The Settings rail registry (settings redesign, WS-B owns this file).
@@ -107,7 +108,16 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     visibleWhen: waitlistVisible,
     order: 50,
   },
-  { id: "availability", group: "studio", label: "Availability", href: "/settings/availability", roles: BOTH, order: 60 },
+  {
+    id: "availability",
+    group: "studio",
+    label: "Availability",
+    href: "/settings/availability",
+    roles: BOTH,
+    order: 60,
+    // A practitioner sees it only once own-hours is switched on (after 0278 is applied); the owner always.
+    visibleWhen: (ctx) => ctx.role === "owner" || practitionerOwnHoursEnabled(),
+  },
   { id: "services", group: "studio", label: "Services", href: "/settings/services", roles: OWNER, order: 70 },
   { id: "machines", group: "studio", label: "Machines", href: "/settings/machines", roles: OWNER, order: 80 },
   { id: "consent", group: "studio", label: "Consent forms", href: "/settings/consent", roles: OWNER, order: 90 },

@@ -60,6 +60,7 @@ const WRITERS = [
 ] as const;
 
 beforeEach(() => {
+  vi.stubEnv("HONE_PRACTITIONER_OWN_HOURS_ENABLED", "true");
   session.role = "practitioner";
   session.active = true;
   reached.client = 0;
@@ -126,13 +127,28 @@ describe("decision 6: exposure", () => {
     expect(src).toContain("practitionerId={mine.id}");
   });
 
-  it("nav and search list availability for practitioners", () => {
-    expect(read("lib/settings/nav-registry.ts")).toMatch(
-      /id: "availability"[^\n]*roles: BOTH/,
-    );
-    const nav = read("lib/search/navigation-registry.ts");
-    const i = nav.indexOf('id: "settings-availability"');
-    expect(nav.slice(i, i + 500)).toContain('visibility: "practitioner"');
+  it("nav lists availability for a practitioner only behind the default-off flag; search stays owner-only", () => {
+    const nav = read("lib/settings/nav-registry.ts");
+    expect(nav).toMatch(/id: "availability"[\s\S]*?roles: BOTH[\s\S]*?visibleWhen: \(ctx\) => ctx\.role === "owner" \|\| practitionerOwnHoursEnabled\(\)/);
+    const search = read("lib/search/navigation-registry.ts");
+    const at = search.indexOf('id: "settings-availability"');
+    expect(search.slice(at, at + 500)).toContain('visibility: "owner"');
+  });
+
+  it("the flag is default-off and exactly 'true' turns it on", async () => {
+    const { practitionerOwnHoursEnabled } = await import("@/lib/settings/practitioner-own-hours");
+    vi.unstubAllEnvs();
+    expect(practitionerOwnHoursEnabled()).toBe(false);
+    vi.stubEnv("HONE_PRACTITIONER_OWN_HOURS_ENABLED", "1");
+    expect(practitionerOwnHoursEnabled()).toBe(false);
+    vi.stubEnv("HONE_PRACTITIONER_OWN_HOURS_ENABLED", "true");
+    expect(practitionerOwnHoursEnabled()).toBe(true);
+  });
+
+  it("the page replaces the editor with a plain sentence while the flag is off", () => {
+    const src = read("app/(app)/settings/availability/page.tsx");
+    expect(src.indexOf("practitionerOwnHoursEnabled()")).toBeGreaterThan(0);
+    expect(src.indexOf("practitionerOwnHoursEnabled()")).toBeLessThan(src.indexOf("practitionerId={mine.id}"));
   });
 });
 
@@ -194,4 +210,20 @@ describe("decision 6: source contracts for the database half's conditions", () =
     }
     expect(hits).toEqual([]);
   });
+});
+
+describe("decision 6: flag OFF (default) refuses gracefully and never reaches the database", () => {
+  for (const [name, action] of WRITERS) {
+    it(`${name}: a practitioner targeting themselves gets the plain not-available sentence`, async () => {
+      vi.unstubAllEnvs();
+      const res = await action(form({ practitioner_id: OWN }));
+      expect(res).toEqual({ ok: false, error: "Changing your own working hours is not available yet. Ask the studio owner." });
+      expect(reached).toEqual({ client: 0, admin: 0 });
+    });
+    it(`${name}: the owner is unaffected by the flag`, async () => {
+      vi.unstubAllEnvs();
+      session.role = "owner";
+      await expect(action(form({ practitioner_id: OTHER }))).rejects.toThrow("REACHED_DB");
+    });
+  }
 });

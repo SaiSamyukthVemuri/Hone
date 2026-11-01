@@ -1,4 +1,5 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { OWN_HOURS_NOT_AVAILABLE_MESSAGE, practitionerOwnHoursEnabled } from "@/lib/settings/practitioner-own-hours";
 import { createClient } from "@/lib/supabase/server";
 import { getBlockouts } from "@/lib/booking/queries";
 import {
@@ -104,6 +105,7 @@ export default async function AvailabilitySettingsPage({
         {text}
       </div>
     );
+    if (!practitionerOwnHoursEnabled()) return notice(OWN_HOURS_NOT_AVAILABLE_MESSAGE);
     if (studio.practitioner_capacity_enabled !== true) {
       return notice("Your studio sets one schedule for everyone. Ask the studio owner to change the hours.");
     }

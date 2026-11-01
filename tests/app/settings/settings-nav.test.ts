@@ -55,6 +55,7 @@ describe("settings nav registry", () => {
       "/settings/team",
       "/settings/booking",
       "/settings/waitlist",
+      "/settings/availability",
       "/settings/services",
       "/settings/machines",
       "/settings/consent",
@@ -68,8 +69,6 @@ describe("settings nav registry", () => {
     }
     expect(practitioner).toContain("/settings/profile");
     expect(practitioner).toContain("/settings/intake");
-    // Decision 6 (Sam, 1 Nov): a practitioner manages their OWN working hours.
-    expect(practitioner).toContain("/settings/availability");
   });
 
   it("owner-only sections of a shared page are filtered out for a practitioner", async () => {
