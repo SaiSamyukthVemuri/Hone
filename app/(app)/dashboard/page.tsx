@@ -1216,6 +1216,7 @@ function AppointmentRow({
     clientId: appt.client_id,
   });
   const time = formatTimeForStudio(new Date(appt.starts_at), tz, timeFormat);
+  const endTime = formatTimeForStudio(new Date(appt.ends_at), tz, timeFormat);
   const performerName = appt.practitioner?.display_name?.trim();
   const performerColor = resolvePractitionerColor(appt.practitioner?.color);
   const modality = appt.service?.modality
@@ -1292,7 +1293,10 @@ function AppointmentRow({
           className="flex min-w-0 gap-4"
         >
           <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
-            {time}
+            <span>{time}</span>
+            <span className="block text-xs font-normal text-neutral-500" data-testid="today-row-end-time">
+              {endTime}
+            </span>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2">
@@ -1317,15 +1321,17 @@ function AppointmentRow({
                 </span>
               )}
             </div>
-            <div className="mt-0.5 break-words text-xs text-neutral-500">
-              {serviceName && <span>{serviceName}</span>}
-              {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
-              <span>
-                {(serviceName || modality) ? " · " : ""}
-                {appt.duration_minutes} min
+            {/* COMPACT ROW: service · modality · duration · practitioner on ONE line; allergy flag stays
+                visible; everything else about the visit is in the details below the row. */}
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500">
+              <span className="break-words">
+                {serviceName && <span>{serviceName}</span>}
+                {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
+                <span>
+                  {(serviceName || modality) ? " · " : ""}
+                  {appt.duration_minutes} min
+                </span>
               </span>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               {performerName ? (
                 <span className="flex items-center gap-1.5">
                   <span
@@ -1346,7 +1352,6 @@ function AppointmentRow({
                   Allergies
                 </span>
               )}
-              <IntakePill status={intakeStatus} />
             </div>
             {pinnedNotes && pinnedNotes.length > 0 && (
               /* EVERY pinned note, newest first. This used to render one
@@ -1373,6 +1378,21 @@ function AppointmentRow({
                 </ul>
               </div>
             )}
+          </div>
+        </PendingContainerLink>
+        {/* COMPACT ROW (fidelity C): everything beyond time, name, service, practitioner, status, the
+            pinned note, the allergy flag and the primary action lives here, server-rendered and CLOSED by
+            default. Nothing was deleted: Before-Today memory, latest setup, last treatment, consultation
+            notes, review intake and the portal link are all inside. It is a SIBLING of the row-body link,
+            never inside it (CHLOE D1). */}
+        <details data-testid="today-row-details" className="pl-24 [&_summary::-webkit-details-marker]:hidden">
+          <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-xs font-medium text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
+            Visit details
+          </summary>
+          <div className="flex flex-col gap-1.5 pb-2">
+            <div className="text-xs">
+              <IntakePill status={intakeStatus} />
+            </div>
             {/* PREPARATION: the facts that used to be split across the Today
                 row and the Daily Prep Brief, now resolved ONCE by
                 buildTodayWorkflow and rendered once here. Nothing below repeats
@@ -1489,8 +1509,6 @@ function AppointmentRow({
                 )}
               </div>
             )}
-          </div>
-        </PendingContainerLink>
         {/* Dashboard V2 Part 2A: the previous treatment in place. Compact by
             default (one line naming the visit) and expandable to the complete
             #517 card WITHOUT leaving Today. Rendered only for a client who HAS
@@ -1522,7 +1540,7 @@ function AppointmentRow({
             the narrative to survive both "nothing charted" and a failed block
             read, so a note-only visit still reaches her. */}
         {!workflow && prepSummary.remember && (
-          <div className="pl-24 text-xs">
+          <div className="text-xs">
             <span
               data-testid="dashboard-prep-remember"
               className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
@@ -1533,7 +1551,7 @@ function AppointmentRow({
           </div>
         )}
         {(prepSummary.hasTreatment || prepSummary.unavailable) && (
-          <div className="pl-24 text-xs">
+          <div className="text-xs">
             <DashboardTreatmentMemory
               appointmentId={appt.id}
               clientId={appt.client_id}
@@ -1546,6 +1564,56 @@ function AppointmentRow({
             />
           </div>
         )}
+        {/* Secondary by design: borderless, so it never competes with the
+            resolved primary action (Start/Continue charting) or the checkout
+            cell above it. Sibling of the row-body link, never nested inside
+            it. */}
+        {/* SECONDARY STRIP. One wrapping line rather than a stack of buttons:
+            each item is quiet, borderless, and never competes with the resolved
+            primary action or the checkout cell above. Every item here is a
+            SIBLING of the row-body link, never nested inside it. */}
+        <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1">
+          {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
+              NAVIGATES to the canonical practitioner writer
+              (/clients/<id>?tab=treatment, client_clinical_notes) exactly as
+              the appointment-side ConsultationNotesCard does. The
+              consultation writer lives in the Treatment tab since #1300
+              (the legacy ?tab=consultation link still redirects there). No modal, no
+              drawer, no second textarea, no second note action, no second
+              clinical-note loader — a second writer is precisely what this
+              contract exists to prevent. */}
+          <PendingLink
+            href={`/clients/${appt.client_id}?tab=treatment`}
+            data-testid="today-consultation-notes"
+            pendingLabel="Opening client…"
+            className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            {isConsultationVisit
+              ? "Start consultation notes"
+              : "Consultation notes"}
+          </PendingLink>
+          {intakeAction && (
+            <PendingLink
+              href={intakeAction.href}
+              data-testid="today-review-intake"
+              pendingLabel="Opening intake…"
+              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            >
+              {intakeAction.label}
+            </PendingLink>
+          )}
+          {/* Only for a TRUSTED "no card". Reuses the existing practitioner
+              portal-link authority whole; sends nothing until she clicks. */}
+          {offerPortalLink && (
+            <TodayPortalLinkButton
+              clientId={appt.client_id}
+              clientHasEmail={!!appt.client?.email?.trim()}
+              portalEnabled={portalEnabled}
+            />
+          )}
+        </div>
+          </div>
+        </details>
       </div>
       {/* ONE compact appointment footer. `gap-1` and `self-start` replace
           `gap-2` + `self-center`: on a phone this column wraps onto its own
@@ -1584,57 +1652,6 @@ function AppointmentRow({
         >
           {nextAction.label}
         </PendingLink>
-        {/* Secondary by design: borderless, so it never competes with the
-            resolved primary action (Start/Continue charting) or the checkout
-            cell above it. Sibling of the row-body link, never nested inside
-            it. */}
-        {/* SECONDARY STRIP. One wrapping line rather than a stack of buttons:
-            each item is quiet, borderless, and never competes with the resolved
-            primary action or the checkout cell above. Every item here is a
-            SIBLING of the row-body link, never nested inside it. */}
-        <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 sm:justify-end">
-          {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
-              NAVIGATES to the canonical practitioner writer
-              (/clients/<id>?tab=consultation, client_clinical_notes) exactly as
-              the appointment-side ConsultationNotesCard does. HELD at
-              ?tab=consultation until #1300 moves consultation into the
-              Treatment tab: on production today the Treatment tab has no
-              consultation writer, so repointing early would land on the wrong
-              content. The repoint to ?tab=treatment is a one-line follow-up
-              once #1300 is merged. No modal, no
-              drawer, no second textarea, no second note action, no second
-              clinical-note loader — a second writer is precisely what this
-              contract exists to prevent. */}
-          <PendingLink
-            href={`/clients/${appt.client_id}?tab=consultation`}
-            data-testid="today-consultation-notes"
-            pendingLabel="Opening client…"
-            className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
-          >
-            {isConsultationVisit
-              ? "Start consultation notes"
-              : "Consultation notes"}
-          </PendingLink>
-          {intakeAction && (
-            <PendingLink
-              href={intakeAction.href}
-              data-testid="today-review-intake"
-              pendingLabel="Opening intake…"
-              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
-            >
-              {intakeAction.label}
-            </PendingLink>
-          )}
-          {/* Only for a TRUSTED "no card". Reuses the existing practitioner
-              portal-link authority whole; sends nothing until she clicks. */}
-          {offerPortalLink && (
-            <TodayPortalLinkButton
-              clientId={appt.client_id}
-              clientHasEmail={!!appt.client?.email?.trim()}
-              portalEnabled={portalEnabled}
-            />
-          )}
-        </div>
       </div>
     </div>
   );

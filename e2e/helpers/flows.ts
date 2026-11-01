@@ -46,7 +46,29 @@ export async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
 }
 
 // Real magic-link login for any seeded studio member (owner or practitioner).
+/**
+ * Dashboard appointment rows keep their secondary content (Before today, latest setup, last treatment,
+ * consultation notes, review intake, portal link) inside a server-rendered <details> that is CLOSED by
+ * default (fidelity C). Playwright treats content in a closed <details> as hidden, so every spec that
+ * reads that content opens the details as soon as they appear, including after a soft day navigation.
+ * Applied at login so it covers each page of the run; it touches only the row details' `open` attribute.
+ */
+export async function openTodayRowDetailsOnLoad(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const open = () => {
+      document
+        .querySelectorAll('details[data-testid="today-row-details"]:not([open])')
+        .forEach((d) => d.setAttribute("open", ""));
+    };
+    document.addEventListener("DOMContentLoaded", () => {
+      open();
+      new MutationObserver(open).observe(document.documentElement, { childList: true, subtree: true });
+    });
+  });
+}
+
 export async function loginByMagicLink(page: Page, email: string): Promise<void> {
+  await openTodayRowDetailsOnLoad(page);
   // WebKit only (non-required WebKit job): strip the https-upgrade headers
   // before the first document and follow the link by request. Chromium skips both.
   const webkit = isWebKit(page);

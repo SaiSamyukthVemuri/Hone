@@ -185,8 +185,8 @@ test.describe("Today row: current client, card status, one-tap actions", () => {
     ).toHaveText("Consultation notes");
 
     await consultAction.click();
-    // The canonical practitioner route — not a Dashboard-local editor. The dashboard link still sends
-    // the legacy ?tab=consultation; the profile redirects it on the server to the Treatment tab.
+    // The canonical practitioner route — not a Dashboard-local editor. The dashboard link goes straight
+    // to ?tab=treatment (the legacy ?tab=consultation still redirects there).
     await expect(page).toHaveURL(
       new RegExp(`/clients/${consult.clientId}\\?tab=treatment`),
       { timeout: T },

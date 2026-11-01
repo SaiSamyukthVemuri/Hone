@@ -302,16 +302,17 @@ describe("#598 survives on every day", () => {
     // `</Link>` then ran past it to the next ordinary link on the page and
     // swept the whole actions column into "the history block".
     const fromWorkflow = CODE.slice(CODE.indexOf("{workflow && ("));
-    const rowBodyEnd = fromWorkflow.search(/<\/\w*Link>/);
+    // FIDELITY C: the history block now lives in the row's <details>; it ends where the off-Today prep note begins.
+    const rowBodyEnd = fromWorkflow.indexOf("{!workflow && prepSummary.remember");
     expect(
       rowBodyEnd,
       "the row-body link must close after the history block",
     ).toBeGreaterThan(-1);
     const historyBlock = fromWorkflow.slice(0, rowBodyEnd);
     expect(historyBlock).not.toMatch(/CardOnFilePill|resolveCardOnFileStatus/);
-    expect(historyBlock).not.toMatch(/tab=consultation/);
+    expect(historyBlock).not.toMatch(/tab=treatment/);
     expect(CODE).toMatch(/<CardOnFilePill status=\{cardOnFile\}/);
-    expect(CODE).toMatch(/tab=consultation/);
+    expect(CODE).toMatch(/\?tab=treatment/);
   });
 
   it("the card load is still ONE bounded, studio-scoped batch for the day's clients", () => {

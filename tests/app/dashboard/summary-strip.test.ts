@@ -129,3 +129,33 @@ describe("Birthdays: compact block top-right on desktop (fidelity G)", () => {
     expect(page).toMatch(/lg:col-span-2[\s\S]{0,80}<OnboardingSurface/);
   });
 });
+
+describe("compact appointment rows (fidelity C)", () => {
+  const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+  const row = page.slice(page.indexOf("function AppointmentRow("), page.indexOf("function AppointmentStatusPill("));
+  const link = row.slice(row.indexOf("<PendingContainerLink"), row.indexOf("</PendingContainerLink>"));
+  const details = row.slice(row.indexOf('<details data-testid="today-row-details"'), row.indexOf("</details>"));
+  it("the collapsed row keeps time+end, name, service, practitioner, status, pinned note and allergy flag", () => {
+    for (const marker of ["today-row-end-time", "clientDisplayName", "serviceName", "performerName", "AppointmentStatusPill", "Allergies", "Pinned"]) {
+      expect(link).toContain(marker);
+    }
+  });
+  it("the pinned note TEXT is visible and wrapped in the collapsed row, never truncated or inside details", () => {
+    expect(link).toMatch(/whitespace-pre-wrap break-words[\s\S]{0,120}\{note\.text\}/);
+    expect(details).not.toContain("note.text");
+  });
+  it("everything else is MOVED into the details, not deleted", () => {
+    for (const marker of ["Before today", "Latest setup:", "IntakePill", "<DashboardTreatmentMemory", "today-consultation-notes", "today-review-intake", "<TodayPortalLinkButton", "dashboard-prep-remember"]) {
+      expect(details, marker).toContain(marker);
+      expect(link, marker).not.toContain(marker);
+    }
+  });
+  it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and closed by default", () => {
+    expect(row.indexOf("</PendingContainerLink>")).toBeLessThan(row.indexOf("<details"));
+    expect(row).not.toMatch(/<details[^>]*\bopen\b/);
+    expect(link).not.toMatch(/<details|<summary/);
+  });
+  it("the card-on-file pill stays owner-only, and non-owners get no card read (#1309)", () => {
+    expect(row).toMatch(/\{isOwner && <CardOnFilePill status=\{cardOnFile\} \/>\}/);
+  });
+});
