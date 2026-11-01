@@ -1,0 +1,6 @@
+{
+  "pr": 1294,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0274_receptionist_desk_projection.sql"],
+  "release_receipt": "01-ops/1294-release-receipt.json"
+}
