@@ -163,7 +163,9 @@ export function BookAppointment({
     // Drop only `book`; tab / returnTo stay so Back still restores the directory.
     const next = new URLSearchParams(searchParams.toString());
     next.delete("book");
-    router.replace(next.size ? `${pathname}?${next}` : pathname, { scroll: false });
+    // toString, not URLSearchParams.size: `size` is undefined on older browsers and would drop tab/returnTo.
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once for the deep link
   }, []);
 
