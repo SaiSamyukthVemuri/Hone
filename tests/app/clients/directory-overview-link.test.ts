@@ -99,4 +99,13 @@ describe("directory interaction contract (HON-58)", () => {
     expect(src).toContain('e.key === "Escape"');
     expect(src).toContain("overviewRowLinkId(clientId)");
   });
+
+  it("a client module exports only components (the server page crashed calling a helper exported from one)", () => {
+    for (const f of ["OverviewFrame.tsx", "DirectoryControls.tsx"]) {
+      const src = read(f);
+      expect(src).toContain('"use client"');
+      const exported = [...src.matchAll(/^export (?:async )?(?:function|const) (\w+)/gm)].map((m) => m[1]);
+      expect(exported.every((n) => /^[A-Z]/.test(n))).toBe(true);
+    }
+  });
 });

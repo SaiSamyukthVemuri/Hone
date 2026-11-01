@@ -3,10 +3,11 @@ import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingLink } from "@/components/pending-link";
 import { UnarchiveRowControl } from "./UnarchiveRowControl";
-import { OverviewFrame, overviewRowLinkId } from "./OverviewFrame";
+import { OverviewFrame } from "./OverviewFrame";
 import { NAME_ON_FILE_LABEL } from "@/lib/clients/directory-rules";
 import {
   directoryHref,
+  overviewRowLinkId,
   type DirectoryFilter,
   type DirectoryPage,
   type DirectoryRow,

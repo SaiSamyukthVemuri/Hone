@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, type ReactNode } from "react";
+import { overviewRowLinkId } from "@/lib/clients/directory-query";
 
 // The shell of the open client overview: focus on open, focus back on close.
 //
@@ -12,13 +13,12 @@ import { useEffect, useRef, type ReactNode } from "react";
 // the same one without ?client= (so search, filters, sort and page are exactly as
 // they were), and there is no #anchor, so the page is never scrolled to a fragment.
 //
+// A "use client" module may export only components: a server component cannot call a
+// function exported from it (overviewRowLinkId lives in lib/clients/directory-query.ts).
+//
 // Leaf island: the content is server-rendered and passed in as children; this only
 // owns focus. It needs no router (a Link does the navigation), so it renders the same
 // without one.
-
-export function overviewRowLinkId(clientId: string): string {
-  return `client-open-${clientId}`;
-}
 
 export function OverviewFrame({
   clientId,

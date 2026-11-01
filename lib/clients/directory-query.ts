@@ -225,3 +225,8 @@ export function directoryHref(state: {
   const qs = p.toString();
   return qs ? `/clients?${qs}` : "/clients";
 }
+
+/** The id of a row's own link: the overview hands keyboard focus back to it on close. */
+export function overviewRowLinkId(clientId: string): string {
+  return `client-open-${clientId}`;
+}
