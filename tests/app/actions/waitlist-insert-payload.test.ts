@@ -17,12 +17,12 @@ vi.mock("@/lib/rate-limit/public", () => ({
 
 import { submitWaitlistEntry } from "@/app/actions/waitlist";
 
-// The ONLY proven fact about hosted public.waitlist (R1, 2026-11-01) is that
-// `source` is ABSENT. Every other column is unverified until the catalog JSON
-// arrives (the count reads cannot prove one: the table has 0 rows). So the
-// payload must be the smallest the feature needs, the email alone, and must
-// never name a column that is not proven. Widen it only with hosted evidence.
-const PROVEN_ABSENT_ON_HOSTED = ["source"];
+// Hosted public.waitlist columns, from the catalog Sam relayed (R1, 2026-11-01):
+// id, email (NOT NULL, UNIQUE), practice_name (nullable), created_at. `source`,
+// which repo migration 0004 declares, is ABSENT on hosted. Change this list only
+// with hosted evidence, never from the repo's migrations.
+const HOSTED_WAITLIST_COLUMNS = ["id", "email", "practice_name", "created_at"];
+const ABSENT_ON_HOSTED = ["source"];
 
 beforeEach(() => {
   insert.mockReset();
@@ -37,13 +37,14 @@ describe("submitWaitlistEntry insert payload", () => {
     expect(insert).toHaveBeenCalledWith({ email: "person@example.com" });
   });
 
-  it("names only the email and never a column proven absent on hosted", async () => {
+  it("names only the email, a column that exists on hosted, and never one that does not", async () => {
     insert.mockResolvedValue({ error: null });
     await submitWaitlistEntry("a@b.co");
     const keys = Object.keys(insert.mock.calls[0][0]);
+    // The action collects no practice name, so the email alone is sent.
     expect(keys).toEqual(["email"]);
-    for (const absent of PROVEN_ABSENT_ON_HOSTED)
-      expect(keys).not.toContain(absent);
+    for (const k of keys) expect(HOSTED_WAITLIST_COLUMNS).toContain(k);
+    for (const absent of ABSENT_ON_HOSTED) expect(keys).not.toContain(absent);
   });
 
   it("treats a duplicate as success", async () => {
