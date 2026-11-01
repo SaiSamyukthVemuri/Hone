@@ -1,32 +1,9 @@
 "use client";
 
-import { PendingLink } from "@/components/pending-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { PRESS_TRANSITION, cx } from "./ui/control-base";
 import type { ProfileTab } from "./profile-tab";
-
-// Tab order matches Chloe's mental model after the launch retest:
-// Overview, Sessions, Treatment Plans, Health & Forms, Personal Notes.
-// "Sessions" and "Treatment Plans" were split out of the previous
-// combined tab; the new "sessions" URL value holds per-visit history
-// and the existing "treatment" URL value now holds plans only. Old
-// /clients/[id]?tab=treatment deep links still land on a valid tab
-// (Treatment Plans). "Health & Forms" is a rename of the prior
-// "Health" tab; URL value unchanged so deep links survive.
-const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
-  { value: "overview", label: "Overview" },
-  { value: "sessions", label: "Sessions" },
-  { value: "treatment", label: "Treatment Plans" },
-  { value: "messages", label: "Messages" },
-  { value: "health", label: "Health & Forms" },
-  // LABEL ONLY. The tab VALUE stays "consultation": it is the ?tab= query
-  // parameter, and existing deep links (the appointment consultation CTA, the
-  // Overview cards) plus their tests depend on it. Chloe could not tell that
-  // skin/hair analysis lived behind a tab named only "Consultation".
-  { value: "consultation", label: "Consultation & Skin/Hair" },
-  { value: "personal", label: "Personal Notes" },
-];
 
 /**
  * The in-flight mark, and why this is a COPY rather than an import (UI-01D).
@@ -59,9 +36,25 @@ const PENDING_MARK =
 
 type Props = {
   active: ProfileTab;
+  /** The tabs THIS viewer may open (lib/clients/profile-tabs: Billing is owner-only and absent otherwise). */
+  tabs: ReadonlyArray<{ value: ProfileTab; label: string }>;
 };
 
-export function ProfileTabBar({ active }: Props) {
+export function ProfileTabBar({ active, tabs }: Props) {
+  const TABS = tabs;
+  // Sticky bar: it stays reachable while reading. After a tab change the new content starts directly
+  // under the bar, never at the page header and never at an anchor: if the page was scrolled past the
+  // bar's resting place, bring it back to that place, and do nothing otherwise.
+  const restRef = useRef<HTMLDivElement | null>(null);
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    const top = restRef.current?.getBoundingClientRect().top ?? 0;
+    if (top < 0) window.scrollBy(0, top);
+  }, [active]);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -99,14 +92,16 @@ export function ProfileTabBar({ active }: Props) {
     const url = qs ? `${pathname}?${qs}` : pathname;
     setRequested(next);
     startTransition(() => {
-      router.push(url, { scroll: true });
+      router.push(url, { scroll: false });
     });
   }
 
   return (
+    <>
+    <div ref={restRef} aria-hidden className="h-0" />
     <nav
       aria-label="Client profile sections"
-      className="border-b border-neutral-200 pb-3 dark:border-neutral-800 md:pb-0"
+      className="sticky top-0 z-20 -mx-1 bg-white px-1 pt-1 border-b border-neutral-200 pb-3 dark:border-neutral-800 dark:bg-neutral-950 md:pb-0"
     >
       {/* PR #238 (Chloe pilot): on phones the one-row scroller from
           PR #233 still moved under the finger and felt unstable, so
@@ -132,24 +127,6 @@ export function ProfileTabBar({ active }: Props) {
           ))}
         </select>
       </label>
-      {/* PR #272: Treatment Photos lives on its own route
-          (/clients/[id]/images). Surface it as a tab-level link instead of
-          burying it under Health & Forms. Mobile: a link under the section
-          select; md+: a tab-styled link at the end of the row. */}
-      {/* RESP-CLIENT-INTAKE-01 RANK 5 (1 of 2 — the mobile form).
-          This was the one control in this bar that stayed silent while its
-          seven siblings spoke: measured under a held navigation, the tab
-          BUTTONS acknowledged on all four channels and this link changed by
-          nothing at all. It is a real <Link>, so the shipped navigation leaf
-          is the right mechanism — the local copy below stays for the buttons,
-          which are not links and own their own transition. */}
-      <PendingLink
-        href={`${pathname}/images`}
-        pendingLabel="Opening treatment photos…"
-        className="mt-2 inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-600 underline md:hidden dark:text-neutral-300"
-      >
-        Treatment Photos →
-      </PendingLink>
       {/* md+: the underlined tab row, unchanged from PR #233 (it fits
           in one row on tablet/desktop and never scrolls there). */}
       <div className="hidden gap-x-5 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex md:gap-x-6">
@@ -218,17 +195,6 @@ export function ProfileTabBar({ active }: Props) {
             </button>
           );
         })}
-        {/* RESP-CLIENT-INTAKE-01 RANK 5 (2 of 2 — the md+ form). `relative`
-            is already on this control and PendingLink adds its own; the
-            duplicate is harmless and the class is kept so the tab-styled
-            geometry is unchanged from PR #233. */}
-        <PendingLink
-          href={`${pathname}/images`}
-          pendingLabel="Opening treatment photos…"
-          className="relative min-h-[44px] px-1 pb-3 pt-2 text-sm font-medium text-neutral-500 transition hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-        >
-          Treatment Photos
-        </PendingLink>
       </div>
       {/* MOUNTED AT ALL TIMES; only its TEXT changes.
           A polite live region has to exist before its content changes — a
@@ -244,5 +210,6 @@ export function ProfileTabBar({ active }: Props) {
         {pendingLabel ? `Opening ${pendingLabel}…` : ""}
       </span>
     </nav>
+    </>
   );
 }

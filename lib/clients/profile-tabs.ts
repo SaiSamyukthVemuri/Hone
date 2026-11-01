@@ -8,15 +8,9 @@
 // An unknown value is Overview (today's behaviour). Billing is owner-only: a non-owner asking for it
 // lands on Overview and the billing reads are never executed for them (see canViewClientBilling).
 
-export type ProfileTab =
-  | "overview"
-  | "sessions"
-  | "treatment"
-  | "photos"
-  | "health"
-  | "messages"
-  | "notes"
-  | "billing";
+import type { ProfileTab } from "@/components/profile-tab";
+
+export type { ProfileTab };
 
 export type ProfileTabViewer = { isOwner: boolean };
 
@@ -36,15 +30,14 @@ export function profileTabsFor(viewer: ProfileTabViewer): ReadonlyArray<{ value:
   return TABS.filter((t) => !t.ownerOnly || viewer.isOwner).map(({ value, label }) => ({ value, label }));
 }
 
-const LEGACY: Readonly<Record<string, { tab: ProfileTab; anchor?: string }>> = {
-  consultation: { tab: "treatment", anchor: "consultation" },
+const LEGACY: Readonly<Record<string, { tab: ProfileTab }>> = {
+  consultation: { tab: "treatment" },
   personal: { tab: "notes" },
 };
 
 export type ResolvedProfileTab = {
   tab: ProfileTab;
   // Section id inside the tab the old link meant, if any.
-  anchor?: string;
   // True when the viewer asked for a tab they may not open (the page lands on Overview instead).
   denied: boolean;
 };
@@ -62,6 +55,11 @@ export function resolveProfileTab(raw: string | null | undefined, viewer: Profil
 // Payment method, card authorization, payment history, client pricing and lifetime spend (the header
 // figure included) are owner-only. The loader AND every action check this; hiding the tab is not the
 // gate. services.price_cents stays readable by every member (0254 decision) and is not billing here.
+/** A `?tab=` value that used to be a tab and is now redirected to the tab that holds its content. */
+export function isLegacyProfileTab(raw: string | null | undefined): boolean {
+  return Object.hasOwn(LEGACY, (raw ?? "").trim().toLowerCase());
+}
+
 export function canViewClientBilling(role: string | null | undefined): boolean {
   return role === "owner";
 }

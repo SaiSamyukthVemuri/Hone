@@ -91,18 +91,14 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     expect(helper).toMatch(/return \{ url: data\.signedUrl, thumbUrl \};/);
   });
 
-  it("the profile header renders the portrait only when one was signed", () => {
+  it("the redesigned profile header shows initials only: no portrait is read, signed or rendered", () => {
+    // Sam (2026-11-01): the profile layout is independent of the held identification-photo
+    // feature. The 0231 portrait components stay in the repo for the Photos lane, but the profile
+    // page neither signs nor renders one. The images route keeps its own gated use (tests above).
     const page = readFileSync(join(ROOT, "app/(app)/clients/[id]/page.tsx"), "utf8");
-    // Inside the page's one parallel read wave, never a serial await of its own.
-    expect(page).toMatch(/portraitUrl,\n\s*\] = await Promise\.all\(\[/);
-    expect(page).not.toMatch(/await signedClientPortraitUrl/);
-    expect(page).toMatch(/\{portraitUrl && \(/);
-    // Keyed by the server URLs (fresh URLs remount it) and given the image id it
-    // re-mints through.
-    expect(page).toMatch(
-      /<ClientPortrait key=\{`\$\{portraitUrl\.url\}:\$\{portraitUrl\.thumbUrl \?\? ""\}`\} clientId=\{client\.id\} imageId=\{client\.portrait_image_id!\} url=\{portraitUrl\.url\} thumbUrl=\{portraitUrl\.thumbUrl\} clientName=\{client\.name\} \/>/,
-    );
-    expect(page).not.toMatch(/src=\{portraitUrl\}/);
+    expect(page).not.toMatch(/signedClientPortraitUrl|ClientPortrait\b|clientPortraitEnabled|portrait_image_id/);
+    expect(page).toMatch(/data-testid="client-profile-avatar"/);
+    expect(page).toMatch(/clientAvatarInitials\(client\.name\)/);
   });
 
   it("the header avatar loads the derivative first, demotes to the original, and re-mints an EXPIRED URL once per variant", () => {

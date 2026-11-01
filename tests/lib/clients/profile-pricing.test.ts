@@ -113,7 +113,7 @@ describe("pinned notes: Overview AND the notes tab, one source, no second write 
   it("the card is built once and rendered on both tabs", () => {
     expect((PAGE.match(/<ClientPinnedNotesCard\b/g) ?? []).length).toBe(1);
     expect(PAGE).toMatch(/\{activeTab === "overview" && \(\s*<>[\s\S]*?\{pinnedNotesCard\}/);
-    expect(PAGE).toMatch(/\{activeTab === "personal" && pinnedNotesCard\}/);
+    expect(PAGE).toMatch(/\{activeTab === "notes" && pinnedNotesCard\}/);
   });
   it("the three actions are passed in that one place only", () => {
     for (const a of ["addClientPinnedNoteAction", "editClientPinnedNoteAction", "removeClientPinnedNoteAction"]) {
@@ -122,7 +122,7 @@ describe("pinned notes: Overview AND the notes tab, one source, no second write 
   });
   it("one read serves both, and the deferred-read contract covers the notes tab", () => {
     expect((PAGE.match(/getPinnedNotesForClient\(/g) ?? []).length).toBe(1);
-    expect(PAGE).toMatch(/const needsPinnedNotes = isOverview \|\| activeTab === "personal";/);
-    expect(PAGE).toMatch(/personal: \{ personalNotes: needsPersonalNotes, pinnedNotes: needsPinnedNotes \}/);
+    expect(PAGE).toMatch(/const needsPinnedNotes = isOverview \|\| activeTab === "notes";/);
+    expect(PAGE).toMatch(/notes: \{ personalNotes: needsPersonalNotes, pinnedNotes: needsPinnedNotes \}/);
   });
 });

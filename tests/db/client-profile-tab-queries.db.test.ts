@@ -143,14 +143,9 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // returns before its lookup, which is why this used to read 2.
     practitioners: 4,
     client_intake_forms: 2, // latest, and latest submitted-or-reviewed
-    client_portal_magic_links: 1,
-    client_portal_sessions: 1,
-    client_portal_messages: 1,
     client_pinned_notes: 1,
     consent_form_templates: 1,
     client_consent_signatures: 1,
-    client_payment_methods: 1,
-    client_portal_access_events: 1,
     imported_treatment_memories: 1,
     client_clinical_notes: 2,
     session_blocks: 2, // last treatment AND treatment intelligence
@@ -172,31 +167,53 @@ const EXPECTED: Record<string, Record<string, number>> = {
     session_blocks: 1, // last treatment only
     session_block_areas: 1,
   },
-  consultation: {
+  // Treatment: plans + consultation / skin-hair notes + budget (one tab).
+  treatment: {
     ...ALWAYS,
     // 2 base + 2 for the note loaders attributing the seeded notes.
     practitioners: 4,
+    treatment_plans: 1,
     client_clinical_notes: 4,
     client_budget_context: 1,
   },
-  treatment: { ...ALWAYS, treatment_plans: 1 },
-  personal: { ...ALWAYS, client_personal_notes: 1 },
-  messages: { ...ALWAYS, client_portal_messages: 1, client_portal_message_replies: 1 },
+  photos: { ...ALWAYS },
+  // Notes: personal notes and the (shared) pinned notes.
+  notes: { ...ALWAYS, client_personal_notes: 1, client_pinned_notes: 1 },
+  // Messages: portal access, pending tasks (intake + consent + messages), activity.
+  messages: {
+    ...ALWAYS,
+    client_portal_magic_links: 1,
+    client_portal_sessions: 1,
+    client_portal_access_events: 1,
+    client_portal_messages: 1,
+    client_portal_message_replies: 1,
+    client_intake_forms: 1,
+    consent_form_templates: 1,
+    client_consent_signatures: 1,
+  },
   health: { ...ALWAYS, client_intake_forms: 1 },
+  // Billing (owner only): card on file and the card-authorization state.
+  billing: {
+    ...ALWAYS,
+    client_payment_methods: 1,
+    consent_form_templates: 1,
+    client_consent_signatures: 1,
+  },
 };
 
 // Tables no other tab may touch. This is the optimization's whole point.
+// (Pinned notes and consent templates/signatures are shared by design and are
+// pinned in EXPECTED per tab instead.)
 const TAB_EXCLUSIVE: Record<string, string> = {
   appointments: "sessions",
   treatment_goals: "sessions",
   treatment_plans: "treatment",
-  client_personal_notes: "personal",
+  client_budget_context: "treatment",
+  client_personal_notes: "notes",
   client_portal_message_replies: "messages",
-  client_budget_context: "consultation",
-  client_pinned_notes: "overview",
+  client_portal_magic_links: "messages",
+  client_payment_methods: "billing",
   imported_treatment_memories: "overview",
-  consent_form_templates: "overview",
-  client_payment_methods: "overview",
 };
 
 const SESSION_BLOCK_PROJECTIONS = [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canViewClientBilling, profileTabsFor, resolveProfileTab } from "@/lib/clients/profile-tabs";
+import { canViewClientBilling, isLegacyProfileTab, profileTabsFor, resolveProfileTab } from "@/lib/clients/profile-tabs";
 
 const owner = { isOwner: true };
 const member = { isOwner: false };
@@ -14,7 +14,7 @@ describe("legacy and current ?tab= values all resolve", () => {
     ["photos", "photos", undefined],
     ["notes", "notes", undefined],
     ["personal", "notes", undefined],
-    ["consultation", "treatment", "consultation"],
+    ["consultation", "treatment", undefined],
   ])("%s -> %s", (raw, tab, anchor) => {
     for (const viewer of [owner, member]) {
       expect(resolveProfileTab(raw, viewer)).toEqual({ tab, ...(anchor ? { anchor } : {}), denied: false });
@@ -45,5 +45,20 @@ describe("billing is owner-only", () => {
   it("the gate is the role string 'owner' and nothing else", () => {
     expect(canViewClientBilling("owner")).toBe(true);
     for (const r of ["member", "practitioner", "receptionist", "", null, undefined, "OWNER"]) expect(canViewClientBilling(r as string | null)).toBe(false);
+  });
+});
+
+describe("legacy values are redirected, with no anchor (nothing scrolls)", () => {
+  it("only consultation and personal are legacy", () => {
+    expect(isLegacyProfileTab("consultation")).toBe(true);
+    expect(isLegacyProfileTab(" Personal ")).toBe(true);
+    for (const v of ["overview", "treatment", "notes", "billing", "", undefined, "nope"]) {
+      expect(isLegacyProfileTab(v)).toBe(false);
+    }
+  });
+  it("the resolver never returns an anchor", () => {
+    for (const raw of ["consultation", "personal", "treatment"]) {
+      expect(resolveProfileTab(raw, owner)).not.toHaveProperty("anchor");
+    }
   });
 });

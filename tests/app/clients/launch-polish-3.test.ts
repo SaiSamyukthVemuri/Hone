@@ -9,7 +9,7 @@ const PAGE = read("app/(app)/clients/[id]/page.tsx");
 const TIMELINE = read("components/client-appointment-timeline.tsx");
 const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 const INFO = read("components/session-performer-line.tsx");
-const TABBAR = read("components/profile-tab-bar.tsx");
+const TABBAR = read("lib/clients/profile-tabs.ts"); // the tab set (labels, order, owner-only Billing)
 const CAL = read("app/(app)/calendar/page.tsx");
 const DAY = read("app/(app)/calendar/DayColumn.tsx");
 

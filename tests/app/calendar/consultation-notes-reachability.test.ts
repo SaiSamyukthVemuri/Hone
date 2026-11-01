@@ -16,7 +16,7 @@ const read = (p: string) => readFileSync(path.join(REPO, p), "utf8");
 
 const CARD = read("components/consultation-notes-card.tsx");
 const APPT = read("app/(app)/calendar/[id]/page.tsx");
-const TABS = read("components/profile-tab-bar.tsx");
+const TABS = read("lib/clients/profile-tabs.ts");
 const TAB_MODEL = read("components/profile-tab.ts");
 
 describe("G1 — the appointment reaches the notes", () => {
@@ -131,17 +131,15 @@ describe("G2 — pre-visit note context reuses the existing authority", () => {
 });
 
 describe("G3 — the tab says what it holds, without changing its URL", () => {
-  it("the VISIBLE label names both kinds", () => {
-    expect(TABS).toMatch(/label: "Consultation & Skin\/Hair"/);
+  it("consultation and skin/hair notes sit under the Treatment tab", () => {
+    expect(TABS).toMatch(/label: "Treatment"/);
   });
 
-  it("the tab VALUE is still exactly 'consultation'", () => {
-    // ?tab=consultation is a real deep link used by the new CTA and by the
-    // Overview cards. Renaming the value would break every existing link.
-    expect(TABS).toMatch(/value: "consultation"/);
-    expect(TABS).not.toMatch(/value: "consultation_skin_hair"/);
-    expect(TAB_MODEL).toMatch(/\| "consultation"/);
-    expect(TAB_MODEL).toMatch(/value === "consultation"/);
+  it("?tab=consultation is still a working link: it resolves to Treatment", () => {
+    // ?tab=consultation is a real deep link used by the CTA and the Overview cards. It is no
+    // longer a tab; the server redirects it (no anchor), so every existing link still lands.
+    expect(TABS).toMatch(/consultation: \{ tab: "treatment" \}/);
+    expect(TAB_MODEL).not.toMatch(/\| "consultation"/);
   });
 });
 

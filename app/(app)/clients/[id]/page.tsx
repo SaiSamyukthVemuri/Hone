@@ -6,10 +6,7 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 // in the measured slice and are deliberately left alone.
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
-import { notFound } from "next/navigation";
-import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
-import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
-import { ClientPortrait } from "./ClientPortrait";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -63,7 +60,7 @@ import { ClientPinnedNotesCard } from "@/components/client-pinned-notes-card";
 import { TreatmentPlansCard } from "@/components/treatment-plans-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
-import { todayInTz } from "@/lib/booking/tz";
+import { resolveTimeFormat, todayInTz } from "@/lib/booking/tz";
 import {
   getLatestIntakeForClient,
   getLatestSubmittedOrReviewedIntakeForClient,
@@ -110,7 +107,6 @@ import {
 import { TreatmentTimeCard } from "@/components/treatment-time-card";
 import { upsertTreatmentGoalAction } from "./treatment-time-actions";
 import { ProfileTabBar } from "@/components/profile-tab-bar";
-import { isProfileTab, type ProfileTab } from "@/components/profile-tab";
 import { sanitizeAppointmentReturnTo } from "@/lib/nav/appointment-return";
 import { BookAppointment } from "./BookAppointment";
 import {
@@ -154,7 +150,11 @@ import {
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { requireLoadedForTab } from "./deferred-reads";
-import { canViewClientBilling } from "@/lib/clients/profile-tabs";
+import { canViewClientBilling, isLegacyProfileTab, profileTabsFor, resolveProfileTab, type ProfileTab } from "@/lib/clients/profile-tabs";
+import { clientAvatarInitials } from "@/lib/clients/profile-avatar";
+import { getOverviewVisitAppointments } from "@/lib/clients/profile-appointments";
+import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits";
+import { VisitSummary } from "./_profile/VisitSummary";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -219,13 +219,6 @@ export default async function ClientCheatSheetPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const activeTab: ProfileTab = isProfileTab(sp.tab) ? sp.tab : "overview";
-  // Deep-link from an appointment: open the EXISTING treatment-plan create form.
-  // Only honoured on the treatment tab; it just opens the form (no auto-create).
-  const autoOpenCreatePlan = sp.create_plan === "1" && activeTab === "treatment";
-  // Validated internal "/calendar/<uuid>" back target, or null. Never external.
-  const planReturnTo = sanitizeAppointmentReturnTo(sp.returnTo);
-
   // Measurement only (perf/route-timing-baseline). The page's own identity
   // resolution is measured separately from its domain reads so the summary
   // can attribute time to the shell, to identity, and to page content.
@@ -238,6 +231,25 @@ export default async function ClientCheatSheetPage({
   // assembles its data across ~13 statements and wrapping them in a closure
   // would be a real restructuring of a clinical surface for a measurement PR.
   // An early notFound() simply leaves the span unrecorded.
+  // Which tab, for THIS viewer. A legacy `?tab=consultation|personal` link and a non-owner's
+  // `?tab=billing` never render the old/forbidden tab: they are redirected server-side to the tab
+  // that now holds the content (no #anchor, so nothing scrolls), keeping create_plan/returnTo.
+  const viewerCanSeeBilling = canViewClientBilling(practitioner.role);
+  const resolved = resolveProfileTab(sp.tab, { isOwner: viewerCanSeeBilling });
+  if (resolved.denied || isLegacyProfileTab(sp.tab)) {
+    const q = new URLSearchParams();
+    if (!resolved.denied && resolved.tab !== "overview") q.set("tab", resolved.tab);
+    if (!resolved.denied && resolved.tab === "treatment" && sp.create_plan === "1") q.set("create_plan", "1");
+    if (!resolved.denied && resolved.tab === "treatment" && sp.returnTo) q.set("returnTo", sp.returnTo);
+    redirect(`/clients/${id}${q.size ? `?${q}` : ""}`);
+  }
+  const activeTab: ProfileTab = resolved.tab;
+  // Deep-link from an appointment: open the EXISTING treatment-plan create form.
+  // Only honoured on the treatment tab; it just opens the form (no auto-create).
+  const autoOpenCreatePlan = sp.create_plan === "1" && activeTab === "treatment";
+  // Validated internal "/calendar/<uuid>" back target, or null. Never external.
+  const planReturnTo = sanitizeAppointmentReturnTo(sp.returnTo);
+
   const domain = startPerfSpan("client-profile.domain");
   // Sam's ruling: a non-owner's profile payload carries no client price, session
   // price or service price. The loaders are told, and do not fetch them.
@@ -288,15 +300,23 @@ export default async function ClientCheatSheetPage({
   //     card. Gating either to a single tab would silently blank the overview
   //     pending-task list, which is a product change, not an optimisation.
   const isOverview = activeTab === "overview";
-  const needsIntake = isOverview || activeTab === "health";
-  const needsPortalMessages = isOverview || activeTab === "messages";
+  const needsIntake = isOverview || activeTab === "health" || activeTab === "messages";
+  // Portal access, pending tasks and activity moved from Overview to Messages (Q3).
+  const isMessages = activeTab === "messages";
+  const needsPortalMessages = isMessages;
+  // Consent templates and signatures feed the Overview consent card, the Messages
+  // pending tasks and the owner Billing card-authorization state.
+  const isOwnerBilling = activeTab === "billing" && isOwner;
+  const needsConsent = isOverview || isMessages || isOwnerBilling;
+  // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
+  const needsCard = isOwnerBilling;
   const needsSessionsData = activeTab === "sessions";
   const needsTreatmentPlans = activeTab === "treatment";
-  const needsPersonalNotes = activeTab === "personal";
+  const needsPersonalNotes = activeTab === "notes";
   // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
-  const needsPinnedNotes = isOverview || activeTab === "personal";
+  const needsPinnedNotes = isOverview || activeTab === "notes";
   const needsPortalMessageReplies = activeTab === "messages";
-  const needsConsultationNotes = activeTab === "consultation";
+  const needsConsultationNotes = activeTab === "treatment";
 
   const portalLoginUrl = studio.slug
     ? `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`
@@ -322,6 +342,8 @@ export default async function ClientCheatSheetPage({
   // while doing strictly more database work, which is not the fix the
   // measurement asked for. A skipped read yields the same empty/neutral value
   // its consumer already handles, and its tab re-requests it on navigation.
+  // One instant for the read and the selectors, so a visit exactly on the boundary is never in both.
+  const visitNowMs = Date.now();
   const [
     appointmentTimeline,
     services,
@@ -341,7 +363,7 @@ export default async function ClientCheatSheetPage({
     activeCard,
     importedMemory,
     portalAccessEvents,
-    portraitUrl,
+    overviewVisitAppointments,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -355,7 +377,7 @@ export default async function ClientCheatSheetPage({
       ? getLatestIntakeForClient(studio.id, client.id)
       : Promise.resolve(null),
     // Portal access hints (last link sent / last sign-in). Overview card.
-    isOverview
+    isMessages
       ? getPortalAccessSummary(studio.id, client.id)
       // Same shape the helper returns when the client has never been sent a
       // link and has never signed in — the card already renders that state.
@@ -401,15 +423,15 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getPortalMessageRepliesForPractitionerView>>),
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
     // both feed computePortalPendingTasks.
-    isOverview
+    needsConsent
       ? getConsentTemplatesForStudio(studio.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
-    isOverview
+    needsConsent
       ? getLatestSignaturesForPractitionerView(studio.id, client.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
     // PR #135 (migration 0058): card-on-file metadata only; Stripe identifiers
     // stay off the wire. Overview card.
-    isOverview
+    needsCard
       ? getActiveCardForStudioClient(studio.id, client.id)
       : Promise.resolve(null),
     // PR #259: read-only imported treatment memory for the Before Today
@@ -422,21 +444,13 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve({ items: [], hasItems: false, totalFound: 0 }),
     // Portal Access PR 3: recent access events, fail-soft to [] pre-migration.
     // Overview card.
-    isOverview
+    isMessages
       ? getRecentPortalAccessEvents(studio.id, client.id, 5)
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
-    // 0231: the identification portrait in the header (every tab), signed for
-    // 60 s; null when none is set or it cannot be signed. Depends only on
-    // (studio.id, client), so it belongs in this wave, not after it.
-    // HELD: while portrait use is not enabled nothing is signed and no
-    // portrait renders; the stored pointer is left untouched.
-    clientPortraitEnabled()
-      ? signedClientPortraitUrl({
-          studioId: studio.id,
-          clientId: client.id,
-          portraitImageId: client.portrait_image_id,
-        })
-      : Promise.resolve(null),
+    // Overview only: ONE bounded read (at most two rows) for Last visit and Next appointment.
+    isOverview
+      ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
+      : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -874,12 +888,12 @@ export default async function ClientCheatSheetPage({
   // production. See ./deferred-reads for what this does and does not prove.
   requireLoadedForTab(activeTab, {
     overview: {
-      // pinned notes, portal access + events, consent, card on file, imported
-      // memory, clinical-notes summary, treatment intelligence
+      // pinned notes, consent, imported memory, clinical-notes summary,
+      // treatment intelligence
       overviewOnlyReads: isOverview,
       pinnedNotes: needsPinnedNotes,
       intake: needsIntake,
-      portalMessages: needsPortalMessages,
+      consent: needsConsent,
       lastTreatment: needsLastTreatment,
     },
     sessions: {
@@ -887,14 +901,22 @@ export default async function ClientCheatSheetPage({
       sessionsData: needsSessionsData,
       lastTreatment: needsLastTreatment,
     },
-    treatment: { treatmentPlans: needsTreatmentPlans },
+    treatment: {
+      treatmentPlans: needsTreatmentPlans,
+      consultationNotes: needsConsultationNotes,
+    },
     messages: {
+      // portal access card, pending tasks (intake + consent + messages), activity
       portalMessages: needsPortalMessages,
       portalMessageReplies: needsPortalMessageReplies,
+      intake: needsIntake,
+      consent: needsConsent,
     },
     health: { intake: needsIntake },
-    consultation: { consultationNotes: needsConsultationNotes },
-    personal: { personalNotes: needsPersonalNotes, pinnedNotes: needsPinnedNotes },
+    notes: { personalNotes: needsPersonalNotes, pinnedNotes: needsPinnedNotes },
+    // Owner-only. A non-owner never reaches this tab (resolved to Overview above), and `needsCard`
+    // is false for them, so the card read cannot run.
+    billing: { cardOnFile: needsCard, consent: needsConsent },
   });
 
   // ONE card element, rendered on Overview and on the notes tab: the same source, the same
@@ -929,9 +951,13 @@ export default async function ClientCheatSheetPage({
         <div className="mt-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              {portraitUrl && (
-                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} clientId={client.id} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
-              )}
+              <span
+                aria-hidden
+                data-testid="client-profile-avatar"
+                className="flex size-12 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-base font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+              >
+                {clientAvatarInitials(client.name)}
+              </span>
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}
               </h1>
@@ -1006,7 +1032,7 @@ export default async function ClientCheatSheetPage({
         </p>
       </section>
 
-      <ProfileTabBar active={activeTab} />
+      <ProfileTabBar active={activeTab} tabs={profileTabsFor({ isOwner })} />
 
       {activeTab === "overview" && (
         <>
@@ -1083,7 +1109,7 @@ export default async function ClientCheatSheetPage({
                 is byte-identical; only the element changed. The dashboard already
                 ships a PendingLink to this very destination. */}
             <PendingLink
-              href={`/clients/${client.id}?tab=consultation`}
+              href={`/clients/${client.id}?tab=treatment`}
               pendingLabel="Opening consultation…"
               className="mt-4 inline-flex items-center rounded-md border border-neutral-900 px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-900 hover:bg-neutral-50 dark:border-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-900"
             >
@@ -1134,6 +1160,20 @@ export default async function ClientCheatSheetPage({
               forward-looking BeforeToday prep card is separate and
               unchanged; the Sessions-tab "Last treatment" card (fuller,
               with price) also stays. */}
+          <VisitSummary
+            clientId={client.id}
+            lastVisit={pickLastVisit({
+              sessions: sessions.map((x) => ({ id: x.id, started_at: x.started_at, record_status: x.record_status })),
+              appointments: overviewVisitAppointments,
+              nowMs: visitNowMs,
+            })}
+            lastChartedAt={lastTreatment?.started_at ?? null}
+            lastChartedSessionId={lastTreatment?.id ?? null}
+            next={pickNextAppointment({ appointments: overviewVisitAppointments, nowMs: visitNowMs })}
+            timezone={studio.timezone}
+            timeFormat={resolveTimeFormat(studio)}
+          />
+
           <LastVisitCard
             clientId={client.id}
             sessionId={lastTreatment?.id ?? null}
@@ -1145,22 +1185,6 @@ export default async function ClientCheatSheetPage({
             isLatestSession={lastTreatment?.id === newestSession?.id}
             summary={lastTreatmentSummary}
             unavailable={clinicalHistoryUnavailable}
-          />
-
-          {/* PR #197 (Chloe round 3): portal messages moved to the
-              dedicated Messages tab; Overview stays clinical-first. */}
-
-          {/* Client portal access (Send/Copy portal link). Reuses the existing
-              secure magic-link issuance; studio-scoped + rate-limited. */}
-          <PortalAccessCard
-            clientId={client.id}
-            portalLoginUrl={portalLoginUrl}
-            clientHasEmail={!!client.email && client.email.length > 0}
-            lastLinkSentAt={portalAccess.lastLinkSentAt}
-            lastSeenAt={portalAccess.lastSeenAt}
-            pendingTasks={portalPendingTasks}
-            recentEvents={portalAccessEvents}
-            portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
           />
 
           {/* PR #134. Consent / e-sign per-template signed status for
@@ -1180,67 +1204,6 @@ export default async function ClientCheatSheetPage({
               }))}
             latestSignatures={consentLatestSignatures}
           />
-
-          {/* PR #135. Card-on-file Phase 1 read-only status card.
-              Practitioner sees brand / last4 / exp + the
-              authorization signed-at timestamp when available.
-              v1 has no Charge / Replace / Remove affordances; card
-              management lives in the portal. */}
-          {/* PR #158. Resolve card-authorization state from data the
-              page has already loaded (consentTemplatesAll +
-              consentLatestSignatures) so the practitioner card can
-              render one of four explanatory branches without a new
-              query: active card, no template configured, template
-              exists but unsigned, or signed but no card yet. The IIFE
-              keeps the derivation co-located with the prop site so a
-              future refactor moving this block does not split the
-              two halves of the same decision. */}
-          {(() => {
-            // PR #170. Practitioner-side card_authorization state must
-            // match what the portal sees: the LIVE template
-            // (is_live=true AND status='active') and its current
-            // version. Before PR #170 this find used only
-            // status='active', which after PR #167 became inconsistent
-            // with the portal query that also requires is_live=true.
-            // The fix is small: add the is_live filter so a draft /
-            // not-live card_authorization template never surfaces here
-            // as "ready," and compare the matching signature's
-            // template_version to the live template's current version
-            // so an out-of-date signature flips the new prop.
-            const cardAuthTemplate = consentTemplatesAll.find(
-              (t) =>
-                t.is_live === true &&
-                t.status === "active" &&
-                t.form_type === "card_authorization",
-            );
-            const cardAuthorizationTemplateExists = cardAuthTemplate != null;
-            const matchingSignature = cardAuthTemplate
-              ? consentLatestSignatures.find(
-                  (s) => s.template_id === cardAuthTemplate.id,
-                )
-              : null;
-            const cardAuthorizationSigned = matchingSignature != null;
-            const cardAuthorizationOutOfDate =
-              cardAuthTemplate != null &&
-              matchingSignature != null &&
-              matchingSignature.template_version !== cardAuthTemplate.version;
-            const authorizationSignedAt = matchingSignature
-              ? matchingSignature.signed_at
-              : null;
-            return (
-              <PaymentMethodCard
-                clientName={client.name}
-                activeCard={activeCard}
-                authorizationSignedAt={authorizationSignedAt}
-                cardAuthorizationTemplateExists={
-                  cardAuthorizationTemplateExists
-                }
-                cardAuthorizationSigned={cardAuthorizationSigned}
-                cardAuthorizationOutOfDate={cardAuthorizationOutOfDate}
-                cardSetupBlockedByEnvironment={!publishableKeyOk()}
-              />
-            );
-          })()}
 
           {/* PR #194: allergies moved to the top of Overview (under
               pinned notes); see the block above the Messages
@@ -1358,6 +1321,120 @@ export default async function ClientCheatSheetPage({
             unavailable={intelligenceUnavailable}
           />
 
+        </>
+      )}
+
+      {activeTab === "notes" && pinnedNotesCard}
+
+      {activeTab === "notes" && (
+        <ClientPersonalNotesEditor
+          clientId={client.id}
+          initial={{
+            personal_notes: personalNotes?.personal_notes ?? "",
+            private_warnings: personalNotes?.private_warnings ?? "",
+          }}
+          action={updateClientPersonalNotesAction}
+        />
+      )}
+
+      {activeTab === "messages" && (
+        <>
+          {/* PR #197 (Chloe round 3): portal messages moved to the
+              dedicated Messages tab; Overview stays clinical-first. */}
+
+          {/* Client portal access (Send/Copy portal link). Reuses the existing
+              secure magic-link issuance; studio-scoped + rate-limited. */}
+          <PortalAccessCard
+            clientId={client.id}
+            portalLoginUrl={portalLoginUrl}
+            clientHasEmail={!!client.email && client.email.length > 0}
+            lastLinkSentAt={portalAccess.lastLinkSentAt}
+            lastSeenAt={portalAccess.lastSeenAt}
+            pendingTasks={portalPendingTasks}
+            recentEvents={portalAccessEvents}
+            portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
+          />
+
+          {/* PR #197: dedicated Messages tab (moved off Overview at
+              Chloe's request). Same card, same actions. */}
+          <PortalMessagesCard
+            clientId={client.id}
+            clientName={client.name}
+            clientHasEmail={!!client.email && client.email.length > 0}
+            clientIsArchived={client.archived_at != null}
+            messages={portalMessages}
+            replies={portalMessageReplies}
+            createAction={createPortalMessageAction}
+            archiveAction={archivePortalMessageAction}
+            markReplySeenAction={markPortalReplySeenAction}
+            practitionerNames={practitionerNames}
+          />
+        </>
+      )}
+
+      {activeTab === "billing" && isOwner && (
+        <>
+          {/* PR #135. Card-on-file Phase 1 read-only status card.
+              Practitioner sees brand / last4 / exp + the
+              authorization signed-at timestamp when available.
+              v1 has no Charge / Replace / Remove affordances; card
+              management lives in the portal. */}
+          {/* PR #158. Resolve card-authorization state from data the
+              page has already loaded (consentTemplatesAll +
+              consentLatestSignatures) so the practitioner card can
+              render one of four explanatory branches without a new
+              query: active card, no template configured, template
+              exists but unsigned, or signed but no card yet. The IIFE
+              keeps the derivation co-located with the prop site so a
+              future refactor moving this block does not split the
+              two halves of the same decision. */}
+          {(() => {
+            // PR #170. Practitioner-side card_authorization state must
+            // match what the portal sees: the LIVE template
+            // (is_live=true AND status='active') and its current
+            // version. Before PR #170 this find used only
+            // status='active', which after PR #167 became inconsistent
+            // with the portal query that also requires is_live=true.
+            // The fix is small: add the is_live filter so a draft /
+            // not-live card_authorization template never surfaces here
+            // as "ready," and compare the matching signature's
+            // template_version to the live template's current version
+            // so an out-of-date signature flips the new prop.
+            const cardAuthTemplate = consentTemplatesAll.find(
+              (t) =>
+                t.is_live === true &&
+                t.status === "active" &&
+                t.form_type === "card_authorization",
+            );
+            const cardAuthorizationTemplateExists = cardAuthTemplate != null;
+            const matchingSignature = cardAuthTemplate
+              ? consentLatestSignatures.find(
+                  (s) => s.template_id === cardAuthTemplate.id,
+                )
+              : null;
+            const cardAuthorizationSigned = matchingSignature != null;
+            const cardAuthorizationOutOfDate =
+              cardAuthTemplate != null &&
+              matchingSignature != null &&
+              matchingSignature.template_version !== cardAuthTemplate.version;
+            const authorizationSignedAt = matchingSignature
+              ? matchingSignature.signed_at
+              : null;
+            return (
+              <PaymentMethodCard
+                clientName={client.name}
+                activeCard={activeCard}
+                authorizationSignedAt={authorizationSignedAt}
+                cardAuthorizationTemplateExists={
+                  cardAuthorizationTemplateExists
+                }
+                cardAuthorizationSigned={cardAuthorizationSigned}
+                cardAuthorizationOutOfDate={cardAuthorizationOutOfDate}
+                cardSetupBlockedByEnvironment={!publishableKeyOk()}
+              />
+            );
+          })()}
+
           {/* Pricing moved to the end of Overview: it's billing, not
               clinical caution. Same fields, same actions (unchanged),
               same delete button; only the surrounding section markup
@@ -1421,85 +1498,22 @@ export default async function ClientCheatSheetPage({
         </>
       )}
 
-      {activeTab === "consultation" && clinicalNoteSections && (
-        <ClinicalNotesSection
-          clientId={client.id}
-          variant="full"
-          sections={clinicalNoteSections}
-          addAction={addClinicalNoteAction}
-          reviseAction={reviseClinicalNoteAction}
-          printHref={`/clients/${client.id}/clinical-notes/print`}
-        />
-      )}
-
-      {/* Chloe pilot feedback: budget belongs with consultation, not with a
-          treatment plan. Renders as a peer of the two clinical sections but
-          is deliberately separate from them — mutable current context, not an
-          append-only clinical record, and not a client_clinical_notes kind.
-
-          Four read states, three renderings:
-            available / empty  -> the editable card (empty is a real "no
-                                  budget recorded yet", which IS editable)
-            unavailable        -> a truthful non-destructive notice with NO
-                                  form, so a failed read can never be saved
-                                  over real stored data
-            not_installed      -> nothing at all; 0183 is not applied yet and
-                                  the rest of the tab must still work */}
-      {activeTab === "consultation" &&
-        budgetContext &&
-        (budgetContext.status === "available" ||
-          budgetContext.status === "empty") && (
-          <ClientBudgetCard
-            clientId={client.id}
-            initial={{
-              budgetLevel:
-                budgetContext.status === "available"
-                  ? budgetContext.budgetLevel
-                  : null,
-              budgetNotes:
-                budgetContext.status === "available"
-                  ? budgetContext.budgetNotes
-                  : "",
-            }}
-            action={updateClientBudgetContextAction}
-          />
-        )}
-
-      {activeTab === "consultation" &&
-        budgetContext?.status === "unavailable" && (
-          <ClientBudgetCardUnavailable />
-        )}
-
-      {activeTab === "personal" && pinnedNotesCard}
-
-      {activeTab === "personal" && (
-        <ClientPersonalNotesEditor
-          clientId={client.id}
-          initial={{
-            personal_notes: personalNotes?.personal_notes ?? "",
-            private_warnings: personalNotes?.private_warnings ?? "",
-          }}
-          action={updateClientPersonalNotesAction}
-        />
-      )}
-
-      {activeTab === "messages" && (
-        <>
-          {/* PR #197: dedicated Messages tab (moved off Overview at
-              Chloe's request). Same card, same actions. */}
-          <PortalMessagesCard
-            clientId={client.id}
-            clientName={client.name}
-            clientHasEmail={!!client.email && client.email.length > 0}
-            clientIsArchived={client.archived_at != null}
-            messages={portalMessages}
-            replies={portalMessageReplies}
-            createAction={createPortalMessageAction}
-            archiveAction={archivePortalMessageAction}
-            markReplySeenAction={markPortalReplySeenAction}
-            practitionerNames={practitionerNames}
-          />
-        </>
+      {activeTab === "photos" && (
+        <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+            Treatment photos
+          </h2>
+          <p className="text-sm text-neutral-500">
+            Before and after photos for this client's sessions.
+          </p>
+          <PendingLink
+            href={`/clients/${client.id}/images`}
+            pendingLabel="Opening treatment photos…"
+            className="inline-flex min-h-[44px] w-fit items-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            Open treatment photos
+          </PendingLink>
+        </section>
       )}
 
       {activeTab === "health" && (
@@ -1767,6 +1781,55 @@ export default async function ClientCheatSheetPage({
           })()}
         </>
       )}
+
+      {activeTab === "treatment" && clinicalNoteSections && (
+        <ClinicalNotesSection
+          clientId={client.id}
+          variant="full"
+          sections={clinicalNoteSections}
+          addAction={addClinicalNoteAction}
+          reviseAction={reviseClinicalNoteAction}
+          printHref={`/clients/${client.id}/clinical-notes/print`}
+        />
+      )}
+
+      {/* Chloe pilot feedback: budget belongs with consultation, not with a
+          treatment plan. Renders as a peer of the two clinical sections but
+          is deliberately separate from them — mutable current context, not an
+          append-only clinical record, and not a client_clinical_notes kind.
+
+          Four read states, three renderings:
+            available / empty  -> the editable card (empty is a real "no
+                                  budget recorded yet", which IS editable)
+            unavailable        -> a truthful non-destructive notice with NO
+                                  form, so a failed read can never be saved
+                                  over real stored data
+            not_installed      -> nothing at all; 0183 is not applied yet and
+                                  the rest of the tab must still work */}
+      {activeTab === "treatment" &&
+        budgetContext &&
+        (budgetContext.status === "available" ||
+          budgetContext.status === "empty") && (
+          <ClientBudgetCard
+            clientId={client.id}
+            initial={{
+              budgetLevel:
+                budgetContext.status === "available"
+                  ? budgetContext.budgetLevel
+                  : null,
+              budgetNotes:
+                budgetContext.status === "available"
+                  ? budgetContext.budgetNotes
+                  : "",
+            }}
+            action={updateClientBudgetContextAction}
+          />
+        )}
+
+      {activeTab === "treatment" &&
+        budgetContext?.status === "unavailable" && (
+          <ClientBudgetCardUnavailable />
+        )}
 
       {activeTab === "treatment" && (
         <TreatmentPlansCard

@@ -16,7 +16,7 @@ describe("1. Messages tab actually opens", () => {
     expect(TAB).toMatch(/value === "messages" \|\|/);
   });
   it("invalid tabs still fall back safely; overview excludes messages", () => {
-    expect(PAGE).toMatch(/isProfileTab\(sp\.tab\) \? sp\.tab : "overview"/);
+    expect(PAGE).toMatch(/resolveProfileTab\(sp\.tab, /);
     const overview = PAGE.slice(PAGE.indexOf('{activeTab === "overview"'), PAGE.indexOf('{activeTab === "messages"'));
     expect(overview).not.toMatch(/<PortalMessagesCard/);
   });

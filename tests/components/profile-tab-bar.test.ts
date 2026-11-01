@@ -72,6 +72,7 @@ vi.mock("next/link", async () => {
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { ProfileTabBar } = await import("@/components/profile-tab-bar");
+const { profileTabsFor } = await import("@/lib/clients/profile-tabs");
 
 type Tab = {
   label: string;
@@ -91,6 +92,7 @@ function render(state: {
   return renderToStaticMarkup(
     createElement(ProfileTabBar, {
       active: state.active as Parameters<typeof ProfileTabBar>[0]["active"],
+      tabs: profileTabsFor({ isOwner: true }),
     }),
   );
 }
@@ -204,9 +206,9 @@ describe("UI-01D: the pending target is represented separately", () => {
     const html = render({
       pending: true,
       active: "overview",
-      requested: "personal",
+      requested: "notes",
     });
-    expect(liveRegion(html)).toBe("Opening Personal Notes…");
+    expect(liveRegion(html)).toBe("Opening Notes…");
     expect(liveRegion(html)).not.toMatch(/opened|loaded|done/i);
   });
 
@@ -244,11 +246,11 @@ describe("UI-01D: pending state cannot go stale", () => {
     const second = render({
       pending: true,
       active: "overview",
-      requested: "personal",
+      requested: "notes",
     });
     expect(find(first, "Sessions")?.ariaBusy).toBe("true");
     expect(find(second, "Sessions")?.ariaBusy).toBeNull();
-    expect(find(second, "Personal Notes")?.ariaBusy).toBe("true");
+    expect(find(second, "Notes")?.ariaBusy).toBe("true");
     expect(markCount(second)).toBe(1);
     expect(tabs(second).filter((t) => t.ariaBusy === "true")).toHaveLength(1);
   });
