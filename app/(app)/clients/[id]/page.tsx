@@ -214,13 +214,15 @@ export default async function ClientCheatSheetPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; create_plan?: string; returnTo?: string }>;
+  searchParams: Promise<{ tab?: string; create_plan?: string; returnTo?: string; book?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
   const activeTab: ProfileTab = isProfileTab(sp.tab) ? sp.tab : "overview";
   // Deep-link from an appointment: open the EXISTING treatment-plan create form.
   // Only honoured on the treatment tab; it just opens the form (no auto-create).
+  // Directory deep link: `?book=1` opens the existing booking flow for this client.
+  const autoOpenBooking = sp.book === "1";
   const autoOpenCreatePlan = sp.create_plan === "1" && activeTab === "treatment";
   // Validated internal "/calendar/<uuid>" back target, or null. Never external.
   const planReturnTo = sanitizeAppointmentReturnTo(sp.returnTo);
@@ -966,6 +968,7 @@ export default async function ClientCheatSheetPage({
           <div className="min-w-0 flex-1">
             <BookAppointment
               clientId={client.id}
+              initiallyOpen={autoOpenBooking}
               services={services}
               defaultDate={today}
               timezone={studio.timezone}

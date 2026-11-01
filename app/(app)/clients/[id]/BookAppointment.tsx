@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Service } from "@/lib/types/database";
 import {
   formatServiceLabel,
@@ -32,6 +32,9 @@ type Props = {
   practitionerCapacityEnabled: boolean;
   currentPractitionerId: string;
   currentPractitionerName: string;
+  // Directory deep link (`?book=1`): start expanded for this client. Slots load as on a click,
+  // focus lands on the first control without scrolling, and the param is dropped from the URL.
+  initiallyOpen?: boolean;
 };
 
 const OVERRIDE_TIME_RE = /^\d{2}:\d{2}$/;
@@ -45,9 +48,14 @@ export function BookAppointment({
   practitionerCapacityEnabled,
   currentPractitionerId,
   currentPractitionerName,
+  initiallyOpen = false,
 }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const firstControlRef = useRef<HTMLSelectElement>(null);
+  const deepLinkHandled = useRef(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const groups = useMemo(() => groupServicesByModality(services), [services]);
   const firstServiceId = groups[0]?.services[0]?.id ?? "";
   const [serviceId, setServiceId] = useState(firstServiceId);
@@ -146,6 +154,18 @@ export function BookAppointment({
       loadSlots(nextServiceId, nextDate, nextTarget);
     });
   }
+
+  useEffect(() => {
+    if (!initiallyOpen || deepLinkHandled.current) return;
+    deepLinkHandled.current = true;
+    if (serviceId && date) loadForService(serviceId, date);
+    firstControlRef.current?.focus({ preventScroll: true });
+    // Drop only `book`; tab / returnTo stay so Back still restores the directory.
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("book");
+    router.replace(next.size ? `${pathname}?${next}` : pathname, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once for the deep link
+  }, []);
 
   function handleOpen() {
     setOpen(true);
@@ -252,6 +272,7 @@ export function BookAppointment({
             Service
           </span>
           <select
+            ref={firstControlRef}
             value={serviceId}
             onChange={(e) => handleService(e.target.value)}
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
