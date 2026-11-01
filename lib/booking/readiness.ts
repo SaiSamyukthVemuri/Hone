@@ -88,7 +88,7 @@ export function computeBookingReadiness(opts: {
       label: "Studio name set",
       ok: hasStudioName,
       required: true,
-      href: "/settings/studio",
+      href: "/settings/studio/details",
     },
     {
       key: "booking_link",

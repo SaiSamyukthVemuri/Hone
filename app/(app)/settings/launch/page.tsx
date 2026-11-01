@@ -173,7 +173,7 @@ export default async function LaunchChecklistPage() {
       detail: provenBlockers.has("studio_name")
         ? "Set the studio name."
         : "Studio name set.",
-      cta: { label: "Open Studio settings", href: "/settings/studio" },
+      cta: { label: "Open Studio settings", href: "/settings/studio/details" },
     },
     {
       title: "Public booking link",
@@ -181,7 +181,7 @@ export default async function LaunchChecklistPage() {
       detail: bookingUrl ?? "Set a booking slug to enable the public link.",
       cta: hasSlug && bookingUrl
         ? { label: "Open public booking page", href: bookingUrl }
-        : { label: "Open Studio settings", href: "/settings/studio" },
+        : { label: "Open booking settings", href: "/settings/booking/link" },
       secondaryCta: hasSlug
         ? { label: "Open booking settings", href: "/settings/booking/link" }
         : undefined,
@@ -283,7 +283,7 @@ export default async function LaunchChecklistPage() {
       detail: studio.send_confirmation_emails
         ? "Clients receive confirmation emails with the intake link."
         : "Turn on confirmation emails so clients receive the intake link after booking.",
-      cta: { label: "Open Studio settings", href: "/settings/studio" },
+      cta: { label: "Open email settings", href: "/settings/studio/email" },
     },
     {
       title: "Intake form",

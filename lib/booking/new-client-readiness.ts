@@ -135,7 +135,7 @@ const BLOCKER_ORDER: NewClientBlockerKey[] = [
 ];
 
 const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
-  studio_name: { label: "Studio name is not set.", href: "/settings/studio" },
+  studio_name: { label: "Studio name is not set.", href: "/settings/studio/details" },
   // A FACT, NOT A DIAGNOSIS -- the rule every other label follows. It states
   // what is true of admission today; it does not call the studio
   // misconfigured, because it is not.

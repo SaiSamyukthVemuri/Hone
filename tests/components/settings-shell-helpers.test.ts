@@ -249,3 +249,22 @@ describe("R2 Codex P2s (1 Nov): readiness remediation links and the override gua
     expect(src).toMatch(/setDate\(""\);\s*setIsOpen\(true\);\s*setOpen\("10:00"\);\s*setClose\("15:00"\);/);
   });
 });
+
+describe("R2 Codex P2 (1 Nov): setup links open the focused Studio view, never the doorway", () => {
+  const read = (rel: string) => readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+  it("the confirmation-email checklist row and the getting-started email review open the email editor", () => {
+    const launch = read("app/(app)/settings/launch/page.tsx");
+    expect(launch).toMatch(/title: "Client confirmation emails"[\s\S]*?href: "\/settings\/studio\/email"/);
+    expect(read("lib/onboarding/getting-started.ts")).toMatch(/"emails-review"[\s\S]*?"\/settings\/studio\/email"/);
+  });
+  it("no readiness, launch or getting-started link points at the /settings/studio doorway", () => {
+    for (const f of [
+      "app/(app)/settings/launch/page.tsx",
+      "lib/onboarding/getting-started.ts",
+      "lib/booking/readiness.ts",
+      "lib/booking/new-client-readiness.ts",
+    ]) {
+      expect(read(f), f).not.toMatch(/["'`]\/settings\/studio["'`]/);
+    }
+  });
+});
