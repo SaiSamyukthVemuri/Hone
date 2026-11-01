@@ -22,10 +22,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Relayed result: APPLIED+VERIFIED, 249 history rows, max 0257, reconcile finished, apply-state marker archived, no settings write. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0253` is present at the applied bytes (it arrived with #1135). |
+| **Repo migration max** | **0278** (`0278_practitioner_own_working_hours.sql`, HON-44 decision 6, authored on `team/hon44-hours-0278`, HELD DRAFT, **NOT applied**), derived from the source files on this tree. The previous max `0257` (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`) is the hosted head; `0253` is present at the applied bytes (it arrived with #1135). |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
-| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **`0278`** — `0278_practitioner_own_working_hours.sql`, authored and **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. It adds `authorize_schedule_writer` and `save_weekly_availability_as` and swaps the gate of four schedule commands (a practitioner changes only their own hours; the owner any). It is held: never applied without Sam's per-change approval and Privacy then Insurance review. `0247`, `0249`-`0252`, `0255` and `0256` remain declared unhosted gaps below the hosted head, not a pending suffix. |
+| **Next free number** | Next free number is **0279** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation (`0278` is reserved to Team for practitioner own working hours), not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The 0253 apply (facts as relayed by Sam and recorded by OPS, 2026-10-31T20:35:52Z)
