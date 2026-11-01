@@ -19,6 +19,7 @@ import {
 export type DeskDirectoryState =
   | { status: "idle" }
   | { status: "ok"; input: DeskDirectoryInput; data: DeskDirectoryPage }
+  | { status: "too_short"; input: DeskDirectoryInput }
   | { status: "unavailable" };
 
 export async function searchDeskClientsAction(
@@ -34,6 +35,9 @@ export async function searchDeskClientsAction(
       sort: formData.get("sort"),
       page: formData.get("page"),
     });
+    // One character is not a search (the database requires 2): say so, do not call it and do not
+    // report the service as unavailable.
+    if (input.q.length === 1) return { status: "too_short", input };
     const supabase = (await createClient()) as unknown as DeskRpc;
     const data = await readDeskDirectory(supabase, identity.studioId, input);
     return { status: "ok", input, data };

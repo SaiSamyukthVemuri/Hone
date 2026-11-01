@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { DeskClientRow, DeskDirectoryPage, DeskIntake } from "@/lib/desk/read";
-import { DESK_MIN_QUERY_FOR_PAGING } from "@/lib/desk/read";
+import { DESK_MAX_QUERY_LENGTH, DESK_MIN_QUERY_FOR_PAGING } from "@/lib/desk/read";
 import { searchDeskClientsAction, type DeskDirectoryState } from "./actions";
 
 // The desk directory's interactive half. State lives HERE and in the action result, never in the URL
@@ -19,7 +19,8 @@ const INTAKE_LABEL: Record<DeskIntake, string> = {
 
 function ConsentText({ signed }: { signed: boolean | null }) {
   if (signed === null) return <>Consent unavailable</>;
-  return <>{signed ? "Consent signed" : "Consent not signed"}</>;
+  // Privacy F2: strict. Treatment-consent templates only; the label claims no more than that.
+  return <>{signed ? "Consent on file" : "Consent needed"}</>;
 }
 
 export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }) {
@@ -31,7 +32,10 @@ export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }
   );
   const [openId, setOpenId] = useState<string | null>(null);
   const data = state.status === "ok" ? state.data : null;
-  const input = state.status === "ok" ? state.input : { q: "", filters: [], sort: "name" as const, page: 1 };
+  const input =
+    state.status === "ok" || state.status === "too_short"
+      ? state.input
+      : { q: "", filters: [], sort: "name" as const, page: 1 };
   const open = data?.rows.find((r) => r.id === openId) ?? null;
   const canPage = input.q.length >= DESK_MIN_QUERY_FOR_PAGING;
 
@@ -49,7 +53,7 @@ export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }
               type="search"
               name="q"
               defaultValue={input.q}
-              maxLength={100}
+              maxLength={DESK_MAX_QUERY_LENGTH}
               placeholder="Name, email or phone"
               autoComplete="off"
               className="min-h-11 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
@@ -91,6 +95,11 @@ export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }
         </div>
         <p className="text-xs text-neutral-500">Searches the names shown, email and phone. Type at least {DESK_MIN_QUERY_FOR_PAGING} characters to see more than the first page.</p>
 
+        {state.status === "too_short" && (
+          <p role="status" className="text-sm text-neutral-700 dark:text-neutral-300">
+            Type at least {DESK_MIN_QUERY_FOR_PAGING} characters to search.
+          </p>
+        )}
         {state.status === "unavailable" && (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
             The client list is unavailable right now. Try again in a moment.
@@ -171,8 +180,14 @@ function Overview({ row }: { row: DeskClientRow }) {
           <dd>{row.nextAppointmentAt ? <FormattedDateTime iso={row.nextAppointmentAt} /> : "No upcoming appointment"}</dd>
         </div>
         <div>
-          <dt className="text-xs text-neutral-500">Last visit</dt>
-          <dd>{row.lastVisitOn ?? "No completed visit recorded in Hone"}</dd>
+          <dt className="text-xs text-neutral-500">Last completed appointment</dt>
+          <dd>
+            {row.lastCompleted.state === "at"
+              ? row.lastCompleted.on
+              : row.lastCompleted.state === "none"
+                ? "No completed appointment in Hone"
+                : "Unavailable"}
+          </dd>
         </div>
         <div>
           <dt className="text-xs text-neutral-500">Forms</dt>

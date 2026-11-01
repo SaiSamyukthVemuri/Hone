@@ -180,3 +180,26 @@ describe("routing: /desk is private and inert by default", () => {
     expect(flag).toContain('"HONE_RECEPTIONIST_DESK_ENABLED"');
   });
 });
+
+describe("Insurance L1-L5: the desk last completed appointment is its own fact", () => {
+  const UI = read(path.join(ROOT, "app/(desk)/desk/clients/DeskDirectory.tsx"));
+  it("L1/L2/L3: the desk label, empty text and unavailable text are the ruled ones", () => {
+    expect(UI).toContain("Last completed appointment");
+    expect(UI).toContain("No completed appointment in Hone");
+    expect(UI).toContain('"Unavailable"');
+  });
+  it("L5: nothing in the desk uses the staff 'Last visit' label, text or module, and none sorts or compares by it", () => {
+    for (const f of DESK_FILES) {
+      const src = stripComments(read(f));
+      expect(src, rel(f)).not.toMatch(/Last visit|No visit recorded|last-visit|lastVisit/);
+      expect(src, rel(f)).not.toMatch(/lib\/clients\//);
+    }
+  });
+  it("control: the checker flags the staff label", () => {
+    expect(/Last visit|No visit recorded|last-visit|lastVisit/.test('<dt>Last visit</dt>')).toBe(true);
+  });
+  it("Privacy F2: the consent label claims only 'on file' / 'needed' for treatment consent", () => {
+    expect(UI).toContain('"Consent on file" : "Consent needed"');
+    expect(UI).not.toContain("Consent signed");
+  });
+});

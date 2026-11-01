@@ -12,7 +12,8 @@ export const DESK_PAGE_SIZE = 25;
 /** Privacy R2: offset + limit never exceeds this, so the list cannot be walked end to end. */
 export const DESK_MAX_WINDOW = 200;
 export const DESK_MIN_QUERY_FOR_PAGING = 2;
-export const DESK_MAX_QUERY_LENGTH = 100;
+// The database refuses a term over 80 characters (0274), so the app never sends one (Insurance D3).
+export const DESK_MAX_QUERY_LENGTH = 80;
 
 export type DeskFilter = "intake_review" | "no_upcoming";
 export type DeskSort = "name" | "next";
@@ -29,7 +30,11 @@ export type DeskClientRow = {
   email: string | null;
   nextAppointmentAt: string | null;
   /** A calendar date (YYYY-MM-DD), never finer (R7). */
-  lastVisitOn: string | null;
+  /**
+   * The last COMPLETED APPOINTMENT as a studio-local date (Insurance ruling, 0274). Not the staff
+   * directory's "Last visit" (which also counts a session): a different fact with its own name.
+   */
+  lastCompleted: DeskLastCompleted;
   intake: DeskIntake;
   /** The studio's required treatment consent only; null when it could not be read. */
   consentSigned: boolean | null;
@@ -94,6 +99,15 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+export type DeskLastCompleted = { state: "at"; on: string } | { state: "none" } | { state: "unavailable" };
+
+/** null = no completed appointment; a YYYY-MM-DD date = at; anything else could not be read. */
+export function mapLastCompleted(raw: unknown): DeskLastCompleted {
+  if (raw === null) return { state: "none" };
+  if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}/.test(raw)) return { state: "at", on: raw.slice(0, 10) };
+  return { state: "unavailable" };
+}
+
 export function mapDeskClientRow(raw: unknown): DeskClientRow | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
@@ -107,7 +121,7 @@ export function mapDeskClientRow(raw: unknown): DeskClientRow | null {
     phone: str(r.phone),
     email: str(r.email),
     nextAppointmentAt: str(r.next_appointment_at),
-    lastVisitOn: str(r.last_visit_on)?.slice(0, 10) ?? null,
+    lastCompleted: mapLastCompleted(r.last_visit_on),
     intake: INTAKE.includes(r.intake_state as DeskIntake) ? (r.intake_state as DeskIntake) : "unavailable",
     consentSigned: typeof r.consent_signed === "boolean" ? r.consent_signed : null,
   };

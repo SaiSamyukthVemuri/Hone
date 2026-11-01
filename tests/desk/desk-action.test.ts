@@ -44,9 +44,21 @@ describe("searchDeskClientsAction", () => {
     expect(rpcCalls[0]).toMatchObject({ p_studio_id: "studio-1", p_query: "jan", p_filters: ["no_upcoming"], p_sort: "next", p_offset: 0 });
   });
 
-  it("R2 holds through the action: page 3 with a one-character term is page 1", async () => {
-    await searchDeskClientsAction(idle, form([["q", "j"], ["page", "3"]]));
+  it("R2 holds through the action: page 3 with a one-character or empty term is page 1", async () => {
+    const out = await searchDeskClientsAction(idle, form([["q", "j"], ["page", "3"]]));
+    expect(out).toMatchObject({ status: "too_short", input: { page: 1 } }); // no browse, and no call at all
+    expect(rpcCalls).toEqual([]);
+    await searchDeskClientsAction(idle, form([["q", ""], ["page", "3"]])); // an empty term cannot page either
     expect(rpcCalls[0].p_offset).toBe(0);
+  });
+
+  it("Insurance D3: a one-character term is 'too short', never 'unavailable', and never calls the database", async () => {
+    const out = await searchDeskClientsAction(idle, form([["q", "j"]]));
+    expect(out).toMatchObject({ status: "too_short", input: { q: "j", page: 1 } });
+    expect(rpcCalls).toEqual([]);
+    // control: two characters do search
+    expect((await searchDeskClientsAction(idle, form([["q", "ja"]]))).status).toBe("ok");
+    expect(rpcCalls).toHaveLength(1);
   });
 
   it("an identity failure never reaches the database and returns the fixed state", async () => {

@@ -48,7 +48,7 @@ describe("input parsing (R2)", () => {
     });
     expect(parseDeskDirectoryInput({ sort: "next" }).sort).toBe("next");
     expect(normalizeDeskQuery("  Jane   \n Smith ")).toBe("Jane Smith");
-    expect(normalizeDeskQuery("x".repeat(500))).toHaveLength(100);
+    expect(normalizeDeskQuery("x".repeat(500))).toHaveLength(80); // the database refuses more than 80
     expect(normalizeDeskQuery(undefined)).toBe("");
   });
 });
@@ -68,7 +68,7 @@ describe("directory read", () => {
   it("maps exactly the allow-listed columns and no other value", () => {
     const row = mapDeskClientRow(raw({ address: "SENTINEL", date_of_birth: "SENTINEL", notes: "SENTINEL", legal_name: "SENTINEL", pronouns: "SENTINEL", consent_accepted_at: "SENTINEL" }));
     expect(Object.keys(row!).sort()).toEqual([
-      "consentSigned", "displayName", "email", "id", "intake", "lastVisitOn", "nameOnFile", "nextAppointmentAt", "phone",
+      "consentSigned", "displayName", "email", "id", "intake", "lastCompleted", "nameOnFile", "nextAppointmentAt", "phone",
     ]);
     expect(JSON.stringify(row)).not.toContain("SENTINEL");
   });
@@ -80,7 +80,9 @@ describe("directory read", () => {
     expect(mapDeskClientRow(raw({ consent_signed: "yes" }))!.consentSigned).toBeNull();
     expect(mapDeskClientRow(raw({ consent_signed: null }))!.consentSigned).toBeNull();
     expect(mapDeskClientRow(raw({ consent_signed: false }))!.consentSigned).toBe(false);
-    expect(mapDeskClientRow(raw({ last_visit_on: "2030-05-01T13:45:00Z" }))!.lastVisitOn).toBe("2030-05-01");
+    expect(mapDeskClientRow(raw({ last_visit_on: "2030-05-01T13:45:00Z" }))!.lastCompleted).toEqual({ state: "at", on: "2030-05-01" });
+    expect(mapDeskClientRow(raw({ last_visit_on: null }))!.lastCompleted).toEqual({ state: "none" });
+    expect(mapDeskClientRow(raw({ last_visit_on: 12345 }))!.lastCompleted).toEqual({ state: "unavailable" });
     expect(mapDeskClientRow(raw({ display_name: "" }))).toBeNull();
     expect(mapDeskClientRow(null)).toBeNull();
   });
