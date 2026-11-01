@@ -9,6 +9,7 @@ import {
   seedE2eMember,
   seedE2eStudio,
   seedE2eTodayAppointment,
+  seedE2eUnlinkedSession,
   setPractitionerActive,
   sql,
   type E2eSeed,
@@ -98,7 +99,7 @@ const OWNER_ONLY_PATHS = [
 
 let seed: E2eSeed;
 let seedB: E2eSeed;
-let otherMember: { email: string };
+let otherMember: { email: string; practitionerId: string };
 let member: { email: string; practitionerId: string };
 let todayClient: { clientId: string; name: string };
 let clientB: { clientId: string; clientName: string };
@@ -106,6 +107,40 @@ let ownerCtx: BrowserContext;
 let memberCtx: BrowserContext;
 let ownerBCtx: BrowserContext;
 let memberState: Awaited<ReturnType<BrowserContext["storageState"]>>;
+// Decision 3 fixtures: appointments that have STARTED, in studio A except `bAppt`.
+let apptMine: string; // assigned to `member`
+let apptTheirs: string; // assigned to `otherMember`
+let apptUnassigned: string; // practitioner_id null
+let apptForOwner: string; // unassigned, completed by the owner
+let apptForRevoked: string; // assigned to `member`, used to prove the OLD cookie cannot complete through the action
+let bAppt: string; // studio B
+// G-1: a unique price sentinel on a session in studio A.
+const SESSION_PRICE_CENTS = 7654321;
+const SESSION_PRICE_FORMS = ["7654321", "76543.21", "76,543.21"];
+let priceClient: { clientId: string; sessionId: string };
+// The captured completion request, replayed with other ids (server-action direct calls).
+let template: { url: string; headers: Record<string, string>; body: string; sourceId: string } | null = null;
+
+async function seedStartedAppointment(
+  studioId: string,
+  clientId: string,
+  practitionerId: string | null,
+  startedMinutesAgo: number,
+): Promise<string> {
+  const starts = new Date(Date.now() - startedMinutesAgo * 60_000);
+  const ends = new Date(starts.getTime() + 5 * 60_000);
+  const rows = await sql<{ id: string }>(
+    `insert into public.appointments
+       (id, studio_id, client_id, practitioner_id, starts_at, ends_at,
+        duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+     values (gen_random_uuid(), $1, $2, $3, $4, $5, 5, 0, $5, 'confirmed')
+     returning id`,
+    [studioId, clientId, practitionerId, starts.toISOString(), ends.toISOString()],
+  );
+  return rows[0]!.id;
+}
+const statusOf = async (id: string) =>
+  (await sql<{ status: string }>(`select status from public.appointments where id = $1`, [id]))[0]!.status;
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(240_000);
@@ -126,6 +161,19 @@ test.beforeAll(async ({ browser }) => {
   });
   await seedE2eActiveCardOnFile(seed, todayClient.clientId);
   clientB = await seedClientInStudio(seedB.studioId, "RBACZZSTUDIOB");
+
+  // Decision 3 fixtures (distinct windows so no overlap rule is in play).
+  apptMine = await seedStartedAppointment(seed.studioId, todayClient.clientId, member.practitionerId, 300);
+  apptTheirs = await seedStartedAppointment(seed.studioId, todayClient.clientId, otherMember.practitionerId, 240);
+  apptUnassigned = await seedStartedAppointment(seed.studioId, todayClient.clientId, null, 180);
+  apptForOwner = await seedStartedAppointment(seed.studioId, todayClient.clientId, null, 120);
+  apptForRevoked = await seedStartedAppointment(seed.studioId, todayClient.clientId, member.practitionerId, 60);
+  const ownerB = (await sql<{ id: string }>(`select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`, [seedB.studioId]))[0]!.id;
+  bAppt = await seedStartedAppointment(seedB.studioId, clientB.clientId, ownerB, 30);
+
+  // G-1: a session carrying the price sentinel.
+  priceClient = await seedE2eUnlinkedSession(seed);
+  await sql(`update public.sessions set price_paid_cents = $1 where id = $2`, [SESSION_PRICE_CENTS, priceClient.sessionId]);
 
   ownerCtx = await browser.newContext();
   memberCtx = await browser.newContext();
@@ -181,6 +229,99 @@ test("cross-studio, both directions: another studio's client never renders", asy
   expect(bOwn.html.body).toContain(clientB.clientName);
 });
 
+
+test("G-1: a practitioner's client profile and session page carry no session price on any channel (owner control)", async () => {
+  const paths = [`/clients/${priceClient.clientId}`, `/clients/${priceClient.clientId}/sessions/${priceClient.sessionId}`];
+  const found: string[] = [];
+  for (const path of paths) {
+    const ch = await fetchChannels(memberCtx, path);
+    expect([200, 307, 308]).toContain(ch.html.status);
+    for (const l of leaks(ch, SESSION_PRICE_FORMS)) found.push(`${path} ${l}`);
+  }
+  expect(found, `a session price reached a practitioner: ${found.join(", ")}`).toEqual([]);
+  // Control: the OWNER receives the same sentinel on the same surface, so the absence above is not an empty page.
+  const owner = await fetchChannels(ownerCtx, paths[0]!);
+  expect(owner.html.status).toBe(200);
+  expect(leaks(owner, SESSION_PRICE_FORMS).length).toBeGreaterThan(0);
+});
+
+test("decision 2: the published service-list price still shows a practitioner when booking", async () => {
+  const ch = await fetchChannels(memberCtx, `/clients/${todayClient.clientId}`);
+  expect(ch.html.status).toBe(200);
+  expect(ch.html.body + safeDecode(ch.html.body)).toContain(PRICE_SENTINEL);
+});
+
+async function openCalendarAppointment(ctx: BrowserContext, id: string) {
+  const page = await ctx.newPage();
+  await page.goto(`/calendar/${id}`);
+  return page;
+}
+const completeButton = (page: Awaited<ReturnType<typeof openCalendarAppointment>>) =>
+  page.getByRole("button", { name: /mark this appointment completed/i });
+
+test("decision 3 (UI): the assignee sees Mark completed and completes; a colleague's and an unassigned one show only the explanation", async () => {
+  const theirs = await openCalendarAppointment(memberCtx, apptTheirs);
+  await expect(theirs.getByTestId("completion-not-assigned")).toBeVisible();
+  await expect(completeButton(theirs)).toHaveCount(0);
+  await theirs.close();
+  const unassigned = await openCalendarAppointment(memberCtx, apptUnassigned);
+  await expect(unassigned.getByTestId("completion-not-assigned")).toBeVisible();
+  await expect(completeButton(unassigned)).toHaveCount(0);
+  await unassigned.close();
+
+  // The assignee completes through the real UI; capture the real server-action request for replay.
+  const mine = await openCalendarAppointment(memberCtx, apptMine);
+  mine.on("request", (req) => {
+    const h = req.headers();
+    if (req.method() === "POST" && h["next-action"] && (req.postData() ?? "").includes(apptMine)) {
+      template = { url: req.url(), headers: { "next-action": h["next-action"], "content-type": h["content-type"] ?? "" }, body: req.postData() ?? "", sourceId: apptMine };
+    }
+  });
+  await expect(completeButton(mine)).toBeVisible();
+  await completeButton(mine).click();
+  await mine.getByRole("button", { name: "Mark completed", exact: true }).click();
+  await expect.poll(() => statusOf(apptMine), { timeout: 15_000 }).toBe("completed");
+  expect(template, "the completion server-action request was captured").not.toBeNull();
+  await mine.close();
+
+  // Owner control: the owner completes an UNASSIGNED appointment.
+  const owner = await openCalendarAppointment(ownerCtx, apptForOwner);
+  await expect(owner.getByTestId("completion-not-assigned")).toHaveCount(0);
+  await completeButton(owner).click();
+  await owner.getByRole("button", { name: "Mark completed", exact: true }).click();
+  await expect.poll(() => statusOf(apptForOwner), { timeout: 15_000 }).toBe("completed");
+  await owner.close();
+});
+
+async function replayCompletion(req: { post: (url: string, o: { headers: Record<string, string>; data: string }) => Promise<APIResponse> }, targetId: string): Promise<{ status: number; body: string }> {
+  expect(template).not.toBeNull();
+  const t = template!;
+  const res = await req.post(t.url, { headers: t.headers, data: t.body.split(t.sourceId).join(targetId) });
+  return { status: res.status(), body: await res.text() };
+}
+
+test("decision 3 (direct server-action calls): the replayed action is refused for a colleague's, an unassigned and another studio's appointment", async () => {
+  const before = { theirs: await statusOf(apptTheirs), unassigned: await statusOf(apptUnassigned), b: await statusOf(bAppt) };
+  expect(before).toEqual({ theirs: "confirmed", unassigned: "confirmed", b: "confirmed" });
+  for (const [name, id] of [["colleague", apptTheirs], ["unassigned", apptUnassigned], ["other studio", bAppt]] as const) {
+    const r = await replayCompletion(memberCtx.request, id);
+    expect(r.body, `${name}: refusal expected`).toContain("Could not mark this appointment complete");
+    expect(r.body).not.toMatch(/"ok":\s*true/);
+  }
+  expect({ theirs: await statusOf(apptTheirs), unassigned: await statusOf(apptUnassigned), b: await statusOf(bAppt) }).toEqual(before);
+  // The refusals are indistinguishable (nothing about the row is revealed).
+  const a = await replayCompletion(memberCtx.request, apptTheirs);
+  const b = await replayCompletion(memberCtx.request, bAppt);
+  const c = await replayCompletion(memberCtx.request, "00000000-0000-4000-8000-000000000000");
+  const norm = (x: string) => x.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "ID");
+  expect(norm(a.body)).toBe(norm(b.body));
+  expect(norm(a.body)).toBe(norm(c.body));
+  // The owner's replay on the other studio's appointment is refused too (cross-studio through the action).
+  const ownerCross = await replayCompletion(ownerCtx.request, bAppt);
+  expect(ownerCross.body).toContain("Could not mark this appointment complete");
+  expect(await statusOf(bAppt)).toBe("confirmed");
+});
+
 test("revocation: the OLD practitioner cookie is refused at once on HTML, RSC and prefetch", async ({ playwright }) => {
   const baseURL = E2E_APP_ORIGIN;
   const old = await playwright.request.newContext({ baseURL, storageState: memberState });
@@ -202,6 +343,10 @@ test("revocation: the OLD practitioner cookie is refused at once on HTML, RSC an
     expect(before.html.body).toContain(todayClient.name);
 
     await setPractitionerActive(member.practitionerId, false);
+
+    // Revocation through the ACTION: the old cookie cannot complete even an appointment assigned to it.
+    const replay = await replayCompletion(old, apptForRevoked);
+    expect(await statusOf(apptForRevoked), `revoked cookie completed an appointment (${replay.status})`).toBe("confirmed");
 
     const found: string[] = [];
     for (const path of paths) {
