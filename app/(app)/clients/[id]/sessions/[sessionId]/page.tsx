@@ -77,6 +77,7 @@ import {
   completionLabel,
   postcareLabel,
 } from "@/lib/sessions/finish-appointment";
+import { canCompleteAppointment } from "@/lib/appointments/completion-authority";
 import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
@@ -230,6 +231,7 @@ export default async function SessionDetailPage({
     serviceModality: string | null;
     startsAt: string | null;
     practitionerName: string | null;
+    assignedPractitionerId: string | null;
   } | null = null;
   // THE appointment identity for this page is sessions.appointment_id, taken
   // directly from the session row and NOT from the billing eligibility result:
@@ -269,7 +271,7 @@ export default async function SessionDetailPage({
     const { data: apptRow, error: apptErr } = await supabaseForDefault
       .from("appointments")
       .select(
-        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, practitioner_id, service:services(name, price_cents, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", linkedAppointmentId)
       .eq("studio_id", studio.id)
@@ -314,6 +316,7 @@ export default async function SessionDetailPage({
             serviceModality: svcOne?.modality ?? null,
             startsAt: (row.starts_at as string | null) ?? null,
             practitionerName: pracOne?.display_name ?? null,
+            assignedPractitionerId: (row.practitioner_id as string | null) ?? null,
           }
         : null;
     }
@@ -958,10 +961,23 @@ export default async function SessionDetailPage({
               own. The control renders its own authoritative helper text when
               not started, so there is no second explanation and no second
               timer. */}
+          {/* Decision 3: only the assigned practitioner or an owner may complete. The server
+              refuses anyone else (markAppointmentCompleteAction); this hides a control that
+              would only answer the generic failure. */}
           {!isFinalized &&
             linkedAppointmentId &&
             (finishState.completion.kind === "ready" ||
-              finishState.completion.kind === "before_start") && (
+              finishState.completion.kind === "before_start") &&
+            !canCompleteAppointment(practitioner, apptContext?.assignedPractitionerId) && (
+              <span className="text-xs text-neutral-500" data-testid="completion-not-assigned">
+                Only the assigned practitioner or the studio owner can mark this appointment completed.
+              </span>
+            )}
+          {!isFinalized &&
+            linkedAppointmentId &&
+            (finishState.completion.kind === "ready" ||
+              finishState.completion.kind === "before_start") &&
+            canCompleteAppointment(practitioner, apptContext?.assignedPractitionerId) && (
               <MarkAppointmentCompleteControl
                 appointmentId={linkedAppointmentId}
                 startsAt={finishState.completion.startsAt}

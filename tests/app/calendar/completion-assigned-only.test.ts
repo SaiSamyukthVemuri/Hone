@@ -155,3 +155,28 @@ describe("session start is not a way around the rule (source pin)", () => {
     expect(SRC).toContain("role: practitioner.role");
   });
 });
+
+describe("the completion control is hidden from a practitioner who cannot use it (a hint; the action above is the gate)", () => {
+  const read = (p: string) => readFileSync(path.resolve(__dirname, "../../..", p), "utf8");
+  const CAL_PAGE = read("app/(app)/calendar/[id]/page.tsx");
+  const LIFECYCLE = read("app/(app)/calendar/AppointmentLifecycleActions.tsx");
+  const SESSION_PAGE = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
+
+  it("the calendar page computes it from the appointment's assignee and passes it down", () => {
+    expect(CAL_PAGE).toContain("canComplete={canCompleteAppointment(practitioner, data.practitioner_id)}");
+  });
+  it("the lifecycle component renders the shared control only when canComplete, else an explanation", () => {
+    expect(LIFECYCLE).toMatch(/canComplete \? \(\s*<MarkAppointmentCompleteControl/);
+    expect(LIFECYCLE).toContain('data-testid="completion-not-assigned"');
+  });
+  it("the session page reads the assignee in its ONE appointment read and gates the control on it", () => {
+    expect(SESSION_PAGE).toContain("postcare_email_send_attempts, practitioner_id, service:services(");
+    expect(SESSION_PAGE).toContain("assignedPractitionerId: (row.practitioner_id as string | null) ?? null");
+    expect(SESSION_PAGE).toMatch(/canCompleteAppointment\(practitioner, apptContext\?\.assignedPractitionerId\) && \(\s*<MarkAppointmentCompleteControl/);
+    expect(SESSION_PAGE).toContain('data-testid="completion-not-assigned"');
+  });
+  it("the server action's refusal is still there (the hint never replaces it)", () => {
+    const ACTIONS = read("app/(app)/calendar/actions.ts");
+    expect(ACTIONS).toContain("canCompleteAppointment(practitioner, assignment.practitioner_id)");
+  });
+});
