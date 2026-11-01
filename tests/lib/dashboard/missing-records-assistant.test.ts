@@ -289,7 +289,7 @@ describe("dashboard wiring (source pins)", () => {
   it("the dashboard loads the assistant and feeds it to the ONE To-do model", () => {
     expect(PAGE).toMatch(/getMissingRecordsAssistant\(/);
     expect(PAGE).toMatch(/assistant: followUpAssistant/);
-    expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
+    expect(PAGE).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
     // ...and the retired card is really gone, not merely unrendered.
     expect(PAGE).not.toMatch(/FollowUpAssistantCard/);
   });

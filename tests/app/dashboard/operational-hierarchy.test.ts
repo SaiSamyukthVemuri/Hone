@@ -88,7 +88,10 @@ function at(marker: string | RegExp): number {
 // today branch still reads exactly "Today" is asserted below by evaluating the
 // real function, not by trusting a literal that no longer exists in the JSX.
 const TODAY = "{dayHeading(selectedDayLocal, todayLocal)}";
-const TODO = '<h2 className="text-lg font-medium">To do</h2>';
+// WS-DB: the To do section became Needs attention (grouped by client and
+// session). The ordering law is unchanged: appointments, then the actionable
+// work, then relationship context.
+const TODO = 'id="needs-attention-heading"';
 const BIRTHDAYS = "<BirthdaysThisMonth";
 const SNAPSHOT = "<PracticeSnapshot";
 
@@ -134,7 +137,7 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     expect(h2s[0]).toBe("Today");
   });
 
-  it("the page's own top-level headings are exactly Today, To do, Birthdays this month", () => {
+  it("the page's own top-level headings are exactly Today, Needs attention, Birthdays this month", () => {
     // A new peer h2 competing with the three operational sections should fail
     // here and be a deliberate decision, not a drive-by addition.
     //
@@ -143,7 +146,7 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     // it is demoted, not absent, and it must keep a heading of its own or its
     // cards nest under Birthdays in the accessibility tree.
     const h2s = pageHeadings();
-    expect(h2s).toEqual(["Today", "To do", "Birthdays this month"]);
+    expect(h2s).toEqual(["Today", "Needs attention", "Birthdays this month"]);
   });
 
   it("the demoted Practice Snapshot still has a heading of its OWN", () => {
@@ -390,7 +393,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // top-level headings are still exactly the three operational sections
     // (also asserted above); this pins that the cleanup ADDED no section.
     const h2s = pageHeadings();
-    expect(h2s).toEqual(["Today", "To do", "Birthdays this month"]);
+    expect(h2s).toEqual(["Today", "Needs attention", "Birthdays this month"]);
   });
 });
 
@@ -423,11 +426,11 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
 
   // Dashboard V2 Part 2B: the four children became ONE list fed by ONE model.
   it("the ONE To-do list is CONTAINED by the To do section element", () => {
-    expect(todoSection()).toContain("<DashboardTodoList");
+    expect(todoSection()).toContain("<NeedsAttentionSection");
   });
 
   it("there is exactly ONE To-do list, rendered once", () => {
-    expect(DASH.match(/<DashboardTodoList/g) ?? []).toHaveLength(1);
+    expect(DASH.match(/<NeedsAttentionSection/g) ?? []).toHaveLength(1);
   });
 
   it("the four independent visible sub-sections are GONE", () => {
@@ -437,10 +440,12 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
       "<ActionNeeded",
       "<FollowUpAssistantCard",
       "<SuppliesExpiringCard",
-      "<NeedsAttention",
     ]) {
       expect(DASH, `${marker} must no longer be rendered`).not.toContain(marker);
     }
+    // The old bare `<NeedsAttention` card is gone; the grouped panel has its own
+    // distinct names, so the negative check excludes them.
+    expect(DASH).not.toMatch(/<NeedsAttention(?![A-Za-z])/);
     // ...and the components themselves are deleted, not merely unreferenced.
     for (const f of [
       "app/(app)/dashboard/follow-up-assistant.tsx",
@@ -477,11 +482,11 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
       "the To do section must not be wrapped in a conditional",
     ).not.toMatch(/\{[^{}]*&&\s*$/);
     // ...and nothing inside it gates the heading either.
-    const beforeHeading = sec.slice(0, sec.indexOf("To do</h2>"));
+    const beforeHeading = sec.slice(0, sec.indexOf("Needs attention"));
     expect(beforeHeading, "the To do heading must not be conditionally rendered").not.toMatch(
       /\{\s*[A-Za-z0-9_.!]+\s*&&/,
     );
-    for (const marker of ["<DashboardTodoList"]) {
+    for (const marker of ["<NeedsAttentionSection"]) {
       const line = sec.slice(sec.lastIndexOf("\n", sec.indexOf(marker)), sec.indexOf(marker));
       expect(line, `${marker} must not be gated`).not.toMatch(/&&/);
     }
@@ -491,7 +496,7 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
     // Part 1 gave the four children h3s so they read as items of one group.
     // Part 2B removes the competing headings altogether: one list, one grammar.
     const list = readFileSync(
-      join(process.cwd(), "app/(app)/dashboard/todo-list.tsx"),
+      join(process.cwd(), "app/(app)/dashboard/needs-attention-panel.tsx"),
       "utf8",
     );
     expect(list).not.toMatch(/<h[1-6]/);
@@ -524,8 +529,10 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
         new RegExp(`${field}[?]?:`),
       );
     }
+    // WS-DB: the grouped panel renders the model's rows (the "others" list)
+    // with the same subject / reason / action grammar.
     const list = readFileSync(
-      join(process.cwd(), "app/(app)/dashboard/todo-list.tsx"),
+      join(process.cwd(), "app/(app)/dashboard/needs-attention-panel.tsx"),
       "utf8",
     );
     for (const field of [
@@ -584,8 +591,8 @@ describe("dashboard hierarchy — no new data loading", () => {
 describe("dashboard hierarchy — nothing operational was removed", () => {
   it.each([
     "<OnboardingSurface",
-    // Part 2B: the four To-do sub-sections collapsed into this single list.
-    "<DashboardTodoList",
+    // WS-DB: the To-do list became the grouped Needs attention panel.
+    "<NeedsAttentionSection",
     "<BookingSetupCard",
     "<BirthdaysThisMonth",
     "<PracticeSnapshot",

@@ -10,8 +10,10 @@ import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
-import { DashboardTodoList } from "./todo-list";
+import { NeedsAttentionPanel } from "./needs-attention-panel";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
+import { buildNeedsAttention } from "@/lib/dashboard/needs-attention-model";
+import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
   buildGettingStarted,
   getGettingStartedSignals,
@@ -58,7 +60,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 // spelled as the exact field `buildDashboardTodo` reads, because that is its
 // only consumer and `loadPaymentStatus` is private to the page module.
 type AttentionSources = readonly [
-  number,
+  // R3: the clients whose CURRENT intake is awaiting review (not a row count).
+  ReadonlyArray<IntakeAwaitingReview>,
   number,
   Parameters<typeof buildDashboardTodo>[0]["studio"]["paymentStatus"],
   Awaited<ReturnType<typeof getClientBirthdaysForMonth>>,
@@ -79,15 +82,6 @@ type Props = {
   bookingReadiness: Promise<NewClientReadiness | null>;
   practiceMetrics: Promise<
     Awaited<ReturnType<typeof getPracticeDashboardMetrics>>
-  >;
-  clientsNeedingAttention: Promise<
-    Awaited<ReturnType<typeof getClientsNeedingAttention>>
-  >;
-  followUpAssistant: Promise<
-    Awaited<ReturnType<typeof getMissingRecordsAssistant>>
-  >;
-  expiringSupplies: Promise<
-    Awaited<ReturnType<typeof getExpiringSterileItems>>
   >;
   gettingStartedSignals: Promise<
     Awaited<ReturnType<typeof getGettingStartedSignals>>
@@ -158,9 +152,6 @@ export async function SecondaryStack({
   staffManaged: staffManagedPromise,
   bookingReadiness,
   practiceMetrics: practiceMetricsPromise,
-  clientsNeedingAttention: clientsNeedingAttentionPromise,
-  followUpAssistant: followUpAssistantPromise,
-  expiringSupplies: expiringSuppliesPromise,
   gettingStartedSignals: gettingStartedSignalsPromise,
   studio,
   isOwner,
@@ -168,65 +159,18 @@ export async function SecondaryStack({
   todayLocal,
   selectedDayLocal,
 }: Props) {
-  // "Needs attention" sources. Each is independently safe to fail; if a
-  // single signal can't be fetched we render the rest. All checks here
-  // are bounded SELECTs on tables we already have RLS on.
-  const [
-    intakesAwaitingReviewCount,
-    activeServicesCount,
-    paymentStatus,
-    birthdaysThisMonth,
-  ] = await attentionSources;
+  // Birthdays ride in the same bundle the page started before the roster. The
+  // To do / Needs attention sources are consumed by NeedsAttentionSection.
+  const [, , , birthdaysThisMonth] = await attentionSources;
   const staffManaged = await staffManagedPromise;
 
-  // ONB-03: THE CANONICAL AUTHORITY, AWAITED INDEPENDENTLY.
-  //
-  // This component does not CALL the authority; the page starts it as its own
-  // deferred read and hands the promise down. Two reasons, and the first is
-  // correctness:
-  //
-  //   * A rejection in any sibling read must not prevent the verdict from being
-  //     computed. When this component called the authority after
-  //     `await attentionSources`, a failure in a bundle member -- including one
-  //     nothing consumed -- threw first, so the `unknown` card could never render
-  //     in the very situation it exists for.
-  //   * The authority's three parallel reads no longer wait behind the bundle.
-  //
-  // WHAT DID NOT CHANGE: the verdict is still the canonical one, still
-  // `getNewClientReadiness`, and this file still assembles no evidence of its
-  // own. Moving WHERE it is started is not a change to WHAT decides readiness.
+  // ONB-03: THE CANONICAL AUTHORITY, AWAITED INDEPENDENTLY (unchanged: the page
+  // starts it as its own deferred read, so a sibling rejection cannot stop the
+  // verdict, and `unknown` can still render).
   const readiness = await bookingReadiness;
 
   // PR #208: read-only practice metrics for the selected period.
   const practiceMetrics = await practiceMetricsPromise;
-
-  // PR #214: recorded-history attention list (two batched reads over
-  // the 200 most recent sessions; unique clients counted once).
-  const clientsNeedingAttention = await clientsNeedingAttentionPromise;
-
-  // PR #249: Missing Records / Follow-up Assistant V1. Rules-based only
-  // (no AI, no model, no provider, no action).
-  const followUpAssistant = await followUpAssistantPromise;
-
-  // PR #316: sterile items / probe lots expired or expiring within 30 days.
-  const expiringSupplies = await expiringSuppliesPromise;
-
-  // Dashboard V2 Part 2B, the ONE To-do model. `buildDashboardTodo` is PURE:
-  // no client, no query, no clock, no model. Adding it costs ZERO round-trips.
-  const dashboardTodo = buildDashboardTodo({
-    assistant: followUpAssistant,
-    attention: clientsNeedingAttention,
-    supplies: expiringSupplies,
-    metrics: practiceMetrics.actions,
-    studio: {
-      isOwner,
-      intakesAwaitingReviewCount,
-      activeServicesCount,
-      paymentStatus,
-      staffManaged,
-    },
-    todayLocal,
-  });
 
   // PR #215: Getting Started progress for the dashboard card.
   const gettingStarted = buildGettingStarted(await gettingStartedSignalsPromise);
@@ -239,36 +183,6 @@ export async function SecondaryStack({
 
   return (
     <div className="flex flex-col gap-10">
-      {/* ===================================================================
-          TO DO: Dashboard V2 Part 2B.
-          ===================================================================
-          Part 1 put ONE heading over four independent products: "Action
-          needed", "Follow-up assistant", "Supplies expiring" and "Needs
-          attention". They still had four loaders, four row grammars, four
-          empty states, and they asked for the same unresolved work more than
-          once: most visibly "Aftercare not marked", which arrived both as a
-          per-session row from the assistant and as a count tile computed over
-          a different window in a different unit.
-
-          Part 2B replaces the four visible sub-sections with ONE ordered list
-          built from ONE normalized model:
-
-              domain facts → lib/dashboard/todo-model.ts → one To-do list
-
-          The domain loaders are deliberately UNCHANGED: rewriting them would
-          expand scope, and NO query was added: `buildDashboardTodo` is pure and
-          consumes results the page already had. Deduplication is on domain
-          identity (`kind:subjectId`), never on rendered text; ordering is
-          documented in TODO_PRIORITY. Every action that worked before is
-          carried through unchanged, including the assistant's deep links to a
-          specific session or appointment. */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">To do</h2>
-        <DashboardTodoList todo={dashboardTodo} />
-        {/* DASH-TRUTH-04: the quiet pilot feedback footer is gone from To do
-            as well. See the note at the foot of the dashboard page. */}
-      </section>
-
       {/* Relationship context, BELOW the operational work, never above it. */}
       <BirthdaysThisMonth
         birthdays={birthdaysThisMonth}
@@ -476,4 +390,92 @@ const MONTH_NAMES: ReadonlyArray<string> = [
 function formatMonthDay(month: number, day: number): string {
   const name = MONTH_NAMES[month - 1] ?? "";
   return `${name} ${day}`;
+}
+
+
+// ---------------------------------------------------------------------------
+// NEEDS ATTENTION (dashboard redesign, WS-DB).
+//
+// Replaces the flat "To do" list with ONE entry per client + session (pure model:
+// lib/dashboard/needs-attention-model.ts). It consumes the SAME promises the page
+// started before the roster query, so no read moved and none was added; the only
+// new read is the per-client intake list, which REPLACES the old intake count
+// (R3: newest-intake rule, see lib/dashboard/intakes-awaiting-review.ts).
+//
+// A rejection in any source throws here, through the route error boundary: the
+// panel never turns a failed read into "nothing needs attention".
+// ---------------------------------------------------------------------------
+export async function NeedsAttentionSection({
+  attentionSources,
+  staffManaged: staffManagedPromise,
+  practiceMetrics: practiceMetricsPromise,
+  clientsNeedingAttention: clientsNeedingAttentionPromise,
+  followUpAssistant: followUpAssistantPromise,
+  expiringSupplies: expiringSuppliesPromise,
+  isOwner,
+  todayLocal,
+}: {
+  attentionSources: Promise<AttentionSources>;
+  staffManaged: Promise<boolean>;
+  practiceMetrics: Props["practiceMetrics"];
+  clientsNeedingAttention: Promise<
+    Awaited<ReturnType<typeof getClientsNeedingAttention>>
+  >;
+  followUpAssistant: Promise<
+    Awaited<ReturnType<typeof getMissingRecordsAssistant>>
+  >;
+  expiringSupplies: Promise<
+    Awaited<ReturnType<typeof getExpiringSterileItems>>
+  >;
+  isOwner: boolean;
+  todayLocal: string;
+}) {
+  const [intakesAwaitingReview, activeServicesCount, paymentStatus] =
+    await attentionSources;
+  const staffManaged = await staffManagedPromise;
+  const practiceMetrics = await practiceMetricsPromise;
+  const clientsNeedingAttention = await clientsNeedingAttentionPromise;
+  const followUpAssistant = await followUpAssistantPromise;
+  const expiringSupplies = await expiringSuppliesPromise;
+
+  const dashboardTodo = buildDashboardTodo({
+    assistant: followUpAssistant,
+    attention: clientsNeedingAttention,
+    supplies: expiringSupplies,
+    metrics: practiceMetrics.actions,
+    studio: {
+      isOwner,
+      intakesAwaitingReviewCount: intakesAwaitingReview.length,
+      activeServicesCount,
+      paymentStatus,
+      staffManaged,
+    },
+    todayLocal,
+  });
+
+  return (
+    <NeedsAttentionPanel
+      needs={buildNeedsAttention({
+        assistant: followUpAssistant,
+        intakesAwaitingReview,
+        todo: dashboardTodo,
+      })}
+    />
+  );
+}
+
+// Wordless, like the secondary stack's: nothing about the studio is known yet.
+export function NeedsAttentionSkeleton() {
+  return (
+    <div
+      aria-busy="true"
+      aria-live="off"
+      data-testid="needs-attention-pending"
+      className="flex flex-col gap-2"
+    >
+      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-16 w-full" />
+    </div>
+  );
 }

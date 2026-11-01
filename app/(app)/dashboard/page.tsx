@@ -53,9 +53,12 @@ import {
 } from "@/lib/booking/new-client-readiness";
 import {
   SecondaryStack,
+  NeedsAttentionSection,
+  NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
 } from "./secondary-stack";
 import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
 import {
   isReportingPeriod,
@@ -289,7 +292,7 @@ export default async function DashboardPage({
   };
   const attentionSourcesPromise = settleLater(
     Promise.all([
-      countIntakesAwaitingReview(supabase, studio.id),
+      getIntakesAwaitingReview(supabase, studio.id),
       countActiveServices(studio.id),
       isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
       // Birthday reminders: month-of-year only, derived from
@@ -719,7 +722,12 @@ export default async function DashboardPage({
         />
       )}
 
-      <section className="flex flex-col gap-3">
+      {/* WS-DB layout: appointments beside Needs Attention on desktop, stacked on
+          mobile. `min-w-0` on both columns lets long names wrap instead of
+          widening the grid. The appointments column does not wait for Needs
+          Attention: that column streams behind its own boundary. */}
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
+      <section aria-label="Appointments" className="flex min-w-0 flex-col gap-3">
         {/* `flex-wrap` matters: this header was the one multi-control row on
             the page without it, and it now carries day navigation beside the
             primary action. Without wrapping, 390px overflows horizontally. */}
@@ -904,6 +912,28 @@ export default async function DashboardPage({
             The daily workspace should not ask a practitioner to email the
             founder; that was pilot tooling, not product. */}
       </section>
+      <section aria-labelledby="needs-attention-heading" className="flex min-w-0 flex-col gap-3">
+        <h2 id="needs-attention-heading" className="text-lg font-medium">
+          Needs attention
+        </h2>
+        {/* KEYED like the secondary stack below, for the same reason. */}
+        <Suspense
+          key={`needs:${selectedDayLocal}:${period}`}
+          fallback={<NeedsAttentionSkeleton />}
+        >
+          <NeedsAttentionSection
+            attentionSources={attentionSourcesPromise}
+            staffManaged={staffManagedPromise}
+            practiceMetrics={practiceMetricsPromise}
+            clientsNeedingAttention={clientsNeedingAttentionPromise}
+            followUpAssistant={followUpAssistantPromise}
+            expiringSupplies={expiringSuppliesPromise}
+            isOwner={isOwner}
+            todayLocal={todayLocal}
+          />
+        </Suspense>
+      </section>
+      </div>
       {/* PERF-01C: the secondary stack streams; the roster above does not
           wait for it.
 
@@ -946,9 +976,6 @@ export default async function DashboardPage({
           staffManaged={staffManagedPromise}
           bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
-          clientsNeedingAttention={clientsNeedingAttentionPromise}
-          followUpAssistant={followUpAssistantPromise}
-          expiringSupplies={expiringSuppliesPromise}
           gettingStartedSignals={gettingStartedSignalsPromise}
           studio={studio}
           isOwner={isOwner}
@@ -1654,23 +1681,6 @@ async function loadIntakeStatusByClient(
   // created_at), applied in memory across the batch by the shared pure helper
   // so Today can never disagree with the page its link opens.
   return selectCurrentIntakeByClient((data ?? []) as TodayIntakeRow[]);
-}
-
-async function countIntakesAwaitingReview(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  studioId: string,
-): Promise<number> {
-  const { count, error } = await supabase
-    .from("client_intake_forms")
-    .select("id", { count: "exact", head: true })
-    .eq("studio_id", studioId)
-    .eq("status", "submitted")
-    .is("deleted_at", null);
-  if (error) {
-    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
-    throw new Error("Failed to count intakes awaiting review");
-  }
-  return count ?? 0;
 }
 
 async function countActiveServices(studioId: string): Promise<number> {
