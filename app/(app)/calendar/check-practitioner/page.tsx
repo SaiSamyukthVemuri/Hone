@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   CHECK_REASON_TEXT,
@@ -24,15 +25,18 @@ export default async function CheckPractitionerPage() {
 
   const supabase = await createClient();
   const [apptRes, pracRes] = await Promise.all([
-    supabase
-      .from("appointments")
-      .select(
-        "id, starts_at, practitioner_id, created_by_practitioner_id, client:clients(name, preferred_name), service:services(name), sessions(performed_by_practitioner_id)",
-      )
-      .eq("studio_id", studio.id)
-      .eq("status", "confirmed")
-      .order("starts_at")
-      .limit(LIMIT),
+    // preferred_name arrives with 0258; until the database has it the read retries without it (shows the stored name).
+    readWithPreferredName((withPreferred) =>
+      supabase
+        .from("appointments")
+        .select(
+          `id, starts_at, practitioner_id, created_by_practitioner_id, client:clients(${preferredNameColumn(withPreferred)}name), service:services(name), sessions(performed_by_practitioner_id)`,
+        )
+        .eq("studio_id", studio.id)
+        .eq("status", "confirmed")
+        .order("starts_at")
+        .limit(LIMIT),
+    ),
     supabase.from("practitioners").select("id, role, active, display_name").eq("studio_id", studio.id),
   ]);
   if (apptRes.error || pracRes.error) {
@@ -60,7 +64,7 @@ export default async function CheckPractitionerPage() {
     starts_at: string;
     practitioner_id: string | null;
     created_by_practitioner_id: string | null;
-    client: { name: string | null; preferred_name: string | null } | { name: string | null; preferred_name: string | null }[] | null;
+    client: { name: string | null; preferred_name?: string | null } | { name: string | null; preferred_name?: string | null }[] | null;
     service: { name: string | null } | { name: string | null }[] | null;
     sessions: { performed_by_practitioner_id: string | null }[] | null;
   };
@@ -107,7 +111,7 @@ export default async function CheckPractitionerPage() {
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">
-                    {client ? clientDisplayName({ name: client.name ?? "", preferred_name: client.preferred_name }) : "Client"}
+                    {client ? clientDisplayName({ name: client.name ?? "", preferred_name: client.preferred_name ?? null }) : "Client"}
                     {service?.name ? ` · ${service.name}` : ""}
                   </span>
                   <FormattedDateTime iso={it.startsAt} />

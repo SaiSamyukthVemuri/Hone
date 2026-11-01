@@ -158,6 +158,13 @@ describe("source contracts", () => {
     expect(row).toMatch(/onSubmit=\{\(e\) => \{[\s\S]*?reassignOpenAppointmentAction\(fd\)/);
     expect(row).not.toMatch(/useEffect/);
   });
+  it("the list read tolerates a database without clients.preferred_name (pre-0258 chain), as the other surfaces do", () => {
+    const page = read("app/(app)/calendar/check-practitioner/page.tsx");
+    expect(page).toContain("readWithPreferredName");
+    expect(page).toContain("preferredNameColumn(withPreferred)");
+    // the select never names preferred_name literally (that is what failed on a chain that lacks the column)
+    expect(page).not.toMatch(/clients\(name, preferred_name\)/);
+  });
   it("the action sends no client email and no payment write", () => {
     const act = read("app/(app)/calendar/check-practitioner/actions.ts");
     const code = act.replace(/\/\/.*$/gm, "");
