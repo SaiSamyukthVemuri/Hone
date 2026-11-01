@@ -78,7 +78,8 @@ describe("card-change notification DELIVERY is owner-only", () => {
 describe("owner-only pages and surfaces refuse before any read", () => {
   it("Practice Snapshot renders for the owner only", () => {
     const s = read("app/(app)/dashboard/secondary-stack.tsx");
-    expect(s).toMatch(/\{isOwner && \(\s*<PracticeSnapshot/);
+    // WS-DB: also requires the metrics, which are only loaded for the owner.
+    expect(s).toMatch(/\{isOwner && practiceMetrics && \(\s*<PracticeSnapshot/);
   });
   it("Practice Capacity keeps its owner check before the capacity read", () => {
     const s = read("app/(app)/dashboard/capacity/page.tsx");
