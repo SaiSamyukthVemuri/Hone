@@ -141,16 +141,16 @@ const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
   // misconfigured, because it is not.
   admission_closed: {
     label: "This studio is not accepting new clients.",
-    href: "/settings/booking",
+    href: "/settings/booking/link",
   },
   wait_admission: {
     label: "New clients join the waitlist instead of booking directly.",
     href: "/settings/waitlist",
   },
-  booking_link: { label: "Booking link is not set.", href: "/settings/booking" },
+  booking_link: { label: "Booking link is not set.", href: "/settings/booking/link" },
   booking_settings: {
     label: "Booking settings are incomplete.",
-    href: "/settings/booking",
+    href: "/settings/booking/window",
   },
   consultation_service: {
     label: "No active consultation service a new client can book.",

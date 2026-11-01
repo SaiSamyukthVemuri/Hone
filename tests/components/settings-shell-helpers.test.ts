@@ -226,3 +226,26 @@ describe("Codex P2: no in-app entry point still targets the legacy /settings/int
     expect(src).not.toMatch(/\/settings\/intake/);
   });
 });
+
+describe("R2 Codex P2s (1 Nov): readiness remediation links and the override guard", () => {
+  const read = (rel: string) => readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+  it("booking-readiness remediation links open the editor that owns the field, never the doorway", () => {
+    const readiness = read("lib/booking/readiness.ts");
+    expect(readiness).not.toMatch(/href: "\/settings\/booking",/);
+    expect(readiness).toMatch(/key: "booking_settings"[\s\S]*?href: "\/settings\/booking\/window"/);
+    expect(readiness).toMatch(/key: "public_location"[\s\S]*?href: "\/settings\/booking\/window"/);
+    expect(readiness).toMatch(/key: "booking_link"[\s\S]*?href: "\/settings\/booking\/link"/);
+    const newClient = read("lib/booking/new-client-readiness.ts");
+    expect(newClient).not.toMatch(/href: "\/settings\/booking"/);
+    expect(newClient).toMatch(/booking_settings: \{[\s\S]*?href: "\/settings\/booking\/window"/);
+    const launch = read("app/(app)/settings/launch/page.tsx");
+    expect(launch).not.toMatch(/href: "\/settings\/booking"/);
+    expect(launch).toMatch(/booking_settings[\s\S]{0,400}href: "\/settings\/booking\/window"/);
+  });
+  it("a saved practitioner override resets its fields so the guard releases", () => {
+    const src = read("app/(app)/settings/availability/PractitionerWeekEditor.tsx");
+    expect(src).toMatch(/function run\([\s\S]*?onOk\?: \(\) => void\)/);
+    expect(src).toMatch(/onOk\?\.\(\)/);
+    expect(src).toMatch(/setDate\(""\);\s*setIsOpen\(true\);\s*setOpen\("10:00"\);\s*setClose\("15:00"\);/);
+  });
+});

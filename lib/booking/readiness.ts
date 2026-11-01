@@ -95,7 +95,7 @@ export function computeBookingReadiness(opts: {
       label: "Booking link set",
       ok: hasSlug,
       required: true,
-      href: "/settings/booking",
+      href: "/settings/booking/link",
     },
     {
       key: "visible_service",
@@ -116,14 +116,14 @@ export function computeBookingReadiness(opts: {
       label: "Booking settings",
       ok: hasBookingSettings,
       required: true,
-      href: "/settings/booking",
+      href: "/settings/booking/window",
     },
     {
       key: "public_location",
       label: "Public location reviewed",
       ok: hasPublicLocation,
       required: false,
-      href: "/settings/booking",
+      href: "/settings/booking/window",
     },
   ];
 

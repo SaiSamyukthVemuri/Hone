@@ -79,7 +79,7 @@ export function PractitionerWeekEditor({
             draft.close !== (editedDay.close_time || "17:00")))),
   );
 
-  function run(action: () => Promise<AvailabilityActionResult>, okText: string) {
+  function run(action: () => Promise<AvailabilityActionResult>, okText: string, onOk?: () => void) {
     setMsg(null);
     startTransition(async () => {
       const r = await action();
@@ -87,6 +87,7 @@ export function PractitionerWeekEditor({
         setMsg({ ok: true, text: okText });
         setEditingDow(null);
         setConfirmResetWeek(false);
+        onOk?.();
       } else {
         setMsg({ ok: false, text: r.error });
       }
@@ -313,7 +314,7 @@ function OverridesSection({
   practitionerName: string;
   timeFormat: "12h" | "24h";
   overrides: EffectiveOverride[];
-  run: (a: () => Promise<AvailabilityActionResult>, ok: string) => void;
+  run: (a: () => Promise<AvailabilityActionResult>, ok: string, onOk?: () => void) => void;
   fd: (fields: Record<string, string>) => FormData;
   pending: boolean;
 }) {
@@ -398,6 +399,14 @@ function OverridesSection({
                   }),
                 ),
               `Saved a date override for ${practitionerName}.`,
+              // A saved override is no longer an unsaved edit: back to the form's
+              // resting values so the unsaved-changes guard releases.
+              () => {
+                setDate("");
+                setIsOpen(true);
+                setOpen("10:00");
+                setClose("15:00");
+              },
             )
           }
           className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"

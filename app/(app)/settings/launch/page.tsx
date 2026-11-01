@@ -183,7 +183,7 @@ export default async function LaunchChecklistPage() {
         ? { label: "Open public booking page", href: bookingUrl }
         : { label: "Open Studio settings", href: "/settings/studio" },
       secondaryCta: hasSlug
-        ? { label: "Open booking settings", href: "/settings/booking" }
+        ? { label: "Open booking settings", href: "/settings/booking/link" }
         : undefined,
     },
     // THE AUTHORITY OWNS THIS FACT, SO THE PAGE MUST SHOW IT. Without this row
@@ -200,7 +200,7 @@ export default async function LaunchChecklistPage() {
       detail: provenBlockers.has("booking_settings")
         ? "Set a valid time zone, appointment duration, buffer and booking horizon."
         : "Time zone, appointment duration, buffer and booking horizon are set.",
-      cta: { label: "Open booking settings", href: "/settings/booking" },
+      cta: { label: "Open booking settings", href: "/settings/booking/window" },
     },
     {
       title: "Consultation service",
@@ -275,7 +275,7 @@ export default async function LaunchChecklistPage() {
         : provenBlockers.has("admission_closed")
           ? "New clients cannot book or join a waitlist. Existing clients are unaffected."
           : "New clients are not blocked from this studio.",
-      cta: { label: "Open booking settings", href: "/settings/booking" },
+      cta: { label: "Open booking settings", href: "/settings/booking/link" },
     },
     {
       title: "Client confirmation emails",
