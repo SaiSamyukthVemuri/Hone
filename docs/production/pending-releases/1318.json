@@ -1,1 +1,1 @@
-{"pr":1318,"runtime":false,"migrations":["0278"],"release_receipt":"01-ops/1318-release-receipt.json"}
+{"pr":1318,"runtime":false,"migrations":["supabase/migrations/0278_practitioner_own_working_hours.sql"],"release_receipt":"01-ops/1318-release-receipt.json"}

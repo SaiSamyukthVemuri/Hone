@@ -168,7 +168,7 @@ describe("0278 revocation, cross-studio scope and existing visits (Privacy C2, I
          (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status,
           cancellation_token_hash, buffer_minutes_snapshot, blocked_ends_at)
        values (gen_random_uuid(), $1, $2, $3, now() + interval '3 days', now() + interval '3 days 30 minutes', 30,
-               'confirmed', md5(random()::text), 15, now() + interval '3 days 45 minutes')
+               'confirmed', encode(sha256(convert_to(random()::text, 'UTF8')), 'hex'), 15, now() + interval '3 days 45 minutes')
        returning id, starts_at, status`,
       [f.s.studioId, f.a.practitionerId, f.s.clientId],
     );
