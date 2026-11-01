@@ -876,6 +876,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/calendar/check-practitioner",
+    reason:
+      "Owner-only one-time review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's own prompt, not a destination to search for; revisit if it becomes a standing surface.",
+  },
+  {
     route: "/records/print",
     reason:
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",

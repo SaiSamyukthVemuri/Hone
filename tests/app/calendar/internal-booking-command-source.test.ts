@@ -28,8 +28,9 @@ describe("bookAppointmentForClientAction — canonical command wiring", () => {
     expect(ACTIONS).not.toMatch(/\.from\("appointments"\)\s*\.insert\(/);
   });
 
-  it("resolves the target only for a capacity-ON owner; everyone else books for self", () => {
-    expect(ACTIONS).toMatch(/capacityOn && practitioner\.role === "owner" && submittedPractitionerId/);
+  it("resolves the target only for an owner (either capacity mode); everyone else books for self", () => {
+    expect(ACTIONS).toMatch(/practitioner\.role === "owner" && submittedPractitionerId/);
+    expect(ACTIONS).not.toMatch(/capacityOn && practitioner\.role === "owner" && submittedPractitionerId/);
   });
 
   it("never returns a raw DB message from the booking path", () => {

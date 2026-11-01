@@ -22,8 +22,8 @@ describe("move action — routes through move_or_reassign_appointment (0143)", (
     // for an owner reassignment — and passes it. The command is the final authority.
     expect(MOVE).toMatch(/p_target_practitioner_id: target/);
     expect(MOVE).toMatch(/let target: string \| null = null/);
-    // The target is only honoured for an owner of a capacity-ON studio.
-    expect(MOVE).toMatch(/const reassignEnabled =\s*\n?\s*practitioner\.role === "owner" && studio\.practitioner_capacity_enabled === true/);
+    // The target is only honoured for an owner, in either capacity mode (eligibility is a capacity-ON rule).
+    expect(MOVE).toMatch(/const reassignEnabled = practitioner\.role === "owner";/);
     // A forged/ineligible target is rejected (re-validated against the eligible set).
     expect(MOVE).toMatch(/if \(!eligible\.some\(\(p\) => p\.id === requestedTarget\)\)/);
   });

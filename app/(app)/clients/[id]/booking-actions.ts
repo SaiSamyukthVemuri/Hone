@@ -55,7 +55,7 @@ export async function fetchSlotsForClientBookingAction(params: {
   // non-owner's) supplied id is ignored → self. Legacy ignores the dimension.
   const capacityOn = studio.practitioner_capacity_enabled === true;
   let target = practitioner.id;
-  if (capacityOn && practitioner.role === "owner" && params.practitionerId) {
+  if (practitioner.role === "owner" && params.practitionerId) {
     const { data: t, error: tErr } = await supabase
       .from("practitioners")
       .select("id")
@@ -70,19 +70,22 @@ export async function fetchSlotsForClientBookingAction(params: {
     // Fixed copy, never reveals whether a FOREIGN id exists.
     if (!t) return { ok: false, error: "That practitioner isn't available.", code: "invalid_practitioner" };
 
-    const { data: elig, error: eligErr } = await supabase
-      .from("service_practitioners")
-      .select("practitioner_id")
-      .eq("service_id", params.serviceId)
-      .eq("practitioner_id", params.practitionerId)
-      .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (eligErr) {
-      logBookingSlotError("target_eligibility", dbErrorCode(eligErr));
-      return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
-    }
-    if (!elig) {
-      return { ok: false, error: "That practitioner isn't set up for this service.", code: "practitioner_not_eligible" };
+    // Service eligibility is a capacity-ON rule (the command applies it only then).
+    if (capacityOn) {
+      const { data: elig, error: eligErr } = await supabase
+        .from("service_practitioners")
+        .select("practitioner_id")
+        .eq("service_id", params.serviceId)
+        .eq("practitioner_id", params.practitionerId)
+        .eq("studio_id", studio.id)
+        .maybeSingle();
+      if (eligErr) {
+        logBookingSlotError("target_eligibility", dbErrorCode(eligErr));
+        return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
+      }
+      if (!elig) {
+        return { ok: false, error: "That practitioner isn't set up for this service.", code: "practitioner_not_eligible" };
+      }
     }
     target = params.practitionerId;
   }
@@ -126,12 +129,31 @@ export async function fetchEligiblePractitionersAction(
   serviceId: string,
 ): Promise<{ ok: true; practitioners: EligiblePractitioner[] } | { ok: false; error: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  if (studio.practitioner_capacity_enabled !== true || practitioner.role !== "owner") {
+  if (practitioner.role !== "owner") {
     return { ok: true, practitioners: [] };
   }
   if (!serviceId) return { ok: true, practitioners: [] };
 
   const supabase = await createClient();
+  // Capacity OFF: every active same-studio practitioner can be the ASSIGNEE (assignment only; the
+  // slot search stays studio-wide). Service eligibility is a capacity-ON rule.
+  if (studio.practitioner_capacity_enabled !== true) {
+    const { data: all, error: allErr } = await supabase
+      .from("practitioners")
+      .select("id, display_name")
+      .eq("studio_id", studio.id)
+      .eq("active", true);
+    if (allErr) {
+      logBookingSlotError("practitioner_lookup", dbErrorCode(allErr));
+      return { ok: false, error: "Could not load practitioners. Please try again." };
+    }
+    return {
+      ok: true,
+      practitioners: (all ?? [])
+        .map((p) => ({ id: p.id as string, displayName: p.display_name as string }))
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    };
+  }
   const { data: elig, error: eligErr } = await supabase
     .from("service_practitioners")
     .select("practitioner_id")
