@@ -262,7 +262,7 @@ async function openCalendarAppointment(ctx: BrowserContext, id: string) {
   return page;
 }
 const completeButton = (page: Awaited<ReturnType<typeof openCalendarAppointment>>) =>
-  page.getByRole("button", { name: /mark this appointment completed/i });
+  page.getByTestId("mark-appointment-complete");
 
 test("decision 3 (UI): the assignee sees Mark completed and completes; a colleague's and an unassigned one show only the explanation", async () => {
   const theirs = await openCalendarAppointment(memberCtx, apptTheirs);
@@ -284,7 +284,8 @@ test("decision 3 (UI): the assignee sees Mark completed and completes; a colleag
   });
   await expect(completeButton(mine)).toBeVisible();
   await completeButton(mine).click();
-  await mine.getByRole("button", { name: "Mark completed", exact: true }).click();
+  // the confirmation dialog's own button is the LAST "Mark completed" in the document
+  await mine.getByRole("button", { name: "Mark completed", exact: true }).last().click();
   await expect.poll(() => statusOf(apptMine), { timeout: 15_000 }).toBe("completed");
   expect(template, "the completion server-action request was captured").not.toBeNull();
   await mine.close();
@@ -293,7 +294,7 @@ test("decision 3 (UI): the assignee sees Mark completed and completes; a colleag
   const owner = await openCalendarAppointment(ownerCtx, apptForOwner);
   await expect(owner.getByTestId("completion-not-assigned")).toHaveCount(0);
   await completeButton(owner).click();
-  await owner.getByRole("button", { name: "Mark completed", exact: true }).click();
+  await owner.getByRole("button", { name: "Mark completed", exact: true }).last().click();
   await expect.poll(() => statusOf(apptForOwner), { timeout: 15_000 }).toBe("completed");
   await owner.close();
 });
@@ -310,7 +311,7 @@ test("decision 3 (direct server-action calls): the replayed action is refused fo
   expect(before).toEqual({ theirs: "confirmed", unassigned: "confirmed", b: "confirmed" });
   for (const [name, id] of [["colleague", apptTheirs], ["unassigned", apptUnassigned], ["other studio", bAppt]] as const) {
     const r = await replayCompletion(memberCtx.request, id);
-    expect(r.body, `${name}: refusal expected`).toContain("Could not mark this appointment complete");
+    expect(r.body, `${name}: refusal expected`).toContain("can mark it complete");
     expect(r.body).not.toMatch(/"ok":\s*true/);
   }
   expect({ theirs: await statusOf(apptTheirs), unassigned: await statusOf(apptUnassigned), b: await statusOf(bAppt) }).toEqual(before);
@@ -323,7 +324,7 @@ test("decision 3 (direct server-action calls): the replayed action is refused fo
   expect(norm(a.body)).toBe(norm(c.body));
   // The owner's replay on the other studio's appointment is refused too (cross-studio through the action).
   const ownerCross = await replayCompletion(ownerCtx.request, bAppt);
-  expect(ownerCross.body).toContain("Could not mark this appointment complete");
+  expect(ownerCross.body).toContain("can mark it complete");
   expect(await statusOf(bAppt)).toBe("confirmed");
 });
 
