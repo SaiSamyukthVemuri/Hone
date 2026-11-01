@@ -214,4 +214,9 @@ describe("Insurance Y2 and Y7 follow-ups", () => {
     expect(SIDEBAR).toMatch(/ref=\{toggleRef\}/);
     expect(SIDEBAR).toMatch(/tabIndex=\{drawerOpen && !isDesktop \? -1 : undefined\}/);
   });
+  it("HON-69: a mini-calendar pick never scrolls the page (every link is scroll={false})", () => {
+    const links = MINI_SRC.match(/<Link\b[\s\S]*?>/g) ?? [];
+    expect(links.length).toBe(2); // Today and the day cells
+    for (const l of links) expect(l, l).toMatch(/scroll=\{false\}/);
+  });
 });

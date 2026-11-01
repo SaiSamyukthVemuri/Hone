@@ -66,6 +66,7 @@ export function CalendarMiniMonth({
           </div>
           <Link
             href={withSelection(miniCalendarHref(view, today), selectionParam)}
+            scroll={false}
             data-testid="calendar-mini-today"
             onClick={() => {
               setShown(today);
@@ -100,6 +101,7 @@ export function CalendarMiniMonth({
             <Link
               key={date}
               href={withSelection(miniCalendarHref(view, date), selectionParam)}
+              scroll={false}
               data-testid="calendar-mini-day"
               onClick={() => announceMiniPick(date)}
               data-date={date}
