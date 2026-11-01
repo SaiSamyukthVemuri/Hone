@@ -302,6 +302,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
       "AppointmentCheckoutCell", // owns the checkout control
       "PilotFeedbackPrompt", // mailto anchors
       "DashboardTodoList", // rows of links
+      "NeedsAttentionSection", // grouped rows of links
     ]) {
       expect(
         children,

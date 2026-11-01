@@ -33,6 +33,7 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import { profileProvenance } from "@/lib/machines/profile-provenance";
 import {
   selectableDevices,
@@ -936,13 +937,8 @@ export function MachineFirstSetupPanel({
           className="text-xs text-neutral-600 dark:text-neutral-400"
           data-testid="machine-owner-hint"
         >
-          You own this studio, so you can register its machines. Today only
-          models that have passed their evidence review can be registered. If
-          yours is not listed, send Hone the manufacturer, the exact model and
-          variant, the label on your unit, its modes, and the field names and
-          units the machine shows, with the manual page or a photo of the
-          screen with no client on screen. Never include client details.
-          Sending this starts a review; it does not add the model.
+          You own this studio, so you can register its machines.{" "}
+          {OWNER_INPUT_REQUEST}
         </p>
       )}
 

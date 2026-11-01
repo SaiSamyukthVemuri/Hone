@@ -229,7 +229,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // SQL-only row check, four desktop page loads (one also steps to the next
     // day) and one 390px touch page load, each a few seconds against the ~6 min
     // target and 15 min ceiling.
-        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(44);
+    // Now 46: the HON-48 day-layout matrix (calendar-day-layout.spec.ts and calendar-day-layout-single.spec.ts) joined `calendar`, the group
+    // the /calendar paths already select. RECORDED AS A DECISION per the note above. Cost: ZERO executed cases in this lane: both files
+    // self-skip unless CAL_LAYOUT_E2E=1 (the matrix is ~11 min of serial browser time, run locally at a PR's exact head), so a targeted
+    // lane lists them and executes nothing.
+        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(46);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

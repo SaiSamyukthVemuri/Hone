@@ -130,13 +130,80 @@ describe("the payload", () => {
     const m = (await dir(aDesk, a.studioId, "maggie")).rows[0];
     expect(m.consent_signed).toBe(false); // photo consent is not treatment consent
     const tpl2 = randomUUID();
-    await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status) values ($1,$2,'Treatment consent','body','treatment_consent',1,'active')", [tpl2, a.studioId]);
+    await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,'Treatment consent','body','treatment_consent',1,'active',true)", [tpl2, a.studioId]);
     await adminQuery(
       `insert into public.client_consent_signatures (id, studio_id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, template_hash, signature_name, response, response_label_snapshot)
        values (gen_random_uuid(), $1, $2, $3, 'Treatment consent', 'body', 1, $4, 'Synthetic', 'accepted', 'I agree')`,
       [a.studioId, ids.maggie, tpl2, "c".repeat(64)],
     );
     expect((await dir(aDesk, a.studioId, "maggie")).rows[0].consent_signed).toBe(true);
+  });
+});
+
+describe("Insurance D1-D3 (peer review of #1303)", () => {
+  const sign = (client: string, tpl: string, version: number, response: string, at: string, hash: string) =>
+    adminQuery(
+      `insert into public.client_consent_signatures (id, studio_id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, template_hash, signature_name, response, response_label_snapshot, signed_at)
+       values (gen_random_uuid(), $1, $2, $3, 'Treatment consent', 'body', $4, $5, 'Synthetic', $6, 'label', $7)`,
+      [a.studioId, client, tpl, version, hash.repeat(64).slice(0, 64), response, at],
+    );
+  const consentOf = async (q: string) => (await dir(aDesk, a.studioId, q)).rows[0].consent_signed;
+
+  it("D1: a superseded version, a later denial, and a template that is no longer live never read as signed", async () => {
+    const plain = "555 0102";
+    // The earlier case left a live treatment_consent template signed only for another client;
+    // this case tests one template at a time, so retire every earlier live one first.
+    await adminQuery("update public.consent_form_templates set is_live = false where studio_id = $1 and form_type = 'treatment_consent'", [a.studioId]);
+    const tpl = randomUUID();
+    await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,'Treatment v1','body','treatment_consent',1,'active',true)", [tpl, a.studioId]);
+    await sign(ids.plain, tpl, 1, "accepted", "2024-02-01T10:00:00Z", "d");
+    expect(await consentOf(plain)).toBe(true);
+    // The template moves to version 2: the v1 signature is out of date.
+    await adminQuery("update public.consent_form_templates set version = 2 where id = $1", [tpl]);
+    expect(await consentOf(plain)).toBe(false);
+    await sign(ids.plain, tpl, 2, "accepted", "2024-03-01T10:00:00Z", "e");
+    expect(await consentOf(plain)).toBe(true);
+    // A later denial of the current version wins.
+    await sign(ids.plain, tpl, 2, "denied", "2024-04-01T10:00:00Z", "f");
+    expect(await consentOf(plain)).toBe(false);
+    // Not live: nothing to be signed against.
+    await adminQuery("update public.consent_form_templates set is_live = false where id = $1", [tpl]);
+    expect(await consentOf(plain)).toBe(false);
+  });
+
+  it("D1: with two live treatment templates, a client signed on only one is NOT signed (the 'every' rule)", async () => {
+    const plain = "555 0102";
+    await adminQuery("update public.consent_form_templates set is_live = false where studio_id = $1 and form_type = 'treatment_consent'", [a.studioId]);
+    const t1 = randomUUID();
+    const t2 = randomUUID();
+    for (const [id, title] of [[t1, "Modality one"], [t2, "Modality two"]]) {
+      await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,$3,'body','treatment_consent',1,'active',true)", [id, a.studioId, title]);
+    }
+    await sign(ids.plain, t1, 1, "accepted", "2024-05-01T10:00:00Z", "1");
+    expect(await consentOf(plain)).toBe(false);
+    await sign(ids.plain, t2, 1, "accepted", "2024-05-02T10:00:00Z", "2");
+    expect(await consentOf(plain)).toBe(true);
+    await adminQuery("update public.consent_form_templates set is_live = false where id in ($1,$2)", [t1, t2]);
+  });
+
+  it("D2: last visit is the STUDIO-local date (a UTC-next-day visit does not show tomorrow)", async () => {
+    const day = async () =>
+      (await asUser(aDesk, (x) => x(`select to_char(last_visit_on,'YYYY-MM-DD') as d from public.receptionist_client_directory($1,'555 0102',null,'name',0,25)`, [a.studioId]))).rows[0].d;
+    const original = (await adminQuery("select timezone from public.studios where id = $1", [a.studioId])).rows[0].timezone;
+    try {
+      await adminQuery("update public.studios set timezone = 'America/Toronto' where id = $1", [a.studioId]);
+      expect(await day()).toBe("2024-01-02"); // 15:00Z = 10:00 local
+      await adminQuery("update public.studios set timezone = 'Pacific/Auckland' where id = $1", [a.studioId]);
+      expect(await day()).toBe("2024-01-03"); // 15:00Z = 04:00 next day local
+    } finally {
+      await adminQuery("update public.studios set timezone = $2 where id = $1", [a.studioId, original]);
+    }
+  });
+
+  it("D3: a too-long term and a too-short term are refused with different messages", async () => {
+    await expect(dir(aDesk, a.studioId, "x".repeat(81))).rejects.toMatchObject({ code: "22023", message: expect.stringContaining("query_too_long") });
+    await expect(dir(aDesk, a.studioId, "x")).rejects.toMatchObject({ code: "22023", message: expect.stringContaining("query_too_short") });
+    expect((await dir(aDesk, a.studioId, "x".repeat(80))).rowCount).toBe(0);
   });
 });
 
@@ -186,6 +253,72 @@ describe("R1: the schedule", () => {
       expect((await adminQuery("select has_function_privilege($1,$2,'EXECUTE') ok", [role, CAL1])).rows[0].ok).toBe(false);
     }
     await expect(asUser(aDesk, (x) => x(`select * from public.receptionist_calendar($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')`, [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+  });
+});
+
+describe("Privacy C2 and Insurance L7 (reviews of 0274 at 236e34d6)", () => {
+  const MARK = ["MARK-APPT-NOTE", "MARK-CANCEL-REASON", "MARK-ADDRESS", "MARK-DOB"];
+  const cal = (uid: string, studio: string) =>
+    asUser(uid, (x) => x(`select * from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')`, [studio]));
+
+  it("neither function returns a planted note, cancellation reason, address or date of birth (owner control: the staff path DOES read them)", async () => {
+    await adminQuery("update public.appointments set notes = $2 where studio_id = $1 and client_id = $3 and status = 'confirmed' and starts_at > now()", [a.studioId, MARK[0], ids.maggie]);
+    await addAppt(a, ids.maggie, "cancelled", "2031-03-05T15:00:00Z");
+    await adminQuery("update public.appointments set cancellation_reason = $2 where studio_id = $1 and client_id = $3 and status = 'cancelled' and starts_at = '2031-03-05T15:00:00Z'", [a.studioId, MARK[1], ids.maggie]);
+    await adminQuery("update public.clients set address = $2, date_of_birth = '1990-01-01' where id = $1", [ids.maggie, MARK[2]]);
+    // positive control: a staff (owner) session reads the planted values, so the markers are really there.
+    const staffNotes = await asUser(a.userId, (x) => x("select notes, cancellation_reason from public.appointments where studio_id = $1 and client_id = $2 order by starts_at", [a.studioId, ids.maggie]));
+    expect(JSON.stringify(staffNotes.rows)).toContain(MARK[0]);
+    expect(JSON.stringify(staffNotes.rows)).toContain(MARK[1]);
+    const v2 = await cal(aDesk, a.studioId);
+    const directory = await dir(aDesk, a.studioId);
+    for (const m of MARK) {
+      expect(JSON.stringify(v2.rows)).not.toContain(m);
+      expect(JSON.stringify(directory.rows)).not.toContain(m);
+    }
+    expect(v2.rows.length).toBeGreaterThan(0);
+    expect(directory.rows.length).toBeGreaterThan(0);
+  });
+
+  it("cross-studio, both directions, for both functions", async () => {
+    await expect(dir(bDesk, a.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(dir(aDesk, b.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(cal(bDesk, a.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(cal(aDesk, b.studioId)).rejects.toMatchObject({ code: "42501" });
+    // and each desk sees only its own studio's clients
+    const bRows = (await dir(bDesk, b.studioId)).rows.map((x) => x.client_id);
+    const aRows = (await dir(aDesk, a.studioId)).rows.map((x) => x.client_id);
+    expect(bRows).toContain(ids.other);
+    expect(aRows).toContain(ids.plain);
+    expect(bRows).not.toContain(ids.plain);
+    expect(aRows).not.toContain(ids.other);
+  });
+
+  it("an archived client is absent from the directory and from search (positive control: the same client is found when active)", async () => {
+    expect((await dir(aDesk, a.studioId)).rows.map((x) => x.client_id)).not.toContain(ids.archived);
+    expect((await dir(aDesk, a.studioId, "Archived")).rows).toHaveLength(0);
+    await adminQuery("update public.clients set archived_at = null where id = $1", [ids.archived]);
+    try {
+      expect((await dir(aDesk, a.studioId, "Archived")).rows.map((x) => x.client_id)).toEqual([ids.archived]);
+    } finally {
+      await adminQuery("update public.clients set archived_at = now() where id = $1", [ids.archived]);
+    }
+  });
+
+  it("L7: a client with ONLY a live session and no completed appointment reads an empty desk last visit (the narrowing, pinned)", async () => {
+    const only = await addClient(a, "sessiononly", "Session Only", null, null, null);
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values (gen_random_uuid(), $1, $2, $3, 'electrolysis')`,
+      [a.studioId, only, a.practitionerId],
+    );
+    const sessions = await adminQuery("select count(*)::int n from public.sessions where studio_id = $1 and client_id = $2 and deleted_at is null", [a.studioId, only]);
+    expect(sessions.rows[0].n).toBe(1); // the staff-side fact exists
+    const row = (await dir(aDesk, a.studioId, "Session Only")).rows[0];
+    expect(row.client_id).toBe(only);
+    expect(row.last_visit_on).toBeNull();
+    // control: a completed appointment is what makes the desk date appear
+    await addAppt(a, only, "completed", "2024-03-03T15:00:00Z");
+    expect((await dir(aDesk, a.studioId, "Session Only")).rows[0].last_visit_on).not.toBeNull();
   });
 });
 

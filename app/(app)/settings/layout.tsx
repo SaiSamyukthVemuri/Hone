@@ -1,26 +1,14 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
-import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
-import { createClient } from "@/lib/supabase/server";
-import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
-import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
+import { resolveSettingsNav } from "@/lib/settings/nav";
+import { SETTINGS_NAV } from "@/lib/settings/nav-registry";
+import { SettingsShell } from "@/components/settings/settings-shell";
 
-// Settings layout. The tab list is computed server-side based on
-// role; the nav itself is a small client component so it can read
-// usePathname for the active tab and drive a mobile <select> change
-// handler. Routes are unchanged.
-
-/**
- * Stable empty list for a conditionally-included owner tab.
- *
- * Written as a named constant rather than an inline `: []` on purpose: the
- * owner-gated region of this file is read TEXTUALLY by
- * tests/lib/search/navigation-registry.test.ts, which locates the end of the
- * owner block by its `: []`. A nested one inside that block would truncate the
- * parse and quietly stop that guard from proving search never advertises an
- * owner-only tab to a member.
- */
-const NO_TABS: SettingsNavItem[] = [];
+// Settings layout. The rail is evaluated on the SERVER from the nav registry
+// (lib/settings/nav-registry.ts): entries are filtered by the signed-in role
+// and each entry's own visibleWhen, and only the filtered list reaches the
+// browser, so an owner-only entry is never shipped to a practitioner. Hiding an
+// entry is navigation, never access: every settings page keeps its own gate.
+// Routes are unchanged.
 
 export default async function SettingsLayout({
   children,
@@ -28,79 +16,18 @@ export default async function SettingsLayout({
   children: React.ReactNode;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
-  const isOwner = practitioner.role === "owner";
-  // WAIT-02. The durable waitlist tab appears for an owner whose studio is
-  // BOTH waitlisting new clients AND recording those requests durably — the
-  // same subordinate contract the submit path enforces, derived here from the
-  // SERVER-RESOLVED slug and never from anything the browser sent.
-  //
-  // WAITLIST-NAV-VIS-01. ...OR whose studio already holds an entry the operator
-  // can still act on (waiting / claimed / invited / expired / released). A
-  // studio with a real queue must never lose its navigation to that queue just
-  // because the rollout flags are not both set; the flags also drive public
-  // booking behaviour, so they are not the lever for exposing a tab. Terminal
-  // history (converted / removed) alone does not count.
-  //
-  // The presence read runs only for an owner, only when the flags have not
-  // already answered, on the RLS-scoped user client, HEAD-only. It fails
-  // closed (tab hidden). /settings/waitlist stays reachable by URL for an
-  // owner in every shape either way — this governs navigation, not access.
-  // NEW-CLIENT-MODE-01: the canonical mode replaces the two env predicates.
-  // The second half of the rule below is UNCHANGED and deliberately so - a
-  // studio with a real queue must never lose its navigation to that queue,
-  // whatever the mode says. That is also why UNKNOWN cannot hide an active
-  // queue: an unreadable mode is not evidence that the queue is gone.
-  //
-  // THE FIRST HALF IS THE DURABLE COMMIT PATH, NOT THE MODE. `waitlist` alone
-  // was wrong: during the migration bridge a studio can be in WAITLIST mode
-  // while its joins still commit through legacy email acceptance, so the tab
-  // would open an operator queue that nothing writes to. The owner would be
-  // shown an empty queue while their prospects sat in an inbox - and a deploy
-  // that is meant to change no behaviour would have added a tab.
-  //
-  // This tab EXISTS to work a durable queue, so the question it must ask is
-  // whether a permitted join lands in one. That is exactly the bridge's
-  // decision, reused rather than restated: persisted WAITLIST always durable,
-  // legacy-inherited WAITLIST only while the legacy durable list says so.
-  const admission = await getNewClientAdmissionMode(studio);
-  const waitlistLive = newClientWaitlistCommitIsDurable(admission, studio.slug);
-  const waitlistTabVisible =
-    isOwner &&
-    (waitlistLive ||
-      (await hasActiveWaitlistEntries(await createClient(), studio.id)));
-
-  const items: SettingsNavItem[] = [
-    { href: "/settings/profile", label: "Profile" },
-    { href: "/settings/launch", label: "Launch" },
-    { href: "/settings/intake", label: "Forms & Postcare" },
-    ...(isOwner
-      ? [
-          { href: "/settings/studio", label: "Studio" },
-          { href: "/settings/team", label: "Team" },
-          { href: "/settings/booking", label: "Booking" },
-          ...(waitlistTabVisible
-            ? [{ href: "/settings/waitlist", label: "Waitlist" }]
-            : NO_TABS),
-          { href: "/settings/availability", label: "Availability" },
-          { href: "/settings/services", label: "Services" },
-          { href: "/settings/machines", label: "Machines" },
-          { href: "/settings/consent", label: "Consent forms" },
-          { href: "/settings/payments", label: "Payments" },
-          { href: "/settings/integrations", label: "Integrations" },
-          { href: "/settings/tracking", label: "Marketing & analytics" },
-          { href: "/settings/import", label: "Import" },
-          { href: "/settings/data", label: "Data" },
-        ]
-      : []),
-  ];
+  const role = practitioner.role === "owner" ? "owner" : "practitioner";
+  const items = await resolveSettingsNav(SETTINGS_NAV, { role, studio });
 
   return (
-    <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        <SettingsNav items={items} />
-      </div>
+    <SettingsShell
+      items={items}
+      account={{
+        name: practitioner.display_name || practitioner.email,
+        roleLabel: role === "owner" ? "Owner" : "Practitioner",
+      }}
+    >
       {children}
-    </div>
+    </SettingsShell>
   );
 }

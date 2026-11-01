@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
+// The clients directory (including its archived view) is no longer in this list: #1292 replaced
+// ArchivedClientsList and the directory takes its names from lib/clients/directory-rules.ts, whose
+// identity rule is pinned by tests/lib/clients/directory-guards.test.ts.
 const ORDINARY_DISPLAY = [
-  "app/(app)/clients/ArchivedClientsList.tsx",
   "app/(app)/calendar/QuickBookDrawer.tsx",
   "app/(app)/calendar/upcoming/page.tsx",
   "app/(app)/dashboard/page.tsx",

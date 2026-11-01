@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { updateOwnProfileAction } from "./actions";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 
 type Props = {
   initialDisplayName: string;
@@ -10,6 +11,9 @@ type Props = {
 
 export function ProfileForm({ initialDisplayName, email }: Props) {
   const [displayName, setDisplayName] = useState(initialDisplayName);
+  // The last saved value: leaving with typed-but-unsaved edits asks first.
+  const [saved, setSaved] = useState(initialDisplayName);
+  useUnsavedChangesGuard("profile-details", displayName !== saved);
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<
     { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
@@ -28,6 +32,7 @@ export function ProfileForm({ initialDisplayName, email }: Props) {
     startTransition(async () => {
       try {
         await updateOwnProfileAction(fd);
+        setSaved(displayName);
         setHint({ kind: "saved" });
         window.setTimeout(() => setHint({ kind: "idle" }), 1500);
       } catch (err) {

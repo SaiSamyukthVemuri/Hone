@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // contraindications, skin and private notes, emergency contacts, SMS consent
 // evidence) to surfaces that use seven of them. It now names its columns on
 // every page. The list is the union of what the directory's consumers read:
-// /clients (ClientSearch, ArchivedClientsList), the calendar quick-book
+// /clients (ClientSearch, ClientsDirectory), the calendar quick-book
 // drawer, and the records exposed-person selector, procedure filter and print.
 // tests/app/clients/directory-minimal-fields.test.ts pins what crosses to the
 // browser.

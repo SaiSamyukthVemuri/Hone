@@ -391,7 +391,7 @@ describe("launch checklist surfaces consent readiness", () => {
     expect(LAUNCH).toContain("Create a treatment consent form and make it live");
     // "Consent forms" is the settings nav label; the copy must match it.
     expect(LAUNCH).toContain("Open Consent forms");
-    expect(read("app/(app)/settings/layout.tsx")).toContain(
+    expect(read("lib/settings/nav-registry.ts")).toContain(
       'label: "Consent forms"',
     );
   });
@@ -695,8 +695,10 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     expect(STACK_CODE).toContain("await bookingReadiness");
     expect(STACK_CODE).toContain('readiness.status !== "ready"');
     expect(CARD_CODE).toContain('readiness.status === "unknown"');
-    // Exactly ONE Suspense boundary in the page: the existing architecture stands.
-    expect((PAGE_CODE.match(/<Suspense\b/g) ?? []).length).toBe(1);
+    // Two Suspense boundaries in the page, one per region (WS-DB: Needs
+    // attention streams beside Appointments; the secondary stack streams below).
+    // Readiness lives behind the stack's boundary only.
+    expect((PAGE_CODE.match(/<Suspense\b/g) ?? []).length).toBe(2);
     expect(existsSync(join(process.cwd(), "app/(app)/error.tsx"))).toBe(true);
   });
 
