@@ -23,6 +23,11 @@ describe("directory reference headings and labels", () => {
   it("the intake status states what it is: the newest non-deleted form, reviewed by a practitioner", () => {
     expect(SRC).toContain("A practitioner has reviewed the newest intake form");
   });
+  it("Insurance T-1: the meaning is visible text and aria-describedby, never a hover-only title", () => {
+    expect(SRC).toContain("aria-describedby={meaningId(state)}");
+    expect(SRC).toContain("<IntakeLegend />");
+    expect(SRC).not.toMatch(/title=\{INTAKE_MEANING/);
+  });
   it("Privacy ruling: subline is pronouns · email with Name on file leading; the phone has its own line", () => {
     expect(SRC).toContain("[row.nameOnFile ? NAME_ON_FILE_LABEL : null, row.pronouns, row.email]");
     expect(SRC).toContain("{row.phone && <div");

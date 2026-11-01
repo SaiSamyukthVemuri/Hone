@@ -122,6 +122,7 @@ export function DirectoryResults({
         {filtered ? `${data.total} ${data.total === 1 ? "match" : "matches"}` : `${data.total} ${data.total === 1 ? "client" : "clients"}`}
         {` · showing ${data.firstIndex}–${data.lastIndex}`}
       </p>
+      {!archived && <IntakeLegend />}
       <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         <DirectoryHeader archived={archived} />
         {data.rows.map((row) => (
@@ -214,10 +215,27 @@ const INTAKE_MEANING: Record<IntakeState, string> = {
   unavailable: "Intake status could not be loaded",
 };
 
+// Insurance T-1: the meaning is VISIBLE text (touch, keyboard and screen-reader users cannot
+// hover), and each pill points at its own line with aria-describedby. No title attribute.
+const meaningId = (state: IntakeState) => `directory-intake-meaning-${state}`;
+
+function IntakeLegend() {
+  return (
+    <dl data-testid="directory-intake-legend" className="space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+      {(["reviewed", "awaiting_review", "not_submitted", "unavailable"] as const).map((state) => (
+        <div key={state} className="flex flex-wrap gap-x-1">
+          <dt className="font-medium">{INTAKE_LABEL[state]}:</dt>
+          <dd id={meaningId(state)}>{INTAKE_MEANING[state]}.</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function IntakePill({ state }: { state: IntakeState }) {
   return (
     <span
-      title={INTAKE_MEANING[state]}
+      aria-describedby={meaningId(state)}
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${INTAKE_TONE[state]}`}
     >
       {INTAKE_LABEL[state]}
