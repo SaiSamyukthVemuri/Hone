@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { updateStudioPostcareAction } from "./actions";
 import {
   MarkdownLiteTextarea,
@@ -157,9 +159,16 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
     initial.postcare_delivery_mode,
   );
   const [pending, startTransition] = useTransition();
-  const [hint, setHint] = useState<
-    { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
-  >({ kind: "idle" });
+  const snapshot = () => ({
+    aftercare, warnings, products, reviewUrl, reviewPrompt, contactEmail, deliveryMode,
+  });
+  const [saved, setSaved] = useState(snapshot);
+  const feedback = useSaveFeedback();
+  const current = snapshot();
+  const dirty = (Object.keys(current) as Array<keyof typeof current>).some(
+    (k) => current[k] !== saved[k],
+  );
+  useUnsavedChangesGuard("studio-postcare", dirty);
   // Per-field "click again to replace" confirmation. Stays local
   // until the practitioner confirms; resets when they cancel.
   const [confirming, setConfirming] = useState<SuggestKey | null>(null);
@@ -194,7 +203,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setHint({ kind: "idle" });
+    feedback.saving();
     const fd = new FormData();
     fd.set("postcare_aftercare_text", aftercare);
     fd.set("postcare_warning_signs_text", warnings);
@@ -206,13 +215,10 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
     startTransition(async () => {
       try {
         await updateStudioPostcareAction(fd);
-        setHint({ kind: "saved" });
-        window.setTimeout(() => setHint({ kind: "idle" }), 1500);
+        setSaved(snapshot());
+        feedback.saved();
       } catch (err) {
-        setHint({
-          kind: "error",
-          message: err instanceof Error ? err.message : "Failed to save.",
-        });
+        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
       }
     });
   }
@@ -439,14 +445,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
         >
           {pending ? "Saving…" : "Save postcare settings"}
         </button>
-        {hint.kind === "saved" && (
-          <span className="text-xs text-green-600 dark:text-green-400">
-            Saved.
-          </span>
-        )}
-        {hint.kind === "error" && (
-          <span className="text-xs text-red-700">{hint.message}</span>
-        )}
+        <SaveStatus state={feedback.state} />
       </div>
     </form>
   );

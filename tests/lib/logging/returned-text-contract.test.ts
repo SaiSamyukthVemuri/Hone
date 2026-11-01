@@ -35,12 +35,6 @@ type Allowed = { text: string; reason: string };
 // Each entry is a (file, flagged text) PAIR: a new flagged value in the same file
 // is still reported, and the stale-entry check requires every pair to still exist.
 const ALLOWED: Record<string, Allowed[]> = {
-  "app/(app)/calendar/calendar-block-actions.ts": [
-    {
-      text: "error.message",
-      reason: "HELD, not repaired here: the file is changed by open #1135 (Machines), who own the line. Remove this entry in the PR that fixes it.",
-    },
-  ],
   "lib/sms/send-appointment.ts": [
     {
       text: "message",

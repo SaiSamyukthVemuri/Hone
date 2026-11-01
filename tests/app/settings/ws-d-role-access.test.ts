@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // WS-D (settings redesign): role-aware access, enforced on the server. Synthetic ids only.
@@ -40,7 +40,7 @@ describe("card-change notification DELIVERY is owner-only", () => {
   function fakeAdmin(owner: { id: string } | null) {
     const chain = (data: unknown, count?: number) => {
       const c: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "limit"]) c[m] = () => c;
+      for (const m of ["select", "eq", "order", "limit"]) c[m] = () => c;
       c.maybeSingle = async () => ({ data, error: null });
       c.then = (res: (v: unknown) => unknown) => res({ data: null, error: null, count });
       return c;
@@ -58,9 +58,20 @@ describe("card-change notification DELIVERY is owner-only", () => {
     expect(ensure).toHaveBeenCalledTimes(1);
     expect((ensure.mock.calls[0] as unknown[])[1]).toMatchObject({ practitionerId: OWNER });
   });
-  it("throws (so Stripe retries) when the studio has no active owner, and writes nothing", async () => {
-    await expect(ensureCardChangeNotification(fakeAdmin(null) as never, params as never)).rejects.toThrow("card_change_owner_missing");
-    expect(ensure).not.toHaveBeenCalled();
+  it("a studio with NO active owner gets no notice for anyone: it succeeds, writes nothing, and logs a structured alert without client data", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const out = await ensureCardChangeNotification(fakeAdmin(null) as never, params as never);
+      expect(out).toMatchObject({ skipped: "no_active_owner", deduped: false });
+      expect(ensure).not.toHaveBeenCalled();
+      const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("card_change_notice_skipped_no_active_owner");
+      expect(logged).not.toContain("Synthetic Client");
+      expect(logged).not.toContain("4242");
+      expect(logged).not.toContain('"clientId"');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -85,9 +96,32 @@ describe("owner-only pages and surfaces refuse before any read", () => {
       expect(guard).toBeLessThan(s.indexOf(readMarker, s.indexOf("export default")));
     });
   }
-  it("the Launch tab sits in the owner-gated block of the settings nav", () => {
-    const s = read("app/(app)/settings/layout.tsx");
-    expect(s.indexOf('href: "/settings/launch"')).toBeGreaterThan(s.indexOf("...(isOwner"));
+  it("the Launch entry is owner-only and hidden once setup is complete, expressed in the registry (launch/nav.ts), not the layout", () => {
+    const s = read("app/(app)/settings/launch/nav.ts");
+    expect(s).toMatch(/roles: \["owner"\]/);
+    expect(s).toMatch(/visibleWhen:[\s\S]*!isLaunchComplete\(/);
+    expect(read("app/(app)/settings/layout.tsx")).not.toContain("isLaunchComplete");
+  });
+  it("only an allow-list of files reads practitioner_notifications, so a new reader is a deliberate, reviewed act (card rows are excluded per reader)", () => {
+    const allowed = new Set([
+      "app/(app)/layout.tsx",
+      "app/(app)/notifications/page.tsx",
+      "app/(app)/notifications/actions.ts",
+      "lib/export/resource-registry.ts",
+      "lib/notifications/practitioner-notifications.ts",
+      "lib/notifications/owner-only-events.ts",
+    ]);
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(e.name) && readFileSync(p, "utf8").includes("practitioner_notifications")) hits.push(p);
+      }
+    };
+    walk("app");
+    walk("lib");
+    expect(hits.filter((h) => !allowed.has(h))).toEqual([]);
   });
   it("studio-wide calendar preferences (time format, birthday colour) are saved only by an owner, at the action", () => {
     const s = read("app/(app)/settings/studio/actions.ts");
@@ -125,6 +159,6 @@ describe("launch completion predicate (decision D4): derived, owner-only 'Setup'
     const page = readFileSync("app/(app)/settings/launch/page.tsx", "utf8");
     expect(page).toMatch(/isLaunchComplete\(readiness, studio\)\) redirect\("\/settings\/profile"\)/);
     expect(page).toMatch(/studioHasAftercare\(studio\)/);
-    expect(readFileSync("app/(app)/settings/layout.tsx", "utf8")).toMatch(/launchVisible \? \[\{ href: "\/settings\/launch", label: "Setup" \}\]/);
+    expect(readFileSync("app/(app)/settings/launch/nav.ts", "utf8")).toMatch(/label: "Setup"/);
   });
 });
