@@ -544,10 +544,12 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
         and p.proname like 'receptionist\\_%'
       order by 1`);
-    const names = rows.map((r) => String(r.signature).split("(")[0]);
+    // regprocedure text drops the schema when public is on the search_path.
+    const bare = (signature: unknown) => String(signature).replace(/^public\./, "");
+    const names = rows.map((r) => bare(r.signature).split("(")[0]);
     // On a chain without 0274 the directory function is absent; with it, it is the only addition.
-    expect(names.every((n) => n === "public.receptionist_client_contacts" || n === "public.receptionist_client_directory")).toBe(true);
-    const directory = rows.find((r) => String(r.signature).startsWith("public.receptionist_client_directory("));
+    expect(names.every((n) => n === "receptionist_client_contacts" || n === "receptionist_client_directory")).toBe(true);
+    const directory = rows.find((r) => bare(r.signature).startsWith("receptionist_client_directory("));
     if (directory) expect(directory.sha).toBe(DESK_DIRECTORY_SHA_VALUE);
   });
 
@@ -592,7 +594,9 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
       // Positive actual full-chain context first; mutants live only inside
       // this transaction/savepoint and cannot alter another test's catalog.
       // The reviewed 0274 delegate (pinned above by source hash and ACL) postdates the frozen 0248 block;
-      // close it for this transaction only so the block is replayed in its historical context.
+      // close it, inside a savepoint that is rolled back at the end of this test (adminTx commits),
+      // so the block is replayed in its historical context.
+      await q("savepoint desk_closed");
       await q(`do $$ begin
         if to_regprocedure(${DESK_DIRECTORY_SIGNATURE}) is not null then
           execute 'revoke execute on function public.receptionist_client_directory(uuid,text,text[],text,integer,integer) from authenticated';
@@ -638,6 +642,8 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         await q("rollback to savepoint delegate_negative");
       }
       await q(preflight);
+      // adminTx COMMITS: put the reviewed 0274 delegate back for every later test in this database.
+      await q("rollback to savepoint desk_closed");
     });
   });
 
