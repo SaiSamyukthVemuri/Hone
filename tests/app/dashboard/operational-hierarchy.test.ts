@@ -162,9 +162,9 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     expect(snapshot).toMatch(/<h2 className="text-lg font-medium">Practice snapshot<\/h2>/);
     // ...and it is a landmark section, not a bare div.
     // Widened from 400: the component gained documented `selectedDay` /
-    // `todayLocal` props so its period links carry the selected day. The rule
+    // `todayLocal` props (and a `children` slot for the capacity row). The rule
     // being guarded is "a section, not a bare div", not a character budget.
-    expect(snapshot).toMatch(/export function PracticeSnapshot[\s\S]{0,900}?<section/);
+    expect(snapshot).toMatch(/export function PracticeSnapshot[\s\S]{0,1200}?<section/);
   });
 });
 

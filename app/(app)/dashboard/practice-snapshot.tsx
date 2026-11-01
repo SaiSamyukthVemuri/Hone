@@ -29,7 +29,7 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+    <section className="flex flex-col gap-2 rounded-lg bg-neutral-50 p-4 dark:bg-neutral-900/50">
       <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
         {title}
       </h3>
@@ -53,6 +53,7 @@ export function PracticeSnapshot({
   selectedDay,
   todayLocal,
   staffManaged = false,
+  children,
 }: {
   metrics: PracticeDashboardMetrics;
   // PR #323: deployment mode. Gates the factual "Live payments On/Off" +
@@ -63,13 +64,15 @@ export function PracticeSnapshot({
   todayLocal: string;
   /** HON-65: both HON-47 client self-service settings are off. Hides "Late cancellations" (nothing sets that reason on a staff cancel). */
   staffManaged?: boolean;
+  /** The owner's last row inside the card (the capacity link). */
+  children?: React.ReactNode;
 }) {
   const a = metrics.appointments;
   // HON-44: null for a non-owner. The loader never read the prices or payment
   // attempts, so there is nothing here to hide; the cards are simply absent.
   const money = metrics.money;
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-4 rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
       {/* This section carries its own h2. Without one, its cards' h3s would
           nest under the PRECEDING h2 in the accessibility tree: "Birthdays
           this month", so a screen-reader user navigating by heading would
@@ -77,8 +80,15 @@ export function PracticeSnapshot({
           attention surface this file used to host is gone entirely: Dashboard
           V2 Part 2B folded it into the one normalized To-do model
           (lib/dashboard/todo-model.ts). This file is REPORTING only. */}
+      {/* Integrated card header: the title on the left, the Today / Week / Month segmented control
+          top-right. Same PendingLink contract as before (server-driven, scroll={false}, aria-current). */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="text-lg font-medium">Practice snapshot</h2>
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        role="group"
+        aria-label="Reporting period"
+        className="inline-flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700"
+      >
         {PERIODS.map((p) => (
           <PendingLink
             key={p.key}
@@ -101,13 +111,14 @@ export function PracticeSnapshot({
             aria-current={metrics.period === p.key ? "page" : undefined}
             className={
               metrics.period === p.key
-                ? "rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
-                : "rounded-full border border-neutral-300 px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:text-neutral-300"
+                ? "inline-flex min-h-[40px] items-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+                : "inline-flex min-h-[40px] items-center rounded-md px-4 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
             }
           >
             {p.label}
           </PendingLink>
         ))}
+      </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -217,6 +228,7 @@ export function PracticeSnapshot({
           </p>
         </Card>
       </div>
+      {children}
     </section>
   );
 }

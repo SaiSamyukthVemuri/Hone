@@ -85,3 +85,18 @@ describe("panel headers share one top edge (fidelity B)", () => {
     expect(stack).toMatch(/async function ClientCountPillValue[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)\.clients\.length/);
   });
 });
+
+describe("Practice snapshot is one integrated card (fidelity E)", () => {
+  const snap = readFileSync("app/(app)/dashboard/practice-snapshot.tsx", "utf8");
+  const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
+  it("header with the segmented period control top-right, three columns, capacity row inside", () => {
+    expect(snap).toMatch(/justify-between[\s\S]{0,200}<h2 className="text-lg font-medium">Practice snapshot<\/h2>[\s\S]{0,200}role="group"/);
+    expect(snap).toMatch(/lg:grid-cols-3/);
+    expect(snap).toMatch(/\{children\}/);
+    expect(stack).toMatch(/<PracticeSnapshot[\s\S]{0,400}\{capacityLink\}[\s\S]{0,40}<\/PracticeSnapshot>/);
+  });
+  it("stays owner-only and keeps the existing metric definitions (no new read or card)", () => {
+    expect(stack).toMatch(/\{isOwner && practiceMetrics && \(\s*<PracticeSnapshot/);
+    expect(stack).toMatch(/\{isOwner && !practiceMetrics && capacityLink\}/);
+  });
+});

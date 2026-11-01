@@ -209,6 +209,21 @@ export async function SecondaryStack({
     gettingStarted.autoTotal > 0 &&
     gettingStarted.autoDone === gettingStarted.autoTotal;
 
+  // OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card: the figures on it are
+  // studio-wide practice analytics an ordinary practitioner must not be shown, and the page refuses
+  // them server-side before issuing a single analytics read. Rendered only under `isOwner` above.
+  const capacityLink = (
+    <Link
+      href="/dashboard/capacity"
+      className="flex items-baseline justify-between gap-3 border-t border-neutral-200 pt-4 text-sm hover:text-neutral-900 dark:border-neutral-800 dark:hover:text-neutral-100"
+    >
+      <span className="font-medium">Practice capacity</span>
+      <span className="text-fg-muted">
+        Who is in treatment, and who has no treatment booked &rarr;
+      </span>
+    </Link>
+  );
+
   return (
     <div className="flex flex-col gap-10">
       {/* Relationship context, BELOW the operational work, never above it. */}
@@ -246,6 +261,8 @@ export async function SecondaryStack({
           late cancellations) that your settings would hide.
         </p>
       )}
+      {/* ONE integrated card: the snapshot, then the owner's capacity link as its last row (passed as
+          children). When the metrics could not load the link still renders on its own, as before. */}
       {isOwner && practiceMetrics && (
         <PracticeSnapshot
           metrics={practiceMetrics}
@@ -253,25 +270,11 @@ export async function SecondaryStack({
           selectedDay={selectedDayLocal}
           todayLocal={todayLocal}
           staffManaged={staffManaged}
-        />
-      )}
-
-      {/* OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card:
-          the figures on it are studio-wide practice analytics an ordinary
-          practitioner must not be shown, and the page refuses them server-side
-          before issuing a single analytics read. Rendering it here keeps the
-          surface reachable without another nav tab. */}
-      {isOwner && (
-        <Link
-          href="/dashboard/capacity"
-          className="flex items-baseline justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-sunken"
         >
-          <span className="font-medium">Practice capacity</span>
-          <span className="text-fg-muted">
-            Who is in treatment, and who has no treatment booked &rarr;
-          </span>
-        </Link>
+          {capacityLink}
+        </PracticeSnapshot>
       )}
+      {isOwner && !practiceMetrics && capacityLink}
 
       {/* CHLOE D2, setup that is DONE is not daily work.
           ------------------------------------------------------------------
