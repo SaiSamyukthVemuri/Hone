@@ -53,11 +53,25 @@ set local lock_timeout = '5s';
 -- ---------------------------------------------------------------------------
 do $$
 begin
-  insert into storage.buckets (id, name, public)
-  values ('client-identification-photos', 'client-identification-photos', false)
-  on conflict (id) do nothing;
+  -- Hardened on insert (C4): private, capped at the column's byte limit, WebP only.
+  -- An existing NON-public bucket is brought to the same limits; its `public` flag
+  -- is never altered here, and an existing PUBLIC bucket fails the assertion below.
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('client-identification-photos', 'client-identification-photos', false, 524288, array['image/webp'])
+  on conflict (id) do update
+     set file_size_limit = excluded.file_size_limit,
+         allowed_mime_types = excluded.allowed_mime_types;
 exception when insufficient_privilege or undefined_table then
-  raise notice 'skipping storage.buckets insert; create a PRIVATE bucket named client-identification-photos manually';
+  raise notice 'skipping storage.buckets insert; create a PRIVATE bucket named client-identification-photos (524288-byte limit, image/webp only) manually; the activation preflight checks it';
+end $$;
+
+do $$
+begin
+  if exists (select 1 from storage.buckets where id = 'client-identification-photos' and public) then
+    raise exception 'The client-identification-photos bucket exists and is PUBLIC; make it private before applying 0275.' using errcode = 'P0275';
+  end if;
+exception when undefined_table then
+  null;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -176,7 +190,15 @@ create table public.client_id_photo_pending_object_deletions (
   storage_bucket text not null default 'client-identification-photos'
     check (storage_bucket = 'client-identification-photos'),
   storage_path text not null unique,
-  queued_at timestamptz not null default now()
+  queued_at timestamptz not null default now(),
+  -- Ordinary deletions are due at once. A RESERVATION (C1) is the path handed out
+  -- for an upload that has not been recorded yet: it is due only after its window,
+  -- is consumed by set_client_id_photo, and otherwise is drained like any deletion.
+  delete_after timestamptz not null default now(),
+  reservation boolean not null default false,
+  reserved_client_id uuid,
+  constraint client_id_photo_reservation_shape
+    check (reservation = (reserved_client_id is not null))
 );
 
 -- ---------------------------------------------------------------------------
@@ -454,11 +476,17 @@ begin
   if p_provided_by is distinct from 'client' then
     raise exception 'Consent must be given by the client.' using errcode = 'P0275';
   end if;
+  -- C3: only the LATEST approved wording (the one wording_current serves) can be
+  -- consented to; a superseded version is refused even though it was once approved.
   if not exists (
-    select 1 from public.client_id_photo_wording_versions w
-     where w.version = p_wording_version
-       and w.wording_sha256 = p_wording_sha256
-       and w.approved_at is not null) then
+    select 1
+      from (select w.version, w.wording_sha256
+              from public.client_id_photo_wording_versions w
+             where w.approved_at is not null
+             order by w.approved_at desc, w.created_at desc
+             limit 1) latest
+     where latest.version = p_wording_version
+       and latest.wording_sha256 = p_wording_sha256) then
     raise exception 'That consent wording is not current.' using errcode = 'P0275';
   end if;
 
@@ -525,6 +553,50 @@ begin
 end;
 $$;
 
+-- C1: reserve the object path IN THE DATABASE before any upload. The reservation is
+-- a queue row, so a face image that is uploaded and then never recorded (consent
+-- withdrawn, client archived, switch turned off, command failed, process died)
+-- is drained and deleted like any other. Same checks as set_client_id_photo, and
+-- the client row is locked first.
+create or replace function public.reserve_client_id_photo_path(p_client_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_studio uuid;
+  v_archived timestamptz;
+  v_actor uuid;
+  v_path text;
+begin
+  select c.studio_id, c.archived_at into v_studio, v_archived
+    from public.clients c
+   where c.id = p_client_id
+     for update;
+  if v_studio is not null then
+    v_actor := public.client_id_photo_actor(v_studio);
+  end if;
+  if v_studio is null or v_actor is null or v_archived is not null
+     or not public.client_id_photo_switch_on(v_studio) then
+    raise exception 'ID photos are not available for this client.' using errcode = 'check_violation';
+  end if;
+  if not public.client_id_photo_consent_granted(v_studio, p_client_id) then
+    raise exception 'The client''s consent is needed first.' using errcode = 'P0275';
+  end if;
+  if (select count(*) from public.client_id_photo_pending_object_deletions q
+       where q.reserved_client_id = p_client_id and q.reservation and q.delete_after > now()) >= 5 then
+    raise exception 'Too many uploads are pending for this client.' using errcode = 'P0275';
+  end if;
+
+  v_path := v_studio::text || '/' || p_client_id::text || '/' || gen_random_uuid()::text || '.webp';
+  insert into public.client_id_photo_pending_object_deletions
+    (studio_id, storage_path, delete_after, reservation, reserved_client_id)
+  values (v_studio, v_path, now() + interval '15 minutes', true, p_client_id);
+  return v_path;
+end;
+$$;
+
 -- Store or replace the photo's metadata AFTER the server uploaded the re-encoded
 -- derivative. The path must be <studio>/<client>/<uuid>.webp (checked by the table).
 create or replace function public.set_client_id_photo(
@@ -568,6 +640,17 @@ begin
    limit 1;
   if v_consent is null then
     raise exception 'The client''s consent is needed first.' using errcode = 'P0275';
+  end if;
+
+  -- C1: only a path the database handed out for THIS client, still inside its window.
+  delete from public.client_id_photo_pending_object_deletions q
+   where q.storage_path = p_storage_path
+     and q.reservation
+     and q.reserved_client_id = p_client_id
+     and q.studio_id = v_studio
+     and q.delete_after > now();
+  if not found then
+    raise exception 'That upload was not reserved for this client.' using errcode = 'P0275';
   end if;
 
   select exists (select 1 from public.client_id_photos where client_id = p_client_id) into v_had;
@@ -624,6 +707,10 @@ end;
 $$;
 
 -- The deletion queue, drained by the app through the Storage API.
+-- C2: the deletion queue is drained by the SERVER with the service role (the Storage
+-- delete is a service-role action anyway). No actor can acknowledge a deletion, so
+-- the database never records "done" for an object it cannot see. A path that a live
+-- photo row still points at is never offered. Names/counts only; no image bytes.
 create or replace function public.pending_client_id_photo_object_deletions(p_limit integer default 20)
 returns table (storage_path text)
 language sql
@@ -633,8 +720,9 @@ set search_path = ''
 as $$
   select q.storage_path
     from public.client_id_photo_pending_object_deletions q
-   where public.client_id_photo_actor(q.studio_id) is not null
-   order by q.queued_at
+   where q.delete_after <= now()
+     and not exists (select 1 from public.client_id_photos p where p.storage_path = q.storage_path)
+   order by q.delete_after, q.queued_at
    limit greatest(1, least(coalesce(p_limit, 20), 100));
 $$;
 
@@ -645,16 +733,12 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_studio uuid;
   v_deleted int;
 begin
-  select q.studio_id into v_studio
-    from public.client_id_photo_pending_object_deletions q
-   where q.storage_path = p_storage_path;
-  if v_studio is null or public.client_id_photo_actor(v_studio) is null then
-    return false;
-  end if;
-  delete from public.client_id_photo_pending_object_deletions where storage_path = p_storage_path;
+  delete from public.client_id_photo_pending_object_deletions q
+   where q.storage_path = p_storage_path
+     and q.delete_after <= now()
+     and not exists (select 1 from public.client_id_photos p where p.storage_path = q.storage_path);
   get diagnostics v_deleted = row_count;
   return v_deleted > 0;
 end;
@@ -822,6 +906,12 @@ revoke execute on function public.withdraw_client_id_photo_consent(uuid) from au
 revoke execute on function public.withdraw_client_id_photo_consent(uuid) from service_role;
 grant execute on function public.withdraw_client_id_photo_consent(uuid) to authenticated;
 
+revoke execute on function public.reserve_client_id_photo_path(uuid) from public;
+revoke execute on function public.reserve_client_id_photo_path(uuid) from anon;
+revoke execute on function public.reserve_client_id_photo_path(uuid) from authenticated;
+revoke execute on function public.reserve_client_id_photo_path(uuid) from service_role;
+grant execute on function public.reserve_client_id_photo_path(uuid) to authenticated;
+
 revoke execute on function public.set_client_id_photo(uuid, text, integer, integer, integer) from public;
 revoke execute on function public.set_client_id_photo(uuid, text, integer, integer, integer) from anon;
 revoke execute on function public.set_client_id_photo(uuid, text, integer, integer, integer) from authenticated;
@@ -838,13 +928,13 @@ revoke execute on function public.pending_client_id_photo_object_deletions(integ
 revoke execute on function public.pending_client_id_photo_object_deletions(integer) from anon;
 revoke execute on function public.pending_client_id_photo_object_deletions(integer) from authenticated;
 revoke execute on function public.pending_client_id_photo_object_deletions(integer) from service_role;
-grant execute on function public.pending_client_id_photo_object_deletions(integer) to authenticated;
+grant execute on function public.pending_client_id_photo_object_deletions(integer) to service_role;
 
 revoke execute on function public.ack_client_id_photo_object_deletion(text) from public;
 revoke execute on function public.ack_client_id_photo_object_deletion(text) from anon;
 revoke execute on function public.ack_client_id_photo_object_deletion(text) from authenticated;
 revoke execute on function public.ack_client_id_photo_object_deletion(text) from service_role;
-grant execute on function public.ack_client_id_photo_object_deletion(text) to authenticated;
+grant execute on function public.ack_client_id_photo_object_deletion(text) to service_role;
 
 -- OPERATOR commands: granted to nobody.
 revoke execute on function public.set_client_id_photo_enabled(uuid, boolean, text) from public;

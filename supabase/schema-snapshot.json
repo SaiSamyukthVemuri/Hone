@@ -3,7 +3,7 @@
   "migrations": {
     "count": 250,
     "last": "0275_client_identification_photo_store.sql",
-    "sha256": "e4d7a9726d7aa10660a90bde9bf87a6735cb118a355b82e8de2f2965fdfe1b9b"
+    "sha256": "1ab98be51b7e513101612e8bb409d6d03395060d9e5a4501898a93bf98a46447"
   },
   "public": {
     "tables": [
@@ -467,6 +467,7 @@
       "requeue_platform_lead_alert",
       "reschedule_appointment_v2",
       "reschedule_appointment_v3",
+      "reserve_client_id_photo_path",
       "resolve_active_studio_sms_sender",
       "resolve_delivery_incident",
       "resolve_double_charge_incident",

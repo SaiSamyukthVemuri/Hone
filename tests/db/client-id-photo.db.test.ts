@@ -14,6 +14,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   adminQuery,
   asRole,
@@ -57,8 +58,25 @@ const consent = (userId: string, clientId: string, over: Partial<{ channel: stri
 
 const pathFor = (s: SeededStudio, clientId: string) => `${s.studioId}/${clientId}/${randomUUID()}.webp`;
 
-const setPhoto = (userId: string, clientId: string, path: string) =>
-  userQuery(userId, `select public.set_client_id_photo($1,$2,$3,$4,$5) id`, [clientId, path, 20000, 512, 512]);
+const reserve = async (userId: string, clientId: string): Promise<string> =>
+  (await userQuery(userId, `select public.reserve_client_id_photo_path($1) p`, [clientId])).rows[0].p as string;
+
+/** Reserve a path (unless one is given), then record it: the only order the app may use. */
+const setPhoto = async (userId: string, clientId: string, path?: string) =>
+  userQuery(userId, `select public.set_client_id_photo($1,$2,$3,$4,$5) id`, [
+    clientId,
+    path ?? (await reserve(userId, clientId)),
+    20000,
+    512,
+    512,
+  ]);
+
+const serviceDrain = (limit = 50) =>
+  asRole("service_role", (q) => q(`select * from public.pending_client_id_photo_object_deletions($1)`, [limit]));
+const serviceAck = (path: string) =>
+  asRole("service_role", (q) => q(`select public.ack_client_id_photo_object_deletion($1) a`, [path]));
+const makeDue = (path: string) =>
+  adminQuery(`update public.client_id_photo_pending_object_deletions set delete_after = now() - interval '1 second' where storage_path = $1`, [path]);
 
 const readable = async (userId: string, clientId: string) =>
   (await userQuery(userId, `select client_id from public.client_id_photos where client_id = $1`, [clientId])).rows.length;
@@ -184,7 +202,7 @@ describe("0275: store, read, replace, remove", () => {
     const c = await newClient(A);
     expect((await refusal(setPhoto(A.userId, c, pathFor(A, c)))).code).toBe(P0275);
     await consent(A.userId, c);
-    await setPhoto(A.userId, c, pathFor(A, c));
+    await setPhoto(A.userId, c);
     expect(await readable(A.userId, c)).toBe(1);
     expect(await readable(memberA.userId, c)).toBe(1);
     expect(await readable(B.userId, c)).toBe(0);
@@ -194,7 +212,7 @@ describe("0275: store, read, replace, remove", () => {
     await enable(A.studioId, true);
     const c = await newClient(A);
     await consent(A.userId, c);
-    await setPhoto(A.userId, c, pathFor(A, c));
+    await setPhoto(A.userId, c);
     await enable(A.studioId, false);
     expect(await readable(A.userId, c)).toBe(0);
     await enable(A.studioId, true);
@@ -210,8 +228,9 @@ describe("0275: store, read, replace, remove", () => {
     // an unknown client
     expect((await refusal(setPhoto(A.userId, randomUUID(), pathFor(A, c)))).code).toBe(CHECK_VIOLATION);
     // a path in another studio or another client's folder, or the wrong extension
-    for (const bad of [pathFor(B, c), `${A.studioId}/${randomUUID()}/${randomUUID()}.webp`, `${A.studioId}/${c}/${randomUUID()}.jpg`]) {
-      expect((await refusal(setPhoto(A.userId, c, bad))).code).toBe(CHECK_VIOLATION);
+    // a path the database did not hand out for this client: never accepted
+    for (const bad of [pathFor(B, c), `${A.studioId}/${randomUUID()}/${randomUUID()}.webp`, `${A.studioId}/${c}/${randomUUID()}.jpg`, pathFor(A, c)]) {
+      expect((await refusal(setPhoto(A.userId, c, bad))).code).toBe(P0275);
     }
     // a deactivated practitioner
     await adminQuery(`update public.practitioners set active = false where id = $1`, [memberA.practitionerId]);
@@ -235,9 +254,9 @@ describe("0275: store, read, replace, remove", () => {
     await enable(A.studioId, true);
     const c = await newClient(A);
     await consent(A.userId, c);
-    const first = pathFor(A, c);
-    const second = pathFor(A, c);
+    const first = await reserve(A.userId, c);
     await setPhoto(A.userId, c, first);
+    const second = await reserve(A.userId, c);
     await setPhoto(A.userId, c, second);
     const q1 = await adminQuery(`select storage_path from public.client_id_photo_pending_object_deletions where studio_id = $1`, [A.studioId]);
     expect(q1.rows.map((r) => r.storage_path)).toContain(first);
@@ -254,20 +273,21 @@ describe("0275: store, read, replace, remove", () => {
     // image-free: the audit table has no path, url, filename or text column
     expect(Object.keys(audit.rows[0]).sort()).toEqual(["actor_practitioner_id", "at", "client_id", "event", "seq", "studio_id"]);
 
-    // the queue is drained through the acknowledging command, by an actor of the studio
-    const ack = await userQuery(A.userId, `select public.ack_client_id_photo_object_deletion($1) a`, [second]);
-    expect(ack.rows[0].a).toBe(true);
-    const foreign = await userQuery(B.userId, `select public.ack_client_id_photo_object_deletion($1) a`, [first]);
-    expect(foreign.rows[0].a).toBe(false);
-    const pendingB = await userQuery(B.userId, `select * from public.pending_client_id_photo_object_deletions(50)`);
-    expect(pendingB.rows).toHaveLength(0);
+    // the queue is drained by the SERVER with the service role only
+    await makeDue(second);
+    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(second);
+    // asRole rolls back (privilege probes never persist), so commit the ack as the owner role;
+    // the grant itself is proved separately (service_role may call it, nobody else).
+    expect((await serviceAck(second)).rows[0].a).toBe(true);
+    expect((await adminQuery(`select public.ack_client_id_photo_object_deletion($1) a`, [second])).rows[0].a).toBe(true);
+    expect((await serviceDrain()).rows.map((r) => r.storage_path)).not.toContain(second);
   });
 
   it("removal still works while the switch is OFF (never trapped)", async () => {
     await enable(A.studioId, true);
     const c = await newClient(A);
     await consent(A.userId, c);
-    await setPhoto(A.userId, c, pathFor(A, c));
+    await setPhoto(A.userId, c);
     await enable(A.studioId, false);
     const removed = await userQuery(A.userId, `select public.remove_client_id_photo($1) r`, [c]);
     expect(removed.rows[0].r).toBe(true);
@@ -280,7 +300,7 @@ describe("0275: withdrawal and archive", () => {
     await enable(A.studioId, true);
     const c = await newClient(A);
     await consent(A.userId, c);
-    const p = pathFor(A, c);
+    const p = await reserve(A.userId, c);
     await setPhoto(A.userId, c, p);
     const w = await userQuery(A.userId, `select public.withdraw_client_id_photo_consent($1) w`, [c]);
     expect(w.rows[0].w).toBe(true);
@@ -291,7 +311,7 @@ describe("0275: withdrawal and archive", () => {
     expect(q.rows).toHaveLength(1);
     expect((await refusal(setPhoto(A.userId, c, pathFor(A, c)))).code).toBe(P0275);
     await consent(A.userId, c);
-    await setPhoto(A.userId, c, pathFor(A, c));
+    await setPhoto(A.userId, c);
     expect(await readable(A.userId, c)).toBe(1);
   });
 
@@ -299,7 +319,7 @@ describe("0275: withdrawal and archive", () => {
     await enable(A.studioId, true);
     const c = await newClient(A);
     await consent(A.userId, c);
-    const p = pathFor(A, c);
+    const p = await reserve(A.userId, c);
     await setPhoto(A.userId, c, p);
     const before = await rowCount(`select count(*) n from public.treatment_images where studio_id = $1`, [A.studioId]);
     await adminQuery(`update public.clients set archived_at = now() where id = $1`, [c]);
@@ -313,6 +333,151 @@ describe("0275: withdrawal and archive", () => {
     expect(await rowCount(`select count(*) n from public.treatment_images where studio_id = $1`, [A.studioId])).toBe(before);
     // an archived client cannot be given a photo
     expect((await refusal(setPhoto(A.userId, c, pathFor(A, c)))).code).toBe(CHECK_VIOLATION);
+  });
+});
+
+describe("0275 C1: the object path is reserved in the database BEFORE any upload", () => {
+  it("a reserved path is a queue row, due only after its window, and is consumed by set", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    await consent(A.userId, c);
+    const path = await reserve(A.userId, c);
+    expect(path).toMatch(new RegExp(`^${A.studioId}/${c}/[0-9a-f-]{36}\\.webp$`));
+    const q = await adminQuery(`select reservation, reserved_client_id, delete_after > now() later from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path]);
+    expect(q.rows[0]).toMatchObject({ reservation: true, reserved_client_id: c, later: true });
+    expect((await serviceDrain()).rows.map((r) => r.storage_path), "not drained inside its window").not.toContain(path);
+    await setPhoto(A.userId, c, path);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path])).toBe(0);
+    expect(await readable(A.userId, c)).toBe(1);
+    // the same path cannot be used twice
+    expect((await refusal(setPhoto(A.userId, c, path))).code).toBe(P0275);
+  });
+
+  it("upload, then withdraw: set is refused and the orphan path is still in the queue, drained once due", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    await consent(A.userId, c);
+    const path = await reserve(A.userId, c);
+    // (the server uploaded the object here)
+    await userQuery(A.userId, `select public.withdraw_client_id_photo_consent($1)`, [c]);
+    expect((await refusal(setPhoto(A.userId, c, path))).code).toBe(P0275);
+    expect(await rowCount(`select count(*) n from public.client_id_photos where client_id = $1`, [c])).toBe(0);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path])).toBe(1);
+    await makeDue(path);
+    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(path);
+  });
+
+  it("upload, then archive the client / switch the studio off: set is refused and the path stays queued", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    await consent(A.userId, c);
+    const archivedPath = await reserve(A.userId, c);
+    await adminQuery(`update public.clients set archived_at = now() where id = $1`, [c]);
+    expect((await refusal(setPhoto(A.userId, c, archivedPath))).code).toBe(CHECK_VIOLATION);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_pending_object_deletions where storage_path = $1`, [archivedPath])).toBe(1);
+
+    const c2 = await newClient(A);
+    await consent(A.userId, c2);
+    const offPath = await reserve(A.userId, c2);
+    await enable(A.studioId, false);
+    expect((await refusal(setPhoto(A.userId, c2, offPath))).code).toBe(CHECK_VIOLATION);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_pending_object_deletions where storage_path = $1`, [offPath])).toBe(1);
+    await enable(A.studioId, true);
+  });
+
+  it("refuses an expired reservation, another client's reservation, and a path queued for deletion", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    const other = await newClient(A);
+    await consent(A.userId, c);
+    await consent(A.userId, other);
+    const expired = await reserve(A.userId, c);
+    await makeDue(expired);
+    expect((await refusal(setPhoto(A.userId, c, expired))).code).toBe(P0275);
+    const mine = await reserve(A.userId, c);
+    expect((await refusal(setPhoto(A.userId, other, mine))).code).toBe(P0275);
+    // a path queued by a removal is not a reservation and can never be re-adopted
+    const live = await reserve(A.userId, c);
+    await setPhoto(A.userId, c, live);
+    await userQuery(A.userId, `select public.remove_client_id_photo($1)`, [c]);
+    expect((await refusal(setPhoto(A.userId, c, live))).code).toBe(P0275);
+  });
+
+  it("reserve has the same gates as set: switch off, no consent, wrong studio, archived, deactivated; and a cap", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    expect((await refusal(reserve(A.userId, c))).code, "no consent").toBe(P0275);
+    await consent(A.userId, c);
+    expect((await refusal(reserve(B.userId, c))).code, "wrong studio").toBe(CHECK_VIOLATION);
+    for (let i = 0; i < 5; i++) await reserve(A.userId, c);
+    expect((await refusal(reserve(A.userId, c))).code, "cap of five pending").toBe(P0275);
+    await enable(A.studioId, false);
+    expect((await refusal(reserve(A.userId, A.clientId))).code, "switch off").toBe(CHECK_VIOLATION);
+    await enable(A.studioId, true);
+    const anon = await refusal(asRole("anon", (q) => q(`select public.reserve_client_id_photo_path($1)`, [c])));
+    expect(anon.code).toBe(INSUFFICIENT_PRIVILEGE);
+  });
+});
+
+describe("0275 C2: drain and acknowledge are service-role only", () => {
+  it("authenticated and anon cannot call drain or ack; service_role can", async () => {
+    for (const role of ["anon", "authenticated"] as const) {
+      expect((await refusal(asRole(role, (q) => q(`select * from public.pending_client_id_photo_object_deletions(5)`)))).code).toBe(INSUFFICIENT_PRIVILEGE);
+      expect((await refusal(asRole(role, (q) => q(`select public.ack_client_id_photo_object_deletion('x')`)))).code).toBe(INSUFFICIENT_PRIVILEGE);
+    }
+    expect((await refusal(userQuery(A.userId, `select public.ack_client_id_photo_object_deletion('x')`))).code).toBe(INSUFFICIENT_PRIVILEGE);
+    expect((await serviceDrain(1)).rows.length).toBeLessThanOrEqual(1);
+  });
+
+  it("an ack is refused for a path that is not yet due or is still referenced by a live photo", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    await consent(A.userId, c);
+    const reservedPath = await reserve(A.userId, c);
+    expect((await serviceAck(reservedPath)).rows[0].a, "inside its window").toBe(false);
+    await setPhoto(A.userId, c, reservedPath);
+    expect((await serviceAck(reservedPath)).rows[0].a, "live photo / no queue row").toBe(false);
+    expect((await serviceAck(`${A.studioId}/${c}/${randomUUID()}.webp`)).rows[0].a, "unknown path").toBe(false);
+  });
+});
+
+describe("0275 C3: consent only against the latest approved wording", () => {
+  it("approving v1.2 makes v1.1 refused, and v1.2 accepted", async () => {
+    await enable(A.studioId, true);
+    await adminQuery(
+      `insert into public.client_id_photo_wording_versions (version, wording, wording_sha256)
+       select 'v1.2', w, encode(sha256(convert_to(w,'UTF8')),'hex') from (select repeat('a successor wording for the test. ', 4) w) s`,
+    );
+    await adminQuery(`select public.approve_client_id_photo_wording('v1.2')`);
+    const v12 = (await adminQuery(`select wording_sha256 s from public.client_id_photo_wording_versions where version='v1.2'`)).rows[0].s as string;
+    const c = await newClient(A);
+    expect((await refusal(consent(A.userId, c))).code, "v1.1 is superseded").toBe(P0275);
+    await userQuery(A.userId, `select public.record_client_id_photo_consent($1,'v1.2',$2,'in_person','client')`, [c, v12]);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_consents where client_id = $1 and wording_version = 'v1.2'`, [c])).toBe(1);
+    const cur = await userQuery(A.userId, `select version from public.client_id_photo_wording_current($1)`, [A.studioId]);
+    expect(cur.rows[0].version).toBe("v1.2");
+  });
+});
+
+describe("0275 C4: the bucket is hardened and a public bucket fails the migration", () => {
+  it("exists private, capped at the column limit, WebP only (when the storage schema is present)", async () => {
+    const b = await adminQuery(`select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'client-identification-photos'`);
+    expect(b.rows).toHaveLength(1);
+    expect(b.rows[0]).toMatchObject({ public: false, file_size_limit: expect.anything(), allowed_mime_types: ["image/webp"] });
+    expect(Number(b.rows[0].file_size_limit)).toBe(524288);
+  });
+
+  it("the migration's assertion raises when the bucket is public (and passes when private)", async () => {
+    const sql = readFileSync("supabase/migrations/0275_client_identification_photo_store.sql", "utf8");
+    const block = sql.match(/do \$\$\nbegin\n  if exists \(select 1 from storage\.buckets[\s\S]*?end \$\$;/)![0];
+    await adminQuery(block);
+    await adminQuery(`update storage.buckets set public = true where id = 'client-identification-photos'`);
+    try {
+      expect((await refusal(adminQuery(block))).code).toBe(P0275);
+    } finally {
+      await adminQuery(`update storage.buckets set public = false where id = 'client-identification-photos'`);
+    }
+    await adminQuery(block);
   });
 });
 

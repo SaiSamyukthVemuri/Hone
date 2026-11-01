@@ -25,6 +25,10 @@ const AUTHENTICATED: Array<[string, string]> = [
   ["withdraw_client_id_photo_consent", "uuid"],
   ["set_client_id_photo", "uuid, text, integer, integer, integer"],
   ["remove_client_id_photo", "uuid"],
+  ["reserve_client_id_photo_path", "uuid"],
+];
+/** C2: the deletion queue is drained by the SERVER only: revoked from all four, granted to service_role only. */
+const SERVICE_ROLE_ONLY: Array<[string, string]> = [
   ["pending_client_id_photo_object_deletions", "integer"],
   ["ack_client_id_photo_object_deletion", "text"],
 ];
@@ -109,7 +113,7 @@ describe("0275's transaction and shape", () => {
   });
 
   it("the bucket is private, created in an exception wrapper, with NO storage.objects policy", () => {
-    expect(sql).toMatch(/values \('client-identification-photos', 'client-identification-photos', false\)/);
+    expect(sql).toMatch(/values \('client-identification-photos', 'client-identification-photos', false, 524288/);
     expect(sql).toMatch(/exception when insufficient_privilege or undefined_table then/);
     expect(EXECUTABLE).not.toMatch(/storage\.objects/);
   });
@@ -134,7 +138,7 @@ describe("0275's transaction and shape", () => {
 describe("0275's function privileges", () => {
   it("revokes EVERY created function from public, anon, authenticated and service_role by name", () => {
     const created = createdFunctions().map((f) => f.name).sort();
-    const covered = [...AUTHENTICATED, ...NOBODY].map(([n]) => n).filter((n) => n !== "set_client_portrait").sort();
+    const covered = [...AUTHENTICATED, ...SERVICE_ROLE_ONLY, ...NOBODY].map(([n]) => n).filter((n) => n !== "set_client_portrait").sort();
     expect(created).toEqual(covered);
   });
 
@@ -142,6 +146,13 @@ describe("0275's function privileges", () => {
     for (const [fn, args] of AUTHENTICATED) {
       expect(revokedRoles(EXECUTABLE, fn, args), fn).toEqual(REQUIRED_REVOKES);
       expect(grantedRoles(EXECUTABLE, fn, args), fn).toEqual(["authenticated"]);
+    }
+  });
+
+  it("C2: drain and ack are granted to service_role ONLY (no actor can acknowledge a deletion)", () => {
+    for (const [fn, args] of SERVICE_ROLE_ONLY) {
+      expect(revokedRoles(EXECUTABLE, fn, args), fn).toEqual(REQUIRED_REVOKES);
+      expect(grantedRoles(EXECUTABLE, fn, args), fn).toEqual(["service_role"]);
     }
   });
 
@@ -160,6 +171,36 @@ describe("0275's function privileges", () => {
     for (const m of EXECUTABLE.matchAll(/create or replace function public\.(\w+)\([\s\S]*?\$\$/g)) {
       expect(m[0], m[1]).toMatch(/set search_path = ''/);
     }
+  });
+});
+
+describe("0275 revision conditions (Privacy C1-C4)", () => {
+  it("C1: set accepts only a database-reserved path for this client, inside its window, and consumes it", () => {
+    const set = createdFunctions().find((f) => f.name === "set_client_id_photo")!.body;
+    expect(set).toMatch(/q\.reservation[\s\S]*q\.reserved_client_id = p_client_id[\s\S]*q\.delete_after > now\(\)/);
+    expect(set).toMatch(/That upload was not reserved for this client/);
+    const reserve = createdFunctions().find((f) => f.name === "reserve_client_id_photo_path")!.body;
+    expect(reserve).toMatch(/gen_random_uuid\(\)::text \|\| '\.webp'/);
+    expect(reserve).toMatch(/for update/);
+    expect(reserve).toMatch(/insert into public\.client_id_photo_pending_object_deletions/);
+  });
+
+  it("C2: the drain never offers a live photo's path and never an undue reservation", () => {
+    const drain = createdFunctions().find((f) => f.name === "pending_client_id_photo_object_deletions")!.body;
+    expect(drain).toMatch(/q\.delete_after <= now\(\)/);
+    expect(drain).toMatch(/not exists \(select 1 from public\.client_id_photos p where p\.storage_path = q\.storage_path\)/);
+    expect(drain).not.toMatch(/auth\.uid|client_id_photo_actor/);
+  });
+
+  it("C3: consent is accepted only against the latest approved wording", () => {
+    const rec = createdFunctions().find((f) => f.name === "record_client_id_photo_consent")!.body;
+    expect(rec).toMatch(/order by w\.approved_at desc, w\.created_at desc\s+limit 1\) latest/);
+  });
+
+  it("C4: the bucket is hardened on insert and a PUBLIC bucket fails the migration", () => {
+    expect(sql).toMatch(/file_size_limit, allowed_mime_types\)\s+values \('client-identification-photos', 'client-identification-photos', false, 524288, array\['image\/webp'\]\)/);
+    expect(sql).toMatch(/where id = 'client-identification-photos' and public\) then\s+raise exception/);
+    expect(sql).not.toMatch(/set public\s*=\s*true/i);
   });
 });
 
