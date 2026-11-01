@@ -35,3 +35,17 @@ export function focusSettingsHeading(
   heading.focus({ preventScroll: true });
   return true;
 }
+
+/**
+ * Where focus goes when the person chooses "Stay" on the unsaved-changes dialog.
+ * Only a drawer that was open when the dialog appeared is closed, and focus then
+ * returns to the Menu button (the rail link that held it is hidden). Any other
+ * held click came from page content (or the desktop rail): focus returns to that
+ * anchor and the drawer is left alone.
+ */
+export function stayFocusTarget(args: {
+  drawerWasOpen: boolean;
+  isDesktop: boolean;
+}): "menu" | "anchor" {
+  return args.drawerWasOpen && !args.isDesktop ? "menu" : "anchor";
+}

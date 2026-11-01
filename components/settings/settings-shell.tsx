@@ -10,7 +10,7 @@ import {
   isRailLinkClick,
   type SettingsNavItem,
 } from "@/lib/settings/nav";
-import { focusIsNowhere, focusSettingsHeading } from "./focus-heading";
+import { focusIsNowhere, focusSettingsHeading, stayFocusTarget } from "./focus-heading";
 import { HashRedirect } from "./hash-redirect";
 import { UnsavedChangesProvider } from "./unsaved-changes";
 
@@ -113,16 +113,28 @@ export function SettingsShell({ items, account, children }: Props) {
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
-  // "Stay" on the unsaved-changes dialog: the held rail click never reached the
-  // drawer's own handler, so close the drawer here and put focus back on the
-  // Menu button (the rail link that had it is about to be hidden).
-  const stayOnPage = () => {
-    setDrawerOpen(false);
+  // "Stay" on the unsaved-changes dialog. Whether the drawer was open is read
+  // when the dialog appears (a held click from page content leaves it shut). Only
+  // an open drawer is closed, and focus goes back to the Menu button because the
+  // rail link that held it is about to be hidden; otherwise focus returns to the
+  // held anchor, wherever it was.
+  const drawerOpenRef = useRef(false);
+  drawerOpenRef.current = drawerOpen;
+  const drawerWasOpen = useRef(false);
+  const rememberDrawer = () => {
+    drawerWasOpen.current = drawerOpenRef.current;
+  };
+  const stayOnPage = (anchor: HTMLAnchorElement | null) => {
+    const target = stayFocusTarget({
+      drawerWasOpen: drawerWasOpen.current,
+      isDesktop: window.matchMedia("(min-width: 700px)").matches,
+    });
+    if (target === "menu") setDrawerOpen(false);
     // Two frames: the dialog restores focus to its trigger first.
     window.requestAnimationFrame(() =>
       window.requestAnimationFrame(() => {
-        if (window.matchMedia("(min-width: 700px)").matches) return;
-        menuButton.current?.focus();
+        if (target === "menu") menuButton.current?.focus();
+        else if (anchor?.isConnected) anchor.focus({ preventScroll: true });
       }),
     );
   };
@@ -133,7 +145,7 @@ export function SettingsShell({ items, account, children }: Props) {
   })).filter((g) => g.entries.length > 0);
 
   return (
-    <UnsavedChangesProvider onStay={stayOnPage}>
+    <UnsavedChangesProvider onHold={rememberDrawer} onStay={stayOnPage}>
       <HashRedirect />
       <div className="flex flex-col gap-6">
         {/* Sticky so the menu is reachable without scrolling back to the top. */}

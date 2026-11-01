@@ -55,15 +55,21 @@ export function isLeavingNavigation(
 
 export function UnsavedChangesProvider({
   children,
+  onHold,
   onStay,
 }: {
   children: ReactNode;
+  /** Called as a navigation is held and the dialog opens. */
+  onHold?: (anchor: HTMLAnchorElement) => void;
   /** Called when the person chooses "Stay" (the held navigation is dropped). */
-  onStay?: () => void;
+  onStay?: (anchor: HTMLAnchorElement | null) => void;
 }) {
+  const heldAnchor = useRef<HTMLAnchorElement | null>(null);
   const dirtyKeys = useRef(new Set<string>());
   const router = useRouter();
   const [leaving, setLeaving] = useState<string | null>(null);
+  const onHoldRef = useRef(onHold);
+  onHoldRef.current = onHold;
 
   const setDirty = useCallback((key: string, dirty: boolean) => {
     if (dirty) dirtyKeys.current.add(key);
@@ -88,6 +94,8 @@ export function UnsavedChangesProvider({
       // Hold the navigation and ask. "Leave" navigates to the same target.
       e.preventDefault();
       e.stopPropagation();
+      heldAnchor.current = anchor;
+      onHoldRef.current?.(anchor);
       setLeaving(anchor.href);
     }
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -123,7 +131,7 @@ export function UnsavedChangesProvider({
         onConfirm={leave}
         onCancel={() => {
           setLeaving(null);
-          onStay?.();
+          onStay?.(heldAnchor.current);
         }}
       />
     </GuardContext.Provider>

@@ -424,11 +424,27 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
     expect(src).toMatch(/focusSettingsHeading\(content\.current/);
   });
 
-  it("Stay closes the drawer and returns focus to the Menu button", () => {
+  it("Stay after a held click from an OPEN phone drawer closes it and focuses the Menu button", async () => {
+    const { stayFocusTarget } = await import("@/components/settings/focus-heading");
+    expect(stayFocusTarget({ drawerWasOpen: true, isDesktop: false })).toBe("menu");
+  });
+
+  it("Stay after a held click from page content (drawer never open), or on desktop, returns focus to the held anchor", async () => {
+    const { stayFocusTarget } = await import("@/components/settings/focus-heading");
+    expect(stayFocusTarget({ drawerWasOpen: false, isDesktop: false })).toBe("anchor");
+    expect(stayFocusTarget({ drawerWasOpen: false, isDesktop: true })).toBe("anchor");
+    expect(stayFocusTarget({ drawerWasOpen: true, isDesktop: true })).toBe("anchor");
+  });
+
+  it("the shell reads the drawer state when the dialog appears and only closes an open drawer", () => {
     const shell = read("components/settings/settings-shell.tsx");
     const guard = read("components/settings/unsaved-changes.tsx");
-    expect(shell).toMatch(/<UnsavedChangesProvider onStay=\{stayOnPage\}>/);
-    expect(shell).toMatch(/const stayOnPage = \(\) => \{[\s\S]*setDrawerOpen\(false\)[\s\S]*menuButton\.current\?\.focus\(\)/);
-    expect(guard).toMatch(/onCancel=\{\(\) => \{\s*setLeaving\(null\);\s*onStay\?\.\(\);/);
+    expect(shell).toMatch(/<UnsavedChangesProvider onHold=\{rememberDrawer\} onStay=\{stayOnPage\}>/);
+    expect(shell).toMatch(/drawerWasOpen\.current = drawerOpenRef\.current/);
+    expect(shell).toMatch(/if \(target === "menu"\) setDrawerOpen\(false\)/);
+    expect(shell).toMatch(/anchor\.focus\(\{ preventScroll: true \}\)/);
+    expect(guard).toMatch(/onHoldRef\.current\?\.\(anchor\)/);
+    expect(guard).toMatch(/onStay\?\.\(heldAnchor\.current\)/);
   });
+
 });
