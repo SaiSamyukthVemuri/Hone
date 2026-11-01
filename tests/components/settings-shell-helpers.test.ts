@@ -136,3 +136,13 @@ describe("Insurance #1297 U3: edit-then-save forms register with the unsaved gua
     expect(src).toContain(key);
   });
 });
+
+describe("Insurance #1297 G1: the tracking form reads clean after a save with stray spaces", () => {
+  const read = (rel: string) =>
+    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+  it("a successful save puts the trimmed values back in the inputs", () => {
+    const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
+    expect(src).toMatch(/setPixelId\(pixelId\.trim\(\)\)/);
+    expect(src).toMatch(/setTestCode\(testCode\.trim\(\)\)/);
+  });
+});
