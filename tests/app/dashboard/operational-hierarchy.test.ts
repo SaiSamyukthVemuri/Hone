@@ -208,7 +208,9 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // Chloe saw "Booking page ready / Your public booking page is live" plus a
     // column of ticks, permanently. Complete readiness must render nothing.
     expect(DASH).toMatch(
-      /\{isOwner && readiness && readiness\.status !== "ready" && \(/,
+      // WS-DB: also not shown when the owner has paused new-client booking (its
+      // own notice), which is a choice rather than unfinished setup.
+      /isOwner &&\s*readiness &&\s*readiness\.status !== "ready" &&\s*setupCard\.kind !== "paused_by_owner" && \(/,
     );
     // The card itself refuses too, so the contract does not depend on a caller
     // remembering the guard.

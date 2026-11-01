@@ -2,6 +2,9 @@ import Link from "next/link";
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
 import { BookingSetupCard } from "./BookingSetupCard";
+import { SetupStateNotice } from "./setup-state-notice";
+import { buildSetupCardState } from "@/lib/dashboard/setup-card-model";
+import { STAFF_MANAGED_UNKNOWN } from "@/lib/dashboard/staff-managed";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor, Studio } from "@/lib/types/database";
@@ -80,6 +83,8 @@ type Props = {
   attentionSources: Promise<AttentionSources>;
   /** HON-65: own deferred read (never throws; false on any error). */
   staffManaged: Promise<boolean>;
+  /** The same read, with a failure kept distinct (`unknown`). */
+  staffManagedRead: Promise<boolean | typeof STAFF_MANAGED_UNKNOWN>;
   /**
    * The canonical verdict, as a promise, resolved by the page ALONGSIDE the
    * bundle above rather than inside it.
@@ -159,6 +164,7 @@ export function SecondaryStackSkeleton() {
 export async function SecondaryStack({
   attentionSources,
   staffManaged: staffManagedPromise,
+  staffManagedRead: staffManagedReadPromise,
   bookingReadiness,
   practiceMetrics: practiceMetricsPromise,
   gettingStartedSignals: gettingStartedSignalsPromise,
@@ -172,6 +178,7 @@ export async function SecondaryStack({
   // To do / Needs attention sources are consumed by NeedsAttentionSection.
   const [, , , birthdaysThisMonth] = await attentionSources;
   const staffManaged = await staffManagedPromise;
+  const staffManagedUnknown = (await staffManagedReadPromise) === STAFF_MANAGED_UNKNOWN;
 
   // ONB-03: THE CANONICAL AUTHORITY, AWAITED INDEPENDENTLY (unchanged: the page
   // starts it as its own deferred read, so a sibling rejection cannot stop the
@@ -182,7 +189,9 @@ export async function SecondaryStack({
   const practiceMetrics = await practiceMetricsPromise;
 
   // PR #215: Getting Started progress for the dashboard card.
-  const gettingStarted = buildGettingStarted(await gettingStartedSignalsPromise);
+  const gettingStartedSignals = await gettingStartedSignalsPromise;
+  const gettingStarted = buildGettingStarted(gettingStartedSignals);
+  const setupCard = buildSetupCardState({ isOwner, readiness, studio });
 
   // PR #238 (Chloe pilot): once every auto-detected setup step is done, the
   // Getting started card stops occupying the prime spot.
@@ -211,6 +220,17 @@ export async function SecondaryStack({
           functionality. */}
       {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
           not its counts, period filter or copy, is rendered into the response. the metrics loader itself no longer runs for a non-owner (WS-DB); the roll-up they need comes from `getProcedureActionMetrics`. */}
+      {isOwner && staffManagedUnknown && (
+        <p
+          role="status"
+          data-testid="staff-managed-unknown"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          Could not read your client cancel and reschedule settings just now.
+          Figures below use the standard view and may include items (such as
+          late cancellations) that your settings would hide.
+        </p>
+      )}
       {isOwner && practiceMetrics && (
         <PracticeSnapshot
           metrics={practiceMetrics}
@@ -256,9 +276,16 @@ export async function SecondaryStack({
           distinct unknown state rather than an empty checklist, and it returns
           null itself for "ready", so the contract holds for any future caller
           and not only for this call site. */}
-      {isOwner && readiness && readiness.status !== "ready" && (
-        <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
-      )}
+      {/* WS-DB: the owner's choice to pause new-client booking is its own
+          state, not a "to-do" checklist, and a ready studio with launch items
+          open gets a one-line pointer to /settings/launch. */}
+      <SetupStateNotice state={setupCard} />
+      {isOwner &&
+        readiness &&
+        readiness.status !== "ready" &&
+        setupCard.kind !== "paused_by_owner" && (
+          <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
+        )}
 
       {/* PR #215: setup/readiness checklist entry point. A normal
           link card, never a blocking modal. PR #238: shown only while
@@ -272,8 +299,9 @@ export async function SecondaryStack({
         >
           <span className="text-sm font-medium">Getting started</span>
           <span className="text-xs text-neutral-500">
-            {gettingStarted.autoDone} of {gettingStarted.autoTotal} steps
-            complete →
+            {gettingStartedSignals.nextStepSignalsAvailable
+              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete →`
+              : "Some steps could not be checked just now →"}
           </span>
         </Link>
       )}
@@ -343,35 +371,37 @@ function BirthdaysThisMonth({
   const todayDay = parseInt(today.slice(8, 10), 10);
   const accent = resolveBirthdayColor(accentColor);
 
+  // WS-DB: compact. One wrapped line of chips instead of a card per person, so a
+  // month with many birthdays no longer pushes the setup cards off the screen.
+  // Same data, same links (`?tab=personal`), same studio accent; today's
+  // birthdays still carry the "Today" badge.
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex flex-col gap-2">
       <h2 className="text-lg font-medium">Birthdays this month</h2>
-      <ul className="flex flex-col gap-2">
+      <ul className="flex flex-wrap gap-2">
         {birthdays.map((b) => {
           const isToday = b.day === todayDay;
           return (
             <li
               key={b.id}
-              className={`flex flex-wrap items-baseline justify-between gap-3 rounded-lg border px-4 py-3 ${accent.card}`}
+              className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
             >
-              <div className="flex items-baseline gap-2">
-                <Link
-                  href={`/clients/${b.id}?tab=personal`}
-                  className="text-sm font-medium hover:underline"
+              <Link
+                href={`/clients/${b.id}?tab=personal`}
+                className="text-sm font-medium hover:underline"
+              >
+                {b.name}
+              </Link>
+              <span className={`text-xs tabular-nums ${accent.mutedText}`}>
+                {formatMonthDay(b.month, b.day)}
+              </span>
+              {isToday && (
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
                 >
-                  {b.name}
-                </Link>
-                <span className={`text-xs tabular-nums ${accent.mutedText}`}>
-                  {formatMonthDay(b.month, b.day)}
+                  Today
                 </span>
-                {isToday && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
-                  >
-                    Today
-                  </span>
-                )}
-              </div>
+              )}
             </li>
           );
         })}

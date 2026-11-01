@@ -64,7 +64,10 @@ import {
 import { getClientIdsWithUpcomingVisits } from "@/lib/dashboard/upcoming-visit-clients";
 import { CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
 import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
-import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
+import {
+  loadStaffManagedClinicChecked,
+  STAFF_MANAGED_UNKNOWN,
+} from "@/lib/dashboard/staff-managed";
 import {
   isReportingPeriod,
   type ReportingPeriod,
@@ -328,7 +331,15 @@ export default async function DashboardPage({
       ? getNewClientReadiness(studio)
       : Promise.resolve(null as NewClientReadiness | null),
   );
-  const staffManagedPromise = settleLater(loadStaffManagedClinic(supabase, studio.id));
+  // The read distinguishes "unknown" from "standard"; consumers that only need
+  // the copy posture get the same default as before, and the stack states the
+  // unknown case to the owner.
+  const staffManagedReadPromise = settleLater(
+    loadStaffManagedClinicChecked(supabase, studio.id),
+  );
+  const staffManagedPromise = settleLater(
+    staffManagedReadPromise.then((v) => (v === STAFF_MANAGED_UNKNOWN ? false : v)),
+  );
   // WS-DB: the practice metrics loader runs for the OWNER only. A practitioner
   // never starts it (it reads studio-wide activity and, for the owner, money).
   const practiceMetricsPromise = settleLater(
@@ -997,6 +1008,7 @@ export default async function DashboardPage({
         <SecondaryStack
           attentionSources={attentionSourcesPromise}
           staffManaged={staffManagedPromise}
+          staffManagedRead={staffManagedReadPromise}
           bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
           gettingStartedSignals={gettingStartedSignalsPromise}
