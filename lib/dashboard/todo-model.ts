@@ -445,7 +445,7 @@ export function buildDashboardTodo(
       kind: "records_details",
       subject: { kind: "studio", id: "studio", label: "Procedure records" },
       reason: `${n} ${n === 1 ? "record is" : "records are"} missing client or operator details`,
-      detail: `Across your ${input.metrics.reviewedSessions} most recent charted sessions.`,
+      detail: `Across the studio's ${input.metrics.reviewedSessions} most recent charted sessions.`,
       action: {
         href: "/records?section=procedures",
         label: "Open records",

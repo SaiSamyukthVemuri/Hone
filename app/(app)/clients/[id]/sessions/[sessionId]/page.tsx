@@ -192,7 +192,7 @@ export default async function SessionDetailPage({
       : Promise.resolve(null),
     isOwner && linkedAppointmentId
       ? timed("session-chart.settlements", () =>
-          getAppointmentSettlements(studio.id, [linkedAppointmentId]),
+          getAppointmentSettlements(studio.id, [linkedAppointmentId], isOwner),
         )
       : Promise.resolve(null),
   ]);

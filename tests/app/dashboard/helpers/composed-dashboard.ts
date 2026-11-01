@@ -39,7 +39,11 @@ const STACK_PATH = "app/(app)/dashboard/secondary-stack.tsx";
  * was added. The opening tag is located by its `fallback` prop, which is the
  * part that identifies it.
  */
-const BOUNDARY_OPEN_RE = /<Suspense\b[\s\S]*?fallback=\{<SecondaryStackSkeleton \/>\}[\s\S]*?>/;
+// WS-DB: the page now has TWO boundaries (Needs attention, then this one). The
+// tempered `(?:(?!<Suspense)[\s\S])` stops the match starting at the first
+// boundary and swallowing the Needs attention section into the splice.
+const BOUNDARY_OPEN_RE =
+  /<Suspense\b(?:(?!<Suspense)[\s\S])*?fallback=\{<SecondaryStackSkeleton \/>\}[\s\S]*?>/;
 const BOUNDARY_CLOSE = "</Suspense>";
 
 function read(rel: string): string {

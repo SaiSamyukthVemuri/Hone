@@ -22,7 +22,7 @@ const ACTIONS = read("app/(app)/settings/import/actions.ts");
 const ACTIONS_CODE = codeOnly(ACTIONS);
 const PAGE = read("app/(app)/settings/import/page.tsx");
 const PAGE_CODE = codeOnly(PAGE);
-const LAYOUT = read("app/(app)/settings/layout.tsx");
+const LAYOUT = read("lib/settings/nav-registry.ts");
 const GATE = read("lib/import/operator-assist.ts");
 const GATE_CODE = codeOnly(GATE);
 
@@ -106,9 +106,8 @@ describe("owner-gated, RLS-backed (no service role)", () => {
   it("the page is owner-gated and the nav exposes Import only to owners", () => {
     expect(PAGE).toMatch(/practitioner\.role !== "owner"/);
     expect(PAGE).toMatch(/Only studio owners can import/);
-    // The nav entry sits inside the isOwner-only spread.
-    const ownerBlock = LAYOUT.slice(LAYOUT.indexOf("isOwner"));
-    expect(ownerBlock).toMatch(/href: "\/settings\/import"/);
+    // The nav entry is owner-only in the registry.
+    expect(LAYOUT).toMatch(/href: "\/settings\/import", roles: OWNER/);
   });
 });
 

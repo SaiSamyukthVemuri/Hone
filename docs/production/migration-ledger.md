@@ -15,7 +15,62 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-10-30T11:35:59Z-11:36:01Z, post-0257 online apply; `0257` APPLIED out of order, `0247` and `0249`-`0256` NOT applied, repo == hosted)
+## Current state (as relayed 2026-10-31T20:35:52Z, post-0253 out-of-order apply; `0253`, `0254` and `0257` APPLIED, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0257`, with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted.** The single sealed migration `0253_member_scoped_block_authorship.sql` (sha256 `9992f4f0974ad3f9750a2437091059bb590e31c2a7728babbdab935c70f3432d`) was APPLIED to production out of order BELOW the hosted max `0257`, by Sam under explicit per-change authorization (`SAM-AUTHORIZATION-P2V2-0253-0255-20261031T201915Z.txt`, sha256 `1bd8dd796fbeb03ddb3a58c2b97fdda7f0fc33ebbbf42bc1969fda6f2b819084`). At the relayed 2026-10-31T20:35:52Z read-back the hosted history was `0001`-`0246` (less the permanently skipped `0158`), `0248`, `0253`, `0254` and `0257` (249 rows). That is declared in `docs/production/migration-state.json` as `hosted_out_of_order` (`0248` below `0247`; `0253` and `0254` above `0247` and `0249`-`0252`; `0257` above `0247`, `0249`-`0252`, `0255` and `0256`). `hosted_migration_max` stays **0257**. This record is written from OPS's completion record (`01-ops/RECORD-0253-APPLIED-20261031.md`), not from the plan.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Relayed result: APPLIED+VERIFIED, 249 history rows, max 0257, reconcile finished, apply-state marker archived, no settings write. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
+| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0253` is present at the applied bytes (it arrived with #1135). |
+| **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
+| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0253 apply (facts as relayed by Sam and recorded by OPS, 2026-10-31T20:35:52Z)
+
+- **What it is.** 0253 (PR #1135, HON-48 F1) enforces in the database that a non-owner member creates, edits and deletes timed blocks only on their own schedule; only owners write a studio-wide block or a blockout (Sam's decision 14). It is a behaviour change for members of studios that do not use per-practitioner scheduling, who can no longer block the whole studio from the calendar.
+- **Order against the application.** Database first (rule A1): the migration was applied before #1135 merged, because a merge carrying an unapplied migration file would have turned the ledger guards red. Between the apply and the deploy of #1135 a non-owner member's attempt at a studio-wide block showed the database refusal instead of the application's message; their own blocks were unaffected. Sam accepted that window in the session sheet. #1135 then merged and deployed.
+- **Tool and authorization.** P2 v2 stage `0253-b00`, run by Sam on the operator Mac under the authorization above. No settings write.
+- **Evidence basis.** Sam's relayed summary. The runner's full result block was not pasted to the record; the reconcile record is on the operator Mac. Same evidence class as the 0257 Stage-A record.
+- **Not captured.** Any server-side apply instant and statement-level timing. Migration history is not table-content evidence.
+
+### 0255: NOT applied
+
+- The 0255 half of the same session did not run. Its pre-apply check stopped on `42703` (the hosted `public.waitlist` has no `source` column, which `0004` declares); nothing was pushed, no marker was written and production is unchanged by that attempt.
+- Hosted read R1 (read-only, catalog and counts, relayed 2026-11-01): `public.waitlist` and `public.demo_requests` exist; `waitlist.source` is absent; `demo_requests` matches `0006`; history 249 rows, max 0257. The drift between `0004` and hosted is **documented only**: no migration adds or drops a column to resolve it, and no source column is dropped anywhere. No number of failed submissions is stated or inferred.
+- Sealed `0255` is not edited and not applied.
+
+### Holds unchanged
+
+`0270`, `0247`, `0249`-`0252`, `0255`, `0256`; `OWNER_JURISDICTION_CONFIRMATION_ENABLED` stays off; no charges or refunds. Every later stage bundle must carry the sealed `0253` by sha256 `9992f4f0974ad3f9750a2437091059bb590e31c2a7728babbdab935c70f3432d` and the sealed `0254` by sha256 `77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23` as hosted.
+
+## Previous state (verified 2026-10-31T01:31:05Z-01:31:08Z, post-0254 out-of-order apply; `0254` and `0257` APPLIED below/at the hosted max, `0247`, `0249`-`0253`, `0255` and `0256` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0257`, with `0247`, `0249`-`0253`, `0255` and `0256` declared unhosted.** The single sealed migration `0254_perm_hon44_role_enforcement.sql` (sha256 `77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23`, bytes unchanged) was APPLIED to production by ONE `db push --include-all`, by Sam under explicit per-change authorization (`SAM-AUTHORIZATION-0254A-V21-20261031T012742Z.txt` sha256 `e8069f370bbed63f4fcb31a0439cc8abf503d4177ecd7f60a5e74765473bbe7e`). It is an **out-of-order** apply BELOW the hosted max `0257`: at the 2026-10-31T01:31:05Z-01:31:08Z read-back the hosted history was `0001`-`0246` (less the permanently skipped `0158`), `0248`, `0254` and `0257` (248 rows). That is declared in `docs/production/migration-state.json` as `hosted_out_of_order` (`0248` below `0247`; `0254` above `0247` and `0249`-`0253`; `0257` above `0247`, `0249`-`0253`, `0255` and `0256`). `hosted_migration_max` stays **0257**. This record is written from OPS's completion record (`01-ops/RECORD-0254-APPLIED-20261031.md`), not from the plan.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Read back 2026-10-31T01:31:05Z-01:31:08Z: APPLIED+VERIFIED as recorded by OPS: 248 history rows, max 0257, `0254` exactly once; functions and sealed bodies PASS; each of `payment_charge_attempts`, `manual_fee_charge_attempts` and `appointment_settlements` has exactly one owner-gated SELECT policy. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
+| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0254` is present at the sealed bytes. |
+| **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0253`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
+| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0254 apply (facts as recorded by OPS, 2026-10-31T01:31:05Z-01:31:08Z)
+
+- **What it is.** 0254 (PR #1226, PERM-HON44) moves role enforcement into the database. Financial READS of `payment_charge_attempts`, `manual_fee_charge_attempts` and `appointment_settlements` become owner-only; session-price (`set_session_price`) and client-price WRITES become owner-only; `record_appointment_settlement` answers a non-owner with the closed code `owner_only`; pinned-caution DELETE is owner-only; the `edit_client_pinned_note` command EXISTS after 0254 but the application does not call it yet, so the pinned-caution edit path is unchanged (still the service-role UPDATE scoped to the author). Audit rows are written for session-price changes, client-price changes and pinned-caution deletes **only** (amounts are not recorded; a pinned-caution EDIT is not audited). `services.price_cents` stays readable by every member: a recorded product decision. Two existing functions were replaced (their 0167 and 0187 definitions) and policy drops hit the real names.
+- **Order.** Applied OUT OF ORDER and BELOW the hosted max: a plain push would refuse it, so the stage used `db push --include-all` over a 248-file bundle (`migrations-stage0254a.tar` sha256 `cb781e43b266a0c91b8a07ed18f8c87eeb297865846726b5be10c9c1e2576585`, list sha256 `446b637ce3845c65f9b5978ca41563f60939b733a8284e5c127c6a2199712675`): the hosted files as hosted plus the sealed `0254`, with `0247`, `0249`-`0253`, `0255` and `0256` absent, so the bundle itself was the control. The dry run had to list exactly `0254`, and a second, separate APPLY was typed after that listing.
+- **Tool and authorization.** Sam ran package `01-ops/stage-0254a-v21-mac` (v2.1, 21 pins, installer sha256 `0d174390e3b4bb7f04a048acc8b1c1b21ab29ae3bbb713f65517cb9c883de079`) as one command on the operator Mac, under `SAM-AUTHORIZATION-0254A-V21-20261031T012742Z.txt` (sha256 `e8069f370bbed63f4fcb31a0439cc8abf503d4177ecd7f60a5e74765473bbe7e`). The sentence was byte-identical to `sentence-0254a-v21.txt`; an earlier submission with four mistyped hashes was refused and not recorded. No settings write, no heartbeat, no window, no payment hold.
+- **Read-back.** 2026-10-31T01:31:05Z-01:31:08Z: APPLIED+VERIFIED: 248 history rows, max 0257, `0254` once; functions and sealed bodies PASS; three payment tables with exactly one owner-gated SELECT policy each. Reconcile done, APPLY-STATE marker archived.
+- **Production after the apply (OPS).** Serving `dpl_9sqy` (`ab6496ac`); smoke 6/6; no runtime errors in the hour after.
+- **Gap read: not applicable.** The read-back's "gap read within 24 h of S1" line is inherited text from the #1035 maintenance window; 0254 was an online apply with no window and no payment hold, and its read-back SQL contains no gap read.
+- **Not captured.** Any server-side apply instant, statement-level timing, and a client push marker (none is stated in OPS's record). Migration history is not table-content evidence.
+- **Holds unchanged.** `0270`, `0247`, `0249`-`0253`, `0255`, `0256`; `OWNER_JURISDICTION_CONFIRMATION_ENABLED` stays off; no charges or refunds. Every later stage bundle must carry the sealed `0254` by sha256 `77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23` as hosted.
+
+## Previous state (verified 2026-10-30T11:35:59Z-11:36:01Z, post-0257 online apply; `0257` APPLIED out of order, `0247` and `0249`-`0256` NOT applied, repo == hosted)
 
 > **CURRENT RELATIONSHIP: repo == hosted at `0257`, with `0247` and `0249`-`0256` declared unhosted.** The single sealed migration `0257_studio_payment_jurisdiction_failed_attempt_ack.sql` (sha256 `170b5ddaf851c4e6d2900162ccdf47d048b2cf49a4ed7f4c6e0f79217b5ad20f`, bytes unchanged) was APPLIED to production by ONE push, by Sam under explicit per-change authorization (`SAM-AUTHORIZATION-0257-STAGE-A-20261030T113007Z.txt sha256 208d1a17383a7515fc3ba3a18a9ff0bd90db37a9c0a7c4240f0a2d5b80eac39a`). It is an **out-of-order** apply: `0247` and `0249`-`0256` are held and **absent from hosted history**; that is declared in `docs/production/migration-state.json` as `hosted_out_of_order` (`0248` below `0247`; `0257` below `0247`, `0249`-`0256`). **Do not reapply `0257`, and do not apply a held number as part of this record.** THE APPLY DOES NOT ITSELF INITIALIZE THE STUDIO'S PAYMENT JURISDICTION: it only installs the v2 command and two audit columns. Initializing that studio's jurisdiction is the SEPARATE operator run (rollback dry run, then apply), separately approved by Sam, and is not recorded here.
 

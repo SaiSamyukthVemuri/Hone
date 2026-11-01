@@ -221,7 +221,7 @@ async function ownerView(who: SignedIn, studioId: string, appointmentId: string)
   for (const [name, value] of who.cookies) jar.set(name, value);
   let state: string | undefined;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    state = (await getAppointmentPaymentStates(studioId, [appointmentId], TZ)).get(appointmentId);
+    state = (await getAppointmentPaymentStates(studioId, [appointmentId], TZ, true)).get(appointmentId);
     if (state !== "unavailable") return state;
     await new Promise((r) => setTimeout(r, 250));
   }
@@ -266,7 +266,7 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
   });
 
-  it("a non-owner practitioner records the visit as STILL OWED; nothing reads as money received", async () => {
+  it("the OWNER records the visit as STILL OWED (a practitioner is refused: owner_only, HON-44); nothing reads as money received", async () => {
     const s = await cardlessChartedVisit();
     const member = await seedMember(
       { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
@@ -279,7 +279,13 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     expect(beforeView).toBeDefined();
     expect(["settled_owing", "unavailable"]).not.toContain(beforeView);
 
-    const out = await record(member.userId, s.studioId, s.appointmentId, "still_owes", PRICE);
+    // HON-44 / 0254 (Sam decision 12): recording what is owed is a financial act.
+    // A practitioner of the studio is refused and nothing is written.
+    const refused = await record(member.userId, s.studioId, s.appointmentId, "still_owes", PRICE);
+    expect(refused.result).toBe("owner_only");
+    expect(await settlements(s.studioId)).toHaveLength(0);
+
+    const out = await record(owner.userId, s.studioId, s.appointmentId, "still_owes", PRICE);
     expect(out.result).toBe("recorded");
 
     const rows = await settlements(s.studioId);
@@ -331,7 +337,11 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
       { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
       "hon45-payer",
     );
-    const owed = await record(member.userId, s.studioId, s.appointmentId, "still_owes", PRICE);
+    // The owner records the outstanding amount (HON-44 / 0254: a practitioner can
+    // no longer record it). Signing in repoints the owner's practitioner row at the
+    // new auth user, so the owner signs in first.
+    const owner = await signIn(s.practitionerId, "hon45-owner");
+    const owed = await record(owner.userId, s.studioId, s.appointmentId, "still_owes", PRICE);
     expect(owed.result).toBe("recorded");
 
     // A practitioner cannot turn "owed" into "paid": that is a correction, and
@@ -341,7 +351,6 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     expect((await settlements(s.studioId)).filter((r) => r.superseded_at === null)).toEqual([
       expect.objectContaining({ method: "still_owes", amount_cents: PRICE }),
     ]);
-    const owner = await signIn(s.practitionerId, "hon45-owner");
     expect(await ownerView(owner, s.studioId, s.appointmentId)).toBe("settled_owing");
 
     // The owner records the payment as received some other way. (Signing in

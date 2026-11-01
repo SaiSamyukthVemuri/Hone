@@ -242,6 +242,9 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
+      "calendar-day-layout.spec.ts",
+      "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.
@@ -273,6 +276,7 @@ export const BROWSER_GROUPS = {
       // requirement (self-skips in CI without storage-api). Does not add to
       // the sessions targeted-lane cost pin.
       "fett-client-portrait.spec.ts",
+      "fett-session-photos-handoff.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -365,6 +369,10 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // HON-58 / #1292: the clients directory click journey (search, filter, sort, page,
+      // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
+      // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
+      "clients-directory-journey.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
