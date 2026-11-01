@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
 import { PendingLink } from "@/components/pending-link";
@@ -50,25 +50,6 @@ export function SettingsShell({ items, account, children }: Props) {
   const content = useRef<HTMLDivElement>(null);
   const railId = useId();
   const mounted = useRef(false);
-  // Opening or closing a rail group must never move the window (Sam: no automatic
-  // scrolling). The window's scroll position at the moment a group toggle is
-  // pressed, or null when the last press was not a group toggle.
-  const scrollAtGroupPress = useRef<number | null>(null);
-
-  // After a group toggle commits, put the window back where it was if anything
-  // (a focus scroll, a taller rail) moved it. Checked twice: now, and after the
-  // browser's next frame.
-  useLayoutEffect(() => {
-    const saved = scrollAtGroupPress.current;
-    if (saved === null) return;
-    scrollAtGroupPress.current = null;
-    const restore = () => {
-      if (window.scrollY !== saved) window.scrollTo({ top: saved, behavior: "instant" });
-    };
-    restore();
-    const frame = window.requestAnimationFrame(restore);
-    return () => window.cancelAnimationFrame(frame);
-  }, [openId]);
 
   useEffect(() => {
     setOpenId(activeItem?.id ?? null);
@@ -215,15 +196,6 @@ export function SettingsShell({ items, account, children }: Props) {
             <nav
               aria-label="Settings sections"
               className="flex flex-col gap-1"
-              onPointerDownCapture={(e) => {
-                const toggle = (e.target as Element | null)?.closest?.("[data-rail-group-toggle]");
-                scrollAtGroupPress.current = toggle ? window.scrollY : null;
-              }}
-              onMouseDown={(e) => {
-                // A mouse press must not focus-scroll the toggle into view; keyboard
-                // focus (Tab) is untouched.
-                if ((e.target as Element | null)?.closest?.("[data-rail-group-toggle]")) e.preventDefault();
-              }}
               onClick={(e) => {
                 const target = e.target as Element | null;
                 if (!isRailLinkClick(target)) return;
@@ -284,7 +256,6 @@ export function SettingsShell({ items, account, children }: Props) {
                           type="button"
                           aria-expanded={open}
                           aria-controls={listId}
-                          data-rail-group-toggle
                           onClick={() => setOpenId(open ? null : entry.id)}
                           className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold tracking-tight text-neutral-900 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:focus-visible:outline-neutral-100 ${
                             isActive ? "bg-neutral-50 dark:bg-neutral-900" : ""
