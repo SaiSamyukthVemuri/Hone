@@ -30,7 +30,7 @@ export function ReassignRow({
   if (!canChange) {
     return (
       <p data-testid="check-practitioner-started" className="text-xs text-neutral-500">
-        This appointment has already started. Changing its practitioner is not available yet.
+        This appointment has already started. You, as the owner, complete this one from the calendar; its practitioner is not changed here.
       </p>
     );
   }

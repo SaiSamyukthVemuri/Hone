@@ -125,7 +125,7 @@ describe("reassignOpenAppointmentAction", () => {
   it("a started appointment is refused with a plain sentence and nothing is changed", async () => {
     ctx.appt = { id: A, status: "confirmed", starts_at: new Date(Date.now() - 36e5).toISOString(), ends_at: future(), practitioner_id: null };
     const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
-    expect(r).toEqual({ ok: false, error: "This appointment has already started. Changing its practitioner is not available yet." });
+    expect(r).toEqual({ ok: false, error: "This appointment has already started. You, as the owner, complete this one from the calendar; its practitioner is not changed here." });
     expect(ctx.rpc).toEqual([]);
   });
   it("not found / other studio, a closed appointment, the same practitioner, and malformed ids are refused without a command", async () => {
@@ -164,6 +164,14 @@ describe("source contracts", () => {
     expect(page).toContain("preferredNameColumn(withPreferred)");
     // the select never names preferred_name literally (that is what failed on a chain that lacks the column)
     expect(page).not.toMatch(/clients\(name, preferred_name\)/);
+  });
+  it("a started row says the owner completes it and offers no reassign control (Sam, option A)", () => {
+    const row = read("app/(app)/calendar/check-practitioner/ReassignRow.tsx");
+    const from = row.indexOf("if (!canChange)");
+    const started = row.slice(from, row.indexOf("\n  }\n", from));
+    expect(started).toContain("check-practitioner-started");
+    expect(started).toContain("complete this one");
+    expect(started).not.toMatch(/<button|<select|<form/);
   });
   it("the action sends no client email and no payment write", () => {
     const act = read("app/(app)/calendar/check-practitioner/actions.ts");

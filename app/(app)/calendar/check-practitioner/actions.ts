@@ -38,7 +38,7 @@ export async function reassignOpenAppointmentAction(formData: FormData): Promise
     // a separately reviewed command that does not exist yet; nothing is changed.
     return {
       ok: false,
-      error: "This appointment has already started. Changing its practitioner is not available yet.",
+      error: "This appointment has already started. You, as the owner, complete this one from the calendar; its practitioner is not changed here.",
     };
   }
 
