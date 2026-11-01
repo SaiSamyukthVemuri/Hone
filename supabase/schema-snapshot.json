@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 249,
-    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "e3877a03b2ac6c32d3d87e4c211e094383adbbd2a3c000a3ca1dc8170d005214"
+    "count": 250,
+    "last": "0277_appointment_completion_assigned_only.sql",
+    "sha256": "a65fb41de411f4b3919641ddac657287aceabefb9964ceb55538c58016416789"
   },
   "public": {
     "tables": [

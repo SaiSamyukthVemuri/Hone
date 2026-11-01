@@ -22,10 +22,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Relayed result: APPLIED+VERIFIED, 249 history rows, max 0257, reconcile finished, apply-state marker archived, no settings write. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0253` is present at the applied bytes (it arrived with #1135). |
+| **Repo migration max** | **0277** (`0277_appointment_completion_assigned_only.sql`, HON-44 completion boundary, authored on `team/hon44-completion-0277`, HELD DRAFT, **NOT applied**), derived from the source files on this tree. The previous max `0257` (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`) is the hosted head; `0253` is present at the applied bytes (it arrived with #1135). |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
-| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **`0277`** — `0277_appointment_completion_assigned_only.sql`, authored and **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. It replaces `mark_appointment_complete` only (assigned-only for a non-owner). It is held: never applied without Sam's per-change approval and Privacy then Insurance review. `0247`, `0249`-`0252`, `0255` and `0256` remain declared unhosted gaps below the hosted head, not a pending suffix. |
+| **Next free number** | Next free number is **0278** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation (`0277` is reserved to Team for the completion boundary), not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The 0253 apply (facts as relayed by Sam and recorded by OPS, 2026-10-31T20:35:52Z)
