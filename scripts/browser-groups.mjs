@@ -227,6 +227,8 @@ export const BROWSER_GROUPS = {
       "settings-nav-roles.spec.ts",
       "settings-display-prefs.spec.ts",
       "settings-shell-interactions.spec.ts",
+      "settings-r2-behaviours.spec.ts",
+      "settings-r2-sequence.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
