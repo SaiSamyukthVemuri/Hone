@@ -8,16 +8,20 @@ import { adminQuery, asRole, closePool, seedMember, seedStudio } from "./helpers
 
 const tokenHash = () => createHash("sha256").update(randomUUID()).digest("hex");
 
+// Distinct windows per appointment: the studio-wide overlap exclusion constraint rejects overlaps.
+let slot = 0;
 async function seedAppointment(studioId: string, clientId: string, practitionerId: string | null): Promise<string> {
+  const hoursAgo = 2 + 2 * slot++; // started, 30 minutes long, never overlapping another in the studio
   const r = await adminQuery(
     `insert into public.appointments
        (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status,
         cancellation_token_hash, buffer_minutes_snapshot, blocked_ends_at)
      values (gen_random_uuid(), $1, $2, $3,
-             now() - interval '30 minutes', now() + interval '30 minutes', 60, 'confirmed', $4,
-             15, now() + interval '45 minutes')
+             now() - ($5::text || ' hours')::interval,
+             now() - ($5::text || ' hours')::interval + interval '30 minutes', 30, 'confirmed', $4,
+             15, now() - ($5::text || ' hours')::interval + interval '45 minutes')
      returning id`,
-    [studioId, practitionerId, clientId, tokenHash()],
+    [studioId, practitionerId, clientId, tokenHash(), hoursAgo],
   );
   return r.rows[0].id as string;
 }

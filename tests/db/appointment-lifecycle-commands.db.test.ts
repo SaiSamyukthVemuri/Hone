@@ -275,8 +275,9 @@ describe("T6.1 mark_appointment_complete — unauthorized actor", () => {
   it("positive control: an ACTIVE practitioner of the studio completes an eligible appointment", async () => {
     // Deliberately the non-owner member: the gate is `active = true`, not the
     // owner role, and a test that only ever used the owner could not tell the
-    // difference.
-    const id = await mkAppt({ studio: A, when: "past" });
+    // difference. 0277 (decision 3): a non-owner completes only an appointment
+    // ASSIGNED to them, so this one is assigned to the member.
+    const id = await mkAppt({ studio: A, when: "past", practitionerId: memberA.practitionerId });
     await markComplete(id, A.studioId, memberA.practitionerId);
 
     const after = await snapshot(id);
