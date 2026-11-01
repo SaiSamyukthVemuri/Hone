@@ -186,8 +186,21 @@ describe("Insurance #1297 G1: the tracking form reads clean after a save with st
     require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
   it("a successful save puts the trimmed values back in the inputs", () => {
     const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
-    expect(src).toMatch(/setPixelId\(pixelId\.trim\(\)\)/);
-    expect(src).toMatch(/setTestCode\(testCode\.trim\(\)\)/);
+    expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
+    expect(src).toMatch(/setTestCode\(\(cur\) => \(cur === sentRawTest \? sent\.testCode : cur\)\)/);
+  });
+});
+
+describe("Insurance #1297 / Codex: edits typed while a tracking save is in flight survive it", () => {
+  it("normalizes and clears only fields still equal to what was sent, and marks saved what was sent", () => {
+    const src = require("node:fs").readFileSync(
+      require("node:path").resolve(__dirname, "../..", "app/(app)/settings/tracking/TrackingProviderForm.tsx"),
+      "utf8",
+    ) as string;
+    expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
+    expect(src).toMatch(/setTestCode\(\(cur\) => \(cur === sentRawTest \? sent\.testCode : cur\)\)/);
+    expect(src).toMatch(/setToken\(\(cur\) => \(cur === sentRawToken \? "" : cur\)\)/);
+    expect(src).toMatch(/setSaved\(sent\)/);
   });
 });
 
