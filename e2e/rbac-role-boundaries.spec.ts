@@ -11,6 +11,7 @@ import {
   seedE2eTodayAppointment,
   seedE2eUnlinkedSession,
   setPractitionerActive,
+  setStudioCapacityEnabled,
   sql,
   type E2eSeed,
 } from "./helpers/seed";
@@ -327,6 +328,156 @@ test("decision 3 (direct server-action calls): the replayed action is refused fo
   expect(ownerCross.body).toContain("can mark it complete");
   expect(await statusOf(bAppt)).toBe("confirmed");
 });
+
+// ---- 0277 workflow (Sam 1 Nov): assignment, explicit reassignment and completion in BOTH capacity modes.
+// Needs #1320 (picker, check-the-practitioner list) and #1315 (completion gate) in the build under test.
+
+async function seedFutureAppointment(studioId: string, clientId: string, practitionerId: string | null, daysAhead: number): Promise<string> {
+  const starts = new Date(Date.now() + daysAhead * 86_400_000);
+  starts.setUTCMinutes(0, 0, 0);
+  const ends = new Date(starts.getTime() + 30 * 60_000);
+  const rows = await sql<{ id: string }>(
+    `insert into public.appointments
+       (id, studio_id, client_id, practitioner_id, starts_at, ends_at,
+        duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+     values (gen_random_uuid(), $1, $2, $3, $4, $5, 30, 0, $5, 'confirmed')
+     returning id`,
+    [studioId, clientId, practitionerId, starts.toISOString(), ends.toISOString()],
+  );
+  return rows[0]!.id;
+}
+
+test("capacity OFF: the owner's check list shows a no-practitioner and an owner-assigned visit, changes NOTHING until a row is confirmed, and the change is audited", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const c = await seedE2eStudio();
+  await setStudioCapacityEnabled(c.studioId, false);
+  const m = await seedE2eMember(c); // a second ACTIVE practitioner, so an owner-assigned visit is "may be wrong"
+  const cli = await seedClientInStudio(c.studioId, "RBACZZCHECK");
+  const ownerId = (await sql<{ id: string }>(`select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`, [c.studioId]))[0]!.id;
+  const apptNone = await seedFutureAppointment(c.studioId, cli.clientId, null, 3);
+  const apptOwner = await seedFutureAppointment(c.studioId, cli.clientId, ownerId, 4);
+  const apptMember = await seedFutureAppointment(c.studioId, cli.clientId, m.practitionerId, 5); // control: not listed
+  const snap = async (id: string) =>
+    (await sql<{ practitioner_id: string | null; starts_at: string; status: string }>(
+      `select practitioner_id, starts_at::text, status from public.appointments where id = $1`, [id]))[0]!;
+  const beforeOwner = await snap(apptOwner);
+  const beforeMember = await snap(apptMember);
+
+  const ownerC = await browser.newContext();
+  const memberC = await browser.newContext();
+  try {
+    await loginByMagicLink(await ownerC.newPage(), c.ownerEmail);
+    await loginByMagicLink(await memberC.newPage(), m.email);
+
+    // A practitioner gets no page at all.
+    const mp = await memberC.newPage();
+    const denied = await mp.goto("/calendar/check-practitioner");
+    expect(denied?.status()).toBe(404);
+    await mp.close();
+
+    const page = await ownerC.newPage();
+    await page.goto("/calendar/check-practitioner");
+    const items = page.getByTestId("check-practitioner-item");
+    await expect(items).toHaveCount(2);
+    // Merely looking changed nothing.
+    expect(await snap(apptOwner)).toEqual(beforeOwner);
+    expect((await snap(apptNone)).practitioner_id).toBeNull();
+
+    // Explicit confirmation on the first row (ordered by start): assign the no-practitioner visit to the member.
+    const startsBefore = (await snap(apptNone)).starts_at;
+    await items.nth(0).getByTestId("check-practitioner-select").selectOption(m.practitionerId);
+    await items.nth(0).getByTestId("check-practitioner-confirm").click();
+    await expect.poll(async () => (await snap(apptNone)).practitioner_id, { timeout: 15_000 }).toBe(m.practitionerId);
+    const after = await snap(apptNone);
+    expect(after.starts_at).toBe(startsBefore); // same time
+    expect(after.status).toBe("confirmed");
+    const audit = await sql<{ n: number }>(
+      `select count(*)::int n from public.appointment_audit where appointment_id = $1 and action = 'reassigned'`, [apptNone]);
+    expect(audit[0]!.n).toBe(1);
+    // The other rows were not touched by that confirmation.
+    expect(await snap(apptOwner)).toEqual(beforeOwner);
+    expect(await snap(apptMember)).toEqual(beforeMember);
+    await page.reload();
+    await expect(items).toHaveCount(1);
+    await page.close();
+  } finally {
+    await Promise.all([ownerC.close(), memberC.close()]);
+  }
+});
+
+for (const capacity of [false, true]) {
+  test(`decision 3 with capacity ${capacity ? "ON" : "OFF"}: the assignee completes their own; a colleague's${capacity ? "" : " and an unassigned"} visit ${capacity ? "is" : "are"} refused; the owner completes any`, async ({ browser }) => {
+    test.setTimeout(150_000);
+    // OFF reuses studio A. ON gets its OWN studio: studio A still holds unassigned confirmed visits, which capacity ON refuses to coexist with.
+    let sid = seed.studioId;
+    let clientId = todayClient.clientId;
+    let mineId = member.practitionerId;
+    let theirId = otherMember.practitionerId;
+    let oCtx = ownerCtx;
+    let mCtx = memberCtx;
+    const extra: BrowserContext[] = [];
+    if (capacity) {
+      const d = await seedE2eStudio();
+      await setStudioCapacityEnabled(d.studioId, true);
+      const m1 = await seedE2eMember(d);
+      const m2 = await seedE2eMember(d);
+      const cli = await seedClientInStudio(d.studioId, "RBACZZON");
+      sid = d.studioId;
+      clientId = cli.clientId;
+      mineId = m1.practitionerId;
+      theirId = m2.practitionerId;
+      oCtx = await browser.newContext();
+      mCtx = await browser.newContext();
+      extra.push(oCtx, mCtx);
+      await loginByMagicLink(await oCtx.newPage(), d.ownerEmail);
+      await loginByMagicLink(await mCtx.newPage(), m1.email);
+    } else {
+      await setStudioCapacityEnabled(sid, false);
+    }
+    try {
+      const base = capacity ? 600 : 500; // distinct windows per mode
+      const mine = await seedStartedAppointment(sid, clientId, mineId, base);
+      const theirs = await seedStartedAppointment(sid, clientId, theirId, base - 60);
+      // Capacity ON cannot hold an unassigned confirmed visit at all (0134 CHECK), so that case exists only in capacity OFF.
+      const none = capacity ? null : await seedStartedAppointment(sid, clientId, null, base - 120);
+      const others = [theirs, none].filter((x): x is string => !!x);
+
+      for (const id of others) {
+        const t = await openCalendarAppointment(mCtx, id);
+        await expect(t.getByTestId("completion-not-assigned")).toBeVisible();
+        await expect(completeButton(t)).toHaveCount(0);
+        await t.close();
+      }
+
+      const own = await openCalendarAppointment(mCtx, mine);
+      await expect(completeButton(own)).toBeVisible();
+      await completeButton(own).click();
+      await own.getByRole("button", { name: "Mark completed", exact: true }).last().click();
+      await expect.poll(() => statusOf(mine), { timeout: 15_000 }).toBe("completed");
+      await own.close();
+
+      // Direct server-action replay (the request captured by the decision-3 case above): refused, nothing changes.
+      if (template) {
+        for (const id of others) {
+          const r = await replayCompletion(mCtx.request, id);
+          expect(r.body).toContain("can mark it complete");
+        }
+      }
+      for (const id of others) expect(await statusOf(id)).toBe("confirmed");
+
+      // Owner control: completes the colleague's and, in capacity OFF, the unassigned one.
+      for (const id of others) {
+        const o = await openCalendarAppointment(oCtx, id);
+        await completeButton(o).click();
+        await o.getByRole("button", { name: "Mark completed", exact: true }).last().click();
+        await expect.poll(() => statusOf(id), { timeout: 15_000 }).toBe("completed");
+        await o.close();
+      }
+    } finally {
+      await Promise.all(extra.map((c) => c.close()));
+    }
+  });
+}
 
 test("revocation: the OLD practitioner cookie is refused at once on HTML, RSC and prefetch", async ({ playwright }) => {
   const baseURL = E2E_APP_ORIGIN;
