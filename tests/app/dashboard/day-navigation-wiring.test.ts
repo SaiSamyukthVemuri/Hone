@@ -309,9 +309,9 @@ describe("#598 survives on every day", () => {
     ).toBeGreaterThan(-1);
     const historyBlock = fromWorkflow.slice(0, rowBodyEnd);
     expect(historyBlock).not.toMatch(/CardOnFilePill|resolveCardOnFileStatus/);
-    expect(historyBlock).not.toMatch(/tab=consultation/);
+    expect(historyBlock).not.toMatch(/tab=(consultation|treatment)/);
     expect(CODE).toMatch(/<CardOnFilePill status=\{cardOnFile\}/);
-    expect(CODE).toMatch(/tab=consultation/);
+    expect(CODE).toMatch(/tab=treatment/);
   });
 
   it("the card load is still ONE bounded, studio-scoped batch for the day's clients", () => {

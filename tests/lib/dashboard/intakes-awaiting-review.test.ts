@@ -80,92 +80,109 @@ describe("selectClientsAwaitingIntakeReview (R3 newest-intake rule)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The loader: deleted rows are excluded in the query, and the read pages past
-// PostgREST's 1000-row cap rather than undercount.
+// The loader: bounded (Insurance B2). Step 1 reads only clients with a submitted
+// form; step 2 reads the rows of just those clients, chunked. A failure or a
+// ceiling REFUSES so the caller can show "unavailable" for this count only.
 // ---------------------------------------------------------------------------
 
-type DbRow = TodayIntakeRow & { deleted_at: string | null };
+type DbRow = TodayIntakeRow & { id: string; deleted_at: string | null };
 
-function fakeSupabase(intakes: DbRow[], clients: Array<{ id: string; name: string }>) {
-  const calls = { ranges: [] as Array<[number, number]>, isDeleted: [] as unknown[] };
+function fakeSupabase(
+  intakes: DbRow[],
+  clients: Array<{ id: string; name: string }>,
+  opts: { failStep?: 1 | 2 | "names" } = {},
+) {
+  const calls = {
+    intakeReads: [] as Array<{ status?: unknown; inClientIds?: string[]; range?: [number, number] }>,
+    notDeleted: 0,
+  };
   const from = (table: string) => {
-    const state: { range?: [number, number]; ids?: string[] } = {};
-    const builder: Record<string, unknown> = {};
-    const chain = () => builder;
-    builder.select = chain;
-    builder.eq = chain;
-    builder.order = chain;
-    builder.is = (_col: string, val: unknown) => {
-      calls.isDeleted.push(val);
-      return builder;
-    };
-    builder.in = (_col: string, ids: string[]) => {
-      state.ids = ids;
-      return builder;
-    };
-    builder.range = (a: number, b: number) => {
-      state.range = [a, b];
-      calls.ranges.push([a, b]);
-      return builder;
-    };
-    builder.then = (resolve: (v: unknown) => unknown) => {
+    const f: { eq: Record<string, unknown>; ids?: string[]; range?: [number, number]; deleted?: boolean } = { eq: {} };
+    const b: Record<string, unknown> = {};
+    const self = () => b;
+    b.select = self;
+    b.order = self;
+    b.eq = (c: string, v: unknown) => ((f.eq[c] = v), b);
+    b.is = () => ((f.deleted = true), b);
+    b.in = (_c: string, ids: string[]) => ((f.ids = ids), b);
+    b.range = (a: number, z: number) => ((f.range = [a, z]), b);
+    b.then = (resolve: (v: unknown) => unknown) => {
       if (table === "client_intake_forms") {
-        const live = intakes
-          .filter((r) => r.deleted_at === null)
-          .sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
-        const [a, b] = state.range ?? [0, live.length];
-        return resolve({ data: live.slice(a, b + 1), error: null });
+        const step = f.ids ? 2 : 1;
+        calls.intakeReads.push({ status: f.eq.status, inClientIds: f.ids, range: f.range });
+        if (f.deleted) calls.notDeleted += 1;
+        if (opts.failStep === step) return resolve({ data: null, error: { message: "x" } });
+        let rows = intakes.filter((r) => r.deleted_at === null);
+        if (f.eq.status !== undefined) rows = rows.filter((r) => r.status === f.eq.status);
+        if (f.ids) rows = rows.filter((r) => f.ids!.includes(r.client_id));
+        rows = rows.sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
+        const [a, z] = f.range ?? [0, rows.length];
+        return resolve({ data: rows.slice(a, z + 1), error: null });
       }
-      return resolve({
-        data: clients.filter((c) => state.ids?.includes(c.id)),
-        error: null,
-      });
+      if (opts.failStep === "names") return resolve({ data: null, error: { message: "x" } });
+      return resolve({ data: clients.filter((c) => f.ids?.includes(c.id)), error: null });
     };
-    return builder;
+    return b;
   };
   return { client: { from } as never, calls };
 }
 
-describe("getIntakesAwaitingReview", () => {
-  it("ignores deleted rows: a deleted newer form does not hide the live submitted one", async () => {
+const dbRow = (id: string, client_id: string, status: TodayIntakeRow["status"], created_at: string, deleted_at: string | null = null): DbRow => ({
+  id,
+  client_id,
+  status,
+  created_at,
+  deleted_at,
+});
+
+describe("getIntakesAwaitingReview (bounded)", () => {
+  it("applies the newest-row rule across both steps and ignores deleted rows", async () => {
     const { client, calls } = fakeSupabase(
       [
-        { client_id: "a", status: "submitted", created_at: "2026-10-01T10:00:00Z", deleted_at: null },
-        { client_id: "a", status: "in_progress", created_at: "2026-10-05T10:00:00Z", deleted_at: "2026-10-06T00:00:00Z" },
+        dbRow("1", "a", "submitted", "2026-10-01T10:00:00Z"),
+        // a deleted newer in-progress reissue must NOT hide the live submitted one
+        dbRow("2", "a", "in_progress", "2026-10-05T10:00:00Z", "2026-10-06T00:00:00Z"),
+        // b: older submitted, newer LIVE in-progress -> not counted
+        dbRow("3", "b", "submitted", "2026-10-02T10:00:00Z"),
+        dbRow("4", "b", "in_progress", "2026-10-06T10:00:00Z"),
       ],
-      [{ id: "a", name: "Client A" }],
+      [{ id: "a", name: "Client A" }, { id: "b", name: "Client B" }],
     );
     const out = await getIntakesAwaitingReview(client, "studio-1");
-    expect(out).toEqual([
-      { clientId: "a", clientName: "Client A", submittedAt: "2026-10-01T10:00:00Z" },
-    ]);
-    // The query itself asks for non-deleted rows only.
-    expect(calls.isDeleted).toContain(null);
+    expect(out).toEqual([{ clientId: "a", clientName: "Client A", submittedAt: "2026-10-01T10:00:00Z" }]);
+    expect(calls.notDeleted).toBe(calls.intakeReads.length);
   });
 
-  it("pages past the 1000-row cap instead of undercounting", async () => {
-    const many: DbRow[] = Array.from({ length: 1500 }, (_, i) => ({
-      client_id: `c${i}`,
-      status: "submitted" as const,
-      created_at: new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString(),
-      deleted_at: null,
-    }));
-    const { client, calls } = fakeSupabase(many, []);
+  it("never reads clients that have no submitted form (size follows submitted forms, not history)", async () => {
+    const history: DbRow[] = Array.from({ length: 3000 }, (_, i) => dbRow(`r${i}`, `old${i}`, "reviewed", new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString()));
+    const { client, calls } = fakeSupabase([...history, dbRow("s", "a", "submitted", "2026-10-01T10:00:00Z")], [{ id: "a", name: "Client A" }]);
     const out = await getIntakesAwaitingReview(client, "studio-1");
-    expect(out).toHaveLength(1500);
-    expect(calls.ranges.map((r) => r[0])).toEqual([0, 1000]);
+    expect(out.map((r) => r.clientId)).toEqual(["a"]);
+    // Step 1 asked for submitted only; step 2 asked for just the one candidate.
+    expect(calls.intakeReads[0].status).toBe("submitted");
+    expect(calls.intakeReads[1].inClientIds).toEqual(["a"]);
+    expect(calls.intakeReads).toHaveLength(2);
   });
 
-  it("refuses (throws) rather than return a silently truncated count", async () => {
-    const endless: DbRow[] = Array.from({ length: 20_001 }, (_, i) => ({
-      client_id: `c${i}`,
-      status: "submitted" as const,
-      created_at: new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString(),
-      deleted_at: null,
-    }));
+  it("chunks the per-client read and pages past 1000 submitted forms", async () => {
+    const many = Array.from({ length: 1250 }, (_, i) => dbRow(`r${i}`, `c${i}`, "submitted", new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString()));
+    const { client, calls } = fakeSupabase(many, many.map((r) => ({ id: r.client_id, name: r.client_id })));
+    const out = await getIntakesAwaitingReview(client, "studio-1");
+    expect(out).toHaveLength(1250);
+    const step1 = calls.intakeReads.filter((c) => !c.inClientIds);
+    expect(step1.map((c) => c.range![0])).toEqual([0, 1000]);
+    const step2 = calls.intakeReads.filter((c) => c.inClientIds);
+    expect(Math.max(...step2.map((c) => c.inClientIds!.length))).toBeLessThanOrEqual(100);
+  });
+
+  it.each([1, 2, "names"] as const)("a failed step (%s) refuses with the fixed message, so the caller can say 'unavailable'", async (failStep) => {
+    const { client } = fakeSupabase([dbRow("1", "a", "submitted", "2026-10-01T10:00:00Z")], [{ id: "a", name: "Client A" }], { failStep });
+    await expect(getIntakesAwaitingReview(client, "studio-1")).rejects.toThrow("Failed to count intakes awaiting review");
+  });
+
+  it("refuses past the page ceiling rather than undercount", async () => {
+    const endless = Array.from({ length: 20_001 }, (_, i) => dbRow(`r${i}`, `c${i}`, "submitted", new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString()));
     const { client } = fakeSupabase(endless, []);
-    await expect(getIntakesAwaitingReview(client, "studio-1")).rejects.toThrow(
-      "Failed to count intakes awaiting review",
-    );
+    await expect(getIntakesAwaitingReview(client, "studio-1")).rejects.toThrow("Failed to count intakes awaiting review");
   });
 });

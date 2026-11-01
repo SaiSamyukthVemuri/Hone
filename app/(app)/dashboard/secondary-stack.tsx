@@ -2,6 +2,8 @@ import Link from "next/link";
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
 import { BookingSetupCard } from "./BookingSetupCard";
+import { PersonalChartingCard } from "./personal-charting-card";
+import type { ChartedWithin24hMetrics } from "@/lib/dashboard/practice-metrics";
 import { SetupStateNotice } from "./setup-state-notice";
 import { buildSetupCardState } from "@/lib/dashboard/setup-card-model";
 import { STAFF_MANAGED_UNKNOWN } from "@/lib/dashboard/staff-managed";
@@ -70,7 +72,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 // only consumer and `loadPaymentStatus` is private to the page module.
 type AttentionSources = readonly [
   // R3: the clients whose CURRENT intake is awaiting review (not a row count).
-  ReadonlyArray<IntakeAwaitingReview>,
+  // `unavailable` = the intake read failed or hit its ceiling (this one count
+  // only; the rest of Needs attention still renders).
+  ReadonlyArray<IntakeAwaitingReview> | typeof CHECK_UNAVAILABLE,
   number,
   // `unavailable` = the owner's payment read failed (not "no payment setup").
   | Parameters<typeof buildDashboardTodo>[0]["studio"]["paymentStatus"]
@@ -83,6 +87,8 @@ type Props = {
   attentionSources: Promise<AttentionSources>;
   /** HON-65: own deferred read (never throws; false on any error). */
   staffManaged: Promise<boolean>;
+  /** A practitioner's own charting figure; `null` for the owner (not read). */
+  personalCharting: Promise<ChartedWithin24hMetrics | typeof CHECK_UNAVAILABLE | null>;
   /** The same read, with a failure kept distinct (`unknown`). */
   staffManagedRead: Promise<boolean | typeof STAFF_MANAGED_UNKNOWN>;
   /**
@@ -165,6 +171,7 @@ export async function SecondaryStack({
   attentionSources,
   staffManaged: staffManagedPromise,
   staffManagedRead: staffManagedReadPromise,
+  personalCharting: personalChartingPromise,
   bookingReadiness,
   practiceMetrics: practiceMetricsPromise,
   gettingStartedSignals: gettingStartedSignalsPromise,
@@ -178,6 +185,7 @@ export async function SecondaryStack({
   // To do / Needs attention sources are consumed by NeedsAttentionSection.
   const [, , , birthdaysThisMonth] = await attentionSources;
   const staffManaged = await staffManagedPromise;
+  const personalCharting = await personalChartingPromise;
   const staffManagedUnknown = (await staffManagedReadPromise) === STAFF_MANAGED_UNKNOWN;
 
   // ONB-03: THE CANONICAL AUTHORITY, AWAITED INDEPENDENTLY (unchanged: the page
@@ -220,6 +228,11 @@ export async function SecondaryStack({
           functionality. */}
       {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
           not its counts, period filter or copy, is rendered into the response. the metrics loader itself no longer runs for a non-owner (WS-DB); the roll-up they need comes from `getProcedureActionMetrics`. */}
+      {!isOwner && personalCharting !== null && (
+        <PersonalChartingCard
+          metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
+        />
+      )}
       {isOwner && staffManagedUnknown && (
         <p
           role="status"
@@ -470,8 +483,10 @@ export async function NeedsAttentionSection({
   isOwner: boolean;
   todayLocal: string;
 }) {
-  const [intakesAwaitingReview, activeServicesCount, paymentStatusRead] =
+  const [intakesRead, activeServicesCount, paymentStatusRead] =
     await attentionSources;
+  const intakesUnavailable = intakesRead === CHECK_UNAVAILABLE;
+  const intakesAwaitingReview = intakesUnavailable ? [] : intakesRead;
   const paymentUnavailable = paymentStatusRead === CHECK_UNAVAILABLE;
   const paymentStatus = paymentUnavailable ? null : paymentStatusRead;
   const staffManaged = await staffManagedPromise;
@@ -502,7 +517,10 @@ export async function NeedsAttentionSection({
         assistant: followUpAssistant,
         intakesAwaitingReview,
         todo: dashboardTodo,
-        unavailableChecks: paymentUnavailable ? ["payment setup"] : [],
+        unavailableChecks: [
+          ...(intakesUnavailable ? ["intake review"] : []),
+          ...(paymentUnavailable ? ["payment setup"] : []),
+        ],
         recordDetailGaps: procedureActions.detailGaps,
         upcomingVisitClientIds:
           upcomingVisitClients === CHECK_UNAVAILABLE

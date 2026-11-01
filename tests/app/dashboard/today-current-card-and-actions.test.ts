@@ -98,9 +98,9 @@ describe("A — Current", () => {
 // B — consultation notes in one tap, to the EXISTING writer
 // ---------------------------------------------------------------------------
 describe("B — Consultation notes", () => {
-  it("the row links to the canonical consultation tab", () => {
+  it("the row links to the profile Treatment tab, where consultation notes live", () => {
     expect(ROW).toMatch(
-      /href=\{`\/clients\/\$\{appt\.client_id\}\?tab=consultation`\}/,
+      /href=\{`\/clients\/\$\{appt\.client_id\}\?tab=treatment`\}/,
     );
     expect(ROW).toMatch(/data-testid="today-consultation-notes"/);
     // No invented route and no second composer.
