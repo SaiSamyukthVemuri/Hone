@@ -237,9 +237,9 @@ test("core memory loop: booking to next-appointment memory", async ({
     // bounded studio-scoped loader exercises the recent-sessions /
     // completed-appt / intake reads against the real local DB). Dashboard V2
     // Part 2B retired its standalone card: its gaps now render as rows of the
-    // ONE To do list, so assert on the section that owns them. The heading is
+    // grouped Needs attention list (WS-DB), so assert on the section that owns them. The heading is
     // present whether there are gaps or the calm empty state.
-    await expect(page.getByRole("heading", { name: "To do" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Follow-up assistant" }),
     ).toHaveCount(0);

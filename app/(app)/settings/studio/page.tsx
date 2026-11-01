@@ -1,5 +1,5 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { resolveTimeFormat } from "@/lib/booking/tz";
+import { HashRedirect } from "@/components/settings/hash-redirect";
 import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
 import { SmsSettingsForm } from "./SmsSettingsForm";
@@ -12,6 +12,11 @@ import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-ser
 // editing moved to /settings/intake (Intake & Postcare tab) after
 // Chloe's retest; the form component itself is unchanged and is
 // still owner-gated server-side via updateStudioPostcareAction.
+
+const MOVED_SECTIONS = {
+  "birthday-color": "/settings/calendar#birthday-color",
+  "time-format": "/settings/calendar#time-format",
+} as const;
 
 export default async function StudioSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
@@ -29,7 +34,9 @@ export default async function StudioSettingsPage() {
 
   return (
     <section className="flex flex-col gap-10">
-      <div>
+      {/* The display preferences moved to Calendar; keep old deep links working. */}
+      <HashRedirect moved={MOVED_SECTIONS} />
+      <div id="studio-details" className="scroll-mt-24">
         <h2 className="text-xl font-medium">Studio</h2>
         <p className="mt-1 text-sm text-neutral-500">
           Change your studio name and legal entity. Visible to your team.
@@ -39,8 +46,6 @@ export default async function StudioSettingsPage() {
         initialName={studio.name}
         initialLegalEntity={studio.legal_entity_name ?? ""}
         ownerEmail={studio.owner_email}
-        initialBirthdayColor={studio.birthday_reminder_color}
-        initialTimeFormat={resolveTimeFormat(studio)}
       />
       <EmailSettingsForm
         initial={{

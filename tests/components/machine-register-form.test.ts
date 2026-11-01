@@ -64,13 +64,9 @@ describe("the owner route stays reviewed-only and owner-only", () => {
     expect(page).not.toMatch(/register_studio_machine|\.rpc\(/);
   });
 
-  it("the tab is inside the owner-only block of the settings layout", () => {
-    const layout = read("app/(app)/settings/layout.tsx");
-    const owner = layout.indexOf("isOwner\n      ? [");
-    const tab = layout.indexOf('"/settings/machines"');
-    expect(owner).toBeGreaterThan(-1);
-    expect(tab).toBeGreaterThan(owner);
-    expect(layout.slice(owner, tab)).not.toContain(": []");
+  it("the tab is an owner-only entry in the settings nav registry", () => {
+    const registry = read("lib/settings/nav-registry.ts");
+    expect(registry).toMatch(/href: "\/settings\/machines", roles: OWNER/);
   });
 
   it("CONTROL: with the shipped catalogue the list is whatever is active, never inactive", () => {
@@ -110,10 +106,13 @@ describe("R5: one shared owner-input wording", () => {
     expect(read("app/(app)/settings/machines/page.tsx")).toMatch(/\{OWNER_INPUT_REQUEST\}/);
   });
 
-  it("the charting panel hint, once it carries the review caveat, carries this exact text", () => {
-    const panel = squash(read("components/machines/machine-first-setup-panel.tsx"));
-    if (!panel.includes("Sending this starts a review")) return; // #1272 not merged yet
-    expect(panel).toContain(OWNER_INPUT_REQUEST);
+  it("the charting panel renders the constant, not its own copy", () => {
+    const panel = read("components/machines/machine-first-setup-panel.tsx");
+    expect(panel).toMatch(/from "@\/lib\/machines\/owner-input-copy"/);
+    expect(panel).toMatch(/\{OWNER_INPUT_REQUEST\}/);
+    // No second copy of the wording may creep back in beside the constant.
+    expect(squash(panel)).not.toContain("Sending this starts a review");
+    expect(squash(panel)).not.toContain("with no client on screen");
   });
 });
 

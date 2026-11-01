@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 
 import { Button } from "@/components/ui/button";
 
@@ -37,6 +38,18 @@ export function TrackingProviderForm({
   const [token, setToken] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState({
+    enabled: current?.enabled ?? false,
+    pixelId: current?.browserTagId ?? "",
+    testCode: current?.testEventCode ?? "",
+  });
+  useUnsavedChangesGuard(
+    `tracking-${provider}`,
+    enabled !== saved.enabled ||
+      pixelId !== saved.pixelId ||
+      testCode !== saved.testCode ||
+      token !== "",
+  );
   const [pending, start] = useTransition();
 
   const hasToken = current?.tokenStatus === "active" && !!current?.tokenLast4;
@@ -50,11 +63,20 @@ export function TrackingProviderForm({
     fd.set("test_event_code", testCode.trim());
     fd.set("enabled", enabled ? "true" : "false");
     if (token.trim()) fd.set("token", token.trim());
+    // What was SENT. Edits typed while the save is in flight must survive it:
+    // only a field still equal to what was sent is normalized or cleared.
+    const sent = { enabled, pixelId: pixelId.trim(), testCode: testCode.trim() };
+    const sentRawPixel = pixelId;
+    const sentRawTest = testCode;
+    const sentRawToken = token;
     start(async () => {
       const r = await saveAction(fd);
       if (r.ok) {
-        setToken("");
-        setMsg(hasToken && token.trim() ? "Saved. Token rotated." : "Saved.");
+        setToken((cur) => (cur === sentRawToken ? "" : cur));
+        setPixelId((cur) => (cur === sentRawPixel ? sent.pixelId : cur));
+        setTestCode((cur) => (cur === sentRawTest ? sent.testCode : cur));
+        setSaved(sent);
+        setMsg(hasToken && sentRawToken.trim() ? "Saved. Token rotated." : "Saved.");
       } else setErr(r.error);
     });
   }
@@ -68,6 +90,7 @@ export function TrackingProviderForm({
       const r = await clearTokenAction(fd);
       if (r.ok) {
         setEnabled(false);
+        setSaved((s) => ({ ...s, enabled: false }));
         setMsg("Token removed. Provider disabled.");
       } else setErr(r.error);
     });
