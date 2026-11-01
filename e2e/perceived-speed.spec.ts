@@ -336,7 +336,8 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
     const landed = new URL(page.url());
     expect(landed.pathname).toBe(`/clients/${client.clientId}`);
     // The requested tab is preserved — the acknowledgement changed no semantics.
-    expect(landed.searchParams.get("tab")).toBe("consultation");
+    // ?tab=consultation is a legacy link: the server redirects it to Treatment.
+    expect(landed.searchParams.get("tab")).toBe("treatment");
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
     await expect(liveRegion).toHaveCount(0);
   });
@@ -932,7 +933,7 @@ test.describe("UI-01D Client Profile tabs — desktop", () => {
 
     await test.step("a second, unheld tab change leaves nothing behind", async () => {
       await page.unrouteAll({ behavior: "wait" });
-      const personal = tabRow.getByRole("button", { name: "Personal Notes" });
+      const personal = tabRow.getByRole("button", { name: "Notes", exact: true });
       await personal.click();
       await expect(personal).toHaveAttribute("aria-current", "page", {
         timeout: T,
@@ -1031,11 +1032,10 @@ test.describe("UI-01E navigation touch floor — 390px", () => {
     const seed = await seedE2eStudio();
     const client = await seedE2eDashboardClient(seed, { label: "Touch Floor Mobile" });
     await loginAsOwner(page, seed);
-    await page.goto(`/clients/${client.clientId}`);
+    await page.goto(`/clients/${client.clientId}?tab=photos`);
 
-    // `md:hidden` — this control exists only below 768px, which is the width
-    // the practitioner's phone actually reports.
-    const photos = page.getByRole("link", { name: "Treatment Photos →" });
+    // The link now lives on the Photos tab (the bar no longer hosts it).
+    const photos = page.getByRole("link", { name: "Open treatment photos" });
     await provesTheTouchFloor(page, photos, "treatment photos");
 
     await photos.click();

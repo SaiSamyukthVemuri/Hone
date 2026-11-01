@@ -27,7 +27,7 @@ describe("G1 — the appointment reaches the notes", () => {
 
   it("the CTA deep-links to the EXISTING consultation tab, not a new route", () => {
     expect(CARD).toMatch(
-      /href = `\/clients\/\$\{clientId\}\?tab=consultation`/,
+      /href = `\/clients\/\$\{clientId\}\?tab=treatment`/,
     );
     // No invented route, and no note-composer of its own.
     expect(CARD).not.toMatch(/\/consultation\/new|\/notes\/new/);

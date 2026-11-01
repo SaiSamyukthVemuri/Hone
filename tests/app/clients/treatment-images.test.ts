@@ -77,7 +77,7 @@ describe("no public/client-facing exposure", () => {
     // (a "Treatment Photos" route link), so it is no longer buried.
     // The client profile redesign made Photos its own tab; it links to the route.
     const page = read("app/(app)/clients/[id]/page.tsx");
-    expect(page).toMatch(/Treatment photos/);
+    expect(page).toMatch(/Open treatment photos/);
     expect(page).toMatch(/\/clients\/\$\{client\.id\}\/images/);
   });
 });

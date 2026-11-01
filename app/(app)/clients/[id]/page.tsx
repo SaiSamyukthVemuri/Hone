@@ -1501,7 +1501,7 @@ export default async function ClientCheatSheetPage({
       {activeTab === "photos" && (
         <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
           <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Treatment photos
+            Photos
           </h2>
           <p className="text-sm text-neutral-500">
             Before and after photos for this client's sessions.
