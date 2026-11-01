@@ -57,7 +57,20 @@ function EntryRow({ entry }: { entry: AttentionEntry }) {
 export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
   const [expanded, setExpanded] = useState(false);
 
+  const unavailableNote =
+    needs.unavailableChecks.length > 0 ? (
+      <p
+        role="status"
+        data-testid="needs-attention-unavailable"
+        className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+      >
+        Could not check {needs.unavailableChecks.join(" and ")} just now, so
+        this list may be incomplete. Reload to try again.
+      </p>
+    ) : null;
+
   if (needs.entries.length === 0 && needs.others.length === 0) {
+    if (unavailableNote) return unavailableNote;
     return (
       <p className="rounded-lg border border-dashed border-neutral-300 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-700">
         Nothing needs attention right now. Finished work drops off this list
@@ -76,6 +89,7 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {unavailableNote}
       {needs.entries.length > 0 && (
         <>
           <p

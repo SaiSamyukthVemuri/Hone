@@ -31,6 +31,10 @@ import { practitionerIntakeReviewHref } from "./today-intake";
 // navigation to the existing page; an item leaves the list only when the
 // underlying record is genuinely finished.
 
+// A source that could not be read. Distinct from "read and found nothing": an
+// unreadable check must never look like a clean one.
+export const CHECK_UNAVAILABLE = "unavailable" as const;
+
 export type AttentionIssueKind =
   | "intake_review"
   | "intake_incomplete"
@@ -68,6 +72,9 @@ export type NeedsAttention = {
   // Gaps the sources know about but did not hand over because of a scan or
   // return cap. When > 0 the panel must say the list is not exhaustive.
   notReturnedCount: number;
+  // Names of checks that could not be read, in plain words. When non-empty the
+  // panel says the list may be incomplete and never shows the all-clear.
+  unavailableChecks: string[];
 };
 
 const GROUPED_TODO_KINDS: ReadonlySet<DashboardTodoItem["kind"]> = new Set([
@@ -90,6 +97,7 @@ export function buildNeedsAttention(input: {
   assistant: MissingRecordsAssistant;
   intakesAwaitingReview: ReadonlyArray<IntakeAwaitingReview>;
   todo: DashboardTodo;
+  unavailableChecks?: ReadonlyArray<string>;
 }): NeedsAttention {
   const byId = new Map<string, AttentionEntry>();
 
@@ -198,6 +206,7 @@ export function buildNeedsAttention(input: {
     entries,
     issueCount: entries.reduce((n, e) => n + e.issues.length, 0),
     others: input.todo.items.filter((i) => !GROUPED_TODO_KINDS.has(i.kind)),
+    unavailableChecks: [...(input.unavailableChecks ?? [])],
     notReturnedCount: Math.max(
       0,
       (input.assistant.allTotal ?? allItems.length) - allItems.length,

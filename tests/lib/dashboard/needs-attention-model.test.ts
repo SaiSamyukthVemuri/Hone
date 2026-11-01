@@ -158,3 +158,19 @@ describe("buildNeedsAttention grouping", () => {
     expect(out).toMatchObject({ entries: [], issueCount: 0, others: [], notReturnedCount: 0 });
   });
 });
+
+describe("buildNeedsAttention unavailable checks", () => {
+  it("carries the names of unreadable checks through unchanged", () => {
+    const out = buildNeedsAttention({
+      assistant: buildMissingRecordsAssistant({
+        unchartedAppointments: [],
+        sessions: [],
+        incompleteIntakes: [],
+      }),
+      intakesAwaitingReview: [],
+      todo: NO_TODO,
+      unavailableChecks: ["payment setup"],
+    });
+    expect(out.unavailableChecks).toEqual(["payment setup"]);
+  });
+});

@@ -15,7 +15,10 @@ import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assi
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { NeedsAttentionPanel } from "./needs-attention-panel";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
-import { buildNeedsAttention } from "@/lib/dashboard/needs-attention-model";
+import {
+  buildNeedsAttention,
+  CHECK_UNAVAILABLE,
+} from "@/lib/dashboard/needs-attention-model";
 import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
   buildGettingStarted,
@@ -66,7 +69,9 @@ type AttentionSources = readonly [
   // R3: the clients whose CURRENT intake is awaiting review (not a row count).
   ReadonlyArray<IntakeAwaitingReview>,
   number,
-  Parameters<typeof buildDashboardTodo>[0]["studio"]["paymentStatus"],
+  // `unavailable` = the owner's payment read failed (not "no payment setup").
+  | Parameters<typeof buildDashboardTodo>[0]["studio"]["paymentStatus"]
+  | typeof CHECK_UNAVAILABLE,
   Awaited<ReturnType<typeof getClientBirthdaysForMonth>>,
 ];
 
@@ -433,8 +438,10 @@ export async function NeedsAttentionSection({
   isOwner: boolean;
   todayLocal: string;
 }) {
-  const [intakesAwaitingReview, activeServicesCount, paymentStatus] =
+  const [intakesAwaitingReview, activeServicesCount, paymentStatusRead] =
     await attentionSources;
+  const paymentUnavailable = paymentStatusRead === CHECK_UNAVAILABLE;
+  const paymentStatus = paymentUnavailable ? null : paymentStatusRead;
   const staffManaged = await staffManagedPromise;
   const procedureActions = await procedureActionsPromise;
   const clientsNeedingAttention = await clientsNeedingAttentionPromise;
@@ -462,6 +469,7 @@ export async function NeedsAttentionSection({
         assistant: followUpAssistant,
         intakesAwaitingReview,
         todo: dashboardTodo,
+        unavailableChecks: paymentUnavailable ? ["payment setup"] : [],
       })}
     />
   );

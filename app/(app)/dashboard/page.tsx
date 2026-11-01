@@ -61,6 +61,7 @@ import {
   getPracticeDashboardMetrics,
   getProcedureActionMetrics,
 } from "@/lib/dashboard/practice-metrics";
+import { CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
 import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
 import {
@@ -1715,7 +1716,7 @@ type PaymentStatusForDashboard = {
 async function loadPaymentStatus(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
-): Promise<PaymentStatusForDashboard | null> {
+): Promise<PaymentStatusForDashboard | typeof CHECK_UNAVAILABLE> {
   // Uses the same display-safe RPC the Payments settings page reads from.
   // No Stripe SDK calls, no secrets, no Stripe IDs returned. Mode-scoped
   // (migration 0103): reads the CURRENT deployment mode's row only, so the
@@ -1735,7 +1736,9 @@ async function loadPaymentStatus(
         timestamp: new Date().toISOString(),
       }),
     );
-    return null;
+    // WS-DB: a failed read is "unavailable", never "no payment item". The panel
+    // says so instead of showing a clean list.
+    return CHECK_UNAVAILABLE;
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) {
