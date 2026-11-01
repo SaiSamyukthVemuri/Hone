@@ -106,7 +106,7 @@ describe("narrow-screen drawer closes on a same-page section link (Codex P2)", (
       "utf8",
     );
     expect(src).toMatch(
-      /onClick=\{\(e\) => \{\s*if \(isRailLinkClick\(e\.target as Element \| null\)\)\s*setDrawerOpen\(false\);/,
+      /onClick=\{\(e\) => \{\s*const target = e\.target as Element \| null;\s*if \(!isRailLinkClick\(target\)\) return;\s*setDrawerOpen\(false\);/,
     );
     expect(src).toMatch(/addEventListener\("hashchange", close\)/);
   });
@@ -377,5 +377,58 @@ describe("R2-F1 (Photos, 1 Nov): every rail view's heading carries the focus mar
   it("the marked heading is programmatically focusable and not outlined", () => {
     const profile = readFileSync(path.join(root, "app/(app)/settings/profile/page.tsx"), "utf8");
     expect(profile).toMatch(/<h2 tabIndex=\{-1\} data-settings-heading/);
+  });
+});
+
+describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Stay at 390", () => {
+  const root = path.resolve(__dirname, "../..");
+  const read = (f: string) => readFileSync(path.join(root, f), "utf8");
+
+  it("rail items use Sam's and the artifact's names", () => {
+    const reg = read("lib/settings/nav-registry.ts");
+    expect(reg).toMatch(/label: "Studio details"/);
+    expect(reg).not.toMatch(/label: "Details"/);
+    expect(reg).toMatch(/label: "Text-message preferences"/);
+    expect(reg).toMatch(/label: "Cancellation and no-show policy"/);
+    expect(reg).toMatch(/label: "Personal details"/);
+  });
+
+  it("every rail leaf view that uses SettingsViewHeading is titled exactly like its rail item", () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const reg = read("lib/settings/nav-registry.ts");
+    const items = Array.from(reg.matchAll(/label: "([^"]+)", href: "(\/settings\/[a-z0-9/-]+)"/g), (m) => ({ label: m[1], href: m[2] }));
+    expect(items.length).toBeGreaterThanOrEqual(15);
+    for (const { label, href } of items) {
+      const dir = path.join(root, "app/(app)", href);
+      const dirs = [dir, ...(/^\/settings\/(booking|payments)\//.test(href) ? [path.dirname(dir)] : [])];
+      const src = dirs
+        .filter((d) => fs.existsSync(d))
+        .flatMap((d) => fs.readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(path.join(d, f), "utf8")))
+        .join("\n");
+      // Team's rail item is a flat link whose view is headed "Practitioners".
+      if (label === "Team" || !/SettingsViewHeading/.test(src)) continue;
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/&/g, "(?:&|and)");
+      expect(src, `${href} heading should read "${label}"`).toMatch(new RegExp(`(title=\\{?"${escaped}"|data-settings-heading[^>]*>${escaped}<)`));
+    }
+  });
+
+  it("the scope sits in a chip beside the title", () => {
+    const src = read("components/settings/view-heading.tsx");
+    expect(src).toMatch(/rounded-full border/);
+    expect(src).toMatch(/justify-between/);
+  });
+
+  it("a rail pick of the open view moves focus to its heading", () => {
+    const src = read("components/settings/settings-shell.tsx");
+    expect(src).toMatch(/anchor\.pathname === pathname/);
+    expect(src).toMatch(/focusSettingsHeading\(content\.current/);
+  });
+
+  it("Stay closes the drawer and returns focus to the Menu button", () => {
+    const shell = read("components/settings/settings-shell.tsx");
+    const guard = read("components/settings/unsaved-changes.tsx");
+    expect(shell).toMatch(/<UnsavedChangesProvider onStay=\{stayOnPage\}>/);
+    expect(shell).toMatch(/const stayOnPage = \(\) => \{[\s\S]*setDrawerOpen\(false\)[\s\S]*menuButton\.current\?\.focus\(\)/);
+    expect(guard).toMatch(/onCancel=\{\(\) => \{\s*setLeaving\(null\);\s*onStay\?\.\(\);/);
   });
 });

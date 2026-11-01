@@ -113,13 +113,27 @@ export function SettingsShell({ items, account, children }: Props) {
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
+  // "Stay" on the unsaved-changes dialog: the held rail click never reached the
+  // drawer's own handler, so close the drawer here and put focus back on the
+  // Menu button (the rail link that had it is about to be hidden).
+  const stayOnPage = () => {
+    setDrawerOpen(false);
+    // Two frames: the dialog restores focus to its trigger first.
+    window.requestAnimationFrame(() =>
+      window.requestAnimationFrame(() => {
+        if (window.matchMedia("(min-width: 700px)").matches) return;
+        menuButton.current?.focus();
+      }),
+    );
+  };
+
   const groups = SETTINGS_NAV_GROUP_ORDER.map((group) => ({
     group,
     entries: items.filter((i) => i.group === group),
   })).filter((g) => g.entries.length > 0);
 
   return (
-    <UnsavedChangesProvider>
+    <UnsavedChangesProvider onStay={stayOnPage}>
       <HashRedirect />
       <div className="flex flex-col gap-6">
         {/* Sticky so the menu is reachable without scrolling back to the top. */}
@@ -170,8 +184,16 @@ export function SettingsShell({ items, account, children }: Props) {
               aria-label="Settings sections"
               className="flex flex-col gap-1"
               onClick={(e) => {
-                if (isRailLinkClick(e.target as Element | null))
-                  setDrawerOpen(false);
+                const target = e.target as Element | null;
+                if (!isRailLinkClick(target)) return;
+                setDrawerOpen(false);
+                // Choosing the view already open changes no pathname, so the
+                // route effect never runs: move focus to its heading here, or it
+                // falls to <body> when the drawer hides.
+                const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+                if (anchor && anchor.pathname === pathname) {
+                  focusSettingsHeading(content.current, document.activeElement);
+                }
               }}
             >
               {groups.map(({ group, entries }, groupIndex) => (

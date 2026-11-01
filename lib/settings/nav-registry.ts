@@ -65,7 +65,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     href: "/settings/studio",
     roles: OWNER,
     children: [
-      { id: "studio-details", label: "Details", href: "/settings/studio/details" },
+      { id: "studio-details", label: "Studio details", href: "/settings/studio/details" },
       { id: "studio-email", label: "Email notifications", href: "/settings/studio/email" },
       { id: "studio-text-messages", label: "Text-message preferences", href: "/settings/studio/text-messages" },
       { id: "studio-client-self-service", label: "Client self-service", href: "/settings/studio/client-self-service" },
@@ -83,7 +83,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
       // keeps the read-only intake preview.
       { id: "forms-postcare", label: "Postcare", href: "/settings/forms/postcare", roles: OWNER },
       { id: "forms-intake-preview", label: "Intake form preview", href: "/settings/forms/intake-preview" },
-      { id: "forms-cancellation-policy", label: "Cancellation policy", href: "/settings/forms/cancellation-policy", roles: OWNER },
+      { id: "forms-cancellation-policy", label: "Cancellation and no-show policy", href: "/settings/forms/cancellation-policy", roles: OWNER },
     ],
     order: 20,
   },

@@ -21,18 +21,22 @@ export function SettingsViewHeading({
 }) {
   return (
     <header>
-      <h2
-        tabIndex={-1}
-        data-settings-heading
-        className="scroll-mt-32 text-xl font-medium outline-none"
-      >
-        {title}
-      </h2>
-      {scope && (
-        <p className="mt-1 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-          {scope}
-        </p>
-      )}
+      {/* As in the approved settings artifact: the view name with its scope as a
+          chip beside it. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <h2
+          tabIndex={-1}
+          data-settings-heading
+          className="scroll-mt-32 text-xl font-medium outline-none"
+        >
+          {title}
+        </h2>
+        {scope && (
+          <span className="rounded-full border border-neutral-300 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-300">
+            {scope}
+          </span>
+        )}
+      </div>
       {children && <p className="mt-1 text-sm text-neutral-500">{children}</p>}
     </header>
   );

@@ -53,7 +53,14 @@ export function isLeavingNavigation(
   return url.pathname !== current.pathname || url.search !== current.search;
 }
 
-export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
+export function UnsavedChangesProvider({
+  children,
+  onStay,
+}: {
+  children: ReactNode;
+  /** Called when the person chooses "Stay" (the held navigation is dropped). */
+  onStay?: () => void;
+}) {
   const dirtyKeys = useRef(new Set<string>());
   const router = useRouter();
   const [leaving, setLeaving] = useState<string | null>(null);
@@ -114,7 +121,10 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
         confirmLabel="Leave"
         cancelLabel="Stay"
         onConfirm={leave}
-        onCancel={() => setLeaving(null)}
+        onCancel={() => {
+          setLeaving(null);
+          onStay?.();
+        }}
       />
     </GuardContext.Provider>
   );
