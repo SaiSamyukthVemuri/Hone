@@ -63,16 +63,20 @@ export function TrackingProviderForm({
     fd.set("test_event_code", testCode.trim());
     fd.set("enabled", enabled ? "true" : "false");
     if (token.trim()) fd.set("token", token.trim());
+    // What was SENT. Edits typed while the save is in flight must survive it:
+    // only a field still equal to what was sent is normalized or cleared.
+    const sent = { enabled, pixelId: pixelId.trim(), testCode: testCode.trim() };
+    const sentRawPixel = pixelId;
+    const sentRawTest = testCode;
+    const sentRawToken = token;
     start(async () => {
       const r = await saveAction(fd);
       if (r.ok) {
-        setToken("");
-        // The server stores the trimmed values; keep the inputs equal to what was
-        // saved, or a stray space leaves the form dirty after "Saved." (Insurance G1).
-        setPixelId(pixelId.trim());
-        setTestCode(testCode.trim());
-        setSaved({ enabled, pixelId: pixelId.trim(), testCode: testCode.trim() });
-        setMsg(hasToken && token.trim() ? "Saved. Token rotated." : "Saved.");
+        setToken((cur) => (cur === sentRawToken ? "" : cur));
+        setPixelId((cur) => (cur === sentRawPixel ? sent.pixelId : cur));
+        setTestCode((cur) => (cur === sentRawTest ? sent.testCode : cur));
+        setSaved(sent);
+        setMsg(hasToken && sentRawToken.trim() ? "Saved. Token rotated." : "Saved.");
       } else setErr(r.error);
     });
   }
