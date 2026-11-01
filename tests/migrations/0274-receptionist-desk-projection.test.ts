@@ -99,6 +99,10 @@ describe("0274: directory", () => {
     expect(DIR).toContain("raise exception 'query_too_short'");
     expect(DIR).toContain("pg_catalog.pg_timezone_names");
   });
+  it("L7 (Insurance): the function never reads the sessions table (comments and string literals removed)", () => {
+    const code = `${DIR}\n${CAL}`.replace(/--[^\n]*/g, "").replace(/'(?:[^']|'')*'/g, "''");
+    expect(code).not.toMatch(/\bsessions\b|\bsession_blocks\b|\btreatment_sessions\b/);
+  });
   it("last visit is the completed-appointments source only, as a date; next is confirmed and in the future", () => {
     expect(DIR).toContain("a.status = 'completed'");
     expect(DIR).toContain("a.starts_at <= pg_catalog.now()");

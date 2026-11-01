@@ -256,6 +256,72 @@ describe("R1: the schedule", () => {
   });
 });
 
+describe("Privacy C2 and Insurance L7 (reviews of 0274 at 236e34d6)", () => {
+  const MARK = ["MARK-APPT-NOTE", "MARK-CANCEL-REASON", "MARK-ADDRESS", "MARK-DOB"];
+  const cal = (uid: string, studio: string) =>
+    asUser(uid, (x) => x(`select * from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')`, [studio]));
+
+  it("neither function returns a planted note, cancellation reason, address or date of birth (owner control: the staff path DOES read them)", async () => {
+    await adminQuery("update public.appointments set notes = $2 where studio_id = $1 and client_id = $3 and status = 'confirmed' and starts_at > now()", [a.studioId, MARK[0], ids.maggie]);
+    await addAppt(a, ids.maggie, "cancelled", "2031-03-05T15:00:00Z");
+    await adminQuery("update public.appointments set cancellation_reason = $2 where studio_id = $1 and client_id = $3 and status = 'cancelled' and starts_at = '2031-03-05T15:00:00Z'", [a.studioId, MARK[1], ids.maggie]);
+    await adminQuery("update public.clients set address = $2, date_of_birth = '1990-01-01' where id = $1", [ids.maggie, MARK[2]]);
+    // positive control: a staff (owner) session reads the planted values, so the markers are really there.
+    const staffNotes = await asUser(a.userId, (x) => x("select notes, cancellation_reason from public.appointments where studio_id = $1 and client_id = $2 order by starts_at", [a.studioId, ids.maggie]));
+    expect(JSON.stringify(staffNotes.rows)).toContain(MARK[0]);
+    expect(JSON.stringify(staffNotes.rows)).toContain(MARK[1]);
+    const v2 = await cal(aDesk, a.studioId);
+    const directory = await dir(aDesk, a.studioId);
+    for (const m of MARK) {
+      expect(JSON.stringify(v2.rows)).not.toContain(m);
+      expect(JSON.stringify(directory.rows)).not.toContain(m);
+    }
+    expect(v2.rows.length).toBeGreaterThan(0);
+    expect(directory.rows.length).toBeGreaterThan(0);
+  });
+
+  it("cross-studio, both directions, for both functions", async () => {
+    await expect(dir(bDesk, a.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(dir(aDesk, b.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(cal(bDesk, a.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(cal(aDesk, b.studioId)).rejects.toMatchObject({ code: "42501" });
+    // and each desk sees only its own studio's clients
+    const bRows = (await dir(bDesk, b.studioId)).rows.map((x) => x.client_id);
+    const aRows = (await dir(aDesk, a.studioId)).rows.map((x) => x.client_id);
+    expect(bRows).toContain(ids.other);
+    expect(aRows).toContain(ids.plain);
+    expect(bRows).not.toContain(ids.plain);
+    expect(aRows).not.toContain(ids.other);
+  });
+
+  it("an archived client is absent from the directory and from search (positive control: the same client is found when active)", async () => {
+    expect((await dir(aDesk, a.studioId)).rows.map((x) => x.client_id)).not.toContain(ids.archived);
+    expect((await dir(aDesk, a.studioId, "Archived")).rows).toHaveLength(0);
+    await adminQuery("update public.clients set archived_at = null where id = $1", [ids.archived]);
+    try {
+      expect((await dir(aDesk, a.studioId, "Archived")).rows.map((x) => x.client_id)).toEqual([ids.archived]);
+    } finally {
+      await adminQuery("update public.clients set archived_at = now() where id = $1", [ids.archived]);
+    }
+  });
+
+  it("L7: a client with ONLY a live session and no completed appointment reads an empty desk last visit (the narrowing, pinned)", async () => {
+    const only = await addClient(a, "sessiononly", "Session Only", null, null, null);
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values (gen_random_uuid(), $1, $2, $3, 'electrolysis')`,
+      [a.studioId, only, a.practitionerId],
+    );
+    const sessions = await adminQuery("select count(*)::int n from public.sessions where studio_id = $1 and client_id = $2 and deleted_at is null", [a.studioId, only]);
+    expect(sessions.rows[0].n).toBe(1); // the staff-side fact exists
+    const row = (await dir(aDesk, a.studioId, "Session Only")).rows[0];
+    expect(row.client_id).toBe(only);
+    expect(row.last_visit_on).toBeNull();
+    // control: a completed appointment is what makes the desk date appear
+    await addAppt(a, only, "completed", "2024-03-03T15:00:00Z");
+    expect((await dir(aDesk, a.studioId, "Session Only")).rows[0].last_visit_on).not.toBeNull();
+  });
+});
+
 describe("grants", () => {
   it("the two new functions are executable by authenticated only", async () => {
     for (const fn of [DIR, CAL2]) {
