@@ -4,7 +4,7 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingLink } from "@/components/pending-link";
 import { UnarchiveRowControl } from "./UnarchiveRowControl";
 import { OverviewFrame } from "./OverviewFrame";
-import { formatStudioDate } from "@/lib/clients/last-visit";
+import { formatStudioDate, formatStudioDateTime } from "@/lib/clients/last-visit";
 import { NAME_ON_FILE_LABEL } from "@/lib/clients/directory-rules";
 import {
   directoryHref,
@@ -140,8 +140,14 @@ export function DirectoryResults({
   );
 }
 
-function NextCell({ row }: { row: DirectoryRow }) {
-  if (row.next.state === "scheduled") return <FormattedDateTime iso={row.next.startsAt} />;
+function NextCell({ row, timeZone }: { row: DirectoryRow; timeZone?: string }) {
+  if (row.next.state === "scheduled") {
+    return timeZone ? (
+      <time dateTime={row.next.startsAt}>{formatStudioDateTime(row.next.startsAt, timeZone)}</time>
+    ) : (
+      <FormattedDateTime iso={row.next.startsAt} />
+    );
+  }
   if (row.next.state === "none") return <span>No upcoming appointment</span>;
   return <span className="text-neutral-500">Unavailable</span>;
 }
@@ -235,7 +241,7 @@ function DirectoryRowView({
             <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
               <span>
                 <span className="text-neutral-500 md:hidden">Next: </span>
-                <NextCell row={row} />
+                <NextCell row={row} timeZone={timeZone} />
               </span>
               <IntakePill state={row.intake} />
             </div>
@@ -294,11 +300,13 @@ export function ClientOverview({
   row,
   lastVisit,
   page,
+  timeZone,
 }: {
   state: DirectoryState;
   row: DirectoryRow;
   lastVisit: LastVisitCell;
   page: number;
+  timeZone?: string;
 }) {
   const archived = state.view === "archived";
   return (
@@ -326,7 +334,7 @@ export function ClientOverview({
           <>
             <div>
               <dt className="text-xs text-neutral-500">Next appointment</dt>
-              <dd><NextCell row={row} /></dd>
+              <dd><NextCell row={row} timeZone={timeZone} /></dd>
             </div>
             <div>
               <dt className="text-xs text-neutral-500">Intake</dt>

@@ -161,3 +161,18 @@ export function formatStudioDate(iso: string, timeZone: string): string {
     return new Intl.DateTimeFormat("en-US", { ...opts, timeZone: "UTC" }).format(at);
   }
 }
+
+/** A date and time in the STUDIO's timezone, server-rendered: the next-appointment cell, so both
+ *  clocks on a row are the studio's (Insurance M4). The en-US format stays for now. */
+export function formatStudioDateTime(iso: string, timeZone: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const opts: Intl.DateTimeFormatOptions = {
+    month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+  };
+  try {
+    return new Intl.DateTimeFormat("en-US", { ...opts, timeZone }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", { ...opts, timeZone: "UTC" }).format(at);
+  }
+}

@@ -345,4 +345,41 @@ describe("a typed search term in the URL never reaches Sentry (K7-A)", () => {
     expect((event.request as { url: string }).url).toBe("https://app.example.test/clients");
     expect(event.request).not.toHaveProperty("query_string");
   });
+
+  it("the ROOT span (contexts.trace) of a transaction and of an error event drops the query too (M1)", () => {
+    const trace = {
+      trace_id: "0123456789abcdef0123456789abcdef",
+      span_id: "0123456789abcdef",
+      op: "http.server",
+      description: `GET ${URL_WITH_TERM}`,
+      data: {
+        "http.target": URL_WITH_TERM,
+        "url.full": `https://app.example.test${URL_WITH_TERM}#x`,
+        "url.query": "q=jane%20smith",
+        "http.query": "?q=jane%20smith",
+        "http.status_code": 200,
+      },
+    };
+    const tx = scrubTransactionEvent({ type: "transaction", contexts: { trace: structuredClone(trace) } } as unknown as Event);
+    const err = scrubErrorEvent({ contexts: { trace: structuredClone(trace) } } as unknown as ErrorEvent);
+    for (const event of [tx, err]) {
+      expect(JSON.stringify(event)).not.toMatch(TERM);
+      const ctx = event.contexts!.trace as unknown as { description: string; op: string; data: Record<string, unknown> };
+      expect(ctx.description).toBe("GET /clients");
+      expect(ctx.data["http.target"]).toBe("/clients");
+      expect(ctx.data["url.full"]).toBe("https://app.example.test/clients");
+      expect(ctx.data).not.toHaveProperty("url.query");
+      expect(ctx.data).not.toHaveProperty("http.query");
+      // Control: the trace's own structure survives.
+      expect(ctx.op).toBe("http.server");
+      expect(ctx.data["http.status_code"]).toBe(200);
+    }
+  });
+
+  it("the original context object is not mutated", () => {
+    const ctx = { description: `GET ${URL_WITH_TERM}`, data: { "url.query": "q=jane" } };
+    scrubTransactionEvent({ type: "transaction", contexts: { trace: ctx } } as unknown as Event);
+    expect(ctx.description).toContain("jane");
+    expect(ctx.data["url.query"]).toBe("q=jane");
+  });
 });

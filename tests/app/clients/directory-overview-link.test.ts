@@ -122,4 +122,20 @@ describe("empty states and the archived view (Insurance K5, K6)", () => {
     expect(parseDirectoryParams({ filter: ["no_upcoming", "intake_review"] }, "archived").filters).toEqual([]);
     expect(parseDirectoryParams({ filter: "no_upcoming" }, "active").filters).toEqual(["no_upcoming"]);
   });
+
+  it("the next appointment is the studio's clock too, server-rendered (M4)", () => {
+    const row = { ...projectStaffRow({ id: "c9", name: "N", preferred_name: null, pronouns: null, email: null, phone: null, archived_at: null }) };
+    const base = { ...row, intake: "not_submitted" as const };
+    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, page: 1 };
+    // Newer ICU puts a narrow no-break space before AM/PM; compare with a plain space.
+    const html = (tz: string) =>
+      renderToStaticMarkup(
+        createElement(ClientOverview, {
+          state, row: { ...base, next: { state: "scheduled" as const, startsAt: "2030-03-02T03:30:00Z" } },
+          lastVisit: { kind: "none" }, page: 1, timeZone: tz,
+        }),
+      ).replace(/\u202f/g, " ");
+    expect(html("America/Los_Angeles")).toContain("Mar 1, 2030, 7:30 PM");
+    expect(html("Pacific/Auckland")).toContain("Mar 2, 2030, 4:30 PM");
+  });
 });

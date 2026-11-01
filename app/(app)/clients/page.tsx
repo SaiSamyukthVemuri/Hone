@@ -130,6 +130,7 @@ export default async function ClientsPage({
       row={selected}
       lastVisit={lastVisitCell(lastVisitMap, selected.id, studio.timezone)}
       page={data.page}
+      timeZone={studio.timezone}
     />
   ) : null;
 
