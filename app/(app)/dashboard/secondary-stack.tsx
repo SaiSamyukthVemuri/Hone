@@ -169,8 +169,42 @@ export function SecondaryStackSkeleton() {
   );
 }
 
-export async function SecondaryStack({
+// Birthdays, top-right on desktop (the page places it; this is its own boundary). Same data as before:
+// the birthdays bundle the page started before the roster, so no read is added or moved.
+async function BirthdaysFromBundle({
   attentionSources,
+  today,
+  accentColor,
+}: {
+  attentionSources: Promise<AttentionSources>;
+  today: string;
+  accentColor: BirthdayReminderColor;
+}) {
+  const [, , , birthdaysThisMonth] = await attentionSources;
+  return (
+    <BirthdaysThisMonth
+      birthdays={birthdaysThisMonth}
+      today={today}
+      accentColor={accentColor}
+    />
+  );
+}
+
+export function BirthdaysTopRight(props: {
+  attentionSources: Promise<AttentionSources>;
+  today: string;
+  accentColor: BirthdayReminderColor;
+}) {
+  return (
+    <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+      <Suspense fallback={null}>
+        <BirthdaysFromBundle {...props} />
+      </Suspense>
+    </div>
+  );
+}
+
+export async function SecondaryStack({
   staffManaged: staffManagedPromise,
   staffManagedRead: staffManagedReadPromise,
   personalCharting: personalChartingPromise,
@@ -185,7 +219,6 @@ export async function SecondaryStack({
 }: Props) {
   // Birthdays ride in the same bundle the page started before the roster. The
   // To do / Needs attention sources are consumed by NeedsAttentionSection.
-  const [, , , birthdaysThisMonth] = await attentionSources;
   const staffManaged = await staffManagedPromise;
   const personalCharting = await personalChartingPromise;
   const staffManagedUnknown = (await staffManagedReadPromise) === STAFF_MANAGED_UNKNOWN;
@@ -226,13 +259,6 @@ export async function SecondaryStack({
 
   return (
     <div className="flex flex-col gap-10">
-      {/* Relationship context, BELOW the operational work, never above it. */}
-      <BirthdaysThisMonth
-        birthdays={birthdaysThisMonth}
-        today={todayLocal}
-        accentColor={studio.birthday_reminder_color}
-      />
-
       {/* ===================================================================
           Secondary: reporting and setup, below the operational hierarchy.
           ===================================================================
@@ -393,37 +419,53 @@ function BirthdaysThisMonth({
   // month with many birthdays no longer pushes the setup cards off the screen.
   // Same data, same links (`?tab=personal`), same studio accent; today's
   // birthdays still carry the "Today" badge.
+  // Compact, top-right: the first few are always visible (today's birthdays first); the rest stay one
+  // click away inside a server-rendered <details>, so nobody is dropped. Nothing is sent to anyone.
+  const ordered = [
+    ...birthdays.filter((b) => b.day === todayDay),
+    ...birthdays.filter((b) => b.day !== todayDay),
+  ];
+  const VISIBLE = 4;
+  const shown = ordered.slice(0, VISIBLE);
+  const rest = ordered.slice(VISIBLE);
+  const chip = (b: (typeof birthdays)[number]) => {
+    const isToday = b.day === todayDay;
+    return (
+      <li
+        key={b.id}
+        className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
+      >
+        <Link
+          href={`/clients/${b.id}?tab=personal`}
+          className="text-sm font-medium hover:underline"
+        >
+          {b.name}
+        </Link>
+        <span className={`text-xs tabular-nums ${accent.mutedText}`}>
+          {formatMonthDay(b.month, b.day)}
+        </span>
+        {isToday && (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
+          >
+            Today
+          </span>
+        )}
+      </li>
+    );
+  };
   return (
-    <section className="flex flex-col gap-2">
+    <section data-testid="dashboard-birthdays" className="flex min-w-0 flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
       <h2 className="text-lg font-medium">Birthdays this month</h2>
-      <ul className="flex flex-wrap gap-2">
-        {birthdays.map((b) => {
-          const isToday = b.day === todayDay;
-          return (
-            <li
-              key={b.id}
-              className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
-            >
-              <Link
-                href={`/clients/${b.id}?tab=personal`}
-                className="text-sm font-medium hover:underline"
-              >
-                {b.name}
-              </Link>
-              <span className={`text-xs tabular-nums ${accent.mutedText}`}>
-                {formatMonthDay(b.month, b.day)}
-              </span>
-              {isToday && (
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
-                >
-                  Today
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <ul className="flex flex-wrap gap-2">{shown.map(chip)}</ul>
+      {rest.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-sm text-neutral-600 dark:text-neutral-400">
+            {rest.length} more this month
+          </summary>
+          <ul className="mt-2 flex flex-wrap gap-2">{rest.map(chip)}</ul>
+        </details>
+      )}
     </section>
   );
 }

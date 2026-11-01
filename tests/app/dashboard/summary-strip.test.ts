@@ -100,3 +100,32 @@ describe("Practice snapshot is one integrated card (fidelity E)", () => {
     expect(stack).toMatch(/\{isOwner && !practiceMetrics && capacityLink\}/);
   });
 });
+
+describe("Birthdays: compact block top-right on desktop (fidelity G)", () => {
+  const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+  const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
+  it("the greeting and Birthdays share the top row of ONE grid; Birthdays is the last grid child so a phone shows it below the operational work", () => {
+    expect(page).toMatch(/lg:col-start-1 lg:row-start-1/);
+    expect(stack).toMatch(/lg:col-start-2 lg:row-start-1/);
+    const grid = page.indexOf("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+    expect(grid).toBeGreaterThan(-1);
+    const greeting = page.indexOf("<DashboardGreeting");
+    const appts = page.indexOf('aria-label="Appointments"');
+    const needs = page.indexOf('id="needs-attention-heading"');
+    const birthdays = page.indexOf("<BirthdaysTopRight");
+    expect(grid).toBeLessThan(greeting);
+    expect(greeting).toBeLessThan(appts);
+    expect(appts).toBeLessThan(needs);
+    expect(needs).toBeLessThan(birthdays);
+  });
+  it("is no longer rendered in the secondary stack, has its own boundary, and drops nobody (rest sit in a details)", () => {
+    const stackBody = stack.slice(stack.indexOf("export async function SecondaryStack"));
+    expect(stackBody).not.toContain("<BirthdaysThisMonth");
+    expect(stack).toMatch(/<Suspense fallback=\{null\}>\s*<BirthdaysFromBundle/);
+    expect(stack).toMatch(/<details>[\s\S]*?more this month/);
+    expect(stack).toMatch(/\.\.\.birthdays\.filter\(\(b\) => b\.day === todayDay\)/);
+  });
+  it("onboarding still precedes Today and spans both columns", () => {
+    expect(page).toMatch(/lg:col-span-2[\s\S]{0,80}<OnboardingSurface/);
+  });
+});

@@ -57,6 +57,7 @@ import {
   SecondaryStack,
   NeedsAttentionSection,
   ClientsToReview,
+  BirthdaysTopRight,
   NeedsAttentionCountPill,
   NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
@@ -757,7 +758,13 @@ export default async function DashboardPage({
 
   return (
     <div className="flex flex-col gap-10">
-      <section className="flex flex-col gap-1">
+      {/* ONE grid for the top of the page. Desktop: the greeting top-left and the compact Birthdays block
+          top-right (Sam's placement); onboarding spans both columns; then Appointments | Needs attention.
+          DOM order stays Today first: Birthdays is the LAST child, so on a phone it follows Needs attention
+          (below the operational work) and `lg:col-start-2 lg:row-start-1` lifts it to the top right only
+          where there is room. */}
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
+      <section className="flex flex-col gap-1 lg:col-start-1 lg:row-start-1">
         <DashboardGreeting displayName={practitioner.display_name} />
         <p className="text-xs uppercase tracking-wider text-neutral-500">
           <FormattedToday format="weekday-date" />
@@ -769,17 +776,18 @@ export default async function DashboardPage({
           above the fold. Opt-in per studio + owner-only; supersedes the legacy
           getting-started link/footer below (which is gated off when v2 is on). */}
       {onboarding && (
-        <OnboardingSurface
-          model={onboarding.model}
-          initialOpen={onboarding.initialOpen}
-        />
+        <div className="min-w-0 lg:col-span-2">
+          <OnboardingSurface
+            model={onboarding.model}
+            initialOpen={onboarding.initialOpen}
+          />
+        </div>
       )}
 
       {/* WS-DB layout: appointments beside Needs Attention on desktop, stacked on
           mobile. `min-w-0` on both columns lets long names wrap instead of
           widening the grid. The appointments column does not wait for Needs
           Attention: that column streams behind its own boundary. */}
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
       <section aria-label="Appointments" className="flex min-w-0 flex-col gap-3">
         {/* `flex-wrap` matters: this header was the one multi-control row on
             the page without it, and it now carries day navigation beside the
@@ -1030,6 +1038,14 @@ export default async function DashboardPage({
           />
         </Suspense>
       </section>
+      {/* Compact Birthdays: its own boundary, keyed like the others; reads the bundle the page already
+          started. Rendered unconditionally (relationship context is not role-gated). */}
+      <BirthdaysTopRight
+        key={`birthdays:${selectedDayLocal}:${period}`}
+        attentionSources={attentionSourcesPromise}
+        today={todayLocal}
+        accentColor={studio.birthday_reminder_color}
+      />
       </div>
       {/* PERF-01C: the secondary stack streams; the roster above does not
           wait for it.
