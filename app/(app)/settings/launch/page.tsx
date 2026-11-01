@@ -359,7 +359,7 @@ export default async function LaunchChecklistPage() {
   return (
     <section className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h2 className="text-xl font-medium">Ready for booking checklist</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Ready for booking checklist</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Walk this once before sending your first real client through
           Hone. Each item is a single plain-English requirement with a

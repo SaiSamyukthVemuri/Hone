@@ -344,3 +344,38 @@ describe("R2-F1 (Photos, 1 Nov): the mobile drawer navigation lands focus on the
     expect(src).toMatch(/observer\.disconnect\(\)/);
   });
 });
+
+describe("R2-F1 (Photos, 1 Nov): every rail view's heading carries the focus marker", () => {
+  const root = path.resolve(__dirname, "../..");
+  const registry = readFileSync(path.join(root, "lib/settings/nav-registry.ts"), "utf8");
+  const hrefs = Array.from(new Set(Array.from(registry.matchAll(/href:\s*"(\/settings\/[a-z0-9/-]+)"/g), (m) => m[1])));
+  // A group's own href is its first child's route; only leaf routes are views.
+  const leaves = hrefs.filter((h) => !hrefs.some((o) => o !== h && o.startsWith(h + "/")));
+
+  function sourcesFor(href: string): string {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const dir = path.join(root, "app/(app)", href);
+    // booking/ and payments/ render their views from a shared component in the parent folder.
+    const dirs = [dir, ...(/^\/settings\/(booking|payments)\//.test(href) ? [path.dirname(dir)] : [])];
+    const dyn = path.join(path.dirname(dir), "[view]");
+    if (fs.existsSync(dyn)) dirs.push(dyn);
+    return dirs
+      .filter((d) => fs.existsSync(d))
+      .flatMap((d) => fs.readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(path.join(d, f), "utf8")))
+      .join("\n");
+  }
+
+  it("finds the rail's leaf views", () => {
+    expect(leaves.length).toBeGreaterThanOrEqual(20);
+    expect(leaves).toContain("/settings/profile");
+  });
+
+  it.each(leaves)("%s marks its heading", (href) => {
+    expect(sourcesFor(href)).toMatch(/data-settings-heading|SettingsViewHeading|focusTitle/);
+  });
+
+  it("the marked heading is programmatically focusable and not outlined", () => {
+    const profile = readFileSync(path.join(root, "app/(app)/settings/profile/page.tsx"), "utf8");
+    expect(profile).toMatch(/<h2 tabIndex=\{-1\} data-settings-heading/);
+  });
+});

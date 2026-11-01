@@ -68,7 +68,7 @@ export default async function DataSettingsPage() {
         {/* UI-R02. This page spelled its heading a SECOND way — Fraunces, bold,
             plus an inline letterSpacing override — while /notifications used
             `text-3xl font-semibold tracking-tight`. One page, one spelling. */}
-        <PageHeader title="Your data" headingLevel={2} />
+        <PageHeader title="Your data" headingLevel={2} focusTitle />
         <p className="max-w-[640px] text-base leading-relaxed text-neutral-700 dark:text-neutral-300 md:text-lg">
           {studio.name} has {fmt(clientCount)}{" "}
           {clientCount === 1 ? "client" : "clients"}, {fmt(sessionCount)}{" "}

@@ -51,7 +51,7 @@ export default async function ServicesSettingsPage() {
   return (
     <div className="flex flex-col gap-10">
       <section>
-        <h2 className="text-xl font-medium">Services</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Services</h2>
         <p className="mt-1 text-sm text-neutral-500">
           The list clients pick from when booking. Services group by modality
           on the booking page. Services you hide from booking stay in history
