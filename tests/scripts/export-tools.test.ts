@@ -1616,3 +1616,199 @@ describe("Codex P2 on 3240218c: the private working directory ignores a caller-c
     expect(readdirSync(tmp)).toEqual([]);
   });
 });
+
+// ===========================================================================
+// PEER-1155 TMP PROOF (OPS, Sam): isolated SYNTHETIC regression proof, at the exact head, that the
+// exit trap and every cleanup path remove ONLY what the invocation created. Everything lives in
+// the test's own mkdtemp scratch; no real home, project or temp directory is ever the target.
+// Each case runs twice: against the real scripts (must keep the caller's files) and against a
+// PRE-FIX COPY of the trap as it stood at 3240218c (must LOSE them), so a green run proves the
+// case can fail. The pre-fix copy is derived from the head scripts by reverting exactly the two
+// fix hunks; the derivation asserts every hunk applied, and when 3240218c is reachable in the
+// checkout it is compared with the real old trap line.
+// ===========================================================================
+describe("PEER-1155 TMP proof: only artifacts this invocation created are removed", () => {
+  const CI = { EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true" };
+  const HEADS = ["a.png", "b.png"].map((n) => `s/c/${n}`);
+  let preFix: string;
+
+  beforeAll(() => {
+    preFix = path.join(scratch, "prefix-ops");
+    mkdirSync(preFix, { recursive: true });
+    for (const f of readdirSync(OPS)) if (f.endsWith(".sh")) write(path.join(preFix, f), readFileSync(path.join(OPS, f), "utf8"), 0o755);
+    const patch = (file: string, from: string, to: string) => {
+      const src = readFileSync(path.join(preFix, file), "utf8");
+      expect(src, `pre-fix derivation: hunk present in ${file}`).toContain(from);
+      writeFileSync(path.join(preFix, file), src.replace(from, to));
+    };
+    // hunk 1: the lib no longer resets the inherited variables when sourced
+    patch("export-lib.sh", 'EXPORT_TMPDIR="" EXPORT_OUT="" EXPORT_OUT_CREATED=""\n', "");
+    // hunk 2: the trap removed the bare $TMP of the caller's environment
+    patch("export-lib.sh", '[ -z "${EXPORT_TMPDIR:-}" ] || rm -rf "$EXPORT_TMPDIR"', '[ -z "${TMP:-}" ] || rm -rf "$TMP"');
+    patch("object-export.sh", 'EXPORT_TMPDIR="$TMP"   # the one directory the exit trap removes: made by this run, inside $OUT\n', "");
+    patch("export-lib.sh", "export_signal_traps() { trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP; }", "export_signal_traps() { :; }");
+    // when the real commit is in this checkout, the old trap line must be the one just derived
+    const old = spawnSync("git", ["show", "3240218ce:scripts/ops/export-lib.sh"], { encoding: "utf8", cwd: ROOT });
+    if (old.status === 0) {
+      expect(old.stdout).toContain('[ -z "${TMP:-}" ] || rm -rf "$TMP"');
+      expect(old.stdout).not.toContain('EXPORT_TMPDIR=""');
+    }
+  });
+
+  const runIn = (ops: string, script: string, args: string[], env: Record<string, string>, signal?: { after: string }) =>
+    spawnSync("bash", [path.join(ops, script), ...args], {
+      encoding: "utf8",
+      env: { PATH: `${bin}:${process.env.PATH}`, HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv,
+      timeout: 60_000,
+      ...(signal ? {} : {}),
+    });
+
+  function canary(name: string) {
+    const dir = path.join(scratch, name);
+    mkdirSync(path.join(dir, "sub"), { recursive: true });
+    writeFileSync(path.join(dir, "keep.txt"), "caller data");
+    writeFileSync(path.join(dir, "sub", "deep.txt"), "caller data 2");
+    return dir;
+  }
+  const intact = (dir: string) =>
+    existsSync(path.join(dir, "keep.txt")) && existsSync(path.join(dir, "sub", "deep.txt")) && readFileSync(path.join(dir, "keep.txt"), "utf8") === "caller data";
+
+  function world(name: string, paths = HEADS) {
+    const d = fixtures(name);
+    const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+    writeFileSync(path.join(d, "list.txt"), paths.map((p) => `${p}${US}${enc(p)}${US}${MIME_OF(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), `rows_total=${paths.length} rows_without_object=0 objects_total=${paths.length} objects_without_row=0\n`);
+    return d;
+  }
+  const OBJ = (out: string, ref = REF) => ["--out", out, "--recipient", "age1x", "--expect-ref", ref, "--storage-url", `https://${REF}.supabase.co`, "--sample", "2"];
+
+  // (a) + (c): every variable the scripts read for a work, out or cleanup path.
+  const CLEANUP_VARS = ["TMP", "TMPDIR", "EXPORT_TMPDIR", "EXPORT_OUT", "EXPORT_WORKDIRS", "EXPORT_SECRET_FILES", "WORKDIR", "WORK", "AUTH_HDR_FILE", "XDG_RUNTIME_DIR"];
+
+  it("(a)(c) an inherited work/out/cleanup variable never names a directory a refused run removes (real scripts), and the pre-fix trap does lose it", () => {
+    const d = world("tp-ac");
+    const lost: string[] = [];
+    for (const v of CLEANUP_VARS) {
+      const dir = canary(`tp-ac-${v}`);
+      const inherited: Record<string, string> = { [v]: dir, EXPORT_OUT_CREATED: "1" };
+      // a mismatched ref refuses the run AFTER the trap is installed, with the lib already sourced
+      for (const [script, args] of [
+        ["object-export.sh", OBJ(path.join(scratch, `tp-ac-out-o-${v}`), "someotherproject")],
+        ["logical-export.sh", ["--out", path.join(scratch, `tp-ac-out-l-${v}`), "--recipient", "age1x", "--expect-ref", "someotherproject"]],
+      ] as const) {
+        const env = { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, ...inherited };
+        const real = runIn(OPS, script, [...args], env);
+        expect(real.status, `${script} ${v}`).not.toBe(0);
+        expect(intact(dir), `HEAD: ${script} removed the caller's folder named by inherited ${v}`).toBe(true);
+        runIn(preFix, script, [...args], env);
+        if (!intact(dir)) lost.push(`${script}:${v}`);
+        rmSync(dir, { recursive: true, force: true }); canary(`tp-ac-${v}`);
+      }
+    }
+    // CONTROL: the pre-fix trap loses the folder when TMP is inherited (it read the bare $TMP)
+    expect(lost.some((x) => x.endsWith(":TMP")), `pre-fix control must fail for TMP; lost=${lost.join(",")}`).toBe(true);
+  });
+
+  it("(a) the caller's TMP folder survives a SUCCESSFUL and a FAILED run too (the pre-fix control is in the (a)(c) case)", () => {
+    const d = world("tp-a2");
+    const okDir = canary("tp-a2-ok");
+    const ok = runIn(OPS, "object-export.sh", OBJ(path.join(scratch, "tp-a2-ok-out")), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, TMP: okDir });
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(intact(okDir)).toBe(true);
+    expect(existsSync(path.join(scratch, "tp-a2-ok-out", "receipt.txt"))).toBe(true);
+    expect(existsSync(path.join(scratch, "tp-a2-ok-out", "tmp"))).toBe(false); // its own tmp is gone
+    const badDir = canary("tp-a2-bad");
+    const bad = runIn(OPS, "object-export.sh", OBJ(path.join(scratch, "tp-a2-bad-out")), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, TMP: badDir, SHIM_CURL_FAIL_MATCH: "b.png" });
+    expect(bad.status).not.toBe(0);
+    expect(intact(badDir)).toBe(true);
+    // control: pre-fix lib, failed run, inherited TMP set but the script itself reassigns TMP to $OUT/tmp,
+    // so the loss shows on an early refusal, which (a)(c) above exercises; here we only prove HEAD keeps it.
+  });
+
+  // (b)
+  it("(b) an early validation rejection cannot delete caller-owned files: a non-empty --out, a bad argument, a bad recipient, a refused ref", () => {
+    const d = world("tp-b");
+    const owned = canary("tp-b-owned");
+    const cases: Array<[string, string[]]> = [
+      ["non-empty --out", OBJ(owned)],
+      ["bad recipient", ["--out", owned, "--recipient", "notakey", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`]],
+      ["unknown argument", ["--out", owned, "--bogus", "x"]],
+      ["missing arguments", ["--out", owned]],
+      ["refused ref", OBJ(owned, "someotherproject")],
+    ];
+    for (const [label, args] of cases) {
+      const r = runIn(OPS, "object-export.sh", args, { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, EXPORT_OUT: owned, EXPORT_OUT_CREATED: "1" });
+      expect(r.status, label).not.toBe(0);
+      expect(intact(owned), `HEAD: ${label} removed caller-owned files`).toBe(true);
+      const l = runIn(OPS, "logical-export.sh", [...args.filter((a) => a !== "--storage-url" && !a.startsWith("https://") && a !== "--sample" && a !== "2")], { ...CI, DB_URL, SHIM_DUMP_DIR: d, EXPORT_OUT: owned, EXPORT_OUT_CREATED: "1" });
+      expect(l.status, `logical ${label}`).not.toBe(0);
+      expect(intact(owned), `HEAD: logical ${label} removed caller-owned files`).toBe(true);
+    }
+    // CONTROL: pre-fix, an inherited EXPORT_OUT + EXPORT_OUT_CREATED=1 and a refused ref lose the folder
+    const victim = canary("tp-b-victim");
+    runIn(preFix, "object-export.sh", OBJ(path.join(scratch, "tp-b-ctl-out"), "someotherproject"), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, EXPORT_OUT: victim, EXPORT_OUT_CREATED: "1" });
+    expect(intact(victim), "pre-fix control must lose the folder").toBe(false);
+  });
+
+  // (d)
+  describe("(d) success, failure and interruption each remove ONLY what this invocation created", () => {
+    const sibling = () => canary("tp-d-sibling");
+
+    it("success: the output (with receipt) stays, its tmp is gone, the caller's neighbours are untouched", () => {
+      const d = world("tp-d1"); const sib = sibling();
+      const out = path.join(scratch, "tp-d1-out");
+      const r = runIn(OPS, "object-export.sh", OBJ(out), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, TMP: sib, TMPDIR: sib });
+      expect(r.status, r.stderr).toBe(0);
+      expect(existsSync(path.join(out, "receipt.txt"))).toBe(true);
+      expect(existsSync(path.join(out, "tmp"))).toBe(false);
+      expect(intact(sib)).toBe(true);
+    });
+
+    it("failure: a created --out is removed entirely; a caller-owned EMPTY --out keeps its directory but not the partial content; neighbours untouched", () => {
+      const d = world("tp-d2"); const sib = sibling();
+      const created = path.join(scratch, "tp-d2-created");
+      const f1 = runIn(OPS, "object-export.sh", OBJ(created), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, TMP: sib, SHIM_CURL_FAIL_MATCH: "b.png" });
+      expect(f1.status).not.toBe(0);
+      expect(existsSync(created)).toBe(false);
+      const empty = path.join(scratch, "tp-d2-empty"); mkdirSync(empty);
+      const f2 = runIn(OPS, "object-export.sh", OBJ(empty), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, TMP: sib, SHIM_CURL_FAIL_MATCH: "b.png" });
+      expect(f2.status).not.toBe(0);
+      expect(existsSync(empty)).toBe(true);
+      expect(readdirSync(empty)).toEqual([]);
+      expect(intact(sib)).toBe(true);
+    });
+
+    for (const sig of ["TERM", "INT"] as const) {
+      it(`interruption (SIG${sig}) after the work started: the created output is removed, the caller's neighbours and TMP are untouched; the pre-fix tool leaves the partial output`, () => {
+        const d = world(`tp-d3-${sig}`); const sib = sibling();
+        // the rehearsal hook runs mid-run (after the list, before the downloads) and signals the tool; for INT the hook
+        // dies of the same signal, as a real Ctrl-C reaches the whole foreground group
+        const hook = sig === "INT" ? "kill -INT $PPID; kill -INT $$" : "kill -TERM $PPID; sleep 1";
+        const go = (ops: string, out: string) =>
+          runIn(ops, "object-export.sh", OBJ(out), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, TMP: sib, EXPORT_TEST_HOOK_AFTER_LIST: hook });
+        const out = path.join(scratch, `tp-d3-${sig}-out`);
+        const r = go(OPS, out);
+        expect(r.status === 0, `signalled run must not succeed (${r.stderr.slice(-300)})`).toBe(false);
+        expect(existsSync(out), `HEAD: the interrupted run's own output is gone (left=${existsSync(out) ? readdirSync(out).join(",") : ""})`).toBe(false);
+        expect(intact(sib)).toBe(true);
+        // CONTROL: the pre-fix tool (no signal traps) leaves the half-written output behind
+        const outCtl = path.join(scratch, `tp-d3-${sig}-ctl`);
+        go(preFix, outCtl);
+        expect(existsSync(outCtl), "pre-fix control must leave the partial output").toBe(true);
+        expect(intact(sib)).toBe(true);
+      });
+    }
+
+    it("a second invocation never touches the first one's finished output", () => {
+      const d = world("tp-d4");
+      const first = path.join(scratch, "tp-d4-first");
+      expect(runIn(OPS, "object-export.sh", OBJ(first), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d }).status).toBe(0);
+      const before = readdirSync(first).sort();
+      // a refused re-run into the same directory must not delete it (non-empty is refused, not cleaned)
+      const again = runIn(OPS, "object-export.sh", OBJ(first), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, EXPORT_OUT: first, EXPORT_OUT_CREATED: "1" });
+      expect(again.status).not.toBe(0);
+      expect(readdirSync(first).sort()).toEqual(before);
+      expect(existsSync(path.join(first, "receipt.txt"))).toBe(true);
+    });
+  });
+});

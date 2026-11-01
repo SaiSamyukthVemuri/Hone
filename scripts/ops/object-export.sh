@@ -66,6 +66,7 @@ command -v age >/dev/null || export_fail "age is not installed"
 command -v curl >/dev/null || export_fail "curl is not installed"
 export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
 trap export_on_exit EXIT   # closes the session, removes secret files and TMP, deletes a partial output on any failure
+export_signal_traps   # an interrupt exits non-zero, so the trap above removes the partial output
 
 secret_input DB_URL "Database connection string (input hidden): "
 secret_input SERVICE_KEY "Service-role key (input hidden): "

@@ -433,6 +433,12 @@ export_on_exit() {
   fi
 }
 
+# export_signal_traps: bash gives the EXIT trap a status of 0 after a fatal SIGINT/SIGTERM/SIGHUP, so
+# export_on_exit would read an interrupted run as a success and leave its half-written output in
+# place. Turning each signal into an `exit` with the conventional 128+n status makes the trap see the
+# failure and remove ONLY what this run created.
+export_signal_traps() { trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP; }
+
 # The commands behind the two connections. PRODUCTION: pg_dump/psql with the
 # URL the operator typed, WITHOUT its password. REHEARSAL (CI only) may override
 # both, but only with the one allow-listed docker-exec form (rehearsal_override_ok).

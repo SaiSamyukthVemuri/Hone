@@ -54,6 +54,7 @@ case "$RECIPIENT" in age1*) ;; *) export_fail "the recipient must be an age PUBL
 command -v age >/dev/null || export_fail "age is not installed"
 export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
 trap export_on_exit EXIT   # closes the session, removes secret files, deletes a partial output on any failure
+export_signal_traps   # an interrupt exits non-zero, so the trap above removes the partial output
 
 secret_input DB_URL "Database connection string (input hidden): "
 require_conn_url "$DB_URL" "the connection string"
