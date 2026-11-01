@@ -112,13 +112,14 @@ describe("schedule read (R1, R8)", () => {
     const { db, calls } = rpcOf([{
       appointment_id: "a1", starts_at: "2031-01-01T10:00:00Z", ends_at: "2031-01-01T11:00:00Z", status: "confirmed",
       practitioner_id: "p1", practitioner_display_name: "Pat", practitioner_color: "#fff", service_id: "s1", service_name: "Consultation",
-      client_id: "c1", display_name: "Janie", name_on_file: true, notes: "SENTINEL", price: "SENTINEL", client_display_name: "SENTINEL stored",
+      client_id: "c1", display_name: "Janie", name_on_file: true, duration_minutes: 60, studio_timezone: "America/Toronto", notes: "SENTINEL", price: "SENTINEL", client_display_name: "SENTINEL stored",
     }]);
     const rows = await readDeskSchedule(db, "studio-1", "2031-01-01T00:00:00Z", "2031-01-08T00:00:00Z");
     expect(calls).toEqual([{ fn: "receptionist_calendar_v2", args: { p_studio_id: "studio-1", p_from: "2031-01-01T00:00:00Z", p_to: "2031-01-08T00:00:00Z" } }]);
     expect(rows).toEqual([{
       appointmentId: "a1", startsAt: "2031-01-01T10:00:00Z", endsAt: "2031-01-01T11:00:00Z", status: "confirmed",
-      practitionerName: "Pat", serviceName: "Consultation", displayName: "Janie", nameOnFile: true,
+      practitionerId: "p1", practitionerName: "Pat", serviceName: "Consultation", durationMinutes: 60, studioTimezone: "America/Toronto",
+      displayName: "Janie", nameOnFile: true,
     }]);
     expect(JSON.stringify(rows)).not.toContain("SENTINEL");
     expect(JSON.stringify(rows)).not.toContain("c1"); // no client id: nothing on the schedule can link anywhere

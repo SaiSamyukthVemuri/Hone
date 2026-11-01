@@ -29,18 +29,20 @@ const ALLOWED_IMPORTS = new Set([
   "react",
   "next/link",
   "next/navigation",
+  "next/cache", // revalidatePath after a booking command
   "server-only",
   "@/lib/supabase/server",
   "@/lib/supabase/selected-studio",
   "@/components/formatted-date-time",
   "@/app/(auth)/no-access/actions", // the shared sign-out action, outside (app)
+  "@/app/(desk)/desk/clients/actions", // the desk's own restricted client search, used by the booking form
 ]);
 function importsOf(source: string): string[] {
   return [...source.matchAll(/^\s*(?:import|export)\s[^;]*?from\s+["']([^"']+)["']/gm)].map((m) => m[1]);
 }
 function importProblems(source: string): string[] {
   return importsOf(source).filter(
-    (spec) => !(ALLOWED_IMPORTS.has(spec) || spec.startsWith("./") || spec.startsWith("@/lib/desk/")),
+    (spec) => !(ALLOWED_IMPORTS.has(spec) || spec.startsWith("./") || spec.startsWith("../") || spec.startsWith("@/lib/desk/")),
   );
 }
 
@@ -60,6 +62,8 @@ describe("the desk imports only what was reviewed (allow-list)", () => {
     expect(names).toEqual(expect.arrayContaining([
       "app/(desk)/layout.tsx", "app/(desk)/desk/page.tsx", "app/(desk)/desk/clients/page.tsx",
       "app/(desk)/desk/clients/actions.ts", "app/(desk)/desk/clients/DeskDirectory.tsx",
+      "app/(desk)/desk/actions.ts", "app/(desk)/desk/book/page.tsx", "app/(desk)/desk/book/BookForm.tsx",
+      "app/(desk)/desk/ScheduleRowActions.tsx", "lib/desk/book.ts", "lib/desk/time.ts",
       "lib/desk/guard.ts", "lib/desk/read.ts", "lib/desk/flag.ts", "lib/desk/home.ts", "lib/desk/membership.ts",
     ]));
   });

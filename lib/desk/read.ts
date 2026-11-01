@@ -54,6 +54,11 @@ export type DeskScheduleRow = {
   startsAt: string;
   endsAt: string;
   status: string;
+  practitionerId: string | null;
+  /** The appointment's length in minutes (Sam, 1 Nov: the schedule shows service names AND durations). */
+  durationMinutes: number | null;
+  /** The studio's IANA zone from the database; every desk time is shown and entered in it. */
+  studioTimezone: string;
   practitionerName: string;
   serviceName: string;
   displayName: string;
@@ -180,6 +185,9 @@ export async function readDeskSchedule(
       startsAt,
       endsAt,
       status: str(r.status) ?? "unknown",
+      practitionerId: str(r.practitioner_id),
+      durationMinutes: typeof r.duration_minutes === "number" && r.duration_minutes > 0 ? r.duration_minutes : null,
+      studioTimezone: str(r.studio_timezone) ?? "UTC",
       practitionerName: str(r.practitioner_display_name) ?? "Practitioner",
       serviceName: str(r.service_name) ?? "Appointment",
       displayName,

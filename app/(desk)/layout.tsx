@@ -25,6 +25,9 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
               <Link href="/desk" className="inline-flex min-h-11 items-center hover:underline">
                 Schedule
               </Link>
+              <Link href="/desk/book" className="inline-flex min-h-11 items-center hover:underline">
+                Book
+              </Link>
               <Link href="/desk/clients" className="inline-flex min-h-11 items-center hover:underline">
                 Clients
               </Link>
