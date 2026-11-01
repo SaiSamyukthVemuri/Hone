@@ -116,7 +116,10 @@ export function ProfileTabBar({ active, tabs }: Props) {
         </span>
         <select
           value={active}
-          disabled={pending}
+          // NOT disabled while a navigation is in flight (PB-F1): a browser blurs a control the
+          // moment it becomes disabled, so a keyboard change dropped focus to <body>. Same reasoning
+          // as the desktop tabs above: a section change writes no state, so a second change is free.
+          aria-busy={pending || undefined}
           onChange={(e) => pick(e.target.value as ProfileTab)}
           className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-base font-medium outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         >

@@ -287,18 +287,14 @@ describe("UI-01D: a spinner is not the proof, and the mobile control is untouche
     expect(html).toMatch(/pointer-events-none absolute inset-0 m-auto/);
   });
 
-  it("leaves the mobile select's own pending behaviour exactly as it was", () => {
-    // PR #238 made the phone control a native <select>; it is outside the
-    // repaired mechanism and its lock is unchanged.
-    expect(
-      selectDisabled(
-        render({ pending: true, active: "overview", requested: "sessions" }),
-      ),
-    ).toBe(true);
-    expect(
-      selectDisabled(
-        render({ pending: false, active: "overview", requested: null }),
-      ),
-    ).toBe(false);
+  it("never disables the mobile select mid-flight, so keyboard focus survives (PB-F1)", () => {
+    // A browser blurs a control when it becomes disabled; the select must stay enabled and only
+    // announce busy, like the desktop tabs.
+    const pendingHtml = render({ pending: true, active: "overview", requested: "sessions" });
+    expect(selectDisabled(pendingHtml)).toBe(false);
+    expect(pendingHtml.match(/<select([^>]*)>/)?.[1]).toMatch(/aria-busy="true"/);
+    const restHtml = render({ pending: false, active: "overview", requested: null });
+    expect(selectDisabled(restHtml)).toBe(false);
+    expect(restHtml.match(/<select([^>]*)>/)?.[1]).not.toMatch(/aria-busy/);
   });
 });
