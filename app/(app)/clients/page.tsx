@@ -24,9 +24,9 @@ import {
   type DirectorySupabase,
 } from "@/lib/clients/directory-read";
 import { readLastVisits, type LastVisitSupabase } from "@/lib/clients/last-visit";
+import { DirectoryControls } from "./DirectoryControls";
 import {
   ClientOverview,
-  DirectoryControls,
   DirectoryResults,
   lastVisitCell,
   type DirectoryState,
@@ -95,6 +95,18 @@ export default async function ClientsPage({
 
   const state: DirectoryState = { view, q: query.q, filters: query.filters, sort: query.sort, page: data.page };
 
+  // The overview opens under its own row (nothing above it moves). A selected client
+  // that is not on the page being shown (an edited URL) is shown above the list instead.
+  const onThisPage = selected !== null && data.rows.some((r) => r.id === selected.id);
+  const overview = selected ? (
+    <ClientOverview
+      state={state}
+      row={selected}
+      lastVisit={lastVisitCell(lastVisitMap, selected.id)}
+      page={data.page}
+    />
+  ) : null;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -123,20 +135,14 @@ export default async function ClientsPage({
           That client isn&apos;t in this list.
         </p>
       )}
-      {selected && (
-        <ClientOverview
-          state={state}
-          row={selected}
-          lastVisit={lastVisitCell(lastVisitMap, selected.id)}
-          page={data.page}
-        />
-      )}
+      {selected && !onThisPage && overview}
 
       <DirectoryResults
         state={state}
         data={data}
         lastVisits={lastVisitMap}
         selectedId={selected?.id ?? null}
+        overview={onThisPage ? overview : null}
       />
     </div>
   );

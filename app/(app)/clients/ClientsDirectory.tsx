@@ -1,7 +1,9 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingLink } from "@/components/pending-link";
 import { UnarchiveRowControl } from "./UnarchiveRowControl";
+import { OverviewFrame, overviewRowLinkId } from "./OverviewFrame";
 import { NAME_ON_FILE_LABEL } from "@/lib/clients/directory-rules";
 import {
   directoryHref,
@@ -11,11 +13,11 @@ import {
   type DirectorySort,
   type IntakeState,
 } from "@/lib/clients/directory-query";
-import { MAX_DIRECTORY_QUERY_LENGTH } from "@/lib/clients/directory-search";
 
-// The clients directory (server component). Every control is a plain GET form or
-// link, so search, filters, sort, page, view and the open overview all live in the
-// URL: closing the overview or going back restores them. Nothing here filters or
+// The clients directory (server component; the controls and the overview's focus
+// handling are the two small client islands next to it). Search, filters, sort, page,
+// view and the open overview all live in the URL: closing the overview or going back
+// restores them, and no link carries a #fragment (HON-58: no anchor jumps). Nothing here filters or
 // counts: the page is handed ONE page of rows and the count of the set that
 // produced it (lib/clients/directory-query.ts, server-side, whole authorized set).
 //
@@ -53,82 +55,19 @@ function href(state: DirectoryState, over: { page?: number; client?: string } = 
   return directoryHref({ ...state, ...over });
 }
 
-export function DirectoryControls({ state }: { state: DirectoryState }) {
-  const archived = state.view === "archived";
-  return (
-    <form method="get" action="/clients" className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
-      {archived && <input type="hidden" name="view" value="archived" />}
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">
-          Search clients
-          <input
-            type="search"
-            name="q"
-            defaultValue={state.q}
-            maxLength={MAX_DIRECTORY_QUERY_LENGTH}
-            placeholder="Name, email or phone"
-            autoComplete="off"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">
-          Sort by
-          <select
-            name="sort"
-            defaultValue={state.sort}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
-          >
-            {archived ? (
-              <>
-                <option value="archived">Recently archived</option>
-                <option value="name">Name</option>
-              </>
-            ) : (
-              <>
-                <option value="name">Name</option>
-                <option value="next">Next appointment</option>
-              </>
-            )}
-          </select>
-        </label>
-        <button
-          type="submit"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-        >
-          Apply
-        </button>
-        <Link href={archived ? "/clients?view=archived" : "/clients"} className="py-2 text-sm text-neutral-600 underline dark:text-neutral-400">
-          Clear
-        </Link>
-      </div>
-      {!archived && (
-        <fieldset className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-          <legend className="sr-only">Filters</legend>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" name="filter" value="intake_review" defaultChecked={state.filters.includes("intake_review")} />
-            Intake needs review
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" name="filter" value="no_upcoming" defaultChecked={state.filters.includes("no_upcoming")} />
-            No upcoming appointment
-          </label>
-        </fieldset>
-      )}
-      <p className="text-xs text-neutral-500">Searches the names shown, email and phone.</p>
-    </form>
-  );
-}
-
 export function DirectoryResults({
   state,
   data,
   lastVisits,
   selectedId,
+  overview,
 }: {
   state: DirectoryState;
   data: DirectoryPage;
   lastVisits: ReadonlyMap<string, string> | null;
   selectedId: string | null;
+  /** The open overview; shown INSIDE the selected row's item so nothing above it moves. */
+  overview?: ReactNode;
 }) {
   const archived = state.view === "archived";
   const filtered = state.q.length > 0 || state.filters.length > 0;
@@ -179,7 +118,14 @@ export function DirectoryResults({
       </p>
       <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {data.rows.map((row) => (
-          <DirectoryRowView key={row.id} row={row} state={state} lastVisits={lastVisits} selected={row.id === selectedId} />
+          <DirectoryRowView
+            key={row.id}
+            row={row}
+            state={state}
+            lastVisits={lastVisits}
+            selected={row.id === selectedId}
+            overview={row.id === selectedId ? overview : null}
+          />
         ))}
       </ul>
       <Pagination state={state} data={data} />
@@ -218,22 +164,29 @@ function DirectoryRowView({
   state,
   lastVisits,
   selected,
+  overview,
 }: {
   row: DirectoryRow;
   state: DirectoryState;
   lastVisits: ReadonlyMap<string, string> | null;
   selected: boolean;
+  overview: ReactNode;
 }) {
   const archived = state.view === "archived";
   const contact = [row.email, row.phone].filter((v): v is string => Boolean(v));
   return (
-    <li id={`client-${row.id}`} className={`px-4 py-3 ${selected ? "bg-neutral-50 dark:bg-neutral-900" : ""}`}>
+    <li
+      id={`client-${row.id}`}
+      className={`px-4 py-3 ${selected ? "border-l-4 border-neutral-900 bg-neutral-50 pl-3 dark:border-white dark:bg-neutral-900" : ""}`}
+    >
       <div className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.5fr)_auto] md:items-center md:gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <Link
+              id={overviewRowLinkId(row.id)}
               href={href(state, { client: row.id })}
-              className="truncate font-medium hover:underline"
+              scroll={false}
+              className="inline-flex min-h-11 min-w-0 items-center break-words font-medium hover:underline"
               aria-current={selected ? "true" : undefined}
             >
               {row.displayName}
@@ -275,7 +228,7 @@ function DirectoryRowView({
           <PendingLink
             href={`/clients/${row.id}`}
             pendingLabel="Opening client…"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-3 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Open
           </PendingLink>
@@ -284,6 +237,7 @@ function DirectoryRowView({
           )}
         </div>
       </div>
+      {overview}
     </li>
   );
 }
@@ -293,7 +247,7 @@ function Pagination({ state, data }: { state: DirectoryState; data: DirectoryPag
   return (
     <nav aria-label="Client list pages" className="flex items-center justify-between text-sm">
       {data.page > 1 ? (
-        <PendingLink href={href(state, { page: data.page - 1 })} pendingLabel="Loading clients…" className="rounded-md border border-neutral-300 px-3 py-1.5 dark:border-neutral-700">
+        <PendingLink href={href(state, { page: data.page - 1 })} pendingLabel="Loading clients…" className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-3 dark:border-neutral-700">
           Previous
         </PendingLink>
       ) : (
@@ -303,7 +257,7 @@ function Pagination({ state, data }: { state: DirectoryState; data: DirectoryPag
         Page {data.page} of {data.pageCount}
       </span>
       {data.page < data.pageCount ? (
-        <PendingLink href={href(state, { page: data.page + 1 })} pendingLabel="Loading clients…" className="rounded-md border border-neutral-300 px-3 py-1.5 dark:border-neutral-700">
+        <PendingLink href={href(state, { page: data.page + 1 })} pendingLabel="Loading clients…" className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-3 dark:border-neutral-700">
           Next
         </PendingLink>
       ) : (
@@ -316,8 +270,8 @@ function Pagination({ state, data }: { state: DirectoryState; data: DirectoryPag
 // The overview of the selected client: authorized contact, next appointment,
 // intake STATUS, last visit and links. No treatment notes, payment details or
 // legal identity (none is read for the directory). Before-today and treatment
-// history stay on the full profile. Closing returns to the same URL state, with an
-// anchor so the list scrolls back to the row.
+// history stay on the full profile. It is rendered under its row (OverviewFrame owns
+// focus). Closing returns to the same URL state with ?client= removed: no #anchor.
 export function ClientOverview({
   state,
   row,
@@ -331,17 +285,17 @@ export function ClientOverview({
 }) {
   const archived = state.view === "archived";
   return (
-    <aside aria-label="Client overview" className="rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">{row.displayName}</h2>
+    <OverviewFrame
+      clientId={row.id}
+      title={row.displayName}
+      closeHref={href(state, { page })}
+      meta={
+        <>
           {row.pronouns && <p className="text-xs text-neutral-500">{row.pronouns}</p>}
           {row.nameOnFile && <p className="text-[11px] text-neutral-500">{NAME_ON_FILE_LABEL}</p>}
-        </div>
-        <Link href={`${href(state, { page })}#client-${row.id}`} className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium dark:border-neutral-700">
-          Close
-        </Link>
-      </div>
+        </>
+      }
+    >
       <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
         <div>
           <dt className="text-xs text-neutral-500">Email</dt>
@@ -369,16 +323,16 @@ export function ClientOverview({
         )}
       </dl>
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <PendingLink href={`/clients/${row.id}`} pendingLabel="Opening client…" className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+        <PendingLink href={`/clients/${row.id}`} pendingLabel="Opening client…" className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
           Open full profile
         </PendingLink>
         {!archived && (
-          <PendingLink href={`/clients/${row.id}?book=1`} pendingLabel="Opening booking…" className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900">
+          <PendingLink href={`/clients/${row.id}?book=1`} pendingLabel="Opening booking…" className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900">
             Book appointment
           </PendingLink>
         )}
       </div>
       <p className="mt-3 text-[11px] text-neutral-500">Before-today notes and treatment history are on the full profile.</p>
-    </aside>
+    </OverviewFrame>
   );
 }
