@@ -100,13 +100,21 @@ export function resolvePractitionerDayAvailability(args: {
   defaults: ReadonlyArray<ScopedDefault>;
   overrides: ReadonlyArray<ScopedOverride>;
   practitionerId: string;
+  /**
+   * Capacity OFF: the booking engine (lib/booking/slots.ts) reads STUDIO-WIDE
+   * rows only and ignores any personal row retained from when capacity was on,
+   * so the column must too, or Day can say "closed" where Week and booking
+   * say "open".
+   */
+  capacityEnabled: boolean;
 }): {
   availability: { isOpen: boolean; openTime: string | null; closeTime: string | null } | null;
   closedDay: boolean;
 } {
-  const { date, dayOfWeek, defaults, overrides, practitionerId } = args;
-  const window = effectiveWindow(date, dayOfWeek, defaults, overrides, practitionerId);
-  const configured = windowConfigured(date, dayOfWeek, defaults, overrides, practitionerId);
+  const { date, dayOfWeek, defaults, overrides } = args;
+  const scope = args.capacityEnabled ? args.practitionerId : null;
+  const window = effectiveWindow(date, dayOfWeek, defaults, overrides, scope);
+  const configured = windowConfigured(date, dayOfWeek, defaults, overrides, scope);
   return {
     availability: configured ? { isOpen: window.is_open, openTime: window.open_time, closeTime: window.close_time } : null,
     closedDay: !window.is_open,

@@ -131,12 +131,12 @@ describe("DAT-002 payment status: unknown is not 'no account'", () => {
     expect(payment).toEqual({ hasAccount: false, livemode: null, onboardingCompleted: false, payoutsEnabled: false });
   });
 
-  it("a failed read is reported as unknown (null), never as 'no account'", async () => {
+  it("a failed read is reported as unknown (unavailable), never as 'no account'", async () => {
     state.fail.add("rpc:get_studio_payment_settings_display");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const [, , payment] = await attentionSources();
-      expect(payment).toBeNull();
+      expect(payment).toBe("unavailable");
     } finally {
       log.mockRestore();
     }

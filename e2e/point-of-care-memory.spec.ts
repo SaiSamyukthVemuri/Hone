@@ -272,7 +272,7 @@ test.describe("point-of-care treatment memory", () => {
       await expect(card.getByText(/Fitzpatrick III/)).toBeVisible();
       await expect(card.getByRole("link", { name: /Full notes/i })).toHaveAttribute(
         "href",
-        `/clients/${fx.clientId}?tab=consultation`,
+        `/clients/${fx.clientId}?tab=treatment`,
       );
     });
 

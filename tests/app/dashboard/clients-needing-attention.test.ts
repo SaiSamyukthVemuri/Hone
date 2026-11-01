@@ -236,7 +236,7 @@ describe("placement + UI", () => {
     expect(MODEL).toMatch(/input\.attention\.clients/);
     expect(MODEL).toMatch(/treatment_memory:\$\{c\.clientId\}/);
     expect(PAGE).toMatch(/attention: clientsNeedingAttention/);
-    expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
+    expect(PAGE).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
   });
 
   it("every inclusion signal still reaches the row, and so does the tolerance context", () => {

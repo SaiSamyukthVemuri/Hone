@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { serviceSelect, type ProfileReadOptions } from "@/lib/clients/profile-pricing";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import type {
@@ -21,18 +22,23 @@ import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
 // the public booking page means internal pickers (calendar quick-book,
 // client profile, dashboard) all show services in the same order the
 // practitioner arranged and the same order their clients see on the
-// public booking menu.
-export async function getActiveServices(studioId: string): Promise<Service[]> {
+// public booking menu. `{ includePrices: false }` selects no price column
+// (the Client Profile for a non-owner).
+export async function getActiveServices(
+  studioId: string,
+  o: ProfileReadOptions = {},
+): Promise<Service[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .select("*")
+    .select(serviceSelect(o))
     .eq("studio_id", studioId)
     .eq("active", true)
     .order("sort_order", { ascending: true })
     .order("name");
   if (error) throw new Error(`Failed to load services: ${dbErrorCode(error)}`);
-  return (data ?? []) as Service[];
+  const rows = (data ?? []) as unknown as Service[];
+  return o.includePrices === false ? rows.map((r) => ({ ...r, price_cents: null })) : rows;
 }
 
 // Explicit "does the services.calendar_color column exist yet?" probe for the

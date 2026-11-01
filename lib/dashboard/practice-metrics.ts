@@ -104,6 +104,15 @@ export type ProcedureActionMetrics = {
   // `incompleteRecords` itself is unchanged: it remains the honest
   // completeness figure for any reporting surface that wants the union.
   recordsMissingDetails: number;
+  // WS-DB. The SAME records `recordsMissingDetails` counts, itemized per session
+  // so Needs attention can group them with that visit's other gaps. Additive:
+  // the count above is unchanged and always equals this list's length.
+  detailGaps?: Array<{
+    sessionId: string;
+    clientId: string;
+    clientName: string;
+    startedAt: string;
+  }>;
 };
 
 // Pure: completeness sweep over generated procedure records (the same
@@ -118,6 +127,7 @@ export function summarizeProcedureCompleteness(
   let missingLots = 0;
   let aftercareNotMarked = 0;
   let missingDetails = 0;
+  const detailGaps: NonNullable<ProcedureActionMetrics["detailGaps"]> = [];
   for (const r of records) {
     const areaLotsMissing = r.areas.filter(
       (a) => !a.probeLotNumber?.trim(),
@@ -133,7 +143,15 @@ export function summarizeProcedureCompleteness(
       !r.address?.trim() ||
       !r.operatorName ||
       r.areas.length === 0;
-    if (detailsMissing) missingDetails += 1;
+    if (detailsMissing) {
+      missingDetails += 1;
+      detailGaps.push({
+        sessionId: r.sessionId,
+        clientId: r.clientId,
+        clientName: r.clientName,
+        startedAt: r.startedAt,
+      });
+    }
     const missingAny =
       detailsMissing || areaLotsMissing > 0 || !r.aftercareExplainedAt;
     if (missingAny) incomplete += 1;
@@ -144,6 +162,7 @@ export function summarizeProcedureCompleteness(
     missingProbeLots: missingLots,
     aftercareNotMarked,
     recordsMissingDetails: missingDetails,
+    detailGaps,
   };
 }
 
@@ -164,6 +183,11 @@ export function summarizeProcedureCompleteness(
 // feedback for the studio as a whole; it is never grouped or ranked
 // by practitioner.
 export const CHARTED_WINDOW_DAYS = 7;
+
+// How many of the studio's most recent charted sessions the procedure-record
+// completeness check looks at. Printed on Needs attention so a clean list is not
+// read as "every session ever is complete" (Insurance N3).
+export const PROCEDURE_RECORD_WINDOW = 100;
 export const CHARTED_WITHIN_MS = 24 * 60 * 60 * 1000;
 
 export type ChartedWithin24hInput = ReadonlyArray<{
@@ -230,9 +254,18 @@ export async function getPracticeDashboardMetrics(
   // REQUIRED, so every caller states who is looking. Membership RLS lets any
   // practitioner read service prices and payment_charge_attempts; HON-44
   // restricts studio totals to the owner, so the gate is here, before the read.
-  viewer: { viewerIsOwner: boolean },
+  //
+  // WS-DB: the loader no longer RUNS for anyone else. Its other reads (the
+  // studio-wide appointment counts and the charted-within-24h figures) are not
+  // a non-owner's to load, so the type admits only `true` and a runtime refusal
+  // backs it. A non-owner needs only the procedure-record roll-up, which has its
+  // own loader below.
+  viewer: { viewerIsOwner: true },
 ): Promise<PracticeDashboardMetrics> {
-  const includeMoney = viewer.viewerIsOwner;
+  if (viewer.viewerIsOwner !== true) {
+    throw new Error("Practice metrics are owner-only");
+  }
+  const includeMoney = true;
   const todayLocal = todayInTz(timezone);
   const range = resolvePeriodRange(todayLocal, period);
   const startUtc = utcInstantFromLocal(range.startLocal, "00:00", timezone);
@@ -280,7 +313,7 @@ export async function getPracticeDashboardMetrics(
         : Promise.resolve({ data: null, error: null }),
       // Same 100-session window as before; only the parameter shape
       // changed when PR #223 added the per-client filter option.
-      getClientProcedureRecords(studioId, { limit: 100 }),
+      getClientProcedureRecords(studioId, { limit: PROCEDURE_RECORD_WINDOW }),
       // PR #225 charted-within-24h denominator: completed
       // appointments that ENDED in the rolling last 7 days.
       supabase
@@ -393,4 +426,16 @@ export async function getPracticeDashboardMetrics(
     actions: summarizeProcedureCompleteness(procedureRecords),
     chartedWithin24h,
   };
+}
+
+// The procedure-record roll-up on its own: the "records missing details" count
+// every role sees on the To do / Needs attention list. Same 100-session window
+// and the same summarizer as `getPracticeDashboardMetrics(...).actions`, so the
+// number is identical; it just does not drag the owner's reads along.
+export async function getProcedureActionMetrics(
+  studioId: string,
+): Promise<ProcedureActionMetrics> {
+  return summarizeProcedureCompleteness(
+    await getClientProcedureRecords(studioId, { limit: PROCEDURE_RECORD_WINDOW }),
+  );
 }

@@ -1369,7 +1369,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(SPEC).toContain('if (browserName !== "webkit") return loginAsOwner(page, seed);');
     expect(SPEC).toContain("await page.context().request.get(link);");
     expect(SPEC).not.toMatch(/page\.goto\(link\)/);
-    expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(6);
+    expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(7);
     expect((SPEC.match(/loginAsOwner\(/g) ?? []).length).toBe(1);
     // HON-62-R6-CLASSIFY: WebKit does not auto-advance time segments, so it
     // gets its own keystrokes; the Chromium keystrokes are the original

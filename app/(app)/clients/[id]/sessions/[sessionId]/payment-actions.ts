@@ -246,7 +246,7 @@ export async function prepareSessionPaymentChargeAction(
   // Run charge — leaving a stray prepared attempt behind that then blocks
   // recording anything else. Failing early is kinder and leaves no residue.
   if (appointmentId) {
-    const settlements = await getAppointmentSettlements(studioId, [appointmentId]);
+    const settlements = await getAppointmentSettlements(studioId, [appointmentId], actorIsOwner);
     // A FAILED READ DOES NOT BLOCK. It is only a courtesy check, and the SQL
     // authority still refuses at claim time, so treating an unreadable result
     // as "settled" would stop a legitimate charge on no evidence.

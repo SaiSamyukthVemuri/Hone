@@ -14,6 +14,7 @@ function read(rel: string): string {
 
 const SEARCH = read("app/(app)/GlobalSearch.tsx");
 const TABBAR = read("components/profile-tab-bar.tsx");
+const TABSET = read("lib/clients/profile-tabs.ts");
 const SESSION_PAGE = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
 );
@@ -48,19 +49,21 @@ describe("1. mobile search input does not trigger iOS zoom", () => {
 });
 
 describe("2. client sections: stable select on phones", () => {
-  it("the select carries all six sections and reflects the active one", () => {
+  it("the select carries every section the viewer may open and reflects the active one", () => {
     expect(TABBAR).toMatch(/value=\{active\}/);
     expect(TABBAR).toMatch(/onChange=\{\(e\) => pick\(e\.target\.value as ProfileTab\)\}/);
     expect(TABBAR).toMatch(/\{TABS\.map\(\(tab\) => \(\s*\n?\s*<option/);
     for (const label of [
       "Overview",
       "Sessions",
-      "Treatment Plans",
-      "Messages",
+      "Treatment",
+      "Photos",
       "Health & Forms",
-      "Personal Notes",
+      "Messages",
+      "Notes",
+      "Billing",
     ]) {
-      expect(TABBAR).toMatch(new RegExp(`label: "${label.replace("&", "&")}"`));
+      expect(TABSET).toMatch(new RegExp(`label: "${label}"`));
     }
   });
 
@@ -165,7 +168,7 @@ describe("5. dashboard: worklist first", () => {
     const today = DASH.indexOf("{dayHeading(selectedDayLocal, todayLocal)}");
     const snapshot = DASH.indexOf("<PracticeSnapshot");
     // Part 2B: the four To-do sub-sections became one list.
-    const attention = DASH.indexOf("<DashboardTodoList");
+    const attention = DASH.indexOf("<NeedsAttentionSection");
     const booking = DASH.indexOf("<BookingSetupCard");
     const birthdays = DASH.indexOf("<BirthdaysThisMonth");
     expect(today).toBeGreaterThan(-1);
@@ -231,7 +234,7 @@ describe("5. dashboard: worklist first", () => {
     );
     expect(DASH).not.toMatch(/<ActionNeeded/);
     expect(DASH).toMatch(/attention: clientsNeedingAttention/);
-    expect(DASH).toMatch(/<DashboardTodoList todo=\{dashboardTodo\} \/>/);
+    expect(DASH).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
     // Loaded exactly once — the split must not have introduced a second read.
     expect(DASH.match(/getClientsNeedingAttention\(/g) ?? []).toHaveLength(1);
   });
