@@ -9,7 +9,7 @@ const PAGE = read("app/(app)/clients/[id]/page.tsx");
 const TIMELINE = read("components/client-appointment-timeline.tsx");
 const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 const INFO = read("components/session-performer-line.tsx");
-const TABBAR = read("components/profile-tab-bar.tsx");
+const TABBAR = read("lib/clients/profile-tabs.ts"); // the tab set (labels, order, owner-only Billing)
 const CAL = read("app/(app)/calendar/page.tsx");
 const DAY = read("app/(app)/calendar/DayColumn.tsx");
 
@@ -76,7 +76,7 @@ describe("6. Messages tab", () => {
 describe("7. overview order", () => {
   it("pinned notes, then allergies, then skin; pricing later", () => {
     const o = PAGE.slice(PAGE.indexOf('{activeTab === "overview"'), PAGE.indexOf('{activeTab === "messages"'));
-    const pinned = o.indexOf("ClientPinnedNotesCard");
+    const pinned = o.indexOf("{pinnedNotesCard}");
     const allergies = o.indexOf("Allergies");
     const skin = o.indexOf(">\n              Skin\n            </h2>") >= 0 ? o.indexOf(">\n              Skin\n            </h2>") : o.indexOf("Skin");
     const pricing = o.lastIndexOf("Pricing");

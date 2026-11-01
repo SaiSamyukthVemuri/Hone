@@ -60,8 +60,9 @@ export function buildCardChangeNotification(input: {
   const body = isReplacement
     ? `${clientName} replaced the card on file with ${brand} ending in ${last4}.`
     : `${clientName} added ${brand} ending in ${last4}.`;
-  // Studio-facing deep link to the client's overview tab.
-  const href = `/clients/${clientId}?tab=overview`;
+  // Studio-facing deep link to the client's Billing tab (where the card on file now lives). A
+  // non-owner opening it is sent to Overview by the profile page, never shown billing.
+  const href = `/clients/${clientId}?tab=billing`;
   return { eventType, title, body, href };
 }
 
