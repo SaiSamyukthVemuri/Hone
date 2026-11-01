@@ -165,7 +165,13 @@ say "=================== B1: EXTRA FILE (a stray below the head, taken by --incl
 reset_to 0; bundle "$S1"; PRE="$(snap)"
 printf '%s\n' "begin;" "select 255;" "commit;" > "$MIG/0255_stray.sql"
 cli b1-dry $IA1 --dry-run
+if [ -n "$IA1" ]; then
 expect "the dry run LISTS the stray as well as [$M1] (a stray file is not harmless)" "$(sed -n 's/^ • //p' "$LOG" | grep -q '^0255_stray.sql$' && sed -n 's/^ • //p' "$LOG" | grep -q "^$M1\$" && echo 0 || echo 1)" "$(sed -n 's/^ • //p' "$LOG" | tr '\n' ' ')"
+else
+# A forward stage is a PLAIN push: a stray below the hosted max makes the CLI refuse the whole push (it lists nothing and
+# applies nothing), which is the safe outcome. The exact-list assertion below must still refuse.
+expect "a plain step with a stray below the head: the dry run REFUSES (rc != 0) and lists nothing" "$([ "$RC" != 0 ] && ! grep -q 'Would push' "$LOG" && echo 0 || echo 1)" "rc=$RC"
+fi
 assert_fails "...and the exact-list assertion for [$M1] REFUSES it, so the stage STOPs before any push" "$M1"
 expect "...and the dry run changed nothing" "$(yes0 "$(snap)" "$PRE")" "$(snap)"
 
@@ -202,7 +208,13 @@ printf '%s\n' "begin;" "select 1/0;" "commit;" > "$MIG/$M3"
 PRE1="$(snap)"
 cli b6-multipush $IA3 --yes
 expect "a single push of both files exits non-zero (the second failed)" "$([ "$RC" != 0 ] && echo 0 || echo 1)" "rc=$RC"
+if [[ "$M3" < "$M2" ]]; then
+# $M3 sorts BEFORE $M2: a combined push would run it first, so the broken file stops everything and $M2 never runs.
+# That is exactly why each migration is its own stage: the order 0272 then 0266 cannot be had from one push.
+expect "...and $M3 sorts BEFORE $M2, so a combined push runs it first, applies nothing, and the history is still step 1's" "$([ "$(snap)" = "$PRE1" ] && echo 0 || echo 1)" "$(snap)"
+else
 expect "...but the FIRST file stayed applied: history is +1 ($M2), not back at step 1's state" "$([ "$(hrows)" = "$(ex "$S2" "d['history_after']['rows']")" ] && [ "$(hmax)" = "$(ex "$S2" "d['history_after']['max']")" ] && [ "$(snap)" != "$PRE1" ] && echo 0 || echo 1)" "$(snap)"
+fi
 
 say "=================== B7: FAILURE INJECTED AT STEP k: history stops at k-1, and the same step cannot be pushed on"
 for k in 2 3 4 5; do
