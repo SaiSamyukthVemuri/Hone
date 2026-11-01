@@ -522,6 +522,8 @@ export async function NeedsAttentionSection({
           ...(intakesUnavailable ? ["intake review"] : []),
           ...(paymentUnavailable ? ["payment setup"] : []),
         ],
+        treatmentMemoryNotReturned:
+          clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
         recordDetailGaps: procedureActions.detailGaps,
         detailsWindow: procedureActions.detailGaps ? PROCEDURE_RECORD_WINDOW : null,
         upcomingVisitClientIds:

@@ -111,6 +111,11 @@ export function buildNeedsAttention(input: {
   // Per-session procedure-record gaps (client or operator details). When
   // supplied they replace the studio-level "records missing details" row.
   detailsWindow?: number | null;
+  // Treatment-memory clients the attention source knew about but did not hand
+  // over because of its own cap (`totalClients - clients.length`). The retired
+  // To-do list counted these in `moreCount`; dropping them would let a studio
+  // with more capped clients read as complete (Codex P2).
+  treatmentMemoryNotReturned?: number;
   recordDetailGaps?: ReadonlyArray<{
     sessionId: string;
     clientId: string;
@@ -256,9 +261,8 @@ export function buildNeedsAttention(input: {
     ),
     unavailableChecks: [...(input.unavailableChecks ?? [])],
     detailsWindow: input.detailsWindow ?? null,
-    notReturnedCount: Math.max(
-      0,
-      (input.assistant.allTotal ?? allItems.length) - allItems.length,
-    ),
+    notReturnedCount:
+      Math.max(0, (input.assistant.allTotal ?? allItems.length) - allItems.length) +
+      Math.max(0, input.treatmentMemoryNotReturned ?? 0),
   };
 }

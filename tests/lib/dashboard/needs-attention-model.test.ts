@@ -250,3 +250,33 @@ describe("buildNeedsAttention preparation tier", () => {
     expect(out.entries.every((e) => e.tier === "preparation")).toBe(true);
   });
 });
+
+describe("buildNeedsAttention truncation warning (Codex P2)", () => {
+  const empty = () =>
+    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+
+  it("counts treatment-memory clients the attention source capped away", () => {
+    const out = buildNeedsAttention({
+      assistant: empty(),
+      intakesAwaitingReview: [],
+      todo: NO_TODO,
+      treatmentMemoryNotReturned: 7,
+    });
+    expect(out.notReturnedCount).toBe(7);
+  });
+
+  it("adds it to the assistant's own shortfall, and never goes negative", () => {
+    const capped = { items: [], totalFound: 12, allItems: [], allTotal: 12 } as never;
+    expect(
+      buildNeedsAttention({ assistant: capped, intakesAwaitingReview: [], todo: NO_TODO, treatmentMemoryNotReturned: 3 }).notReturnedCount,
+    ).toBe(15);
+    expect(
+      buildNeedsAttention({ assistant: empty(), intakesAwaitingReview: [], todo: NO_TODO, treatmentMemoryNotReturned: -4 }).notReturnedCount,
+    ).toBe(0);
+  });
+
+  it("the stack passes the attention shortfall (more than the cap = warning)", () => {
+    const src = require("node:fs").readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8") as string;
+    expect(src).toContain("clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length");
+  });
+});

@@ -68,3 +68,14 @@ describe("Needs attention honest states", () => {
     expect(html({ ...empty, detailsWindow: null })).not.toContain("charted sessions");
   });
 });
+
+describe("Needs attention truncation note", () => {
+  it("anything capped away is never an all-clear, even with nothing to list", () => {
+    const out = html({ ...empty, notReturnedCount: 3 });
+    expect(out).toContain("Older items beyond this list are not included");
+    expect(out).not.toContain("Nothing needs attention right now");
+  });
+  it("nothing capped and nothing listed is the all-clear", () => {
+    expect(html(empty)).toContain("Nothing needs attention right now");
+  });
+});

@@ -80,6 +80,19 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
     ) : null;
 
   if (needs.entries.length === 0 && needs.others.length === 0) {
+    // Something was capped away: this is not an all-clear.
+    if (needs.notReturnedCount > 0) {
+      return (
+        <div className="flex flex-col gap-2">
+          {unavailableNote}
+          <p data-testid="needs-attention-capped" className="text-sm text-neutral-600 dark:text-neutral-400">
+            Older items beyond this list are not included, so this may not be
+            everything.
+          </p>
+          {windowNote}
+        </div>
+      );
+    }
     if (unavailableNote) {
       return (
         <div className="flex flex-col gap-2">
