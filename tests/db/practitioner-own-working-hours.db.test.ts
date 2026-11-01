@@ -127,7 +127,7 @@ describe("0278 the direct-table path stays owner-only (RLS unchanged) and grants
     const { asUser } = await import("./helpers/harness");
     await expect(
       asUser(f.a.userId, (q) =>
-        q(`insert into public.studio_availability_default (studio_id, practitioner_id, day_of_week, is_open, open_time, close_time) values ($1,$2,5,true,'09:00','10:00')`, [f.s.studioId, f.a.practitionerId]),
+        q(`insert into public.studio_availability_default (id, studio_id, practitioner_id, day_of_week, is_open, open_time, close_time) values (gen_random_uuid(),$1,$2,5,true,'09:00','10:00')`, [f.s.studioId, f.a.practitionerId]),
       ),
     ).rejects.toMatchObject({ code: "42501" });
   });
