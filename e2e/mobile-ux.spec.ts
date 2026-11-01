@@ -813,8 +813,9 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(bufferControl).toBeVisible();
     await expect(bufferControl).toContainText("Time between appointments");
     await expectScrolledIntoView(desktopPage, bufferControl, "buffer control");
-    // Two searches, one page, two different destinations.
-    expect(new URL(desktopPage.url()).hash).toBe("#buffer");
+    // R2: the destination is the focused view itself, with no hash. The
+    // control is still its own element on the page (#buffer above).
+    expect(new URL(desktopPage.url()).hash).toBe("");
 
     await desktopPage.goto("/dashboard");
     await search.fill(seed.clientName);
