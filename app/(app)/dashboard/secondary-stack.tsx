@@ -286,13 +286,18 @@ export async function SecondaryStack({
           payment posture does not exist yet, and deleting the only surface that
           shows them before their replacement exists would destroy working
           functionality. */}
-      <PracticeSnapshot
-        metrics={practiceMetrics}
-        livemode={inferStripeLivemode()}
-        selectedDay={selectedDayLocal}
-        todayLocal={todayLocal}
-        staffManaged={staffManaged}
-      />
+      {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
+          not its counts, period filter or copy, is rendered into the response. `practiceMetrics.actions` is still read above because it
+          feeds the shared To do model, which every role sees; the snapshot itself never reaches a non-owner. */}
+      {isOwner && (
+        <PracticeSnapshot
+          metrics={practiceMetrics}
+          livemode={inferStripeLivemode()}
+          selectedDay={selectedDayLocal}
+          todayLocal={todayLocal}
+          staffManaged={staffManaged}
+        />
+      )}
 
       {/* OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card:
           the figures on it are studio-wide practice analytics an ordinary

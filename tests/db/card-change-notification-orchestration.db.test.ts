@@ -145,7 +145,7 @@ const call = (mode: boolean, sid: string) =>
   });
 
 describe("real ensureCardChangeNotification against the local DB", () => {
-  it("first SetupIntent -> exactly one card_added notification (studio-wide, safe body, href to client)", async () => {
+  it("first SetupIntent -> exactly one card_added notification (owner-targeted, safe body, href to client)", async () => {
     await insertActiveCard(false, "seti_first");
     const r = await call(false, "seti_first");
     expect(r).toEqual({ eventType: "card_added", deduped: false });
@@ -153,7 +153,7 @@ describe("real ensureCardChangeNotification against the local DB", () => {
     const k = key(false, "seti_first");
     expect(await notifCount(k)).toBe(1);
     const row = await notifRow(k);
-    expect(row.practitioner_id).toBeNull(); // studio-wide
+    expect(row.practitioner_id).toBe(s.practitionerId); // WS-D: owner-only delivery, never studio-wide
     expect(row.event_type).toBe("card_added");
     expect(row.client_id).toBe(s.clientId);
     expect(row.href).toBe(`/clients/${s.clientId}?tab=billing`);
