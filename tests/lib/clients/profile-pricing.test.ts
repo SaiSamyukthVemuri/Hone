@@ -73,10 +73,22 @@ describe("the loaders do not fetch a price for a non-owner (Sam's ruling)", () =
     expect(log.find((l) => l.table === "sessions")?.select).toMatch(/^\*,/);
   });
 
-  it("the default (every other caller) is the owner read", async () => {
+  it("the default (a caller that names nothing) is the SAFE read: no client pricing, no price column", async () => {
     const { getClientById } = await import("@/lib/supabase/queries");
     await getClientById("s1", "c1");
-    expect(log.map((l) => l.table)).toContain("client_pricing");
+    expect(log.map((l) => l.table)).not.toContain("client_pricing");
+    expect(log.find((l) => l.table === "sessions")?.select).not.toMatch(/price|^\*/);
+  });
+
+  it("no page calls getClientById without stating the price option or needing none (RBAC G-1)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const withOption = [
+      "app/(app)/clients/[id]/page.tsx",
+      "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+    ];
+    for (const f of withOption) {
+      expect(readFileSync(f, "utf8"), f).toMatch(/getClientById\([^)]*includePrices|getClientById\(studio\.id, id, priceReads\)/);
+    }
   });
 
   it("getActiveServices({ includePrices:false }) selects no price column and returns price_cents null", async () => {
