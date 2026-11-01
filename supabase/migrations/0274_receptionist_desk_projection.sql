@@ -41,6 +41,9 @@
 --       date. A fact that cannot be read is NOT defaulted to a positive one.
 --   R8  the schedule carries the service name (booking information); no
 --       appointment notes, prices, payment state or status reasons.
+-- D1-D3 (Insurance peer review of #1303): consent is CURRENT-version only, last visit is a
+-- studio-local date from the studios.timezone the definer reads, and a too-long term is
+-- refused with its own message (query_too_long).
 -- R3 (ship dark), R4 (cross-studio), R5, R6 are application conditions and live
 -- in the desk package, not in this file.
 --
@@ -111,6 +114,7 @@ declare
   v_sort    text    := coalesce(p_sort, 'name');
   v_filters text[]  := coalesce(p_filters, array[]::text[]);
   v_pattern text;
+  v_tz      text;
 begin
   if auth.uid() is null then
     raise exception 'not_authorized' using errcode = '42501';
@@ -118,6 +122,16 @@ begin
   if public.receptionist_actor_id(p_studio_id) is null then
     raise exception 'not_authorized' using errcode = '42501';
   end if;
+
+  -- The studio's own clock (the definer reads it; the receptionist cannot). A missing or
+  -- unusable zone falls back to UTC rather than failing the page.
+  select coalesce(
+           (select z.name from pg_catalog.pg_timezone_names z where z.name = s.timezone limit 1),
+           'UTC')
+    into v_tz
+    from public.studios s
+   where s.id = p_studio_id;
+  v_tz := coalesce(v_tz, 'UTC');
 
   -- Closed sets: anything else is refused, never ignored.
   if v_sort not in ('name', 'next') then
@@ -131,7 +145,10 @@ begin
 
   -- R2: a front desk finds a client, it does not export a list.
   if v_query is not null then
-    if char_length(v_query) < 2 or char_length(v_query) > 80 then
+    if char_length(v_query) > 80 then
+      raise exception 'query_too_long' using errcode = '22023';
+    end if;
+    if char_length(v_query) < 2 then
       raise exception 'query_too_short' using errcode = '22023';
     end if;
     -- Escape LIKE metacharacters so the search is literal.
@@ -184,20 +201,32 @@ begin
                  and f.deleted_at is null
                order by f.created_at desc, f.id desc
                limit 1)                                                         as istatus,
-             exists (
-               select 1
-                 from public.client_consent_signatures sg
-                 join public.consent_form_templates t
-                   on t.id = sg.template_id and t.studio_id = sg.studio_id
-                where sg.studio_id = p_studio_id
-                  and sg.client_id = s.id
-                  and sg.response  = 'accepted'
-                  and t.form_type  = 'treatment_consent')                       as consent
+             -- CURRENT treatment consent: the studio has at least one LIVE, ACTIVE
+             -- treatment_consent template, and for EVERY such template the client's NEWEST
+             -- signature is an acceptance of that template's CURRENT version. A superseded
+             -- version, a later denial, or an archived template never reads as signed.
+             (exists (
+                select 1 from public.consent_form_templates t
+                 where t.studio_id = p_studio_id
+                   and t.form_type = 'treatment_consent'
+                   and t.is_live and t.status = 'active')
+              and not exists (
+                select 1 from public.consent_form_templates t
+                 where t.studio_id = p_studio_id
+                   and t.form_type = 'treatment_consent'
+                   and t.is_live and t.status = 'active'
+                   and coalesce((select sg.response = 'accepted' and sg.template_version = t.version
+                                   from public.client_consent_signatures sg
+                                  where sg.studio_id = p_studio_id
+                                    and sg.client_id = s.id
+                                    and sg.template_id = t.id
+                                  order by sg.signed_at desc, sg.id desc
+                                  limit 1), false) is not true))                as consent
         from searched s
     ),
     shaped as (
       select f.id, f.dname, f.on_file, f.cphone, f.cemail, f.nxt,
-             (f.lastv at time zone 'UTC')::date as lastv_on,
+             (f.lastv at time zone v_tz)::date as lastv_on,
              case f.istatus
                when 'submitted' then 'awaiting_review'
                when 'reviewed'  then 'reviewed'
@@ -235,7 +264,7 @@ revoke execute on function public.receptionist_client_directory(uuid, text, text
 grant execute on function public.receptionist_client_directory(uuid, text, text[], text, integer, integer) to authenticated;
 
 comment on function public.receptionist_client_directory(uuid, text, text[], text, integer, integer) is
-  '0274 desk directory: ONE page of active clients, display identity (preferred name else the stored name flagged name_on_file), phone, email, next appointment, last visit as a date (completed appointments only), intake enum and a treatment-consent boolean. Active receptionist of the studio only. A query of 2+ characters is required for any page after the first; offset + limit is capped at 200. Never reads sessions, client_legal_identities, any legal_ column, intake answers or consent text.';
+  '0274 desk directory: ONE page of active clients, display identity (preferred name else the stored name flagged name_on_file), phone, email, next appointment, last completed appointment as a studio-local date (completed appointments only; not the staff Last visit), intake enum and a boolean that is true only when the newest client signature on every live treatment-consent template accepts its current version. Active receptionist of the studio only. A query of 2+ characters is required for any page after the first; offset + limit is capped at 200. Never reads sessions, client_legal_identities, any legal_ column, intake answers or consent text.';
 
 -- ---------------------------------------------------------------------------
 -- 2) The schedule with the display identity (Privacy R1).

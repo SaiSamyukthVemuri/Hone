@@ -130,13 +130,62 @@ describe("the payload", () => {
     const m = (await dir(aDesk, a.studioId, "maggie")).rows[0];
     expect(m.consent_signed).toBe(false); // photo consent is not treatment consent
     const tpl2 = randomUUID();
-    await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status) values ($1,$2,'Treatment consent','body','treatment_consent',1,'active')", [tpl2, a.studioId]);
+    await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,'Treatment consent','body','treatment_consent',1,'active',true)", [tpl2, a.studioId]);
     await adminQuery(
       `insert into public.client_consent_signatures (id, studio_id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, template_hash, signature_name, response, response_label_snapshot)
        values (gen_random_uuid(), $1, $2, $3, 'Treatment consent', 'body', 1, $4, 'Synthetic', 'accepted', 'I agree')`,
       [a.studioId, ids.maggie, tpl2, "c".repeat(64)],
     );
     expect((await dir(aDesk, a.studioId, "maggie")).rows[0].consent_signed).toBe(true);
+  });
+});
+
+describe("Insurance D1-D3 (peer review of #1303)", () => {
+  const sign = (client: string, tpl: string, version: number, response: string, at: string, hash: string) =>
+    adminQuery(
+      `insert into public.client_consent_signatures (id, studio_id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, template_hash, signature_name, response, response_label_snapshot, signed_at)
+       values (gen_random_uuid(), $1, $2, $3, 'Treatment consent', 'body', $4, $5, 'Synthetic', $6, 'label', $7)`,
+      [a.studioId, client, tpl, version, hash.repeat(64).slice(0, 64), response, at],
+    );
+  const consentOf = async (q: string) => (await dir(aDesk, a.studioId, q)).rows[0].consent_signed;
+
+  it("D1: a superseded version, a later denial, and a template that is no longer live never read as signed", async () => {
+    const plain = "555 0102";
+    const tpl = randomUUID();
+    await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,'Treatment v1','body','treatment_consent',1,'active',true)", [tpl, a.studioId]);
+    await sign(ids.plain, tpl, 1, "accepted", "2024-02-01T10:00:00Z", "d");
+    expect(await consentOf(plain)).toBe(true);
+    // The template moves to version 2: the v1 signature is out of date.
+    await adminQuery("update public.consent_form_templates set version = 2 where id = $1", [tpl]);
+    expect(await consentOf(plain)).toBe(false);
+    await sign(ids.plain, tpl, 2, "accepted", "2024-03-01T10:00:00Z", "e");
+    expect(await consentOf(plain)).toBe(true);
+    // A later denial of the current version wins.
+    await sign(ids.plain, tpl, 2, "denied", "2024-04-01T10:00:00Z", "f");
+    expect(await consentOf(plain)).toBe(false);
+    // Not live: nothing to be signed against.
+    await adminQuery("update public.consent_form_templates set is_live = false where id = $1", [tpl]);
+    expect(await consentOf(plain)).toBe(false);
+  });
+
+  it("D2: last visit is the STUDIO-local date (a UTC-next-day visit does not show tomorrow)", async () => {
+    const day = async () =>
+      (await asUser(aDesk, (x) => x(`select to_char(last_visit_on,'YYYY-MM-DD') as d from public.receptionist_client_directory($1,'555 0102',null,'name',0,25)`, [a.studioId]))).rows[0].d;
+    const original = (await adminQuery("select timezone from public.studios where id = $1", [a.studioId])).rows[0].timezone;
+    try {
+      await adminQuery("update public.studios set timezone = 'America/Toronto' where id = $1", [a.studioId]);
+      expect(await day()).toBe("2024-01-02"); // 15:00Z = 10:00 local
+      await adminQuery("update public.studios set timezone = 'Pacific/Auckland' where id = $1", [a.studioId]);
+      expect(await day()).toBe("2024-01-03"); // 15:00Z = 04:00 next day local
+    } finally {
+      await adminQuery("update public.studios set timezone = $2 where id = $1", [a.studioId, original]);
+    }
+  });
+
+  it("D3: a too-long term and a too-short term are refused with different messages", async () => {
+    await expect(dir(aDesk, a.studioId, "x".repeat(81))).rejects.toMatchObject({ code: "22023", message: expect.stringContaining("query_too_long") });
+    await expect(dir(aDesk, a.studioId, "x")).rejects.toMatchObject({ code: "22023", message: expect.stringContaining("query_too_short") });
+    expect((await dir(aDesk, a.studioId, "x".repeat(80))).rowCount).toBe(0);
   });
 });
 

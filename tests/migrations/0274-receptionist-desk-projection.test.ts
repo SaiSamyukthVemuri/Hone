@@ -88,13 +88,22 @@ describe("0274: directory", () => {
   it("R7: intake is a closed enum from the newest non-deleted form's STATUS; consent is a boolean for treatment_consent only", () => {
     expect(DIR).toMatch(/when 'submitted' then 'awaiting_review'[\s\S]*when 'reviewed'\s+then 'reviewed'[\s\S]*else 'not_submitted'/);
     expect(DIR).toContain("f.deleted_at is null");
-    expect(DIR).toContain("t.form_type  = 'treatment_consent'");
+    expect(DIR).toContain("t.form_type = 'treatment_consent'");
     expect(DIR).not.toMatch(/signature_name|template_body|template_title|signed_at\s+as|submitted_at/);
+  });
+  it("D1-D3: consent needs a LIVE ACTIVE template and the newest signature on its CURRENT version; the term length has two distinct refusals", () => {
+    expect(DIR).toContain("t.is_live and t.status = 'active'");
+    expect(DIR).toContain("sg.template_version = t.version");
+    expect(DIR).toContain("order by sg.signed_at desc, sg.id desc");
+    expect(DIR).toContain("raise exception 'query_too_long'");
+    expect(DIR).toContain("raise exception 'query_too_short'");
+    expect(DIR).toContain("pg_catalog.pg_timezone_names");
   });
   it("last visit is the completed-appointments source only, as a date; next is confirmed and in the future", () => {
     expect(DIR).toContain("a.status = 'completed'");
     expect(DIR).toContain("a.starts_at <= pg_catalog.now()");
-    expect(DIR).toContain("(f.lastv at time zone 'UTC')::date");
+    expect(DIR).toContain("(f.lastv at time zone v_tz)::date");
+    expect(DIR).not.toContain("at time zone 'UTC'");
     expect(DIR).toContain("a.status = 'confirmed'");
     expect(DIR).toContain("a.starts_at > pg_catalog.now()");
   });
