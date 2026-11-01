@@ -272,8 +272,8 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
-  // HON-58: ONE display identity for the whole profile (preferred name when set, else the stored name).
-  const { display: clientDisplay, nameOnFile } = profileNameLines(client);
+  // HON-58: ONE display identity for the whole profile (preferred name alone when set; else the stored name, labelled Name on file).
+  const { display: clientDisplay, labelAsNameOnFile } = profileNameLines(client);
   const sessionsByRecency = orderByRecency(sessions);
   const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
@@ -984,9 +984,9 @@ export default async function ClientCheatSheetPage({
                 </span>
               )}
             </div>
-            {nameOnFile && (
-              <p data-testid="client-profile-name-on-file" className="mt-1 text-sm text-neutral-500">
-                Name on file: {nameOnFile}
+            {labelAsNameOnFile && (
+              <p data-testid="client-profile-name-on-file" className="mt-1 text-xs uppercase tracking-wider text-neutral-500">
+                Name on file
               </p>
             )}
             <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
