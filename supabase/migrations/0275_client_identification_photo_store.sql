@@ -538,8 +538,8 @@ begin
   get diagnostics v_deleted = row_count;
   -- D1: any upload in flight for this client is due for deletion NOW, so it is drained promptly.
   update public.client_id_photo_pending_object_deletions
-     set delete_after = now()
-   where reserved_client_id = p_client_id and reservation and delete_after > now();
+     set delete_after = now(), reservation = false, reserved_client_id = null
+   where reserved_client_id = p_client_id and reservation;
 
   if v_last.event = 'granted' then
     insert into public.client_id_photo_consents
@@ -704,8 +704,8 @@ begin
   get diagnostics v_deleted = row_count;
   -- D1: any upload in flight for this client is due for deletion NOW, so it is drained promptly.
   update public.client_id_photo_pending_object_deletions
-     set delete_after = now()
-   where reserved_client_id = p_client_id and reservation and delete_after > now();
+     set delete_after = now(), reservation = false, reserved_client_id = null
+   where reserved_client_id = p_client_id and reservation;
   if v_deleted > 0 then
     insert into public.client_id_photo_audit (studio_id, client_id, event, actor_practitioner_id)
     values (v_studio, p_client_id, 'photo_removed', v_actor);
@@ -816,8 +816,8 @@ begin
   get diagnostics v_deleted = row_count;
   -- D1: any upload in flight for this client is due for deletion NOW, so it is drained promptly.
   update public.client_id_photo_pending_object_deletions
-     set delete_after = now()
-   where reserved_client_id = new.id and reservation and delete_after > now();
+     set delete_after = now(), reservation = false, reserved_client_id = null
+   where reserved_client_id = new.id and reservation;
 
   if v_last.event = 'granted' then
     insert into public.client_id_photo_consents

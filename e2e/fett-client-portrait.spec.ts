@@ -188,9 +188,17 @@ test("portrait use OFF: no control, no header portrait, the stored pointer is le
   await expect(tile(page, photo)).toHaveCount(1, { timeout: T });
   await expect(page.getByRole("button", { name: /Use as ID photo|Remove ID photo/ })).toHaveCount(0);
 
-  // A pointer stored before the hold (set here as the table owner) is neither
-  // rendered nor cleared.
-  await sql(`update public.clients set portrait_image_id = $1 where id = $2`, [photo.id, clientId]);
+  // A pointer stored before the hold is neither rendered nor cleared. 0275 refuses
+  // any non-null write of the pointer, so a legacy one is planted the way a restore
+  // would: the owner switches the guard trigger off for this one statement batch.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  expect(photo.id).toMatch(uuid);
+  expect(clientId).toMatch(uuid);
+  await sql(
+    `alter table public.clients disable trigger clients_portrait_pointer_frozen;
+     update public.clients set portrait_image_id = '${photo.id}' where id = '${clientId}';
+     alter table public.clients enable trigger clients_portrait_pointer_frozen;`,
+  );
   await page.goto(`/clients/${clientId}`);
   await page.reload();
   await expect(page.getByTestId("client-portrait")).toHaveCount(0);

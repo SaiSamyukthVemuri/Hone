@@ -3,7 +3,7 @@
   "migrations": {
     "count": 250,
     "last": "0275_client_identification_photo_store.sql",
-    "sha256": "092f24cd2fe897354dd0a295fc490c1c5185400034eed0c45544ab1d66563211"
+    "sha256": "5076d636be49bffa86c9f0db1ed0103a472666c14a35210b24c67bb42e736008"
   },
   "public": {
     "tables": [

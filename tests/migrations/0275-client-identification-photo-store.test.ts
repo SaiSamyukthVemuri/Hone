@@ -205,12 +205,12 @@ describe("0275 revision conditions (Privacy C1-C4)", () => {
 });
 
 describe("0275 D1 (Privacy delta): in-flight reservations are made due when the photo goes away", () => {
-  it("withdraw, remove and the archive trigger each expire that client's open reservations", () => {
+  it("withdraw, remove and the archive trigger each expire that client's open reservations and clear the reservation flag (I3: no timestamp race)", () => {
     const fns = createdFunctions();
     for (const name of ["withdraw_client_id_photo_consent", "remove_client_id_photo", "client_id_photo_on_client_archive"]) {
       const body = fns.find((f) => f.name === name)!.body;
       expect(body, name).toMatch(
-        /update public\.client_id_photo_pending_object_deletions\s+set delete_after = now\(\)\s+where reserved_client_id = (p_client_id|new\.id) and reservation and delete_after > now\(\)/,
+        /update public\.client_id_photo_pending_object_deletions\s+set delete_after = now\(\), reservation = false, reserved_client_id = null\s+where reserved_client_id = (p_client_id|new\.id) and reservation;/,
       );
     }
   });

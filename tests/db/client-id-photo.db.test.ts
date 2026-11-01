@@ -449,6 +449,31 @@ describe("0275 D1: withdraw, remove and archive make an in-flight reservation du
     await userQuery(A.userId, `select public.remove_client_id_photo($1)`, [c]);
     expect(await due(path)).toBe(true);
     expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(path);
+    // I3: the reservation is no longer one, so a set that waited on the client lock cannot consume it,
+    // and consent is still current after a remove.
+    const q = await adminQuery(`select reservation, reserved_client_id from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path]);
+    expect(q.rows[0]).toMatchObject({ reservation: false, reserved_client_id: null });
+    expect((await refusal(setPhoto(A.userId, c, path))).code).toBe(P0275);
+  });
+
+  it("I2: the owner can plant a legacy pointer for a restore by disabling the guard trigger; the guard stays enforced after", async () => {
+    const c = await newClient(A);
+    const img = randomUUID();
+    await userQuery(A.userId, `select public.create_treatment_image_metadata($1,$2,null,null,$3,$4,$5,$6,$7)`, [
+      img, c, "treatment-images", `${A.studioId}/${c}/${img}.jpg`, "synthetic.jpg", "image/jpeg", 1024,
+    ]);
+    await adminQuery(`alter table public.clients disable trigger clients_portrait_pointer_frozen`);
+    try {
+      await adminQuery(`update public.clients set portrait_image_id = $2 where id = $1`, [c, img]);
+    } finally {
+      await adminQuery(`alter table public.clients enable trigger clients_portrait_pointer_frozen`);
+    }
+    expect((await adminQuery(`select portrait_image_id from public.clients where id = $1`, [c])).rows[0].portrait_image_id).toBe(img);
+    const other = randomUUID();
+    await userQuery(A.userId, `select public.create_treatment_image_metadata($1,$2,null,null,$3,$4,$5,$6,$7)`, [
+      other, c, "treatment-images", `${A.studioId}/${c}/${other}.jpg`, "synthetic.jpg", "image/jpeg", 1024,
+    ]);
+    expect((await refusal(adminQuery(`update public.clients set portrait_image_id = $2 where id = $1`, [c, other]))).code).toBe(P0275);
   });
 
   it("the client-archive trigger expires them", async () => {
