@@ -109,6 +109,7 @@ import { upsertTreatmentGoalAction } from "./treatment-time-actions";
 import { ProfileTabBar } from "@/components/profile-tab-bar";
 import { sanitizeAppointmentReturnTo } from "@/lib/nav/appointment-return";
 import { BookAppointment } from "./BookAppointment";
+import { sanitizeDirectoryReturnTo } from "@/lib/nav/directory-return";
 import {
   addClientPricingAction,
   deleteClientPricingAction,
@@ -216,7 +217,7 @@ export default async function ClientCheatSheetPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; create_plan?: string; returnTo?: string }>;
+  searchParams: Promise<{ tab?: string; create_plan?: string; returnTo?: string; book?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -236,12 +237,19 @@ export default async function ClientCheatSheetPage({
   // `?tab=billing` never render the old/forbidden tab: they are redirected server-side to the tab
   // that now holds the content (no #anchor, so nothing scrolls), keeping create_plan/returnTo.
   const viewerCanSeeBilling = canViewClientBilling(practitioner.role);
+  // Directory contract (#1292): `?book=1` opens the existing booking flow for THIS client, and a
+  // validated `/clients?...` returnTo restores the directory's URL state on Back. No anchor.
+  const directoryReturnTo = sanitizeDirectoryReturnTo(sp.returnTo);
+  const autoOpenBooking = sp.book === "1";
   const resolved = resolveProfileTab(sp.tab, { isOwner: viewerCanSeeBilling });
   if (resolved.denied || isLegacyProfileTab(sp.tab)) {
     const q = new URLSearchParams();
     if (!resolved.denied && resolved.tab !== "overview") q.set("tab", resolved.tab);
     if (!resolved.denied && resolved.tab === "treatment" && sp.create_plan === "1") q.set("create_plan", "1");
     if (!resolved.denied && resolved.tab === "treatment" && sp.returnTo) q.set("returnTo", sp.returnTo);
+    // Directory contract: a booking deep link survives the redirect, with its validated return path.
+    if (sp.book === "1") q.set("book", "1");
+    if (sp.book === "1" && directoryReturnTo && !q.has("returnTo")) q.set("returnTo", directoryReturnTo);
     redirect(`/clients/${id}${q.size ? `?${q}` : ""}`);
   }
   const activeTab: ProfileTab = resolved.tab;
@@ -937,7 +945,7 @@ export default async function ClientCheatSheetPage({
     <div className="flex flex-col gap-10">
       <section data-testid="client-profile-header">
         <Link
-          href="/clients"
+          href={directoryReturnTo ?? "/clients"}
           className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← Clients
@@ -1012,6 +1020,7 @@ export default async function ClientCheatSheetPage({
           <div className="min-w-0 flex-1">
             <BookAppointment
               clientId={client.id}
+              initiallyOpen={autoOpenBooking}
               services={services}
               defaultDate={today}
               timezone={studio.timezone}

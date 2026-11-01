@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Service } from "@/lib/types/database";
 import {
@@ -32,6 +32,8 @@ type Props = {
   practitionerCapacityEnabled: boolean;
   currentPractitionerId: string;
   currentPractitionerName: string;
+  // Directory deep link (`?book=1`): start expanded for this client. Slots load as on a click.
+  initiallyOpen?: boolean;
 };
 
 const OVERRIDE_TIME_RE = /^\d{2}:\d{2}$/;
@@ -45,9 +47,10 @@ export function BookAppointment({
   practitionerCapacityEnabled,
   currentPractitionerId,
   currentPractitionerName,
+  initiallyOpen = false,
 }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const groups = useMemo(() => groupServicesByModality(services), [services]);
   const firstServiceId = groups[0]?.services[0]?.id ?? "";
   const [serviceId, setServiceId] = useState(firstServiceId);
@@ -146,6 +149,14 @@ export function BookAppointment({
       loadSlots(nextServiceId, nextDate, nextTarget);
     });
   }
+
+  const autoLoaded = useRef(false);
+  useEffect(() => {
+    if (!initiallyOpen || autoLoaded.current) return;
+    autoLoaded.current = true;
+    if (serviceId && date) loadForService(serviceId, date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once for the deep link
+  }, []);
 
   function handleOpen() {
     setOpen(true);
