@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -1647,6 +1647,12 @@ describe("PEER-1155 TMP proof: only artifacts this invocation created are remove
     patch("export-lib.sh", '[ -z "${EXPORT_TMPDIR:-}" ] || rm -rf "$EXPORT_TMPDIR"', '[ -z "${TMP:-}" ] || rm -rf "$TMP"');
     patch("object-export.sh", 'EXPORT_TMPDIR="$TMP"   # the one directory the exit trap removes: made by this run, inside $OUT\n', "");
     patch("export-lib.sh", "export_signal_traps() { trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP; }", "export_signal_traps() { :; }");
+    // pre-30d21d68 forms for the Insurance L1/L2/L4/L3 controls
+    patch("export-lib.sh", 'SNAP_IS_OPEN=0 SNAP_IN="" SNAP_OUT_FD="" SNAP_WAIT_PID="" SNAP_PID=""\n', "");
+    patch("export-lib.sh", "  case \"$SNAP_IN\" in ''|*[!0-9]*) return 0;; esac\n", "");
+    patch("export-lib.sh", "for v in $(compgen -e | grep '^PG' || true); do", "for v in PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY PGPASSFILE PGGSSENCMODE PGSYSCONFDIR; do");
+    patch("export-lib.sh", '  [ ! -L "$out" ] || export_fail "$out is a symbolic link; give the real directory"\n', "");
+    patch("export-lib.sh", '  mkdir "$out" 2>/dev/null || export_fail "$out was created by another run; refusing"\n', '  sleep 0.3   # the old check-then-create window, widened so the control is deterministic\n  mkdir -p "$out"\n');
     // when the real commit is in this checkout, the old trap line must be the one just derived
     const old = spawnSync("git", ["show", "3240218ce:scripts/ops/export-lib.sh"], { encoding: "utf8", cwd: ROOT });
     if (old.status === 0) {
@@ -1811,4 +1817,71 @@ describe("PEER-1155 TMP proof: only artifacts this invocation created are remove
       expect(existsSync(path.join(first, "receipt.txt"))).toBe(true);
     });
   });
+
+  // ---- Insurance 30d21d68 findings ----
+  it("L1 an inherited SNAP_IS_OPEN/SNAP_IN/SNAP_OUT_FD/SNAP_WAIT_PID is never evaluated by the exit trap; the pre-fix lib evaluates it", () => {
+    const d = world("tp-l1");
+    for (const [label, snapIn] of [["shell fragment", "9>&-; touch SENTINEL; exec 9"], ["digit", "9"]] as const) {
+      const dir = canary(`tp-l1-${label.replace(" ", "")}`);
+      const sentinel = path.join(dir, "evaluated.txt");
+      const frag = snapIn.replace("SENTINEL", sentinel);
+      const env = { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, SNAP_IS_OPEN: "1", SNAP_IN: frag, SNAP_OUT_FD: "8", SNAP_WAIT_PID: "999999" };
+      const real = runIn(OPS, "object-export.sh", OBJ(path.join(scratch, `tp-l1-out-${label.replace(" ", "")}`), "someotherproject"), env);
+      expect(real.status, label).not.toBe(0);
+      expect(existsSync(sentinel), `HEAD evaluated the inherited SNAP_IN (${label})`).toBe(false);
+      if (label === "shell fragment") {
+        runIn(preFix, "object-export.sh", OBJ(path.join(scratch, "tp-l1-ctl-out"), "someotherproject"), env);
+        expect(existsSync(sentinel), "pre-fix control must evaluate the fragment").toBe(true);
+      }
+    }
+  });
+
+  it("L2 every PG* variable is refused, including the ones the old list missed; the pre-fix guard lets the missed ones through", () => {
+    const d = world("tp-l2");
+    for (const v of ["PGSSLMINPROTOCOLVERSION", "PGCHANNELBINDING", "PGSSLCRL", "PGSSLCRLDIR", "PGSSLSNI", "PGSSLCERTMODE", "PGTARGETSESSIONATTRS", "PGLOADBALANCEHOSTS", "PGTZ", "PGDATESTYLE", "PGCLIENTENCODING", "PGREQUIREAUTH", "PGKRBSRVNAME"]) {
+      const env = { DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", [v]: "x" };
+      const real = runIn(OPS, "logical-export.sh", ["--out", path.join(scratch, `tp-l2-${v}`), "--recipient", "age1x", "--expect-ref", REF], env);
+      expect(real.status, v).not.toBe(0);
+      expect(real.stderr, v).toContain(`${v} is set in the environment`);
+      if (v === "PGSSLMINPROTOCOLVERSION" || v === "PGCHANNELBINDING") {
+        const old = runIn(preFix, "logical-export.sh", ["--out", path.join(scratch, `tp-l2-ctl-${v}`), "--recipient", "age1x", "--expect-ref", REF], env);
+        expect(old.stderr, `pre-fix control must not name ${v}`).not.toContain(`${v} is set in the environment`);
+      }
+    }
+  });
+
+  it("L3 a symbolic --out is refused by both tools and its target is left alone; the pre-fix lib accepts it", () => {
+    const d = world("tp-l3");
+    const target = path.join(scratch, "tp-l3-target"); mkdirSync(target);
+    const link = path.join(scratch, "tp-l3-link"); symlinkSync(target, link);
+    for (const [script, args] of [["object-export.sh", OBJ(link)], ["logical-export.sh", ["--out", link, "--recipient", "age1x", "--expect-ref", REF]]] as const) {
+      const r = runIn(OPS, script, [...args], { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d });
+      expect(r.status, script).not.toBe(0);
+      expect(r.stderr, script).toContain("symbolic link");
+      expect(readdirSync(target), `${script} wrote through the link`).toEqual([]);
+    }
+    const ctl = runIn(preFix, "object-export.sh", OBJ(link), { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d });
+    expect(ctl.stderr).not.toContain("symbolic link");
+  });
+
+  it("L4 many runs claiming one new --out: exactly one owns it and a loser deletes nothing; the old check-then-mkdir -p lets several own it", () => {
+    const claimMany = (lib: string, dir: string, n: number) => {
+      const script = `. ${path.join(lib, "export-lib.sh")}
+n=${n}; D=${dir}
+for i in $(seq 1 $n); do
+  ( set +e; r=$( (export_claim_out "$D" >/dev/null 2>&1; echo "OWNER:\${EXPORT_OUT_CREATED:-0}") ); case "$r" in OWNER*) echo "$r";; *) echo LOSER;; esac >> "$D.results" ) &
+done; wait; sort "$D.results" | uniq -c`;
+      return spawnSync("bash", ["-c", script], { encoding: "utf8" }).stdout;
+    };
+    const head = path.join(scratch, "tp-l4-head");
+    const outHead = claimMany(OPS, head, 8);
+    expect((outHead.match(/OWNER:1/g) ?? []).length, outHead).toBe(1);
+    expect(outHead).toMatch(/\b7 LOSER/);
+    expect(existsSync(head)).toBe(true);
+    // CONTROL: the pre-fix claim lets more than one run believe it created the directory
+    const old = path.join(scratch, "tp-l4-old");
+    const outOld = claimMany(preFix, old, 8);
+    expect(Number(/(\d+) OWNER:1/.exec(outOld)?.[1] ?? 0), `pre-fix control must show several owners: ${outOld}`).toBeGreaterThan(1);
+  });
+
 });

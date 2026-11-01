@@ -61,9 +61,7 @@ require_conn_url "$DB_URL" "the connection string"
 url_matches_ref "$DB_URL" "$REF" || export_fail "the connection string's host does not name project ref '$REF'; refusing"
 export_configure_commands
 
-if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then export_fail "$OUT exists and is not empty"; fi
-[ -e "$OUT" ] || EXPORT_OUT_CREATED=1
-EXPORT_OUT="$OUT"
+export_claim_out "$OUT"   # atomic: a symlink or a directory another run made is refused
 mkdir -p "$OUT/markers"
 
 T0=$(date +%s)

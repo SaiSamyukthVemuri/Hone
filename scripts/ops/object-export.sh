@@ -77,9 +77,7 @@ url_matches_ref "$STORAGE_URL" "$REF" || export_fail "the storage URL's host doe
 export_configure_commands
 make_auth_header_file   # the key reaches curl through a private 0600 file, never argv
 
-if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then export_fail "$OUT exists and is not empty"; fi
-[ -e "$OUT" ] || EXPORT_OUT_CREATED=1
-EXPORT_OUT="$OUT"
+export_claim_out "$OUT"   # atomic: a symlink or a directory another run made is refused
 mkdir -p "$OUT/objects" "$OUT/tmp"
 TMP="$OUT/tmp"
 EXPORT_TMPDIR="$TMP"   # the one directory the exit trap removes: made by this run, inside $OUT

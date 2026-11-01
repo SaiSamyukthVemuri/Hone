@@ -12,6 +12,9 @@
 # when the lib is sourced, so a value inherited from the caller's environment (TMP, EXPORT_OUT,
 # EXPORT_OUT_CREATED, EXPORT_TMPDIR) can never name a directory the trap removes (Codex P1 on 3240218c).
 EXPORT_TMPDIR="" EXPORT_OUT="" EXPORT_OUT_CREATED=""
+# The same for the database-session variables snap_close reads in the exit trap (Insurance L1): an
+# inherited open-flag with a descriptor fragment must never reach an eval.
+SNAP_IS_OPEN=0 SNAP_IN="" SNAP_OUT_FD="" SNAP_WAIT_PID="" SNAP_PID=""
 
 US=$'\x1f' # unit separator: object paths may contain '|' and spaces
 
@@ -112,8 +115,10 @@ require_conn_url() {
 # libpq reads PGHOST / PGHOSTADDR / PGPORT / PGSERVICE / ... from the environment too
 # (PGHOSTADDR overrides the address a checked host resolves to), so none may be set.
 export_guard_libpq_env() {
+  # EVERY PG* variable is refused, not a list: libpq reads dozens (channel binding, TLS floor, CRLs,
+  # target_session_attrs, timezone, encoding ...) and a list drifts with its releases (Insurance L2).
   local v
-  for v in PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY PGPASSFILE PGGSSENCMODE PGSYSCONFDIR; do
+  for v in $(compgen -e | grep '^PG' || true); do
     [ -z "${!v:-}" ] || export_fail "$v is set in the environment; libpq would let it override the checked target; unset it"
   done
 }
@@ -336,6 +341,8 @@ snap_query() {
 snap_close() {
   [ "${SNAP_IS_OPEN:-}" = 1 ] || return 0
   SNAP_IS_OPEN=0
+  # SNAP_IN is a descriptor number the coproc gave us; anything else is never evaluated (Insurance L1).
+  case "$SNAP_IN" in ''|*[!0-9]*) return 0;; esac
   printf '%s\n' "commit;" >&"$SNAP_IN" 2>/dev/null || true
   eval "exec ${SNAP_IN}>&-" 2>/dev/null || true
   [ -z "$SNAP_WAIT_PID" ] || wait "$SNAP_WAIT_PID" 2>/dev/null || true
@@ -424,6 +431,7 @@ private_workdir() {
 # Set EXPORT_OUT (and EXPORT_OUT_CREATED=1 when the tool made the directory).
 export_on_exit() {
   local rc=$?
+  trap '' INT TERM HUP   # a second signal must not cut the cleanup short (Insurance L5)
   snap_close
   export_cleanup_secrets
   [ -z "${EXPORT_TMPDIR:-}" ] || rm -rf "$EXPORT_TMPDIR"
@@ -431,6 +439,26 @@ export_on_exit() {
     export_log "removing the partial output"
     if [ "${EXPORT_OUT_CREATED:-}" = 1 ]; then rm -rf "$EXPORT_OUT"; else find "$EXPORT_OUT" -mindepth 1 -delete 2>/dev/null || true; fi
   fi
+}
+
+# export_claim_out DIR: claim the output directory ATOMICALLY (Insurance L3/L4). A symbolic link is
+# refused (find does not descend into one, so a "discard" would remove nothing). An existing EMPTY
+# directory is the caller's: it is used and emptied on failure, never removed. A missing one is made
+# with plain `mkdir` (no -p), which fails if another run created it first, so two runs can never both
+# own it; EXPORT_OUT is set only after the claim succeeded, so a run that lost the race deletes nothing.
+export_claim_out() {
+  local out="$1"
+  [ ! -L "$out" ] || export_fail "$out is a symbolic link; give the real directory"
+  if [ -e "$out" ]; then
+    [ -d "$out" ] || export_fail "$out exists and is not a directory"
+    [ -z "$(ls -A "$out" 2>/dev/null)" ] || export_fail "$out exists and is not empty"
+    EXPORT_OUT="$out"
+    return 0
+  fi
+  mkdir -p "$(dirname "$out")" || export_fail "could not make the parent of $out"
+  mkdir "$out" 2>/dev/null || export_fail "$out was created by another run; refusing"
+  EXPORT_OUT_CREATED=1
+  EXPORT_OUT="$out"
 }
 
 # export_signal_traps: bash gives the EXIT trap a status of 0 after a fatal SIGINT/SIGTERM/SIGHUP, so
