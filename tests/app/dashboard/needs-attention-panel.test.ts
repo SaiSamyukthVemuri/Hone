@@ -30,6 +30,14 @@ describe("Needs Attention panel interaction contract", () => {
     expect(SRC).toContain('id="needs-attention-list"');
   });
 
+  it("the toggle stays mounted after expanding: its visibility depends on the total, not on the expansion (Codex P2)", () => {
+    expect(SRC).toMatch(/const collapsedHidden = needs\.clients\.slice\(NEEDS_ATTENTION_COMPACT_COUNT\)/);
+    expect(SRC).toMatch(/const hasOverflow = hiddenClients > 0/);
+    expect(SRC).toMatch(/\{hasOverflow && \(\s*<button/);
+    expect(SRC).not.toMatch(/hiddenCount/);
+    expect(SRC).toContain('{expanded ? "Show less"');
+  });
+
   it("cards are keyed by the client id so expanding keeps existing rows mounted", () => {
     expect(SRC).toContain("key={card.clientId}");
   });

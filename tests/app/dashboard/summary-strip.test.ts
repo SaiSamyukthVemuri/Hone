@@ -48,7 +48,7 @@ describe("Clients to review comes from the Needs attention model", () => {
   it("one builder serves the panel and the strip, and the strip reads .clients.length", () => {
     expect(stack).toMatch(/async function resolveNeedsAttentionInput\(/);
     expect(stack).toMatch(/needs=\{buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)\}/);
-    expect(stack).toMatch(/buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)\.clients\.length/);
+    expect(stack).toMatch(/async function resolveClientReviewCount[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)[\s\S]*?\.clients\.length/);
     expect(page).toMatch(/<ClientsToReview\b/);
   });
   it("a failed read says Unavailable, never 0", async () => {
@@ -75,6 +75,42 @@ describe("Clients to review comes from the Needs attention model", () => {
   });
 });
 
+describe("an unavailable intake-review check is never a definite client count (Codex P2)", () => {
+  const resolved = (intakes: unknown) => ({
+    attentionSources: Promise.resolve([intakes, 1, null, []]) as never,
+    staffManaged: Promise.resolve(false),
+    procedureActions: Promise.resolve({ detailGaps: [], recordsMissingDetails: 0, reviewedSessions: 0 }) as never,
+    upcomingVisitClients: Promise.resolve(new Set<string>()) as never,
+    clientsNeedingAttention: Promise.resolve({ clients: [], totalClients: 0 }) as never,
+    followUpAssistant: Promise.resolve({ items: [], totalFound: 0 }) as never,
+    expiringSupplies: Promise.resolve([]) as never,
+    isOwner: false,
+    todayLocal: "2026-11-02",
+  });
+  const render = async (el: { props: unknown }) => {
+    const child = (el.props as { children: { type: (p: unknown) => Promise<unknown>; props: unknown } }).children;
+    return renderToStaticMarkup((await child.type(child.props)) as never);
+  };
+  it("the strip says Unavailable when the intake check could not run, never 0", async () => {
+    const { ClientsToReview } = await import("@/app/(app)/dashboard/secondary-stack");
+    const out = await render(ClientsToReview(resolved("unavailable")) as never);
+    expect(out).toContain("Unavailable");
+    expect(out).not.toMatch(/>0</);
+  });
+  it("the header pill says Unavailable too", async () => {
+    const { NeedsAttentionCountPill } = await import("@/app/(app)/dashboard/secondary-stack");
+    const out = await render(NeedsAttentionCountPill(resolved("unavailable")) as never);
+    expect(out).toContain("Unavailable");
+    expect(out).not.toContain("0 clients");
+  });
+  it("with the check available, the same inputs give a real count (0 is honest then)", async () => {
+    const { ClientsToReview } = await import("@/app/(app)/dashboard/secondary-stack");
+    const out = await render(ClientsToReview(resolved([])) as never);
+    expect(out).not.toContain("Unavailable");
+    expect(out).toMatch(/>0</);
+  });
+});
+
 describe("panel headers share one top edge (fidelity B)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
@@ -82,7 +118,8 @@ describe("panel headers share one top edge (fidelity B)", () => {
     expect((page.match(/<div className="flex min-h-\[44px\]/g) ?? []).length).toBe(2);
     expect(page).toMatch(/<NeedsAttentionCountPill/);
     expect(stack).toMatch(/clients\.length[\s\S]{0,400}needs-attention-count-pill|needs-attention-count-pill[\s\S]{0,400}clients/);
-    expect(stack).toMatch(/async function ClientCountPillValue[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)\.clients\.length/);
+    expect(stack).toMatch(/async function ClientCountPillValue[\s\S]*?resolveClientReviewCount\(props\)/);
+    expect(stack).toMatch(/async function resolveClientReviewCount[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)[\s\S]*?"intake review"[\s\S]*?\.clients\.length/);
   });
 });
 

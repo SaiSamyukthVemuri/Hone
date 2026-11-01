@@ -193,10 +193,13 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
   const shownClients = expanded
     ? needs.clients
     : needs.clients.slice(0, NEEDS_ATTENTION_COMPACT_COUNT);
-  const hiddenList = needs.clients.slice(shownClients.length);
-  const hiddenClients = hiddenList.length;
-  const hiddenReaction = hiddenList.filter(cardHasReaction).length;
-  const hiddenCount = hiddenClients;
+  // The toggle depends on the TOTAL, never on the current expansion, so "Show less" stays mounted
+  // (and keeps keyboard focus) after expanding. The hidden-card label is computed from the
+  // collapsed slice, so it reads the same whichever state the panel is in.
+  const collapsedHidden = needs.clients.slice(NEEDS_ATTENTION_COMPACT_COUNT);
+  const hiddenClients = collapsedHidden.length;
+  const hiddenReaction = collapsedHidden.filter(cardHasReaction).length;
+  const hasOverflow = hiddenClients > 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -218,7 +221,7 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
         ))}
         {studioPresent && <StudioCard items={needs.studioItems} />}
       </ul>
-      {hiddenCount > 0 && (
+      {hasOverflow && (
         <button
           type="button"
           data-testid="needs-attention-toggle"

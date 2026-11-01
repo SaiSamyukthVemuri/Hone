@@ -607,13 +607,23 @@ export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
  * from the SAME model. A failed read renders "Unavailable", never 0 (a zero would claim nothing needs
  * review when nobody could read it).
  */
-async function ClientsToReviewValue(props: NeedsAttentionInputs) {
-  let count: number | null = null;
+/**
+ * The client count both the strip and the header pill show, from the SAME model as the panel. It is
+ * null (rendered "Unavailable") when the read failed OR when the intake-review check could not run:
+ * intake review contributes client cards, so a count taken without it could say 0 while someone
+ * needs review. The payment-setup check only adds a studio item and does not change this count.
+ */
+async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | null> {
   try {
-    count = buildNeedsAttention(await resolveNeedsAttentionInput(props)).clients.length;
+    const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
+    return model.unavailableChecks.includes("intake review") ? null : model.clients.length;
   } catch {
-    count = null;
+    return null;
   }
+}
+
+async function ClientsToReviewValue(props: NeedsAttentionInputs) {
+  const count = await resolveClientReviewCount(props);
   return (
     <span data-testid="summary-clients-to-review-value">
       {count === null ? "Unavailable" : count}
@@ -622,12 +632,7 @@ async function ClientsToReviewValue(props: NeedsAttentionInputs) {
 }
 
 async function ClientCountPillValue(props: NeedsAttentionInputs) {
-  let count: number | null = null;
-  try {
-    count = buildNeedsAttention(await resolveNeedsAttentionInput(props)).clients.length;
-  } catch {
-    count = null;
-  }
+  const count = await resolveClientReviewCount(props);
   return (
     <span
       data-testid="needs-attention-count-pill"
