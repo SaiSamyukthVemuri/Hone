@@ -812,6 +812,9 @@ export type Client = {
   id: string;
   studio_id: string;
   name: string;
+  // Migration 0258 (HON-58): the name the client goes by. Optional here so a row
+  // read before the migration (or a fixture) need not carry it; null/absent means none.
+  preferred_name?: string | null;
   pronouns: string | null;
   date_of_birth: string | null;
   phone: string | null;
