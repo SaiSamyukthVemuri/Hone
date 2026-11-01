@@ -40,7 +40,8 @@ export type AttentionIssueKind =
   | "intake_incomplete"
   | "charting"
   | "aftercare"
-  | "probe_lot";
+  | "probe_lot"
+  | "record_details";
 
 export type AttentionIssue = {
   kind: AttentionIssueKind;
@@ -98,6 +99,14 @@ export function buildNeedsAttention(input: {
   intakesAwaitingReview: ReadonlyArray<IntakeAwaitingReview>;
   todo: DashboardTodo;
   unavailableChecks?: ReadonlyArray<string>;
+  // Per-session procedure-record gaps (client or operator details). When
+  // supplied they replace the studio-level "records missing details" row.
+  recordDetailGaps?: ReadonlyArray<{
+    sessionId: string;
+    clientId: string;
+    clientName: string;
+    startedAt: string;
+  }>;
 }): NeedsAttention {
   const byId = new Map<string, AttentionEntry>();
 
@@ -195,6 +204,25 @@ export function buildNeedsAttention(input: {
     }
   }
 
+  for (const g of input.recordDetailGaps ?? []) {
+    add(
+      {
+        id: `session:${g.clientId}:${g.sessionId}`,
+        scope: "session",
+        tier: "documentation",
+        clientId: g.clientId,
+        clientName: g.clientName,
+        occurredAt: g.startedAt,
+      },
+      {
+        kind: "record_details",
+        label: "Client or operator details missing",
+        href: `/clients/${g.clientId}/sessions/${g.sessionId}`,
+        actionLabel: "Review session",
+      },
+    );
+  }
+
   const entries = [...byId.values()].sort((a, b) => {
     if (a.tier !== b.tier) return a.tier === "preparation" ? -1 : 1;
     const byDate = newerFirst(a.occurredAt, b.occurredAt);
@@ -205,7 +233,12 @@ export function buildNeedsAttention(input: {
   return {
     entries,
     issueCount: entries.reduce((n, e) => n + e.issues.length, 0),
-    others: input.todo.items.filter((i) => !GROUPED_TODO_KINDS.has(i.kind)),
+    others: input.todo.items.filter(
+      (i) =>
+        !GROUPED_TODO_KINDS.has(i.kind) &&
+        // Replaced by per-session entries when those were supplied.
+        !(input.recordDetailGaps && i.kind === "records_details"),
+    ),
     unavailableChecks: [...(input.unavailableChecks ?? [])],
     notReturnedCount: Math.max(
       0,

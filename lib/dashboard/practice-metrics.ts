@@ -104,6 +104,15 @@ export type ProcedureActionMetrics = {
   // `incompleteRecords` itself is unchanged: it remains the honest
   // completeness figure for any reporting surface that wants the union.
   recordsMissingDetails: number;
+  // WS-DB. The SAME records `recordsMissingDetails` counts, itemized per session
+  // so Needs attention can group them with that visit's other gaps. Additive:
+  // the count above is unchanged and always equals this list's length.
+  detailGaps?: Array<{
+    sessionId: string;
+    clientId: string;
+    clientName: string;
+    startedAt: string;
+  }>;
 };
 
 // Pure: completeness sweep over generated procedure records (the same
@@ -118,6 +127,7 @@ export function summarizeProcedureCompleteness(
   let missingLots = 0;
   let aftercareNotMarked = 0;
   let missingDetails = 0;
+  const detailGaps: NonNullable<ProcedureActionMetrics["detailGaps"]> = [];
   for (const r of records) {
     const areaLotsMissing = r.areas.filter(
       (a) => !a.probeLotNumber?.trim(),
@@ -133,7 +143,15 @@ export function summarizeProcedureCompleteness(
       !r.address?.trim() ||
       !r.operatorName ||
       r.areas.length === 0;
-    if (detailsMissing) missingDetails += 1;
+    if (detailsMissing) {
+      missingDetails += 1;
+      detailGaps.push({
+        sessionId: r.sessionId,
+        clientId: r.clientId,
+        clientName: r.clientName,
+        startedAt: r.startedAt,
+      });
+    }
     const missingAny =
       detailsMissing || areaLotsMissing > 0 || !r.aftercareExplainedAt;
     if (missingAny) incomplete += 1;
@@ -144,6 +162,7 @@ export function summarizeProcedureCompleteness(
     missingProbeLots: missingLots,
     aftercareNotMarked,
     recordsMissingDetails: missingDetails,
+    detailGaps,
   };
 }
 

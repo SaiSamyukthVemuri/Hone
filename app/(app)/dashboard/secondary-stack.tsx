@@ -470,6 +470,7 @@ export async function NeedsAttentionSection({
         intakesAwaitingReview,
         todo: dashboardTodo,
         unavailableChecks: paymentUnavailable ? ["payment setup"] : [],
+        recordDetailGaps: procedureActions.detailGaps,
       })}
     />
   );

@@ -174,3 +174,39 @@ describe("buildNeedsAttention unavailable checks", () => {
     expect(out.unavailableChecks).toEqual(["payment setup"]);
   });
 });
+
+describe("buildNeedsAttention per-session record details", () => {
+  const gap = { sessionId: "s1", clientId: "c1", clientName: "Client One", startedAt: "2026-10-10T15:00:00.000Z" };
+  const empty = () =>
+    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+
+  it("groups a details gap with the same session's aftercare gap", () => {
+    const assistant = buildMissingRecordsAssistant({
+      unchartedAppointments: [],
+      incompleteIntakes: [],
+      sessions: [session({ aftercareMarked: false })],
+    });
+    const out = buildNeedsAttention({
+      assistant,
+      intakesAwaitingReview: [],
+      todo: NO_TODO,
+      recordDetailGaps: [gap],
+    });
+    expect(out.entries).toHaveLength(1);
+    expect(out.entries[0].issues.map((i) => i.kind).sort()).toEqual(["aftercare", "record_details"]);
+  });
+
+  it("replaces the studio-level roll-up row when per-session gaps are supplied", () => {
+    const todo: DashboardTodo = {
+      hasItems: true,
+      moreCount: 0,
+      items: [todoItem("records_details", "records_details:studio")],
+    };
+    const withGaps = buildNeedsAttention({ assistant: empty(), intakesAwaitingReview: [], todo, recordDetailGaps: [gap] });
+    expect(withGaps.others).toEqual([]);
+    expect(withGaps.entries).toHaveLength(1);
+    // Without the itemized list the roll-up row is kept, so the gap stays reachable.
+    const without = buildNeedsAttention({ assistant: empty(), intakesAwaitingReview: [], todo });
+    expect(without.others.map((i) => i.id)).toEqual(["records_details:studio"]);
+  });
+});
