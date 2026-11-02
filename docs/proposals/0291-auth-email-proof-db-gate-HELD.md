@@ -39,3 +39,20 @@ directly (CLAUDE.md §5); keep the existing function signatures; one fresh `db r
 `tests/db/invitation-reconciliation.db.test.ts` matrix re-run with OTP JWTs (the harness mints HS256 tokens without `amr`, so it
 must add `amr` for its positive controls). The `amr` claim is present in GoTrue access tokens; the recorded evidence
 (`passwordAmr`, `magicLinkAmr`, `emailOtpAmr`) pins the exact strings.
+
+## Addendum: password-state probe for `HONE_PROOF_HARDENING=password_only` (HELD; ask OPS whether it folds into 0291 or takes its own number)
+
+`password_only` must touch only accounts that actually hold a password, and must not read the hash. GoTrue's admin user object
+does not expose it, and an `email` identity exists for passwordless users too, so the only server-side signal is a service-role
+function returning a boolean. Until it exists the app treats "unknown" as "do not touch" (shipped inert).
+
+```sql
+-- sketch, not a migration
+create or replace function public.auth_account_has_password(p_user_id uuid) returns boolean
+language sql stable security definer set search_path = ''
+as $$ select coalesce((select encrypted_password is not null and encrypted_password <> '' from auth.users where id = p_user_id), false) $$;
+revoke execute on function public.auth_account_has_password(uuid) from public, anon, authenticated, service_role;
+grant execute on function public.auth_account_has_password(uuid) to service_role;  -- the ONLY caller is the server callback
+```
+It returns a boolean only (never the hash). With the 0292 hook in place a password is already unusable, so this probe is needed only
+for targeted remediation after verified mailbox ownership; the hook alone removes the exposure without modifying any account.
