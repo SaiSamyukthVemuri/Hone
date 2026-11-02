@@ -11,6 +11,8 @@ import { buildClientFormData } from "@/lib/clients/client-form-payload";
 
 export type ClientFormValues = {
   name: string;
+  /** HON-58: the name the client goes by; blank means none. */
+  preferred_name: string;
   pronouns: string;
   date_of_birth: string;
   phone: string;
@@ -24,6 +26,7 @@ export type ClientFormValues = {
 
 export const EMPTY_CLIENT_FORM: ClientFormValues = {
   name: "",
+  preferred_name: "",
   pronouns: "",
   date_of_birth: "",
   phone: "",
@@ -150,6 +153,14 @@ export function ClientForm({
         autoFocus
         value={values.name}
         onChange={(v) => update("name", v)}
+        onKeyDown={blockEnterSubmit}
+      />
+
+      <Field
+        label="Preferred name"
+        placeholder="Optional: the name the client goes by"
+        value={values.preferred_name}
+        onChange={(v) => update("preferred_name", v)}
         onKeyDown={blockEnterSubmit}
       />
 
