@@ -7,7 +7,7 @@ import {
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
-import { hardenAccountAfterMailboxProof } from "@/lib/auth/proof-hardening";
+import { applyProofHardening, hardeningMode } from "@/lib/auth/proof-hardening";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
 const EMAIL_OTP_TYPES: readonly EmailOtpType[] = ["signup", "magiclink", "invite", "recovery", "email"];
@@ -60,13 +60,22 @@ export async function GET(request: Request) {
           email: data.user.email,
           identities: data.user.identities,
         }) !== null;
-      if (proven && accessToken) {
-        // Once per account: rotate away any password a pre-registrant set and sign out their other sessions (never blocks).
+      if (proven) {
+        // Account-wide remediation is OFF unless the HONE_PROOF_HARDENING rollout flag says otherwise (lib/auth/proof-hardening.ts).
+        // It rotates a password, which GoTrue answers by revoking every session, so it re-issues one for the person who just
+        // proved the mailbox; if that cannot be done they sign in again. It never blocks sign-in otherwise.
+        let outcome: string = "failed";
         try {
-          await hardenAccountAfterMailboxProof(createAdminClient(), data.user, accessToken);
+          outcome = await applyProofHardening({
+            mode: hardeningMode(process.env.HONE_PROOF_HARDENING),
+            user: data.user,
+            makeAdmin: () => createAdminClient(),
+            supabase,
+          });
         } catch {
           // Never block sign-in on hardening.
         }
+        if (outcome === "hardened_reissue_failed") return NextResponse.redirect(`${origin}/login?error=auth`);
       }
       try {
         if (!proven) throw new Error("mailbox not proven in this session");

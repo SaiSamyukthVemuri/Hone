@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
-import { hardenAccountAfterMailboxProof, HARDENED_MARKER } from "@/lib/auth/proof-hardening";
+import { hardenAccountAfterMailboxProof, HARDENED_MARKER, reissueProvenSession, applyProofHardening, accountHasPassword, hardeningMode } from "@/lib/auth/proof-hardening";
 
 const U = { email: "Member@Harness.local", identities: [] as never[] };
 const google = (email: string, verified: unknown) => ({ ...U, identities: [{ provider: "google", identity_data: { email, email_verified: verified } }] });
@@ -44,37 +44,137 @@ describe("claimsFromAccessToken", () => {
 });
 
 describe("hardenAccountAfterMailboxProof", () => {
-  const mk = (over: { update?: unknown; signOut?: unknown } = {}) => ({
+  const mk = (over: { update?: unknown; link?: unknown } = {}) => ({
     auth: { admin: {
       updateUserById: vi.fn().mockResolvedValue(over.update ?? { error: null }),
-      signOut: vi.fn().mockResolvedValue(over.signOut ?? { error: null }),
+      generateLink: vi.fn().mockResolvedValue(over.link ?? { data: { properties: { hashed_token: "th" } }, error: null }),
     } },
   });
-  it("rotates the password, stamps the marker and revokes OTHER sessions", async () => {
+  it("rotates the password and stamps the marker", async () => {
     const a = mk();
-    const r = await hardenAccountAfterMailboxProof(a, { id: "u1", app_metadata: { provider: "email" } }, "jwt", () => new Date("2026-11-02T00:00:00Z"));
+    const r = await hardenAccountAfterMailboxProof(a, { id: "u1", app_metadata: { provider: "email" } }, () => new Date("2026-11-02T00:00:00Z"));
     expect(r).toBe("hardened");
     const attrs = a.auth.admin.updateUserById.mock.calls[0][1];
     expect(typeof attrs.password).toBe("string");
     expect(attrs.password.length).toBeGreaterThanOrEqual(48);
     expect(attrs.app_metadata).toEqual({ provider: "email", [HARDENED_MARKER]: "2026-11-02T00:00:00.000Z" });
-    expect(a.auth.admin.signOut).toHaveBeenCalledExactlyOnceWith("jwt", "others");
   });
-  it("is one-time: an already-hardened account is untouched (a second device is not signed out)", async () => {
+  it("is one-time: an already-hardened account is untouched", async () => {
     const a = mk();
-    expect(await hardenAccountAfterMailboxProof(a, { id: "u1", app_metadata: { [HARDENED_MARKER]: "x" } }, "jwt")).toBe("already_hardened");
+    expect(await hardenAccountAfterMailboxProof(a, { id: "u1", app_metadata: { [HARDENED_MARKER]: "x" } })).toBe("already_hardened");
     expect(a.auth.admin.updateUserById).not.toHaveBeenCalled();
-    expect(a.auth.admin.signOut).not.toHaveBeenCalled();
   });
   it("a different random password each time", async () => {
     const a = mk(); const b = mk();
-    await hardenAccountAfterMailboxProof(a, { id: "u1" }, "j"); await hardenAccountAfterMailboxProof(b, { id: "u1" }, "j");
+    await hardenAccountAfterMailboxProof(a, { id: "u1" }); await hardenAccountAfterMailboxProof(b, { id: "u1" });
     expect(a.auth.admin.updateUserById.mock.calls[0][1].password).not.toBe(b.auth.admin.updateUserById.mock.calls[0][1].password);
   });
   it("failures are reported, never thrown", async () => {
-    expect(await hardenAccountAfterMailboxProof(mk({ update: { error: new Error("x") } }), { id: "u" }, "j")).toBe("failed");
-    expect(await hardenAccountAfterMailboxProof(mk({ signOut: { error: new Error("x") } }), { id: "u" }, "j")).toBe("failed");
-    const boom = { auth: { admin: { updateUserById: vi.fn().mockRejectedValue(new Error("x")), signOut: vi.fn() } } };
-    expect(await hardenAccountAfterMailboxProof(boom, { id: "u" }, "j")).toBe("failed");
+    expect(await hardenAccountAfterMailboxProof(mk({ update: { error: new Error("x") } }), { id: "u" })).toBe("failed");
+    const boom = { auth: { admin: { updateUserById: vi.fn().mockRejectedValue(new Error("x")), generateLink: vi.fn() } } };
+    expect(await hardenAccountAfterMailboxProof(boom, { id: "u" })).toBe("failed");
+  });
+});
+
+describe("reissueProvenSession", () => {
+  const admin = (link: unknown) => ({ auth: { admin: { updateUserById: vi.fn(), generateLink: vi.fn().mockResolvedValue(link) } } });
+  it("redeems a server-generated magiclink token on the request client", async () => {
+    const verifyOtp = vi.fn().mockResolvedValue({ error: null });
+    expect(await reissueProvenSession(admin({ data: { properties: { hashed_token: "th" } }, error: null }), { auth: { verifyOtp } }, "a@harness.local")).toBe(true);
+    expect(verifyOtp).toHaveBeenCalledExactlyOnceWith({ token_hash: "th", type: "magiclink" });
+  });
+  it("false (never throws) when no token, a link error, a verify error or an exception", async () => {
+    const ok = vi.fn().mockResolvedValue({ error: null });
+    expect(await reissueProvenSession(admin({ data: { properties: null }, error: null }), { auth: { verifyOtp: ok } }, "a@h")).toBe(false);
+    expect(await reissueProvenSession(admin({ data: null, error: new Error("x") }), { auth: { verifyOtp: ok } }, "a@h")).toBe(false);
+    expect(await reissueProvenSession(admin({ data: { properties: { hashed_token: "t" } }, error: null }), { auth: { verifyOtp: vi.fn().mockResolvedValue({ error: new Error("x") }) } }, "a@h")).toBe(false);
+    expect(await reissueProvenSession(admin({ data: { properties: { hashed_token: "t" } }, error: null }), { auth: { verifyOtp: vi.fn().mockRejectedValue(new Error("x")) } }, "a@h")).toBe(false);
+  });
+});
+
+describe("hardeningMode: the rollout flag defaults OFF", () => {
+  it.each([[undefined, "off"], [null, "off"], ["", "off"], ["off", "off"], ["OFF", "off"], ["true", "off"], ["1", "off"], ["on", "off"], ["password_only", "password_only"], [" Password_Only ", "password_only"], ["all", "all"], ["ALL", "all"]])("%j -> %s", (raw, mode) => {
+    expect(hardeningMode(raw as never)).toBe(mode);
+  });
+});
+
+describe("accountHasPassword (boolean from a service-role function; the hash is never read)", () => {
+  const probe = (r: unknown) => ({ rpc: vi.fn().mockResolvedValue(r) });
+  it("true / false pass through", async () => {
+    expect(await accountHasPassword(probe({ data: true, error: null }), "u")).toBe(true);
+    expect(await accountHasPassword(probe({ data: false, error: null }), "u")).toBe(false);
+  });
+  it.each([{ data: null, error: { code: "42883" } }, { data: "yes", error: null }, { data: null, error: null }])("unknown (%j) is null, never a guess", async (r) => {
+    expect(await accountHasPassword(probe(r), "u")).toBeNull();
+  });
+  it("a thrown call is null", async () => {
+    expect(await accountHasPassword({ rpc: vi.fn().mockRejectedValue(new Error("x")) }, "u")).toBeNull();
+  });
+});
+
+describe("applyProofHardening: what each flag value does", () => {
+  const mk = (has: unknown = { data: true, error: null }) => ({
+    auth: { admin: {
+      updateUserById: vi.fn().mockResolvedValue({ error: null }),
+      generateLink: vi.fn().mockResolvedValue({ data: { properties: { hashed_token: "th" } }, error: null }),
+    } },
+    rpc: vi.fn().mockResolvedValue(has),
+  });
+  const run = async (mode: "off" | "password_only" | "all", admin = mk(), user: { id: string; email: string; app_metadata?: Record<string, unknown> } = { id: "u", email: "a@harness.local" }, verify = vi.fn().mockResolvedValue({ error: null })) => {
+    const makeAdmin = vi.fn(() => admin as never);
+    const outcome = await applyProofHardening({ mode, user, makeAdmin, supabase: { auth: { verifyOtp: verify } } });
+    return { outcome, admin, makeAdmin, verify };
+  };
+  const untouched = (r: Awaited<ReturnType<typeof run>>) => {
+    expect(r.admin.auth.admin.updateUserById).not.toHaveBeenCalled();
+    expect(r.admin.auth.admin.generateLink).not.toHaveBeenCalled();
+    expect(r.verify).not.toHaveBeenCalled();
+  };
+  it("off: NO SIDE EFFECT of any kind (no admin client, no read, no marker, no session)", async () => {
+    const r = await run("off");
+    expect(r.outcome).toBe("skipped_off");
+    expect(r.makeAdmin).not.toHaveBeenCalled();
+    expect(r.admin.rpc).not.toHaveBeenCalled();
+    untouched(r);
+  });
+  it("password_only: an account WITH a password is rotated, marked and re-issued a session", async () => {
+    const r = await run("password_only");
+    expect(r.outcome).toBe("hardened_session_reissued");
+    expect(r.admin.rpc).toHaveBeenCalledExactlyOnceWith("auth_account_has_password", { p_user_id: "u" });
+    expect(r.admin.auth.admin.updateUserById).toHaveBeenCalledOnce();
+    expect(r.verify).toHaveBeenCalledOnce();
+  });
+  it("password_only: an account WITHOUT a password is not touched (no marker either)", async () => {
+    const r = await run("password_only", mk({ data: false, error: null }));
+    expect(r.outcome).toBe("skipped_no_password");
+    untouched(r);
+  });
+  it("password_only: an UNKNOWN password state (function missing / call failed) is not touched", async () => {
+    const r = await run("password_only", mk({ data: null, error: { code: "42883" } }));
+    expect(r.outcome).toBe("skipped_password_unknown");
+    untouched(r);
+  });
+  it("all: an account without a password is hardened too, and no password probe is made", async () => {
+    const r = await run("all", mk({ data: false, error: null }));
+    expect(r.outcome).toBe("hardened_session_reissued");
+    expect(r.admin.rpc).not.toHaveBeenCalled();
+  });
+  it.each(["password_only", "all"] as const)("%s: an already-hardened account is left alone", async (mode) => {
+    const r = await run(mode, mk(), { id: "u", email: "a@h", app_metadata: { email_proof_hardened_at: "x" } });
+    expect(r.outcome).toBe("already_hardened");
+    untouched(r);
+  });
+  it("a failed re-issue is reported so the caller can ask for a fresh sign-in", async () => {
+    const r = await run("all", mk(), undefined, vi.fn().mockResolvedValue({ error: new Error("x") }));
+    expect(r.outcome).toBe("hardened_reissue_failed");
+  });
+  it("any throw is 'failed', never an exception", async () => {
+    const outcome = await applyProofHardening({ mode: "all", user: { id: "u" }, makeAdmin: () => { throw new Error("x"); }, supabase: { auth: { verifyOtp: vi.fn() } } });
+    expect(outcome).toBe("failed");
+  });
+  it("touches the auth account only: no studio-membership table is ever addressed", async () => {
+    const r = await run("all");
+    expect(Object.keys(r.admin)).toEqual(["auth", "rpc"]);
+    expect(r.admin.rpc.mock.calls.every((c) => c[0] === "auth_account_has_password")).toBe(true);
   });
 });

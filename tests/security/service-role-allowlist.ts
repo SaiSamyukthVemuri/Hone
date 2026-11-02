@@ -21,9 +21,9 @@ export type ServiceRoleAllowlistEntry = {
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(auth)/auth/callback/route.ts",
-    purpose: "Email-trust hardening (2 Nov): once per account, after a session that PROVED mailbox control, rotate any password to a random unknown value and revoke the account's other sessions.",
-    why: "auth.admin.updateUserById/signOut are GoTrue admin calls that have no user-session equivalent. The target id is data.user.id of the session this request just created from a one-time code/link (never a request parameter), the proof is read from that session's own access-token claims, and the call is skipped unless the proof holds. Failure never blocks sign-in.",
-    scopeGuard: "hardenAccountAfterMailboxProof",
+    purpose: "Email-trust hardening (2 Nov), OFF unless HONE_PROOF_HARDENING=password_only|all: once per account, after a session that PROVED mailbox control, rotate any password to a random unknown value (GoTrue then revokes every session) and re-issue a session for the person who just proved it.",
+    why: "auth.admin.updateUserById/generateLink are GoTrue admin calls that have no user-session equivalent. The target id is data.user.id of the session this request just created from a one-time code/link (never a request parameter), the proof is read from that session's own access-token claims, and the call is skipped unless the proof holds. Failure never blocks sign-in; the client is built only when the rollout flag is not off.",
+    scopeGuard: "applyProofHardening",
   },
   {
     path: "lib/audit/governed-writes.ts",

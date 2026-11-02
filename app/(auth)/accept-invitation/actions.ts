@@ -9,7 +9,7 @@ import { sessionMailboxProof } from "@/lib/auth/session-email-proof";
 
 export type AcceptState = { error: string; needsVerification?: boolean } | null;
 
-export const MAILBOX_PROOF_REQUIRED =
+const MAILBOX_PROOF_REQUIRED =
   "Confirm that this email address is yours first: we will send a one-time link to it.";
 
 // THE authoritative acceptance point. The browser cannot call the acceptance

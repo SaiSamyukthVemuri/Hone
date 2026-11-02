@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
-import { hardenAccountAfterMailboxProof } from "@/lib/auth/proof-hardening";
+import { hardenAccountAfterMailboxProof, reissueProvenSession } from "@/lib/auth/proof-hardening";
 
 // EMAIL-TRUST (2 Nov, Machines): proof of mailbox control is read from the SESSION's amr, not from email_confirmed_at.
 // This runs against the REAL GoTrue of an owned isolated stack (no mocks) to pin (a) the actual amr strings GoTrue writes for
@@ -61,6 +61,11 @@ async function rpc(token: string, fn: string) {
   const t = await res.text();
   let b: unknown = t; try { b = JSON.parse(t); } catch { /* text */ }
   return { status: res.status, body: b };
+}
+
+function memoryStorage() {
+  const m = new Map<string, string>();
+  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
 }
 
 beforeAll(async () => { studio = await seedStudio("email-proof"); });
@@ -135,19 +140,29 @@ describe("pre-account takeover and the hardening", () => {
     const victim = await magicLinkSession(email); // the real owner clicks their magic link: SAME user id
     expect((await userOf(victim.body.access_token as string)).id).toBe(id);
     const admin = createClient(E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
-    const u = await userOf(victim.body.access_token as string);
-    expect(await hardenAccountAfterMailboxProof({ auth: admin.auth } as never, { id, app_metadata: {} }, victim.body.access_token as string)).toBe("hardened");
+    expect(await hardenAccountAfterMailboxProof({ auth: admin.auth } as never, { id, app_metadata: {} })).toBe("hardened");
 
+    // MEASURED: the rotation revokes EVERY session of the user, the proven one too (which is why the callback re-issues).
+    evidence.rotationRevokesProvenSession = (await userOf(victim.body.access_token as string)).id === undefined;
     expect((await passwordSession(email, attackerPassword)).status, "old password no longer works").toBe(400);
     expect((await gotrue("token?grant_type=refresh_token", { refresh_token: attackerSession.body.refresh_token as string }, ANON)).status, "attacker refresh token revoked").toBeGreaterThanOrEqual(400);
-    expect((await gotrue("token?grant_type=refresh_token", { refresh_token: victim.body.refresh_token as string }, ANON)).status, "the proven session keeps working").toBe(200);
-    // one-time: a second proven sign-in (another device) is not signed out again
-    const second = await magicLinkSession(email);
+    expect((await gotrue("token?grant_type=refresh_token", { refresh_token: victim.body.refresh_token as string }, ANON)).status, "the pre-rotation proven session is revoked too").toBeGreaterThanOrEqual(400);
+
+    // The callback then re-establishes a session for the person who just proved the mailbox (server-generated link, cookie client).
+    const cookieClient = createClient(E2E_SUPABASE_URL, ANON, { auth: { autoRefreshToken: false, persistSession: true, storage: memoryStorage() } });
+    expect(await reissueProvenSession({ auth: admin.auth } as never, cookieClient as never, email)).toBe(true);
+    const fresh = (await cookieClient.auth.getSession()).data.session;
+    expect(fresh, "a fresh session exists").not.toBeNull();
+    evidence.reissuedAmr = amrOf({ access_token: fresh!.access_token });
+    expect(mailboxProofMethod(claimsFromAccessToken(fresh!.access_token), await userOf(fresh!.access_token))).toBe("email_link_or_otp");
+    expect((await gotrue("token?grant_type=refresh_token", { refresh_token: fresh!.refresh_token }, ANON)).status).toBe(200);
+
+    // one-time: a later proven sign-in (another device) is NOT rotated or signed out
     const meta = (await adminQuery(`select raw_app_meta_data from auth.users where id=$1`, [id])).rows[0].raw_app_meta_data as Json;
     expect(typeof meta.email_proof_hardened_at).toBe("string");
-    expect(await hardenAccountAfterMailboxProof({ auth: admin.auth } as never, { id, app_metadata: meta }, second.body.access_token as string)).toBe("already_hardened");
-    expect((await gotrue("token?grant_type=refresh_token", { refresh_token: victim.body.refresh_token as string }, ANON)).status).toBe(200);
-    expect(u.email).toBe(email);
+    const second = await magicLinkSession(email);
+    expect(await hardenAccountAfterMailboxProof({ auth: admin.auth } as never, { id, app_metadata: meta })).toBe("already_hardened");
+    expect((await gotrue("token?grant_type=refresh_token", { refresh_token: second.body.refresh_token as string }, ANON)).status).toBe(200);
   });
 });
 

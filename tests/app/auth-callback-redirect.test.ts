@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ exchange: vi.fn(), reconcile: vi.fn(), identify: vi.fn(), capture: vi.fn(), harden: vi.fn(), verify: vi.fn() }));
+const h = vi.hoisted(() => ({ exchange: vi.fn(), reconcile: vi.fn(), identify: vi.fn(), capture: vi.fn(), harden: vi.fn(), reissue: vi.fn(), verify: vi.fn() }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
-vi.mock("@/lib/auth/proof-hardening", () => ({ hardenAccountAfterMailboxProof: h.harden }));
+vi.mock("@/lib/auth/proof-hardening", async (orig) => ({ ...(await orig<typeof import("@/lib/auth/proof-hardening")>()), applyProofHardening: h.harden }));
 // An access token whose payload carries the session's amr (decoded, not verified, exactly as the route reads a token the
 // auth server just issued).
 const token = (amr: unknown[]) => `h.${Buffer.from(JSON.stringify({ amr })).toString("base64url")}.s`;
@@ -22,7 +22,8 @@ function request(next?: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.exchange.mockResolvedValue({ data: { user: { id: "11111111-2222-4333-8444-555555555555", email: "member@harness.local" }, session: { access_token: OTP_TOKEN } }, error: null });
-  h.harden.mockResolvedValue("hardened");
+  h.harden.mockResolvedValue("skipped_off");
+  delete process.env.HONE_PROOF_HARDENING;
   h.reconcile.mockResolvedValue({ data: null, error: null });
 });
 describe("successful auth callback redirect boundary", () => {
@@ -76,12 +77,33 @@ describe("successful auth callback redirect boundary", () => {
       expect(h.reconcile).not.toHaveBeenCalled();
       expect(h.harden).not.toHaveBeenCalled();
     });
-    it("POSITIVE: an OTP session reconciles and is hardened once with its own token", async () => {
+    it.each([[undefined, "off"], ["", "off"], ["off", "off"], ["bogus", "off"], ["password_only", "password_only"], ["all", "all"]])("HONE_PROOF_HARDENING=%s runs the hardening in mode %s, and reconcile still happens", async (flag, mode) => {
+      if (flag === undefined) delete process.env.HONE_PROOF_HARDENING; else process.env.HONE_PROOF_HARDENING = flag;
       await GET(request("/dashboard"));
-      expect(h.reconcile).toHaveBeenCalledOnce();
       expect(h.harden).toHaveBeenCalledOnce();
-      expect(h.harden.mock.calls[0][1]).toMatchObject({ id: user.id });
-      expect(h.harden.mock.calls[0][2]).toBe(OTP_TOKEN);
+      expect(h.harden.mock.calls[0][0]).toMatchObject({ mode, user: { id: user.id } });
+      expect(h.reconcile).toHaveBeenCalledOnce();
+    });
+    it("a rotation whose session cannot be re-established sends the person to sign in again, linking nothing", async () => {
+      h.harden.mockResolvedValue("hardened_reissue_failed");
+      const response = await GET(request("/dashboard"));
+      expect(response.headers.get("location")).toBe(`${ORIGIN}/login?error=auth`);
+      expect(h.reconcile).not.toHaveBeenCalled();
+    });
+    it.each(["skipped_off", "skipped_no_password", "skipped_password_unknown", "already_hardened", "hardened_session_reissued", "failed"])("outcome %s never blocks sign-in", async (outcome) => {
+      h.harden.mockResolvedValue(outcome);
+      expect((await GET(request("/dashboard"))).headers.get("location")).toBe(`${ORIGIN}/dashboard`);
+      expect(h.reconcile).toHaveBeenCalledOnce();
+    });
+    it("a throw inside the hardening never blocks sign-in", async () => {
+      h.harden.mockRejectedValue(new Error("synthetic"));
+      expect((await GET(request("/dashboard"))).headers.get("location")).toBe(`${ORIGIN}/dashboard`);
+    });
+    it("NEGATIVE: an unproven session never reaches the hardening at all, whatever the flag", async () => {
+      process.env.HONE_PROOF_HARDENING = "all";
+      h.exchange.mockResolvedValue(sessionWith([{ method: "password", timestamp: 1 }]));
+      await GET(request("/dashboard"));
+      expect(h.harden).not.toHaveBeenCalled();
     });
     it("POSITIVE: Google asserting the same verified address proves the mailbox", async () => {
       const google = { ...user, identities: [{ provider: "google", identity_data: { email: user.email, email_verified: true } }] };
@@ -94,11 +116,6 @@ describe("successful auth callback redirect boundary", () => {
       h.exchange.mockResolvedValue(sessionWith([{ method: "oauth", provider: "google", timestamp: 1 }], google));
       await GET(request("/dashboard"));
       expect(h.reconcile).not.toHaveBeenCalled();
-    });
-    it("hardening failure (reject or 'failed') never blocks sign-in or reconciliation", async () => {
-      h.harden.mockRejectedValue(new Error("synthetic"));
-      expect((await GET(request("/dashboard"))).headers.get("location")).toBe(`${ORIGIN}/dashboard`);
-      expect(h.reconcile).toHaveBeenCalledOnce();
     });
     it("token_hash signup-confirmation links are verified with verifyOtp and carry the same proof rules", async () => {
       h.verify.mockResolvedValue(sessionWith([{ method: "email/signup", timestamp: 1 }]));
