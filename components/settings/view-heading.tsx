@@ -24,7 +24,10 @@ export function SettingsViewHeading({
     <header data-view-head>
       {/* As in the approved settings artifact: the view name with its scope as a
           chip beside it. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+      {/* Phone: the title and the chip share ONE row (a grid) and the title wraps
+          inside its own column, so the chip never adds a line between the title
+          and the view. From sm up they flow as a wrapping row. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-y-1">
         <h2
           tabIndex={-1}
           data-settings-heading

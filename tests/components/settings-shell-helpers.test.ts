@@ -619,3 +619,28 @@ describe("a route outside the viewer's rail (Photos, 0ab9ce743)", () => {
     expect(shell).toMatch(/\{!activeItem && \(/);
   });
 });
+
+describe("phone: the scope chip shares the title's row; the drawer overlays the header by design (Photos, 31a0772ad)", () => {
+  const read = (f: string) => readFileSync(path.resolve(__dirname, "../..", f), "utf8");
+  it("the heading row is a two-column grid below sm, a wrapping flex from sm up", () => {
+    expect(read("components/settings/view-heading.tsx")).toMatch(
+      /grid grid-cols-\[minmax\(0,1fr\)_auto\] items-start gap-x-3 sm:flex sm:flex-wrap/,
+    );
+  });
+  it("the open drawer is a fixed full-height layer ABOVE the sticky app header (z-40 over z-30)", () => {
+    // railClippedUnderHeader reads true at 390 because the drawer's box starts at the
+    // top of the viewport: it covers the header on purpose, it is not clipped by it.
+    expect(read("components/settings/settings-shell.tsx")).toMatch(/fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto/);
+    expect(read("app/(app)/layout.tsx")).toMatch(/<header className="sticky top-0 z-30 /);
+  });
+  it("the flat entries Photos listed have no children, so a parent can never share a child's selected look", () => {
+    const flat = ["team", "waitlist", "availability", "services", "machines", "consent", "import", "data"];
+    const reg = read("lib/settings/nav-registry.ts");
+    for (const id of flat) {
+      const m = reg.match(new RegExp(`\\{ id: "${id}",[^\\n]*\\n`)) ?? reg.match(new RegExp(`id: "${id}",[\\s\\S]*?order: \\d+,\\n  \\}`));
+      expect(m, id).not.toBeNull();
+      expect(m![0], id).not.toMatch(/children:/);
+    }
+    expect(read("app/(app)/settings/launch/nav.ts")).not.toMatch(/children:/);
+  });
+});
