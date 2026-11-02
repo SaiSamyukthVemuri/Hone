@@ -5,15 +5,21 @@ import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { parsePreferredName } from "@/lib/clients/identity";
+import {
+  CHANGED_BY_SOMEONE_ELSE_ERROR,
+  NOT_SAVED_ERROR,
+  STALE_FORM_ERROR,
+  describeConflicts,
+  parseBaseline,
+  planProfileUpdate,
+  type ProfileConflict,
+} from "@/lib/clients/profile-baseline";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
   findPossibleDuplicateClient,
   type PossibleDuplicate,
 } from "@/lib/clients/possible-duplicate";
-import { normalizeName } from "@/lib/import/quick-import";
-import { normalizePhoneForSms } from "@/lib/sms/phone";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 async function assertClientVisible(
@@ -64,12 +70,6 @@ function nullableString(value: FormDataEntryValue | null): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
-function nullableInt(value: FormDataEntryValue | null): number | null {
-  if (typeof value !== "string" || value.trim() === "") return null;
-  const n = parseInt(value, 10);
-  return Number.isFinite(n) ? n : null;
-}
-
 // Converts a dollar string like "150" or "150.50" to integer cents.
 function dollarsToCents(value: FormDataEntryValue | null): number | null {
   if (typeof value !== "string" || value.trim() === "") return null;
@@ -99,6 +99,8 @@ export type ClientSaveResult = {
   ok: false;
   error: string;
   possibleDuplicates?: PossibleDuplicate[];
+  /** Zero rows because a changed field was changed by someone else: current vs yours, for review. */
+  conflicts?: ProfileConflict[];
 };
 
 // Pre-flight duplicate-email check that scopes by studio (matching
@@ -214,70 +216,52 @@ export async function updateClientAction(
     return { ok: false, error: "Missing client id." };
   }
 
-  const name = nullableString(formData.get("name"));
-  if (!name) return { ok: false, error: "Name is required." };
+  // The values the page loaded. Without them this is an older or foreign form: refuse it before anything is
+  // read or written (it cannot be told apart from a stale tab, and guessing would overwrite newer values).
+  const baseline = parseBaseline(formData.get("baseline"));
+  if (!baseline) return { ok: false, error: STALE_FORM_ERROR };
 
-  // HON-58: the preferred name is written ONLY when the form submitted the field, so an older form
-  // (or any other caller) can never blank it. A blank submission clears it (null). Validated here to
-  // the same shape the database enforces (clients_preferred_name_shape: 1-200 chars, trimmed).
-  const preferredRead = formData.has("preferred_name")
-    ? parsePreferredName(formData.get("preferred_name"))
-    : null;
-  if (preferredRead && !preferredRead.ok) return { ok: false, error: preferredRead.error };
+  // Only fields the form submitted AND the staff member changed are written; an omitted field is never a
+  // candidate, so it can never be cleared. Invalid input changes nothing.
+  const plan = planProfileUpdate(formData, baseline);
+  if (!plan.ok) return { ok: false, error: plan.error };
 
   const { studio } = await getCurrentPractitionerWithStudio();
   const visible = await isClientVisible(studio.id, clientId);
   if (!visible) return { ok: false, error: "Client not found." };
 
+  // Nothing changed: nothing to write, and nothing to claim was saved beyond what is already stored.
+  if (Object.keys(plan.patch).length === 0) {
+    revalidatePath(`/clients/${clientId}`);
+    redirect(`/clients/${clientId}`);
+  }
+
   const supabase = await createClient();
 
-  const email = nullableString(formData.get("email"));
-  const dupCheck = await checkDuplicateEmail(
-    supabase,
-    studio.id,
-    email,
-    clientId,
-  );
-  if (dupCheck.kind === "active_duplicate" || dupCheck.kind === "archived_duplicate") {
-    return duplicateErrorFromCheck(dupCheck);
-  }
-  if (dupCheck.kind === "lookup_failed") {
-    return { ok: false, error: GENERIC_SAVE_ERROR };
+  const emailChanged = "email" in plan.patch;
+  const email = emailChanged ? ((plan.patch.email as string | null) ?? null) : null;
+  if (emailChanged) {
+    const dupCheck = await checkDuplicateEmail(supabase, studio.id, email, clientId);
+    if (dupCheck.kind === "active_duplicate" || dupCheck.kind === "archived_duplicate") {
+      return duplicateErrorFromCheck(dupCheck);
+    }
+    if (dupCheck.kind === "lookup_failed") {
+      return { ok: false, error: GENERIC_SAVE_ERROR };
+    }
   }
 
-  // HON-58 (Team review of #1084, I1): an edit can make this record a probable
-  // duplicate. Check only when the edit changes the name, phone or date of
-  // birth, so an unrelated edit is not re-warned about a duplicate that
-  // already existed; never count this client; save only when every match was
-  // confirmed by id. A failed read refuses rather than implying "none".
-  const phone = nullableString(formData.get("phone"));
-  const dateOfBirth = nullableString(formData.get("date_of_birth"));
-  const { data: stored, error: storedErr } = await supabase
-    .from("clients")
-    .select("name, phone, date_of_birth")
-    .eq("id", clientId)
-    .eq("studio_id", studio.id)
-    .maybeSingle();
-  if (storedErr) {
-    safeLog.error(
-      JSON.stringify({
-        event: "client_update_identity_read_failed",
-        code: dbErrorCode(storedErr),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return { ok: false, error: GENERIC_SAVE_ERROR };
-  }
-  if (!stored) return { ok: false, error: "Client not found." };
-  const identityChanged =
-    normalizeName(name) !== normalizeName(stored.name) ||
-    normalizePhoneForSms(phone) !== normalizePhoneForSms(stored.phone) ||
-    (dateOfBirth ?? "") !== (stored.date_of_birth ?? "");
+  // HON-58 (Team review of #1084, I1): an edit can make this record a probable duplicate. Check only when the
+  // edit changes the name, phone or date of birth (compared with what the page loaded), never count this
+  // client, save only when every match was confirmed by id. A failed read refuses rather than implying "none".
+  const identityChanged = "name" in plan.patch || "phone" in plan.patch || "date_of_birth" in plan.patch;
   if (identityChanged) {
     const check = await findPossibleDuplicateClient(supabase, studio.id, {
-      name,
-      phone,
-      dateOfBirth,
+      name: typeof plan.patch.name === "string" ? plan.patch.name : (baseline.name as string | null) ?? "",
+      phone: "phone" in plan.patch ? ((plan.patch.phone as string | null) ?? null) : ((baseline.phone as string | null) ?? null),
+      dateOfBirth:
+        "date_of_birth" in plan.patch
+          ? ((plan.patch.date_of_birth as string | null) ?? null)
+          : ((baseline.date_of_birth as string | null) ?? null),
     });
     if (check.kind === "unavailable") {
       safeLog.error(
@@ -302,47 +286,40 @@ export async function updateClientAction(
     }
   }
 
-  const { error } = await supabase
+  // ONE conditional UPDATE: it applies only while every column it changes still holds the value the page
+  // loaded, and it returns the row it changed. Zero rows is "not saved", never success.
+  // Chloe Session 1A: `clients.skin_notes` is retired as an editor and is never written here.
+  // The column list is spelled out (undefined = unchanged, dropped from the request) so the write census can
+  // prove which columns this action can ever touch.
+  const p = plan.patch;
+  let update = supabase
     .from("clients")
     .update({
-      name,
-      ...(preferredRead && preferredRead.ok ? { preferred_name: preferredRead.value } : {}),
-      pronouns: nullableString(formData.get("pronouns")),
-      phone,
-      email,
-      address: nullableString(formData.get("address")),
-      date_of_birth: dateOfBirth,
-      fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
-      // Chloe Session 1A: `clients.skin_notes` is RETIRED as a practitioner
-      // editor. It is no longer submitted by the client form and is no longer
-      // written here, so an ordinary client edit can never overwrite historical
-      // clinical text that carries no author, date or revision lineage. The
-      // column and its data are untouched; new skin/hair observations are
-      // recorded as append-only client_clinical_notes (kind=skin_hair_analysis).
-      allergies: nullableString(formData.get("allergies")),
-      emergency_contact_name: nullableString(
-        formData.get("emergency_contact_name"),
-      ),
-      emergency_contact_phone: nullableString(
-        formData.get("emergency_contact_phone"),
-      ),
+      name: p.name,
+      preferred_name: p.preferred_name,
+      pronouns: p.pronouns,
+      date_of_birth: p.date_of_birth,
+      phone: p.phone,
+      email: p.email,
+      address: p.address,
+      fitzpatrick_type: p.fitzpatrick_type,
+      allergies: p.allergies,
+      emergency_contact_name: p.emergency_contact_name,
+      emergency_contact_phone: p.emergency_contact_phone,
     })
     .eq("id", clientId)
     .eq("studio_id", studio.id);
+  for (const { key, value } of plan.conditions) {
+    update = value === null ? update.is(key, null) : update.eq(key, value);
+  }
+  const { data: changed, error } = await update.select("id");
 
   if (error) {
     if (isClientDuplicateEmailDbError(error)) {
-      // Race fallback: the pre-flight observed the email free, but a
-      // concurrent edit (or a row we did not see because of a stale
-      // read) tripped the unique index. Re-run the check to pick the
-      // correct copy; if it still says "ok" we fall back to the
-      // active-duplicate message which is the safer assumption.
-      const recheck = await checkDuplicateEmail(
-        supabase,
-        studio.id,
-        email,
-        clientId,
-      );
+      // Race fallback: the pre-flight observed the email free, but a concurrent edit tripped the unique
+      // index. Re-run the check to pick the correct copy; if it still says "ok" fall back to the
+      // active-duplicate message, the safer assumption.
+      const recheck = await checkDuplicateEmail(supabase, studio.id, email, clientId);
       if (recheck.kind === "archived_duplicate") {
         return { ok: false, error: ARCHIVED_DUPLICATE_ERROR };
       }
@@ -358,6 +335,23 @@ export async function updateClientAction(
     );
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
+
+  if (!changed || changed.length === 0) {
+    // Not saved. Say why: the client is gone, or one of the changed fields no longer holds what the page
+    // loaded (somebody else changed it). The current values go only to this signed-in staff member.
+    const { data: stored, error: readError } = await supabase
+      .from("clients")
+      .select(plan.conditions.map((c) => c.key).join(","))
+      .eq("id", clientId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (readError) return { ok: false, error: NOT_SAVED_ERROR };
+    if (!stored) return { ok: false, error: "Client not found." };
+    const conflicts = describeConflicts(plan, stored as unknown as Record<string, unknown>);
+    if (conflicts.length === 0) return { ok: false, error: NOT_SAVED_ERROR };
+    return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts };
+  }
+
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/clients");
   redirect(`/clients/${clientId}`);

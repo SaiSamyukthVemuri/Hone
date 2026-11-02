@@ -44,7 +44,11 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         update: (row: Record<string, unknown>) => {
           db.updates.push(row);
-          const u: Record<string, unknown> = { eq: (c: string, v: unknown) => { db.updateFilters.push([c, v]); return u; }, then: (resolve: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
+          const u: Record<string, unknown> = {
+            eq: (c: string, v: unknown) => { db.updateFilters.push([c, v]); return u; },
+            is: (c: string, v: unknown) => { db.updateFilters.push([c, v]); return u; },
+            select: async () => ({ data: [{ id: "client-x" }], error: null }),
+          };
           return u;
         },
       };
@@ -56,9 +60,15 @@ vi.mock("@/lib/supabase/server", () => ({
 import { createClientAction } from "@/app/(app)/clients/new/actions";
 import { updateClientAction } from "@/app/(app)/clients/[id]/actions";
 
+// What the edit page loaded (the action writes only fields that differ from it).
+const LOADED = {
+  name: "Bob Lee", preferred_name: null, pronouns: null, date_of_birth: null, phone: null, email: null,
+  address: null, fitzpatrick_type: null, allergies: null, emergency_contact_name: null, emergency_contact_phone: null,
+};
 async function run(action: (fd: FormData) => Promise<unknown>, fields: Record<string, string>) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+  if (action === updateClientAction && !fd.has("baseline")) fd.set("baseline", JSON.stringify(LOADED));
   try {
     return { result: await action(fd), redirected: null as string | null };
   } catch (err) {
@@ -100,16 +110,28 @@ describe("staff edit writes the preferred name only when the form submitted it",
 
   it("saves a changed preferred name and a cleared one (null)", async () => {
     await run(updateClientAction, { ...base, preferred_name: "Bobby" });
-    expect(db.updates[0]).toMatchObject({ name: "Bob Lee", preferred_name: "Bobby" });
-    await run(updateClientAction, { ...base, preferred_name: "" });
-    expect(db.updates[1]).toMatchObject({ preferred_name: null });
+    // Only the changed field is written: the unchanged name is not sent back.
+    expect(db.updates[0]).toEqual({ preferred_name: "Bobby" });
+    // Clearing is an explicit action against a stored value, never a blank by omission.
+    const loaded = JSON.stringify({ ...LOADED, preferred_name: "Bobby" });
+    await run(updateClientAction, { ...base, preferred_name: "", baseline: loaded, clear_preferred_name: "yes" });
+    expect(db.updates[1]).toEqual({ preferred_name: null });
+  });
+
+  it("a blanked preferred name without the explicit clear action is refused and writes nothing", async () => {
+    const loaded = JSON.stringify({ ...LOADED, preferred_name: "Bobby" });
+    const { result } = await run(updateClientAction, { ...base, preferred_name: "", baseline: loaded });
+    expect(result).toMatchObject({ ok: false });
+    expect(db.updates).toHaveLength(0);
   });
 
   it("an older form with no preferred_name field leaves the stored preferred name alone", async () => {
-    await run(updateClientAction, base);
-    expect(db.updates).toHaveLength(1);
-    // undefined: JSON serialisation omits it, so nothing is written (and the column is never named).
-    expect(db.updates[0].preferred_name).toBeUndefined();
+    const loaded = JSON.stringify({ ...LOADED, preferred_name: "Bobby" });
+    await run(updateClientAction, { ...base, baseline: loaded });
+    // Nothing differs and nothing was submitted for it: no write at all, and the column is never named.
+    expect(db.updates).toHaveLength(0);
+    await run(updateClientAction, { ...base, baseline: loaded, pronouns: "they/them" });
+    expect(db.updates[0]).toEqual({ pronouns: "they/them" });
   });
 
   it("refuses a too-long preferred name and updates nothing", async () => {
@@ -137,8 +159,8 @@ describe("who may edit, and where the write lands", () => {
 
   it("an edit never changes the stored name unless the form submitted one, and never writes preferred_name from another field", async () => {
     await run(updateClientAction, { client_id: "client-x", name: "Bob Lee", preferred_name: "Bobby" });
-    expect(db.updates[0]).toMatchObject({ name: "Bob Lee", preferred_name: "Bobby" });
+    expect(db.updates[0]).toEqual({ preferred_name: "Bobby" });
     // Saving a preferred name leaves `name` as typed: no automatic rename in either direction.
-    expect(db.updates[0].name).toBe("Bob Lee");
+    expect(db.updates[0].name).toBeUndefined();
   });
 });

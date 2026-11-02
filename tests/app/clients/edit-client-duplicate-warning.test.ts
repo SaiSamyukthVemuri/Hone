@@ -67,7 +67,8 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         update: (row: Record<string, unknown>) => {
           db.updates.push(row);
-          const u = { eq: () => u, then: (resolve: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
+          // update(patch).eq(...).is(...).select("id"): the conditional write reports the row it changed.
+          const u = { eq: () => u, is: () => u, select: async () => ({ data: [{ id: "client-x" }], error: null }) };
           return u;
         },
       };
@@ -91,6 +92,15 @@ async function edit(fields: Record<string, string>, confirm: string[] = []) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   for (const id of confirm) fd.append("confirm_possible_duplicate", id);
+  // The page's loaded values travel with the form; here they are the stored row as it stands.
+  const stored = db.rows.find((r) => r.id === fields.client_id);
+  if (stored && !fd.has("baseline")) {
+    fd.set("baseline", JSON.stringify({
+      name: stored.name, preferred_name: null, pronouns: null, date_of_birth: stored.date_of_birth, phone: stored.phone,
+      email: null, address: null, fitzpatrick_type: null, allergies: null, emergency_contact_name: null,
+      emergency_contact_phone: null,
+    }));
+  }
   try {
     return { result: await updateClientAction(fd), redirected: null as string | null };
   } catch (err) {
@@ -163,10 +173,11 @@ describe("HON-58 I1: an edit that creates a probable duplicate warns before savi
     expect(db.updates).toHaveLength(0);
   });
 
-  it("a failed read of the stored record refuses the save", async () => {
-    db.failStored = true;
-    const { result } = await edit(bobAs({ phone: "604.555.0199" }));
-    expect(result).toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
+  it("a form with no baseline (an older page) is refused and saves nothing", async () => {
+    const fd = new FormData();
+    fd.set("client_id", "client-bob"); fd.set("name", "Bob Lee"); fd.set("phone", "604.555.0199");
+    const result = await updateClientAction(fd);
+    expect(result).toMatchObject({ ok: false });
     expect(db.updates).toHaveLength(0);
   });
 
