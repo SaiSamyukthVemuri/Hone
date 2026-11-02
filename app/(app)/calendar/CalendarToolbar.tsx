@@ -33,6 +33,8 @@ type Props = {
   todayHref: string;
   nextHref: string;
   upcomingHref: string;
+  // Owner only (HON-44). Absent for everyone else, so the link is not rendered; the page itself still 404s for a non-owner.
+  reviewAssignmentsHref?: string;
   hideStepNavOnMobile: boolean;
 };
 
@@ -50,6 +52,7 @@ export function CalendarToolbar({
   todayHref,
   nextHref,
   upcomingHref,
+  reviewAssignmentsHref,
   hideStepNavOnMobile,
 }: Props) {
   return (
@@ -115,6 +118,16 @@ export function CalendarToolbar({
         >
           Upcoming
         </PendingLink>
+        {reviewAssignmentsHref && (
+          <PendingLink
+            href={reviewAssignmentsHref}
+            data-testid="calendar-review-assignments"
+            pendingLabel="Opening review…"
+            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            Review practitioner assignments
+          </PendingLink>
+        )}
       </div>
     </header>
   );
