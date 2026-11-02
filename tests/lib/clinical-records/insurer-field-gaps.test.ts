@@ -44,7 +44,7 @@ describe("insurer field gaps", () => {
   it("scopes the legal-name gap to the client profile, not to all of Hone", () => {
     const legal = INSURER_FIELD_GAPS.find((g) => g.key === "legal_identity");
     expect(legal?.reason).toMatch(/^Not on the client profile/);
-    expect(legal?.reason).toMatch(/intake form is not included in this packet/);
+    expect(legal?.reason).toMatch(/neither is included in this packet yet/);
     expect(legal?.reason).not.toMatch(/Not recorded|Hone stores|in Hone/);
   });
 
@@ -116,8 +116,14 @@ describe("schema tether", () => {
     // If this fails, HON-58 or HON-60 added the field: revisit
     // lib/clinical-records/insurer-field-gaps.ts so the packet prints the
     // recorded value instead of "Not recorded".
-    const suspicious = clientColumns().filter((key) =>
-      /legal|preferred|mrn|medical_record|diagnos|icd|problem_code|policy|member|insur|payer/.test(key),
+    // HON-58 (0258) added `preferred_name`, which is not one of the insurer
+    // fields (the legal identity lives in its own table, never a clients
+    // column), so it is the one allowed name here. A `legal_*` column on
+    // clients would still be a revisit.
+    const suspicious = clientColumns().filter(
+      (key) =>
+        key !== "preferred_name" &&
+        /legal|preferred|mrn|medical_record|diagnos|icd|problem_code|policy|member|insur|payer/.test(key),
     );
     expect(suspicious).toEqual([]);
   });
