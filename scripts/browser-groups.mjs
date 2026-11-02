@@ -231,6 +231,8 @@ export const BROWSER_GROUPS = {
   calendar: {
     description: "calendar surfaces, services and colours",
     specs: [
+      // HON-44/HON-49: practitioner sees/uses no paid-by-cash control; owner control on the same visit.
+      "settlement-role-check.spec.ts",
       "service-calendar-color-mobile.spec.ts",
       "service-order-and-colors.spec.ts",
       "disinfectant-notification.spec.ts",

@@ -233,7 +233,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // the /calendar paths already select. RECORDED AS A DECISION per the note above. Cost: ZERO executed cases in this lane: both files
     // self-skip unless CAL_LAYOUT_E2E=1 (the matrix is ~11 min of serial browser time, run locally at a PR's exact head), so a targeted
     // lane lists them and executes nothing.
-        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(46);
+    // Now 47: settlement-role-check.spec.ts (HON-44/HON-49) joined `calendar` (its surfaces are /dashboard, /calendar and /calendar/<id>).
+    // RECORDED AS A DECISION per the note above. Cost: three short cases (two viewport page sweeps and one replayed server action),
+    // roughly a minute of serial browser time in this lane, no payment provider, no flag.
+        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(47);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
