@@ -987,7 +987,7 @@ export default async function DashboardPage({
         ) : (
           <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {visibleAppointments.map((appt) => (
-              <li key={appt.id} className="min-w-0">
+              <li key={appt.id}>
                 <AppointmentRow
                   appt={appt}
                   workflow={workflowByAppointment.get(appt.id) ?? null}
@@ -1311,7 +1311,7 @@ function AppointmentRow({
           href={`/calendar/${appt.id}`}
           data-testid="today-row-body"
           pendingLabel="Opening appointment…"
-          className="flex min-w-0 max-w-full basis-full gap-3 lg:basis-0 lg:flex-1"
+          className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"
         >
           <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
             <span>{time}</span>

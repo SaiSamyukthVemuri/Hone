@@ -64,10 +64,10 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
 
 describe("long client names never widen the row (T-1: 22px horizontal scroll at 390)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
-  it("every box from the list item down to the name can shrink and is capped at its parent", () => {
-    expect(page).toMatch(/<li key=\{appt\.id\} className="min-w-0">/);
+  it("the row, the row-body link and the name can shrink and are capped at their parent", () => {
     expect(page).toMatch(/className=\{`min-w-0 max-w-full flex flex-wrap items-start gap-x-3/);
-    expect(page).toMatch(/className="flex min-w-0 max-w-full basis-full gap-3 lg:basis-0 lg:flex-1"/);
+    // The li is a block in the list and the link already carries min-w-0 as a flex item of the row.
+    expect(page).toMatch(/className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"/);
     expect(page).toMatch(/className="min-w-0 max-w-full truncate text-sm font-medium leading-5"/);
   });
   it("the truncated name carries the full name in a title", () => {
