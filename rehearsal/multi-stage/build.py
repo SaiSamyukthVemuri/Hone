@@ -456,11 +456,15 @@ def gen_scripts(st, pack, S, shas, rt):
               % (st["n_before"], st["n_before"], st["before_max"], st["before_max"], st["md5_before"], st["rowcol"], V, st["rowcol"], st["rowcol"], st["n_before"], st["before_max"], V))
     if "g12" in reads:
         fl = pack["preflight"]["fields"]
+        zf = pack["preflight"].get("zero_fields", [])
+        sf = pack["preflight"].get("show_fields", [])
         js.append('} else if (rule === "g12") {\n  if (rows.length !== 1) done(false, "expected 1 row, got " + rows.length);\n  const r = rows[0], bad = [];\n'
                   '  if (!numEq(r.at_hosted_%s, 1)) bad.push("at_hosted_%s");\n'
                   '  for (const k of [%s]) if (!isTrue(r[k])) bad.push(k);\n'
-                  '  done(bad.length === 0, bad.length ? "the sealed %s preflight is predicted to refuse or to run against the wrong shape: " + bad.join(", ") : "the sealed %s preflight passes");\n'
-                  % (st["before_max"], st["before_max"], ", ".join('"%s"' % f for f in fl), V, V))
+                  '  for (const k of [%s]) if (!numEq(r[k], 0)) bad.push(k + " is " + r[k] + ", must be 0");\n'
+                  '  const shown = [%s].map((k) => k + "=" + r[k]).join(", ");\n'
+                  '  done(bad.length === 0, (bad.length ? "the sealed %s preflight is predicted to refuse or to run against the wrong shape: " + bad.join(", ") : "the sealed %s preflight passes") + (shown ? " | COUNTS FOR THE APPROVER: " + shown : ""));\n'
+                  % (st["before_max"], st["before_max"], ", ".join('"%s"' % f for f in fl), ", ".join('"%s"' % f for f in zf), ", ".join('"%s"' % f for f in sf), V, V))
     if tables:
         js.append('} else if (rule === "open") {\n  if (!exact(S1)) done(false, "the table set is not exactly the %d scanned table(s) (" + rows.length + " rows)");\n'
                   '  const absent = rows.filter((r) => !isTrue(r.table_present)).map((r) => r.table_name);\n'

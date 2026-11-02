@@ -41,17 +41,12 @@ jobs:
           want="$(tr -d '[:space:]' < rehearsal/multi-stage/spec/s3.package-tree-sha256)"
           echo "built $got pinned $want"
           [ "$got" = "$want" ]
-      - name: The FIXED variant differs from the pinned package only by the generated preflight rule line (the defect, shown)
+      - name: The CI-built 0277 manifest is the one the approval request names (cd09c03d, replacing 17969bb3), and the two stages chain
         run: |
-          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s3.fixed.json "$RUNNER_TEMP/ms-pkg-fixed"
-          diff -r "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/ms-pkg-fixed" | grep -E '^(diff|Only|[<>] .*isTrue)' | cut -c1-260 || true
-          diff -rq "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/ms-pkg-fixed" | sed 's#'"$RUNNER_TEMP"'##g'
-      - name: The CI-built 0277 manifest is the one the approval request names (17969bb3), and the two stages chain
-        run: |
-          # Team's MANIFEST-0277.sha256 (its own sha256 starts 17969bb3) lists every file of 0277-b00 as "sha256  ./path"; its line SET, sorted bytewise, hashes to the pin below
+          # Team's MANIFEST-0277.sha256 (its own sha256 is cd09c03d0f79...) lists every file of 0277-b00 as "sha256  ./path"; its line SET, sorted bytewise, hashes to the pin below
           got="$(cd "$RUNNER_TEMP/ms-pkg/0277-b00" && find . -type f | xargs sha256sum | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
           echo "manifest line-set sha256 $got"
-          [ "$got" = db9a1a9bbb31d5ade608e8692379845f4145e81ff11eec7e8bd61a4286013f24 ]
+          [ "$got" = 8bcfabfdea10218e46d59da1d467a86cc5835ca82f3babd36be3aaed054a3918 ]
           python3 -I - "$RUNNER_TEMP/ms-pkg" <<'PY'
           import json, sys
           a = json.load(open(sys.argv[1] + "/0277-b00/EXPECT.json")); b = json.load(open(sys.argv[1] + "/0278-b01/EXPECT.json"))
@@ -73,10 +68,6 @@ jobs:
           for q in full drop-0278 "drop-0277+0278"; do
             echo "=========== S3 sequence $q" | tee -a "$RUNNER_TEMP/seq-s3.txt"
             bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/s3-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s3.txt" | tail -3
-          done
-          for q in full drop-0278; do
-            echo "=========== S3 FIXED sequence $q" | tee -a "$RUNNER_TEMP/seq-s3.txt"
-            bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg-fixed" "$RUNNER_TEMP/s3-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s3.txt" | tail -3
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-s3.txt" "$RUNNER_TEMP/builder-s3.txt"
 
@@ -337,16 +328,8 @@ jobs:
         run: |
           bash rehearsal/multi-stage/prepare-s3.sh "$RUNNER_TEMP/s3-hosted249"
           python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s3.ci.json "$RUNNER_TEMP/ms-pkgx"
-          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s3.fixed.json "$RUNNER_TEMP/ms-pkgx-fixed"
           test "$(ls supabase/migrations | wc -l | tr -d ' ')" = 253
-      - name: CONTROL, the PINNED package (Team's as built) - its generated preflight rule must refuse the correct hosted-shaped stack (the defect; nothing is applied)
-        run: |
-          mkdir -p "$RUNNER_TEMP/s3-extras"
-          for f in 0258_hon58_identity.sql 0266_legal_name_receptionist_access.sql 0272_hon58_legal_identity_hardening.sql 0274_receptionist_desk_projection.sql; do cp "supabase/migrations/$f" "$RUNNER_TEMP/s3-extras/"; done
-          EXTRA_DIR="$RUNNER_TEMP/s3-extras" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-pinned" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" full 2>&1 | tee "$RUNNER_TEMP/gates-pinned.txt" || true
-          grep -q "^FAIL - step 0277 (0277-b00): PRE g12 refused" "$RUNNER_TEMP/gates-pinned.txt"
-          grep -q "wrong shape: at_hosted_0274" "$RUNNER_TEMP/gates-pinned.txt"
-      - name: Gate packs on the FIXED variant, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
+      - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/s3-extras"
@@ -357,9 +340,29 @@ jobs:
             if [ "$first" = 0 ]; then git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset.log" 2>&1 || { echo "FAIL - db reset between sequences"; tail -20 "$RUNNER_TEMP/reset.log"; exit 1; }; fi
             first=0
             echo "=========== S3 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
-            EXTRA_DIR="$RUNNER_TEMP/s3-extras" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx-fixed" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
+            EXTRA_DIR="$RUNNER_TEMP/s3-extras" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
+      - name: The PRE counts line is printed for the approver, and the real g12 rule refuses a non-zero overlap and a hosted max that is not 0274
+        run: |
+          set -euo pipefail
+          grep -q "COUNTS FOR THE APPROVER" "$RUNNER_TEMP/gates-stack.txt" || { echo "FAIL - no COUNTS FOR THE APPROVER line"; exit 1; }
+          grep "COUNTS FOR THE APPROVER" "$RUNNER_TEMP/gates-stack.txt" | head -1 | cut -c1-400
+          A="$RUNNER_TEMP/ms-pkgx/0277-b00/s1-apply-0277-b00-online/s1-apply-0277-b00-online.sh"
+          sed -n "/^cat > \"\$ONLINE\/rule.js\" <<'JS'\$/,/^JS\$/p" "$A" | sed '1d;$d' > "$RUNNER_TEMP/rule0277.js"
+          test -s "$RUNNER_TEMP/rule0277.js"
+          # a real row of the stack's types (the stack is at 254 / 0277 here, so the chain guard itself is the control for "max is not 0274")
+          set +e
+          q="$(grep -v '^[[:space:]]*--' "$RUNNER_TEMP/ms-pkgx/0277-b00/window-reads-0277-b00/g12-0277-b00-preflight-0277-b00.sql" | sed -e ':a' -e '$!N;$!ba' -e 's/;[[:space:]]*$//')"
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -At -v ON_ERROR_STOP=1 -c "select coalesce(json_agg(t), '[]'::json) from ($q) t" > "$RUNNER_TEMP/g12-not0274.json" 2> "$RUNNER_TEMP/g12-not0274.err"
+          rc=$?; set -e
+          [ "$rc" != 0 ] && grep -qi "division by zero" "$RUNNER_TEMP/g12-not0274.err" && echo "ok - hosted max not 0274: the preflight errors with division by zero (refused)" || { echo "FAIL - the chain guard did not refuse at max != 0274 (rc=$rc)"; cat "$RUNNER_TEMP/g12-not0274.err"; exit 1; }
+          # the rule on a synthetic row: all true, overlap 0 passes; overlap 1 refuses and names the field
+          good='[{"at_hosted_0274":1,"single_overload":true,"body_is_0175":true,"definer_pinned_path":true,"acl_service_role_only":true,"dual_role_overlap":0}]'
+          bad='[{"at_hosted_0274":1,"single_overload":true,"body_is_0175":true,"definer_pinned_path":true,"acl_service_role_only":true,"dual_role_overlap":1}]'
+          echo "$good" > "$RUNNER_TEMP/g12-good.json"; echo "$bad" > "$RUNNER_TEMP/g12-bad.json"
+          node "$RUNNER_TEMP/rule0277.js" g12 "$RUNNER_TEMP/g12-good.json" | grep -q "^PASS" && echo "ok - rule passes the all-true row with overlap 0 (guard column as the integer 1)"
+          if o="$(node "$RUNNER_TEMP/rule0277.js" g12 "$RUNNER_TEMP/g12-bad.json" 2>&1)"; then echo "FAIL - overlap 1 was accepted"; exit 1; else echo "$o" | grep -q "dual_role_overlap is 1, must be 0" && echo "ok - overlap 1 refused: $o"; fi
       - name: Upload the read-back results (read-only catalog facts, no data)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

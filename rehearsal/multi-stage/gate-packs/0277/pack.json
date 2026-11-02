@@ -11,11 +11,32 @@
   "preflight": {
     "sql": "g12-preflight.sql",
     "fields": [
-      "at_hosted_0274",
       "single_overload",
       "body_is_0175",
       "definer_pinned_path",
       "acl_service_role_only"
+    ],
+    "zero_fields": [
+      "dual_role_overlap"
+    ],
+    "show_fields": [
+      "dual_role_overlap",
+      "studios_total",
+      "studios_capacity_off",
+      "open_total",
+      "open_future",
+      "open_past_unfinished",
+      "check_a_null_assignee",
+      "check_b_owner_assigned_multi_practitioner",
+      "check_c_booker_assigned_session_differs",
+      "check_any",
+      "check_any_future",
+      "check_any_past_unfinished",
+      "check_any_in_capacity_off",
+      "started_a_null_assignee",
+      "started_b_owner_assigned_multi_practitioner",
+      "started_c_booker_assigned_session_differs",
+      "started_any_in_capacity_off"
     ]
   },
   "verify_sql": [

@@ -11,7 +11,6 @@
   "preflight": {
     "sql": "g12-preflight.sql",
     "fields": [
-      "at_hosted_0277",
       "four_bodies_are_0150",
       "two_new_absent",
       "acl_four_service_role_only",
