@@ -57,7 +57,7 @@ export function ReceptionistInviteForm() {
 }
 
 // Remove a receptionist's access. Never hidden by the desk flag: the flag hides the desk, only this
-// revokes. It also closes any outstanding invitation for the same address (0275).
+// revokes. It also closes any outstanding invitation for the same address (0279).
 export function RemoveReceptionistButton({ id, name }: { id: string; name: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();

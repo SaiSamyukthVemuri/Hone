@@ -5,12 +5,12 @@ import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "./helpers/local-env";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 
 // The owner's Team-page front-desk flow end to end, through the REAL UI (Sam, 2 Nov): owner invites -> receptionist accepts
-// -> owner removes -> the SAME cookie is refused; an OLD invitation for the removed person is refused afterwards (0275);
+// -> owner removes -> the SAME cookie is refused; an OLD invitation for the removed person is refused afterwards (0279);
 // a pending invitation's Revoke works; and after a move the schedule row's Move and Cancel buttons return (Privacy C3).
 //
 // HELD like receptionist-removal.spec.ts: the app server must run with HONE_RECEPTIONIST_DESK_ENABLED=true, which the lanes never
 // set; it self-skips everywhere except a dedicated run on an OWNED isolated stack (OPS heavy slot). Synthetic data only; no real
-// invitation, mailbox or account. Needs migration 0275 on that stack (it is in the tree, so a fresh local reset has it).
+// invitation, mailbox or account. Needs migration 0279 on that stack (it is in the tree, so a fresh local reset has it).
 const DESK_ON = E2E_WEB_SERVER_ENV.HONE_RECEPTIONIST_DESK_ENABLED === "true";
 test.beforeEach(() => {
   test.skip(!DESK_ON, "the desk is OFF on this server (HONE_RECEPTIONIST_DESK_ENABLED is not true)");

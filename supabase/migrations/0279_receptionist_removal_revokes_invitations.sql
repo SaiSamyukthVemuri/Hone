@@ -1,7 +1,7 @@
--- 0275: removing a receptionist also revokes their outstanding invitations.
+-- 0279: removing a receptionist also revokes their outstanding invitations.
 --
 -- DRAFT, HELD, PREPARE-ONLY. Never applied or activated without Sam's per-change approval; Privacy
--- SQL review first, then Insurance. Number: next free at authoring (OPS to confirm the reservation).
+-- SQL review first, then Insurance. Number: 0279, assigned by OPS (0275 is #1296, 0275/0276 are reserved in #1316's guard, 0277/0278 are Team's).
 --
 -- THE GAP (Sam, 2 Nov: "removing a receptionist must also invalidate any outstanding invitation so
 -- it cannot restore access"). link_invited_membership (0218) REACTIVATES an inactive receptionist
@@ -75,7 +75,7 @@ begin
     raise exception 'receptionist_changed_concurrently' using errcode = '40001';
   end if;
 
-  -- 0275: a removal also closes every outstanding receptionist invitation for this person, in the
+  -- 0279: a removal also closes every outstanding receptionist invitation for this person, in the
   -- same transaction, so an old invitation cannot reactivate the row.
   if not p_active and v_row.email is not null then
     update public.pending_invitations

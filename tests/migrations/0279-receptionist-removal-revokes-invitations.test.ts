@@ -2,14 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { countVersion, fileForVersion } from "./helpers/migration-state";
 
-// 0275: source contract. Behaviour is proved in tests/db/receptionist-removal-invitations.db.test.ts (CI only).
-const sql = readFileSync("supabase/migrations/0275_receptionist_removal_revokes_invitations.sql", "utf8");
+// 0279: source contract. Behaviour is proved in tests/db/receptionist-removal-invitations.db.test.ts (CI only).
+const sql = readFileSync("supabase/migrations/0279_receptionist_removal_revokes_invitations.sql", "utf8");
 const code = sql.replace(/^\s*--.*$/gm, "");
 
-describe("0275: removal revokes outstanding invitations", () => {
+describe("0279: removal revokes outstanding invitations", () => {
   it("owns one filename and opens its own transaction with lock_timeout inside", () => {
-    expect(countVersion("0275")).toBe(1);
-    expect(fileForVersion("0275")).toBe("0275_receptionist_removal_revokes_invitations.sql");
+    expect(countVersion("0279")).toBe(1);
+    expect(fileForVersion("0279")).toBe("0279_receptionist_removal_revokes_invitations.sql");
     expect(code.trim()).toMatch(/^begin;\s*set local lock_timeout = '5s';/);
     expect(code.trim()).toMatch(/commit;$/);
   });

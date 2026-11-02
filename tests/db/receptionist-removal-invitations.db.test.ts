@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, closePool, seedStudio, type SeededStudio, type UserQuery } from "./helpers/harness";
 
-// 0275: removing a receptionist also revokes their outstanding invitations. Before it, accepting an old pending
+// 0279: removing a receptionist also revokes their outstanding invitations. Before it, accepting an old pending
 // invitation REACTIVATED the removed row (link_invited_membership, 0218). Synthetic values only.
 
 let studio: SeededStudio;
@@ -43,7 +43,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("0275: removal closes outstanding invitations", () => {
+describe("0279: removal closes outstanding invitations", () => {
   it("CONTROL: an invitation issued after the removal is deliberate and still re-admits (the accept path is unchanged)", async () => {
     expect(await remove()).toBe("updated");
     expect((await row()).active).toBe(false);
