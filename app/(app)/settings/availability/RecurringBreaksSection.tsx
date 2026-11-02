@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { useState, useTransition } from "react";
 import type { StudioRecurringBreakRule } from "@/lib/types/database";
 import { formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
@@ -110,9 +111,27 @@ export function RecurringBreaksSection({
   const [scope, setScope] = useState<string>(defaultScope);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // A rule being edited, or a create form changed from its defaults, is unsaved
+  // work; resetForm() after a successful save puts every field back.
+  // Editing an existing rule is dirty only once a field differs from the rule as
+  // opened; a create form is dirty once it differs from its defaults.
+  const [openedKey, setOpenedKey] = useState<string | null>(null);
+  const fieldsKey = [label, days.join(","), startLocal, endLocal, String(active), scope].join("\u0000");
+  useUnsavedChangesGuard(
+    "availability-recurring-break",
+    editingId != null
+      ? fieldsKey !== openedKey
+      : label !== DEFAULT_LABEL ||
+          days.join(",") !== DEFAULT_DAYS.join(",") ||
+          startLocal !== DEFAULT_START ||
+          endLocal !== DEFAULT_END ||
+          !active ||
+          scope !== defaultScope,
+  );
 
   function resetForm() {
     setEditingId(null);
+    setOpenedKey(null);
     setLabel(DEFAULT_LABEL);
     setDays(DEFAULT_DAYS);
     setStartLocal(DEFAULT_START);
@@ -130,6 +149,9 @@ export function RecurringBreaksSection({
 
   function onEdit(r: StudioRecurringBreakRule) {
     setEditingId(r.id);
+    setOpenedKey(
+      [r.label, [...r.days_of_week].join(","), trimSeconds(r.start_local_time), trimSeconds(r.end_local_time), String(r.active), r.practitioner_id ?? ""].join("\u0000"),
+    );
     setLabel(r.label);
     setDays([...r.days_of_week]);
     setStartLocal(trimSeconds(r.start_local_time));

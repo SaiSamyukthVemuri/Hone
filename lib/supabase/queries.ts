@@ -25,7 +25,6 @@ import type {
   Studio,
 } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 
 export {
   IdentityRefusalError,
@@ -319,13 +318,11 @@ export async function getPractitionersForStudio(
 // Clinical, consent and emergency-contact columns never leave the database
 // for a list. A consumer that needs another column must add it here.
 export const CLIENT_DIRECTORY_COLUMNS =
-  "id, name, preferred_name, pronouns, email, phone, address, archived_at";
-// HON-58: `preferred_name` is the optional name the client goes by; ordinary
-// staff lists show clientDisplayName (preferred, else the stored name).
+  "id, name, pronouns, email, phone, address, archived_at";
 export type DirectoryClient = Pick<
   Client,
   "id" | "name" | "pronouns" | "email" | "phone" | "address" | "archived_at"
-> & WithPreferredName;
+>;
 
 async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<DirectoryClient[]> {
   const supabase = await createClient();
@@ -347,7 +344,7 @@ async function loadStudioClientDirectory(studioId: string, archived: boolean): P
       return clients.sort((a, b) => (
         archived
           ? Date.parse(b.archived_at!) - Date.parse(a.archived_at!)
-          : clientDisplayName(a).localeCompare(clientDisplayName(b), "en")
+          : a.name.localeCompare(b.name, "en")
       ) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
     for (const row of rows) {

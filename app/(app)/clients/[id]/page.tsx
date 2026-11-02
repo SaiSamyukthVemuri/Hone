@@ -154,8 +154,6 @@ import { requireLoadedForTab } from "./deferred-reads";
 import { canViewClientBilling, isLegacyProfileTab, profileTabsFor, resolveProfileTab, type ProfileTab } from "@/lib/clients/profile-tabs";
 import { clientAvatarInitials } from "@/lib/clients/profile-avatar";
 import { profileNameLines } from "@/lib/clients/profile-name";
-import { clientLegalName } from "@/lib/clients/identity";
-import { readLegalIdentityForSession } from "@/lib/clients/legal-identity";
 import { getOverviewVisitAppointments } from "@/lib/clients/profile-appointments";
 import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits";
 import { VisitSummary } from "./_profile/VisitSummary";
@@ -378,7 +376,6 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     overviewVisitAppointments,
-    legalIdentityRead,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -466,12 +463,7 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
-    // HON-58: the legal name, shown beside the display name in the heading on every tab. Read with the SIGNED-IN client, so only an owner or
-    // practitioner ever receives a row; a failed or thrown read omits the line, never the page.
-    readLegalIdentityForSession(client.id),
   ]);
-  const legalName =
-    legalIdentityRead.ok && legalIdentityRead.value ? clientLegalName(legalIdentityRead.value) : null;
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
   // shape uses legacy decoding; a present undefined/malformed snapshot refuses
@@ -998,7 +990,6 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
             <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
-              {legalName && legalName !== clientDisplay && <span>Legal name: {legalName}</span>}
               {client.pronouns && <span>{client.pronouns}</span>}
             </div>
             {isOwner && sessionsWithPrice > 0 && (

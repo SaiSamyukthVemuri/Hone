@@ -45,14 +45,12 @@ export function SmsSettingsForm({ initial }: Props) {
   return (
     <section className="flex flex-col gap-4" data-testid="sms-settings">
       <div>
-        <h2 id="sms-notifications" className="scroll-mt-24 text-lg font-medium">
-          Text messages
-        </h2>
-        <p className="mt-1 text-sm text-neutral-500">
+        {/* The view heading (Text-message preferences) comes from the route. */}
+        <p className="text-sm text-neutral-500">
           Texts go only to clients who have agreed to receive them and have not
           opted out. A client without a phone number or without that agreement
-          gets no text, whatever is switched on here. Email notifications above
-          are separate.
+          gets no text, whatever is switched on here. Email notifications are on
+          their own page.
         </p>
       </div>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">

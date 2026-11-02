@@ -5,6 +5,7 @@ import {
   IMPORT_SUPPORT_MAILTO,
 } from "@/lib/import/operator-assist";
 import { QuickImport } from "./QuickImport";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 // PR #257: Quick Import V1. Owner-only (defense-in-depth over the settings nav
 // only showing this tab to owners, and the server actions re-checking owner).
@@ -24,11 +25,7 @@ export default async function ImportPage() {
   const { practitioner } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
-    return (
-      <section className="rounded-lg border border-neutral-200 p-5 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-400">
-        Only studio owners can import clients and treatment history.
-      </section>
-    );
+    return <OwnerOnlyNotice>Only studio owners can import clients and treatment history.</OwnerOnlyNotice>;
   }
 
   const operator = await isImportOperator();
@@ -36,7 +33,7 @@ export default async function ImportPage() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">
+        <h2 tabIndex={-1} data-settings-heading className="text-2xl font-semibold tracking-tight outline-none">
           Import clients and history
         </h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">

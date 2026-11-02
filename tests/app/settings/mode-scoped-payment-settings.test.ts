@@ -79,7 +79,7 @@ describe("every studio_payment_settings read is mode-scoped", () => {
 
 describe("get_studio_payment_settings_display callers pass the deployment mode", () => {
   it("Settings → Payments page passes p_stripe_livemode: inferStripeLivemode()", () => {
-    const src = read("app/(app)/settings/payments/page.tsx");
+    const src = read("app/(app)/settings/payments/PaymentsView.tsx");
     expect(src).toMatch(
       /get_studio_payment_settings_display",\s*\n?\s*\{ p_studio_id: studio\.id, p_stripe_livemode: inferStripeLivemode\(\) \}/,
     );

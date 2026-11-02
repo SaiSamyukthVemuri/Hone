@@ -166,7 +166,7 @@ export async function createClientAction(
     .insert({
       studio_id: studio.id,
       name,
-      // HON-58: the name the client goes by, on the SAME client record.
+      // HON-58: the name the client goes by, on the SAME client record (null when blank).
       preferred_name: preferred.value,
       pronouns: nullableString(formData.get("pronouns")),
       phone,

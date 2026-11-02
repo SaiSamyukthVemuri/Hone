@@ -10,13 +10,16 @@ import {
 } from "@/lib/stripe/account";
 import { getAppOrigin } from "@/lib/stripe/server";
 import { thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 export const dynamic = "force-dynamic";
 
 export default async function StripeOnboardingRefreshPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    redirect("/settings/payments");
+    return (
+      <OwnerOnlyNotice>Only the studio owner can manage payments.</OwnerOnlyNotice>
+    );
   }
 
   try {

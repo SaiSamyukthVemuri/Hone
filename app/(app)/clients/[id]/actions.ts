@@ -217,13 +217,13 @@ export async function updateClientAction(
   const name = nullableString(formData.get("name"));
   if (!name) return { ok: false, error: "Name is required." };
 
-  // HON-58: written only when the form submitted the field (see the update).
+  // HON-58: the preferred name is written ONLY when the form submitted the field, so an older form
+  // (or any other caller) can never blank it. A blank submission clears it (null). Validated here to
+  // the same shape the database enforces (clients_preferred_name_shape: 1-200 chars, trimmed).
   const preferredRead = formData.has("preferred_name")
     ? parsePreferredName(formData.get("preferred_name"))
     : null;
   if (preferredRead && !preferredRead.ok) return { ok: false, error: preferredRead.error };
-  const preferredUpdate: { preferred_name?: string | null } =
-    preferredRead && preferredRead.ok ? { preferred_name: preferredRead.value } : {};
 
   const { studio } = await getCurrentPractitionerWithStudio();
   const visible = await isClientVisible(studio.id, clientId);
@@ -306,9 +306,7 @@ export async function updateClientAction(
     .from("clients")
     .update({
       name,
-      // HON-58: only written when the form submitted the field, so an older
-      // form (or any other caller) can never blank a preferred name.
-      ...preferredUpdate,
+      ...(preferredRead && preferredRead.ok ? { preferred_name: preferredRead.value } : {}),
       pronouns: nullableString(formData.get("pronouns")),
       phone,
       email,

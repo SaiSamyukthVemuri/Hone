@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
+  updateFilters: [] as Array<[string, unknown]>,
+  practitionerFails: false,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -16,7 +18,11 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: () => undefined }));
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1" }, studio: { id: "studio-A" } }),
+  getCurrentPractitionerWithStudio: async () => {
+    // A receptionist is not a practitioners row, so the resolver refuses them before any write.
+    if (db.practitionerFails) throw new Error("not a practitioner");
+    return { practitioner: { id: "prac-1" }, studio: { id: "studio-A" } };
+  },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
@@ -38,7 +44,7 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         update: (row: Record<string, unknown>) => {
           db.updates.push(row);
-          const u: Record<string, unknown> = { eq: () => u, then: (resolve: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
+          const u: Record<string, unknown> = { eq: (c: string, v: unknown) => { db.updateFilters.push([c, v]); return u; }, then: (resolve: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
           return u;
         },
       };
@@ -65,6 +71,8 @@ async function run(action: (fd: FormData) => Promise<unknown>, fields: Record<st
 beforeEach(() => {
   db.inserts = [];
   db.updates = [];
+  db.updateFilters = [];
+  db.practitionerFails = false;
 });
 
 describe("staff create writes the preferred name on the one client row", () => {
@@ -100,12 +108,37 @@ describe("staff edit writes the preferred name only when the form submitted it",
   it("an older form with no preferred_name field leaves the stored preferred name alone", async () => {
     await run(updateClientAction, base);
     expect(db.updates).toHaveLength(1);
-    expect(Object.keys(db.updates[0])).not.toContain("preferred_name");
+    // undefined: JSON serialisation omits it, so nothing is written (and the column is never named).
+    expect(db.updates[0].preferred_name).toBeUndefined();
   });
 
   it("refuses a too-long preferred name and updates nothing", async () => {
     const { result } = await run(updateClientAction, { ...base, preferred_name: "y".repeat(201) });
     expect(result).toMatchObject({ ok: false });
     expect(db.updates).toHaveLength(0);
+  });
+});
+
+describe("who may edit, and where the write lands", () => {
+  it("a caller that is not an owner or practitioner (a receptionist) reaches no write", async () => {
+    db.practitionerFails = true;
+    await expect(run(updateClientAction, { client_id: "client-x", name: "Bob Lee", preferred_name: "Bobby" })).rejects.toThrow();
+    await expect(run(createClientAction, { name: "Jane Smith", preferred_name: "Janie" })).rejects.toThrow();
+    expect(db.updates).toHaveLength(0);
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("the update is scoped to the caller's studio and the one client; the insert carries the caller's studio", async () => {
+    await run(updateClientAction, { client_id: "client-x", name: "Bob Lee", preferred_name: "Bobby" });
+    expect(db.updateFilters).toEqual(expect.arrayContaining([["id", "client-x"], ["studio_id", "studio-A"]]));
+    await run(createClientAction, { name: "Jane Smith", preferred_name: "Janie" });
+    expect(db.inserts[0]).toMatchObject({ studio_id: "studio-A" });
+  });
+
+  it("an edit never changes the stored name unless the form submitted one, and never writes preferred_name from another field", async () => {
+    await run(updateClientAction, { client_id: "client-x", name: "Bob Lee", preferred_name: "Bobby" });
+    expect(db.updates[0]).toMatchObject({ name: "Bob Lee", preferred_name: "Bobby" });
+    // Saving a preferred name leaves `name` as typed: no automatic rename in either direction.
+    expect(db.updates[0].name).toBe("Bob Lee");
   });
 });
