@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs utility without type declarations
-import { evaluateOutOfOrder, getMigrationState, pendingMigrationVersions, PERMANENTLY_SKIPPED } from "../../scripts/migration-state.mjs";
+import { evaluateOutOfOrder, evaluateReservedAboveHosted, getMigrationState, pendingMigrationVersions, PERMANENTLY_SKIPPED } from "../../scripts/migration-state.mjs";
 
 // The out-of-order stage rule (0248 hosted ahead of 0247) must admit EXACTLY
 // the declared shape. Every case drives the pure evaluator so the controls do
@@ -131,5 +131,44 @@ describe("getMigrationState wiring: a 0247 file with the 0248-stage declaration"
   it("NEGATIVE CONTROL: the same files with no declaration lose 0247 (pre-fix) and report the gap-free repo as parity", () => {
     const st = fixture("undeclared", ["0246_a.sql", "0247_b.sql", "0248_c.sql"], { ...record, hosted_out_of_order: [] });
     expect(st.pending_migrations).toEqual([]);
+  });
+});
+
+describe("reserved numbers above the hosted head (reserved_unallocated_above_hosted)", () => {
+  const ok = { numbers: [248, 249, 252], hostedMaxNumber: 249 };
+  const run = (reserved: unknown, o: Partial<typeof ok> = {}) =>
+    evaluateReservedAboveHosted({ ...ok, ...o, reserved });
+
+  it("accepts a named reservation with no file between hosted and the repo max", () => {
+    expect(run([{ version: "0250", holder: "another lane, unsealed" }])).toEqual([]);
+  });
+  it("an absent declaration is empty, not invalid", () => {
+    expect(run(undefined)).toEqual([]);
+  });
+  it("NEGATIVE CONTROL: not an array", () => {
+    expect(run({ version: "0250" }).join(" ")).toMatch(/must be an array/);
+  });
+  it("NEGATIVE CONTROL: malformed version", () => {
+    expect(run([{ version: "250", holder: "x" }]).join(" ")).toMatch(/no four-digit version/);
+  });
+  it("NEGATIVE CONTROL: no holder named", () => {
+    expect(run([{ version: "0250", holder: "  " }]).join(" ")).toMatch(/names no holder/);
+  });
+  it("NEGATIVE CONTROL: duplicate", () => {
+    expect(run([{ version: "0250", holder: "a" }, { version: "0250", holder: "b" }]).join(" ")).toMatch(/twice/);
+  });
+  it("NEGATIVE CONTROL: at or below the hosted head belongs in hosted_out_of_order", () => {
+    expect(run([{ version: "0249", holder: "a" }]).join(" ")).toMatch(/at or below hosted_migration_max/);
+  });
+  it("NEGATIVE CONTROL: once the file exists the reservation must be removed", () => {
+    expect(run([{ version: "0252", holder: "a" }]).join(" ")).toMatch(/has a repo file/);
+  });
+  it("NEGATIVE CONTROL: a reservation above the repo max is stale", () => {
+    expect(run([{ version: "0253", holder: "a" }]).join(" ")).toMatch(/above the repo max/);
+  });
+  it("the real record wires through getMigrationState and is valid", () => {
+    const s = getMigrationState();
+    expect(s.invalid_reserved_declarations).toEqual([]);
+    expect(Array.isArray(s.reserved_above_hosted)).toBe(true);
   });
 });
