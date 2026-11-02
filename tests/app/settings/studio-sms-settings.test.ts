@@ -119,7 +119,7 @@ describe("both states render", () => {
 describe("source contract", () => {
   const read = (p: string) => readFileSync(path.join(__dirname, "../../..", p), "utf8");
   it("the page renders the card with the stored values and the send gate is unchanged", () => {
-    const page = read("app/(app)/settings/studio/page.tsx");
+    const page = read("app/(app)/settings/studio/text-messages/page.tsx");
     expect(page).toContain("<SmsSettingsForm");
     for (const k of ["send_confirmation_sms", "send_24h_sms_reminders", "send_2h_sms_reminders"]) {
       expect(page).toContain(`${k}: studio.${k}`);

@@ -50,7 +50,7 @@ function toScopeProps(dir: PractitionerDirectory): {
 
 const Header = () => (
   <div>
-    <h2 className="text-xl font-medium">Availability</h2>
+    <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Availability</h2>
     <p className="mt-1 text-sm text-neutral-500">
       Everything that decides when clients can book, in one place:
     </p>

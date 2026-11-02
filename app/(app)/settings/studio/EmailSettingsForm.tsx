@@ -134,19 +134,10 @@ export function EmailSettingsForm({ initial }: Props) {
   return (
     <section className="flex flex-col gap-4">
       <div>
-        {/* Anchor target for Global Search: "reminder" / "sms" resolves to
-            /settings/studio#email-notifications, which is well below the
-            studio-name form on this page. scroll-mt matches the existing
-            #postcare anchor so the sticky header does not cover the heading. */}
-        <h2
-          id="email-notifications"
-          className="scroll-mt-24 text-lg font-medium"
-        >
-          Email notifications
-        </h2>
-        <p className="mt-1 text-sm text-neutral-500">
+        {/* The view heading (Email notifications) comes from the route. */}
+        <p className="text-sm text-neutral-500">
           All emails are sent from hello@hone.care and appear as your studio.
-          Clients can cancel or reschedule from these emails unless you turn that off under Client self-service below.
+          Clients can cancel or reschedule from these emails unless you turn that off under Client self-service.
         </p>
       </div>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
@@ -168,6 +159,7 @@ export function EmailSettingsForm({ initial }: Props) {
                 type="button"
                 onClick={() => toggle(t)}
                 disabled={pending || isForceOff}
+                aria-label={t.label}
                 aria-pressed={displayOn}
                 aria-disabled={isForceOff}
                 title={isForceOff ? t.forceOffReason : undefined}

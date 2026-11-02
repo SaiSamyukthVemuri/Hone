@@ -51,6 +51,11 @@ export type PageHeaderProps = {
    * heading passes its real depth instead.
    */
   headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+  /**
+   * Mark the title as the Settings view heading (programmatically focusable,
+   * `data-settings-heading`) so the shell can move focus to it after navigation.
+   */
+  focusTitle?: boolean;
   className?: string;
 };
 
@@ -59,6 +64,7 @@ export function PageHeader({
   description,
   action,
   headingLevel = 1,
+  focusTitle = false,
   className,
 }: PageHeaderProps) {
   // Card's `as: Tag` idiom. Same classes at every level: the level changes the
@@ -72,7 +78,12 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <Title className="text-3xl font-semibold tracking-tight text-fg">{title}</Title>
+        <Title
+          {...(focusTitle ? { tabIndex: -1, "data-settings-heading": true } : {})}
+          className={cx("text-3xl font-semibold tracking-tight text-fg", focusTitle && "outline-hidden")}
+        >
+          {title}
+        </Title>
         {description ? (
           <p className="mt-1 max-w-[65ch] text-sm leading-relaxed text-fg-muted">
             {description}

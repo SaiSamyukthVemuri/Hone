@@ -33,34 +33,34 @@ function titles(query: string, ctx: NavSearchContext = OWNER) {
 describe("acceptance matrix — Booking", () => {
   const CASES: Array<[string, string, string]> = [
     // query                        expected title              expected href
-    ["booking horizon", "Booking horizon", "/settings/booking#booking-horizon"],
-    ["horizon", "Booking horizon", "/settings/booking#booking-horizon"],
-    ["how far ahead", "Booking horizon", "/settings/booking#booking-horizon"],
-    ["booking window", "Booking horizon", "/settings/booking#booking-horizon"],
-    ["advance booking", "Booking horizon", "/settings/booking#booking-horizon"],
-    ["months ahead", "Booking horizon", "/settings/booking#booking-horizon"],
-    ["timezone", "Timezone", "/settings/booking#timezone"],
-    ["time zone", "Timezone", "/settings/booking#timezone"],
+    ["booking horizon", "Booking horizon", "/settings/booking/window"],
+    ["horizon", "Booking horizon", "/settings/booking/window"],
+    ["how far ahead", "Booking horizon", "/settings/booking/window"],
+    ["booking window", "Booking horizon", "/settings/booking/window"],
+    ["advance booking", "Booking horizon", "/settings/booking/window"],
+    ["months ahead", "Booking horizon", "/settings/booking/window"],
+    ["timezone", "Timezone", "/settings/booking/window"],
+    ["time zone", "Timezone", "/settings/booking/window"],
     [
       "default duration",
       "Default duration (min)",
-      "/settings/booking#default-duration",
+      "/settings/booking/window",
     ],
-    ["buffer", "Time between appointments", "/settings/booking#buffer"],
+    ["buffer", "Time between appointments", "/settings/booking/window"],
     [
       "time between appointments",
       "Time between appointments",
-      "/settings/booking#buffer",
+      "/settings/booking/window",
     ],
-    ["booking link", "Booking link", "/settings/booking#booking-link"],
-    ["public address", "Public address", "/settings/booking#public-address"],
+    ["booking link", "Booking link", "/settings/booking/link"],
+    ["public address", "Public address", "/settings/booking/window"],
     [
       "booking page intro",
       "Booking page intro",
-      "/settings/booking#booking-intro",
+      "/settings/booking/window",
     ],
-    ["slug", "Booking URL slug", "/settings/booking#booking-slug"],
-    ["booking", "Booking", "/settings/booking"],
+    ["slug", "Booking URL slug", "/settings/booking/link"],
+    ["booking", "Booking", "/settings/booking/link"],
   ];
 
   for (const [query, title, href] of CASES) {
@@ -89,7 +89,7 @@ describe("acceptance matrix — Booking", () => {
 
   it("the generic Booking row survives alongside the precise ones", () => {
     expect(top("booking")?.title).toBe("Booking");
-    expect(top("booking")?.href).toBe("/settings/booking");
+    expect(top("booking")?.href).toBe("/settings/booking/link");
     // ...and the page row does not suppress its own controls.
     expect(top("booking horizon")?.title).toBe("Booking horizon");
     expect(top("booking link")?.title).toBe("Booking link");

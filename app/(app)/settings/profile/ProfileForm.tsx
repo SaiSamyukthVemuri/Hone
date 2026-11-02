@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { updateOwnProfileAction } from "./actions";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
+import { fieldControlClass } from "@/components/ui/field";
 
 type Props = {
   initialDisplayName: string;
@@ -55,7 +56,7 @@ export function ProfileForm({ initialDisplayName, email }: Props) {
           onChange={(e) => setDisplayName(e.target.value)}
           required
           placeholder="The name your team will see"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
         <span className="text-xs text-neutral-500">
           Shown next to sessions you perform and in the team roster.

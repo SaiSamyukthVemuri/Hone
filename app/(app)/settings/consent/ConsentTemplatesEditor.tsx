@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import type {
   ConsentFormTemplate,
   ConsentTemplateFormType,
@@ -8,6 +9,7 @@ import type {
 } from "@/lib/types/database";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SectionLabel } from "@/components/ui/section-label";
+import { fieldControlClass } from "@/components/ui/field";
 
 const TITLE_MAX = 160;
 const BODY_MAX = 20000;
@@ -324,6 +326,14 @@ function TemplateForm({
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Unmounting (a saved form closes, or Cancel) clears the registration.
+  useUnsavedChangesGuard(
+    `consent-template-${initial?.id ?? "new"}`,
+    title !== (initial?.title ?? "") ||
+      description !== (initial?.description ?? "") ||
+      body !== (initial?.body ?? "") ||
+      formType !== (initial?.form_type ?? "treatment_consent"),
+  );
 
   function submit() {
     const t = title.trim();
@@ -386,7 +396,7 @@ function TemplateForm({
           onChange={(e) => setTitle(e.target.value)}
           maxLength={TITLE_MAX}
           placeholder="e.g. Treatment consent"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          className={fieldControlClass({ fullWidth: false })}
         />
       </label>
 
@@ -399,7 +409,7 @@ function TemplateForm({
           onChange={(e) =>
             setFormType(e.target.value as ConsentTemplateFormType)
           }
-          className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          className={fieldControlClass()}
         >
           {(
             [
@@ -426,7 +436,7 @@ function TemplateForm({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Shown under the title in the portal"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          className={fieldControlClass({ fullWidth: false })}
         />
       </label>
 
@@ -440,7 +450,7 @@ function TemplateForm({
           onChange={(e) => setBody(e.target.value)}
           maxLength={BODY_MAX}
           placeholder="Paste the full consent text. This is what clients will see and sign."
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          className={fieldControlClass({ fullWidth: false })}
         />
         <span className="text-[11px] text-neutral-500 tabular-nums">
           {body.length} / {BODY_MAX}

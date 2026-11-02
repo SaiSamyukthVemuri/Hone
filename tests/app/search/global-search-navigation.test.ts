@@ -173,7 +173,7 @@ beforeEach(() => {
 describe("the action derives navigation visibility from the real session", () => {
   it("an owner is offered owner-only settings", async () => {
     signInAs("owner");
-    expect(hrefs(await search("payments"))).toContain("/settings/payments");
+    expect(hrefs(await search("payments"))).toContain("/settings/payments/setup");
     expect(hrefs(await search("hours"))).toContain("/settings/availability");
     expect(hrefs(await search("photo consent"))).toContain("/settings/consent");
   });
@@ -228,7 +228,7 @@ describe("the action derives navigation visibility from the real session", () =>
   it("a practitioner still gets their own settings", async () => {
     signInAs("practitioner");
     expect(hrefs(await search("profile"))).toContain("/settings/profile");
-    expect(hrefs(await search("intake"))).toContain("/settings/intake");
+    expect(hrefs(await search("intake"))).toContain("/settings/forms/intake-preview");
     // WS-D: the launch checklist is owner-only, so a practitioner is never offered it.
     expect(hrefs(await search("launch"))).not.toContain("/settings/launch");
     expect(hrefs(await search("sterile"))).toContain(
@@ -286,7 +286,7 @@ describe("navigation results are shaped safely", () => {
     );
     // V2-A.1: anchored at the control, so a click lands on the buffer field
     // rather than the top of the Booking form.
-    expect(result.href).toBe("/settings/booking#buffer");
+    expect(result.href).toBe("/settings/booking/window");
     expect(result.date).toBeUndefined();
     expect(result.badge).toBeUndefined();
   });

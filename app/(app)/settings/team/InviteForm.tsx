@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { invitePractitionerAction } from "./actions";
+import { fieldControlClass } from "@/components/ui/field";
 
 type Status =
   | { kind: "idle" }
@@ -106,7 +107,7 @@ export function InviteForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="teammate@example.com"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
         <label className="flex flex-col gap-1.5">
@@ -115,7 +116,7 @@ export function InviteForm() {
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="Optional"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
       </div>
@@ -126,7 +127,7 @@ export function InviteForm() {
           onChange={(e) =>
             setRole(e.target.value === "owner" ? "owner" : "practitioner")
           }
-          className="max-w-xs rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false, className: "max-w-xs" })}
         >
           <option value="practitioner">Practitioner</option>
           <option value="owner">Owner</option>

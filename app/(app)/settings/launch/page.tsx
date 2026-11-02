@@ -173,7 +173,7 @@ export default async function LaunchChecklistPage() {
       detail: provenBlockers.has("studio_name")
         ? "Set the studio name."
         : "Studio name set.",
-      cta: { label: "Open Studio settings", href: "/settings/studio" },
+      cta: { label: "Open Studio settings", href: "/settings/studio/details" },
     },
     {
       title: "Public booking link",
@@ -181,9 +181,9 @@ export default async function LaunchChecklistPage() {
       detail: bookingUrl ?? "Set a booking slug to enable the public link.",
       cta: hasSlug && bookingUrl
         ? { label: "Open public booking page", href: bookingUrl }
-        : { label: "Open Studio settings", href: "/settings/studio" },
+        : { label: "Open booking settings", href: "/settings/booking/link" },
       secondaryCta: hasSlug
-        ? { label: "Open booking settings", href: "/settings/booking" }
+        ? { label: "Open booking settings", href: "/settings/booking/link" }
         : undefined,
     },
     // THE AUTHORITY OWNS THIS FACT, SO THE PAGE MUST SHOW IT. Without this row
@@ -200,7 +200,7 @@ export default async function LaunchChecklistPage() {
       detail: provenBlockers.has("booking_settings")
         ? "Set a valid time zone, appointment duration, buffer and booking horizon."
         : "Time zone, appointment duration, buffer and booking horizon are set.",
-      cta: { label: "Open booking settings", href: "/settings/booking" },
+      cta: { label: "Open booking settings", href: "/settings/booking/window" },
     },
     {
       title: "Consultation service",
@@ -275,7 +275,7 @@ export default async function LaunchChecklistPage() {
         : provenBlockers.has("admission_closed")
           ? "New clients cannot book or join a waitlist. Existing clients are unaffected."
           : "New clients are not blocked from this studio.",
-      cta: { label: "Open booking settings", href: "/settings/booking" },
+      cta: { label: "Open booking settings", href: "/settings/booking/link" },
     },
     {
       title: "Client confirmation emails",
@@ -283,7 +283,7 @@ export default async function LaunchChecklistPage() {
       detail: studio.send_confirmation_emails
         ? "Clients receive confirmation emails with the intake link."
         : "Turn on confirmation emails so clients receive the intake link after booking.",
-      cta: { label: "Open Studio settings", href: "/settings/studio" },
+      cta: { label: "Open email settings", href: "/settings/studio/email" },
     },
     {
       title: "Intake form",
@@ -291,8 +291,8 @@ export default async function LaunchChecklistPage() {
       detail:
         "Preview available. The current intake form is shown to every new client booked through Hone.",
       cta: {
-        label: "Open Forms & Policies",
-        href: "/settings/intake",
+        label: "Open Forms & postcare",
+        href: "/settings/forms/intake-preview",
       },
     },
     // Sits directly under the intake row because that is where the form is
@@ -316,7 +316,7 @@ export default async function LaunchChecklistPage() {
         : "Write aftercare text before sending postcare emails.",
       cta: {
         label: "Open Postcare editor",
-        href: "/settings/intake#postcare",
+        href: "/settings/forms/postcare",
       },
     },
     {
@@ -325,7 +325,7 @@ export default async function LaunchChecklistPage() {
       detail: hasBothPolicies
         ? "Both policies are set."
         : "Write a cancellation policy and a no-show policy before card-on-file is offered later.",
-      cta: { label: "Open Policies", href: "/settings/intake" },
+      cta: { label: "Open Policies", href: "/settings/forms/cancellation-policy" },
     },
     {
       title: "Calendar feed",
@@ -359,7 +359,7 @@ export default async function LaunchChecklistPage() {
   return (
     <section className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h2 className="text-xl font-medium">Ready for booking checklist</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Ready for booking checklist</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Walk this once before sending your first real client through
           Hone. Each item is a single plain-English requirement with a

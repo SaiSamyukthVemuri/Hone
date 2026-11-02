@@ -1,3 +1,4 @@
+import { FormDirtyGuard } from "@/components/settings/form-dirty-guard";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
 import { sortServicesForSettings } from "@/lib/booking/service-order";
@@ -16,6 +17,7 @@ import {
 } from "./ServiceFormControls";
 import { ServiceOrderList } from "./ServiceOrderList";
 import { SectionLabel } from "@/components/ui/section-label";
+import { fieldControlClass } from "@/components/ui/field";
 
 function formatPrice(cents: number | null): string {
   if (cents == null) return "Not set";
@@ -50,7 +52,7 @@ export default async function ServicesSettingsPage() {
   return (
     <div className="flex flex-col gap-10">
       <section>
-        <h2 className="text-xl font-medium">Services</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Services</h2>
         <p className="mt-1 text-sm text-neutral-500">
           The list clients pick from when booking. Services group by modality
           on the booking page. Services you hide from booking stay in history
@@ -155,6 +157,7 @@ function ServiceEditForm({
         className="flex flex-col gap-5"
         aria-label={`Edit ${service.name}`}
       >
+        <FormDirtyGuard name={`service-edit-${service.id}`} token={Date.now().toString(36)} />
         <input type="hidden" name="id" value={service.id} />
 
         {/* Main fields */}
@@ -164,7 +167,7 @@ function ServiceEditForm({
               name="name"
               defaultValue={service.name}
               required
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass()}
             />
           </FieldLabel>
           <FieldLabel label="Modality">
@@ -209,7 +212,7 @@ function ServiceEditForm({
             name="description"
             defaultValue={service.description ?? ""}
             placeholder="e.g. 30-minute upper lip session"
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass()}
           />
         </FieldLabel>
 
@@ -222,7 +225,7 @@ function ServiceEditForm({
             defaultValue={service.pre_care_instructions ?? ""}
             rows={4}
             placeholder="e.g. Please arrive 5 minutes early. Skin should be free of lotion or makeup."
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass()}
           />
         </FieldLabel>
 
@@ -255,7 +258,7 @@ function ServiceEditForm({
                 max={100000}
                 step={1}
                 defaultValue={service.sort_order}
-                className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                className={fieldControlClass({ fullWidth: false, className: "w-24 tabular-nums" })}
               />
             </FieldLabel>
           </div>
@@ -290,13 +293,14 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
 
       <article className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
         <form action={createServiceAction} className="flex flex-col gap-5">
+          <FormDirtyGuard name="service-create" token={Date.now().toString(36)} />
           <div className="grid gap-4 md:grid-cols-2">
             <FieldLabel label="Service name" required>
               <input
                 name="name"
                 required
                 placeholder="e.g. Electrolysis 30 min"
-                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                className={fieldControlClass()}
               />
             </FieldLabel>
             <FieldLabel label="Modality">
@@ -329,7 +333,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
             <input
               name="description"
               placeholder="e.g. 30-minute upper lip session"
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass()}
             />
           </FieldLabel>
 
@@ -409,7 +413,7 @@ function ModalitySelect({
     <select
       name={name}
       defaultValue={defaultValue ?? ""}
-      className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+      className={fieldControlClass()}
     >
       {KNOWN_MODALITIES.map((m) => (
         <option key={m.value} value={m.value}>

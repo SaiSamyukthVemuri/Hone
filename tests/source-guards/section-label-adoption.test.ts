@@ -76,7 +76,7 @@ const CONVERTED: readonly string[] = [
   // Slice 2 — the rest of Settings, which is what completes the directory.
   "app/(app)/settings/booking/BookingLinkCard.tsx",
   "app/(app)/settings/consent/ConsentTemplatesEditor.tsx",
-  "app/(app)/settings/intake/page.tsx",
+  "app/(app)/settings/forms/intake-preview/page.tsx",
   "app/(app)/settings/services/page.tsx",
   "app/(app)/settings/tracking/TrackingProviderSelector.tsx",
   // Slice 3 — session charting, which completes that directory.

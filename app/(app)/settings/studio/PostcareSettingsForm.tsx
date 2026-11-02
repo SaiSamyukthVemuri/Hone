@@ -8,6 +8,7 @@ import {
   MarkdownLiteTextarea,
   PostcarePreviewButton,
 } from "./PostcareEditingHelpers";
+import { fieldControlClass } from "@/components/ui/field";
 
 // Per-studio postcare content. Saved values are sent verbatim into the
 // postcare email after the practitioner clicks "Send postcare" on the
@@ -380,7 +381,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
               : "e.g. hello@yourstudio.com"
           }
           autoComplete="off"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
         <span className="text-xs text-neutral-500">
           This appears at the bottom of postcare emails so clients know
@@ -408,7 +409,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
           value={reviewUrl}
           onChange={(e) => setReviewUrl(e.target.value)}
           placeholder="https://g.page/r/your-google-business/review"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
         <span className="text-xs text-neutral-500">
           When set, the postcare email includes a neutral review prompt
@@ -428,7 +429,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
           value={reviewPrompt}
           onChange={(e) => setReviewPrompt(e.target.value)}
           placeholder="If you had a good experience, reviews help small businesses."
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false, className: "leading-relaxed" })}
         />
         <span className="text-xs text-neutral-500">
           This appears only when a review link is set. Keep it neutral.

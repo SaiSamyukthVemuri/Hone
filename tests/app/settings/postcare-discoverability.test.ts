@@ -10,13 +10,14 @@ function read(rel: string): string {
 }
 // The rail entries live in the nav registry (the layout only renders them).
 const LAYOUT = read("lib/settings/nav-registry.ts");
-const INTAKE = read("app/(app)/settings/intake/page.tsx");
+const INTAKE = read("app/(app)/settings/forms/postcare/page.tsx");
 const FORM = read("app/(app)/settings/studio/PostcareSettingsForm.tsx");
 const ACTIONS = read("app/(app)/settings/studio/actions.ts");
 
 describe("postcare settings are discoverable", () => {
   it("the settings nav label surfaces Postcare", () => {
-    expect(LAYOUT).toMatch(/label: "Forms & Postcare",\s*\n\s*href: "\/settings\/intake"/);
+    expect(LAYOUT).toMatch(/label: "Forms & postcare",\s*\n\s*href: "\/settings\/forms"/);
+    expect(LAYOUT).toMatch(/label: "Postcare", href: "\/settings\/forms\/postcare", roles: OWNER/);
     expect(LAYOUT).toMatch(/Postcare/);
     expect(LAYOUT).not.toMatch(/label: "Forms & Policies"/);
   });
@@ -51,11 +52,10 @@ describe("delivery control + helper copy", () => {
 
 describe("owner-only editing is preserved; non-owner sees read-only note", () => {
   it("the postcare/delivery editor still renders only for owners", () => {
-    expect(INTAKE).toMatch(/\{isOwner && \(/);
+    expect(INTAKE).toMatch(/practitioner\.role !== "owner"/);
     expect(INTAKE).toMatch(/PostcareSettingsForm/);
   });
   it("a non-owner sees a read-only explanation, not the edit controls", () => {
-    expect(INTAKE).toMatch(/\{!isOwner && \(/);
     expect(INTAKE).toMatch(/Only studio owners can edit postcare delivery settings/i);
   });
   it("the save action stays owner-gated server-side (unchanged)", () => {

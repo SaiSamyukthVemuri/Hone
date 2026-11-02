@@ -52,7 +52,7 @@ export default async function MachineSettingsPage() {
   return (
     <div className="space-y-8">
       <section>
-        <h2 className="text-lg font-semibold">Machines</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-lg font-semibold outline-none">Machines</h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           Register the machines in your studio so they appear when you chart.{" "}
           {OWNER_INPUT_REQUEST}

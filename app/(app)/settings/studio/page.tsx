@@ -1,74 +1,9 @@
+import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { HashRedirect } from "@/components/settings/hash-redirect";
-import { StudioSettingsForm } from "./StudioSettingsForm";
-import { EmailSettingsForm } from "./EmailSettingsForm";
-import { SmsSettingsForm } from "./SmsSettingsForm";
-import { ClientSelfServiceForm } from "./ClientSelfServiceForm";
-import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
-// PostcareSettingsForm intentionally NOT imported here. Postcare
-// editing moved to /settings/intake (Intake & Postcare tab) after
-// Chloe's retest; the form component itself is unchanged and is
-// still owner-gated server-side via updateStudioPostcareAction.
 
-const MOVED_SECTIONS = {
-  "birthday-color": "/settings/calendar#birthday-color",
-  "time-format": "/settings/calendar#time-format",
-} as const;
-
-export default async function StudioSettingsPage() {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
-
-  if (practitioner.role !== "owner") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can change studio settings.
-      </div>
-    );
-  }
-
-  return (
-    <section className="flex flex-col gap-10">
-      {/* The display preferences moved to Calendar; keep old deep links working. */}
-      <HashRedirect moved={MOVED_SECTIONS} />
-      <div id="studio-details" className="scroll-mt-24">
-        <h2 className="text-xl font-medium">Studio</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          Change your studio name and legal entity. Visible to your team.
-        </p>
-      </div>
-      <StudioSettingsForm
-        initialName={studio.name}
-        initialLegalEntity={studio.legal_entity_name ?? ""}
-        ownerEmail={studio.owner_email}
-      />
-      <EmailSettingsForm
-        initial={{
-          send_confirmation_emails: studio.send_confirmation_emails,
-          notify_practitioner_on_new_booking:
-            studio.notify_practitioner_on_new_booking,
-          send_24h_reminders: studio.send_24h_reminders,
-          send_2h_reminders: studio.send_2h_reminders,
-          // Absent only on a row read before 0186 is applied; the column
-          // defaults true, so absent must display as ON, never OFF.
-          send_intake_reminders: studio.send_intake_reminders ?? true,
-          auto_mark_no_shows: studio.auto_mark_no_shows,
-          send_no_show_followup: studio.send_no_show_followup,
-          show_treatment_time_to_clients: studio.show_treatment_time_to_clients,
-        }}
-      />
-      <SmsSettingsForm
-        initial={{
-          send_confirmation_sms: studio.send_confirmation_sms,
-          send_24h_sms_reminders: studio.send_24h_sms_reminders,
-          send_2h_sms_reminders: studio.send_2h_sms_reminders,
-        }}
-      />
-      <ClientSelfServiceForm
-        initial={(({ cancellation, reschedule }) => ({ cancellation, reschedule }))(
-          clientSelfServicePolicyFromStudio(studio),
-        )}
-        portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
-      />
-    </section>
-  );
+// /settings/studio is only a doorway to its first view; each Studio view is its
+// own route. Old section hashes are forwarded by lib/settings/redirects.ts.
+export default async function StudioSettingsIndex() {
+  await requirePractitionerWithStudio();
+  redirect("/settings/studio/details");
 }

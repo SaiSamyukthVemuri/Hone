@@ -19,7 +19,7 @@ export default async function ProfileSettingsPage() {
   return (
     <section className="flex flex-col gap-8">
       <div>
-        <h2 className="text-xl font-medium">Profile</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Personal details</h2>
         <p className="mt-1 text-sm text-neutral-500">
           How you show up to your team and in session logs.
         </p>

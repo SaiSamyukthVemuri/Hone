@@ -21,7 +21,7 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const STATUS_LIB = "lib/sms/sender-status.ts";
 const CARD = "app/(app)/settings/integrations/SmsSenderStatusCard.tsx";
-const PAGE = "app/(app)/settings/integrations/page.tsx";
+const PAGE = "app/(app)/settings/integrations/text-messaging/page.tsx";
 
 // These files DISCUSS provisioning, adoption and the claim by name when
 // explaining what they refuse to do, so prose must not trip a "does not

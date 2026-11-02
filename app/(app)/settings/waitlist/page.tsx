@@ -813,7 +813,7 @@ export default async function WaitlistSettingsPage({
         importAction={importLegacyWaitlistEntryFormAction}
       />
       <section>
-        <h2 className="text-xl font-medium">Waitlist</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Waitlist</h2>
         <p className="mt-1 text-sm text-neutral-500">
           New clients who asked to be contacted while new-client booking is by
           waitlist. They are not clients yet: nothing here has an appointment,

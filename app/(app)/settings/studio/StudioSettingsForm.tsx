@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { updateStudioAction } from "./actions";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
+import { fieldControlClass } from "@/components/ui/field";
 
 type Props = {
   initialName: string;
@@ -60,7 +61,7 @@ export function StudioSettingsForm({
             feedback.reset();
           }}
           required
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
       </label>
 
@@ -73,7 +74,7 @@ export function StudioSettingsForm({
             feedback.reset();
           }}
           placeholder="If different from studio name"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
       </label>
 

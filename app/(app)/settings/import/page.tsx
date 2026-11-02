@@ -36,7 +36,7 @@ export default async function ImportPage() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">
+        <h2 tabIndex={-1} data-settings-heading className="text-2xl font-semibold tracking-tight outline-none">
           Import clients and history
         </h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">

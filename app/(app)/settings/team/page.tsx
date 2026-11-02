@@ -98,7 +98,7 @@ function CurrentPractitioners({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 id="practitioners" className="scroll-mt-24 text-xl font-medium">
+        <h2 id="practitioners" tabIndex={-1} data-settings-heading className="scroll-mt-24 text-xl font-medium outline-none">
           Practitioners
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
