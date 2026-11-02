@@ -15,17 +15,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-11-01T16:34:53Z-16:35:29Z, post-S1 apply; `0258`, `0266` and `0272` APPLIED in numeric order above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+## Current state (verified 2026-11-01T16:34:53Z-16:35:29Z, post-S1 apply; `0258`, `0266` and `0272` APPLIED in numeric order above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo > hosted by the pending `0278`)
 
-> **CURRENT RELATIONSHIP: repo == hosted at `0272`, with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265` and `0267`-`0271` declared unhosted.** The three sealed migrations `0258_hon58_identity.sql` (sha256 `12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78`), `0266_legal_name_receptionist_access.sql` (sha256 `1617f11a507c84b3fb69ab262d0ca4211f07abd9a621004edc9bd7420faea04c`) and `0272_hon58_legal_identity_hardening.sql` (sha256 `d380534372728383e028c020dce1e0b7d0ab6eeb697594c59184a001ada83655`) were APPLIED to production by ONE plain push in numeric order, by Sam under his own-words authorization (`01-ops/S1-AUTHORIZATION-20261101.md`, recorded 2026-11-01T16:07Z). Carrier PR #1227 head `9ce5b145b68cc551ec7df76c09210b0661524cb6`; package manifest sha256 `284cc7a8a20d3ac763b456b114c0180fda4db6b09c806c7270fb20eb3e173f56`.
+> **CURRENT RELATIONSHIP: repo > hosted (MIGRATION-FIRST PENDING `0278`; hosted max `0272`), with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265` and `0267`-`0271` declared unhosted.** The three sealed migrations `0258_hon58_identity.sql` (sha256 `12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78`), `0266_legal_name_receptionist_access.sql` (sha256 `1617f11a507c84b3fb69ab262d0ca4211f07abd9a621004edc9bd7420faea04c`) and `0272_hon58_legal_identity_hardening.sql` (sha256 `d380534372728383e028c020dce1e0b7d0ab6eeb697594c59184a001ada83655`) were APPLIED to production by ONE plain push in numeric order, by Sam under his own-words authorization (`01-ops/S1-AUTHORIZATION-20261101.md`, recorded 2026-11-01T16:07Z). Carrier PR #1227 head `9ce5b145b68cc551ec7df76c09210b0661524cb6`; package manifest sha256 `284cc7a8a20d3ac763b456b114c0180fda4db6b09c806c7270fb20eb3e173f56`.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0272**, declared in `docs/production/migration-state.json`. Read back 2026-11-01T16:34:53Z-16:35:29Z: APPLIED+VERIFIED as recorded by OPS: 252 history rows, max 0272, `0258`, `0266` and `0272` exactly once each; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0272** (`0272_hon58_legal_identity_hardening.sql`), derived from the source files on this tree; the three files are present at the applied bytes. |
+| **Repo migration max** | **0278** (`0278_practitioner_own_working_hours.sql`, HON-44 practitioner own hours, HELD, **NOT applied**), derived from the source files on this tree. The S1 files `0258`, `0266` and `0272` are present at the applied bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265` and `0267`-`0271` are declared unhosted gaps below it, not a pending suffix. |
-| **Next free number** | Next free number is **0273** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **`0278`** — `0278_practitioner_own_working_hours.sql`, authored and **NOT applied** (the MIGRATION-FIRST PENDING shape); held, never applied without Sam's per-change approval. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265` and `0267`-`0271` remain declared unhosted gaps below the hosted head, not a pending suffix. |
+| **Next free number** | Next free number is **0279** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The S1 apply (facts as recorded by OPS, 2026-11-01)
@@ -47,10 +47,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Relayed result: APPLIED+VERIFIED, 249 history rows, max 0257, reconcile finished, apply-state marker archived, no settings write. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0278** (`0278_practitioner_own_working_hours.sql`, HON-44 decision 6, authored on `team/hon44-hours-0278`, HELD DRAFT, **NOT applied**), derived from the source files on this tree. The previous max `0257` (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`) is the hosted head; `0253` is present at the applied bytes (it arrived with #1135). |
+| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0253` is present at the applied bytes (it arrived with #1135). |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **`0278`** — `0278_practitioner_own_working_hours.sql`, authored and **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. It adds `authorize_schedule_writer` and `save_weekly_availability_as` and swaps the gate of four schedule commands (a practitioner changes only their own hours; the owner any). It is held: never applied without Sam's per-change approval and Privacy then Insurance review. `0247`, `0249`-`0252`, `0255` and `0256` remain declared unhosted gaps below the hosted head, not a pending suffix. |
-| **Next free number** | Next free number is **0279** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation (`0278` is reserved to Team for practitioner own working hours), not by this file. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
+| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The 0253 apply (facts as relayed by Sam and recorded by OPS, 2026-10-31T20:35:52Z)
