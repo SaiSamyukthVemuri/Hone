@@ -1,10 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
-  seedConfirmedAppointment,
   seedE2eDashboardMemoryClient,
   seedE2eIntake,
   seedE2eMember,
-  seedE2eSecondAppointmentToday,
+  seedFutureAppointmentAt,
+  getOwnerPractitionerId,
+  getStudioTimezone,
   seedE2eStudio,
   sql,
 } from "./helpers/seed";
@@ -28,9 +29,15 @@ async function seedStudioWithLongName() {
   await sql(`update public.clients set name = $1 where id = $2`, [LONG_NAME, clientId]);
   // An intake awaiting review puts this client in Needs attention.
   await seedE2eIntake(seed.studioId, clientId, "submitted");
-  const second = await seedE2eSecondAppointmentToday(seed, clientId, 4);
-  const third = await seedE2eSecondAppointmentToday(seed, clientId, 6);
-  return { seed, clientId, extra: [second.appointmentId, third.appointmentId] };
+  // FIXED studio-local times, never "now + N hours": a relative offset crosses local midnight when CI runs late in the
+  // day and the visit lands on tomorrow's roster. The studio clock reads ~09:00 at seed time (timezoneWithLocalMorning), the
+  // memory client's own visit sits at about 11:00-13:00 local, and these three are two hours apart after it, all well inside
+  // one local day and never overlapping (the studio-wide exclusion refuses an overlap).
+  const tz = await getStudioTimezone(seed.studioId);
+  const owner = await getOwnerPractitionerId(seed.studioId);
+  await seedFutureAppointmentAt(seed.studioId, owner, clientId, tz, "14:00");
+  await seedFutureAppointmentAt(seed.studioId, owner, clientId, tz, "16:00");
+  return { seed, clientId, tz };
 }
 
 async function assertNoSidewaysOverflow(page: Page, width: number) {
@@ -76,13 +83,9 @@ for (const width of [320, 390]) {
     });
 
     test(`practitioner: no sideways scroll with the same name on their own appointments`, async ({ page }) => {
-      const { seed, clientId } = await seedStudioWithLongName();
+      const { seed, clientId, tz } = await seedStudioWithLongName();
       const member = await seedE2eMember(seed);
-      // The owner's visits sit at about +2h, +4h and +6h; their start times were taken a moment before this
-      // one, so an adjacent slot can overlap by the drift. +8h leaves a clear hour.
-      const starts = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
-      const ends = new Date(Date.now() + 9 * 3600 * 1000).toISOString();
-      await seedConfirmedAppointment(seed.studioId, member.practitionerId, clientId, starts, ends);
+      await seedFutureAppointmentAt(seed.studioId, member.practitionerId, clientId, tz, "18:00");
       await loginByMagicLink(page, member.email);
       await page.goto("/dashboard");
       await expect(page.getByTestId("today-row-client-name").first()).toBeVisible({ timeout: T });
@@ -91,6 +94,10 @@ for (const width of [320, 390]) {
   });
 }
 
+// AUTHORITATIVE TAP METHOD: `page.touchscreen.tap(x, y)` at the centre of the name span's bounding box, on a context with
+// hasTouch + isMobile at 390px. That dispatches real touch events at a coordinate, exactly what a finger does, so it also fails
+// if something overlays the name. An ad hoc probe that clicks an element handle or dispatches a synthetic event can miss a link
+// that a finger reaches; this spec is the reference and a probe that disagrees should be compared against it.
 test.describe("tapping the appointment name on a 390px touch phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
