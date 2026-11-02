@@ -514,11 +514,13 @@ describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, 
     expect(src).toMatch(/min-\[700px\]:grid-rows-\[auto_minmax\(0,1fr\)\]/);
   });
   it("ordinary items share one colour and weight; only the current page is selected", () => {
-    // A group button reuses ITEM_BASE + ITEM_IDLE (no font-semibold, no darker text),
-    // carries a chevron, and has no fill of its own.
-    expect(src).toMatch(/className=\{`\$\{ITEM_BASE\} \$\{ITEM_IDLE\} flex w-full items-center justify-between/);
+    // A group button uses ITEM_BASE + ITEM_IDLE collapsed, and the quieter ITEM_PARENT_OPEN
+    // (text colour only: no fill, no bar, no weight) while expanded; it carries a chevron.
+    expect(src).toMatch(/className=\{`\$\{ITEM_BASE\} \$\{open \? ITEM_PARENT_OPEN : ITEM_IDLE\} flex w-full items-center justify-between/);
+    expect(src).toMatch(/ITEM_PARENT_OPEN =\s*"text-neutral-900 hover:bg-neutral-50/);
+    expect(src).not.toMatch(/ITEM_PARENT_OPEN =\s*"[^"]*(bg-neutral-100|font-medium|before:)/);
     expect(src).not.toMatch(/font-semibold tracking-tight text-neutral-900/);
-    expect(src).toMatch(/open \? "rotate-90"/);
+    expect(src).toMatch(/\? "rotate-90/);
     // Selected = aria-current only, driven by the single current id.
     expect(src).toMatch(/currentSettingsRailId\(items, pathname\)/);
     expect(src).toMatch(/const childActive = currentId === child\.id/);
@@ -620,18 +622,30 @@ describe("a route outside the viewer's rail (Photos, 0ab9ce743)", () => {
   });
 });
 
-describe("phone: the scope chip shares the title's row; the drawer overlays the header by design (Photos, 31a0772ad)", () => {
+describe("phone: the scope chip shares the title's row; the drawer starts below the header (Photos, 31a0772ad; Sam, 2 Nov)", () => {
   const read = (f: string) => readFileSync(path.resolve(__dirname, "../..", f), "utf8");
   it("the heading row is a two-column grid below sm, a wrapping flex from sm up", () => {
     expect(read("components/settings/view-heading.tsx")).toMatch(
       /grid grid-cols-\[minmax\(0,1fr\)_auto\] items-start gap-x-3 sm:flex sm:flex-wrap/,
     );
   });
-  it("the open drawer is a fixed full-height layer ABOVE the sticky app header (z-40 over z-30)", () => {
-    // railClippedUnderHeader reads true at 390 because the drawer's box starts at the
-    // top of the viewport: it covers the header on purpose, it is not clipped by it.
-    expect(read("components/settings/settings-shell.tsx")).toMatch(/fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto/);
+  it("the open drawer starts BELOW the sticky app header and runs to the viewport bottom (Sam, 2 Nov)", () => {
+    const shell = read("components/settings/settings-shell.tsx");
+    // top = the measured app-header height (--settings-top), bottom-0: it never sits under the header,
+    // however far the page has scrolled (the header is sticky top-0), and it scrolls on its own.
+    expect(shell).toMatch(/fixed bottom-0 left-0 top-\[var\(--settings-top,4\.5rem\)\] z-40 w-72 overflow-y-auto overscroll-contain/);
+    expect(shell).not.toMatch(/fixed inset-y-0/);
+    expect(shell).toContain("pb-[max(1rem,env(safe-area-inset-bottom))]");
     expect(read("app/(app)/layout.tsx")).toMatch(/<header className="sticky top-0 z-30 /);
+  });
+  it("the backdrop starts below the header too, and the drawer has its own Close control", () => {
+    const shell = read("components/settings/settings-shell.tsx");
+    expect(shell).toMatch(/fixed inset-x-0 bottom-0 top-\[var\(--settings-top,4\.5rem\)\] z-30 bg-black\/40 min-\[700px\]:hidden/);
+    expect(shell).toContain("Close menu");
+  });
+  it("the closed state is display:none below 700px, and in-page from 700px up the rail is sticky BELOW the header", () => {
+    const shell = read("components/settings/settings-shell.tsx");
+    expect(shell).toMatch(/: "hidden"\s*\} min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
   });
   it("the flat entries Photos listed have no children, so a parent can never share a child's selected look", () => {
     const flat = ["team", "waitlist", "availability", "services", "machines", "consent", "import", "data"];

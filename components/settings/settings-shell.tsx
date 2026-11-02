@@ -39,6 +39,12 @@ const ITEM_BASE =
   "relative block rounded-md px-3 py-2 text-sm font-normal transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:focus-visible:outline-neutral-100";
 const ITEM_IDLE =
   "text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100";
+// An EXPANDED group (the parent of the page being viewed) is quieter than the
+// selected page: its text and chevron darken, and that is all. It never takes a
+// fill, an accent bar, a heavier weight or aria-current, so it cannot be mistaken
+// for the one selected page. A flat entry has no parent styling at all.
+const ITEM_PARENT_OPEN =
+  "text-neutral-900 hover:bg-neutral-50 dark:text-neutral-100 dark:hover:bg-neutral-900";
 const ITEM_ACTIVE =
   "bg-neutral-100 font-medium text-neutral-900 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 dark:before:bg-neutral-100";
 
@@ -163,7 +169,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
       }
     };
     document.addEventListener("keydown", onKey);
-    rail.current?.querySelector<HTMLElement>("a, button")?.focus();
+    rail.current?.querySelector<HTMLElement>("nav a, nav button")?.focus();
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
@@ -237,7 +243,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
               aria-label="Close settings menu"
               tabIndex={-1}
               onClick={() => setDrawerOpen(false)}
-              className="fixed inset-0 z-30 bg-black/40 min-[700px]:hidden"
+              className="fixed inset-x-0 bottom-0 top-[var(--settings-top,4.5rem)] z-30 bg-black/40 min-[700px]:hidden"
             />
           )}
           <aside
@@ -246,10 +252,20 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
             aria-label="Settings navigation"
             className={`${
               drawerOpen
-                ? "fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto bg-white p-4 shadow-xl dark:bg-neutral-950"
+                ? "fixed bottom-0 left-0 top-[var(--settings-top,4.5rem)] z-40 w-72 overflow-y-auto overscroll-contain bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl dark:bg-neutral-950"
                 : "hidden"
             } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
           >
+            <button
+              type="button"
+              onClick={() => {
+                setDrawerOpen(false);
+                menuButton.current?.focus();
+              }}
+              className="mb-2 rounded-md px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 min-[700px]:hidden dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              <span aria-hidden>✕</span> Close menu
+            </button>
             <nav
               aria-label="Settings sections"
               className="flex flex-col gap-1"
@@ -288,7 +304,6 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                     </p>
                   )}
                   {entries.map((entry) => {
-                    const isActive = activeItem?.id === entry.id;
                     if (entry.children.length === 0) {
                       const isCurrent = currentId === entry.id;
                       return (
@@ -297,6 +312,9 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                           href={entry.href}
                           pendingLabel="Loading settings…"
                           aria-current={isCurrent ? "page" : undefined}
+                          data-rail-item={entry.id}
+                          data-rail-kind="flat"
+                          data-rail-state={isCurrent ? "selected" : "idle"}
                           className={`${ITEM_BASE} ${isCurrent ? ITEM_ACTIVE : ITEM_IDLE}`}
                         >
                           {entry.label}
@@ -315,14 +333,19 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                           aria-expanded={open}
                           aria-controls={listId}
                           onClick={() => setOpenId(open ? null : entry.id)}
-                          className={`${ITEM_BASE} ${ITEM_IDLE} flex w-full items-center justify-between text-left`}
+                          data-rail-item={entry.id}
+                          data-rail-kind="group"
+                          data-rail-state={open ? "expanded" : "collapsed"}
+                          className={`${ITEM_BASE} ${open ? ITEM_PARENT_OPEN : ITEM_IDLE} flex w-full items-center justify-between text-left`}
                         >
                           <span>{entry.label}</span>
                           <svg
                             aria-hidden
                             viewBox="0 0 16 16"
-                            className={`h-4 w-4 shrink-0 text-neutral-500 transition-transform dark:text-neutral-400 ${
-                              open ? "rotate-90" : ""
+                            className={`h-4 w-4 shrink-0 transition-transform ${
+                              open
+                                ? "rotate-90 text-neutral-900 dark:text-neutral-100"
+                                : "text-neutral-500 dark:text-neutral-400"
                             }`}
                             fill="none"
                             stroke="currentColor"
@@ -346,6 +369,9 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                                     href={child.href}
                                     pendingLabel="Loading settings…"
                                     aria-current={childActive ? "page" : undefined}
+                                    data-rail-item={child.id}
+                                    data-rail-kind="child"
+                                    data-rail-state={childActive ? "selected" : "idle"}
                                     className={`${ITEM_BASE} ${childActive ? ITEM_ACTIVE : ITEM_IDLE}`}
                                   >
                                     {child.label}
