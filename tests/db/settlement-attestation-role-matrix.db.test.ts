@@ -55,6 +55,11 @@ let ownerSc: PaymentScenario; // supersede target
 let studio: SeededStudio;
 let tokens: Record<Who, string | null>;
 let secondStudio: SeededStudio;
+let recUserId: string;
+// A receptionist of THE TARGET studio (same-studio negative), not a stranger.
+async function receptionistOf(studioId: string, practitionerId: string) {
+  await adminQuery(`insert into public.studio_receptionists (studio_id, user_id, display_name, email, active, created_by_practitioner_id) values ($1,$2,'Synthetic Desk',$3,true,$4) on conflict do nothing`, [studioId, recUserId, `role-rec2-${studioId.slice(0, 6)}@harness.local`, practitionerId]);
+}
 
 const countSettlements = async (studioId: string) => Number((await adminQuery(`select count(*)::int n from public.appointment_settlements where studio_id=$1`, [studioId])).rows[0].n);
 
@@ -65,6 +70,7 @@ beforeAll(async () => {
   const member = await seedMember(studio, "role-prac");
   secondStudio = await seedStudio("role-other");
   const recUser = randomUUID();
+  recUserId = recUser;
   await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [recUser, `role-rec-${recUser.slice(0, 8)}@harness.local`]);
   await adminQuery(`insert into public.studio_receptionists (studio_id, user_id, display_name, email, active, created_by_practitioner_id) values ($1,$2,'Synthetic Desk',$3,true,$4)`, [studio.studioId, recUser, `role-rec-${recUser.slice(0, 8)}@harness.local`, studio.practitionerId]);
   tokens = { owner: jwt(sc.practitionerUserId), practitioner: jwt(member.userId), receptionist: jwt(recUser), other_owner: jwt(secondStudio.userId), anon: null };
@@ -149,8 +155,9 @@ describe("waive and supersede are owner-only; the service-role-only commands are
   beforeAll(async () => { waiveSc = await seedQuickCheckoutScenario({ label: "role-waive", appointmentStatus: "completed", attempt: "none" }); });
 
   it("waive_appointment_fee: non-owners refused, nothing written", async () => {
+    await receptionistOf(waiveSc.studioId, waiveSc.practitionerId);
     const own = await seedMember({ studioId: waiveSc.studioId, userId: waiveSc.practitionerUserId, practitionerId: waiveSc.practitionerId, clientId: waiveSc.clientId }, "waive-prac");
-    for (const [who, token] of [["practitioner", jwt(own.userId)], ["other_owner", tokens.other_owner], ["anon", null]] as Array<[Who, string | null]>) {
+    for (const [who, token] of [["practitioner", jwt(own.userId)], ["receptionist", tokens.receptionist], ["other_owner", tokens.other_owner], ["anon", null]] as Array<[Who, string | null]>) {
       const r = await rpc(token, "waive_appointment_fee", { p_studio_id: waiveSc.studioId, p_appointment_id: waiveSc.appointmentId, p_amount_cents: 1000, p_note: null, p_livemode: false });
       note("waive_appointment_fee", who, r);
       expect(refused(r)).toBe(true);
@@ -163,12 +170,13 @@ describe("waive and supersede are owner-only; the service-role-only commands are
   });
 
   it("supersede_appointment_settlement: non-owners refused against the owner's record; the owner's correction succeeds", async () => {
-    const rec = await rpc(tokens.owner, "record_appointment_settlement", { p_studio_id: ownerSc.studioId, p_appointment_id: ownerSc.appointmentId, p_method: "paid_cash", p_amount_cents: 5000, p_note: null, p_livemode: false });
+    const rec = await rpc(jwt(ownerSc.practitionerUserId), "record_appointment_settlement", { p_studio_id: ownerSc.studioId, p_appointment_id: ownerSc.appointmentId, p_method: "paid_cash", p_amount_cents: 5000, p_note: null, p_livemode: false });
     const id = idOf(rec);
     expect(id).toBeTruthy();
     const args = (): Record<string, unknown> => ({ p_studio_id: ownerSc.studioId, p_expected_settlement_id: id, p_method: "paid_e_transfer", p_amount_cents: 5000, p_reason: "synthetic correction", p_note: null, p_livemode: false });
+    await receptionistOf(ownerSc.studioId, ownerSc.practitionerId);
     const member = await seedMember({ studioId: ownerSc.studioId, userId: ownerSc.practitionerUserId, practitionerId: ownerSc.practitionerId, clientId: ownerSc.clientId }, "super-prac");
-    for (const [who, token] of [["practitioner", jwt(member.userId)], ["other_owner", tokens.other_owner], ["anon", null]] as Array<[Who, string | null]>) {
+    for (const [who, token] of [["practitioner", jwt(member.userId)], ["receptionist", tokens.receptionist], ["other_owner", tokens.other_owner], ["anon", null]] as Array<[Who, string | null]>) {
       const r = await rpc(token, "supersede_appointment_settlement", args());
       note("supersede_appointment_settlement", who, r);
       expect(refused(r)).toBe(true);
@@ -191,6 +199,26 @@ describe("waive and supersede are owner-only; the service-role-only commands are
         const r = await rpc(tokens[who], fn, args);
         note(fn, who, r);
         expect(r.status >= 400, `${who} must not execute ${fn}: ${r.status} ${JSON.stringify(r.body).slice(0, 120)}`).toBe(true);
+      }
+    }
+  });
+
+  it("the four authenticated-executable payment READ functions answer only the owner (called as every role; owner control)", async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["get_appointment_payment_display", { p_appointment_id: sc.appointmentId, p_studio_id: sc.studioId }],
+      ["get_payment_audit_for_appointment", { p_appointment_id: sc.appointmentId, p_studio_id: sc.studioId }],
+      ["get_refunds_for_appointment", { p_appointment_id: sc.appointmentId, p_studio_id: sc.studioId }],
+      ["get_studio_payment_settings_display", { p_studio_id: sc.studioId, p_stripe_livemode: false }],
+    ];
+    for (const [fn, args] of calls) {
+      const own = await rpc(tokens.owner, fn, args);
+      note(fn, "owner", own);
+      control(fn, own.status === 200);
+      expect(own.status, `owner control for ${fn}`).toBe(200);
+      for (const who of NEGATIVE) {
+        const r = await rpc(tokens[who], fn, args);
+        note(fn, who, r);
+        expect(r.status >= 400, `${who} must not read ${fn}: ${r.status} ${JSON.stringify(r.body).slice(0, 100)}`).toBe(true);
       }
     }
   });
