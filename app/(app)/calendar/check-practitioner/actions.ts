@@ -34,11 +34,12 @@ export async function reassignOpenAppointmentAction(formData: FormData): Promise
   if (appt.status !== "confirmed") return { ok: false, error: "This appointment is no longer open." };
   if (appt.practitioner_id === targetId) return { ok: false, error: "That practitioner is already recorded." };
   if (new Date(appt.starts_at as string).getTime() <= Date.now()) {
-    // The reviewed command only covers appointments that have not started. A started, unfinished one needs
-    // a separately reviewed command that does not exist yet; nothing is changed.
+    // The reviewed command only covers appointments whose time has not come. A past-date, unfinished one needs
+    // a separately reviewed command that does not exist yet; nothing is changed. (A past date is not a recorded
+    // treatment start, so the wording does not claim the visit began.)
     return {
       ok: false,
-      error: "This appointment has already started. You, as the owner, complete this one from the calendar; its practitioner is not changed here.",
+      error: "This appointment's date has passed, so its practitioner is not changed here. Open the appointment to complete it.",
     };
   }
 

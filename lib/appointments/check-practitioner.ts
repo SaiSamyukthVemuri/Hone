@@ -13,18 +13,44 @@ export type OpenAppointment = {
   startsAt: string;
   practitionerId: string | null;
   createdByPractitionerId: string | null;
-  /** performed_by_practitioner_id of every linked session */
+  /** performed_by_practitioner_id of every linked (non-deleted) session */
   performedBy: string[];
+  /**
+   * Number of linked, non-deleted sessions. A session is the RECORD that treatment began; a past appointment date alone is
+   * not (Sam, 2 Nov: old appointments were wrongly described as "already started"). Absent means none.
+   */
+  linkedSessionCount?: number;
+  /** Earliest recorded started_at among the linked, non-deleted sessions. */
+  treatmentStartedAt?: string | null;
 };
 
-export type PractitionerLite = { id: string; role: string; active: boolean; displayName: string };
+export type PractitionerLite = {
+  id: string;
+  role: string;
+  active: boolean;
+  /** display_name as stored; may be blank or the generic placeholder */
+  displayName: string;
+  email?: string | null;
+};
+
+/**
+ *  upcoming            not started: the owner can change the practitioner here;
+ *  date_passed         the date has passed and NO treatment is recorded: shown for review only;
+ *  treatment_recorded  the date has passed and a session records the treatment: shown for review only.
+ */
+export type AssignmentPhase = "upcoming" | "date_passed" | "treatment_recorded";
 
 export type CheckItem = {
   id: string;
   startsAt: string;
   isFuture: boolean;
+  phase: AssignmentPhase;
+  treatmentStartedAt: string | null;
   reasons: CheckReason[];
   currentPractitionerId: string | null;
+  createdByPractitionerId: string | null;
+  /** distinct, sorted performing practitioners of the linked (non-deleted) sessions */
+  performedBy: string[];
   suggestionPractitionerId: string | null;
 };
 
@@ -47,12 +73,18 @@ export function classifyForCheck(
     }
     if (reasons.length === 0) continue;
     const suggestion = other && active.some((p) => p.id === other) ? other : null;
+    const isFuture = new Date(r.startsAt).getTime() > now.getTime();
+    const phase: AssignmentPhase = isFuture ? "upcoming" : (r.linkedSessionCount ?? 0) > 0 ? "treatment_recorded" : "date_passed";
     items.push({
       id: r.id,
       startsAt: r.startsAt,
-      isFuture: new Date(r.startsAt).getTime() > now.getTime(),
+      isFuture,
+      phase,
+      treatmentStartedAt: r.treatmentStartedAt ?? null,
       reasons,
       currentPractitionerId: r.practitionerId,
+      createdByPractitionerId: r.createdByPractitionerId,
+      performedBy: [...new Set(r.performedBy)].sort(),
       suggestionPractitionerId: suggestion,
     });
   }
@@ -63,4 +95,33 @@ export const CHECK_REASON_TEXT: Record<CheckReason, string> = {
   no_practitioner: "No practitioner is recorded.",
   owner_default: "Assigned to the owner; your studio has other practitioners.",
   booker_session_differs: "Assigned to whoever booked it, but the chart was written by someone else.",
+};
+
+// ---- names ------------------------------------------------------------------------------------------------------------------
+
+const GENERIC_NAMES = new Set(["", "practitioner", "unknown"]);
+
+/** A practitioner's display name where there is one; the email stands in only when there is no real name. */
+export function practitionerLabel(p: { displayName?: string | null; email?: string | null }): { name: string; email: string | null } {
+  const name = (p.displayName ?? "").trim();
+  const email = (p.email ?? "").trim() || null;
+  if (!GENERIC_NAMES.has(name.toLowerCase())) return { name, email };
+  return { name: email ?? "Practitioner", email: null };
+}
+
+export const PHASE_TEXT: Record<AssignmentPhase, { heading: string; explain: string }> = {
+  upcoming: {
+    heading: "Can be reassigned now",
+    explain: "These have not started. You can change the practitioner here.",
+  },
+  date_passed: {
+    heading: "Date has passed, no treatment recorded",
+    explain:
+      "The appointment date is in the past and no treatment is recorded for it. Its practitioner is not changed here. Open the appointment to complete it or mark it a no-show.",
+  },
+  treatment_recorded: {
+    heading: "Treatment recorded",
+    explain:
+      "A treatment record exists for these. Their practitioner is not changed here. Open the appointment to complete it.",
+  },
 };

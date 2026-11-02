@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { classifyForCheck, type OpenAppointment, type PractitionerLite } from "@/lib/appointments/check-practitioner";
+import { classifyForCheck, practitionerLabel, type OpenAppointment, type PractitionerLite } from "@/lib/appointments/check-practitioner";
 
 // Sam 1 Nov: the owner reviews OPEN appointments whose practitioner may be wrong (NULL, owner-assigned in a
 // multi-practitioner studio, booker-assigned with a chart written by someone else). Nothing is changed
@@ -127,7 +127,7 @@ describe("reassignOpenAppointmentAction", () => {
   it("a started appointment is refused with a plain sentence and nothing is changed", async () => {
     ctx.appt = { id: A, status: "confirmed", starts_at: new Date(Date.now() - 36e5).toISOString(), ends_at: future(), practitioner_id: null };
     const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
-    expect(r).toEqual({ ok: false, error: "This appointment has already started. You, as the owner, complete this one from the calendar; its practitioner is not changed here." });
+    expect(r).toEqual({ ok: false, error: "This appointment's date has passed, so its practitioner is not changed here. Open the appointment to complete it." });
     expect(ctx.rpc).toEqual([]);
   });
   it("not found / other studio, a closed appointment, the same practitioner, and malformed ids are refused without a command", async () => {
@@ -165,7 +165,7 @@ describe("source contracts", () => {
   });
   it("soft-deleted sessions are not used as reassignment evidence (Codex P2)", () => {
     const page = read("app/(app)/calendar/check-practitioner/page.tsx");
-    expect(page).toContain("sessions(performed_by_practitioner_id, deleted_at)");
+    expect(page).toContain("sessions(performed_by_practitioner_id, started_at, deleted_at)");
     expect(page).toMatch(/\.filter\(\(s\) => s\.deleted_at === null \|\| s\.deleted_at === undefined\)/);
   });
   it("every open appointment is read in pages and an incomplete read never claims 'Nothing to check' (Codex P2)", () => {
@@ -192,13 +192,20 @@ describe("source contracts", () => {
     // the select never names preferred_name literally (that is what failed on a chain that lacks the column)
     expect(page).not.toMatch(/clients\(name, preferred_name\)/);
   });
-  it("a started row says the owner completes it and offers no reassign control (Sam, option A)", () => {
+  it("only an upcoming row has a reassign control; a past row says what is permitted and links to the appointment (Sam, 2 Nov)", () => {
+    const page = read("app/(app)/calendar/check-practitioner/page.tsx");
     const row = read("app/(app)/calendar/check-practitioner/ReassignRow.tsx");
-    const from = row.indexOf("if (!canChange)");
-    const started = row.slice(from, row.indexOf("\n  }\n", from));
-    expect(started).toContain("check-practitioner-started");
-    expect(started).toContain("complete this one");
-    expect(started).not.toMatch(/<button|<select|<form/);
+    expect(page).toMatch(/it\.phase === "upcoming" \? \(\s*<ReassignRow/);
+    expect(page).toContain("check-practitioner-historical");
+    expect(page).toContain("The practitioner is not changed here.");
+    expect(page).toContain("href={`/calendar/${it.id}`}");
+    expect(row).not.toContain("canChange");
+    expect(row).not.toContain("already started");
+  });
+  it("no wording on the page, the row or the action claims a past date means the treatment started", () => {
+    for (const f of ["page.tsx", "ReassignRow.tsx", "actions.ts"]) {
+      expect(read(`app/(app)/calendar/check-practitioner/${f}`)).not.toMatch(/already started/i);
+    }
   });
   it("the action sends no client email and no payment write", () => {
     const act = read("app/(app)/calendar/check-practitioner/actions.ts");
@@ -207,5 +214,73 @@ describe("source contracts", () => {
     // reads only: the appointment, and the target practitioner's active/studio membership; no other table
     expect(code).not.toMatch(/\.from\("(?!appointments"|practitioners")/);
     expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
+  });
+});
+
+describe("phase: a past DATE is not a recorded treatment start (Sam, 2 Nov)", () => {
+  const past = "2030-12-01T10:00:00Z"; // before NOW
+  it("a future appointment is upcoming and reassignable", () => {
+    const [it] = classifyForCheck([appt({ id: "u1", practitionerId: null })], team, NOW);
+    expect(it.phase).toBe("upcoming");
+    expect(it.isFuture).toBe(true);
+  });
+  it("a past appointment with NO linked session is date_passed, never described as started", () => {
+    const [it] = classifyForCheck([appt({ id: "d1", startsAt: past, practitionerId: null })], team, NOW);
+    expect(it.phase).toBe("date_passed");
+    expect(it.treatmentStartedAt).toBeNull();
+  });
+  it("a past appointment WITH a linked session is treatment_recorded and carries the earliest recorded start", () => {
+    const [it] = classifyForCheck(
+      [appt({ id: "t1", startsAt: past, practitionerId: OWNER, linkedSessionCount: 1, treatmentStartedAt: "2030-12-01T10:05:00Z", performedBy: [ANN] })],
+      team, NOW);
+    expect(it.phase).toBe("treatment_recorded");
+    expect(it.treatmentStartedAt).toBe("2030-12-01T10:05:00Z");
+    expect(it.performedBy).toEqual([ANN]);
+  });
+  it("a future appointment stays upcoming even if a session is already linked (reassign is by time, unchanged)", () => {
+    const [it] = classifyForCheck([appt({ id: "f1", practitionerId: OWNER, linkedSessionCount: 1 })], team, NOW);
+    expect(it.phase).toBe("upcoming");
+  });
+  it("sorting is unchanged: earliest first across phases", () => {
+    const out = classifyForCheck([appt({ id: "x2", practitionerId: null }), appt({ id: "x1", startsAt: past, practitionerId: null })], team, NOW);
+    expect(out.map((i) => i.id)).toEqual(["x1", "x2"]);
+  });
+});
+
+describe("practitionerLabel: display name where available, email secondary", () => {
+  it("a real name wins and the email is kept as the secondary line", () => {
+    expect(practitionerLabel({ displayName: " Ann Lee ", email: "ann@example.test" })).toEqual({ name: "Ann Lee", email: "ann@example.test" });
+  });
+  it("a blank or generic name falls back to the email as the primary label", () => {
+    expect(practitionerLabel({ displayName: "", email: "x@example.test" })).toEqual({ name: "x@example.test", email: null });
+    expect(practitionerLabel({ displayName: "Practitioner", email: "y@example.test" })).toEqual({ name: "y@example.test", email: null });
+  });
+  it("neither name nor email gives a neutral word, never an empty string", () => {
+    expect(practitionerLabel({ displayName: null, email: null })).toEqual({ name: "Practitioner", email: null });
+  });
+});
+
+describe("navigation: an owner-only link, hidden for others, and independent of any new storage", () => {
+  const read = (p: string) => readFileSync(path.resolve(__dirname, "../../..", p), "utf8");
+  it("the calendar toolbar renders the link only when an href is given, and every view gives it only to the owner", () => {
+    const bar = read("app/(app)/calendar/CalendarToolbar.tsx");
+    expect(bar).toMatch(/\{reviewAssignmentsHref && \(/);
+    expect(bar).toContain("Review practitioner assignments");
+    const page = read("app/(app)/calendar/page.tsx");
+    const uses = page.match(/reviewAssignmentsHref=\{[^}]*\}/g) ?? [];
+    expect(uses).toHaveLength(3);
+    for (const u of uses) {
+      expect(u).toMatch(/(isOwner|practitioner\.role === "owner") \? "\/calendar\/check-practitioner" : undefined/);
+    }
+  });
+  it("Team settings (an owner-only page) links to it", () => {
+    const team = read("app/(app)/settings/team/page.tsx");
+    expect(team).toContain('href="/calendar/check-practitioner"');
+    expect(team).toContain("Review practitioner assignments");
+  });
+  it("the page still 404s for a non-owner and reads no table that needs new storage", () => {
+    const page = read("app/(app)/calendar/check-practitioner/page.tsx");
+    expect(page).toContain('if (practitioner.role !== "owner") notFound();');
+    expect(page).not.toMatch(/appointment_assignment_reviews|review_appointment_assignment/);
   });
 });
