@@ -202,6 +202,43 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
 }
 
 /**
+ * Reserved numbers ABOVE the hosted head and BELOW the repo max.
+ *
+ * A migration-first pending suffix must be contiguous (a hole above the hosted
+ * head is how a migration gets applied out of order by accident). But another
+ * lane can hold a number that has no sealed file yet (an unsealed draft), while
+ * a later number is ready. Such a number is declared here, by name, with its
+ * holder, in `reserved_unallocated_above_hosted` of the canonical record. It is
+ * NOT a permanent skip: the number stays usable, and once its file exists the
+ * declaration is invalid and must be removed in the same change. Declaring a
+ * reservation does not hosted-apply anything and does not allocate the number.
+ * Returns the reasons a declaration cannot be true. Pure on its inputs.
+ */
+export function evaluateReservedAboveHosted({ reserved, numbers, hostedMaxNumber }) {
+  if (reserved === undefined) return [];
+  if (!Array.isArray(reserved)) return ["reserved_unallocated_above_hosted must be an array"];
+  const present = new Set(numbers);
+  const repoMax = Math.max(...numbers);
+  const seen = new Set();
+  const invalid = [];
+  for (const entry of reserved) {
+    const v = entry?.version;
+    if (typeof v !== "string" || !/^\d{4}$/.test(v)) {
+      invalid.push(`entry has no four-digit version: ${JSON.stringify(entry)}`);
+      continue;
+    }
+    const n = Number.parseInt(v, 10);
+    if (typeof entry.holder !== "string" || entry.holder.trim() === "") invalid.push(`${v} names no holder`);
+    if (seen.has(n)) invalid.push(`${v} is declared twice`);
+    seen.add(n);
+    if (n <= hostedMaxNumber) invalid.push(`${v} is at or below hosted_migration_max (use hosted_out_of_order for a number below the head)`);
+    if (present.has(n)) invalid.push(`${v} has a repo file, so it is no longer reserved: remove the declaration`);
+    if (n > repoMax) invalid.push(`${v} is above the repo max, so no suffix needs it declared`);
+  }
+  return invalid;
+}
+
+/**
  * Repo migration files that hosted has NOT applied. Everything above the hosted
  * max, PLUS every version a declaration lists as unhosted_below that has a repo
  * file (F-OOO-1): a stage that put 0248 ahead of 0247 leaves 0247 BELOW the
@@ -270,6 +307,14 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     repo_equals_hosted: repoMaxNumber === hostedMaxNumber,
     pending_migrations: pending,
     hosted_out_of_order: record.hosted_out_of_order ?? [],
+    reserved_above_hosted: (Array.isArray(record.reserved_unallocated_above_hosted) ? record.reserved_unallocated_above_hosted : [])
+      .map((e) => e?.version)
+      .filter((v) => typeof v === "string"),
+    invalid_reserved_declarations: evaluateReservedAboveHosted({
+      reserved: record.reserved_unallocated_above_hosted,
+      numbers,
+      hostedMaxNumber,
+    }),
     undeclared_gaps: outOfOrder.undeclared_gaps,
     invalid_out_of_order_declarations: outOfOrder.invalid_declarations,
     versions: entries.map((e) => e.version),
