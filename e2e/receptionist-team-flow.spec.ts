@@ -6,7 +6,7 @@ import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 
 // The owner's Team-page front-desk flow end to end, through the REAL UI (Sam, 2 Nov): owner invites -> receptionist accepts
 // -> owner removes -> the SAME cookie is refused; an OLD invitation for the removed person is refused afterwards (0279);
-// a pending invitation's Revoke works; and after a move the schedule row's Move and Cancel buttons return (Privacy C3).
+// a receptionist BOOKS an appointment at the desk, then loses access (OPS HON-18); a pending invitation's Revoke works; and after a move the schedule row's Move and Cancel buttons return (Privacy C3).
 //
 // HELD like receptionist-removal.spec.ts: the app server must run with HONE_RECEPTIONIST_DESK_ENABLED=true, which the lanes never
 // set; it self-skips everywhere except a dedicated run on an OWNED isolated stack (OPS heavy slot). Synthetic data only; no real
@@ -139,4 +139,45 @@ test("after a successful move the row's Move and Cancel buttons return (Privacy 
   // The proof: the same appointment (still confirmed) offers Move and Cancel again.
   await expect(page.getByRole("button", { name: "Move", exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible();
+});
+
+test("a receptionist invited and accepted through the UI BOOKS an appointment; after the owner removes them the same cookie cannot book or read", async ({ browser }) => {
+  const s = await seedE2eStudio();
+  const email = `desk-bk-${s.studioId.slice(0, 8)}@harness.local`;
+  await createLocalAuthUser(email);
+  const [client] = await sql<{ id: string; name: string }>("select id, name from public.clients where studio_id=$1 limit 1", [s.studioId]);
+  const apptCount = async () => Number((await sql<{ n: string }>("select count(*) n from public.appointments where studio_id=$1 and client_id=$2", [s.studioId, client.id]))[0].n);
+  const before = await apptCount();
+
+  const owner = await ownerInvites(browser, s, email, "Booking Desk");
+  const deskCtx = await browser.newContext();
+  const desk = await deskCtx.newPage();
+  await signIn(desk, email);
+  await acceptAsReceptionist(desk);
+  await expect.poll(async () => (await rows(s.studioId, email)).filter((m) => m.active).length, { timeout: 30_000 }).toBe(1);
+
+  // Book through the desk form: choose the client, a service and a practitioner, a day and time inside the seeded open window.
+  await desk.goto("/desk/book");
+  await desk.getByLabel("Search clients").fill(client.name.slice(0, 4));
+  await desk.getByRole("button", { name: "Search", exact: true }).click();
+  await desk.getByRole("button", { name: "Choose" }).first().click();
+  await desk.getByLabel("Service").selectOption({ index: 1 });
+  await desk.getByLabel("Practitioner").selectOption({ index: 1 });
+  const day = new Date(Date.now() + 48 * 3600_000).toISOString().slice(0, 10);
+  await desk.getByLabel("Date").fill(day);
+  await desk.getByLabel("Start time").fill("10:00");
+  await desk.getByRole("button", { name: "Book appointment" }).click();
+  await expect(desk.getByRole("status").filter({ hasText: /on the schedule/i })).toBeVisible({ timeout: 30_000 });
+  expect(await apptCount()).toBe(before + 1);
+
+  // The owner removes the receptionist in the UI; the same cookie is then refused on the booking page and the schedule.
+  await owner.page.goto("/settings/team");
+  await owner.page.getByRole("button", { name: /Remove access for Booking Desk/ }).click();
+  await expect(owner.page.getByText("No receptionist has access.")).toBeVisible();
+  for (const path of ["/desk/book", "/desk"]) {
+    await desk.goto(path);
+    await expect(desk).toHaveURL(/\/no-access|\/login/);
+    await expect(desk.locator("body")).not.toContainText(s.studioName);
+  }
+  expect(await apptCount()).toBe(before + 1); // nothing was booked after removal
 });
