@@ -141,6 +141,10 @@ export async function completeWaitlistProfile(
     return { ok: false, code: "unavailable" };
   }
 
+  // Once 0286 is applied and the capability is on, EVERY completion goes through v2 (v1 on a row whose flag is
+  // true would raise on the new check). While dark, nothing changes: two-name stays on v1 with v1's arguments.
+  const useV2 = WAIT_04B_CAPABILITIES.singleLegalName === true;
+
   try {
     // CONSTRUCTED INSIDE THE BOUNDARY. This sat outside the `try`, so a client
     // that failed to construct — a missing service-role key, a malformed URL —
@@ -150,7 +154,7 @@ export async function completeWaitlistProfile(
     // path whose whole job is to report IN DOUBT rather than raise.
     const admin = createAdminClient();
     const { data, error } = await admin.rpc(
-      patch.singleLegalName ? "complete_waitlist_profile_by_grant_v2" : "complete_waitlist_profile_by_grant",
+      useV2 ? "complete_waitlist_profile_by_grant_v2" : "complete_waitlist_profile_by_grant",
       {
       p_raw_token: input.capabilityToken,
       p_first_name: patch.firstName,
@@ -170,7 +174,7 @@ export async function completeWaitlistProfile(
       p_sms_consent: WAIT_04B_CAPABILITIES.recordsSmsConsent
         ? input.smsOperationalConsent
         : false,
-      ...(patch.singleLegalName ? { p_single_name: true } : {}),
+      ...(useV2 ? { p_single_name: patch.singleLegalName === true } : {}),
       },
     );
 

@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PROFILE_COMPLETE,
@@ -180,5 +182,56 @@ describe("adapter (migration 0286 is held, so the option is dark)", () => {
     const r = await server.completeWaitlistProfile({ capabilityToken: TOKEN, patch: older, smsOperationalConsent: false, consentSource: "prospect_link" });
     expect(r).toEqual({ ok: true });
     expect(h.calls[0].fn).toBe("complete_waitlist_profile_by_grant");
+  });
+});
+
+describe("adapter routing once enabled", () => {
+  it("every completion goes through v2, two-name with p_single_name false", async () => {
+    h.calls = [];
+    const caps = server.WAIT_04B_CAPABILITIES as { singleLegalName?: boolean };
+    caps.singleLegalName = true;
+    try {
+      const r = await server.completeWaitlistProfile({
+        capabilityToken: TOKEN,
+        patch: { ...SINGLE, firstName: "Ada", lastName: "Lovelace", singleLegalName: false },
+        smsOperationalConsent: false,
+        consentSource: "prospect_link",
+      });
+      expect(r).toEqual({ ok: true });
+      expect(h.calls[0].fn).toBe("complete_waitlist_profile_by_grant_v2");
+      expect(h.calls[0].args.p_single_name).toBe(false);
+      expect(h.calls[0].args.p_last_name).toBe("Lovelace");
+    } finally {
+      caps.singleLegalName = false;
+    }
+  });
+});
+
+// Privacy C1/C2: the option cannot be switched on early, and no join form can offer it.
+function walk(dir: string, out: string[] = []): string[] {
+  for (const n of readdirSync(dir)) {
+    if (n === "node_modules" || n === ".next" || n.startsWith(".")) continue;
+    const f = join(dir, n);
+    if (statSync(f).isDirectory()) walk(f, out);
+    else if (/\.(tsx?|sql)$/.test(n)) out.push(f);
+  }
+  return out;
+}
+describe("the option cannot be enabled early", () => {
+  it("capability true requires a migration in the repo that defines the v2 command", () => {
+    const migs = readdirSync(join(process.cwd(), "supabase/migrations")).filter((n) => n.endsWith(".sql"));
+    const defined = migs.some((n) =>
+      /create (or replace )?function public\.complete_waitlist_profile_by_grant_v2/i.test(
+        readFileSync(join(process.cwd(), "supabase/migrations", n), "utf8"),
+      ),
+    );
+    if (server.WAIT_04B_CAPABILITIES.singleLegalName === true) expect(defined).toBe(true);
+  });
+  it("no caller passes singleNameOption true while the capability is off", () => {
+    if (server.WAIT_04B_CAPABILITIES.singleLegalName === true) return;
+    const offenders = [...walk(join(process.cwd(), "app")), ...walk(join(process.cwd(), "components"))].filter((f) =>
+      /singleNameOption(=\{true\}|\s*=\s*\{?\s*true|\s*$|\s+[a-zA-Z/>])/m.test(readFileSync(f, "utf8").replace(/singleNameOption\??: boolean/g, "")) && !f.endsWith("profile-fields.tsx"),
+    );
+    expect(offenders).toEqual([]);
   });
 });
