@@ -78,8 +78,8 @@ for (const width of [320, 390]) {
     test(`practitioner: no sideways scroll with the same name on their own appointments`, async ({ page }) => {
       const { seed, clientId } = await seedStudioWithLongName();
       const member = await seedE2eMember(seed);
-      const starts = new Date(Date.now() + 3 * 3600 * 1000).toISOString();
-      const ends = new Date(Date.now() + 4 * 3600 * 1000).toISOString();
+      const starts = new Date(Date.now() + 5 * 3600 * 1000).toISOString();
+      const ends = new Date(Date.now() + 6 * 3600 * 1000).toISOString();
       await seedConfirmedAppointment(seed.studioId, member.practitionerId, clientId, starts, ends);
       await loginByMagicLink(page, member.email);
       await page.goto("/dashboard");
