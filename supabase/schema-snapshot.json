@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
+    "count": 254,
+    "last": "0275_receptionist_removal_revokes_invitations.sql",
+    "sha256": "ffb0f642cdb9d25f6fb88f1525d4d32006d62ee9e815810f2d07ea7e163f095d"
   },
   "public": {
     "tables": [

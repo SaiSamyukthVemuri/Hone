@@ -298,6 +298,8 @@ export const BROWSER_GROUPS = {
       // HONE_RECEPTIONIST_DESK_ENABLED=true on the app server, which no lane sets, so it SELF-SKIPS in CI and runs only in a
       // dedicated run on an owned isolated stack. Beside the shell/auth-gate family for the same reason as above.
       "receptionist-removal.spec.ts",
+      // Same hold: the owner's Team-page invite/remove/revoke flow, the old-invitation refusal (0275) and the buttons-return-after-move proof.
+      "receptionist-team-flow.spec.ts",
       // DAT-002 (E-GAPS): a REAL read failure (a revoked SELECT grant on the
       // disposable stack) reaches the dashboard boundary, the /records section
       // refusal and the global-search refusal, never 0 or empty. Beside the

@@ -8,6 +8,7 @@ import type {
   Practitioner,
 } from "@/lib/types/database";
 import { InviteForm } from "./InviteForm";
+import { ReceptionistSection } from "./ReceptionistSection";
 import {
   removePractitionerAction,
   revokeInvitationAction,
@@ -83,7 +84,9 @@ export default async function TeamSettingsPage() {
         <InviteForm />
       </section>
 
-      <PendingInvitations invitations={invitations} />
+      <ReceptionistSection studioId={studio.id} />
+
+      <PendingInvitations invitations={invitations.filter((i) => (i.role as string) !== "receptionist")} />
     </div>
   );
 }
