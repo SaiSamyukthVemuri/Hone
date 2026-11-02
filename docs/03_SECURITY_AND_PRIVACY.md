@@ -66,9 +66,11 @@ To stop an overlooked or new service-role usage from silently breaking studio is
 
 ### 1.1 Appointment actions: who may do what (HON-44, owner decision 2 Nov)
 
+**This table is CURRENT production behaviour.** It is superseded by the studio Roles and permissions program (see `docs/security/permissions-catalog.md` once it lands), which makes several of these configurable (for example, receptionist no-show and notes, and fee permissions). Update it when that ships.
+
 Four appointment actions are deliberately **studio-wide for active practitioners**: any active practitioner of the studio may act on a colleague's appointment in the **same studio**. There is no assignee gate. This is a recorded product decision, not an omission; `tests/db/colleague-appointment-actions.db.test.ts` pins it.
 
-| Action | Same-studio practitioner (not the assignee) | Owner | Receptionist | Other studio | Anon / authenticated API role |
+| Action | Same-studio practitioner (not the assignee) | Owner | Receptionist (not covered by these tests) | Other studio | Anon / authenticated API role |
 |---|---|---|---|---|---|
 | Cancel (`practitioner_cancel_appointment`) | allowed | allowed | via the desk's own command | refused | cannot call (service-role only) |
 | Mark no-show (`mark_appointment_no_show`) | allowed | allowed | not allowed | refused | cannot call |
@@ -77,7 +79,7 @@ Four appointment actions are deliberately **studio-wide for active practitioners
 
 These permissions grant **no financial access**. Marking a no-show changes the status only; it touches no fee, charge, payment or settlement table and no trigger charges. A no-show or late-cancel fee is a separate manual charge (`calendar/[id]/manual-fee-actions.ts`) that is **owner-only**. Consent, messaging preferences and studio isolation are unchanged.
 
-Not covered by this rule and unchanged: session completion (assigned practitioner or owner, migration 0277), clinical-record edits, and the "risks explained" attestation.
+Not covered by this rule and unchanged: clinical-record edits and the "risks explained" attestation. Session completion is also outside this rule: it becomes assigned-practitioner-or-owner only when #1315 and migration 0277 are in production; **today any active practitioner can complete a started appointment**.
 
 Accountability expected of all four (who acted, which appointment, when, what changed, plus the reason for cancel and no-show, previous note versions, and aftercare delivery outcome): the audit already records actor, appointment, time and (for cancel) the reason; note versions, the no-show reason and the aftercare audit are a held migration, not applied. Until it is applied, an overwritten note's previous text is **not** recoverable.
 

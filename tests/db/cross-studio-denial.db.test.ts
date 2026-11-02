@@ -17,8 +17,13 @@ import {
 // through PostgREST), direct table writes and RPCs. Every denial has a POSITIVE CONTROL with the same statement shape from the
 // rightful actor, so a denial cannot pass because the statement was malformed or the row never existed.
 //
-// OPEN GAPS (team/HON44-GAPS.md H1, H2) are asserted with `it.fails`: the test passes today BECAUSE the gap exists and turns red
-// the moment it is closed, which is the signal to change `it.fails` to `it`. The fix is held (unnumbered SQL, never hosted).
+// OPEN GAPS (team/HON44-GAPS.md H1, H2) are recorded as AFFIRMATIVE tests, not `it.fails`: they assert the specific outcome that
+// exists today (the owner control succeeds AND a member write succeeds), so a broken fixture fails loudly instead of passing as an
+// "expected failure". When the held fix lands they turn red on purpose; invert them to the denial assertions then. The fix is held
+// (unnumbered SQL, never hosted).
+// "Owner-only" here describes PRODUCTION BEHAVIOUR TODAY and the snapshot for existing studios. Under the Roles program (R1/R3/R4)
+// services and consent-template writes become permission-gated, not owner-only by identity; replace these owner-only assertions
+// with the permission-matrix test then.
 
 let A: SeededStudio;
 let B: SeededStudio;
@@ -198,26 +203,39 @@ describe("HON-44 cross-studio: an owner of studio A cannot read or write studio 
 
 describe("HON-44 role: a non-owner practitioner of the same studio cannot write owner-only tables", () => {
   for (const t of TABLES.filter((x) => x.ownerOnly)) {
-    const body = async () => {
-      const id = seeded.get(t.table)!.a;
-      // positive control inside the test: the OWNER of the same studio can do the same update and insert
-      const ownerUpd = await attempt(A.userId, `update public.${t.table} set studio_id = studio_id where id = $1`, [id]);
+    // positive control: the OWNER of the same studio can do the same update and insert (a normal test, so a broken fixture fails here)
+    const ownerControl = async () => {
+      const ownerUpd = await attempt(A.userId, `update public.${t.table} set studio_id = studio_id where id = $1`, [seeded.get(t.table)!.a]);
+      expect(ownerUpd.code).toBeNull();
       expect(ownerUpd.rowCount).toBe(1);
       const ins = t.insert(A);
       const ownerIns = await attempt(A.userId, ins.sql, ins.params);
       expect(ownerIns.code).toBeNull();
-
-      const upd = await attempt(memberA.userId, `update public.${t.table} set studio_id = studio_id where id = $1`, [id]);
-      expect(upd.rowCount).toBe(0);
-      const ins2 = t.insert(A);
-      const memberIns = await attempt(memberA.userId, ins2.sql, ins2.params);
-      expect(memberIns.code).toBe(RLS);
+      expect(ownerIns.rowCount).toBe(1);
     };
+    const memberWrite = async () => {
+      const upd = await attempt(memberA.userId, `update public.${t.table} set studio_id = studio_id where id = $1`, [seeded.get(t.table)!.a]);
+      const ins = t.insert(A);
+      const memberIns = await attempt(memberA.userId, ins.sql, ins.params);
+      return { upd, memberIns };
+    };
+    it(`${t.table}: positive control, the owner can update and insert`, ownerControl);
     if (t.openGap) {
-      // OPEN GAP: passes while the member policy exists; turns red when the held fix lands. Then change `it.fails` to `it`.
-      it.fails(`${t.table}: member write is denied (OPEN GAP ${t.openGap}, see HON44-GAPS.md; remove .fails when fixed)`, body);
+      it(`${t.table}: OPEN GAP ${t.openGap} (HON44-GAPS.md): a member CAN update and insert today; invert to a denial when the held fix lands`, async () => {
+        await ownerControl();
+        const { upd, memberIns } = await memberWrite();
+        expect(upd.code).toBeNull();
+        expect(upd.rowCount).toBe(1);
+        expect(memberIns.code).toBeNull();
+        expect(memberIns.rowCount).toBe(1);
+      });
     } else {
-      it(`${t.table}: member write is denied`, body);
+      it(`${t.table}: member write is denied`, async () => {
+        const { upd, memberIns } = await memberWrite();
+        expect(upd.code).toBeNull();
+        expect(upd.rowCount).toBe(0);
+        expect(memberIns.code).toBe(RLS);
+      });
     }
   }
 
@@ -296,14 +314,25 @@ describe("HON-44 cross-studio RPCs that a signed-in user CAN execute", () => {
 
   it("owner-scoped setting RPCs that take a studio id refuse another studio's id and accept the caller's own", async () => {
     // reorder_studio_service: owner of the named studio only (0161).
+    const svcFirst = randomUUID();
     const svcB = randomUUID();
-    await adminQuery(`insert into public.services (id, studio_id, name) values ($1, $2, 'Probe')`, [svcB, B.studioId]);
-    const cross = await attempt(A.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', 0)`, [B.studioId, svcB]);
-    const own = await attempt(B.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', 0)`, [B.studioId, svcB]);
-    // The rightful call must reach the function body (any outcome except a privilege/authorization error); the cross call must not.
-    expect(own.code === null || own.code !== RLS).toBe(true);
-    expect(cross.code !== null || cross.rows.length === 0 || JSON.stringify(cross.rows).includes("not_")).toBe(true);
-    expect(JSON.stringify(cross.rows)).not.toContain(svcB);
+    await adminQuery(`insert into public.services (id, studio_id, name, sort_order) values ($1, $2, 'Probe first', 10), ($3, $2, 'Probe second', 20)`, [svcFirst, B.studioId, svcB]);
+    const orderB = async () =>
+      (await adminQuery(`select id, sort_order from public.services where studio_id = $1 and active order by sort_order asc, name asc, id asc`, [B.studioId])).rows as {
+        id: string;
+        sort_order: number;
+      }[];
+    const before = await orderB();
+    expect(before.map((r) => r.id)).toEqual([svcFirst, svcB]);
+    const cross = await attempt(A.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [B.studioId, svcB]);
+    const own = await attempt(B.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [B.studioId, svcB]);
+    // The cross call is refused by the function's authorization check and B's service order is byte-for-byte unchanged; the
+    // rightful call reaches the body and actually moves the row.
+    expect(cross.code).toBe(RLS);
+    expect(await orderB()).toEqual(before);
+    expect(own.code).toBeNull();
+    const afterOwn = await orderB();
+    expect(afterOwn.map((r) => r.id)).toEqual([svcB, svcFirst]);
   });
 });
 

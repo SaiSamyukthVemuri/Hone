@@ -6,7 +6,8 @@ import { adminQuery, asRole, closePool, resolveLocalDbUrl, seedMember, seedStudi
 
 // HON-44 D1-D4 (Sam, 2 Nov): a practitioner MAY cancel, mark no-show, edit notes and send aftercare for a COLLEAGUE's
 // appointment inside their own studio. No assignee gate. This file pins that decision (positive: same-studio colleague
-// allowed; negative: other studio, a non-practitioner, and anon/authenticated API roles refused) and, when
+// allowed; negative: other studio, a non-member, a deactivated member, and anon/authenticated API roles refused; the owner is the
+// positive control. A real receptionist (studio_receptionists row) refusal is NOT tested here: add it when the desk fixtures exist) and, when
 // HONE_HELD_FIX_SQL is set, proves the held accountability SQL (note versions, no-show reason, audit of what changed).
 // No fee or payment row may ever be created by any of the four. Time is relative to now(), never a literal.
 
@@ -108,7 +109,7 @@ describe("D2 no-show: a same-studio colleague may mark it, and it creates no fee
 });
 
 describe("D3 notes: a same-studio colleague may edit; a non-member may not", () => {
-  it("colleague edits; an outsider user id (no membership, e.g. a receptionist) is refused", async () => {
+  it("colleague edits; a non-member user id (no membership at all) is refused", async () => {
     const f = await fixture();
     const id = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: 96, practitionerId: f.assignee.practitionerId, notes: "first" });
     const ok = await adminQuery(`select public.set_appointment_notes($1,$2,$3,$4) as r`, [id, f.own.studioId, f.colleague.userId, "second"]);
@@ -129,6 +130,43 @@ describe("D4 aftercare: a same-studio colleague may claim a send for a completed
     expect(bad.rows[0].result).toBe("not_authorized");
     const good = await adminQuery(`select * from public.claim_postcare_send($1,$2,$3,false)`, [id, f.own.studioId, f.colleague.practitionerId]);
     expect(good.rows[0].result).toBe("claimed");
+  });
+});
+
+describe("the owner (positive control) may do all four on a colleague's appointment", () => {
+  it("cancel, no-show, notes and aftercare claim each succeed for the owner as actor", async () => {
+    const f = await fixture();
+    const fut = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: 150, practitionerId: f.assignee.practitionerId });
+    const past = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: -30, practitionerId: f.assignee.practitionerId });
+    const done = await seedAppointment(f.own.studioId, f.own.clientId, { status: "completed", whenHours: -33, practitionerId: f.assignee.practitionerId });
+    const noted = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: 160, practitionerId: f.assignee.practitionerId, notes: "o1" });
+    expect((await adminQuery(`select public.practitioner_cancel_appointment($1,$2,$3,'o') as r`, [fut, f.own.studioId, f.own.practitionerId])).rows[0].r).toBe("cancelled");
+    expect((await adminQuery(`select public.mark_appointment_no_show($1,$2,$3) as r`, [past, f.own.studioId, f.own.practitionerId])).rows[0].r).toBe("marked");
+    expect((await adminQuery(`select public.set_appointment_notes($1,$2,$3,'o2') as r`, [noted, f.own.studioId, f.own.userId])).rows[0].r).toBe("ok");
+    expect((await adminQuery(`select * from public.claim_postcare_send($1,$2,$3,false)`, [done, f.own.studioId, f.own.practitionerId])).rows[0].result).toBe("claimed");
+  });
+});
+
+// The command resolves the CURRENT active row. A colleague who was deactivated after the app session began is refused exactly like a
+// non-member, for every one of the four; nothing changes.
+describe("a DEACTIVATED member of the same studio is refused for all four", () => {
+  it("cancel, no-show, notes and aftercare claim are refused after deactivation; state is unchanged", async () => {
+    const f = await fixture();
+    const fut = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: 170, practitionerId: f.assignee.practitionerId });
+    const past = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: -36, practitionerId: f.assignee.practitionerId });
+    const done = await seedAppointment(f.own.studioId, f.own.clientId, { status: "completed", whenHours: -39, practitionerId: f.assignee.practitionerId });
+    const noted = await seedAppointment(f.own.studioId, f.own.clientId, { status: "confirmed", whenHours: 180, practitionerId: f.assignee.practitionerId, notes: "keep" });
+    // control: while active, the same colleague IS accepted on one of them (so the later refusal is the deactivation)
+    expect((await adminQuery(`select public.set_appointment_notes($1,$2,$3,'while active') as r`, [noted, f.own.studioId, f.colleague.userId])).rows[0].r).toBe("ok");
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [f.colleague.practitionerId]);
+    expect((await adminQuery(`select public.practitioner_cancel_appointment($1,$2,$3,'x') as r`, [fut, f.own.studioId, f.colleague.practitionerId])).rows[0].r).toBe("not_authorized");
+    expect((await adminQuery(`select public.mark_appointment_no_show($1,$2,$3) as r`, [past, f.own.studioId, f.colleague.practitionerId])).rows[0].r).toBe("not_authorized");
+    expect((await adminQuery(`select public.set_appointment_notes($1,$2,$3,'after') as r`, [noted, f.own.studioId, f.colleague.userId])).rows[0].r).toBe("not_a_member");
+    expect((await adminQuery(`select * from public.claim_postcare_send($1,$2,$3,false)`, [done, f.own.studioId, f.colleague.practitionerId])).rows[0].result).toBe("not_authorized");
+    const st = async (id: string) => (await adminQuery(`select status, notes from public.appointments where id=$1`, [id])).rows[0];
+    expect((await st(fut)).status).toBe("confirmed");
+    expect((await st(past)).status).toBe("confirmed");
+    expect((await st(noted)).notes).toBe("while active");
   });
 });
 

@@ -7,6 +7,10 @@ import { adminQuery, closePool } from "./helpers/harness";
 //
 // Deliberately not a pin of the whole policy matrix: a pin like that trips on every unrelated migration (CLAUDE.md §2).
 // It pins only the properties that must stay true.
+// THESE ARE GUARDS AGAINST A NEW UNSCOPED WRITE SURFACE, NOT A PROOF of any policy: they inspect policy text with regexes. The
+// behavioural two-studio denials in cross-studio-denial.db.test.ts are the real gate. "Owner-only" below is production behaviour
+// today (and the snapshot for existing studios); under the Roles program (R1/R3/R4) several of these tables become
+// permission-gated, and these assertions are replaced by the permission-matrix test.
 
 afterAll(async () => {
   await closePool();
@@ -27,15 +31,25 @@ async function writePolicies(): Promise<Pol[]> {
 // identity. A bare `true`, or an expression with none of these, is an unscoped write.
 // session_is_visible(session_id) is the studio-membership visibility predicate for session-child tables (see U2 in HON44-GAPS).
 const SCOPED = /is_studio_member|is_studio_owner|can_use_client_legal_identity|member_owns_scoped_timed_block|session_is_visible|auth\.uid\(\)/i;
+// `auth.uid() is not null` (any signed-in user) mentions auth.uid() but scopes nothing: strip it before the SCOPED test.
+const scopedText = (p: Pol) =>
+  `${p.qual ?? ""} ${p.with_check ?? ""}`.replace(/auth\.uid\(\)\s+is\s+not\s+null/gi, "").replace(/\(\s*select\s+auth\.uid\(\)\s*\)\s+is\s+not\s+null/gi, "");
+// An owner-only policy is not owner-only if it also admits members: reject is_studio_member in the same expression.
+const requiresOwnerOnly = (p: Pol) => {
+  const t = `${p.qual ?? ""} ${p.with_check ?? ""}`;
+  return /is_studio_owner|role\s*=\s*'owner'/i.test(t) && !/is_studio_member/i.test(t);
+};
 
 // Public marketing sign-up tables: no studio column, anonymous insert by design (landing page waitlist and demo requests).
 const PUBLIC_SIGNUP_TABLES = new Set(["waitlist", "demo_requests"]);
 
 describe("HON-44 catalog: every authenticated write policy is scoped to the caller's studio or identity", () => {
   it("no write policy on a tenant table is unscoped (true / no studio or identity term)", async () => {
-    const offenders = (await writePolicies())
+    const all = await writePolicies();
+    expect(all.length).toBeGreaterThan(20); // it examined the real catalog, not an empty list
+    const offenders = all
       .filter((p) => !PUBLIC_SIGNUP_TABLES.has(p.tablename))
-      .filter((p) => !SCOPED.test(`${p.qual ?? ""} ${p.with_check ?? ""}`))
+      .filter((p) => !SCOPED.test(scopedText(p)))
       .map((p) => `${p.tablename}.${p.policyname} (${p.cmd})`);
     expect(offenders).toEqual([]);
   });
@@ -74,27 +88,34 @@ const OWNER_ONLY_WRITE_TABLES = [
   "imported_treatment_memories",
 ];
 
-// OPEN GAPS (team/HON44-GAPS.md H1, H2): member-level write policies exist today. `it.fails` passes while the gap exists and turns
-// red when it is closed, which is the signal to move the table into OWNER_ONLY_WRITE_TABLES. The fix is held (unnumbered SQL).
+// OPEN GAPS (team/HON44-GAPS.md H1, H2): member-level write policies exist today. They are recorded affirmatively below (the exact
+// member policies); the test turns red when the gap is closed, which is the signal to move the table into OWNER_ONLY_WRITE_TABLES.
+// The fix is held (unnumbered SQL). Owner-only is production behaviour today, superseded by the Roles permission core (R1/R3/R4).
 const OPEN_OWNER_ONLY_GAPS: [string, string][] = [
   ["services", "H1"],
   ["consent_form_templates", "H2"],
 ];
 
 describe("HON-44 catalog: owner-only-by-design tables have no member-level write policy", () => {
-  it.fails.each(OPEN_OWNER_ONLY_GAPS)("%s: every write policy requires ownership (OPEN GAP %s)", async (table) => {
+  // Affirmative record of the gap as it is TODAY: the table has write policies and exactly these admit members. Invert (and move
+  // the table into OWNER_ONLY_WRITE_TABLES) when the held fix lands. It fails loudly if the table is renamed or loses its policies.
+  const OPEN_GAP_MEMBER_POLICIES: Record<string, string[]> = {
+    services: ["services_member_insert (INSERT)", "services_member_update (UPDATE)"],
+    consent_form_templates: ["consent_form_templates_studio_member_insert (INSERT)", "consent_form_templates_studio_member_update (UPDATE)"],
+  };
+  it.each(OPEN_OWNER_ONLY_GAPS)("%s: OPEN GAP %s, member-level write policies exist today", async (table) => {
     const pols = (await writePolicies()).filter((p) => p.tablename === table);
-    const nonOwner = pols
-      .filter((p) => !/is_studio_owner|role\s*=\s*'owner'/i.test(`${p.qual ?? ""} ${p.with_check ?? ""}`))
-      .map((p) => `${p.policyname} (${p.cmd})`);
-    expect(nonOwner).toEqual([]);
+    expect(pols.length).toBeGreaterThan(0);
+    const nonOwner = pols.filter((p) => !requiresOwnerOnly(p)).map((p) => `${p.policyname} (${p.cmd})`).sort();
+    expect(nonOwner).toEqual(OPEN_GAP_MEMBER_POLICIES[table]);
   });
 
-  it.each(OWNER_ONLY_WRITE_TABLES)("%s: every write policy requires ownership", async (table) => {
+  it.each(OWNER_ONLY_WRITE_TABLES)("%s: has write policies and every one requires ownership", async (table) => {
+    const exists = await adminQuery(`select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname = $1`, [table]);
+    expect(exists.rowCount).toBe(1);
     const pols = (await writePolicies()).filter((p) => p.tablename === table);
-    const nonOwner = pols
-      .filter((p) => !/is_studio_owner|role\s*=\s*'owner'/i.test(`${p.qual ?? ""} ${p.with_check ?? ""}`))
-      .map((p) => `${p.policyname} (${p.cmd})`);
+    expect(pols.length).toBeGreaterThan(0);
+    const nonOwner = pols.filter((p) => !requiresOwnerOnly(p)).map((p) => `${p.policyname} (${p.cmd})`);
     expect(nonOwner).toEqual([]);
   });
 });
@@ -119,6 +140,13 @@ describe("HON-44 catalog: exposed SECURITY DEFINER functions are bound to an ide
         order by 1`,
     );
     expect(r.rows.map((x: { proname: string }) => x.proname)).toEqual([]);
+    // it examined a real set of exposed definer functions, not an empty one
+    const total = await adminQuery(
+      `select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.prosecdef and p.prorettype::regtype::text <> 'trigger'
+          and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))`,
+    );
+    expect(total.rows[0].n).toBeGreaterThan(10);
   });
 
   it("anonymous callers can execute no definer function other than the pinned predicates", async () => {
