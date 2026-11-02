@@ -140,7 +140,7 @@ describe("reserved numbers above the hosted head (reserved_unallocated_above_hos
     evaluateReservedAboveHosted({ ...ok, ...o, reserved });
 
   it("accepts a named reservation with no file between hosted and the repo max", () => {
-    expect(run([{ version: "0250", holder: "another lane, unsealed" }])).toEqual([]);
+    expect(run([{ version: "0250", holder: "General lane: draft, unsealed" }])).toEqual([]);
   });
   it("an absent declaration is empty, not invalid", () => {
     expect(run(undefined)).toEqual([]);
@@ -155,20 +155,46 @@ describe("reserved numbers above the hosted head (reserved_unallocated_above_hos
     expect(run([{ version: "0250", holder: "  " }]).join(" ")).toMatch(/names no holder/);
   });
   it("NEGATIVE CONTROL: duplicate", () => {
-    expect(run([{ version: "0250", holder: "a" }, { version: "0250", holder: "b" }]).join(" ")).toMatch(/twice/);
+    expect(run([{ version: "0250", holder: "Alpha lane" }, { version: "0250", holder: "Beta lane" }]).join(" ")).toMatch(/twice/);
   });
   it("NEGATIVE CONTROL: at or below the hosted head belongs in hosted_out_of_order", () => {
-    expect(run([{ version: "0249", holder: "a" }]).join(" ")).toMatch(/at or below hosted_migration_max/);
+    expect(run([{ version: "0249", holder: "Alpha lane" }]).join(" ")).toMatch(/at or below hosted_migration_max/);
   });
   it("NEGATIVE CONTROL: once the file exists the reservation must be removed", () => {
-    expect(run([{ version: "0252", holder: "a" }]).join(" ")).toMatch(/has a repo file/);
+    expect(run([{ version: "0252", holder: "Alpha lane" }]).join(" ")).toMatch(/has a repo file/);
   });
   it("NEGATIVE CONTROL: a reservation above the repo max is stale", () => {
-    expect(run([{ version: "0253", holder: "a" }]).join(" ")).toMatch(/above the repo max/);
+    expect(run([{ version: "0253", holder: "Alpha lane" }]).join(" ")).toMatch(/above the repo max/);
   });
   it("the real record wires through getMigrationState and is valid", () => {
     const s = getMigrationState();
     expect(s.invalid_reserved_declarations).toEqual([]);
     expect(Array.isArray(s.reserved_above_hosted)).toBe(true);
+  });
+  it("NEGATIVE CONTROL (G-1): a holder that cites no PR or lane is refused", () => {
+    expect(run([{ version: "0250", holder: "someone, unsealed" }]).join(" ")).toMatch(/cites no PR/);
+    expect(run([{ version: "0250", holder: "ID-photo store (#1296), held" }])).toEqual([]);
+  });
+  it("COMBINED CONTROL (G-3, the M6 guarantee): once hosted_migration_max passes a still-declared reservation the record fails; it passes only after the reservation is converted to an unhosted_below declaration", () => {
+    const numbers = [249, 252];
+    const reserved = [{ version: "0250", holder: "Alpha lane" }, { version: "0251", holder: "Beta lane" }];
+    // before: hosted 249, the pending file 0252 sits above two reserved numbers
+    expect(evaluateReservedAboveHosted({ reserved, numbers, hostedMaxNumber: 249 })).toEqual([]);
+    // 0252 is applied: hosted passes the reservations. The record is invalid twice over.
+    const passed = evaluateReservedAboveHosted({ reserved, numbers, hostedMaxNumber: 252 });
+    expect(passed.join(" ")).toMatch(/0250 is at or below hosted_migration_max/);
+    expect(passed.join(" ")).toMatch(/0251 is at or below hosted_migration_max/);
+    expect(evaluateOutOfOrder({ numbers, hostedMaxNumber: 252, declared: [] }).undeclared_gaps).toEqual(["0250", "0251"]);
+    // converted: reservations removed, the stage declared out of order
+    const declared = [{ version: "0252", unhosted_below: ["0250", "0251"] }];
+    expect(evaluateReservedAboveHosted({ reserved: [], numbers, hostedMaxNumber: 252 })).toEqual([]);
+    const ok2 = evaluateOutOfOrder({ numbers, hostedMaxNumber: 252, declared });
+    expect(ok2.undeclared_gaps).toEqual([]);
+    expect(ok2.invalid_declarations).toEqual([]);
+  });
+  it("G-4: next_free_migration is outside reservations: it is above every reservation", () => {
+    const s = getMigrationState();
+    for (const v of s.reserved_above_hosted) expect(Number(v)).toBeLessThan(s.next_free_migration_number);
+    expect(s.next_free_migration_number).toBe(s.repo_migration_max_number + 1);
   });
 });

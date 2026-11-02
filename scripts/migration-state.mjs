@@ -212,6 +212,11 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
  * NOT a permanent skip: the number stays usable, and once its file exists the
  * declaration is invalid and must be removed in the same change. Declaring a
  * reservation does not hosted-apply anything and does not allocate the number.
+ * Every edit to this list is an OPS reservation decision, so the holder text must
+ * carry a PR (#1234) or a lane ("General lane") reference a reviewer can follow.
+ * next_free_migration is never affected: a valid reservation is always BELOW the
+ * repo max, and next_free is repo max + 1 (skipping only PERMANENTLY_SKIPPED), so
+ * reservations live outside the next-free computation by construction.
  * Returns the reasons a declaration cannot be true. Pure on its inputs.
  */
 export function evaluateReservedAboveHosted({ reserved, numbers, hostedMaxNumber }) {
@@ -229,6 +234,7 @@ export function evaluateReservedAboveHosted({ reserved, numbers, hostedMaxNumber
     }
     const n = Number.parseInt(v, 10);
     if (typeof entry.holder !== "string" || entry.holder.trim() === "") invalid.push(`${v} names no holder`);
+    else if (!/#\d+|\b[A-Z][a-z]+ lane\b/.test(entry.holder)) invalid.push(`${v} holder cites no PR (#1234) or lane ("General lane")`);
     if (seen.has(n)) invalid.push(`${v} is declared twice`);
     seen.add(n);
     if (n <= hostedMaxNumber) invalid.push(`${v} is at or below hosted_migration_max (use hosted_out_of_order for a number below the head)`);
