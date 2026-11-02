@@ -294,6 +294,10 @@ export const BROWSER_GROUPS = {
       // already fails safe to EXTENDED coverage, so the spec runs whenever it
       // matters.
       "authenticated-route-error-containment.spec.ts",
+      // Receptionist desk revocation (HELD): the same session cookie is refused after the owner removes access. Needs
+      // HONE_RECEPTIONIST_DESK_ENABLED=true on the app server, which no lane sets, so it SELF-SKIPS in CI and runs only in a
+      // dedicated run on an owned isolated stack. Beside the shell/auth-gate family for the same reason as above.
+      "receptionist-removal.spec.ts",
       // DAT-002 (E-GAPS): a REAL read failure (a revoked SELECT grant on the
       // disposable stack) reaches the dashboard boundary, the /records section
       // refusal and the global-search refusal, never 0 or empty. Beside the
