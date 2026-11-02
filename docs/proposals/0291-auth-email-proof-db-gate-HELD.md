@@ -1,6 +1,6 @@
-# Proposal (HELD, un-numbered): database-level mailbox-proof gate for invitation linking
+# Proposal (HELD, claimed number 0291): database-level mailbox-proof gate for invitation linking
 
-Status: proposal only. No migration file, no number. A number needs OPS (`01-ops/MIGRATION-NUMBER-CLAIMS.md`); applying needs Sam's per-change approval.
+Status: proposal only, HELD. Number 0291 is claimed by OPS for this (no migration file exists). Claims: OPS (`01-ops/MIGRATION-NUMBER-CLAIMS.md`); applying needs Sam's per-change approval.
 
 ## Why
 
