@@ -1,0 +1,72 @@
+#!/bin/bash
+# TEST STUB of supabase-go (CI only), STATEFUL: the remote migration history is the file $HOME/remote-history (one version per line).
+# `db push` reads the local files from ./supabase/migrations (the extracted stage bundle, the CLI's working directory), and follows the real CLI's rule:
+# a file BELOW the remote max is refused unless --include-all; with --include-all EVERY unapplied local file is applied. Behaviour knobs come from
+# $HOME/stubcfg (key=value), never from the environment. Every call is logged to $HOME/calls.log.
+H=$HOME; CFG=$H/stubcfg; HIST=$H/remote-history
+cfg() { sed -n "s/^$1=//p" "$CFG" 2>/dev/null | head -1; }
+CANARY_TOK=canary-token-4f1c; CANARY_PW=canary-pw-9d2e
+args="$*"
+case "$args" in *"$CANARY_PW"*|*"$CANARY_TOK"*) echo "LEAK argv" >> "$H/leak.log" ;; esac
+md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else command md5 -q; fi; }
+sorted() { LC_ALL=C sort "$HIST"; }
+hist_json() { # hist_json VER : the generic history row
+  local n mx md r
+  n=$(grep -c . "$HIST"); mx=$(sorted | tail -1); md=$(sorted | tr '\n' ',' | sed 's/,$//' | tr -d '\n' | md5)
+  vs=$(cfg S_VERS); [ -n "$vs" ] || vs=$1; r=0; for v in $vs; do r=$((r+$(grep -c "^$v\$" "$HIST"))); done
+  printf '[{"applied_count":%s,"hosted_max":"%s","list_md5":"%s","rows_%s":%s}]\n' "$n" "$mx" "$md" "$1" "$r"
+}
+if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
+  f=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done
+  b=$(basename "$f" .sql)
+  printf 'query:%s sql=%s\n' "$b" "$(shasum -a 256 "$f" | cut -d' ' -f1)" >> "$H/calls.log"
+  if [ "${SUPABASE_ACCESS_TOKEN:-}" != "$CANARY_TOK" ] || [ "${SUPABASE_DB_PASSWORD:-}" != "$CANARY_PW" ]; then echo "401 unauthorized" >&2; exit 1; fi
+  [ "$(cfg FAIL_QUERY)" = "$b" ] && { echo "ERROR: relation does not exist (42P01)" >&2; exit 1; }
+  ver=$(cfg S_VER); [ -n "$(cfg S_VERS)" ] || true
+  case "$b" in
+    g02-history-0254a) # the adopted reviewed package's own g02 columns, computed from the stateful history
+      n=$(grep -c . "$HIST"); mx=$(sorted | tail -1)
+      r48=$(grep -c '^0248$' "$HIST"); l4=$(sorted | tail -4 | sort -r | tr '\n' ',' | sed 's/,$//')
+      [ -n "$(cfg G02_FORGE_ROWS0248)" ] && r48=$(cfg G02_FORGE_ROWS0248); [ -n "$(cfg G02_FORGE_LAST4)" ] && l4=$(cfg G02_FORGE_LAST4)
+      printf '[{"applied_count":%s,"hosted_max":"%s","versions_ge_0249":%s,"rows_0257":%s,"rows_0254":%s,"versions_0249_0256":%s,"rows_0248":%s,"last4":"%s"}]\n' "$n" "$mx" \
+        "$(awk '$1>="0249"' "$HIST" | grep -c .)" "$(grep -c '^0257$' "$HIST")" "$(grep -c '^0254$' "$HIST")" "$(awk '$1>="0249" && $1<="0256"' "$HIST" | grep -c .)" "$r48" "$l4" ;;
+    g02-history-*|s1-history-*) hist_json "$ver" ;;
+    g12-*) at=$(cfg G12_AT); echo "[{\"at_hosted_$at\":1,\"tables_present\":true,\"functions_present\":true,\"trigger_before_update_only\":true,\"new_constraints_absent\":true,\"legacy_rows_violating_waitlist_email_format\":true,\"legacy_rows_violating_waitlist_field_length\":true,\"legacy_rows_violating_demo_requests_email_format\":true,\"legacy_rows_violating_demo_requests_field_length\":true,\"helpers_ok\":true,\"replaced_ok\":true,\"new_objects_absent\":true,\"columns_ok\":true,\"policies_before_equal_repo_history\":true,\"policy_cmds_before_equal_repo_history\":true,\"identity_policies_before\":true,\"single_overload\":true,\"body_is_0175\":true,\"definer_pinned_path\":true,\"acl_service_role_only\":true,\"dual_role_overlap\":0,\"studios_total\":8,\"studios_capacity_off\":0,\"open_total\":0,\"open_future\":0,\"open_past_unfinished\":0,\"check_a_null_assignee\":0,\"check_b_owner_assigned_multi_practitioner\":0,\"check_c_booker_assigned_session_differs\":0,\"check_any\":0,\"check_any_future\":0,\"check_any_past_unfinished\":0,\"check_any_in_capacity_off\":0,\"started_a_null_assignee\":0,\"started_b_owner_assigned_multi_practitioner\":0,\"started_c_booker_assigned_session_differs\":0,\"started_any_in_capacity_off\":0,\"four_bodies_are_0150\":true,\"two_new_absent\":true,\"acl_four_service_role_only\":true,\"helpers_present\":true,\"realtime_present\":true,\"realtime_rls_on_no_policies\":true,\"realtime_send_grants_as_recorded\":true}]" ;;
+    s1-open-transactions-*) at=$(cfg G12_AT); n=0; printf '['; for x in $(cfg S_TABLES | tr ',' ' '); do n=$((n+1)); [ $n -gt 1 ] && printf ','
+        printf '{"at_hosted_%s":1,"table_name":"%s","table_present":true,"old_xact_backends":0,"old_idle_in_xact_backends":0,"waiting_backends":0,"any_xact_backends":0,"oldest_xact_age_seconds":0,"old_xact_backends_database_wide":0}' "$at" "$x"; done; echo ']' ;;
+    w03-table-sizes-*) at=$(cfg G12_AT); n=0; printf '['; for x in $(cfg S_TABLES | tr ',' ' '); do n=$((n+1)); [ $n -gt 1 ] && printf ','
+        printf '{"at_hosted_%s":1,"table_name":"%s","present":true,"total_bytes":1048576,"approx_rows":10,"statement_timeout":"2min","lock_timeout":"0"}' "$at" "$x"; done; echo ']' ;;
+    *) echo "unknown query $b" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = db ] && [ "${2:-}" = push ]; then
+  mode=push; case "$args" in *--dry-run*) mode=dry ;; esac
+  ia=no; case "$args" in *--include-all*) ia=yes ;; esac
+  printf '%s%s\n' "$mode" "$([ $ia = yes ] && echo +ia)" >> "$H/calls.log"
+  [ -z "${SUPABASE_ACCESS_TOKEN:-}" ] || echo "LEAK token-in-env $mode" >> "$H/leak.log"
+  [ "${PGPASSWORD:-}" = "$CANARY_PW" ] || { echo "password authentication failed (28P01)" >&2; exit 1; }
+  mx=$(sorted | tail -1)
+  todo=""; below=0
+  for p in supabase/migrations/*.sql; do
+    fn=$(basename "$p"); v=${fn%%_*}
+    grep -q "^$v\$" "$HIST" && continue
+    todo="$todo $fn"; [ "$v" \< "$mx" ] && below=1
+  done
+  if [ $ia = no ] && [ $below = 1 ]; then
+    echo "Found local migration files to be inserted before the last migration on remote database." >&2
+    echo "Rerun the command with --include-all flag to apply these migrations:" >&2; exit 1
+  fi
+  if [ "$mode" = dry ]; then
+    echo 'DRY RUN: migrations will *not* be pushed to the database.'; echo 'Would push these migrations:'
+    for fn in $todo; do echo " • $fn"; done; exit 0
+  fi
+  for fn in $todo; do
+    v=${fn%%_*}
+    echo "Applying migration $fn..."
+    if [ "$(cfg FAIL_PUSH_VER)" = "$v" ]; then echo "ERROR: statement failed (XX000)" >&2; exit 1; fi
+    echo "$v" >> "$HIST"
+  done
+  echo "Finished supabase db push."; exit 0
+fi
+echo "stub: unexpected call: $args" >&2; echo "UNEXPECTED $args" >> "$H/leak.log"; exit 2

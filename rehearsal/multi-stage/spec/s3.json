@@ -1,0 +1,65 @@
+{
+  "hosted": {
+    "dir": "../../../supabase/migrations",
+    "skipped": [
+      158
+    ],
+    "pin": [
+      "0257"
+    ],
+    "expect_rows": 253,
+    "expect_max": "0274",
+    "dir_sha256": "493e51ff716e4a9655d6bd5238e6bd9bf521f00f35ef9611c47c64f8f28d790f",
+    "extra": [
+      {
+        "file": "sealed/0258_hon58_identity.sql",
+        "sha256": "12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78"
+      },
+      {
+        "file": "sealed-v2/0266_legal_name_receptionist_access.sql",
+        "sha256": "1617f11a507c84b3fb69ab262d0ca4211f07abd9a621004edc9bd7420faea04c"
+      },
+      {
+        "file": "sealed-v2/0272_hon58_legal_identity_hardening.sql",
+        "sha256": "d380534372728383e028c020dce1e0b7d0ab6eeb697594c59184a001ada83655"
+      },
+      {
+        "file": "sealed-v3/0274_receptionist_desk_projection.sql",
+        "sha256": "4de5175cf6129801f99a5d83af0427469caa7e304a744ae49070b6928c987b29"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "file": "sealed-v4/0277_appointment_completion_assigned_only.sql",
+      "sha256": "e0f406a09c0e5561d317e9f662575bd149f8da821ecc21038706238fd671b60b",
+      "plain": true,
+      "stage_name": "s3-0277",
+      "ready": {
+        "status": "0277 at e0f406a0; assigned-only completion; SQL unchanged since Privacy/Insurance review",
+        "order": "after S2 (0274) applied and verified: one plain push of 0277",
+        "blocker": "Sam approval of this exact package"
+      },
+      "gate_pack": "../gate-packs/0277"
+    },
+    {
+      "file": "sealed-v4/0278_practitioner_own_working_hours.sql",
+      "sha256": "4f10f79d4ca997f179c38fc267de037c0cdd209d068e8874a74e2edd7fbc2d9b",
+      "plain": true,
+      "stage_name": "s4-0278",
+      "ready": {
+        "status": "0278 at 4f10f79d",
+        "order": "after 0277 applied and verified: one plain push of 0278",
+        "blocker": "0277 applied; Sam approval of this exact package"
+      },
+      "gate_pack": "../gate-packs/0278"
+    }
+  ],
+  "rules": {
+    "requires_earlier": {
+      "0278": [
+        "0277"
+      ]
+    }
+  }
+}
