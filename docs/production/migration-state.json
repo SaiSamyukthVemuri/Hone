@@ -27,7 +27,7 @@
   "ledger": "docs/production/migration-ledger.md",
   "reserved_unallocated_above_hosted": [
     { "version": "0275", "holder": "ID-photo store (#1296), unsealed; held" },
-    { "version": "0276", "holder": "0255 replacement, unsealed; held" },
+    { "version": "0276", "holder": "General lane: 0255 replacement, unsealed; held" },
     { "version": "0277", "holder": "completion assigned-only (#1316), sealed and held; remove this entry when #1316 merges" }
   ],
   "hosted_out_of_order": [
