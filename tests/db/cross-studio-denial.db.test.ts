@@ -314,25 +314,26 @@ describe("HON-44 cross-studio RPCs that a signed-in user CAN execute", () => {
 
   it("owner-scoped setting RPCs that take a studio id refuse another studio's id and accept the caller's own", async () => {
     // reorder_studio_service: owner of the named studio only (0161).
+    // A FRESH studio, so no service seeded by the top-level beforeAll takes part in the ordering.
+    const C = await seedStudio("denial-reorder");
     const svcFirst = randomUUID();
     const svcB = randomUUID();
-    await adminQuery(`insert into public.services (id, studio_id, name, sort_order) values ($1, $2, 'Probe first', 10), ($3, $2, 'Probe second', 20)`, [svcFirst, B.studioId, svcB]);
-    const orderB = async () =>
-      (await adminQuery(`select id, sort_order from public.services where studio_id = $1 and active order by sort_order asc, name asc, id asc`, [B.studioId])).rows as {
+    await adminQuery(`insert into public.services (id, studio_id, name, sort_order) values ($1, $2, 'Probe first', 10), ($3, $2, 'Probe second', 20)`, [svcFirst, C.studioId, svcB]);
+    const orderC = async () =>
+      (await adminQuery(`select id, sort_order from public.services where studio_id = $1 and active order by sort_order asc, name asc, id asc`, [C.studioId])).rows as {
         id: string;
         sort_order: number;
       }[];
-    const before = await orderB();
+    const before = await orderC();
     expect(before.map((r) => r.id)).toEqual([svcFirst, svcB]);
-    const cross = await attempt(A.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [B.studioId, svcB]);
-    const own = await attempt(B.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [B.studioId, svcB]);
-    // The cross call is refused by the function's authorization check and B's service order is byte-for-byte unchanged; the
-    // rightful call reaches the body and actually moves the row.
+    // 1. the cross call (A's owner, C's studio) is refused and C's order is byte-for-byte unchanged, BEFORE any authorized call
+    const cross = await attempt(A.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [C.studioId, svcB]);
     expect(cross.code).toBe(RLS);
-    expect(await orderB()).toEqual(before);
+    expect(await orderC()).toEqual(before);
+    // 2. the rightful call reaches the body and actually moves the row (asUser commits)
+    const own = await attempt(C.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [C.studioId, svcB]);
     expect(own.code).toBeNull();
-    const afterOwn = await orderB();
-    expect(afterOwn.map((r) => r.id)).toEqual([svcB, svcFirst]);
+    expect((await orderC()).map((r) => r.id)).toEqual([svcB, svcFirst]);
   });
 });
 
