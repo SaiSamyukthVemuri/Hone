@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getReceptionistWithStudio } from "@/lib/desk/guard";
+import { readStudioTimezone } from "@/lib/desk/book";
 import {
   parseDeskDirectoryInput,
   readDeskDirectory,
@@ -18,7 +19,7 @@ import {
 
 export type DeskDirectoryState =
   | { status: "idle" }
-  | { status: "ok"; input: DeskDirectoryInput; data: DeskDirectoryPage }
+  | { status: "ok"; input: DeskDirectoryInput; data: DeskDirectoryPage; timezone: string }
   | { status: "too_short"; input: DeskDirectoryInput }
   | { status: "unavailable" };
 
@@ -40,7 +41,9 @@ export async function searchDeskClientsAction(
     if (input.q.length === 1) return { status: "too_short", input };
     const supabase = (await createClient()) as unknown as DeskRpc;
     const data = await readDeskDirectory(supabase, identity.studioId, input);
-    return { status: "ok", input, data };
+    // Appointment times are shown in the studio clock, the same as the schedule and booking.
+    const timezone = await readStudioTimezone(supabase, identity.studioId);
+    return { status: "ok", input, data, timezone };
   } catch {
     return { status: "unavailable" };
   }

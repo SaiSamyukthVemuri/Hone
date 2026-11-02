@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireReceptionistWithStudio } from "@/lib/desk/guard";
+import { readStudioTimezone } from "@/lib/desk/book";
 import { parseDeskDirectoryInput, readDeskDirectory, type DeskRpc } from "@/lib/desk/read";
 import { DeskDirectory } from "./DeskDirectory";
 
@@ -12,9 +13,12 @@ export default async function DeskClientsPage() {
   const identity = await requireReceptionistWithStudio();
   const input = parseDeskDirectoryInput({});
   let initial = null;
+  let timezone = "";
   try {
     const supabase = (await createClient()) as unknown as DeskRpc;
-    initial = await readDeskDirectory(supabase, identity.studioId, input);
+    const page = await readDeskDirectory(supabase, identity.studioId, input);
+    timezone = await readStudioTimezone(supabase, identity.studioId);
+    initial = page;
   } catch {
     initial = null;
   }
@@ -24,7 +28,7 @@ export default async function DeskClientsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
         <p className="mt-1 text-sm text-neutral-500">Find a client to book or confirm contact details.</p>
       </div>
-      <DeskDirectory initial={initial} />
+      <DeskDirectory initial={initial} timezone={timezone} />
     </div>
   );
 }

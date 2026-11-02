@@ -1,8 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { DeskClientRow, DeskDirectoryPage, DeskIntake } from "@/lib/desk/read";
+import { formatStudioDateTime } from "@/lib/desk/time";
 import { DESK_MAX_QUERY_LENGTH, DESK_MIN_QUERY_FOR_PAGING } from "@/lib/desk/read";
 import { searchDeskClientsAction, type DeskDirectoryState } from "./actions";
 
@@ -23,15 +23,16 @@ function ConsentText({ signed }: { signed: boolean | null }) {
   return <>{signed ? "Consent on file" : "Consent needed"}</>;
 }
 
-export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }) {
+export function DeskDirectory({ initial, timezone }: { initial: DeskDirectoryPage | null; timezone: string }) {
   const [state, action, pending] = useActionState<DeskDirectoryState, FormData>(
     searchDeskClientsAction,
     initial
-      ? { status: "ok", input: { q: "", filters: [], sort: "name", page: 1 }, data: initial }
+      ? { status: "ok", input: { q: "", filters: [], sort: "name", page: 1 }, data: initial, timezone }
       : { status: "unavailable" },
   );
   const [openId, setOpenId] = useState<string | null>(null);
   const data = state.status === "ok" ? state.data : null;
+  const tz = state.status === "ok" ? state.timezone : timezone;
   const input =
     state.status === "ok" || state.status === "too_short"
       ? state.input
@@ -136,7 +137,7 @@ export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }
                         {[r.email, r.phone].filter(Boolean).join(" · ") || "No contact on file"}
                       </div>
                     </div>
-                    {r.id === openId && open && <Overview row={open} />}
+                    {r.id === openId && open && <Overview row={open} timezone={tz} />}
                   </li>
                 ))}
               </ul>
@@ -163,7 +164,7 @@ export function DeskDirectory({ initial }: { initial: DeskDirectoryPage | null }
   );
 }
 
-function Overview({ row }: { row: DeskClientRow }) {
+function Overview({ row, timezone }: { row: DeskClientRow; timezone: string }) {
   return (
     <section aria-label={`Overview for ${row.displayName}`} className="mt-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
       <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
@@ -177,7 +178,7 @@ function Overview({ row }: { row: DeskClientRow }) {
         </div>
         <div>
           <dt className="text-xs text-neutral-500">Next appointment</dt>
-          <dd>{row.nextAppointmentAt ? <FormattedDateTime iso={row.nextAppointmentAt} /> : "No upcoming appointment"}</dd>
+          <dd>{row.nextAppointmentAt ? formatStudioDateTime(row.nextAppointmentAt, timezone) : "No upcoming appointment"}</dd>
         </div>
         <div>
           <dt className="text-xs text-neutral-500">Last completed appointment</dt>

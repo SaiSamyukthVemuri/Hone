@@ -87,6 +87,7 @@ export default async function DeskSchedulePage() {
                 </div>
                 {actionable && local && (
                   <ScheduleRowActions
+                    key={`${r.appointmentId}:${r.startsAt}:${r.endsAt}:${r.practitionerId ?? ""}`}
                     appointmentId={r.appointmentId}
                     practitionerId={r.practitionerId ?? ""}
                     startsAt={r.startsAt}

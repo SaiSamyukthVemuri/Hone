@@ -14,7 +14,8 @@ vi.mock("@/lib/desk/guard", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
-    rpc: async (_fn: string, args: Record<string, unknown>) => {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn === "receptionist_studio_timezone") return { data: "America/Toronto", error: null };
       rpcCalls.push(args);
       return rpcResult;
     },
@@ -41,6 +42,7 @@ describe("searchDeskClientsAction", () => {
     rpcResult = { data: [{ client_id: "c1", display_name: "Janie", name_on_file: false, total_count: 1, intake_state: "not_submitted", consent_signed: false }], error: null };
     const out = await searchDeskClientsAction(idle, form([["q", "jan"], ["page", "1"], ["filter", "no_upcoming"], ["sort", "next"]]));
     expect(out.status).toBe("ok");
+    expect(out).toMatchObject({ timezone: "America/Toronto" });
     expect(rpcCalls[0]).toMatchObject({ p_studio_id: "studio-1", p_query: "jan", p_filters: ["no_upcoming"], p_sort: "next", p_offset: 0 });
   });
 
