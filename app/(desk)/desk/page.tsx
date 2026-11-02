@@ -5,6 +5,7 @@ import { readDeskSchedule, type DeskRpc, type DeskScheduleRow } from "@/lib/desk
 import { readBookingOptions, type BookingPractitioner } from "@/lib/desk/book";
 import { formatStudioDateTime, formatStudioTime, localParts } from "@/lib/desk/time";
 import { ScheduleRowActions } from "./ScheduleRowActions";
+import { ClockFallbackNotice } from "./ClockFallbackNotice";
 
 // The desk schedule: booking information only (Privacy R1, R8). The client is shown by the display
 // rule (preferred name, else the stored name labelled "Name on file"); the service name is shown
@@ -53,6 +54,7 @@ export default async function DeskSchedulePage() {
           </Link>
         </p>
       </div>
+      {rows !== null && <ClockFallbackNotice timezones={rows.map((r) => r.studioTimezone)} />}
       {rows === null ? (
         <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
           The schedule is unavailable right now. Try again in a moment.
@@ -64,7 +66,7 @@ export default async function DeskSchedulePage() {
       ) : (
         <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           {rows.map((r) => {
-            const tz = r.studioTimezone ?? "UTC";
+            const tz = r.studioTimezone;
             const local = localParts(r.startsAt, tz);
             const actionable = r.status === "confirmed" && practitioners.length > 0 && local !== null && r.practitionerId !== null;
             return (

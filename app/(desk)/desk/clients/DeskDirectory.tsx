@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import type { DeskClientRow, DeskDirectoryPage, DeskIntake } from "@/lib/desk/read";
 import { formatStudioDateTime } from "@/lib/desk/time";
+import { ClockFallbackNotice } from "../ClockFallbackNotice";
 import { DESK_MAX_QUERY_LENGTH, DESK_MIN_QUERY_FOR_PAGING } from "@/lib/desk/read";
 import { searchDeskClientsAction, type DeskDirectoryState } from "./actions";
 
@@ -42,6 +43,7 @@ export function DeskDirectory({ initial, timezone }: { initial: DeskDirectoryPag
 
   return (
     <div className="flex flex-col gap-4">
+      {tz !== "" && <ClockFallbackNotice timezones={[tz]} />}
       <form
         action={action}
         aria-busy={pending}

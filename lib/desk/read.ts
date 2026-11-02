@@ -187,7 +187,7 @@ export async function readDeskSchedule(
       status: str(r.status) ?? "unknown",
       practitionerId: str(r.practitioner_id),
       durationMinutes: typeof r.duration_minutes === "number" && r.duration_minutes > 0 ? r.duration_minutes : null,
-      studioTimezone: str(r.studio_timezone) ?? "UTC",
+      studioTimezone: str(r.studio_timezone) ?? "", // empty = unreadable; the desk says so (ClockFallbackNotice)
       practitionerName: str(r.practitioner_display_name) ?? "Practitioner",
       serviceName: str(r.service_name) ?? "Appointment",
       displayName,

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireReceptionistWithStudio } from "@/lib/desk/guard";
 import type { DeskRpc } from "@/lib/desk/read";
+import { ClockFallbackNotice } from "../ClockFallbackNotice";
 import { readBookingOptions, readStudioTimezone, type BookingOptions } from "@/lib/desk/book";
 import { BookForm } from "./BookForm";
 
@@ -36,7 +37,10 @@ export default async function DeskBookPage() {
           Booking is unavailable right now. Try again in a moment.
         </p>
       ) : (
-        <BookForm options={options} timezone={timezone} />
+        <>
+          <ClockFallbackNotice timezones={[timezone]} />
+          <BookForm options={options} timezone={timezone} />
+        </>
       )}
     </div>
   );

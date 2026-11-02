@@ -73,6 +73,19 @@ export function studioLocalToInstant(date: string, time: string, tz: string): st
   }
 }
 
+/** True when Intl accepts the zone string. The formatters below fall back to UTC when it does not (Privacy D-1). */
+export function isUsableTimeZone(tz: string | null | undefined): boolean {
+  if (typeof tz !== "string" || tz.length === 0) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const CLOCK_FALLBACK_NOTICE = "This studio's clock could not be read, so times on this page are shown in UTC. Check them with the studio before relying on them.";
+
 /** "Mon, Mar 4, 3:00 PM" in the studio zone (falls back to UTC if the zone is unusable). */
 export function formatStudioDateTime(iso: string, tz: string): string {
   const ms = Date.parse(iso);
