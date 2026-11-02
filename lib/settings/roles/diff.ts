@@ -7,7 +7,7 @@ import {
   type Scope,
   type StudioPolicy,
 } from "@/lib/permissions/catalog";
-import { GROUP_LABELS } from "./model";
+import { groupLabel } from "./model";
 
 // Before/after for Reset to defaults, the existing-studio review and Save. PURE. It compares EFFECTIVE scopes (what is in force),
 // so a dependent that follows its prerequisite down shows as a change too, and a newly enabled sensitive key is flagged.
@@ -44,7 +44,7 @@ export function diffPolicies(role: Role, before: StudioPolicy, after: StudioPoli
       key: d.key,
       label: d.label,
       group: d.group,
-      groupLabel: GROUP_LABELS[d.group] ?? d.group,
+      groupLabel: groupLabel(d.group),
       from,
       to,
       direction: widens ? "widens" : "narrows",

@@ -34,6 +34,13 @@ export const GROUP_LABELS: Record<string, string> = {
   accepting_new_clients: "Accepting new clients",
 };
 
+// A group the catalog adds before this map learns it still reads as words, never as an id.
+export const groupLabel = (group: string): string => {
+  if (GROUP_LABELS[group]) return GROUP_LABELS[group];
+  const words = group.replace(/_/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 export const SCOPE_LABELS: Record<Scope, string> = { off: "Off", own: "Own assigned", studio: "Whole studio" };
 // A boolean key is Off / On: "Whole studio" means nothing for a switch.
 export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
@@ -115,7 +122,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         alsoSwitchesOff: dependents.map((x) => x.label),
       });
     }
-    if (rows.length > 0) out.push({ group, label: GROUP_LABELS[group] ?? group, rows });
+    if (rows.length > 0) out.push({ group, label: groupLabel(group), rows });
   }
   return out;
 }

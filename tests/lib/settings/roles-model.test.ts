@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleModel } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleModel, groupLabel } from "@/lib/settings/roles/model";
 import { defaultsPolicy, diffPolicies } from "@/lib/settings/roles/diff";
 import { validateRoleSubmission } from "@/lib/settings/roles/validate";
 
@@ -77,6 +77,13 @@ describe("Roles page model reads the one catalog", () => {
     expect(flagged.length).toBeGreaterThan(0);
     const rows = buildRoleModel("practitioner", snapshot).flatMap((g) => g.rows);
     for (const k of flagged) expect(rows.find((r) => r.key === k)!.futureBusiness, k).toBe(true);
+  });
+});
+
+describe("group labels", () => {
+  it("a group the map does not know yet still reads as words", () => {
+    expect(groupLabel("client_detail_groups")).toBe("Client detail groups");
+    expect(groupLabel("clients_identity")).toBe("Clients and identity");
   });
 });
 
