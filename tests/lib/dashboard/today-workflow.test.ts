@@ -411,7 +411,14 @@ describe("dashboard wiring", () => {
     expect(code).not.toMatch(/Caution noted:/);
     // Exactly one rendered Remember, Caution and Latest setup label.
     expect(code.match(/Remember: \{workflow\.remember\}/g) ?? []).toHaveLength(1);
-    expect(code.match(/Caution: \{workflow\.caution\}/g) ?? []).toHaveLength(1);
+    // The caution line now renders in RowSafetyLines (fed `caution={workflow.caution}` by the row): the page
+    // passes it once and the component renders it once.
+    expect(code.match(/workflow\.hasHistory \? workflow\.caution : null/g) ?? []).toHaveLength(1);
+    expect(code).not.toMatch(/Caution: \{workflow\.caution\}/);
+    const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(safety.match(/Caution: \{caution\}/g) ?? []).toHaveLength(1);
     expect(
       code.match(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/g) ?? [],
     ).toHaveLength(1);

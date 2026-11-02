@@ -17,6 +17,12 @@ import type { DashboardTodoItem } from "@/lib/dashboard/todo-model";
 
 export const NEEDS_ATTENTION_COMPACT_COUNT = 6;
 
+// "a", "a and b", "a, b and c".
+function joinChecks(checks: ReadonlyArray<string>): string {
+  if (checks.length <= 1) return checks.join("");
+  return `${checks.slice(0, -1).join(", ")} and ${checks[checks.length - 1]}`;
+}
+
 const ACTION_CLASS =
   "shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900";
 
@@ -147,7 +153,7 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
         data-testid="needs-attention-unavailable"
         className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
       >
-        Could not check {needs.unavailableChecks.join(" and ")} just now, so
+        Could not check {joinChecks(needs.unavailableChecks)} just now, so
         this list may be incomplete. Reload to try again.
       </p>
     ) : null;

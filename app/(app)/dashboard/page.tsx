@@ -125,6 +125,7 @@ import {
   type CardOnFileStatus,
 } from "@/lib/payment-methods/card-on-file";
 import { CardOnFilePill, CurrentPill } from "./today-status-pills";
+import { RowSafetyLines } from "./row-safety-lines";
 import { TodayPortalLinkButton } from "./TodayPortalLinkButton";
 import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
@@ -1259,7 +1260,7 @@ function AppointmentRow({
     <div
       data-testid={isCurrent ? "today-current-row" : undefined}
       data-current={isCurrent ? "true" : undefined}
-      className={`flex flex-wrap items-start justify-between gap-3 py-4 pr-4 ${
+      className={`flex flex-wrap items-start gap-x-3 gap-y-0 py-2 pr-4 lg:items-center ${
         isCurrent
           ? "border-l-4 border-l-blue-500 bg-blue-50 pl-3 hover:bg-blue-100/70 dark:border-l-blue-400 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
           : "pl-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
@@ -1286,7 +1287,11 @@ function AppointmentRow({
           same text column (pl-24 = the w-20 time cell + the gap-4), which
           is where it already appeared. The row body still opens the
           appointment; the disclosure is simply no longer part of it. */}
-      <div className="flex min-w-0 flex-1 basis-64 flex-col">
+      {/* COMPACT LAYOUT. The row body, the visit-details disclosure and the Open action are flex siblings of
+          ONE wrapping row. On a wide screen they share a single band (body | Visit details | Open) so the
+          44px disclosure trigger adds no height of its own; on a phone the body is one full-width line and
+          the disclosure and Open share the next. An OPEN disclosure takes the full width and drops below
+          (open:order-3 open:basis-full), so its content is never squeezed beside the button. */}
         {/* UI-01C: PendingContainerLink, not Link. This is the LAST navigation
             on the Dashboard with no acknowledgement, and it was deliberately
             left out of UI-01A/B because the shipped PendingLink could not
@@ -1303,7 +1308,7 @@ function AppointmentRow({
           href={`/calendar/${appt.id}`}
           data-testid="today-row-body"
           pendingLabel="Opening appointment…"
-          className="flex min-w-0 gap-4"
+          className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"
         >
           <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
             <span>{time}</span>
@@ -1313,7 +1318,7 @@ function AppointmentRow({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2">
-              <span className="truncate font-medium">
+              <span className="truncate text-sm font-medium leading-5">
                 {appt.client ? clientDisplayName(appt.client) : "Client deleted"}
               </span>
               {isCurrent && <CurrentPill />}
@@ -1333,10 +1338,13 @@ function AppointmentRow({
                   {nextAction.chip}
                 </span>
               )}
+              {/* Closed-state row (Insurance D-1): the intake status stays on the collapsed row, inline on
+                  the name line where it fits (it wraps below the name when it does not). */}
+              <IntakePill status={intakeStatus} />
             </div>
             {/* COMPACT ROW: service · modality · duration · practitioner on ONE line; allergy flag stays
                 visible; everything else about the visit is in the details below the row. */}
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 text-neutral-500">
               {/* A flex item: min-w-0 + overflow-wrap:anywhere let an unbroken service name wrap inside the card
                   (break-words alone does not lower a flex item's min-content width). */}
               <span className="min-w-0 break-words [overflow-wrap:anywhere]">
@@ -1367,56 +1375,14 @@ function AppointmentRow({
                   Allergies
                 </span>
               )}
-              {/* Closed-state row (Insurance D-1): the intake status stays on the collapsed row. */}
-              <IntakePill status={intakeStatus} />
             </div>
-            {pinnedNotes && pinnedNotes.length > 0 && (
-              /* EVERY pinned note, newest first. This used to render one
-                 truncated 50-character line, so a practitioner who pinned three
-                 notes saw one and could not tell the others were there. Each
-                 note is its own row and wraps rather than truncating: a pinned
-                 note is something the practitioner chose to keep in front of
-                 themselves, so hiding its second half defeats the point.
-                 `break-words` + `min-w-0` keep long notes from forcing the
-                 roster to scroll sideways on a phone. */
-              <div className="mt-1 flex min-w-0 flex-col gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                  Pinned
-                </span>
-                <ul className="flex min-w-0 flex-col gap-0.5">
-                  {pinnedNotes.map((note) => (
-                    <li
-                      key={note.id}
-                      className="min-w-0 whitespace-pre-wrap break-words text-xs text-amber-800 dark:text-amber-300"
-                    >
-                      {note.text}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {/* Closed-state row (Insurance D-1): the caution/watch line, FULL text, wrapped, never inside
-                the details. Only when the Before-Today read answered and there is history. */}
-            {/* Insurance E-1: when the Before-Today read FAILED the compact row says so, in the profile's own
-                words. Without it the absent caution line reads as "no caution", a clinical absence nobody
-                read. Same truthfulness rule as the profile's "Unavailable". */}
-            {(workflow ? workflow.unavailable : prepSummary.unavailable) && (
-              <span
-                data-testid="today-row-unavailable"
-                className="mt-1 block text-xs text-neutral-500"
-              >
-                {CLINICAL_UNAVAILABLE_HEADLINE}
-              </span>
-            )}
-            {workflow && !workflow.unavailable && workflow.hasHistory && workflow.caution && (
-              <span
-                data-testid="today-row-caution"
-                className="mt-1 block whitespace-pre-wrap break-words text-xs text-rose-900 dark:text-rose-200"
-                title={workflow.caution}
-              >
-                Caution: {workflow.caution}
-              </span>
-            )}
+            {/* The lines that must stay visible on the CLOSED row (Insurance D-1/E-1): every pinned note in
+                full, the failed-read marker, and the caution/watch line. They add only their own height. */}
+            <RowSafetyLines
+              pinnedNotes={pinnedNotes}
+              unavailable={workflow ? workflow.unavailable : prepSummary.unavailable}
+              caution={workflow && !workflow.unavailable && workflow.hasHistory ? workflow.caution : null}
+            />
           </div>
         </PendingContainerLink>
         {/* COMPACT ROW (fidelity C): everything beyond time, name, service, practitioner, status, the
@@ -1424,16 +1390,19 @@ function AppointmentRow({
             default. Nothing was deleted: Before-Today memory, latest setup, last treatment, consultation
             notes, review intake and the portal link are all inside. It is a SIBLING of the row-body link,
             never inside it (CHLOE D1). */}
-        <details data-testid="today-row-details" className="pl-24 [&_summary::-webkit-details-marker]:hidden">
-          <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-xs font-medium text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
+        <details
+          data-testid="today-row-details"
+          className="order-1 open:order-3 open:basis-full [&_summary::-webkit-details-marker]:hidden"
+        >
+          <summary className="inline-flex min-h-[44px] cursor-pointer flex-col justify-center text-xs font-medium leading-4 text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
             Visit details
             {(workflow?.remember || prepSummary.remember) && (
-              <span data-testid="today-row-plan-cue" className="font-normal text-neutral-500">
-                {" · "}Plan note on record
+              <span data-testid="today-row-plan-cue" className="text-[11px] font-normal text-neutral-500">
+                Plan note on record
               </span>
             )}
           </summary>
-          <div className="flex flex-col gap-1.5 pb-2">
+          <div className="flex flex-col gap-1.5 pb-2 pl-[5.75rem]">
             {/* PREPARATION: the facts that used to be split across the Today
                 row and the Daily Prep Brief, now resolved ONCE by
                 buildTodayWorkflow and rendered once here. Nothing below repeats
@@ -1644,12 +1613,11 @@ function AppointmentRow({
         </div>
           </div>
         </details>
-      </div>
       {/* ONE compact appointment footer. `gap-1` and `self-start` replace
           `gap-2` + `self-center`: on a phone this column wraps onto its own
           full-width line, where centring it against a tall text column opened
           dead space above and below with nothing in it. */}
-      <div className="flex w-full flex-col items-start gap-1 self-start pl-24 sm:w-auto sm:items-end sm:pl-0">
+      <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-2">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}
         {isOwner && (

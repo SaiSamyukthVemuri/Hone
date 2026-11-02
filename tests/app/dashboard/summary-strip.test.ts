@@ -145,7 +145,7 @@ describe("panel headers share one top edge (fidelity B)", () => {
     expect(page).toMatch(/<NeedsAttentionCountPill/);
     expect(stack).toMatch(/clients\.length[\s\S]{0,400}needs-attention-count-pill|needs-attention-count-pill[\s\S]{0,400}clients/);
     expect(stack).toMatch(/async function ClientCountPillValue[\s\S]*?resolveClientReviewCount\(props\)/);
-    expect(stack).toMatch(/async function resolveClientReviewCount[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)[\s\S]*?"intake review"[\s\S]*?\.clients\.length/);
+    expect(stack).toMatch(/async function resolveClientReviewCount[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)[\s\S]*?STUDIO_ONLY_CHECKS[\s\S]*?\.clients\.length/);
   });
 });
 
@@ -197,35 +197,39 @@ describe("compact appointment rows (fidelity C)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   const row = page.slice(page.indexOf("function AppointmentRow("), page.indexOf("function AppointmentStatusPill("));
   const link = row.slice(row.indexOf("<PendingContainerLink"), row.indexOf("</PendingContainerLink>"));
-  const details = row.slice(row.indexOf('<details data-testid="today-row-details"'), row.indexOf("</details>"));
+  const details = row.slice(row.indexOf('<details\n          data-testid="today-row-details"'), row.indexOf("</details>"));
+  // The pinned note, failed-read marker and caution line live in RowSafetyLines (rendered INSIDE the row-body link).
+  const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8");
   it("the collapsed row keeps time+end, name, service, practitioner, status, pinned note and allergy flag", () => {
-    for (const marker of ["today-row-end-time", "clientDisplayName", "serviceName", "performerName", "AppointmentStatusPill", "Allergies", "Pinned"]) {
+    for (const marker of ["today-row-end-time", "clientDisplayName", "serviceName", "performerName", "AppointmentStatusPill", "Allergies", "<RowSafetyLines"]) {
       expect(link).toContain(marker);
     }
+    expect(safety).toContain("Pinned");
+    expect(details.length).toBeGreaterThan(100);
   });
   it("Insurance D-1: the closed row also shows the caution line (full, wrapped) and the intake pill; a plan note is a cue", () => {
     expect(link).toContain("<IntakePill");
     expect(details).not.toContain("<IntakePill");
-    expect(link).toMatch(/data-testid="today-row-caution"[\s\S]{0,200}whitespace-pre-wrap break-words/);
-    expect(link).toContain("Caution: {workflow.caution}");
-    expect(details).not.toContain("Caution: {workflow.caution}");
+    expect(safety).toMatch(/data-testid="today-row-caution"[\s\S]{0,200}whitespace-pre-wrap break-words/);
+    expect(safety).toContain("Caution: {caution}");
+    expect(details).not.toContain("Caution:");
     expect(row).toMatch(/data-testid="today-row-plan-cue"[\s\S]{0,160}Plan note on record/);
     // the plan note itself, last treatment, setup, chips, previous-treatment strip stay inside
     for (const m of ["Remember: {workflow.remember}", "Latest setup:", "missing-record-chip", "<DashboardTreatmentMemory"]) expect(details).toContain(m);
   });
   it("Insurance E-1: a failed Before-Today read says so ON the compact row, never as a silently absent caution", () => {
-    expect(link).toMatch(/\(workflow \? workflow\.unavailable : prepSummary\.unavailable\) && \(/);
-    expect(link).toMatch(/data-testid="today-row-unavailable"[\s\S]{0,160}\{CLINICAL_UNAVAILABLE_HEADLINE\}/);
+    expect(link).toMatch(/unavailable=\{workflow \? workflow\.unavailable : prepSummary\.unavailable\}/);
+    expect(safety).toMatch(/\{unavailable && \(\s*<span data-testid="today-row-unavailable"[\s\S]{0,160}\{CLINICAL_UNAVAILABLE_HEADLINE\}/);
     // the marker sits before the caution line and is not gated on history or caution
-    expect(link.indexOf("today-row-unavailable")).toBeLessThan(link.indexOf("today-row-caution"));
+    expect(safety.indexOf("today-row-unavailable")).toBeLessThan(safety.indexOf("today-row-caution"));
     // and it is not the same node as the details' own line
     expect(details).toContain("today-before-today-unavailable");
     expect(details).not.toContain("today-row-unavailable");
     // the caution line itself still refuses to render off a failed read
-    expect(link).toMatch(/workflow && !workflow\.unavailable && workflow\.hasHistory && workflow\.caution/);
+    expect(link).toMatch(/caution=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.caution : null\}/);
   });
   it("the pinned note TEXT is visible and wrapped in the collapsed row, never truncated or inside details", () => {
-    expect(link).toMatch(/whitespace-pre-wrap break-words[\s\S]{0,120}\{note\.text\}/);
+    expect(safety).toMatch(/whitespace-pre-wrap break-words[\s\S]{0,120}\{note\.text\}/);
     expect(details).not.toContain("note.text");
   });
   it("everything else is MOVED into the details, not deleted", () => {
@@ -236,7 +240,8 @@ describe("compact appointment rows (fidelity C)", () => {
   });
   it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and closed by default", () => {
     expect(row.indexOf("</PendingContainerLink>")).toBeLessThan(row.indexOf("<details"));
-    expect(row).not.toMatch(/<details[^>]*\bopen\b/);
+    // the `open` ATTRIBUTE, not the open: class variant that places an expanded disclosure below the row
+    expect(row).not.toMatch(/<details(?:\s[^>]*)?\sopen(?:[\s=>])/);
     expect(link).not.toMatch(/<details|<summary/);
   });
   it("the card-on-file pill stays owner-only, and non-owners get no card read (#1309)", () => {

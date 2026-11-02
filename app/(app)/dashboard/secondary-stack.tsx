@@ -533,6 +533,46 @@ type NeedsAttentionInputs = {
   todayLocal: string;
 };
 
+// Named unavailable checks of the Needs attention panel. Only payment setup and expiring supplies add
+// studio items; every other check contributes client cards, so a count taken without one is not a count.
+const UNAVAILABLE_INTAKE_REVIEW = "intake review";
+const UNAVAILABLE_PAYMENT_SETUP = "payment setup";
+const UNAVAILABLE_RECENT_SESSIONS = "recent sessions";
+const UNAVAILABLE_MISSING_RECORDS = "missing records";
+const UNAVAILABLE_RECORD_DETAILS = "record details";
+const UNAVAILABLE_EXPIRING_SUPPLIES = "expiring supplies";
+const STUDIO_ONLY_CHECKS: ReadonlySet<string> = new Set([UNAVAILABLE_PAYMENT_SETUP, UNAVAILABLE_EXPIRING_SUPPLIES]);
+
+const EMPTY_PROCEDURE_ACTIONS: ProcedureActionMetrics = {
+  reviewedSessions: 0,
+  incompleteRecords: 0,
+  missingProbeLots: 0,
+  aftercareNotMarked: 0,
+  recordsMissingDetails: 0,
+  detailGaps: [],
+};
+const EMPTY_CLIENTS_NEEDING_ATTENTION: Awaited<ReturnType<typeof getClientsNeedingAttention>> = {
+  totalClients: 0,
+  clients: [],
+  scanCapped: false,
+};
+const EMPTY_FOLLOW_UP_ASSISTANT: Awaited<ReturnType<typeof getMissingRecordsAssistant>> = {
+  items: [],
+  hasItems: false,
+  totalFound: 0,
+};
+
+async function settleOrUnavailable<T>(
+  promise: Promise<T>,
+  fallback: T,
+): Promise<{ value: T; unavailable: boolean }> {
+  try {
+    return { value: await promise, unavailable: false };
+  } catch {
+    return { value: fallback, unavailable: true };
+  }
+}
+
 // The ONE place the Needs Attention model's input is resolved. The panel and the summary strip's "Clients to
 // review" both call it with the same already-started promises, so the strip's number IS the panel's
 // client count by construction (it reads `.clients.length` of this model), and no read is added.
@@ -554,11 +594,23 @@ async function resolveNeedsAttentionInput({
   const paymentUnavailable = paymentStatusRead === CHECK_UNAVAILABLE;
   const paymentStatus = paymentUnavailable ? null : paymentStatusRead;
   const staffManaged = await staffManagedPromise;
-  const procedureActions = await procedureActionsPromise;
+  // ONE FAILING LOADER NEVER TAKES THE PAGE DOWN. Each of these used to be awaited bare, so a rejection
+  // threw out of this async component and fell to the route error boundary, replacing the whole
+  // dashboard. Each now fails into its OWN named unavailable check: an empty fallback plus that
+  // name, which the panel states and which the client count treats as unavailable. An empty fallback
+  // without the name would read as "nothing to follow up", so the two always travel together.
+  const procedureActionsRead = await settleOrUnavailable(procedureActionsPromise, EMPTY_PROCEDURE_ACTIONS);
+  const procedureActions = procedureActionsRead.value;
   const upcomingVisitClients = await upcomingVisitClientsPromise;
-  const clientsNeedingAttention = await clientsNeedingAttentionPromise;
-  const followUpAssistant = await followUpAssistantPromise;
-  const expiringSupplies = await expiringSuppliesPromise;
+  const clientsNeedingAttentionRead = await settleOrUnavailable(
+    clientsNeedingAttentionPromise,
+    EMPTY_CLIENTS_NEEDING_ATTENTION,
+  );
+  const clientsNeedingAttention = clientsNeedingAttentionRead.value;
+  const followUpAssistantRead = await settleOrUnavailable(followUpAssistantPromise, EMPTY_FOLLOW_UP_ASSISTANT);
+  const followUpAssistant = followUpAssistantRead.value;
+  const expiringSuppliesRead = await settleOrUnavailable(expiringSuppliesPromise, []);
+  const expiringSupplies = expiringSuppliesRead.value;
 
   const dashboardTodo = buildDashboardTodo({
     assistant: followUpAssistant,
@@ -580,8 +632,12 @@ async function resolveNeedsAttentionInput({
     intakesAwaitingReview,
     todo: dashboardTodo,
     unavailableChecks: [
-      ...(intakesUnavailable ? ["intake review"] : []),
-      ...(paymentUnavailable ? ["payment setup"] : []),
+      ...(intakesUnavailable ? [UNAVAILABLE_INTAKE_REVIEW] : []),
+      ...(paymentUnavailable ? [UNAVAILABLE_PAYMENT_SETUP] : []),
+      ...(clientsNeedingAttentionRead.unavailable ? [UNAVAILABLE_RECENT_SESSIONS] : []),
+      ...(followUpAssistantRead.unavailable ? [UNAVAILABLE_MISSING_RECORDS] : []),
+      ...(procedureActionsRead.unavailable ? [UNAVAILABLE_RECORD_DETAILS] : []),
+      ...(expiringSuppliesRead.unavailable ? [UNAVAILABLE_EXPIRING_SUPPLIES] : []),
     ],
     treatmentMemoryNotReturned:
       clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
@@ -609,14 +665,15 @@ export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
  */
 /**
  * The client count both the strip and the header pill show, from the SAME model as the panel. It is
- * null (rendered "Unavailable") when the read failed OR when the intake-review check could not run:
- * intake review contributes client cards, so a count taken without it could say 0 while someone
- * needs review. The payment-setup check only adds a studio item and does not change this count.
+ * null (rendered "Unavailable") when the read failed OR when any check that contributes client cards
+ * could not run (intake review, recent sessions, missing records, record details): a count taken
+ * without one could say 0 while someone needs review. Payment setup and expiring supplies only add
+ * studio items and do not change this count.
  */
 async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | null> {
   try {
     const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
-    return model.unavailableChecks.includes("intake review") ? null : model.clients.length;
+    return model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c)) ? null : model.clients.length;
   } catch {
     return null;
   }

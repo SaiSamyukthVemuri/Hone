@@ -910,7 +910,8 @@ for (const width of CARD_WIDTHS) {
       const m = await page.evaluate(() => {
         const rowBody = document.querySelector('[data-testid="today-row-body"]');
         if (!rowBody) return { error: "no today-row-body" } as const;
-        const card = rowBody.parentElement!.parentElement!;
+        // The row body is a direct child of the card since the compact-row layout (no left column wrapper).
+        const card = rowBody.parentElement!;
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
         const beforeToday =
@@ -1107,7 +1108,7 @@ for (const width of HOSTILE_WIDTHS) {
         const textCol = rowBody.children[1] as HTMLElement;
         const rg = document.createRange();
         rg.selectNodeContents(timeCell.firstElementChild ?? timeCell);
-        const card = rowBody.parentElement!.parentElement!.getBoundingClientRect();
+        const card = rowBody.parentElement!.getBoundingClientRect();
         const acts = [
           ...document.querySelectorAll(
             '[data-testid="today-next-action"],[data-testid="today-consultation-notes"]',
