@@ -54,11 +54,11 @@ function calls(): Call[] {
 
 const WRITES = new Set(["receptionist_create_appointment", "receptionist_cancel_appointment", "receptionist_move_appointment"]);
 
-/** Refused = the call raises (42501 or any error) or answers only 'not_authorized' / nothing. */
+/** Refused = the call raises (42501 or any error) or answers only 'not_authorized' (cancel returns a bare text column, create/move a `result` column). */
 async function outcome(call: Call, uid: string): Promise<"refused" | "gate-passed"> {
   try {
     const r = await call.run(uid);
-    if (WRITES.has(call.name)) return r.rows.length > 0 && r.rows.every((row) => row.result === "not_authorized") ? "refused" : "gate-passed";
+    if (WRITES.has(call.name)) return r.rows.length > 0 && r.rows.every((row) => (row.result ?? Object.values(row)[0]) === "not_authorized") ? "refused" : "gate-passed";
     return "gate-passed";
   } catch {
     return "refused";
