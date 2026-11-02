@@ -132,3 +132,23 @@ describe("identity fields are guarded together (Codex P2: the checked combinatio
     ]);
   });
 });
+
+describe("guard conflict, then Save again (Insurance Q-3)", () => {
+  it("after the guard field is adopted, the same edit saves with no conflict against the stored row", () => {
+    const edit = { name: "Dana R. Reyes" };
+    const plan = planProfileUpdate(fd(edit), LOADED);
+    if (!plan.ok) throw new Error("plan");
+    // Someone else moved the phone after this page loaded.
+    const stored = { name: "Dana Reyes", phone: "604-555-0199", date_of_birth: "1990-01-02" };
+    const conflicts = describeConflicts(plan, stored);
+    expect(conflicts).toEqual([{ key: "phone", label: "Phone", current: "604-555-0199", yours: "604-555-0100", guard: true }]);
+    // The form adopts the current value (never writes the old one back) and the person presses Save again.
+    const adopted = adoptCurrent(LOADED, conflicts);
+    expect(adopted.phone).toBe("604-555-0199");
+    const again = planProfileUpdate(fd({ ...edit, phone: "604-555-0199" }), adopted);
+    if (!again.ok) throw new Error("plan again");
+    expect(again.patch).toEqual({ name: "Dana R. Reyes" });
+    expect(again.conditions).toContainEqual({ key: "phone", value: "604-555-0199", guard: true });
+    expect(describeConflicts(again, stored)).toEqual([]);
+  });
+});
