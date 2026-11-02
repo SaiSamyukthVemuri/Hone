@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { isDeskEnabled, isDeskPath } from "@/lib/desk/flag";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -176,9 +177,18 @@ export async function updateSession(request: NextRequest) {
   // but MUST be reachable by a signed-in user who has a pending invitation and
   // no active membership yet (the existing-account reconciliation path), so it
   // is exempt from the no-studio gate, like /no-access itself.
+  // The receptionist desk (Privacy R3). Only while the desk flag is ON, /desk is exempt from the
+  // practitioner gate below: a receptionist-only user has no practitioners row, so the gate would
+  // send them to /no-access before the desk layout could resolve them. Authentication above still
+  // applies, and the exemption grants NOTHING: every desk page, layout and action resolves an
+  // ACTIVE receptionist row itself (lib/desk/guard.ts) and the database refuses everyone else.
+  // Flag off (the default), /desk follows the ordinary gate and the desk guard answers 404.
+  const isDeskRoute = isDeskEnabled() && isDeskPath(pathname);
+
   if (
     user &&
     !isPublicRoute &&
+    !isDeskRoute &&
     pathname !== "/no-access" &&
     pathname !== "/accept-invitation"
   ) {

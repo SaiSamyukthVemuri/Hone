@@ -234,6 +234,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner receptionist management: revoke access via the locked set_studio_receptionist_active command (0216).",
+    why: "removeReceptionistAccessAction resolves the active owner + studio server-side (getCurrentPractitionerWithStudio, role owner, active) then calls the service-role-only locked RPC with the server-derived studio and owner ids and a uuid-validated receptionist id; the RPC re-validates active-owner and same-studio target. The invite action uses the session client only.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/settings/payments/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

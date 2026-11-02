@@ -5,6 +5,7 @@ import {
   identifyServerUser,
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
+import { deskHomeFor, type HomeSupabase } from "@/lib/desk/home";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -62,6 +63,19 @@ export async function GET(request: Request) {
         }
       } catch {
         // Never block sign-in on reconciliation.
+      }
+
+      // Receptionist landing (Privacy R3/R4). Only when the ordinary destination is the dashboard
+      // and the desk flag is on: a user whose ONLY membership is an active receptionist row lands on
+      // /desk. A practitioner membership anywhere always keeps /dashboard, and with the flag off this
+      // makes no read at all (lib/desk/home.ts). It must never block sign-in.
+      if (dest === "/dashboard") {
+        try {
+          const home = await deskHomeFor(supabase as unknown as HomeSupabase, data.user.id);
+          if (home) dest = home;
+        } catch {
+          // keep the ordinary landing
+        }
       }
 
       // Treat the caller's destination as a path, never an origin suffix.
