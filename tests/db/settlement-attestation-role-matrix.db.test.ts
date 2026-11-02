@@ -165,13 +165,13 @@ describe("waive and supersede are owner-only; the service-role-only commands are
     expect(live.rows.map((x) => x.method)).toEqual(["paid_cash"]);
     const ctl = await rpc(jwt(ownerSc.practitionerUserId), "supersede_appointment_settlement", args());
     note("supersede_appointment_settlement", "owner", ctl);
-    expect(resultOf(ctl)).toBe("superseded");
+    expect(resultOf(ctl)).toBe("corrected");
   });
 
   it("reconcile_card_payment_succeeded and claim_session_payment_charge_attempt are service_role-only: no session role may execute them", async () => {
     const probes: Array<[string, Record<string, unknown>]> = [
-      ["reconcile_card_payment_succeeded", { p_studio_id: sc.studioId, p_payment_intent_id: "pi_synthetic", p_event_id: "evt_synthetic" }],
-      ["claim_session_payment_charge_attempt", { p_studio_id: sc.studioId, p_session_id: randomUUID(), p_idempotency_key: "synthetic" }],
+      ["reconcile_card_payment_succeeded", { p_attempt_id: randomUUID(), p_stripe_payment_intent_id: "pi_synthetic", p_stripe_charge_id: "ch_synthetic" }],
+      ["claim_session_payment_charge_attempt", { p_attempt_id: randomUUID(), p_practitioner_id: randomUUID(), p_idempotency_key: "synthetic" }],
     ];
     for (const [fn, args] of probes) {
       for (const who of ["owner", ...NEGATIVE] as Who[]) {
@@ -182,7 +182,7 @@ describe("waive and supersede are owner-only; the service-role-only commands are
     }
   });
 
-  it("catalog: only the three commands are executable by `authenticated`; none by anon", async () => {
+  it("catalog: exactly the three owner-gated commands are executable by `authenticated`; none by anon", async () => {
     const rows = (await adminQuery(
       `select p.proname, has_function_privilege('authenticated', p.oid, 'execute') as auth_exec, has_function_privilege('anon', p.oid, 'execute') as anon_exec
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -191,6 +191,8 @@ describe("waive and supersede are owner-only; the service-role-only commands are
     for (const r of rows) evidence.push({ surface: `catalog:${r.proname}`, role: "practitioner", outcome: `authenticated_exec=${r.auth_exec}`, status: 0 });
     expect(rows.filter((r) => r.anon_exec)).toEqual([]);
     const authed = rows.filter((r) => r.auth_exec).map((r) => r.proname);
-    expect(authed).toEqual(expect.arrayContaining(["record_appointment_settlement", "supersede_appointment_settlement", "waive_appointment_fee"]));
+    // Exactly the three owner-gated commands; the probes above prove they refuse every non-owner, and a 404/42501 on the
+    // service-role-only ones is only meaningful because this catalog check proves no session role holds EXECUTE on them.
+    expect([...authed].sort()).toEqual(["record_appointment_settlement", "supersede_appointment_settlement", "waive_appointment_fee"]);
   });
 });
