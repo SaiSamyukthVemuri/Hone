@@ -235,7 +235,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // lane lists them and executes nothing.
     // Now 47: Insurance PEER-1308 D-4's dashboard-closed-row.spec.ts joined `sessions` with the other Today-roster specs.
     // RECORDED AS A DECISION per the note above. Cost: ONE case, a few seconds (one seeded client, one page load, one click).
-        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(47);
+    // Now 48: #1308's dashboard-phone-overflow.spec.ts joined `sessions` with the other Today-roster specs.
+    // RECORDED AS A DECISION per the note above. Cost: FIVE executed cases (320 and 390 x owner and practitioner, plus one
+    // five-tap navigation case), each a seeded studio, a magic-link login and a page load or a few.
+        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(48);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
