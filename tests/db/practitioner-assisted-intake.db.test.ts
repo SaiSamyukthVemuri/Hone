@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import {
   adminQuery,
   adminTx,
@@ -89,6 +90,23 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
+// The 0274 desk directory's source hash, read from the migration file (frozen once applied) so the
+// reviewed-delegate pin follows the reviewed text. Absent file = no second delegate is allowed.
+function deskDirectorySha(): string | null {
+  const path = "supabase/migrations/0274_receptionist_desk_projection.sql";
+  if (!existsSync(path)) return null;
+  const src = readFileSync(path, "utf8");
+  const start = src.indexOf("create function public.receptionist_client_directory(");
+  if (start < 0) return null;
+  const open = src.indexOf("as $$", start) + "as $$".length;
+  const close = src.indexOf("$$;", open);
+  return createHash("sha256").update(src.slice(open, close), "utf8").digest("hex");
+}
+const DESK_DIRECTORY_SHA_VALUE = deskDirectorySha() ?? "absent";
+const DESK_DIRECTORY_SHA = `'${DESK_DIRECTORY_SHA_VALUE}'`;
+const DESK_DIRECTORY_SIGNATURE =
+  "'public.receptionist_client_directory(pg_catalog.uuid,pg_catalog.text,pg_catalog.text[],pg_catalog.text,pg_catalog.int4,pg_catalog.int4)'";
+
 describe("1. authorized assisted entry uses the governed draft command", () => {
   it("writes questionnaire answers AND the reserved provenance key", async () => {
     const id = await seedIntake(A, "in_progress");
@@ -459,6 +477,7 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         and p.oid<>'public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
         and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
       and (
+       (
         p.oid = pg_catalog.to_regprocedure('public.receptionist_client_contacts(pg_catalog.uuid,pg_catalog.text,pg_catalog.int4)')
         and p.proowner = (select w.proowner from pg_catalog.pg_proc w where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure) and p.provolatile = 's' and p.prokind = 'f'
         and p.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'plpgsql')
@@ -489,11 +508,49 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
             (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
             or (a.grantee <> p.proowner and a.is_grantable))
         )
+       )
+       or (
+        -- 0274 (held): the desk directory. Reviewed delegate #2: exact signature, owner, language,
+        -- volatility, search_path and SOURCE HASH (read from the migration file, which is frozen once
+        -- applied), callable by authenticated only, no grant option, no other grantee.
+        p.oid = pg_catalog.to_regprocedure(${DESK_DIRECTORY_SIGNATURE})
+        and p.proowner = (select w.proowner from pg_catalog.pg_proc w where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure) and p.provolatile = 's' and p.prokind = 'f'
+        and p.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'plpgsql')
+        and p.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+        and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') = ${DESK_DIRECTORY_SHA}
+        and pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+        and not exists (
+          select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+          where a.privilege_type = 'EXECUTE' and (a.grantee not in
+            (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
+            or (a.grantee <> p.proowner and a.is_grantable))
+        )
+       )
       ) is not true
         and (pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE')
           or pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE')
           or pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE'))`);
     expect(delegates).toEqual([]);
+  });
+
+  it("the reviewed intake-reading definers are exactly v1 (closed by 0266) and the 0274 directory, by source hash", async () => {
+    const { rows } = await adminQuery(`select p.oid::regprocedure::text as signature,
+        pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') as sha
+      from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.prosecdef
+        and p.oid<>'public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
+        and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
+        and p.proname like 'receptionist\\_%'
+      order by 1`);
+    // regprocedure text drops the schema when public is on the search_path.
+    const bare = (signature: unknown) => String(signature).replace(/^public\./, "");
+    const names = rows.map((r) => bare(r.signature).split("(")[0]);
+    // On a chain without 0274 the directory function is absent; with it, it is the only addition.
+    expect(names.every((n) => n === "receptionist_client_contacts" || n === "receptionist_client_directory")).toBe(true);
+    const directory = rows.find((r) => bare(r.signature).startsWith("receptionist_client_directory("));
+    if (directory) expect(directory.sha).toBe(DESK_DIRECTORY_SHA_VALUE);
   });
 
   it("additive0243 keeps legacy writes available and invalidates stale CAS before later0248 closure", async () => {
@@ -536,6 +593,14 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     await adminTx(async (q) => {
       // Positive actual full-chain context first; mutants live only inside
       // this transaction/savepoint and cannot alter another test's catalog.
+      // The reviewed 0274 delegate (pinned above by source hash and ACL) postdates the frozen 0248 block;
+      // close it, inside a savepoint that is rolled back at the end of this test (adminTx commits),
+      // so the block is replayed in its historical context.
+      await q("savepoint desk_closed");
+      await q(`do $$ begin
+        if to_regprocedure(${DESK_DIRECTORY_SIGNATURE}) is not null then
+          execute 'revoke execute on function public.receptionist_client_directory(uuid,text,text[],text,integer,integer) from authenticated';
+        end if; end $$`);
       await q(preflight);
       await q("savepoint delegate_negative");
       try {
@@ -549,6 +614,19 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         } else if (change === "writer grant option") {
           await q("grant execute on function public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb) to service_role with grant option");
         } else {
+          // FORWARD TRAP (Insurance PEER-0266-0248-PREFLIGHT P1): this replays the frozen 0248
+          // DO-block at the chain head, and it refuses ANY callable definer that mentions
+          // client_intake_forms and is not the exact reviewed v1. The desk's intake/consent
+          // completion facts were served only by v1, which 0266 closes, so the held desk branch
+          // will need a NEW reviewed command that reads client_intake_forms. When it lands this
+          // test goes red at the head. 0248 cannot be edited: move the reviewed-definer list into
+          // an allowlist test (source sha + exact ACL) BEFORE that command is written, so adding
+          // one definer is a reviewed diff, not a loosening of this test.
+          // 0266 revokes EXECUTE on the v1 finder from every role, which correctly takes it out of
+          // the preflight's "callable intake definer" set. The mutant must therefore be callable
+          // again for the preflight to be asked about its body or its helper; this grant lives only
+          // inside the rolled-back savepoint and changes nothing on a chain without 0266.
+          await q("grant execute on function public.receptionist_client_contacts(uuid,text,integer) to authenticated");
           const signature = change === "changed transitive helper"
             ? "public.receptionist_actor_id(uuid)" : "public.receptionist_client_contacts(uuid,text,integer)";
           const { rows: [row] } = await q("select pg_catalog.pg_get_functiondef($1::regprocedure) as definition", [signature]);
@@ -564,6 +642,8 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         await q("rollback to savepoint delegate_negative");
       }
       await q(preflight);
+      // adminTx COMMITS: put the reviewed 0274 delegate back for every later test in this database.
+      await q("rollback to savepoint desk_closed");
     });
   });
 

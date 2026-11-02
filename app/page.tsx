@@ -362,8 +362,8 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* ── 7. Plans in Canadian dollars ──────────────────────────────────
-            Three columns because Hone has three plans, sharing ONE top rule
+        {/* ── 7. Plans in US dollars (USD) ──────────────────────────────────
+            Three columns because Hone shows three tiers, sharing ONE top rule
             and one baseline, divided by hairlines. A price list, not three
             cards competing for a click, and no plan is marked as recommended. */}
         <Section tone="warm" id="pricing">
@@ -386,7 +386,7 @@ export default function HomePage() {
                   <Subtitle as="h3">{plan.name}</Subtitle>
                   <p className="mt-3">
                     <span className="text-[1.75rem] font-semibold text-ink">
-                      {plan.priceLabel ?? "Talk to us"}
+                      {plan.priceLabel ?? "Contact us"}
                     </span>
                     {plan.cadence ? (
                       <span className="text-[0.9375rem] text-muted">{plan.cadence}</span>
