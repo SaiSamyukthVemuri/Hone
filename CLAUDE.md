@@ -309,7 +309,7 @@ before assuming the diff broke something.**
 | Job | Budget |
 |---|---|
 | changed-path detection | 2 min |
-| validate (typecheck/lint/build/unit) | 8 min |
+| validate (typecheck/lint/build/unit) | target ~10 min (measured 8-14 min on 1 Nov) · **hard timeout 25 min** |
 | db integration | 8 min |
 | targeted browser shard (×3) | target ~6 min · **hard timeout 19 min** |
 | extended browser shard (×4) | target <10 min · **hard timeout 25 min** |
