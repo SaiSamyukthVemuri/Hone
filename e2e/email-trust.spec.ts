@@ -32,7 +32,10 @@ async function injectSession(ctx: BrowserContext, session: Record<string, unknow
 const membership = async (studioId: string, email: string) =>
   (await sql(`select p.id from public.practitioners p join auth.users u on u.id=p.user_id where p.studio_id=$1 and lower(u.email)=lower($2)`, [studioId, email])).length;
 
+const HOOK_ON = process.env.AUTH_HOOK_ON === "1";
+
 test("INVITATION: a password session on an auto-confirmed account cannot accept; a link to the address can, and kills the old password", async ({ browser }) => {
+  test.skip(HOOK_ON, "needs a password session; with the 0292 hook enabled GoTrue refuses it (covered by the hook-mode tests)");
   const studio = await insertBareStudio("email-trust");
   const email = `invitee-${Math.random().toString(36).slice(2, 8)}@harness.local`;
   await sql(`insert into public.pending_invitations (studio_id, email, role, display_name) values ($1,$2,'practitioner','Invited Person')`, [studio.studioId, email]);
@@ -74,14 +77,27 @@ test("INVITATION: a password session on an auto-confirmed account cannot accept;
   }
   await expect.poll(() => membership(studio.studioId, email), { timeout: 30_000 }).toBe(1);
 
-  // HARDENING: the pre-registrant's password and the injected session no longer work.
-  expect((await gotrue("token?grant_type=password", { email, password: PASSWORD }, ANON)).status).toBe(400);
+  // HARDENING is a ROLLOUT SWITCH that defaults OFF (HONE_PROOF_HARDENING). Off: the account is untouched, the old password still
+  // exists (the proof gates above are what protect the invitation). `all`: the pre-registrant's password and session are gone and
+  // the person who proved the mailbox is still signed in (we are on /dashboard with a live session).
+  const mode = process.env.HONE_PROOF_HARDENING ?? "off";
+  const passwordAfter = (await gotrue("token?grant_type=password", { email, password: PASSWORD }, ANON)).status;
   const refresh = await gotrue("token?grant_type=refresh_token", { refresh_token: pw.body.refresh_token as string }, ANON);
-  expect(refresh.status).toBeGreaterThanOrEqual(400);
-  evidence.invitation = { membershipAfterProof: 1, oldPasswordRefused: true, attackerRefreshRevoked: true };
+  if (mode === "all") {
+    expect(passwordAfter).toBe(400);
+    expect(refresh.status).toBeGreaterThanOrEqual(400);
+    await page.goto("/dashboard");
+    expect(new URL(page.url()).pathname).not.toBe("/login");
+  } else {
+    expect(passwordAfter, "flag off: no password reset").toBe(200);
+  }
+  const meta = await sql<{ m: Record<string, unknown> }>(`select raw_app_meta_data as m from auth.users where lower(email)=lower($1)`, [email]);
+  expect("email_proof_hardened_at" in meta[0].m, `marker present only when hardening ran (mode ${mode})`).toBe(mode === "all");
+  evidence.invitation = { membershipAfterProof: 1, hardeningMode: mode, passwordStatusAfter: passwordAfter };
 });
 
 test("PLATFORM ADMIN: a password session on the allowlisted address is not an operator; the same address through a magic link is", async ({ browser }) => {
+  test.skip(HOOK_ON, "needs a password session (see the hook-mode tests)");
   const { email } = await seedOperatorAuthUser();
   const updated = await sql<{ id: string }>(`select id from auth.users where lower(email)=lower($1)`, [email]);
   const set = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users/${updated[0].id}`, { method: "PUT", headers: { apikey: E2E_SERVICE_ROLE_KEY, Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ password: PASSWORD, email_confirm: true }) });
@@ -131,4 +147,36 @@ test("CALLBACK: signup/invite/magiclink token_hash links sign in through /auth/c
   await page.goto(`/auth/callback?token_hash=garbage&type=magiclink`);
   expect(page.url()).toContain("/login");
   evidence.callbackTokenHash = ["invite", "magiclink"];
+});
+
+test("0292 HOOK ON: a password session is refused by GoTrue; the invited person signs in by link and accepts the invitation", async ({ browser }) => {
+  test.skip(!HOOK_ON, "runs only on a stack whose test-only config enables the custom access token hook");
+  const studio = await insertBareStudio("email-trust-hook");
+  const email = `hook-${Math.random().toString(36).slice(2, 8)}@harness.local`;
+  await sql(`insert into public.pending_invitations (studio_id, email, role, display_name) values ($1,$2,'practitioner','Hook Invitee')`, [studio.studioId, email]);
+  expect((await gotrue("admin/users", { email, password: PASSWORD, email_confirm: true })).status).toBe(200);
+  const pw = await gotrue("token?grant_type=password", { email, password: PASSWORD }, ANON);
+  expect(pw.status, "NEGATIVE: password sign-in refused").toBe(403);
+  expect(pw.body.access_token).toBeUndefined();
+  // POSITIVE: the real app flow (magic link through the real /login page) still works and accepts the invitation.
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(email);
+  const seen = await listMessageIds(email);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  await page.goto(await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen }));
+  await page.waitForURL(/accept-invitation|dashboard/, { timeout: 30_000 });
+  if (!/dashboard/.test(page.url())) {
+    await expect(page.locator("body")).toContainText(studio.name, { timeout: 30_000 });
+    await page.locator('input[name="consent"]').check();
+    await page.getByRole("button", { name: /join|accept|confirm/i }).last().click();
+    await page.waitForURL(/dashboard/, { timeout: 30_000 });
+  }
+  await expect.poll(() => membership(studio.studioId, email), { timeout: 30_000 }).toBe(1);
+  // A reload keeps the session (refresh path passes the hook).
+  await page.reload();
+  expect(new URL(page.url()).pathname).not.toBe("/login");
+  evidence.hookOn = { passwordSignIn: pw.status, magicLinkInvitationAccepted: true, reloadKeepsSession: true };
 });
