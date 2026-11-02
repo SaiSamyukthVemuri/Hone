@@ -67,9 +67,21 @@ test("closed row: pinned notes in full, allergy flag, caution line and intake pi
     await expect(page.getByText(/^Latest setup:/)).toBeHidden();
   });
 
+  await test.step("the closed row carries none of the secondary lines or actions (OPS compact-row ruling)", async () => {
+    await expect(page.getByText("Before today", { exact: true })).toBeHidden();
+    await expect(page.getByTestId("today-consultation-notes").first()).toBeHidden();
+    await expect(page.getByTestId("today-review-intake").first()).toBeHidden();
+    // the one primary action and the row-body link stay on the collapsed row
+    await expect(page.getByTestId("today-next-action").first()).toBeVisible();
+    await expect(page.getByTestId("today-row-body").first()).toBeVisible();
+  });
+
   await test.step("opening the details reveals what was collapsed", async () => {
     await details.locator("summary").click();
     await expect(page.getByText(PLAN).first()).toBeVisible();
     await expect(page.getByText(/^Latest setup:/).first()).toBeVisible();
+    await expect(page.getByText("Before today", { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId("today-consultation-notes").first()).toBeVisible();
+    await expect(page.getByTestId("today-review-intake").first()).toBeVisible();
   });
 });
