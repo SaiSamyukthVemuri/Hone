@@ -59,6 +59,9 @@ const toParts = (r: StoredRow): LegalNameParts => ({
 });
 
 export async function saveLegalIdentityAction(formData: FormData): Promise<LegalIdentitySaveResult> {
+  // Session first: no validation or staleness message is returned to a caller who is not a practitioner.
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId) return { ok: false, error: "Missing client id." };
 
@@ -73,7 +76,6 @@ export async function saveLegalIdentityAction(formData: FormData): Promise<Legal
   const baseline = parseLegalBaseline(formData.get("legal_baseline"));
   if (baseline === undefined) return { ok: false, error: STALE };
 
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
 
   // The client must be this studio's. (The composite foreign key refuses a

@@ -94,3 +94,15 @@ describe("no name value reaches a log, an error or a URL from the identity actio
     expect(src).not.toMatch(/redirect\([^)]*(name|legal|preferred)/i);
   });
 });
+
+describe("the session is resolved before any submission is parsed (Insurance P-3)", () => {
+  it.each([
+    ["app/(app)/clients/[id]/actions.ts", "export async function updateClientAction", /parseBaseline\(/],
+    ["app/(app)/clients/[id]/legal-identity-actions.ts", "export async function saveLegalIdentityAction", /parseLegalIdentity\(/],
+  ])("%s", (file, head, parse) => {
+    const body = code(read(file));
+    const fn = body.slice(body.indexOf(head));
+    expect(fn.search(/getCurrentPractitionerWithStudio\(\)/)).toBeGreaterThan(-1);
+    expect(fn.search(/getCurrentPractitionerWithStudio\(\)/)).toBeLessThan(fn.search(parse));
+  });
+});

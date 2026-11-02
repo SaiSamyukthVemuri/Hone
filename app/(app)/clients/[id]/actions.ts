@@ -211,6 +211,10 @@ function isClientDuplicateEmailDbError(
 export async function updateClientAction(
   formData: FormData,
 ): Promise<ClientSaveResult | void> {
+  // Who is asking comes first: nothing about the submission (validation messages, baseline checks) is
+  // answered to a caller who is not an active owner or practitioner of a studio.
+  const { studio } = await getCurrentPractitionerWithStudio();
+
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId) {
     return { ok: false, error: "Missing client id." };
@@ -226,7 +230,6 @@ export async function updateClientAction(
   const plan = planProfileUpdate(formData, baseline);
   if (!plan.ok) return { ok: false, error: plan.error };
 
-  const { studio } = await getCurrentPractitionerWithStudio();
   const visible = await isClientVisible(studio.id, clientId);
   if (!visible) return { ok: false, error: "Client not found." };
 
