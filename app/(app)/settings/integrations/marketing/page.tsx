@@ -49,7 +49,7 @@ export default async function MarketingAnalyticsPage() {
     (data as ProviderRow[] | null)?.find((r) => r.provider === "meta") ?? null;
 
   return (
-    <section className="flex flex-col gap-6">
+    <section className="flex flex-col gap-8">
       <SettingsViewHeading
         title="Marketing & analytics"
         scope={STUDIO_WIDE_SCOPE}

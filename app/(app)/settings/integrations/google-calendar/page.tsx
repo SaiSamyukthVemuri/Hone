@@ -26,7 +26,7 @@ export default async function GoogleCalendarIntegrationPage() {
     : { metadata: null, readiness: "disconnected" as const };
 
   return (
-    <section className="flex flex-col gap-6">
+    <section className="flex flex-col gap-8">
       <SettingsViewHeading title="Google Calendar" scope={STUDIO_WIDE_SCOPE}>
         Connect {studio.name} to Google Calendar. Only the studio owner can
         manage this connection.

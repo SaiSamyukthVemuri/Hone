@@ -105,7 +105,24 @@ export async function resolveSettingsNav(
   entries: ReadonlyArray<SettingsNavEntry>,
   ctx: SettingsNavContext,
 ): Promise<SettingsNavItem[]> {
+  return (await resolveSettingsNavWithReachable(entries, ctx)).items;
+}
+
+/**
+ * The rail for a role, plus the flat entries the role may open by URL whose
+ * rail entry is hidden by its own `visibleWhen` (the waitlist while its flags are
+ * off and its queue is empty). A reachable entry is never listed in the rail; the
+ * shell shows it, selected, only while the owner is ON its route, so that page
+ * still has one correct current item and a breadcrumb. A role the static list
+ * does not admit never gets one (an owner-only route stays out of a practitioner's
+ * payload), and a group with no visible child is not reachable this way.
+ */
+export async function resolveSettingsNavWithReachable(
+  entries: ReadonlyArray<SettingsNavEntry>,
+  ctx: SettingsNavContext,
+): Promise<{ items: SettingsNavItem[]; reachable: SettingsNavItem[] }> {
   const visible: SettingsNavEntry[] = [];
+  const hiddenFlat: SettingsNavEntry[] = [];
   for (const entry of entries) {
     if (!entry.roles.includes(ctx.role)) continue;
     if (entry.visibleWhen) {
@@ -115,7 +132,10 @@ export async function resolveSettingsNav(
       } catch {
         ok = false;
       }
-      if (!ok) continue;
+      if (!ok) {
+        if (!entry.children) hiddenFlat.push(entry);
+        continue;
+      }
     }
     visible.push(entry);
   }
@@ -153,7 +173,15 @@ export async function resolveSettingsNav(
     if (children.length === 0) continue;
     items.push({ id: entry.id, group: entry.group, label: entry.label, href: children[0].href, base: entry.href, children });
   }
-  return items;
+  const reachable: SettingsNavItem[] = hiddenFlat.map((entry) => ({
+    id: entry.id,
+    group: entry.group,
+    label: entry.label,
+    href: entry.href,
+    base: entry.href,
+    children: [],
+  }));
+  return { items, reachable };
 }
 
 /**

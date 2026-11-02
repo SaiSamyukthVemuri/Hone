@@ -159,6 +159,7 @@ export function EmailSettingsForm({ initial }: Props) {
                 type="button"
                 onClick={() => toggle(t)}
                 disabled={pending || isForceOff}
+                aria-label={t.label}
                 aria-pressed={displayOn}
                 aria-disabled={isForceOff}
                 title={isForceOff ? t.forceOffReason : undefined}

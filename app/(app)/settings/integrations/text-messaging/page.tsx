@@ -30,7 +30,7 @@ export default async function TextMessagingSetupPage() {
   );
 
   return (
-    <section className="flex flex-col gap-6">
+    <section className="flex flex-col gap-8">
       <SettingsViewHeading title="Text-message setup" scope={STUDIO_WIDE_SCOPE}>
         The sending number for {studio.name}. Which messages are sent is chosen
         under{" "}

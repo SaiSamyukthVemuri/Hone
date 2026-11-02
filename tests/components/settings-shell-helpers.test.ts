@@ -85,7 +85,7 @@ describe("activeSettingsLocation", () => {
 });
 
 import { isRailLinkClick } from "@/lib/settings/nav";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 describe("narrow-screen drawer closes on a same-page section link (Codex P2)", () => {
@@ -493,7 +493,14 @@ describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, 
     // The offset is the MEASURED app-header height (--settings-top), so a taller
     // header can never clip the rail or the title bar.
     expect(src).toMatch(/min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
-    expect(src).toMatch(/min-\[700px\]:max-h-\[calc\(100vh-var\(--settings-top,4\.5rem\)-2rem\)\]/);
+    // Operators in calc() need spaces (underscores in a Tailwind arbitrary value);
+    // without them the cap is invalid CSS and the rail grew to the full viewport
+    // (Photos, 0ab9ce743: 799px tall). The 4rem allowance (the rail's 0.75rem
+    // top offset plus the page's bottom padding) keeps the rail inside its grid
+    // area at the end of the page, so sticky never pushes it above the header.
+    expect(src).toMatch(
+      /min-\[700px\]:max-h-\[calc\(100vh_-_var\(--settings-top,4\.5rem\)_-_4rem\)\]/,
+    );
     expect(src).toMatch(/sticky top-\[var\(--settings-top,4\.5rem\)\]/);
     expect(src).toMatch(/new ResizeObserver\(measure\)/);
     expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
@@ -564,5 +571,48 @@ describe("Codex P2 threads re-checked at 053d683f5", () => {
     expect(src).toMatch(/addEventListener\("reset", onReset\)/);
     expect(src).toMatch(/removeEventListener\("reset", onReset\)/);
     expect(src).toMatch(/setTimeout\(\(\) => \{\s*baseline\.current = snapshot\(form\)/);
+  });
+});
+
+describe("one heading-to-content rhythm on every view (Photos, 0ab9ce743)", () => {
+  const shell = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
+  it("the shell pulls the element after a view heading up by 1rem", () => {
+    expect(shell).toMatch(/\[&>\*>header\[data-view-head\]:first-child\+\*\]:-mt-4/);
+  });
+  it("the heading carries the marker the rule selects", () => {
+    const heading = readFileSync(path.resolve(__dirname, "../..", "components/settings/view-heading.tsx"), "utf8");
+    expect(heading).toMatch(/<header data-view-head>/);
+  });
+  it("every view root that opens with a heading stacks at gap-8 (the rule assumes 2rem)", () => {
+    const root = path.resolve(__dirname, "../..");
+    const walk = (dir: string): string[] =>
+      readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory()
+          ? walk(path.join(dir, e.name))
+          : e.name.endsWith(".tsx")
+            ? [path.join(dir, e.name)]
+            : [],
+      );
+    const files = walk("app/(app)/settings");
+    let seen = 0;
+    for (const f of files) {
+      const src = readFileSync(path.resolve(__dirname, "../..", f), "utf8");
+      for (const m of src.matchAll(/<(?:section|div) className="([^"]*)">\s*<SettingsViewHeading/g)) {
+        seen++;
+        expect(m[1], f).toMatch(/\bgap-8\b/);
+      }
+    }
+    expect(seen).toBeGreaterThan(10);
+  });
+});
+
+describe("a route outside the viewer's rail (Photos, 0ab9ce743)", () => {
+  const shell = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
+  it("a reachable entry joins the rail only while its own route is open", () => {
+    expect(shell).toMatch(/reachable\.filter\(\s*\(r\) => pathname === r\.href \|\| pathname\.startsWith\(`\$\{r\.href\}\/`\)/);
+    expect(shell).toMatch(/const items = \[\.\.\.railItems, \.\.\.reachableHere\]/);
+  });
+  it("with no location the breadcrumb still says Settings and nothing is selected", () => {
+    expect(shell).toMatch(/\{!activeItem && \(/);
   });
 });

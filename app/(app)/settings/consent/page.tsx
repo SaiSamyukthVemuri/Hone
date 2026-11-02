@@ -26,7 +26,7 @@ export default async function ConsentSettingsPage() {
   const templates = await getConsentTemplatesForStudio(studio.id);
 
   return (
-    <section className="flex flex-col gap-6">
+    <section className="flex flex-col gap-8">
       <SettingsViewHeading title="Consent forms" scope={STUDIO_WIDE_SCOPE}>
         Create consent forms clients can review and sign in their secure portal.
         Only forms marked <strong>Live in client portal</strong> are shown to

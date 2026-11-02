@@ -20,7 +20,7 @@ export function SettingsViewHeading({
   children?: ReactNode;
 }) {
   return (
-    <header>
+    <header data-view-head>
       {/* As in the approved settings artifact: the view name with its scope as a
           chip beside it. */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">

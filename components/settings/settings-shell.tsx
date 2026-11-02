@@ -24,6 +24,8 @@ import { UnsavedChangesProvider } from "./unsaved-changes";
 
 type Props = {
   items: ReadonlyArray<SettingsNavItem>;
+  /** Entries the role may open by URL but whose rail entry is hidden (waitlist). Listed, selected, only while on their route. */
+  reachable?: ReadonlyArray<SettingsNavItem>;
   account: { name: string; roleLabel: string };
   children: ReactNode;
 };
@@ -40,8 +42,15 @@ const ITEM_IDLE =
 const ITEM_ACTIVE =
   "bg-neutral-100 font-medium text-neutral-900 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 dark:before:bg-neutral-100";
 
-export function SettingsShell({ items, account, children }: Props) {
+export function SettingsShell({ items: railItems, reachable = [], account, children }: Props) {
   const pathname = usePathname() ?? "";
+  // A reachable entry joins the rail only while its own route is open, so that
+  // page has exactly one current item and its breadcrumb; it is never listed
+  // otherwise.
+  const reachableHere = reachable.filter(
+    (r) => pathname === r.href || pathname.startsWith(`${r.href}/`),
+  );
+  const items = [...railItems, ...reachableHere];
   const location = activeSettingsLocation(items, pathname);
   const activeItem = location?.item ?? null;
   const currentId = currentSettingsRailId(items, pathname);
@@ -220,7 +229,7 @@ export function SettingsShell({ items, account, children }: Props) {
               drawerOpen
                 ? "fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto bg-white p-4 shadow-xl dark:bg-neutral-950"
                 : "hidden"
-            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh-var(--settings-top,4.5rem)-2rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
+            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_4rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
           >
             <nav
               aria-label="Settings sections"
@@ -343,7 +352,26 @@ export function SettingsShell({ items, account, children }: Props) {
             </div>
           </aside>
 
-          <div ref={content} className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2">
+          {/* ONE heading-to-content rhythm: a view's root stacks at gap-8 (2rem) and the
+              element after its heading block is pulled up 1rem, so every view has
+              1rem between the heading block and its first content. */}
+          <div
+            ref={content}
+            className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2 [&>*>header[data-view-head]:first-child+*]:-mt-4"
+          >
+            {!activeItem && (
+              // A route that is not in this role's rail (an owner-only page opened
+              // by a practitioner): nothing is current, because nothing here is
+              // theirs to select, and the page itself states the refusal.
+              <nav
+                aria-label="Breadcrumb"
+                className="mb-4 text-xs text-neutral-500 dark:text-neutral-400"
+              >
+                <ol className="flex flex-wrap items-center gap-1.5">
+                  <li aria-current="page">Settings</li>
+                </ol>
+              </nav>
+            )}
             {activeItem && (
               <nav
                 aria-label="Breadcrumb"

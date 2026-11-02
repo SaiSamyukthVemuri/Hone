@@ -33,7 +33,7 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
-      <section className="flex flex-col gap-2">
+      <section className="flex flex-col gap-8">
         <SettingsViewHeading title="Payments" />
         <p className="text-sm text-neutral-500">
           Only the studio owner can manage payments.

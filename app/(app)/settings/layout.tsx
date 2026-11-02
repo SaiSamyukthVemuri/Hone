@@ -1,5 +1,5 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { resolveSettingsNav } from "@/lib/settings/nav";
+import { resolveSettingsNavWithReachable } from "@/lib/settings/nav";
 import { SETTINGS_NAV } from "@/lib/settings/nav-registry";
 import { SettingsShell } from "@/components/settings/settings-shell";
 
@@ -17,11 +17,12 @@ export default async function SettingsLayout({
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const role = practitioner.role === "owner" ? "owner" : "practitioner";
-  const items = await resolveSettingsNav(SETTINGS_NAV, { role, studio });
+  const { items, reachable } = await resolveSettingsNavWithReachable(SETTINGS_NAV, { role, studio });
 
   return (
     <SettingsShell
       items={items}
+      reachable={reachable}
       account={{
         name: practitioner.display_name || practitioner.email,
         roleLabel: role === "owner" ? "Owner" : "Practitioner",
