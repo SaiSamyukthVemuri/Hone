@@ -158,7 +158,7 @@ describe("nothing else on the dashboard changed", () => {
     // Phone width now aligns them to the body; `sm:` restores the right-aligned
     // desktop footer. The geometry itself is proved in e2e/mobile-ux.spec.ts.
     // The action column is now a wrapping, right-aligned cluster beside (or under) the body: it grows, never clips.
-    expect(PAGE).toMatch(/order-2 ml-auto flex flex-wrap items-center justify-end gap-2/);
+    expect(PAGE).toMatch(/order-1 ml-\[5\.75rem\] flex flex-wrap items-center gap-2 lg:order-2 lg:ml-auto lg:justify-end/);
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });
 });

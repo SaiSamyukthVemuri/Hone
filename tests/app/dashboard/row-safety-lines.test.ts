@@ -63,8 +63,13 @@ describe("compact row layout pins (OPS 1308: plain row ~56-72px at 1280, ~96-120
     expect(row).toMatch(/basis-full gap-3 lg:basis-0 lg:flex-1/);
   });
   it("an open disclosure takes the full width below; a closed one sits beside Open", () => {
-    expect(row).toMatch(/order-1 open:order-3 open:basis-full/);
-    expect(row).toMatch(/order-2 ml-auto flex flex-wrap items-center justify-end gap-2/);
+    expect(row).toMatch(/order-2 open:order-3 open:basis-full lg:order-1 lg:open:order-3/);
+    expect(row).toMatch(/order-1 ml-\[5\.75rem\] flex flex-wrap items-center gap-2 lg:order-2 lg:ml-auto lg:justify-end/);
+  });
+  it("on a phone Open starts at the text column (mobile-ux pins every action's left edge to the body's)", () => {
+    // 5.75rem = 80px time cell + 12px gap = the body text column offset from the card's content edge
+    expect(row).toMatch(/ml-\[5\.75rem\]/);
+    expect(row).not.toMatch(/order-2 ml-auto/);
   });
   it("the intake pill sits on the name line, ahead of the service line", () => {
     expect(row.indexOf("<IntakePill")).toBeGreaterThan(row.indexOf("{nextAction.chip && ("));

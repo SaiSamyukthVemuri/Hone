@@ -1290,8 +1290,10 @@ function AppointmentRow({
       {/* COMPACT LAYOUT. The row body, the visit-details disclosure and the Open action are flex siblings of
           ONE wrapping row. On a wide screen they share a single band (body | Visit details | Open) so the
           44px disclosure trigger adds no height of its own; on a phone the body is one full-width line and
-          the disclosure and Open share the next. An OPEN disclosure takes the full width and drops below
-          (open:order-3 open:basis-full), so its content is never squeezed beside the button. */}
+          the disclosure and Open share the next, with Open at the text column (the phone-width alignment
+          e2e/mobile-ux.spec.ts pins: every action's left edge is the body's) and Visit details beside it.
+          An OPEN disclosure takes the full width and drops below (open:order-3 open:basis-full), so its
+          content is never squeezed beside the button. */}
         {/* UI-01C: PendingContainerLink, not Link. This is the LAST navigation
             on the Dashboard with no acknowledgement, and it was deliberately
             left out of UI-01A/B because the shipped PendingLink could not
@@ -1392,7 +1394,7 @@ function AppointmentRow({
             never inside it (CHLOE D1). */}
         <details
           data-testid="today-row-details"
-          className="order-1 open:order-3 open:basis-full [&_summary::-webkit-details-marker]:hidden"
+          className="order-2 open:order-3 open:basis-full lg:order-1 lg:open:order-3 [&_summary::-webkit-details-marker]:hidden"
         >
           <summary className="inline-flex min-h-[44px] cursor-pointer flex-col justify-center text-xs font-medium leading-4 text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
             Visit details
@@ -1617,7 +1619,7 @@ function AppointmentRow({
           `gap-2` + `self-center`: on a phone this column wraps onto its own
           full-width line, where centring it against a tall text column opened
           dead space above and below with nothing in it. */}
-      <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-2">
+      <div className="order-1 ml-[5.75rem] flex flex-wrap items-center gap-2 lg:order-2 lg:ml-auto lg:justify-end">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}
         {isOwner && (

@@ -93,6 +93,13 @@ describe("one failing Needs attention loader degrades to its own unavailable sta
 
 describe("source pins", () => {
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
+  it("the owner's practice-metrics read (it reads session_blocks) degrades to a stated note, never the error boundary", () => {
+    expect(stack).not.toMatch(/await practiceMetricsPromise;/);
+    expect(stack).toMatch(/settleOrUnavailable\(practiceMetricsPromise, null\)/);
+    expect(stack).toMatch(/\{isOwner && practiceMetricsRead\.unavailable && \(\s*<p data-testid="practice-snapshot-unavailable"/);
+    // the existing no-snapshot branch (capacity link on its own) is kept
+    expect(stack).toMatch(/\{isOwner && !practiceMetrics && capacityLink\}/);
+  });
   it("no Needs attention loader promise is awaited bare any more", () => {
     for (const name of ["procedureActionsPromise", "clientsNeedingAttentionPromise", "followUpAssistantPromise", "expiringSuppliesPromise"]) {
       expect(stack).not.toMatch(new RegExp(`await ${name};`));
