@@ -87,6 +87,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const [eligible, setEligible] = useState<MovePractitionerOption[]>([]);
   const [target, setTarget] = useState<string>(""); // "" = none chosen (reassignment required)
   const [currentPractitionerId, setCurrentPractitionerId] = useState<string>("");
+  const [holderMustBeValid, setHolderMustBeValid] = useState(true); // capacity ON; server-authoritative
   // Latest-request-wins: a stale slot/eligible response (appt fixed; date/target vary)
   // must never overwrite the current list. Bumped on every load.
   const loadReq = useRef(0);
@@ -147,6 +148,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
         setCanUseCustomTime(res.canUseCustomTime); // server-authoritative owner flag
         setReassignEnabled(res.reassignEnabled);
         setEligible(res.eligiblePractitioners);
+        setHolderMustBeValid(res.holderMustBeValid);
         // NULLABLE in the database (ON DELETE SET NULL): normalise to "" so the
         // gate treats "no holder" as a resolvable state rather than an id.
         setCurrentPractitionerId(res.currentPractitionerId ?? "");
@@ -261,8 +263,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setSelected(null);
     setMoveError(null);
     setLoadError(null);
-    if (t) load(date, t);
-    else setSlots([]); // no target chosen → offer no times (reassignment required)
+    if (t || !holderMustBeValid) load(date, t); // capacity OFF: "no target" keeps the holder, so its times are offered
+    else setSlots([]); // no target chosen → offer no times (reassignment required, capacity ON)
   };
 
   // Mode switches clear incompatible state so stale state from one mode can never
@@ -299,6 +301,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     submitting,
     reassignEnabled,
     eligibleIds: eligible.map((p) => p.id),
+    holderMustBeValid,
     target,
     currentPractitionerId,
     hasSlot: !!selected,

@@ -94,6 +94,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "revert_appointment_outcome",
   },
   {
+    path: "app/(app)/calendar/check-practitioner/actions.ts",
+    purpose: "Owner-only explicit practitioner correction for one open appointment (the 'check the practitioner' list).",
+    why: "The action resolves the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and refuses any non-owner before any read; the browser supplies only an appointment id and a target practitioner id, both UUID-validated. The appointment is read through the admin client filtered by BOTH id and the server-derived studio_id, and the only write is the move_or_reassign_appointment RPC (service_role-only), which independently re-validates the owner, the target (same studio, active) and the appointment state, and writes the audit row. This file performs no appointment DML of its own, sends no client email and writes no payment data.",
+    scopeGuard: "move_or_reassign_appointment",
+  },
+  {
     path: "app/(app)/calendar/move-appointment-actions.ts",
     purpose: "Practitioner Move/reassign appointment — authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
     // PR B1 CORRECTION. This entry previously named `practitioner_move_appointment`
