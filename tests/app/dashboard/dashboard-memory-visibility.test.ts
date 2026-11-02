@@ -79,11 +79,12 @@ describe("Today appointment card shows the memory lines in full", () => {
     expect(remember).toMatch(/whitespace-pre-wrap break-words/);
     const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
     expect(setup).toMatch(/whitespace-pre-wrap break-words/);
-    // The caution is its own wrapped block, in the rose convention.
-    const caution = PREVIEW_BLOCK.slice(
-      PREVIEW_BLOCK.indexOf("{workflow.caution && ("),
-      PREVIEW_BLOCK.indexOf("No watch/plan note."),
-    );
+    // The caution is its own wrapped block, in the rose convention. FIDELITY D-1: it now lives on the
+    // CLOSED row (full text, wrapped), not in the details.
+    // It now lives in RowSafetyLines, rendered inside the row-body link.
+    const caution = read("app/(app)/dashboard/row-safety-lines.tsx");
+    expect(PAGE).toMatch(/caution=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.caution : null\}/);
+    expect(caution).toContain("Caution: {caution}");
     expect(caution).toMatch(/whitespace-pre-wrap break-words/);
     expect(caution).toMatch(/text-rose-900/);
   });
@@ -99,10 +100,13 @@ describe("nothing else on the dashboard changed", () => {
     // `{truncate(pinnedNoteText, 50)}`, which is exactly the behaviour Chloe
     // reported: multiple pinned notes collapsed to one 50-character line. The
     // roster now renders every note, wrapping instead of slicing.
+    const SAFETY = read("app/(app)/dashboard/row-safety-lines.tsx");
     expect(PAGE).not.toMatch(/truncate\(pinnedNote/);
-    expect(PAGE).toMatch(/pinnedNotes\.map\(/);
-    expect(PAGE).toMatch(/whitespace-pre-wrap/);
+    expect(PAGE).toMatch(/<RowSafetyLines\s+pinnedNotes=\{pinnedNotes\}/);
+    expect(SAFETY).toMatch(/pinnedNotes\.map\(/);
+    expect(SAFETY).toMatch(/whitespace-pre-wrap/);
     expect(PAGE).not.toMatch(/line-clamp[^\s"']*[^\s"']*/);
+    expect(SAFETY).not.toMatch(/line-clamp/);
   });
 
   it("the combined workflow model carries the memory notes uncapped", () => {
@@ -138,7 +142,8 @@ describe("nothing else on the dashboard changed", () => {
     // landed (a 4px accent border replaces 4px of pl-4, so the time column
     // stays on the same line); the wrap/alignment contract this test exists for
     // is unchanged, so it is pinned without the padding shorthand.
-    expect(PAGE).toMatch(/flex flex-wrap items-start justify-between gap-3 py-4 pr-4/);
+    // COMPACT LAYOUT (#1308): the row is ONE wrapping flex row (body | details | Open) with tight padding.
+    expect(PAGE).toMatch(/flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center/);
     expect(PAGE).toMatch(/pl-4 hover:bg-neutral-50/);
     // The action footer tightened to `gap-1 self-start`: on a phone this
     // column wraps onto its own full-width line, where centring it against a
@@ -152,8 +157,8 @@ describe("nothing else on the dashboard changed", () => {
     // `rightEdge - itsOwnWidth`: measured x=107 and x=37 against a body at 109.
     // Phone width now aligns them to the body; `sm:` restores the right-aligned
     // desktop footer. The geometry itself is proved in e2e/mobile-ux.spec.ts.
-    expect(PAGE).toMatch(/flex w-full flex-col items-start gap-1 self-start/);
-    expect(PAGE).toMatch(/sm:w-auto sm:items-end sm:pl-0/);
+    // The action column is now a wrapping, right-aligned cluster beside (or under) the body: it grows, never clips.
+    expect(PAGE).toMatch(/order-1 ml-\[5\.75rem\] flex flex-wrap items-center gap-2 lg:order-2 lg:ml-auto lg:justify-end/);
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });
 });

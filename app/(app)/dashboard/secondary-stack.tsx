@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
@@ -10,7 +11,7 @@ import { STAFF_MANAGED_UNKNOWN } from "@/lib/dashboard/staff-managed";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor, Studio } from "@/lib/types/database";
-import { PracticeSnapshot } from "./practice-snapshot";
+import { ChartedWithin24hCard, PracticeSnapshot } from "./practice-snapshot";
 import {
   getPracticeDashboardMetrics,
   PROCEDURE_RECORD_WINDOW,
@@ -168,8 +169,42 @@ export function SecondaryStackSkeleton() {
   );
 }
 
-export async function SecondaryStack({
+// Birthdays, top-right on desktop (the page places it; this is its own boundary). Same data as before:
+// the birthdays bundle the page started before the roster, so no read is added or moved.
+async function BirthdaysFromBundle({
   attentionSources,
+  today,
+  accentColor,
+}: {
+  attentionSources: Promise<AttentionSources>;
+  today: string;
+  accentColor: BirthdayReminderColor;
+}) {
+  const [, , , birthdaysThisMonth] = await attentionSources;
+  return (
+    <BirthdaysThisMonth
+      birthdays={birthdaysThisMonth}
+      today={today}
+      accentColor={accentColor}
+    />
+  );
+}
+
+export function BirthdaysTopRight(props: {
+  attentionSources: Promise<AttentionSources>;
+  today: string;
+  accentColor: BirthdayReminderColor;
+}) {
+  return (
+    <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+      <Suspense fallback={null}>
+        <BirthdaysFromBundle {...props} />
+      </Suspense>
+    </div>
+  );
+}
+
+export async function SecondaryStack({
   staffManaged: staffManagedPromise,
   staffManagedRead: staffManagedReadPromise,
   personalCharting: personalChartingPromise,
@@ -184,7 +219,6 @@ export async function SecondaryStack({
 }: Props) {
   // Birthdays ride in the same bundle the page started before the roster. The
   // To do / Needs attention sources are consumed by NeedsAttentionSection.
-  const [, , , birthdaysThisMonth] = await attentionSources;
   const staffManaged = await staffManagedPromise;
   const personalCharting = await personalChartingPromise;
   const staffManagedUnknown = (await staffManagedReadPromise) === STAFF_MANAGED_UNKNOWN;
@@ -195,6 +229,9 @@ export async function SecondaryStack({
   const readiness = await bookingReadiness;
 
   // PR #208: read-only practice metrics for the selected period.
+  // DAT-002 (#981/#1095): a failed practice-metrics read REFUSES the page (route error boundary), it is never
+  // rendered as a zero or missing snapshot. e2e/dat-002-read-failure-refusal.spec.ts pins this on a real
+  // revoke, so it is deliberately awaited bare. Isolating it would change that contract (a product decision).
   const practiceMetrics = await practiceMetricsPromise;
 
   // PR #215: Getting Started progress for the dashboard card.
@@ -208,15 +245,23 @@ export async function SecondaryStack({
     gettingStarted.autoTotal > 0 &&
     gettingStarted.autoDone === gettingStarted.autoTotal;
 
+  // OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card: the figures on it are
+  // studio-wide practice analytics an ordinary practitioner must not be shown, and the page refuses
+  // them server-side before issuing a single analytics read. Rendered only under `isOwner` above.
+  const capacityLink = (
+    <Link
+      href="/dashboard/capacity"
+      className="flex items-baseline justify-between gap-3 border-t border-neutral-200 pt-4 text-sm hover:text-neutral-900 dark:border-neutral-800 dark:hover:text-neutral-100"
+    >
+      <span className="font-medium">Practice capacity</span>
+      <span className="text-fg-muted">
+        Who is in treatment, and who has no treatment booked &rarr;
+      </span>
+    </Link>
+  );
+
   return (
     <div className="flex flex-col gap-10">
-      {/* Relationship context, BELOW the operational work, never above it. */}
-      <BirthdaysThisMonth
-        birthdays={birthdaysThisMonth}
-        today={todayLocal}
-        accentColor={studio.birthday_reminder_color}
-      />
-
       {/* ===================================================================
           Secondary: reporting and setup, below the operational hierarchy.
           ===================================================================
@@ -229,11 +274,6 @@ export async function SecondaryStack({
           functionality. */}
       {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
           not its counts, period filter or copy, is rendered into the response. the metrics loader itself no longer runs for a non-owner (WS-DB); the roll-up they need comes from `getProcedureActionMetrics`. */}
-      {!isOwner && personalCharting !== null && (
-        <PersonalChartingCard
-          metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
-        />
-      )}
       {isOwner && staffManagedUnknown && (
         <p
           role="status"
@@ -245,6 +285,8 @@ export async function SecondaryStack({
           late cancellations) that your settings would hide.
         </p>
       )}
+      {/* ONE integrated card: the snapshot, then the owner's capacity link as its last row (passed as
+          children). When the metrics could not load the link still renders on its own, as before. */}
       {isOwner && practiceMetrics && (
         <PracticeSnapshot
           metrics={practiceMetrics}
@@ -252,54 +294,57 @@ export async function SecondaryStack({
           selectedDay={selectedDayLocal}
           todayLocal={todayLocal}
           staffManaged={staffManaged}
-        />
-      )}
-
-      {/* OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card:
-          the figures on it are studio-wide practice analytics an ordinary
-          practitioner must not be shown, and the page refuses them server-side
-          before issuing a single analytics read. Rendering it here keeps the
-          surface reachable without another nav tab. */}
-      {isOwner && (
-        <Link
-          href="/dashboard/capacity"
-          className="flex items-baseline justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-sunken"
         >
-          <span className="font-medium">Practice capacity</span>
-          <span className="text-fg-muted">
-            Who is in treatment, and who has no treatment booked &rarr;
-          </span>
-        </Link>
+          {capacityLink}
+        </PracticeSnapshot>
       )}
+      {isOwner && !practiceMetrics && capacityLink}
 
-      {/* CHLOE D2, setup that is DONE is not daily work.
-          ------------------------------------------------------------------
-          This card used to render in both states. Once every required item was
-          satisfied it became a permanent "Booking page ready" banner plus a
-          column of ticks: a congratulation occupying the daily workspace
-          forever.
-
-          ONB-03: the gate is the CANONICAL authority
-          (lib/booking/new-client-readiness.ts), the same one /settings/launch
-          consumes, so the two owner surfaces cannot disagree. No new flag and
-          no new column.
-
-          `status !== "ready"` INCLUDES "unknown" ON PURPOSE. Unknown means an
-          authority could not be read, so nobody has evidence this studio is
-          ready -- hiding the card would assert exactly that. The card renders a
-          distinct unknown state rather than an empty checklist, and it returns
-          null itself for "ready", so the contract holds for any future caller
-          and not only for this call site. */}
-      {/* WS-DB: the owner's choice to pause new-client booking is its own
-          state, not a "to-do" checklist, and a ready studio with launch items
-          open gets a one-line pointer to /settings/launch. */}
-      <SetupStateNotice state={setupCard} />
-      {isOwner &&
-        readiness &&
-        readiness.status !== "ready" &&
-        setupCard.kind !== "paused_by_owner" && (
-          <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
+      {/* FIDELITY F, the lower row: Charting (the owner's studio-wide "Charted within 24h", or a
+          practitioner's own figure) beside the booking card. Both were already live further down the
+          page; they are MOVED here, not duplicated. The booking card keeps its truthful wording
+          (an intentional pause reads "That is your setting, not unfinished setup", never a setup
+          warning), and the incomplete-setup checklist stays its own separate card. */}
+      <div data-testid="dashboard-lower-row" className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <div className="flex min-w-0 flex-col gap-4">
+        {!isOwner && personalCharting !== null && (
+          <PersonalChartingCard
+            metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
+          />
         )}
+          {isOwner && practiceMetrics && <ChartedWithin24hCard metrics={practiceMetrics} />}
+        </div>
+        <div className="flex min-w-0 flex-col gap-4">
+      {/* CHLOE D2, setup that is DONE is not daily work.
+            ------------------------------------------------------------------
+            This card used to render in both states. Once every required item was
+            satisfied it became a permanent "Booking page ready" banner plus a
+            column of ticks: a congratulation occupying the daily workspace
+            forever.
+
+            ONB-03: the gate is the CANONICAL authority
+            (lib/booking/new-client-readiness.ts), the same one /settings/launch
+            consumes, so the two owner surfaces cannot disagree. No new flag and
+            no new column.
+
+            `status !== "ready"` INCLUDES "unknown" ON PURPOSE. Unknown means an
+            authority could not be read, so nobody has evidence this studio is
+            ready -- hiding the card would assert exactly that. The card renders a
+            distinct unknown state rather than an empty checklist, and it returns
+            null itself for "ready", so the contract holds for any future caller
+            and not only for this call site. */}
+        {/* WS-DB: the owner's choice to pause new-client booking is its own
+            state, not a "to-do" checklist, and a ready studio with launch items
+            open gets a one-line pointer to /settings/launch. */}
+        <SetupStateNotice state={setupCard} />
+        {isOwner &&
+          readiness &&
+          readiness.status !== "ready" &&
+          setupCard.kind !== "paused_by_owner" && (
+            <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
+          )}
+        </div>
+      </div>
 
       {/* PR #215: setup/readiness checklist entry point. A normal
           link card, never a blocking modal. PR #238: shown only while
@@ -389,37 +434,53 @@ function BirthdaysThisMonth({
   // month with many birthdays no longer pushes the setup cards off the screen.
   // Same data, same links (`?tab=personal`), same studio accent; today's
   // birthdays still carry the "Today" badge.
+  // Compact, top-right: the first few are always visible (today's birthdays first); the rest stay one
+  // click away inside a server-rendered <details>, so nobody is dropped. Nothing is sent to anyone.
+  const ordered = [
+    ...birthdays.filter((b) => b.day === todayDay),
+    ...birthdays.filter((b) => b.day !== todayDay),
+  ];
+  const VISIBLE = 4;
+  const shown = ordered.slice(0, VISIBLE);
+  const rest = ordered.slice(VISIBLE);
+  const chip = (b: (typeof birthdays)[number]) => {
+    const isToday = b.day === todayDay;
+    return (
+      <li
+        key={b.id}
+        className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
+      >
+        <Link
+          href={`/clients/${b.id}?tab=personal`}
+          className="text-sm font-medium hover:underline"
+        >
+          {b.name}
+        </Link>
+        <span className={`text-xs tabular-nums ${accent.mutedText}`}>
+          {formatMonthDay(b.month, b.day)}
+        </span>
+        {isToday && (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
+          >
+            Today
+          </span>
+        )}
+      </li>
+    );
+  };
   return (
-    <section className="flex flex-col gap-2">
+    <section data-testid="dashboard-birthdays" className="flex min-w-0 flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
       <h2 className="text-lg font-medium">Birthdays this month</h2>
-      <ul className="flex flex-wrap gap-2">
-        {birthdays.map((b) => {
-          const isToday = b.day === todayDay;
-          return (
-            <li
-              key={b.id}
-              className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
-            >
-              <Link
-                href={`/clients/${b.id}?tab=personal`}
-                className="text-sm font-medium hover:underline"
-              >
-                {b.name}
-              </Link>
-              <span className={`text-xs tabular-nums ${accent.mutedText}`}>
-                {formatMonthDay(b.month, b.day)}
-              </span>
-              {isToday && (
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
-                >
-                  Today
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <ul className="flex flex-wrap gap-2">{shown.map(chip)}</ul>
+      {rest.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-sm text-neutral-600 dark:text-neutral-400">
+            {rest.length} more this month
+          </summary>
+          <ul className="mt-2 flex flex-wrap gap-2">{rest.map(chip)}</ul>
+        </details>
+      )}
     </section>
   );
 }
@@ -457,17 +518,7 @@ function formatMonthDay(month: number, day: number): string {
 // A rejection in any source throws here, through the route error boundary: the
 // panel never turns a failed read into "nothing needs attention".
 // ---------------------------------------------------------------------------
-export async function NeedsAttentionSection({
-  attentionSources,
-  staffManaged: staffManagedPromise,
-  procedureActions: procedureActionsPromise,
-  upcomingVisitClients: upcomingVisitClientsPromise,
-  clientsNeedingAttention: clientsNeedingAttentionPromise,
-  followUpAssistant: followUpAssistantPromise,
-  expiringSupplies: expiringSuppliesPromise,
-  isOwner,
-  todayLocal,
-}: {
+type NeedsAttentionInputs = {
   attentionSources: Promise<AttentionSources>;
   staffManaged: Promise<boolean>;
   procedureActions: Promise<ProcedureActionMetrics>;
@@ -483,7 +534,62 @@ export async function NeedsAttentionSection({
   >;
   isOwner: boolean;
   todayLocal: string;
-}) {
+};
+
+// Named unavailable checks of the Needs attention panel. Only payment setup and expiring supplies add
+// studio items; every other check contributes client cards, so a count taken without one is not a count.
+const UNAVAILABLE_INTAKE_REVIEW = "intake review";
+const UNAVAILABLE_PAYMENT_SETUP = "payment setup";
+const UNAVAILABLE_RECENT_SESSIONS = "recent sessions";
+const UNAVAILABLE_MISSING_RECORDS = "missing records";
+const UNAVAILABLE_RECORD_DETAILS = "record details";
+const UNAVAILABLE_EXPIRING_SUPPLIES = "expiring supplies";
+const STUDIO_ONLY_CHECKS: ReadonlySet<string> = new Set([UNAVAILABLE_PAYMENT_SETUP, UNAVAILABLE_EXPIRING_SUPPLIES]);
+
+const EMPTY_PROCEDURE_ACTIONS: ProcedureActionMetrics = {
+  reviewedSessions: 0,
+  incompleteRecords: 0,
+  missingProbeLots: 0,
+  aftercareNotMarked: 0,
+  recordsMissingDetails: 0,
+  detailGaps: [],
+};
+const EMPTY_CLIENTS_NEEDING_ATTENTION: Awaited<ReturnType<typeof getClientsNeedingAttention>> = {
+  totalClients: 0,
+  clients: [],
+  scanCapped: false,
+};
+const EMPTY_FOLLOW_UP_ASSISTANT: Awaited<ReturnType<typeof getMissingRecordsAssistant>> = {
+  items: [],
+  hasItems: false,
+  totalFound: 0,
+};
+
+async function settleOrUnavailable<T>(
+  promise: Promise<T>,
+  fallback: T,
+): Promise<{ value: T; unavailable: boolean }> {
+  try {
+    return { value: await promise, unavailable: false };
+  } catch {
+    return { value: fallback, unavailable: true };
+  }
+}
+
+// The ONE place the Needs Attention model's input is resolved. The panel and the summary strip's "Clients to
+// review" both call it with the same already-started promises, so the strip's number IS the panel's
+// client count by construction (it reads `.clients.length` of this model), and no read is added.
+async function resolveNeedsAttentionInput({
+  attentionSources,
+  staffManaged: staffManagedPromise,
+  procedureActions: procedureActionsPromise,
+  upcomingVisitClients: upcomingVisitClientsPromise,
+  clientsNeedingAttention: clientsNeedingAttentionPromise,
+  followUpAssistant: followUpAssistantPromise,
+  expiringSupplies: expiringSuppliesPromise,
+  isOwner,
+  todayLocal,
+}: NeedsAttentionInputs) {
   const [intakesRead, activeServicesCount, paymentStatusRead] =
     await attentionSources;
   const intakesUnavailable = intakesRead === CHECK_UNAVAILABLE;
@@ -491,11 +597,23 @@ export async function NeedsAttentionSection({
   const paymentUnavailable = paymentStatusRead === CHECK_UNAVAILABLE;
   const paymentStatus = paymentUnavailable ? null : paymentStatusRead;
   const staffManaged = await staffManagedPromise;
-  const procedureActions = await procedureActionsPromise;
+  // ONE FAILING LOADER NEVER TAKES THE PAGE DOWN. Each of these used to be awaited bare, so a rejection
+  // threw out of this async component and fell to the route error boundary, replacing the whole
+  // dashboard. Each now fails into its OWN named unavailable check: an empty fallback plus that
+  // name, which the panel states and which the client count treats as unavailable. An empty fallback
+  // without the name would read as "nothing to follow up", so the two always travel together.
+  const procedureActionsRead = await settleOrUnavailable(procedureActionsPromise, EMPTY_PROCEDURE_ACTIONS);
+  const procedureActions = procedureActionsRead.value;
   const upcomingVisitClients = await upcomingVisitClientsPromise;
-  const clientsNeedingAttention = await clientsNeedingAttentionPromise;
-  const followUpAssistant = await followUpAssistantPromise;
-  const expiringSupplies = await expiringSuppliesPromise;
+  const clientsNeedingAttentionRead = await settleOrUnavailable(
+    clientsNeedingAttentionPromise,
+    EMPTY_CLIENTS_NEEDING_ATTENTION,
+  );
+  const clientsNeedingAttention = clientsNeedingAttentionRead.value;
+  const followUpAssistantRead = await settleOrUnavailable(followUpAssistantPromise, EMPTY_FOLLOW_UP_ASSISTANT);
+  const followUpAssistant = followUpAssistantRead.value;
+  const expiringSuppliesRead = await settleOrUnavailable(expiringSuppliesPromise, []);
+  const expiringSupplies = expiringSuppliesRead.value;
 
   const dashboardTodo = buildDashboardTodo({
     assistant: followUpAssistant,
@@ -512,26 +630,96 @@ export async function NeedsAttentionSection({
     todayLocal,
   });
 
+  return {
+    assistant: followUpAssistant,
+    intakesAwaitingReview,
+    todo: dashboardTodo,
+    unavailableChecks: [
+      ...(intakesUnavailable ? [UNAVAILABLE_INTAKE_REVIEW] : []),
+      ...(paymentUnavailable ? [UNAVAILABLE_PAYMENT_SETUP] : []),
+      ...(clientsNeedingAttentionRead.unavailable ? [UNAVAILABLE_RECENT_SESSIONS] : []),
+      ...(followUpAssistantRead.unavailable ? [UNAVAILABLE_MISSING_RECORDS] : []),
+      ...(procedureActionsRead.unavailable ? [UNAVAILABLE_RECORD_DETAILS] : []),
+      ...(expiringSuppliesRead.unavailable ? [UNAVAILABLE_EXPIRING_SUPPLIES] : []),
+    ],
+    treatmentMemoryNotReturned:
+      clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
+    recordDetailGaps: procedureActions.detailGaps,
+    detailsWindow: procedureActions.detailGaps ? PROCEDURE_RECORD_WINDOW : null,
+    upcomingVisitClientIds:
+      upcomingVisitClients === CHECK_UNAVAILABLE
+        ? undefined
+        : upcomingVisitClients,
+  };
+}
+
+export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
   return (
     <NeedsAttentionPanel
-      needs={buildNeedsAttention({
-        assistant: followUpAssistant,
-        intakesAwaitingReview,
-        todo: dashboardTodo,
-        unavailableChecks: [
-          ...(intakesUnavailable ? ["intake review"] : []),
-          ...(paymentUnavailable ? ["payment setup"] : []),
-        ],
-        treatmentMemoryNotReturned:
-          clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
-        recordDetailGaps: procedureActions.detailGaps,
-        detailsWindow: procedureActions.detailGaps ? PROCEDURE_RECORD_WINDOW : null,
-        upcomingVisitClientIds:
-          upcomingVisitClients === CHECK_UNAVAILABLE
-            ? undefined
-            : upcomingVisitClients,
-      })}
+      needs={buildNeedsAttention(await resolveNeedsAttentionInput(props))}
     />
+  );
+}
+
+/**
+ * The "Clients to review" value of the summary strip: the number of client cards in Needs Attention,
+ * from the SAME model. A failed read renders "Unavailable", never 0 (a zero would claim nothing needs
+ * review when nobody could read it).
+ */
+/**
+ * The client count both the strip and the header pill show, from the SAME model as the panel. It is
+ * null (rendered "Unavailable") when the read failed OR when any check that contributes client cards
+ * could not run (intake review, recent sessions, missing records, record details): a count taken
+ * without one could say 0 while someone needs review. Payment setup and expiring supplies only add
+ * studio items and do not change this count.
+ */
+async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | null> {
+  try {
+    const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
+    return model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c)) ? null : model.clients.length;
+  } catch {
+    return null;
+  }
+}
+
+async function ClientsToReviewValue(props: NeedsAttentionInputs) {
+  const count = await resolveClientReviewCount(props);
+  return (
+    <span data-testid="summary-clients-to-review-value">
+      {count === null ? "Unavailable" : count}
+    </span>
+  );
+}
+
+async function ClientCountPillValue(props: NeedsAttentionInputs) {
+  const count = await resolveClientReviewCount(props);
+  return (
+    <span
+      data-testid="needs-attention-count-pill"
+      className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+    >
+      {count === null ? "Unavailable" : `${count} ${count === 1 ? "client" : "clients"}`}
+    </span>
+  );
+}
+
+/** The header count pill of the Needs attention card: same model, same count as the strip. Own Suspense. */
+export function NeedsAttentionCountPill(props: NeedsAttentionInputs) {
+  return (
+    <Suspense fallback={null}>
+      <ClientCountPillValue {...props} />
+    </Suspense>
+  );
+}
+
+/** Own Suspense so the roster and the strip never wait on the model. The caller keys it per day/period. */
+export function ClientsToReview(props: NeedsAttentionInputs) {
+  return (
+    <Suspense
+      fallback={<span aria-hidden className="inline-block h-6 w-8 rounded bg-neutral-100 dark:bg-neutral-800" />}
+    >
+      <ClientsToReviewValue {...props} />
+    </Suspense>
   );
 }
 

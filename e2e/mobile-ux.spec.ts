@@ -910,7 +910,8 @@ for (const width of CARD_WIDTHS) {
       const m = await page.evaluate(() => {
         const rowBody = document.querySelector('[data-testid="today-row-body"]');
         if (!rowBody) return { error: "no today-row-body" } as const;
-        const card = rowBody.parentElement!.parentElement!;
+        // The row body is a direct child of the card since the compact-row layout (no left column wrapper).
+        const card = rowBody.parentElement!;
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
         const beforeToday =
@@ -928,7 +929,8 @@ for (const width of CARD_WIDTHS) {
         // A Range reports one client rect per line box — the only honest way to
         // ask "did this text wrap?" for a flex item that stretches vertically.
         const timeRange = document.createRange();
-        timeRange.selectNodeContents(timeCell);
+        // The start label is the cell's first span; the end time is a deliberate second line beneath it.
+        timeRange.selectNodeContents(timeCell.firstElementChild ?? timeCell);
         const actions = [...document.querySelectorAll('[data-testid="today-next-action"],[data-testid="today-consultation-notes"]')];
         // The VISIBLE text edge, not the box edge. A borderless link with
         // horizontal padding has a box that aligns while its glyphs sit 12px
@@ -1105,8 +1107,8 @@ for (const width of HOSTILE_WIDTHS) {
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
         const rg = document.createRange();
-        rg.selectNodeContents(timeCell);
-        const card = rowBody.parentElement!.parentElement!.getBoundingClientRect();
+        rg.selectNodeContents(timeCell.firstElementChild ?? timeCell);
+        const card = rowBody.parentElement!.getBoundingClientRect();
         const acts = [
           ...document.querySelectorAll(
             '[data-testid="today-next-action"],[data-testid="today-consultation-notes"]',
