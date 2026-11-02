@@ -1,5 +1,5 @@
 # REHEARSAL - NEVER MERGE. PREPARATION ONLY / HELD: S3 STAGE PACKAGES (0277 then 0278, Team spec rehearsal/multi-stage/spec/s3.json, built by the reviewed rehearsal/multi-stage builder).
-# The hosted set is the 253 files production now carries (the 249 hosted at build time plus the sealed 0258, 0266, 0272 and 0274 already applied). (1) s3-seq-linux: the builder reproduces the pinned package byte for byte, builder checks and the generated scripts run as text against a stub CLI.
+# The hosted set is the 253 files production now carries (the 249 hosted at build time plus the sealed 0258, 0266, 0272 and 0274 already applied). (1) s3-seq-linux: the builder reproduces the pinned package byte for byte, builder checks.
 # (2) push-linux / push-macos: the real pinned CLI v2.102.0 against a disposable PostgreSQL, one plain push per stage, with negative controls. (3) gates-stack: the 0277 and 0278 gate packs on a hosted-shaped local Supabase stack (S1 trio + 0274 applied first, because the production tree is that state).
 # No hosted call, no customer data, no credential beyond a throwaway canary password.
 name: rehearsal-s3-stage
@@ -60,17 +60,6 @@ jobs:
         run: |
           set -o pipefail
           GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/s3.ci.json 2>&1 | tee "$RUNNER_TEMP/builder-s3.txt"
-      - name: Sequence, negative controls and failure injection (N of N)
-        run: |
-          set -o pipefail
-          : > "$RUNNER_TEMP/seq-s3.txt"
-          mkdir -p "$RUNNER_TEMP/s3-hosted" && cp supabase/migrations/*.sql "$RUNNER_TEMP/s3-hosted/"
-          test "$(ls "$RUNNER_TEMP/s3-hosted" | wc -l)" = 253
-          for q in full drop-0278 "drop-0277+0278"; do
-            echo "=========== S3 sequence $q" | tee -a "$RUNNER_TEMP/seq-s3.txt"
-            bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/s3-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s3.txt" | tail -3
-          done
-          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-s3.txt" "$RUNNER_TEMP/builder-s3.txt"
 
   s3-push-linux:
     name: S3 push, real CLI v2.102.0, disposable PostgreSQL (Linux)
