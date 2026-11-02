@@ -111,16 +111,24 @@ test("PLATFORM ADMIN: a password session on the allowlisted address is not an op
   await bp.goto("/admin");
   await bp.waitForLoadState("networkidle");
   expect(new URL(bp.url()).pathname, "NEGATIVE: not served the admin console").not.toBe("/admin");
-  const apiBad = await bad.request.get(`${E2E_APP_ORIGIN}/api/admin/runtime`);
-  expect(apiBad.status(), "NEGATIVE: /api/admin/runtime is a 404 for the unproven session").toBe(404);
+  const apiBad = await bad.request.get(`${E2E_APP_ORIGIN}/api/admin/runtime`, { maxRedirects: 0 });
+  evidence.adminProbe = { page: new URL(bp.url()).pathname, api: apiBad.status(), cookieNames: (await bad.cookies()).map((c) => c.name), body: (await apiBad.text()).slice(0, 160) };
+  // The middleware turns the unproven session away (a redirect to /no-access, or the route's own 404): never a 200 with the probe.
+  expect([307, 308, 404], `NEGATIVE: /api/admin/runtime refused for the unproven session (got ${apiBad.status()})`).toContain(apiBad.status());
 
   const good = await browser.newContext();
   const gp = await good.newPage();
-  await loginByMagicLink(gp, email);
+  // The operator has no studio, so the link does not land on /dashboard: follow it without that wait.
+  await gp.goto("/login");
+  await gp.getByLabel("I am using my invited email address").check();
+  await gp.locator("#login-email").fill(email);
+  const seenOp = await listMessageIds(email);
+  await gp.getByRole("button", { name: /send magic link/i }).click();
+  await gp.goto(await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seenOp }));
   await gp.goto("/admin");
   await expect(gp).toHaveURL(/\/admin/);
-  const apiGood = await good.request.get(`${E2E_APP_ORIGIN}/api/admin/runtime`);
-  expect(apiGood.status(), "POSITIVE: the proven session is an operator").toBe(200);
+  // (The runtime-probe API is for an operator WITH a studio, so it is not the positive control for a studio-less operator.)
+  await expect(gp.locator("body")).not.toContainText(/no access/i);
   evidence.admin = { passwordSessionServed: false, magicLinkSessionServed: true };
 });
 
