@@ -8,6 +8,8 @@ import type {
   Practitioner,
 } from "@/lib/types/database";
 import { InviteForm } from "./InviteForm";
+import { LegalNameAccessSwitch } from "./LegalNameAccessSwitch";
+import { readReceptionistLegalNameAccess } from "@/lib/clients/legal-name-access";
 import {
   removePractitionerAction,
   revokeInvitationAction,
@@ -57,9 +59,10 @@ export default async function TeamSettingsPage() {
     );
   }
 
-  const [practitioners, invitations] = await Promise.all([
+  const [practitioners, invitations, legalNameAccess] = await Promise.all([
     getPractitionersForStudio(studio.id),
     getPendingInvitations(studio.id),
+    readReceptionistLegalNameAccess(await createClient(), studio.id),
   ]);
 
   return (
@@ -84,6 +87,27 @@ export default async function TeamSettingsPage() {
       </section>
 
       <PendingInvitations invitations={invitations} />
+
+      <section className="flex flex-col gap-4" data-testid="legal-name-access-section">
+        <div>
+          <h2 id="legal-name-access" className="scroll-mt-24 text-xl font-medium">
+            Client legal names
+          </h2>
+          <p className="mt-1 text-sm text-neutral-500">
+            Owners and practitioners can always see and record a client&rsquo;s legal name. Receptionists
+            only ever see the preferred name, or the name on file when there is none. No receptionist
+            screen shows legal names yet, so turning this on changes nothing a receptionist sees today; it
+            only records your permission for when one does. It is off by default and every change is recorded.
+          </p>
+        </div>
+        {legalNameAccess.ok ? (
+          <LegalNameAccessSwitch initialEnabled={legalNameAccess.receptionistAccess} />
+        ) : (
+          <p className="text-sm text-neutral-500" data-testid="legal-name-access-unavailable">
+            This setting could not be loaded right now. Reload the page to try again.
+          </p>
+        )}
+      </section>
     </div>
   );
 }
