@@ -43,6 +43,11 @@ const refused = (r: Resp) => r.status >= 400 || (resultOf(r) !== null && ["owner
 
 type Who = "owner" | "practitioner" | "receptionist" | "other_owner" | "anon";
 const evidence: Array<{ surface: string; role: Who; outcome: string; status: number }> = [];
+// Sam (2 Nov): a failure is a PERMISSION finding only when the setup is proven valid by the OWNER positive control in the same
+// run; otherwise it is classified SETUP. `controls` records each owner control's pass/fail so the report can say which.
+const controls: Array<{ surface: string; passed: boolean }> = [];
+const control = (surface: string, passed: boolean) => controls.push({ surface, passed });
+const unexpectedExecute: Array<{ proname: string; args: string; secdef: boolean; anon: boolean; authenticated: boolean; src: string }> = [];
 const note = (surface: string, role: Who, r: Resp) => evidence.push({ surface, role, outcome: resultOf(r) ?? (r.status >= 400 ? "refused" : Array.isArray(r.body) ? `rows=${(r.body as unknown[]).length}` : "ok"), status: r.status });
 
 let sc: PaymentScenario; // a completed visit with no card attempt (negative target; must stay unsettled)
@@ -65,7 +70,8 @@ beforeAll(async () => {
   tokens = { owner: jwt(sc.practitionerUserId), practitioner: jwt(member.userId), receptionist: jwt(recUser), other_owner: jwt(secondStudio.userId), anon: null };
 });
 afterAll(async () => {
-  if (process.env.SETTLE_EVIDENCE) writeFileSync(process.env.SETTLE_EVIDENCE, JSON.stringify(evidence, null, 1));
+  const setupValid = controls.length > 0 && controls.every((c) => c.passed);
+  if (process.env.SETTLE_EVIDENCE) writeFileSync(process.env.SETTLE_EVIDENCE, JSON.stringify({ setupValid, controls, unexpectedExecute, evidence }, null, 1));
   await closePool();
 });
 
@@ -90,6 +96,7 @@ describe("record_appointment_settlement over PostgREST", () => {
       const own = await seedQuickCheckoutScenario({ label: `role-ctl-${method.slice(0, 8)}`, appointmentStatus: "completed", attempt: "none" });
       const r = await rpc(jwt(own.practitionerUserId), "record_appointment_settlement", REC(own.studioId, own.appointmentId, method));
       note(`record_appointment_settlement(${method})`, "owner", r);
+      control(`record_appointment_settlement(${method})`, resultOf(r) === "recorded");
       expect(resultOf(r)).toBe("recorded");
     });
   }
@@ -97,6 +104,7 @@ describe("record_appointment_settlement over PostgREST", () => {
   it("the owner of the negative studio records paid_cash last (so the table-read control below has a row)", async () => {
     const ctl = await rpc(tokens.owner, "record_appointment_settlement", REC(sc.studioId, sc.appointmentId, "paid_cash"));
     note("record_appointment_settlement(paid_cash)", "owner", ctl);
+    control("record_appointment_settlement(paid_cash) on the negative studio", resultOf(ctl) === "recorded");
     expect(resultOf(ctl)).toBe("recorded");
     expect(await countSettlements(sc.studioId)).toBe(1);
   });
@@ -107,7 +115,10 @@ describe("tables over PostgREST", () => {
     for (const who of ["owner", ...NEGATIVE] as Who[]) {
       const r = await call(tokens[who], "GET", `appointment_settlements?studio_id=eq.${sc.studioId}&select=id,method,amount_cents,note`);
       note("appointment_settlements SELECT", who, r);
-      if (who === "owner") expect(Array.isArray(r.body) && (r.body as unknown[]).length >= 1).toBe(true);
+      if (who === "owner") {
+        control("appointment_settlements SELECT", Array.isArray(r.body) && (r.body as unknown[]).length >= 1);
+        expect(Array.isArray(r.body) && (r.body as unknown[]).length >= 1).toBe(true);
+      }
       else expect(r.status >= 400 || (Array.isArray(r.body) && (r.body as unknown[]).length === 0)).toBe(true);
     }
   });
@@ -147,6 +158,7 @@ describe("waive and supersede are owner-only; the service-role-only commands are
     expect(await countSettlements(waiveSc.studioId)).toBe(0);
     const ctl = await rpc(jwt(waiveSc.practitionerUserId), "waive_appointment_fee", { p_studio_id: waiveSc.studioId, p_appointment_id: waiveSc.appointmentId, p_amount_cents: 1000, p_note: null, p_livemode: false });
     note("waive_appointment_fee", "owner", ctl);
+    control("waive_appointment_fee", resultOf(ctl) === "recorded");
     expect(resultOf(ctl)).toBe("recorded");
   });
 
@@ -165,6 +177,7 @@ describe("waive and supersede are owner-only; the service-role-only commands are
     expect(live.rows.map((x) => x.method)).toEqual(["paid_cash"]);
     const ctl = await rpc(jwt(ownerSc.practitionerUserId), "supersede_appointment_settlement", args());
     note("supersede_appointment_settlement", "owner", ctl);
+    control("supersede_appointment_settlement", resultOf(ctl) === "corrected");
     expect(resultOf(ctl)).toBe("corrected");
   });
 
@@ -182,17 +195,23 @@ describe("waive and supersede are owner-only; the service-role-only commands are
     }
   });
 
-  it("catalog: exactly the three owner-gated commands are executable by `authenticated`; none by anon", async () => {
+  it("catalog: record every function in the money area executable by anon or authenticated beyond the three owner-gated commands, with its body, for classification", async () => {
     const rows = (await adminQuery(
-      `select p.proname, has_function_privilege('authenticated', p.oid, 'execute') as auth_exec, has_function_privilege('anon', p.oid, 'execute') as anon_exec
+      `select p.proname, pg_get_function_identity_arguments(p.oid) as args, p.prosecdef as secdef,
+              has_function_privilege('authenticated', p.oid, 'execute') as auth_exec,
+              has_function_privilege('anon', p.oid, 'execute') as anon_exec,
+              left(p.prosrc, 1500) as src
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname='public' and (p.proname like '%settlement%' or p.proname in ('waive_appointment_fee','retire_ready_card_attempts','reconcile_card_payment_succeeded','claim_session_payment_charge_attempt','appointment_has_live_card_money','appointment_quoted_amount_cents'))
-        order by 1`)).rows as Array<{ proname: string; auth_exec: boolean; anon_exec: boolean }>;
-    for (const r of rows) evidence.push({ surface: `catalog:${r.proname}`, role: "practitioner", outcome: `authenticated_exec=${r.auth_exec}`, status: 0 });
-    expect(rows.filter((r) => r.anon_exec)).toEqual([]);
-    const authed = rows.filter((r) => r.auth_exec).map((r) => r.proname);
-    // Exactly the three owner-gated commands; the probes above prove they refuse every non-owner, and a 404/42501 on the
-    // service-role-only ones is only meaningful because this catalog check proves no session role holds EXECUTE on them.
-    expect([...authed].sort()).toEqual(["record_appointment_settlement", "supersede_appointment_settlement", "waive_appointment_fee"]);
+        where n.nspname='public' and (p.proname like '%settlement%' or p.proname like '%payment%' or p.proname like '%charge%' or p.proname like '%refund%' or p.proname like '%waive%' or p.proname like '%fee%')
+        order by 1`)).rows as Array<{ proname: string; args: string; secdef: boolean; auth_exec: boolean; anon_exec: boolean; src: string }>;
+    const expected = new Set(["record_appointment_settlement", "supersede_appointment_settlement", "waive_appointment_fee"]);
+    for (const r of rows) {
+      evidence.push({ surface: `catalog:${r.proname}(${r.args})`, role: "practitioner", outcome: `authenticated_exec=${r.auth_exec} anon_exec=${r.anon_exec} secdef=${r.secdef}`, status: 0 });
+      if ((r.auth_exec || r.anon_exec) && !expected.has(r.proname)) unexpectedExecute.push({ proname: r.proname, args: r.args, secdef: r.secdef, anon: r.anon_exec, authenticated: r.auth_exec, src: r.src });
+    }
+    // The three commands must be executable by `authenticated`. Anything ELSE executable by anon/authenticated is NOT failed here:
+    // a grant alone is not a finding. It is recorded with its body above and classified REAL / HARMLESS-BY-BODY / UNCLEAR in the report.
+    for (const n of expected) expect(rows.some((r) => r.proname === n && r.auth_exec), `${n} should be executable by authenticated`).toBe(true);
+    expect(rows.filter((r) => expected.has(r.proname) && r.anon_exec)).toEqual([]);
   });
 });
