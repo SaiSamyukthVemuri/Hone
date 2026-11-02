@@ -42,6 +42,18 @@ export async function reassignOpenAppointmentAction(formData: FormData): Promise
     };
   }
 
+  // The command skips the target's active check for an owner actor in a capacity-OFF studio (0220, 0152), so the
+  // dropdown is not enough: check on the server that the target is an ACTIVE practitioner of THIS studio.
+  const { data: target } = await admin
+    .from("practitioners")
+    .select("id, active")
+    .eq("id", targetId)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (!target || target.active !== true) {
+    return { ok: false, error: "That practitioner isn't available for this appointment." };
+  }
+
   const { data: rows, error } = await admin.rpc("move_or_reassign_appointment", {
     p_appointment_id: appointmentId,
     p_studio_id: studio.id,

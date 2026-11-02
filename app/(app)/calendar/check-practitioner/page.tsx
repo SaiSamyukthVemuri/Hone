@@ -30,7 +30,7 @@ export default async function CheckPractitionerPage() {
       supabase
         .from("appointments")
         .select(
-          `id, starts_at, practitioner_id, created_by_practitioner_id, client:clients(${preferredNameColumn(withPreferred)}name), service:services(name), sessions(performed_by_practitioner_id)`,
+          `id, starts_at, practitioner_id, created_by_practitioner_id, client:clients(${preferredNameColumn(withPreferred)}name), service:services(name), sessions(performed_by_practitioner_id, deleted_at)`,
         )
         .eq("studio_id", studio.id)
         .eq("status", "confirmed")
@@ -66,7 +66,7 @@ export default async function CheckPractitionerPage() {
     created_by_practitioner_id: string | null;
     client: { name: string | null; preferred_name?: string | null } | { name: string | null; preferred_name?: string | null }[] | null;
     service: { name: string | null } | { name: string | null }[] | null;
-    sessions: { performed_by_practitioner_id: string | null }[] | null;
+    sessions: { performed_by_practitioner_id: string | null; deleted_at: string | null }[] | null;
   };
   const rows = (apptRes.data ?? []) as unknown as Row[];
   const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -75,7 +75,11 @@ export default async function CheckPractitionerPage() {
     startsAt: r.starts_at,
     practitionerId: r.practitioner_id,
     createdByPractitionerId: r.created_by_practitioner_id,
-    performedBy: (r.sessions ?? []).map((s) => s.performed_by_practitioner_id).filter((x): x is string => !!x),
+    // A soft-deleted chart is not evidence of who performed the visit (the sessions policy does not hide it).
+    performedBy: (r.sessions ?? [])
+      .filter((s) => s.deleted_at === null || s.deleted_at === undefined)
+      .map((s) => s.performed_by_practitioner_id)
+      .filter((x): x is string => !!x),
   }));
   const items = classifyForCheck(open, practitioners, new Date());
   const byId = new Map(rows.map((r) => [r.id, r]));

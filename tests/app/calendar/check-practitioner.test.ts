@@ -65,6 +65,8 @@ const ctx = vi.hoisted(() => ({
   rpc: [] as Record<string, unknown>[],
   rpcResult: "reassigned",
   studioFilter: [] as unknown[],
+  target: { id: "", active: true } as Record<string, unknown> | null,
+  targetStudio: [] as unknown[],
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -75,11 +77,11 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
-    from: () => {
+    from: (table: string) => {
       const chain: Record<string, unknown> = new Proxy({}, {
         get(_t, prop: string) {
-          if (prop === "eq") return (c: string, v: unknown) => { if (c === "studio_id") ctx.studioFilter.push(v); return chain; };
-          if (prop === "maybeSingle") return async () => ({ data: ctx.appt, error: null });
+          if (prop === "eq") return (c: string, v: unknown) => { if (c === "studio_id") (table === "practitioners" ? ctx.targetStudio : ctx.studioFilter).push(v); return chain; };
+          if (prop === "maybeSingle") return async () => ({ data: table === "practitioners" ? ctx.target : ctx.appt, error: null });
           return () => chain;
         },
       });
@@ -100,7 +102,7 @@ const form = (o: Record<string, string>) => { const f = new FormData(); for (con
 const future = () => new Date(Date.now() + 5 * 864e5).toISOString();
 
 beforeEach(() => {
-  ctx.role = "owner"; ctx.rpc.length = 0; ctx.rpcResult = "reassigned"; ctx.studioFilter.length = 0;
+  ctx.role = "owner"; ctx.rpc.length = 0; ctx.rpcResult = "reassigned"; ctx.studioFilter.length = 0; ctx.targetStudio.length = 0; ctx.target = { id: T1, active: true };
   ctx.appt = { id: A, status: "confirmed", starts_at: future(), ends_at: future(), practitioner_id: "p-owner" };
 });
 
@@ -138,6 +140,15 @@ describe("reassignOpenAppointmentAction", () => {
     expect((await reassignOpenAppointmentAction(form({ appointment_id: "x", target_practitioner_id: "y" }))).ok).toBe(false);
     expect(ctx.rpc).toEqual([]);
   });
+  it("a target that is inactive, missing or in another studio is refused on the server before any command (Codex P2)", async () => {
+    ctx.target = { id: T1, active: false };
+    const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
+    expect(r).toEqual({ ok: false, error: "That practitioner isn't available for this appointment." });
+    ctx.target = null;
+    expect((await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }))).ok).toBe(false);
+    expect(ctx.rpc).toEqual([]);
+    expect(ctx.targetStudio.every((v) => v === "studio-1")).toBe(true);
+  });
   it("the command's own refusals surface as plain sentences, never raw codes", async () => {
     ctx.rpcResult = "invalid_practitioner";
     const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
@@ -151,6 +162,11 @@ describe("source contracts", () => {
     const page = read("app/(app)/calendar/check-practitioner/page.tsx");
     expect(page).toContain('if (practitioner.role !== "owner") notFound();');
     expect(page).not.toMatch(/\.rpc\(|\.update\(|\.insert\(|\.delete\(|\.upsert\(|reassignOpenAppointmentAction/);
+  });
+  it("soft-deleted sessions are not used as reassignment evidence (Codex P2)", () => {
+    const page = read("app/(app)/calendar/check-practitioner/page.tsx");
+    expect(page).toContain("sessions(performed_by_practitioner_id, deleted_at)");
+    expect(page).toMatch(/\.filter\(\(s\) => s\.deleted_at === null \|\| s\.deleted_at === undefined\)/);
   });
   it("the suggestion only pre-selects a dropdown; only a submit calls the action", () => {
     const row = read("app/(app)/calendar/check-practitioner/ReassignRow.tsx");
@@ -177,6 +193,8 @@ describe("source contracts", () => {
     const act = read("app/(app)/calendar/check-practitioner/actions.ts");
     const code = act.replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/email|sendMail|resend|settlement|charge|refund|payment/i);
-    expect(code).not.toMatch(/\.from\("(?!appointments")/);
+    // reads only: the appointment, and the target practitioner's active/studio membership; no other table
+    expect(code).not.toMatch(/\.from\("(?!appointments"|practitioners")/);
+    expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
   });
 });
