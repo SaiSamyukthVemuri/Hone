@@ -120,11 +120,12 @@ describe("authority is the database's, not this module's", () => {
   });
 
   it("the page stays owner-only", () => {
-    // Defence in depth: RLS already scopes the row, and the page redirects a
-    // non-owner before it renders anything.
+    // Defence in depth: RLS already scopes the row, and the page refuses a
+    // non-owner in place (the shared access-denied state) before it reads anything.
     const page = codeOnly(read(PAGE));
     expect(page).toMatch(/practitioner\.role !== "owner"/);
-    expect(page).toMatch(/redirect\("\/settings\/profile"\)/);
+    expect(page).toMatch(/<OwnerOnlyNotice>/);
+    expect(page).not.toMatch(/redirect\(/);
   });
 });
 

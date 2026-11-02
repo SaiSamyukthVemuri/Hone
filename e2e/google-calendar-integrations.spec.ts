@@ -46,7 +46,8 @@ test("non-owner practitioner cannot access the Integrations page", async ({ page
   await loginByMagicLink(page, member.email);
 
   await page.goto("/settings/integrations/google-calendar");
-  // Owner-only: the server component redirects a non-owner to their profile.
-  await expect(page).toHaveURL(/\/settings\/profile/);
+  // Owner-only: the server component refuses a non-owner in place (no redirect).
+  await expect(page).toHaveURL(/\/settings\/integrations\/google-calendar/);
+  await expect(page.getByTestId("owner-only-denied")).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Integrations$/ })).toHaveCount(0);
 });
