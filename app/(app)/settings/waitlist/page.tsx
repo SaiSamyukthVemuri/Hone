@@ -68,6 +68,7 @@ import {
 } from "@/lib/waitlist/admission-model";
 import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -338,7 +339,7 @@ export default async function WaitlistSettingsPage({
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
-    return <DenialCard>Only studio owners can see the new-client waitlist.</DenialCard>;
+    return <OwnerOnlyNotice>Only studio owners can see the new-client waitlist.</OwnerOnlyNotice>;
   }
 
   // A SECTION IS HONOURED ONLY WHEN IT NAMES ONE OF THE FIVE READ STATES.

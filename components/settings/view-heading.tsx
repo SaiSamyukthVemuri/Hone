@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 // The heading of one focused Settings view (R2). Every rail item is its own
@@ -57,10 +58,36 @@ export function SettingsViewHeading({
   );
 }
 
+// The ONE refusal every owner-only Settings route gives a practitioner (R2): in
+// place, never a redirect, with a heading that says who the page is for, the
+// route's own sentence as the body, and a way back. It carries no studio data,
+// and nothing is selected in the rail because the rail never lists these routes
+// for a practitioner. Tests pin that every owner-only route renders it.
+export const OWNER_ONLY_HEADING = "This page is for the studio owner";
+export const OWNER_ONLY_BACK_HREF = "/settings/profile";
+
 export function OwnerOnlyNotice({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-      {children}
-    </div>
+    <section
+      role="alert"
+      data-testid="owner-only-denied"
+      className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400"
+    >
+      <h2
+        tabIndex={-1}
+        data-settings-heading
+        className="scroll-mt-32 text-xl font-medium text-neutral-900 outline-none dark:text-neutral-100"
+      >
+        {OWNER_ONLY_HEADING}
+      </h2>
+      <p className="mt-2">{children}</p>
+      <p className="mt-2">Ask the studio owner if you need a change here.</p>
+      <Link
+        href={OWNER_ONLY_BACK_HREF}
+        className="mt-4 inline-block font-medium text-neutral-900 underline underline-offset-2 dark:text-neutral-100"
+      >
+        Back to your settings
+      </Link>
+    </section>
   );
 }

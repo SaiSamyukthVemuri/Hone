@@ -1,7 +1,11 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getConsentTemplatesForStudio } from "@/lib/consent/queries";
 import { ConsentTemplatesEditor } from "./ConsentTemplatesEditor";
-import { SettingsViewHeading, STUDIO_WIDE_SCOPE } from "@/components/settings/view-heading";
+import {
+  OwnerOnlyNotice,
+  SettingsViewHeading,
+  STUDIO_WIDE_SCOPE,
+} from "@/components/settings/view-heading";
 import {
   createConsentTemplateAction,
   setConsentTemplateLiveAction,
@@ -17,11 +21,7 @@ import {
 export default async function ConsentSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    return (
-      <section className="text-sm text-neutral-600 dark:text-neutral-400">
-        Only studio owners can manage consent forms.
-      </section>
-    );
+    return <OwnerOnlyNotice>Only studio owners can manage consent forms.</OwnerOnlyNotice>;
   }
   const templates = await getConsentTemplatesForStudio(studio.id);
 

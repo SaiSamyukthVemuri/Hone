@@ -1,8 +1,8 @@
-import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { PendingLink } from "@/components/pending-link";
 import {
+  OwnerOnlyNotice,
   SettingsViewHeading,
   STUDIO_WIDE_SCOPE,
 } from "@/components/settings/view-heading";
@@ -23,7 +23,9 @@ import {
 // separate page (Studio > Text-message preferences), linked both ways.
 export default async function TextMessagingSetupPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
-  if (practitioner.role !== "owner") redirect("/settings/profile");
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can view the text-message sending number.</OwnerOnlyNotice>;
+  }
 
   const smsRead = await createClient().then((supabase) =>
     readOwnStudioSmsSender(supabase, studio.id),

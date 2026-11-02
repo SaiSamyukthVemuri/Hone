@@ -1,7 +1,7 @@
-import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { resolveTimeFormat } from "@/lib/booking/tz";
 import {
+  OwnerOnlyNotice,
   SettingsViewHeading,
   STUDIO_WIDE_SCOPE,
 } from "@/components/settings/view-heading";
@@ -12,7 +12,9 @@ import { StudioDisplayPreferencesForm } from "../StudioDisplayPreferencesForm";
 // practitioner; this is the access gate.
 export default async function CalendarDisplayPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
-  if (practitioner.role !== "owner") redirect("/settings/profile");
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can change calendar display preferences.</OwnerOnlyNotice>;
+  }
 
   return (
     <section className="flex flex-col gap-8">

@@ -18,6 +18,7 @@ import {
 import { ServiceOrderList } from "./ServiceOrderList";
 import { SectionLabel } from "@/components/ui/section-label";
 import { fieldControlClass } from "@/components/ui/field";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 function formatPrice(cents: number | null): string {
   if (cents == null) return "Not set";
@@ -27,11 +28,7 @@ function formatPrice(cents: number | null): string {
 export default async function ServicesSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can manage services.
-      </div>
-    );
+    return <OwnerOnlyNotice>Only studio owners can manage services.</OwnerOnlyNotice>;
   }
 
   const services = await getAllServices(studio.id);

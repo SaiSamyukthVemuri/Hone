@@ -1,9 +1,9 @@
-import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { GoogleCalendarCard } from "../../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 
 import {
+  OwnerOnlyNotice,
   SettingsViewHeading,
   STUDIO_WIDE_SCOPE,
 } from "@/components/settings/view-heading";
@@ -16,7 +16,9 @@ import {
 // and every underlying server action re-authorizes and never trusts a browser id.
 export default async function GoogleCalendarIntegrationPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
-  if (practitioner.role !== "owner") redirect("/settings/profile");
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can manage the Google Calendar connection.</OwnerOnlyNotice>;
+  }
 
   // The card renders ONLY when the studio connection flag is on; when it's off the
   // card is hidden and the server actions reject anyway.

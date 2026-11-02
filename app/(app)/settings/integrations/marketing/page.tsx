@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
+  OwnerOnlyNotice,
   SettingsViewHeading,
   STUDIO_WIDE_SCOPE,
 } from "@/components/settings/view-heading";
@@ -30,11 +31,7 @@ type ProviderRow = {
 export default async function MarketingAnalyticsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    return (
-      <section className="text-sm text-neutral-600 dark:text-neutral-400">
-        Only studio owners can manage marketing &amp; analytics tracking.
-      </section>
-    );
+    return <OwnerOnlyNotice>Only studio owners can manage marketing &amp; analytics tracking.</OwnerOnlyNotice>;
   }
 
   const admin = createAdminClient();

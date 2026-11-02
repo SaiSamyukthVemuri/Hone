@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 // /settings/booking is only a doorway to the Booking link view. A saved/error
 // banner addressed to the old URL is carried across.
@@ -8,7 +9,10 @@ export default async function BookingSettingsIndex({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requirePractitionerWithStudio();
+  const { practitioner } = await requirePractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can change booking preferences.</OwnerOnlyNotice>;
+  }
   const params = (await searchParams) ?? {};
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   const carry = new URLSearchParams();

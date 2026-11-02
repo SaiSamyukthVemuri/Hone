@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 // /settings/integrations is only a doorway to its first view; each integration
 // is its own route. A non-owner is sent to Profile by the view itself.
@@ -12,7 +13,10 @@ export default async function IntegrationsSettingsIndex({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requirePractitionerWithStudio();
+  const { practitioner } = await requirePractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can manage integrations.</OwnerOnlyNotice>;
+  }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries((await searchParams) ?? {})) {
     for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) {

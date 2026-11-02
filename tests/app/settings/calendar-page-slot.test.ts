@@ -69,10 +69,12 @@ describe("Display preferences view", () => {
     expect(tree).toContain("Applies to the whole studio.");
     expect(tree).toContain("Display preferences");
   });
-  it("a practitioner is sent to Profile (the access gate, not the rail)", async () => {
+  it("a practitioner is refused in place, not redirected (the access gate, not the rail)", async () => {
     scenario.role = "practitioner";
     slotState.slot = { views: [{ slug: "colour", label: "Colour", Content: () => "C" }] };
-    await expect(CalendarDisplayPage()).rejects.toThrow("REDIRECT:/settings/profile");
+    const tree = flat(await CalendarDisplayPage());
+    expect(tree).toContain("Only studio owners can change calendar display preferences.");
+    expect(tree).not.toContain("Applies to the whole studio.");
   });
 });
 

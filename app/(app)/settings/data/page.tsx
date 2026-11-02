@@ -10,6 +10,7 @@ import {
 } from "@/lib/export/resource-registry";
 
 import { ExportButton } from "./ExportButton";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 async function loadCounts(studioId: string): Promise<{
   clientCount: number;
@@ -49,11 +50,7 @@ export default async function DataSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   // WS-D: studio data export is owner-only (the action already refuses; the page no longer shows a non-owner the studio-wide totals).
   if (practitioner.role !== "owner") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can view and export studio data.
-      </div>
-    );
+    return <OwnerOnlyNotice>Only studio owners can view and export studio data.</OwnerOnlyNotice>;
   }
   const { clientCount, sessionCount, entryCount } = await loadCounts(studio.id);
 

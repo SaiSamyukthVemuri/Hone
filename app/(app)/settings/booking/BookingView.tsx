@@ -11,7 +11,11 @@ import { SaveButton } from "./SaveButton";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { bookingSettingsErrorSentence } from "@/lib/booking/settings-error-codes";
 import { FormDirtyGuard } from "@/components/settings/form-dirty-guard";
-import { SettingsViewHeading, STUDIO_WIDE_SCOPE } from "@/components/settings/view-heading";
+import {
+  OwnerOnlyNotice,
+  SettingsViewHeading,
+  STUDIO_WIDE_SCOPE,
+} from "@/components/settings/view-heading";
 import { fieldControlClass } from "@/components/ui/field";
 
 // Plain option labels for the buffer select. The "Recommended" hint
@@ -85,11 +89,7 @@ export async function BookingView({
 
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can change booking preferences.
-      </div>
-    );
+    return <OwnerOnlyNotice>Only studio owners can change booking preferences.</OwnerOnlyNotice>;
   }
   const appOrigin = getRequiredAppOrigin();
 

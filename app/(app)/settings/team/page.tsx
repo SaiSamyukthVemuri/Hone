@@ -13,6 +13,7 @@ import {
   revokeInvitationAction,
 } from "./actions";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -50,11 +51,7 @@ export default async function TeamSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can manage the team.
-      </div>
-    );
+    return <OwnerOnlyNotice>Only studio owners can manage the team.</OwnerOnlyNotice>;
   }
 
   const [practitioners, invitations] = await Promise.all([
