@@ -294,15 +294,15 @@ describe("navigation: an owner-only link, hidden for others, and independent of 
     expect(bar).toMatch(/\{reviewAssignmentsHref && \(/);
     expect(bar).toContain("Review practitioner assignments");
     const page = read("app/(app)/calendar/page.tsx");
-    const uses = page.match(/reviewAssignmentsHref=\{[^}]*\}/g) ?? [];
-    expect(uses).toHaveLength(3);
-    for (const u of uses) {
-      expect(u).toMatch(/(isOwner|practitioner\.role === "owner") \? "\/calendar\/check-practitioner" : undefined/);
-    }
+    // one owner-only computation, passed to all three views; a non-owner gets undefined and never runs the read
+    expect(page).toMatch(/const reviewAssignmentsHref =\s*isOwner && \(await shouldShowReviewLink\(studio\.id\)\) \? "\/calendar\/check-practitioner" : undefined/);
+    expect(page.match(/reviewAssignmentsHref=\{reviewAssignmentsHref\}/g) ?? []).toHaveLength(3);
+    expect(page).not.toMatch(/reviewAssignmentsHref=\{[^}]*"\/calendar\/check-practitioner"/);
   });
   it("Team settings (an owner-only page) links to it", () => {
     const team = read("app/(app)/settings/team/page.tsx");
     expect(team).toContain('href="/calendar/check-practitioner"');
+    expect(team).toMatch(/showReviewLink && \(/);
     expect(team).toContain("Review practitioner assignments");
   });
   it("the page still 404s for a non-owner and reads no table that needs new storage", () => {

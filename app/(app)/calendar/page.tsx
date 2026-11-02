@@ -45,6 +45,7 @@ import {
   weekRangeLabel,
 } from "./calendar-format";
 import { CalendarToolbar } from "./CalendarToolbar";
+import { shouldShowReviewLink } from "@/lib/appointments/review-link";
 import {
   CalendarMobileDayView,
   type MobileDayData,
@@ -104,6 +105,9 @@ export default async function CalendarPage({
   );
   const timeFormat = resolveTimeFormat(studio); // 0109: 12h/24h display pref
   const isOwner = practitioner.role === "owner"; // PR C: owner-only block editing
+  // Owner-only link to the practitioner-assignment review, hidden for a solo owner with nothing to review (see review-link.ts).
+  const reviewAssignmentsHref =
+    isOwner && (await shouldShowReviewLink(studio.id)) ? "/calendar/check-practitioner" : undefined;
   const params = await searchParams;
   const today = todayInTz(studio.timezone);
   let view = parseView(params.view);
@@ -129,6 +133,7 @@ export default async function CalendarPage({
       practitioner,
       dayParam: params.day,
       peopleParam: params.people,
+      reviewAssignmentsHref,
     });
   }
 
@@ -144,6 +149,7 @@ export default async function CalendarPage({
       lastWeekParam: params.week,
       peopleParam: params.people,
       isOwner,
+      reviewAssignmentsHref,
     });
   }
 
@@ -342,7 +348,7 @@ export default async function CalendarPage({
         todayHref={withSelection("/calendar?view=week", sidebar.param)}
         nextHref={withSelection(`/calendar?week=${nextWeek}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
-        reviewAssignmentsHref={practitioner.role === "owner" ? "/calendar/check-practitioner" : undefined}
+        reviewAssignmentsHref={reviewAssignmentsHref}
         hideStepNavOnMobile
       />
       {days.some((date, dow) => availabilityForDate(date, dow).hoursVary) && (
@@ -543,8 +549,9 @@ async function renderMonthView(opts: {
   lastWeekParam: string | undefined;
   peopleParam: string | undefined;
   isOwner: boolean;
+  reviewAssignmentsHref: string | undefined;
 }) {
-  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner } = opts;
+  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, reviewAssignmentsHref } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
@@ -676,7 +683,7 @@ async function renderMonthView(opts: {
         todayHref={withSelection("/calendar?view=month", sidebar.param)}
         nextHref={withSelection(`/calendar?view=month&month=${nextMonth}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
-        reviewAssignmentsHref={isOwner ? "/calendar/check-practitioner" : undefined}
+        reviewAssignmentsHref={reviewAssignmentsHref}
         hideStepNavOnMobile={false}
       />
       {Array.from({ length: 31 }, (_, i) => addDays(monthAnchor, i))
@@ -729,8 +736,9 @@ async function renderTeamDayView(opts: {
   practitioner: { id: string; display_name: string };
   dayParam: string | undefined;
   peopleParam: string | undefined;
+  reviewAssignmentsHref: string | undefined;
 }) {
-  const { studio, timeFormat, today, isOwner, practitioner, peopleParam } = opts;
+  const { studio, timeFormat, today, isOwner, practitioner, peopleParam, reviewAssignmentsHref } = opts;
   const date = opts.dayParam && DATE_PARAM_RE.test(opts.dayParam) ? opts.dayParam : today;
   const capacityEnabled = studio.practitioner_capacity_enabled === true;
 
@@ -839,7 +847,7 @@ async function renderTeamDayView(opts: {
         todayHref={withSelection("/calendar?view=day", sidebar.param)}
         nextHref={withSelection(`/calendar?view=day&day=${addDays(date, 1)}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
-        reviewAssignmentsHref={isOwner ? "/calendar/check-practitioner" : undefined}
+        reviewAssignmentsHref={reviewAssignmentsHref}
         hideStepNavOnMobile={false}
       />
       {notWorking.length > 0 && (
