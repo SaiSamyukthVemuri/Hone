@@ -42,6 +42,26 @@ describe("summary strip (fidelity A)", () => {
   });
 });
 
+describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
+  const strip = readFileSync("app/(app)/dashboard/summary-strip.tsx", "utf8");
+  it("a long value can break and cells can shrink, so 'Unavailable' never widens the card", () => {
+    expect(strip).toMatch(/const VALUE =[\s\S]*?min-w-0[\s\S]*?\[overflow-wrap:anywhere\]/);
+    expect(strip).toMatch(/const CELL =[\s\S]*?min-w-0/);
+  });
+  it("only widths under 360px change: smaller value and padding there, the 390/1280 classes are untouched", () => {
+    expect(strip).toMatch(/max-\[359px\]:text-sm/);
+    expect(strip).toMatch(/px-2[^"]*min-\[360px\]:px-4/);
+    expect(strip).toMatch(/text-xl font-semibold/);
+    expect(strip).toContain('className="grid grid-cols-3 gap-3"');
+  });
+  it("renders the Unavailable value through the same wrapping value class", () => {
+    const out = renderToStaticMarkup(
+      createElement(SummaryStrip, { appointmentCount: 1, clientCount: 1, bookedTime: "Unavailable", clientsToReview: "Unavailable" }),
+    );
+    expect(out.match(/\[overflow-wrap:anywhere\]/g)).toHaveLength(3);
+  });
+});
+
 describe("Clients to review comes from the Needs attention model", () => {
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");

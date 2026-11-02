@@ -9,9 +9,14 @@ import type { ReactNode } from "react";
 //     panel. Not a per-practitioner count: the panel is studio-wide today.
 // Display only: no write, no new read.
 
-const CELL = "min-w-0 rounded-lg border border-neutral-200 px-4 py-3 dark:border-neutral-800";
+// Narrow phones (under 360px, e.g. 320): three cells share the row, so the padding and the value size
+// step down and a long value such as "Unavailable" may break rather than push the card and the
+// viewport wider. From 360px up the cells are exactly as before.
+const CELL =
+  "min-w-0 rounded-lg border border-neutral-200 px-2 py-3 min-[360px]:px-4 dark:border-neutral-800";
 const LABEL = "text-[11px] font-medium uppercase tracking-wider text-neutral-500";
-const VALUE = "mt-1 text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100";
+const VALUE =
+  "mt-1 min-w-0 text-xl font-semibold tracking-tight text-neutral-900 [overflow-wrap:anywhere] max-[359px]:text-sm dark:text-neutral-100";
 
 export function SummaryStrip({
   appointmentCount,
