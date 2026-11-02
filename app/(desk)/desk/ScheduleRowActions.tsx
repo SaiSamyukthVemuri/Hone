@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { CANCEL_REASONS, type BookingPractitioner } from "@/lib/desk/book";
 import { cancelAppointmentAction, moveAppointmentAction, type DeskActionState } from "./actions";
 
@@ -34,7 +34,13 @@ export function ScheduleRowActions({
   const [mode, setMode] = useState<"none" | "move" | "cancel">("none");
   const [moved, move, moving] = useActionState<DeskActionState, FormData>(moveAppointmentAction, { status: "idle" });
   const [cancelled, cancel, cancelling] = useActionState<DeskActionState, FormData>(cancelAppointmentAction, { status: "idle" });
-  const done = moved.status === "ok" || cancelled.status === "ok";
+  // Only a cancellation is terminal: the appointment is gone. A successful MOVE leaves a live
+  // appointment, so its Move and Cancel controls come straight back (the success message stays), and
+  // the form closes instead of lingering on the old values.
+  const done = cancelled.status === "ok";
+  useEffect(() => {
+    if (moved.status === "ok") setMode("none");
+  }, [moved]);
 
   return (
     <div className="flex flex-col gap-2">

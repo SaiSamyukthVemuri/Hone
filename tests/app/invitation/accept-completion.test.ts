@@ -5,11 +5,18 @@ const ctx = vi.hoisted(() => ({
   user: { id: "session-user" } as { id: string } | null,
   error: null as { message: string } | null,
   rpc: vi.fn(),
+  tables: { practitioners: [] as unknown[], studio_receptionists: [] as unknown[] },
   clearSelection: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: (to: string) => { throw new Error(`REDIRECT:${to}`); } }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser: async () => ({ data: { user: ctx.user } }) } }),
+  createClient: async () => ({
+    auth: { getUser: async () => ({ data: { user: ctx.user } }) },
+    from: (t: string) => {
+      const q: Record<string, unknown> = { select: () => q, eq: () => q, limit: async () => ({ data: ctx.tables[t as keyof typeof ctx.tables], error: null }) };
+      return q;
+    },
+  }),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: ctx.rpc }) }));
 vi.mock("@/lib/supabase/selected-studio", () => ({ clearSelectedStudioId: ctx.clearSelection }));
@@ -24,6 +31,8 @@ beforeEach(() => {
   ctx.rpc.mockReset();
   ctx.rpc.mockImplementation(async () => ({ data: ctx.result, error: ctx.error }));
   ctx.clearSelection.mockReset();
+  ctx.tables = { practitioners: [], studio_receptionists: [] };
+  vi.unstubAllEnvs();
 });
 
 describe("invitation completion requires an explicit command success", () => {
@@ -79,5 +88,25 @@ describe("invitation completion requires an explicit command success", () => {
     ctx.error = { message: "private database detail" };
     expect(await acceptInvitationAction(null, consented())).toEqual(failed);
     expect(ctx.clearSelection).not.toHaveBeenCalled();
+  });
+});
+
+describe("desk landing after explicit acceptance (Codex #1303)", () => {
+  it("receptionist-only user with the flag on lands on /desk", async () => {
+    vi.stubEnv("HONE_RECEPTIONIST_DESK_ENABLED", "true");
+    ctx.tables = { practitioners: [], studio_receptionists: [{ id: "r1" }] };
+    ctx.result = { status: "linked", choose_studio: false };
+    await expect(acceptInvitationAction(null, consented())).rejects.toThrow("REDIRECT:/desk");
+  });
+  it("a practitioner membership keeps /dashboard even with the flag on", async () => {
+    vi.stubEnv("HONE_RECEPTIONIST_DESK_ENABLED", "true");
+    ctx.tables = { practitioners: [{ studio_id: "s" }], studio_receptionists: [{ id: "r1" }] };
+    ctx.result = { status: "linked", choose_studio: false };
+    await expect(acceptInvitationAction(null, consented())).rejects.toThrow("REDIRECT:/dashboard");
+  });
+  it("flag off keeps /dashboard for a receptionist-only user", async () => {
+    ctx.tables = { practitioners: [], studio_receptionists: [{ id: "r1" }] };
+    ctx.result = { status: "linked", choose_studio: false };
+    await expect(acceptInvitationAction(null, consented())).rejects.toThrow("REDIRECT:/dashboard");
   });
 });
