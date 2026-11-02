@@ -54,12 +54,12 @@ function ClientCard({ card }: { card: AttentionClient }) {
     <li
       data-attention-client={card.clientId}
       data-attention-tier={card.tier}
-      className="flex flex-col gap-2 px-4 py-3"
+      className="flex min-w-0 flex-col gap-2 px-4 py-3"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
         <Link
           href={`/clients/${card.clientId}`}
-          className="break-words font-medium text-neutral-900 hover:underline dark:text-neutral-100"
+          className="min-w-0 max-w-full break-words font-medium text-neutral-900 [overflow-wrap:anywhere] hover:underline dark:text-neutral-100"
         >
           {card.clientName}
         </Link>

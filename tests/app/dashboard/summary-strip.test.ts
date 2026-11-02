@@ -76,6 +76,22 @@ describe("long client names never widen the row (T-1: 22px horizontal scroll at 
   });
 });
 
+describe("an unbroken long name wraps inside Needs attention and the visit details (Photos re-measure at e254f146d)", () => {
+  const panel = readFileSync("app/(app)/dashboard/needs-attention-panel.tsx", "utf8");
+  const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+  it("the client-name link can shrink and breaks an unbroken name anywhere", () => {
+    // break-words alone does not lower a flex item's min-content width (it did not at 320/390).
+    expect(panel).toMatch(
+      /className="min-w-0 max-w-full break-words font-medium[^"]*\[overflow-wrap:anywhere\]/,
+    );
+    expect(panel).toMatch(/data-attention-client=\{card\.clientId\}\s*data-attention-tier=\{card\.tier\}\s*className="flex min-w-0 flex-col/);
+  });
+  it("the closed visit details can shrink inside the row", () => {
+    expect(page).toMatch(/className="min-w-0 max-w-full order-2 open:order-3/);
+    expect(page).toMatch(/className="min-w-0 max-w-full flex flex-col gap-1\.5 pb-2 pl-\[5\.75rem\]"/);
+  });
+});
+
 describe("Clients to review comes from the Needs attention model", () => {
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");

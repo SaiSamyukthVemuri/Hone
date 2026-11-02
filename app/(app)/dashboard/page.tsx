@@ -1401,7 +1401,7 @@ function AppointmentRow({
             never inside it (CHLOE D1). */}
         <details
           data-testid="today-row-details"
-          className="order-2 open:order-3 open:basis-full lg:order-1 lg:open:order-3 [&_summary::-webkit-details-marker]:hidden"
+          className="min-w-0 max-w-full order-2 open:order-3 open:basis-full lg:order-1 lg:open:order-3 [&_summary::-webkit-details-marker]:hidden"
         >
           <summary className="inline-flex min-h-[44px] cursor-pointer flex-col justify-center text-xs font-medium leading-4 text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
             Visit details
@@ -1411,7 +1411,7 @@ function AppointmentRow({
               </span>
             )}
           </summary>
-          <div className="flex flex-col gap-1.5 pb-2 pl-[5.75rem]">
+          <div className="min-w-0 max-w-full flex flex-col gap-1.5 pb-2 pl-[5.75rem]">
             {/* PREPARATION: the facts that used to be split across the Today
                 row and the Daily Prep Brief, now resolved ONCE by
                 buildTodayWorkflow and rendered once here. Nothing below repeats
