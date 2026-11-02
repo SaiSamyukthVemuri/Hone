@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
+// OWNER-ONLY BY DESIGN (see page.tsx): a configurable staff "reassign" permission must not reach this action.
 // Sam 1 Nov: an existing assignment changes ONLY when the owner explicitly confirms a correction, and the
 // change is audited (the command writes a 'reassigned' audit row with the previous and new practitioner:
 // 0220 move_appointment_core). No client email is sent: this corrects an internal record, the time is unchanged.
@@ -31,7 +32,7 @@ export async function reassignOpenAppointmentAction(formData: FormData): Promise
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (!appt) return { ok: false, error: "Appointment not found." };
-  if (appt.status !== "confirmed") return { ok: false, error: "This appointment is no longer open." };
+  if (appt.status !== "confirmed") return { ok: false, error: "This appointment is no longer open. Refresh the page to see its current state." };
   if (appt.practitioner_id === targetId) return { ok: false, error: "That practitioner is already recorded." };
   if (new Date(appt.starts_at as string).getTime() <= Date.now()) {
     // The reviewed command only covers appointments whose time has not come. A past-date, unfinished one needs
@@ -39,7 +40,24 @@ export async function reassignOpenAppointmentAction(formData: FormData): Promise
     // treatment start, so the wording does not claim the visit began.)
     return {
       ok: false,
-      error: "This appointment's date has passed, so its practitioner is not changed here. Open the appointment to complete it.",
+      error: "This appointment's date has passed, so its practitioner is not changed here. Refresh the page to see its current state, or open the appointment to complete it.",
+    };
+  }
+
+  // A linked live session is the record that treatment began, whatever the date. Re-read it here (the page's phase can be
+  // stale, or the request hand-made): reassigning would make the appointment's practitioner disagree with the chart's performer.
+  // A failed read refuses (fail closed).
+  const { count: sessionCount, error: sessionErr } = await admin
+    .from("sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("appointment_id", appointmentId)
+    .eq("studio_id", studio.id)
+    .is("deleted_at", null);
+  if (sessionErr) return { ok: false, error: "We couldn't check this appointment. Please try again." };
+  if ((sessionCount ?? 0) > 0) {
+    return {
+      ok: false,
+      error: "A treatment record now exists for this appointment, so its practitioner is not changed here. Refresh the page to see its current state, or open the appointment.",
     };
   }
 

@@ -67,6 +67,9 @@ const ctx = vi.hoisted(() => ({
   studioFilter: [] as unknown[],
   target: { id: "", active: true } as Record<string, unknown> | null,
   targetStudio: [] as unknown[],
+  sessionCount: 0,
+  sessionErr: null as unknown,
+  sessionFilters: [] as unknown[][],
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -80,6 +83,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     from: (table: string) => {
       const chain: Record<string, unknown> = new Proxy({}, {
         get(_t, prop: string) {
+          if (prop === "then" && table === "sessions") {
+            return (resolve: (v: unknown) => void) => resolve({ count: ctx.sessionCount, error: ctx.sessionErr });
+          }
+          if (prop === "eq" && table === "sessions") return (c: string, v: unknown) => { ctx.sessionFilters.push([c, v]); return chain; };
           if (prop === "eq") return (c: string, v: unknown) => { if (c === "studio_id") (table === "practitioners" ? ctx.targetStudio : ctx.studioFilter).push(v); return chain; };
           if (prop === "maybeSingle") return async () => ({ data: table === "practitioners" ? ctx.target : ctx.appt, error: null });
           return () => chain;
@@ -102,7 +109,7 @@ const form = (o: Record<string, string>) => { const f = new FormData(); for (con
 const future = () => new Date(Date.now() + 5 * 864e5).toISOString();
 
 beforeEach(() => {
-  ctx.role = "owner"; ctx.rpc.length = 0; ctx.rpcResult = "reassigned"; ctx.studioFilter.length = 0; ctx.targetStudio.length = 0; ctx.target = { id: T1, active: true };
+  ctx.role = "owner"; ctx.rpc.length = 0; ctx.rpcResult = "reassigned"; ctx.studioFilter.length = 0; ctx.targetStudio.length = 0; ctx.target = { id: T1, active: true }; ctx.sessionCount = 0; ctx.sessionErr = null; ctx.sessionFilters.length = 0;
   ctx.appt = { id: A, status: "confirmed", starts_at: future(), ends_at: future(), practitioner_id: "p-owner" };
 });
 
@@ -127,7 +134,21 @@ describe("reassignOpenAppointmentAction", () => {
   it("a started appointment is refused with a plain sentence and nothing is changed", async () => {
     ctx.appt = { id: A, status: "confirmed", starts_at: new Date(Date.now() - 36e5).toISOString(), ends_at: future(), practitioner_id: null };
     const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
-    expect(r).toEqual({ ok: false, error: "This appointment's date has passed, so its practitioner is not changed here. Open the appointment to complete it." });
+    expect(r).toEqual({ ok: false, error: "This appointment's date has passed, so its practitioner is not changed here. Refresh the page to see its current state, or open the appointment to complete it." });
+    expect(ctx.rpc).toEqual([]);
+  });
+  it("a FUTURE appointment that already has a live treatment record is refused server-side (stale tab or hand-made request); the read is studio-scoped", async () => {
+    ctx.sessionCount = 1;
+    const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toContain("treatment record now exists");
+    expect(ctx.rpc).toEqual([]);
+    expect(ctx.sessionFilters).toEqual([["appointment_id", A], ["studio_id", "studio-1"]]);
+  });
+  it("fails closed when the treatment-record read errors", async () => {
+    ctx.sessionErr = { code: "XX000" };
+    const r = await reassignOpenAppointmentAction(form({ appointment_id: A, target_practitioner_id: T1 }));
+    expect(r.ok).toBe(false);
     expect(ctx.rpc).toEqual([]);
   });
   it("not found / other studio, a closed appointment, the same practitioner, and malformed ids are refused without a command", async () => {
@@ -207,12 +228,17 @@ describe("source contracts", () => {
       expect(read(`app/(app)/calendar/check-practitioner/${f}`)).not.toMatch(/already started/i);
     }
   });
+  it("the review page and its action stay OWNER-ONLY by explicit server checks, independent of any future configurable reassign permission", () => {
+    expect(read("app/(app)/calendar/check-practitioner/page.tsx")).toMatch(/practitioner\.role !== "owner"\) notFound\(\)/);
+    expect(read("app/(app)/calendar/check-practitioner/actions.ts")).toMatch(/practitioner\.role !== "owner"/);
+  });
   it("the action sends no client email and no payment write", () => {
     const act = read("app/(app)/calendar/check-practitioner/actions.ts");
     const code = act.replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/email|sendMail|resend|settlement|charge|refund|payment/i);
-    // reads only: the appointment, and the target practitioner's active/studio membership; no other table
-    expect(code).not.toMatch(/\.from\("(?!appointments"|practitioners")/);
+    // reads only: the appointment, its live linked sessions (a treatment record refuses the change), and the target
+    // practitioner's active/studio membership; no other table
+    expect(code).not.toMatch(/\.from\("(?!appointments"|practitioners"|sessions")/);
     expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
   });
 });
@@ -237,9 +263,10 @@ describe("phase: a past DATE is not a recorded treatment start (Sam, 2 Nov)", ()
     expect(it.treatmentStartedAt).toBe("2030-12-01T10:05:00Z");
     expect(it.performedBy).toEqual([ANN]);
   });
-  it("a future appointment stays upcoming even if a session is already linked (reassign is by time, unchanged)", () => {
+  it("a future appointment that already has a linked session is treatment_recorded, not upcoming (the session decides, not the date)", () => {
     const [it] = classifyForCheck([appt({ id: "f1", practitionerId: OWNER, linkedSessionCount: 1 })], team, NOW);
-    expect(it.phase).toBe("upcoming");
+    expect(it.phase).toBe("treatment_recorded");
+    expect(it.isFuture).toBe(true);
   });
   it("sorting is unchanged: earliest first across phases", () => {
     const out = classifyForCheck([appt({ id: "x2", practitionerId: null }), appt({ id: "x1", startsAt: past, practitionerId: null })], team, NOW);

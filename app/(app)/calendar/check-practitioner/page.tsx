@@ -23,6 +23,9 @@ import { ReassignRow } from "./ReassignRow";
 // Sam 2 Nov: a PAST appointment date is not a recorded treatment start. Rows are split into what can be reassigned now
 // (not started) and what is shown for review only (date passed; treatment recorded), each with its real status.
 // Nothing here completes, reassigns, cancels or touches payment on its own.
+// OWNER-ONLY BY DESIGN, not by a permission key: it reviews who is recorded, an owner act. If appointment reassignment later becomes
+// configurable for staff (Roles program), this page and its action stay owner-only until a separately reviewed decision says otherwise.
+// "Chart written by" always shows the RECORDED performer of a session, never the assignee.
 
 export const dynamic = "force-dynamic";
 // Every open appointment is read, in pages (Codex P2: a fixed window can hide the misassigned ones behind started
@@ -134,8 +137,8 @@ export default async function CheckPractitionerPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold">Review practitioner assignments</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Practitioners can mark only their own appointments complete. These open appointments may have the wrong
-          practitioner recorded. Nothing is changed until you change it here. A suggestion comes from who wrote the
+          Once the assigned-only completion rule is switched on, practitioners will be able to mark only their own
+          appointments complete. These open appointments may have the wrong practitioner recorded. Nothing is changed until you change it here. A suggestion comes from who wrote the
           chart and is never applied for you.
         </p>
         {items.length > 0 && (
@@ -190,7 +193,7 @@ export default async function CheckPractitionerPage() {
                       {it.phase === "date_passed" && "The appointment date has passed. No treatment is recorded."}
                       {it.phase === "treatment_recorded" && (
                         <>
-                          Treatment recorded
+                          Treatment recorded{!it.isFuture ? "" : " (the appointment date is still ahead)"}
                           {it.treatmentStartedAt ? (
                             <>
                               , started <FormattedDateTime iso={it.treatmentStartedAt} />

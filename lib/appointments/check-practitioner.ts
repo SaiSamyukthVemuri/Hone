@@ -34,9 +34,9 @@ export type PractitionerLite = {
 };
 
 /**
- *  upcoming            not started: the owner can change the practitioner here;
+ *  upcoming            the date is ahead and NO treatment is recorded: the owner can change the practitioner here;
  *  date_passed         the date has passed and NO treatment is recorded: shown for review only;
- *  treatment_recorded  the date has passed and a session records the treatment: shown for review only.
+ *  treatment_recorded  a session records the treatment, whatever the date: shown for review only.
  */
 export type AssignmentPhase = "upcoming" | "date_passed" | "treatment_recorded";
 
@@ -74,7 +74,9 @@ export function classifyForCheck(
     if (reasons.length === 0) continue;
     const suggestion = other && active.some((p) => p.id === other) ? other : null;
     const isFuture = new Date(r.startsAt).getTime() > now.getTime();
-    const phase: AssignmentPhase = isFuture ? "upcoming" : (r.linkedSessionCount ?? 0) > 0 ? "treatment_recorded" : "date_passed";
+    // A linked live session is the RECORD that treatment began, whatever the appointment date says (an early start, a mis-dated
+    // or rebooked row). It decides the phase first, so a row with a chart is never offered for reassignment.
+    const phase: AssignmentPhase = (r.linkedSessionCount ?? 0) > 0 ? "treatment_recorded" : isFuture ? "upcoming" : "date_passed";
     items.push({
       id: r.id,
       startsAt: r.startsAt,
@@ -122,6 +124,6 @@ export const PHASE_TEXT: Record<AssignmentPhase, { heading: string; explain: str
   treatment_recorded: {
     heading: "Treatment recorded",
     explain:
-      "A treatment record exists for these. Their practitioner is not changed here. Open the appointment to complete it.",
+      "A treatment record exists for these, whatever the appointment date. Their practitioner is not changed here, so the chart and the appointment cannot disagree. Open the appointment to complete it.",
   },
 };
