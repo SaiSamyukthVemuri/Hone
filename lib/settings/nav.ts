@@ -197,3 +197,19 @@ export function activeSettingsLocation<
     .sort((a, b) => b.base.length - a.base.length)[0];
   return owner ? { item: owner, child: null } : null;
 }
+
+/**
+ * The ONE rail entry that is "the current page" for a pathname: a child's id
+ * for a group, the entry's own id for a flat link, null when the route is not in
+ * the rail. Only this entry takes the selected look and aria-current; a group
+ * that merely owns the route is expanded, never selected. A group whose own
+ * route has no child of that name (a return URL under its base) selects nothing.
+ */
+export function currentSettingsRailId<
+  T extends { id: string; href: string; base: string; children: ReadonlyArray<{ id: string; href: string }> },
+>(items: ReadonlyArray<T>, pathname: string): string | null {
+  const location = activeSettingsLocation(items, pathname);
+  if (!location) return null;
+  if (location.child) return location.child.id;
+  return location.item.children.length === 0 ? location.item.id : null;
+}

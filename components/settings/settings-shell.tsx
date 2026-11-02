@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
 import { PendingLink } from "@/components/pending-link";
@@ -8,6 +8,7 @@ import {
   SETTINGS_NAV_GROUP_LABEL,
   SETTINGS_NAV_GROUP_ORDER,
   activeSettingsLocation,
+  currentSettingsRailId,
   isRailLinkClick,
   type SettingsNavItem,
 } from "@/lib/settings/nav";
@@ -27,19 +28,31 @@ type Props = {
   children: ReactNode;
 };
 
+// ONE look for every ordinary rail item (links and group buttons alike): the
+// same colour and weight. A group is told apart by its chevron, never by darker
+// or bolder text. ONLY the current page takes ITEM_ACTIVE (a filled row plus an
+// accent bar); hover is a lighter wash with no bar, so it never reads as
+// selected, and an expanded group has no fill at all.
 const ITEM_BASE =
-  "block rounded-md px-3 py-2 text-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:focus-visible:outline-neutral-100";
+  "relative block rounded-md px-3 py-2 text-sm font-normal transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:focus-visible:outline-neutral-100";
 const ITEM_IDLE =
-  "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100";
+  "text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100";
 const ITEM_ACTIVE =
-  "bg-neutral-100 font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
+  "bg-neutral-100 font-medium text-neutral-900 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 dark:before:bg-neutral-100";
 
 export function SettingsShell({ items, account, children }: Props) {
   const pathname = usePathname() ?? "";
   const location = activeSettingsLocation(items, pathname);
   const activeItem = location?.item ?? null;
+  const currentId = currentSettingsRailId(items, pathname);
   const activeChild = location?.child ?? null;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // The sticky title bar and rail sit directly under the app header. Its height
+  // is not a constant (the nav row, a wrapped account name), so it is measured
+  // and handed down as --settings-top; 4.5rem is the first-paint fallback.
+  const [headerPx, setHeaderPx] = useState<number | null>(null);
+  const topVar: CSSProperties | undefined =
+    headerPx === null ? undefined : ({ "--settings-top": `${headerPx}px` } as CSSProperties);
   // Exactly one group is open (R2): opening another closes the previous. Opening
   // is only a disclosure; it navigates nowhere and unmounts nothing, so it can
   // never discard unsaved edits (a link click out of the page is what the
@@ -50,6 +63,18 @@ export function SettingsShell({ items, account, children }: Props) {
   const content = useRef<HTMLDivElement>(null);
   const railId = useId();
   const mounted = useRef(false);
+
+  useEffect(() => {
+    // The app header is the first <header> in the document.
+    const appHeader = document.querySelector<HTMLElement>("header");
+    if (!appHeader) return;
+    const measure = () => setHeaderPx(Math.ceil(appHeader.getBoundingClientRect().height));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(appHeader);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     setOpenId(activeItem?.id ?? null);
@@ -152,9 +177,10 @@ export function SettingsShell({ items, account, children }: Props) {
           so it starts directly under the app header (not under the Settings title
           row) and fits the viewport with no window scroll; the title row and the
           view sit in the right column. */}
-      <div className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-6">
+      <div className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:grid-rows-[auto_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-4"
+        style={topVar}>
         {/* Sticky so the menu is reachable without scrolling back to the top. */}
-        <header className="sticky top-14 z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:col-start-2 min-[700px]:row-start-1 min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
+        <header className="sticky top-[var(--settings-top,4.5rem)] z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:col-start-2 min-[700px]:row-start-1 min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
           <PendingLink
             href="/dashboard"
             pendingLabel="Loading…"
@@ -194,7 +220,7 @@ export function SettingsShell({ items, account, children }: Props) {
               drawerOpen
                 ? "fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto bg-white p-4 shadow-xl dark:bg-neutral-950"
                 : "hidden"
-            } min-[700px]:sticky min-[700px]:top-20 min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh-7.5rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
+            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh-var(--settings-top,4.5rem)-2rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
           >
             <nav
               aria-label="Settings sections"
@@ -236,13 +262,14 @@ export function SettingsShell({ items, account, children }: Props) {
                   {entries.map((entry) => {
                     const isActive = activeItem?.id === entry.id;
                     if (entry.children.length === 0) {
+                      const isCurrent = currentId === entry.id;
                       return (
                         <PendingLink
                           key={entry.id}
                           href={entry.href}
                           pendingLabel="Loading settings…"
-                          aria-current={isActive ? "page" : undefined}
-                          className={`${ITEM_BASE} ${isActive ? ITEM_ACTIVE : ITEM_IDLE}`}
+                          aria-current={isCurrent ? "page" : undefined}
+                          className={`${ITEM_BASE} ${isCurrent ? ITEM_ACTIVE : ITEM_IDLE}`}
                         >
                           {entry.label}
                         </PendingLink>
@@ -252,22 +279,31 @@ export function SettingsShell({ items, account, children }: Props) {
                     const listId = `${railId}-${entry.id}`;
                     return (
                       <div key={entry.id}>
-                        {/* A group heading is a disclosure button, not a link:
-                            heading weight and a chevron set it apart from the
-                            plain links beneath it. */}
+                        {/* A group is a disclosure button with a chevron. Its text is
+                            the same colour and weight as every other item and it
+                            never takes the selected look, open or not. */}
                         <button
                           type="button"
                           aria-expanded={open}
                           aria-controls={listId}
                           onClick={() => setOpenId(open ? null : entry.id)}
-                          className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold tracking-tight text-neutral-900 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:focus-visible:outline-neutral-100 ${
-                            isActive ? "bg-neutral-50 dark:bg-neutral-900" : ""
-                          }`}
+                          className={`${ITEM_BASE} ${ITEM_IDLE} flex w-full items-center justify-between text-left`}
                         >
                           <span>{entry.label}</span>
-                          <span aria-hidden className="text-neutral-500">
-                            {open ? "⌄" : "›"}
-                          </span>
+                          <svg
+                            aria-hidden
+                            viewBox="0 0 16 16"
+                            className={`h-4 w-4 shrink-0 text-neutral-500 transition-transform dark:text-neutral-400 ${
+                              open ? "rotate-90" : ""
+                            }`}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M6 3.5 10.5 8 6 12.5" />
+                          </svg>
                         </button>
                         {open && (
                           <ul
@@ -275,7 +311,7 @@ export function SettingsShell({ items, account, children }: Props) {
                             className="ml-3 mt-1 flex flex-col gap-0.5 border-l border-neutral-200 pl-2 dark:border-neutral-800"
                           >
                             {entry.children.map((child) => {
-                              const childActive = isActive && activeChild?.id === child.id;
+                              const childActive = currentId === child.id;
                               return (
                                 <li key={child.id}>
                                   <PendingLink
@@ -311,7 +347,7 @@ export function SettingsShell({ items, account, children }: Props) {
             {activeItem && (
               <nav
                 aria-label="Breadcrumb"
-                className="mb-6 text-xs text-neutral-500 dark:text-neutral-400"
+                className="mb-4 text-xs text-neutral-500 dark:text-neutral-400"
               >
                 <ol className="flex flex-wrap items-center gap-1.5">
                   <li>Settings</li>

@@ -17,6 +17,7 @@ import {
 } from "./ServiceFormControls";
 import { ServiceOrderList } from "./ServiceOrderList";
 import { SectionLabel } from "@/components/ui/section-label";
+import { fieldControlClass } from "@/components/ui/field";
 
 function formatPrice(cents: number | null): string {
   if (cents == null) return "Not set";
@@ -166,7 +167,7 @@ function ServiceEditForm({
               name="name"
               defaultValue={service.name}
               required
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass()}
             />
           </FieldLabel>
           <FieldLabel label="Modality">
@@ -211,7 +212,7 @@ function ServiceEditForm({
             name="description"
             defaultValue={service.description ?? ""}
             placeholder="e.g. 30-minute upper lip session"
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass()}
           />
         </FieldLabel>
 
@@ -224,7 +225,7 @@ function ServiceEditForm({
             defaultValue={service.pre_care_instructions ?? ""}
             rows={4}
             placeholder="e.g. Please arrive 5 minutes early. Skin should be free of lotion or makeup."
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass()}
           />
         </FieldLabel>
 
@@ -257,7 +258,7 @@ function ServiceEditForm({
                 max={100000}
                 step={1}
                 defaultValue={service.sort_order}
-                className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                className={fieldControlClass({ fullWidth: false, className: "w-24 tabular-nums" })}
               />
             </FieldLabel>
           </div>
@@ -299,7 +300,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
                 name="name"
                 required
                 placeholder="e.g. Electrolysis 30 min"
-                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                className={fieldControlClass()}
               />
             </FieldLabel>
             <FieldLabel label="Modality">
@@ -332,7 +333,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
             <input
               name="description"
               placeholder="e.g. 30-minute upper lip session"
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass()}
             />
           </FieldLabel>
 
@@ -412,7 +413,7 @@ function ModalitySelect({
     <select
       name={name}
       defaultValue={defaultValue ?? ""}
-      className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+      className={fieldControlClass()}
     >
       {KNOWN_MODALITIES.map((m) => (
         <option key={m.value} value={m.value}>

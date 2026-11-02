@@ -490,9 +490,32 @@ describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, 
     expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-2/); // view
   });
   it("it is sticky below the app header and scrolls inside itself", () => {
-    expect(src).toMatch(/min-\[700px\]:sticky min-\[700px\]:top-20/);
-    expect(src).toMatch(/min-\[700px\]:max-h-\[calc\(100vh-7\.5rem\)\]/);
+    // The offset is the MEASURED app-header height (--settings-top), so a taller
+    // header can never clip the rail or the title bar.
+    expect(src).toMatch(/min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
+    expect(src).toMatch(/min-\[700px\]:max-h-\[calc\(100vh-var\(--settings-top,4\.5rem\)-2rem\)\]/);
+    expect(src).toMatch(/sticky top-\[var\(--settings-top,4\.5rem\)\]/);
+    expect(src).toMatch(/new ResizeObserver\(measure\)/);
     expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
+  });
+  it("the view row takes the spare height, so no blank gap opens under the title", () => {
+    // The rail spans both rows; without a flexible second row its extra height is
+    // shared into the title row and pushes the content down.
+    expect(src).toMatch(/min-\[700px\]:grid-rows-\[auto_minmax\(0,1fr\)\]/);
+  });
+  it("ordinary items share one colour and weight; only the current page is selected", () => {
+    // A group button reuses ITEM_BASE + ITEM_IDLE (no font-semibold, no darker text),
+    // carries a chevron, and has no fill of its own.
+    expect(src).toMatch(/className=\{`\$\{ITEM_BASE\} \$\{ITEM_IDLE\} flex w-full items-center justify-between/);
+    expect(src).not.toMatch(/font-semibold tracking-tight text-neutral-900/);
+    expect(src).toMatch(/open \? "rotate-90"/);
+    // Selected = aria-current only, driven by the single current id.
+    expect(src).toMatch(/currentSettingsRailId\(items, pathname\)/);
+    expect(src).toMatch(/const childActive = currentId === child\.id/);
+    expect(src).toMatch(/const isCurrent = currentId === entry\.id/);
+    // Hover is a lighter wash than the selected fill and has no accent bar.
+    expect(src).toMatch(/ITEM_IDLE =\s*"[^"]*hover:bg-neutral-50/);
+    expect(src).toMatch(/ITEM_ACTIVE =\s*"bg-neutral-100 font-medium[^"]*before:bg-neutral-900/);
   });
   it("at 1280x800 and 1280x720 the rail's bottom stays inside the viewport at scroll 0", () => {
     // App header ~65px + main padding 40px = natural top ~105px; the cap is 100vh - 7.5rem.

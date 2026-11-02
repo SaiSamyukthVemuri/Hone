@@ -12,6 +12,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { bookingSettingsErrorSentence } from "@/lib/booking/settings-error-codes";
 import { FormDirtyGuard } from "@/components/settings/form-dirty-guard";
 import { SettingsViewHeading, STUDIO_WIDE_SCOPE } from "@/components/settings/view-heading";
+import { fieldControlClass } from "@/components/ui/field";
 
 // Plain option labels for the buffer select. The "Recommended" hint
 // is no longer inlined here because that crowded the select control
@@ -114,7 +115,7 @@ export async function BookingView({
               name="timezone"
               defaultValue={studio.timezone}
               placeholder="America/Toronto"
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass({ fullWidth: false })}
             />
           </label>
           <label
@@ -129,7 +130,7 @@ export async function BookingView({
               max={480}
               step={5}
               defaultValue={studio.default_appointment_duration_minutes}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass({ fullWidth: false, className: "tabular-nums" })}
             />
           </label>
           <label id="buffer" className="flex scroll-mt-24 flex-col gap-1.5">
@@ -144,7 +145,7 @@ export async function BookingView({
             <select
               name="buffer_minutes"
               defaultValue={String(studio.buffer_minutes)}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              className={fieldControlClass({ fullWidth: false, className: "tabular-nums" })}
             >
               {!BUFFER_PRESET_MINUTES.includes(studio.buffer_minutes) && (
                 <option value={String(studio.buffer_minutes)}>
@@ -173,7 +174,7 @@ export async function BookingView({
           <select
             name="public_booking_horizon_months"
             defaultValue={String(studio.public_booking_horizon_months)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass({ fullWidth: false, className: "tabular-nums" })}
           >
             {PUBLIC_BOOKING_HORIZON_MONTHS_VALUES.map((m) => (
               <option key={m} value={String(m)}>
@@ -198,7 +199,7 @@ export async function BookingView({
             name="address"
             defaultValue={studio.address ?? ""}
             placeholder="123 Main St, City"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass({ fullWidth: false })}
           />
           <span className="text-xs text-neutral-500">
             Shown on your public booking page, and in clients&rsquo;
@@ -215,7 +216,7 @@ export async function BookingView({
             rows={3}
             defaultValue={studio.booking_description ?? ""}
             placeholder="Short description shown on your public booking page."
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
 
