@@ -25,6 +25,7 @@ describe("Item 7 server — reassignment context + target-aware slots + submit",
     expect(ACTIONS).toMatch(/reassignEnabled:/);
     expect(ACTIONS).toMatch(/eligiblePractitioners:/);
     expect(ACTIONS).toMatch(/currentPractitionerValid:/);
+    expect(ACTIONS).toMatch(/holderMustBeValid: studio\.practitioner_capacity_enabled === true/);
     // owner only, in either capacity mode.
     expect(ACTIONS).toMatch(/const reassignEnabled = practitioner\.role === "owner";/);
     // eligibility via service_practitioners (active, same-studio, display names only).
@@ -62,7 +63,7 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
     // Same contract, asserted where it now lives.
     expect(DIALOG).toMatch(/import \{ moveConfirmState \} from "\.\/move-confirm-state"/);
     expect(DIALOG).toMatch(/= moveConfirmState\(\{/);
-    expect(GATE).toMatch(/const targetChosen = !reassignEnabled \|\| eligibleIds\.includes\(target\)/);
+    expect(GATE).toMatch(/const targetChosen = !reassignEnabled \|\| \(target === \"\" \? !holderMustBeValid : eligibleIds\.includes\(target\)\)/);
     expect(GATE).toMatch(/if \(!targetChosen\) return blocked\(/);
     // The dialog must NOT keep a second, private copy of the gate.
     expect(DIALOG).not.toMatch(/const canConfirm =/);
@@ -70,7 +71,7 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
   it("changing the target clears the selected slot + reloads target-specific slots (stale-guarded)", () => {
     expect(DIALOG).toMatch(/const onPickTarget = \(t: string\) => \{/);
     expect(DIALOG).toMatch(/setSelected\(null\)/);
-    expect(DIALOG).toMatch(/if \(t\) load\(date, t\)/);
+    expect(DIALOG).toMatch(/if \(t \|\| !holderMustBeValid\) load\(date, t\)/);
     expect(DIALOG).toMatch(/const loadReq = useRef\(0\)/);
     expect(DIALOG).toMatch(/if \(req !== loadReq\.current\) return/);
   });
@@ -85,7 +86,7 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
     expect(DIALOG).toMatch(/data-testid="reassignment-required"/);
     // EMERG-02: the notice is no longer gated on a NON-EMPTY current id, so an
     // appointment holding NO practitioner explains itself too.
-    expect(GATE).toMatch(/const reassignmentRequired = reassignEnabled && !eligibleIds\.includes\(currentPractitionerId\)/);
+    expect(GATE).toMatch(/const reassignmentRequired = reassignEnabled && holderMustBeValid && !eligibleIds\.includes\(currentPractitionerId\)/);
     expect(GATE).not.toMatch(/reassignmentRequired = reassignEnabled && !!currentPractitionerId/);
   });
   it("submits the proposed target only for an owner (members/Legacy send null)", () => {

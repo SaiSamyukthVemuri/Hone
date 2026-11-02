@@ -49,6 +49,8 @@ export type LoadMoveSlotsResult =
       // Whether the appointment's CURRENT practitioner is still active + eligible;
       // when false the owner must deliberately choose a replacement (no silent pick).
       currentPractitionerValid: boolean;
+      // Whether the database requires a valid holder to move this appointment (capacity ON only).
+      holderMustBeValid: boolean;
     }
   | { ok: false; error: string };
 
@@ -205,6 +207,7 @@ export async function loadMoveSlotsAction(input: {
     eligiblePractitioners: eligible,
     currentPractitionerId: appt.practitioner_id,
     currentPractitionerValid: currentValid,
+    holderMustBeValid: studio.practitioner_capacity_enabled === true,
   };
 }
 
