@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { useState, useTransition } from "react";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
@@ -67,8 +68,18 @@ export function PractitionerWeekEditor({
     close: "17:00",
   });
   const [confirmResetWeek, setConfirmResetWeek] = useState(false);
+  // An open day editor whose draft differs from the day as shown is unsaved work.
+  const editedDay = editingDow == null ? null : week.find((d) => d.day_of_week === editingDow) ?? null;
+  useUnsavedChangesGuard(
+    `availability-week-day-${practitionerId}`,
+    editedDay != null &&
+      (draft.is_open !== editedDay.is_open ||
+        (draft.is_open &&
+          (draft.open !== (editedDay.open_time || "09:00") ||
+            draft.close !== (editedDay.close_time || "17:00")))),
+  );
 
-  function run(action: () => Promise<AvailabilityActionResult>, okText: string) {
+  function run(action: () => Promise<AvailabilityActionResult>, okText: string, onOk?: () => void) {
     setMsg(null);
     startTransition(async () => {
       const r = await action();
@@ -76,6 +87,7 @@ export function PractitionerWeekEditor({
         setMsg({ ok: true, text: okText });
         setEditingDow(null);
         setConfirmResetWeek(false);
+        onOk?.();
       } else {
         setMsg({ ok: false, text: r.error });
       }
@@ -291,6 +303,7 @@ export function PractitionerWeekEditor({
 }
 
 function OverridesSection({
+  practitionerId,
   practitionerName,
   timeFormat,
   overrides,
@@ -302,7 +315,7 @@ function OverridesSection({
   practitionerName: string;
   timeFormat: "12h" | "24h";
   overrides: EffectiveOverride[];
-  run: (a: () => Promise<AvailabilityActionResult>, ok: string) => void;
+  run: (a: () => Promise<AvailabilityActionResult>, ok: string, onOk?: () => void) => void;
   fd: (fields: Record<string, string>) => FormData;
   pending: boolean;
 }) {
@@ -310,6 +323,7 @@ function OverridesSection({
   const [isOpen, setIsOpen] = useState(true);
   const [open, setOpen] = useState("10:00");
   const [close, setClose] = useState("15:00");
+  useUnsavedChangesGuard(`availability-week-override-${practitionerId}`, date !== "" || !isOpen || open !== "10:00" || close !== "15:00");
 
   return (
     <div className="flex flex-col gap-3">
@@ -386,6 +400,14 @@ function OverridesSection({
                   }),
                 ),
               `Saved a date override for ${practitionerName}.`,
+              // A saved override is no longer an unsaved edit: back to the form's
+              // resting values so the unsaved-changes guard releases.
+              () => {
+                setDate("");
+                setIsOpen(true);
+                setOpen("10:00");
+                setClose("15:00");
+              },
             )
           }
           className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
