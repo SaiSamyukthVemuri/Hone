@@ -42,6 +42,11 @@ test("invite -> accept -> desk works -> remove -> the same cookie is refused", a
 
   // accept = the invitee signs in; the membership appears, the desk answers
   await signInAsReceptionist(page, email);
+  // a new membership needs explicit acceptance of the current terms and privacy policy (the invited-as-receptionist page)
+  await page.waitForURL(/\/accept-invitation/, { timeout: 30_000 });
+  await expect(page.getByText(/as receptionist/i).first()).toBeVisible();
+  await page.getByRole("checkbox", { name: /I agree to the current Terms/ }).check();
+  await page.getByRole("button", { name: /as receptionist/i }).click();
   await expect.poll(async () => (await memberships(s.studioId, email)).filter((m) => m.active).length, { timeout: 30_000 }).toBe(1);
   await page.goto("/desk");
   await expect(page).toHaveURL(/\/desk/);
