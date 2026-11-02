@@ -143,7 +143,7 @@ describe("nothing else on the dashboard changed", () => {
     // stays on the same line); the wrap/alignment contract this test exists for
     // is unchanged, so it is pinned without the padding shorthand.
     // COMPACT LAYOUT (#1308): the row is ONE wrapping flex row (body | details | Open) with tight padding.
-    expect(PAGE).toMatch(/flex flex-wrap items-start gap-x-3 gap-y-0 py-2 pr-4 lg:items-center/);
+    expect(PAGE).toMatch(/flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center/);
     expect(PAGE).toMatch(/pl-4 hover:bg-neutral-50/);
     // The action footer tightened to `gap-1 self-start`: on a phone this
     // column wraps onto its own full-width line, where centring it against a

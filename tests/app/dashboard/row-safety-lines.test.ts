@@ -58,7 +58,7 @@ describe("compact row layout pins (OPS 1308: plain row ~56-72px at 1280, ~96-120
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   const row = page.slice(page.indexOf("function AppointmentRow("), page.indexOf("function AppointmentStatusPill("));
   it("the row body, the details disclosure and the Open action share one wrapping row, tight padding", () => {
-    expect(row).toMatch(/flex flex-wrap items-start gap-x-3 gap-y-0 py-2 pr-4 lg:items-center/);
+    expect(row).toMatch(/flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center/);
     expect(row).not.toMatch(/py-4 pr-4/);
     expect(row).toMatch(/basis-full gap-3 lg:basis-0 lg:flex-1/);
   });

@@ -1260,7 +1260,7 @@ function AppointmentRow({
     <div
       data-testid={isCurrent ? "today-current-row" : undefined}
       data-current={isCurrent ? "true" : undefined}
-      className={`flex flex-wrap items-start gap-x-3 gap-y-0 py-2 pr-4 lg:items-center ${
+      className={`flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center ${
         isCurrent
           ? "border-l-4 border-l-blue-500 bg-blue-50 pl-3 hover:bg-blue-100/70 dark:border-l-blue-400 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
           : "pl-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
@@ -1319,7 +1319,7 @@ function AppointmentRow({
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-x-2">
+            <div className="flex flex-wrap items-center gap-x-2 text-xs leading-4">
               <span className="truncate text-sm font-medium leading-5">
                 {appt.client ? clientDisplayName(appt.client) : "Client deleted"}
               </span>
@@ -1331,7 +1331,7 @@ function AppointmentRow({
               {isOwner && <CardOnFilePill status={cardOnFile} />}
               {nextAction.chip && (
                 <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] leading-3 font-medium uppercase tracking-wider ${
                     nextAction.chip === "Charting needed"
                       ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
                       : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
@@ -1683,7 +1683,7 @@ function AppointmentStatusPill({ status }: { status: AppointmentStatus }) {
   if (!v) return null;
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${v.classes}`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] leading-3 font-medium uppercase tracking-wider ${v.classes}`}
     >
       {v.label}
     </span>
