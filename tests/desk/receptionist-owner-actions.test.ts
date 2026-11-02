@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 type Ctx = { practitioner: { id: string; role: string; active: boolean }; studio: { id: string } };
 let ctx: Ctx | Error;
 const inserts: Array<Record<string, unknown>> = [];
+const ilikes: string[] = [];
 const rpcs: Array<{ fn: string; args: Record<string, unknown> }> = [];
 let rpcResult: { data: unknown; error: unknown } = { data: "updated", error: null };
 let existing: { practitioner: unknown; receptionist: unknown; pending: unknown } = { practitioner: null, receptionist: null, pending: null };
@@ -16,7 +17,11 @@ function chain(table: string) {
     return Promise.resolve({ data, error: null });
   };
   const q: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "ilike"]) q[m] = () => q;
+  for (const m of ["select", "eq"]) q[m] = () => q;
+  q.ilike = (_c: string, v: string) => {
+    ilikes.push(v);
+    return q;
+  };
   q.maybeSingle = result;
   q.insert = (row: Record<string, unknown>) => {
     inserts.push(row);
@@ -55,6 +60,7 @@ const form = (entries: Array<[string, string]>) => {
 beforeEach(() => {
   ctx = OWNER;
   inserts.length = 0;
+  ilikes.length = 0;
   rpcs.length = 0;
   rpcResult = { data: "updated", error: null };
   existing = { practitioner: null, receptionist: null, pending: null };
@@ -96,6 +102,13 @@ describe("inviteReceptionistAction", () => {
     existing = { practitioner: null, receptionist: null, pending: { id: "x" } };
     expect(await inviteReceptionistAction(form([["email", "desk@example.test"]]))).toMatchObject({ ok: false });
     expect(inserts).toEqual([]);
+  });
+
+  it("matches the exact address: % _ and \\ in an email are escaped in every duplicate check, and the stored email is unchanged", async () => {
+    const out = await inviteReceptionistAction(form([["email", "a_b%c\\d@example.test"]]));
+    expect(out).toMatchObject({ ok: true });
+    expect(ilikes).toEqual(Array(3).fill("a\\_b\\%c\\\\d@example.test"));
+    expect(inserts[0].email).toBe("a_b%c\\d@example.test");
   });
 
   it("never creates an account or a membership: the only write is the invitation row", async () => {

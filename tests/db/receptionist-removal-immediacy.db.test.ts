@@ -7,7 +7,7 @@ import { adminQuery, adminTx, asRole, asUser, closePool, seedStudio, type Seeded
 // before the owner removed the access gets no further answer. The browser path (old session cookie) is proved in
 // e2e/receptionist-removal.spec.ts. Synthetic values only.
 //
-// Every function a receptionist may reach directly through PostgREST is exercised: the same `authenticated` JWT
+// Every function granted to `authenticated` that resolves a receptionist (receptionist_actor_id) is exercised: the same `authenticated` JWT
 // claims, before and after set_studio_receptionist_active(false). Each has a positive control first (the gate
 // passes while the membership is active), so a refusal afterwards cannot be a vacuous one.
 
@@ -30,7 +30,7 @@ const asServiceRole = <T>(fn: (x: UserQuery) => Promise<T>) =>
   });
 const q = (uid: string, sql: string, params: unknown[]) => asUser(uid, (x) => x(sql, params));
 
-// The eight functions granted to `authenticated` that resolve a receptionist (0216/0220/0266/0274).
+// The nine functions granted to `authenticated` that resolve a receptionist (0216 closures, 0220, 0266, 0274).
 function calls(): Call[] {
   const s = studio.studioId;
   return [
@@ -38,6 +38,7 @@ function calls(): Call[] {
     { name: "receptionist_client_directory", run: (u) => q(u, "select * from public.receptionist_client_directory($1,null,null,'name',0,25)", [s]) },
     { name: "receptionist_studio_timezone", run: (u) => q(u, "select public.receptionist_studio_timezone($1) as tz", [s]) },
     { name: "receptionist_client_contacts_v2", run: (u) => q(u, "select * from public.receptionist_client_contacts_v2($1,null,25)", [s]) },
+    { name: "receptionist_calendar_closures", run: (u) => q(u, "select * from public.receptionist_calendar_closures($1,$2,$3)", [s, FROM, TO]) },
     { name: "receptionist_booking_options", run: (u) => q(u, "select * from public.receptionist_booking_options($1)", [s]) },
     {
       name: "receptionist_create_appointment",

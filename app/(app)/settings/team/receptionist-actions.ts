@@ -32,6 +32,12 @@ export type ReceptionistRemoveResult = { ok: true } | { ok: false; error: string
 const UNAVAILABLE = "This is not available.";
 const OWNER_ONLY = "Only studio owners can manage the team.";
 
+// ilike treats % and _ (and \ as the escape) as pattern characters, and an email local part may legally contain them. Escaped, the
+// match is the exact case-insensitive address, so such an address can neither match other rows nor make a false "already on the team".
+function exactIlike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
   const t = value.trim();
@@ -64,7 +70,7 @@ export async function inviteReceptionistAction(formData: FormData): Promise<Rece
     .from("practitioners")
     .select("id")
     .eq("studio_id", studioId)
-    .ilike("email", email)
+    .ilike("email", exactIlike(email))
     .eq("active", true)
     .maybeSingle();
   if (pErr) return { ok: false, error: "Could not check the team." };
@@ -86,7 +92,7 @@ export async function inviteReceptionistAction(formData: FormData): Promise<Rece
     .from("studio_receptionists")
     .select("id")
     .eq("studio_id", studioId)
-    .ilike("email", email)
+    .ilike("email", exactIlike(email))
     .eq("active", true)
     .maybeSingle();
   if (rErr) return { ok: false, error: "Could not check the team." };
@@ -96,7 +102,7 @@ export async function inviteReceptionistAction(formData: FormData): Promise<Rece
     .from("pending_invitations")
     .select("id")
     .eq("studio_id", studioId)
-    .ilike("email", email)
+    .ilike("email", exactIlike(email))
     .eq("status", "pending")
     .maybeSingle();
   if (iErr) return { ok: false, error: "Could not check existing invitations." };
