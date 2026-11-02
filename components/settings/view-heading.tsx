@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 // overlines: studio-wide views say "Applies to the whole studio.".
 
 export const STUDIO_WIDE_SCOPE = "Applies to the whole studio.";
+export const STUDIO_WIDE_SCOPE_SHORT = "Whole studio";
 
 export function SettingsViewHeading({
   title,
@@ -32,8 +33,19 @@ export function SettingsViewHeading({
           {title}
         </h2>
         {scope && (
+          // On a phone the full sentence would not fit beside the title and would
+          // wrap to its own line, adding a line of height between the title and the
+          // view. There the studio-wide chip reads "Whole studio"; from sm up it is
+          // the full sentence (only one of the two is ever displayed).
           <span className="rounded-full border border-neutral-300 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-300">
-            {scope}
+            {scope === STUDIO_WIDE_SCOPE ? (
+              <>
+                <span className="sm:hidden">{STUDIO_WIDE_SCOPE_SHORT}</span>
+                <span className="hidden sm:inline">{scope}</span>
+              </>
+            ) : (
+              scope
+            )}
           </span>
         )}
       </div>

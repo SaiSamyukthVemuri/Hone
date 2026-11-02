@@ -73,3 +73,25 @@ describe("Email notifications toggles are named (Photos, 0ab9ce743: 2 unlabelled
     expect(src).toMatch(/aria-label=\{t\.label\}\s+aria-pressed=\{displayOn\}/);
   });
 });
+
+describe("Email notifications toggles, rendered", () => {
+  it("every toggle button has its visible label as its accessible name", async () => {
+    const { vi } = await import("vitest");
+    vi.doMock("@/app/(app)/settings/studio/actions", () => ({ setStudioEmailSettingsAction: vi.fn() }));
+    vi.doMock("../../app/(app)/settings/studio/actions", () => ({ setStudioEmailSettingsAction: vi.fn() }));
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { EmailSettingsForm } = await import("../../app/(app)/settings/studio/EmailSettingsForm");
+    const html = renderToStaticMarkup(
+      React.createElement(EmailSettingsForm, { initial: {} as never }),
+    );
+    const buttons = [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
+    expect(buttons.length).toBeGreaterThanOrEqual(8);
+    for (const b of buttons) expect(b).toMatch(/aria-label="[^"]+"/);
+    // The two force-off (P0-1) toggles are the intentionally disabled ones.
+    const disabled = buttons.filter((b) => /\sdisabled(=|\s|>)/.test(b));
+    expect(disabled).toHaveLength(2);
+    expect(disabled.join(" ")).toMatch(/Automatically mark no-shows/);
+    expect(disabled.join(" ")).toMatch(/Send follow-up email to no-shows/);
+  });
+});

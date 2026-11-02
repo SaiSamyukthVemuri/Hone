@@ -499,8 +499,11 @@ describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, 
     // top offset plus the page's bottom padding) keeps the rail inside its grid
     // area at the end of the page, so sticky never pushes it above the header.
     expect(src).toMatch(
-      /min-\[700px\]:max-h-\[calc\(100vh_-_var\(--settings-top,4\.5rem\)_-_4rem\)\]/,
+      /min-\[700px\]:max-h-\[calc\(100vh_-_var\(--settings-top,4\.5rem\)_-_var\(--settings-tail,4\.5rem\)_-_1rem\)\]/,
     );
+    // --settings-tail is the MEASURED space below the grid (main padding + app
+    // footer), so the rail never outgrows its containing block at the page end.
+    expect(src).toMatch(/document\.documentElement\.scrollHeight - \(g\.getBoundingClientRect\(\)\.bottom \+ window\.scrollY\)/);
     expect(src).toMatch(/sticky top-\[var\(--settings-top,4\.5rem\)\]/);
     expect(src).toMatch(/new ResizeObserver\(measure\)/);
     expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
@@ -576,8 +579,8 @@ describe("Codex P2 threads re-checked at 053d683f5", () => {
 
 describe("one heading-to-content rhythm on every view (Photos, 0ab9ce743)", () => {
   const shell = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
-  it("the shell pulls the element after a view heading up by 1rem", () => {
-    expect(shell).toMatch(/\[&>\*>header\[data-view-head\]:first-child\+\*\]:-mt-4/);
+  it("the shell pulls the element after a view heading up by 1.5rem (0.5rem remains)", () => {
+    expect(shell).toMatch(/\[&>\*>header\[data-view-head\]:first-child\+\*\]:-mt-6/);
   });
   it("the heading carries the marker the rule selects", () => {
     const heading = readFileSync(path.resolve(__dirname, "../..", "components/settings/view-heading.tsx"), "utf8");

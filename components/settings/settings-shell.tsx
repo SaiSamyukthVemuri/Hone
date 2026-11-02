@@ -60,8 +60,18 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
   // is not a constant (the nav row, a wrapped account name), so it is measured
   // and handed down as --settings-top; 4.5rem is the first-paint fallback.
   const [headerPx, setHeaderPx] = useState<number | null>(null);
+  // The space BELOW the layout grid (main's bottom padding and the app footer). A
+  // sticky rail may not be taller than the viewport minus its top offset minus
+  // this tail, or sticky pushes it up out of view at the end of the page.
+  const [tailPx, setTailPx] = useState<number | null>(null);
+  const grid = useRef<HTMLDivElement>(null);
   const topVar: CSSProperties | undefined =
-    headerPx === null ? undefined : ({ "--settings-top": `${headerPx}px` } as CSSProperties);
+    headerPx === null && tailPx === null
+      ? undefined
+      : ({
+          ...(headerPx === null ? {} : { "--settings-top": `${headerPx}px` }),
+          ...(tailPx === null ? {} : { "--settings-tail": `${tailPx}px` }),
+        } as CSSProperties);
   // Exactly one group is open (R2): opening another closes the previous. Opening
   // is only a disclosure; it navigates nowhere and unmounts nothing, so it can
   // never discard unsaved edits (a link click out of the page is what the
@@ -77,11 +87,20 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
     // The app header is the first <header> in the document.
     const appHeader = document.querySelector<HTMLElement>("header");
     if (!appHeader) return;
-    const measure = () => setHeaderPx(Math.ceil(appHeader.getBoundingClientRect().height));
+    const measure = () => {
+      setHeaderPx(Math.ceil(appHeader.getBoundingClientRect().height));
+      const g = grid.current;
+      if (g) {
+        const below =
+          document.documentElement.scrollHeight - (g.getBoundingClientRect().bottom + window.scrollY);
+        setTailPx(Math.max(0, Math.ceil(below)));
+      }
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(appHeader);
+    observer.observe(document.body);
     return () => observer.disconnect();
   }, []);
 
@@ -186,7 +205,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
           so it starts directly under the app header (not under the Settings title
           row) and fits the viewport with no window scroll; the title row and the
           view sit in the right column. */}
-      <div className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:grid-rows-[auto_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-4"
+      <div ref={grid} className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:grid-rows-[auto_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-4"
         style={topVar}>
         {/* Sticky so the menu is reachable without scrolling back to the top. */}
         <header className="sticky top-[var(--settings-top,4.5rem)] z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:col-start-2 min-[700px]:row-start-1 min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
@@ -229,7 +248,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
               drawerOpen
                 ? "fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto bg-white p-4 shadow-xl dark:bg-neutral-950"
                 : "hidden"
-            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_4rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
+            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
           >
             <nav
               aria-label="Settings sections"
@@ -353,11 +372,11 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
           </aside>
 
           {/* ONE heading-to-content rhythm: a view's root stacks at gap-8 (2rem) and the
-              element after its heading block is pulled up 1rem, so every view has
-              1rem between the heading block and its first content. */}
+              element after its heading block is pulled up 1.5rem, so every view has
+              0.5rem between the heading block and its first content box. */}
           <div
             ref={content}
-            className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2 [&>*>header[data-view-head]:first-child+*]:-mt-4"
+            className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2 [&>*>header[data-view-head]:first-child+*]:-mt-6"
           >
             {!activeItem && (
               // A route that is not in this role's rail (an owner-only page opened

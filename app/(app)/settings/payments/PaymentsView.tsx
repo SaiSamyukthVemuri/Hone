@@ -14,6 +14,7 @@ import {
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 import {
+  OwnerOnlyNotice,
   SettingsViewHeading,
   STUDIO_WIDE_SCOPE,
 } from "@/components/settings/view-heading";
@@ -33,12 +34,9 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
-      <section className="flex flex-col gap-8">
-        <SettingsViewHeading title="Payments" />
-        <p className="text-sm text-neutral-500">
-          Only the studio owner can manage payments.
-        </p>
-      </section>
+      // The same refusal every owner-only settings view gives: no page heading
+      // (this role has no Payments page), nothing selected in the rail.
+      <OwnerOnlyNotice>Only the studio owner can manage payments.</OwnerOnlyNotice>
     );
   }
 
