@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asRole, asUser, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, asUser, closePool, seedStudio, type SeededStudio, type UserQuery } from "./helpers/harness";
 
 // Removal is immediate at the database (the old-JWT path of the S4 revocation proof). The identity a receptionist
 // function trusts is read LIVE from studio_receptionists on every call, never from the token, so a JWT minted
@@ -21,6 +21,13 @@ type Call = { name: string; run: (uid: string) => Promise<{ rows: Array<Record<s
 
 const FROM = "2031-03-01T00:00:00Z";
 const TO = "2031-03-10T00:00:00Z";
+// The removal must PERSIST (asRole rolls back, as a privilege probe), so it runs as service_role in a committed transaction,
+// the way the app's service client calls it.
+const asServiceRole = <T>(fn: (x: UserQuery) => Promise<T>) =>
+  adminTx(async (x) => {
+    await x("set local role service_role");
+    return fn(x);
+  });
 const q = (uid: string, sql: string, params: unknown[]) => asUser(uid, (x) => x(sql, params));
 
 // The eight functions granted to `authenticated` that resolve a receptionist (0216/0220/0266/0274).
@@ -86,7 +93,7 @@ describe("removal is immediate for a JWT minted before it", () => {
     for (const call of calls()) {
       expect(await outcome(call, deskUser), `${call.name}: positive control (active)`).toBe("gate-passed");
     }
-    const removed = await asRole("service_role", (x) =>
+    const removed = await asServiceRole((x) =>
       x("select public.set_studio_receptionist_active($1,$2,$3,false) as r", [studio.studioId, studio.practitionerId, receptionistId]),
     );
     expect(removed.rows[0].r).toBe("updated");
@@ -98,7 +105,7 @@ describe("removal is immediate for a JWT minted before it", () => {
   it("the membership row stays, deactivated, and removal is idempotent (a second call changes nothing)", async () => {
     const row = await adminQuery("select active, deactivated_at is not null as stamped from public.studio_receptionists where id=$1", [receptionistId]);
     expect(row.rows[0]).toMatchObject({ active: false, stamped: true });
-    const again = await asRole("service_role", (x) =>
+    const again = await asServiceRole((x) =>
       x("select public.set_studio_receptionist_active($1,$2,$3,false) as r", [studio.studioId, studio.practitionerId, receptionistId]),
     );
     expect(again.rows[0].r).toBe("no_change");
@@ -116,12 +123,12 @@ describe("removal is immediate for a JWT minted before it", () => {
 describe("flag off is not revocation", () => {
   it("HONE_RECEPTIONIST_DESK_ENABLED does not exist in the database: only the membership gates these functions", async () => {
     // Reactivate in this test only to show an ACTIVE membership still answers regardless of any app flag.
-    await asRole("service_role", (x) =>
+    await asServiceRole((x) =>
       x("select public.set_studio_receptionist_active($1,$2,$3,true)", [studio.studioId, studio.practitionerId, receptionistId]),
     );
     const call = calls()[0];
     expect(await outcome(call, deskUser)).toBe("gate-passed");
-    await asRole("service_role", (x) =>
+    await asServiceRole((x) =>
       x("select public.set_studio_receptionist_active($1,$2,$3,false)", [studio.studioId, studio.practitionerId, receptionistId]),
     );
     expect(await outcome(call, deskUser)).toBe("refused");
