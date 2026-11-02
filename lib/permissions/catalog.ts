@@ -62,7 +62,7 @@ export type PermissionDef = {
   readonly killSwitch?: boolean; // the operator kill switch returns every non-owner check for this key to false (R1)
   readonly affectsFutureStudioBusiness?: boolean; // studio-wide price/fee settings are labelled as such on the page
   readonly sensitive?: boolean; // newly enabling it is highlighted in the Reset-to-defaults preview (financial, clinical, identity, bulk)
-  readonly shipGate?: Readonly<Partial<Record<Role, string>>>; // the key may not be ENFORCED/offered for that role until this holds
+  readonly shipGate?: Readonly<Partial<Record<Role, GateId>>>; // effectively OFF for that role until the gate is satisfied (see GATES)
   readonly note?: string;
 };
 
@@ -75,8 +75,16 @@ const ASSIGNED = "an appointment whose assigned practitioner is the actor";
 
 const CALENDAR = "appt.view_calendar";
 const PAY_VIEW = "pay.view_appointment";
-const REC_REMOVAL_GATE =
-  "Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed";
+// Ship gates. A gated key is EFFECTIVELY OFF for the gated role until the studio policy says the gate is satisfied. The fact is
+// an operator-controlled release flag that defaults to NOT satisfied, so an unreleased capability can never come on by default.
+export const GATES = {
+  receptionist_finance: "Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed",
+  receptionist_legal_name: "0280/0290 receptionist name privacy and a legal-name read audit are in production (open point R0-Q4)",
+  receptionist_scheduling_notes: "R4 has confirmed from source that scheduling notes are a different field from clinical notes, or limited the receptionist view to a scheduling-only field (Privacy F6)",
+  practitioner_legal_name_edit: "Stale-write protection and versions for legal-name edits (#1328 / M1) are in production",
+  practitioner_completion: "#1315 and the 0277 apply (the assigned-only completion rule) are in production",
+} as const;
+export type GateId = keyof typeof GATES;
 
 export const CATALOG = [
   // ───────────────────────────── appointments ─────────────────────────────
@@ -94,6 +102,21 @@ export const CATALOG = [
     ownerConfigurable: false,
     enforcedIn: "R4",
     note: "A fixed baseline of both staff roles: not a switch. Receptionists have no app in production today (the desk, #1303, is behind a flag that is OFF).",
+  },
+  {
+    key: "client.view_directory",
+    group: "clients_identity",
+    label: "View and search the client list and contact details",
+    description: "See and search clients and their contact details. A role without the legal-name key sees the preferred name, otherwise 'Name on file'.",
+    scopes: BOOL,
+    requires: [CALENDAR],
+    newStudioDefault: pair(["studio", "studio"]),
+    existingSnapshot: pair(["studio", "off"]),
+    snapshotBasis: "source",
+    offeredTo: BOTH,
+    ownerConfigurable: false,
+    enforcedIn: "R5",
+    note: "A fixed baseline, named so a later change to client reads cannot go ungated (D-8). Practitioners read contact details directly and the receptionist through definer functions today.",
   },
   {
     key: "appt.book",
@@ -186,6 +209,8 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    shipGate: { receptionist: "receptionist_scheduling_notes" },
+    note: "R4 requirements (Privacy F6/F9): confirm scheduling and clinical notes are separate fields before a receptionist can read or write notes; decide whether edit implies read; colleagues' note edits by practitioners are an approved policy only once note versions (0283) ship, so R4 must not enforce the new-studio default for colleagues' notes before them.",
   },
   {
     key: "appt.complete",
@@ -202,7 +227,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    shipGate: { practitioner: "#1315 and the 0277 apply (the assigned-only completion rule) are in production" },
+    shipGate: { practitioner: "practitioner_completion" },
     note: "Today's code lets any practitioner complete any started appointment in the studio. Sam's assigned-only rule is the approved policy and #1315/0277 is its vehicle, so the snapshot is 'own' and R4 may not ship before them (open point R0-Q1). Not offered to receptionists in this version.",
   },
   {
@@ -292,13 +317,13 @@ export const CATALOG = [
     requires: [],
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
-    snapshotBasis: "source",
+    snapshotBasis: "approved_policy",
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    shipGate: { receptionist: "0280/0290 receptionist name privacy and a read audit are in production (open point R0-Q4)" },
-    note: "The receptionist legal-name switch exists per studio today (default OFF, hidden in the app, unaudited, settable by API). The existing-studio snapshot row for a receptionist COPIES that studio's current switch value so nothing widens; the catalog value shown here is the default for studios whose switch is OFF.",
+    shipGate: { receptionist: "receptionist_legal_name" },
+    note: "The receptionist legal-name switch exists per studio today (default OFF, hidden in the app, unaudited, settable by API). Nobody approved a value above OFF, so the snapshot is OFF for every studio (basis approved_policy). Any studio whose switch is found ON is LISTED in the owner's review banner instead of being carried forward; counting them is a separate read-only step for OPS or Sam.",
   },
   {
     key: "client.edit_legal_name",
@@ -314,18 +339,15 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    shipGate: {
-      practitioner: "stale-write protection and versions for legal-name edits (#1328 / M1) are in production",
-      receptionist: "0280/0290 receptionist name privacy and a read audit are in production (open point R0-Q4)",
-    },
+    shipGate: { practitioner: "practitioner_legal_name_edit", receptionist: "receptionist_legal_name" },
   },
   {
     key: "client.merge",
     group: "clients_identity",
     label: "Merge duplicate clients",
-    description: "Merge two client records. Safeguarded: preview, confirmation, history kept.",
+    description: "Merge two client records. Safeguarded: preview that shows only what the actor may see (legal names only with view legal name), confirmation, history kept.",
     scopes: BOOL,
-    requires: ["client.edit_contact"],
+    requires: ["client.edit_contact", "client.view_legal_name"],
     newStudioDefault: pair(["off", "off"]),
     existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "not_built",
@@ -388,9 +410,9 @@ export const CATALOG = [
     key: "clin.view_photos",
     group: "clinical_records",
     label: "View treatment photos",
-    description: "See treatment photos.",
+    description: "See treatment photos. Needs client visibility only, not chart access: enabling one clinical capability never grants another.",
     scopes: BOOL,
-    requires: ["clin.view_records"],
+    requires: ["client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
@@ -419,9 +441,9 @@ export const CATALOG = [
     key: "clin.view_intake",
     group: "clinical_records",
     label: "View intake answers",
-    description: "Read a client's intake answers.",
+    description: "Read a client's intake answers. Needs client visibility only, not chart access: enabling one clinical capability never grants another.",
     scopes: BOOL,
-    requires: ["clin.view_records"],
+    requires: ["client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
@@ -438,13 +460,13 @@ export const CATALOG = [
     scopes: BOOL,
     requires: ["clin.view_intake"],
     newStudioDefault: pair(["studio", "off"]),
-    existingSnapshot: pair(["studio", "off"]),
+    existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "source",
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (open point R0-Q2). Whether practitioners can edit answers today is source-only.",
+    note: "Not offered to receptionists in this version (open point R0-Q2). Whether practitioners can edit answers today is unverified, so the snapshot takes the NARROWER value (Off) until OPS verifies it (D-3).",
   },
   {
     key: "clin.print_record",
@@ -488,20 +510,20 @@ export const CATALOG = [
     own: ASSIGNED,
     requires: [CALENDAR],
     newStudioDefault: pair(["own", "studio"]),
-    existingSnapshot: pair(["own", "off"]),
+    existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "source",
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "What a practitioner can send by hand today is source-only; the automated reminder and receipt mail is not staff-triggered.",
+    note: "What a practitioner can send by hand today is unverified (the automated reminder and receipt mail is not staff-triggered), so the snapshot takes the NARROWER value (Off) until OPS verifies it (D-3). Includes sending intake and consent links to a client.",
   },
   {
     key: "comm.bulk_message",
     group: "communications",
     label: "Send bulk messages",
-    description: "Message many clients at once. Safeguarded: recipient preview, consent respected, audit.",
+    description: "Message many clients at once. Safeguarded: recipient preview, consent respected, row limits, audit.",
     scopes: BOOL,
-    requires: ["comm.send_routine"],
+    requires: ["comm.send_routine", "client.view_directory"],
     newStudioDefault: pair(["off", "off"]),
     existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "not_built",
@@ -529,8 +551,8 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
-    note: "Strict prerequisite of every payment and pricing key below: turning it OFF disables them all. The app hides money from practitioners today, but the database still lets them read paid amounts and card metadata (M-2, M-3); the snapshot is the approved OFF and R3 closes those reads.",
+    shipGate: { receptionist: "receptionist_finance" },
+    note: "Strict prerequisite of every payment and pricing key below: turning it OFF disables them all. The app hides money from practitioners today, but the database still lets them read paid amounts and card metadata (M-2, M-3); the snapshot is the approved OFF. R3 closes those reads at the COLUMN level (no processor identifiers or card metadata beyond brand and last 4 for any staff role), not only in the UI.",
   },
   {
     key: "pay.record_external",
@@ -548,7 +570,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
   },
   {
     key: "pay.charge_saved_card",
@@ -567,7 +589,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
   },
   {
     key: "pay.refund",
@@ -585,7 +607,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
   },
   {
     key: "pay.void",
@@ -603,7 +625,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
   },
   {
     key: "pay.correct_or_waive",
@@ -621,7 +643,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
     note: "The earlier proposal made this depend on 'record manual payment'. Sam lists them as separate switches, so the only prerequisite is seeing the payment.",
   },
 
@@ -642,7 +664,26 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
+  },
+  {
+    key: "price.view_client_prices",
+    group: "pricing",
+    label: "See a client's special prices",
+    description: "Read the per-client prices needed for authorized work (the client_pricing table). Closes M-4 together with the payment view.",
+    scopes: SCOPED,
+    own: "the price belongs to a client with an appointment assigned to the actor",
+    requires: [PAY_VIEW],
+    newStudioDefault: pair(["own", "studio"]),
+    existingSnapshot: pair(["off", "off"]),
+    snapshotBasis: "approved_policy",
+    offeredTo: BOTH,
+    ownerConfigurable: true,
+    enforcedIn: "R3",
+    killSwitch: true,
+    sensitive: true,
+    shipGate: { receptionist: "receptionist_finance" },
+    note: "M-4: client_pricing is readable by every member today, while Sam's earlier decision lists per-client prices as forbidden to practitioners. The snapshot is the approved OFF; Sam's C.3 allows the per-client prices needed for authorized work, which this key grants.",
   },
   {
     key: "price.service_list",
@@ -660,7 +701,7 @@ export const CATALOG = [
     killSwitch: true,
     affectsFutureStudioBusiness: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
     note: "Owner-only in the app today but open to any practitioner at the database (H1); the snapshot is the approved owner-only policy. Studio-wide: labelled 'affects future studio business'.",
   },
   {
@@ -679,7 +720,7 @@ export const CATALOG = [
     killSwitch: true,
     affectsFutureStudioBusiness: true,
     sensitive: true,
-    shipGate: { receptionist: REC_REMOVAL_GATE },
+    shipGate: { receptionist: "receptionist_finance" },
   },
 
   // ─────────────────────────────── reports ───────────────────────────────
@@ -737,9 +778,9 @@ export const CATALOG = [
     key: "rep.bulk_export",
     group: "reports",
     label: "Export or print bulk data",
-    description: "Export the client list, schedule or studio data in bulk. Safeguarded: confirmation and audit.",
+    description: "Export client-list and schedule style outputs in bulk. Contains only fields and rows the actor's own keys would show on screen. NEVER the whole-studio data export or backup, which is fixed owner-only. Safeguarded: confirmation, row limits, audit.",
     scopes: BOOL,
-    requires: [],
+    requires: ["client.view_directory"],
     newStudioDefault: pair(["off", "off"]),
     existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "source",
@@ -753,7 +794,7 @@ export const CATALOG = [
     key: "rep.audit_log_view",
     group: "reports",
     label: "View the studio-wide audit log",
-    description: "Read the audit log. Never editable or deletable by anyone through this key.",
+    description: "Read the audit log, showing a non-owner only what their own keys allow and never raw (unmasked) values or free-text reasons they could not otherwise see. Never editable or deletable by anyone through this key.",
     scopes: BOOL,
     requires: [],
     newStudioDefault: pair(["off", "off"]),
@@ -777,11 +818,17 @@ export type FixedOwnerOnly = {
   readonly label: string;
   readonly source: "C.5" | "B" | "this_version";
   readonly existingEffect: "none" | "narrows";
+  // Database objects that must refuse a non-owner for this item: R4's checklist. 'to confirm' = not yet located.
+  readonly enforcedBy?: readonly string[];
   readonly note?: string;
 };
 
 export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
   { id: "manage_roles_permissions_ownership", label: "Manage roles, permissions or ownership", source: "C.5", existingEffect: "none" },
+  { id: "staff_invite_remove_role_change", label: "Inviting, removing and changing the role of staff", source: "C.5", existingEffect: "none", note: "Part of 'managing roles'. R-1 (a receptionist created outside the desk) is a hole in exactly this item." },
+  { id: "ownership_transfer", label: "Transferring ownership", source: "C.5", existingEffect: "none" },
+  { id: "permission_system_administration", label: "Changing the permission catalog, overrides, operator kill switch or their audit tables", source: "C.5", existingEffect: "none", note: "Only through the owner-only writer functions; a role can never grant itself anything." },
+  { id: "full_studio_data_export", label: "The whole-studio data export and backup", source: "this_version", existingEffect: "none", note: "A complete egress of client data. rep.bulk_export never covers it." },
   { id: "provider_credentials_bank_payouts", label: "Payment-provider credentials, bank accounts and payouts", source: "C.5", existingEffect: "none" },
   { id: "studio_account_deletion", label: "Studio or account deletion", source: "C.5", existingEffect: "none" },
   { id: "permanent_deletion_bulk_destructive", label: "Permanent deletion and bulk destructive actions", source: "C.5", existingEffect: "none" },
@@ -791,13 +838,15 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     label: "Deleting treatment records and photos",
     source: "this_version",
     existingEffect: "narrows",
-    note: "Practitioners can soft-delete a colleague's session (reason, audited) and photos today. Owner-only is a NARROWING and needs a notice to affected staff.",
+    enforcedBy: ["public.soft_delete_session", "public.soft_delete_session_area", "public.soft_delete_session_block", "public.archive_treatment_image"],
+    note: "Practitioners can soft-delete a colleague's session (reason, audited) and photos today. Owner-only is a NARROWING: it needs a notice in the owner's review banner and to the affected staff.",
   },
   {
     id: "archive_clients",
     label: "Archiving clients",
     source: "this_version",
     existingEffect: "narrows",
+    enforcedBy: ["clients.archived_at write path (0050)", "public.record_client_archive_audit_governed"],
     note: "Any practitioner can archive any client today. A NARROWING; notice required.",
   },
   {
@@ -805,6 +854,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     label: "Restoring deleted records",
     source: "this_version",
     existingEffect: "narrows",
+    enforcedBy: ["client unarchive path (UnarchiveRowControl)", "session restore path: to confirm"],
     note: "Whether practitioners can restore today is source-only; treated as a narrowing until verified.",
   },
 ];
@@ -812,8 +862,10 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
 // Not in Sam's list and not given a key: they stay owner-only simply because no key exists. Flagged for reviewers as
 // "not offered as toggles", NOT as "fixed by Sam" (open point R0-Q5).
 export const NOT_OFFERED_AS_TOGGLES: readonly string[] = [
-  "Studio settings: booking rules, integrations, payment settings policy, machine registry",
-  "Staff invitations and removal (part of managing roles)",
+  "Studio settings: booking rules, integrations, machine registry",
+  "Payment settings policy such as 'card required' (stays owner-only; the settings page must split it from the fee AMOUNTS key)",
+  "Viewing signed consent contents and machine settings: ride on clin.view_records, no separate key",
+  "ID-photo store and portrait (0275 / 0231): not built or feature-off; no key until they ship",
   "Hone subscription and billing portal, tax and currency, receipt branding, business name",
 ];
 
@@ -827,51 +879,95 @@ export const MANDATORY: readonly string[] = [
   "Refunds never exceed the remaining refundable amount; card refunds return to the original card; reasons are required; original records are preserved",
   "Revocation is immediate: current membership, studio, key and scope are checked on every protected operation; nothing is cached in a token",
   "Role and permission changes are audited append-only (actor, time, before, after)",
+  "The owner-visible financial activity feed cannot be switched off or hidden by any key",
+  "Service-role money paths verify the actual acting user (the actor id comes from the verified session and is re-checked in the definer)",
+  "A reason is required for every refund, correction and waiver, and the original record is preserved",
+  "Overlapping memberships or dual roles cannot bypass a denial: the most restrictive of the actor's current active rows applies",
+  "The operator kill switch fails closed: a non-owner finance check returns false whenever it is engaged or its state cannot be read",
+  "A missing, unknown or unreadable policy state resolves to OFF, never to a default",
+  "Every derived output (export, print, report, message, audit view) contains only the fields and rows the actor's own effective keys would allow on screen: legal names only with view legal name, clinical content only with clinical read, amounts only with payment view and scope, clients only within scope",
+  "The permission catalog, overrides, kill switch and audit tables change only through owner-only writer functions, and a role can never grant itself anything",
+  "Scope is evaluated on the CURRENT assignee at the moment of the action and never cached; reassignment is audited with before and after, and the owner feed flags 'reassigned to self then refunded or completed' (a signal, not a block)",
 ];
 
 // ───────────────────────── pure helpers ─────────────────────────
 
-export const catalogByKey: ReadonlyMap<string, PermissionDef> = new Map(CATALOG.map((d) => [d.key, d]));
+export const catalogByKey: ReadonlyMap<string, PermissionDef> = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
 
-export type RoleValues = Readonly<Record<string, Scope>>; // a role's STORED value per key (missing = the default)
+// ─────────── studio policy state (D-1) ───────────
+// Every studio carries a POLICY BASIS: `existing_snapshot` until its owner reviews the before/after summary and adopts (or saves a
+// custom configuration), `new_studio` for studios created under the shipped defaults. A key with no stored value resolves to the
+// studio's BASIS, never to the new-studio default. A studio whose basis is unknown (null) resolves every key to Off.
+// Reset to defaults sets the basis to `new_studio` only after the preview and the owner's confirmation.
+export type PolicyBasis = "existing_snapshot" | "new_studio";
+export type RoleValues = Readonly<Record<string, Scope>>; // a role's STORED overrides per key
+export type StudioPolicy = {
+  readonly basis: PolicyBasis | null;
+  readonly values: RoleValues;
+  // Gates the operator has marked satisfied for this studio. Absent = NOT satisfied (fail closed).
+  readonly gates?: Readonly<Partial<Record<GateId, boolean>>>;
+};
 
-export function defaultsFor(role: Role, basis: "newStudio" | "existingSnapshot"): Record<string, Scope> {
+export const basisValue = (d: PermissionDef, role: Role, basis: PolicyBasis): Scope =>
+  basis === "new_studio" ? d.newStudioDefault[role] : d.existingSnapshot[role];
+
+export function defaultsFor(role: Role, basis: PolicyBasis): Record<string, Scope> {
   const out: Record<string, Scope> = {};
-  for (const d of CATALOG as readonly PermissionDef[]) out[d.key] = basis === "newStudio" ? d.newStudioDefault[role] : d.existingSnapshot[role];
+  for (const d of CATALOG as readonly PermissionDef[]) out[d.key] = basisValue(d, role, basis);
   return out;
 }
 
-// EFFECTIVE scope of a key for a role: the stored value, capped by the effective scope of every prerequisite, and OFF when
-// the key is not offered to the role. A prerequisite turned OFF makes its dependents effectively OFF, but the dependents'
-// STORED values are left alone, so turning the prerequisite back ON restores exactly what the owner had set.
-export function effectiveScope(role: Role, key: string, values: RoleValues, seen: ReadonlySet<string> = new Set()): Scope {
+// The scopes the owner may pick for a role. "Own assigned appointments" means nothing for a receptionist (they are never the
+// assigned practitioner), so it is not offered to them (D-5).
+export const scopesFor = (d: PermissionDef, role: Role): readonly Scope[] =>
+  role === "receptionist" ? d.scopes.filter((s) => s !== "own") : d.scopes;
+
+// EFFECTIVE scope of a key for a role in a studio. This is the ONE rule the database function must copy.
+//   1. unknown key, a cycle, an unknown policy basis, a key not offered to the role, or an unsatisfied ship gate: Off.
+//   2. the stored value, else the studio's BASIS value (never the new-studio default for an existing studio).
+//   3. a stored value the role may not hold (outside scopesFor) is Off.
+//   4. capped by every prerequisite's effective scope. A capped result that the key does not allow becomes Off, so a
+//      boolean key can never come out as 'own' (D-2): a key that spans the studio needs its prerequisite at that scope.
+//   5. an unmet ship gate caps the key at the existing-studio snapshot (see below).
+// A prerequisite turned Off makes dependents effectively Off while their STORED values are kept.
+export function effectiveScope(role: Role, key: string, policy: StudioPolicy, seen: ReadonlySet<string> = new Set()): Scope {
   const def = catalogByKey.get(key);
-  if (!def || seen.has(key)) return "off"; // unknown key or a cycle fails closed
+  if (!def || seen.has(key) || policy.basis === null) return "off";
   if (!def.offeredTo[role]) return "off";
-  let scope: Scope = values[key] ?? def.newStudioDefault[role];
-  if (!def.scopes.includes(scope)) return "off";
+  const allowed = scopesFor(def, role);
+  let scope: Scope = policy.values[key] ?? basisValue(def, role, policy.basis);
+  if (!allowed.includes(scope)) return "off";
+  // An unmet ship gate makes the role-key UNAVAILABLE: it is capped at the existing-studio snapshot, so a gated capability
+  // that is new for the role (receptionist finance, receptionist legal name) is Off, while behaviour a studio has today is
+  // neither widened nor silently narrowed. The gate is operator data; an owner cannot change it.
+  const gate = def.shipGate?.[role];
+  if (gate && policy.gates?.[gate] !== true && scopeRank(scope) > scopeRank(def.existingSnapshot[role])) scope = def.existingSnapshot[role];
   const next = new Set(seen).add(key);
   for (const req of def.requires) {
-    const cap = effectiveScope(role, req, values, next);
+    const cap = effectiveScope(role, req, policy, next);
     if (scopeRank(cap) < scopeRank(scope)) scope = cap;
   }
-  return scope;
+  return allowed.includes(scope) ? scope : "off";
 }
 
 export type ChangeCheck = { ok: true } | { ok: false; reason: string; blockedBy: string };
 
 // Setting a key. It NEVER changes any other key: a dependent cannot be set above what its prerequisites currently allow, and
 // the refusal names the prerequisite so the page can say what to enable first. Lowering a prerequisite is always allowed
-// (its dependents simply become effectively OFF).
-export function checkChange(role: Role, key: string, next: Scope, values: RoleValues): ChangeCheck {
+// (its dependents simply become effectively Off). A key that is not yet available (unmet gate) cannot be raised above its snapshot.
+export function checkChange(role: Role, key: string, next: Scope, policy: StudioPolicy): ChangeCheck {
   const def = catalogByKey.get(key);
   if (!def) return { ok: false, reason: "Unknown permission.", blockedBy: key };
   if (!def.ownerConfigurable) return { ok: false, reason: "This is a fixed baseline of the role.", blockedBy: key };
   if (!def.offeredTo[role] && next !== "off") return { ok: false, reason: "This permission is not offered to this role in this version.", blockedBy: key };
-  if (!def.scopes.includes(next)) return { ok: false, reason: "That scope is not available for this permission.", blockedBy: key };
+  if (!scopesFor(def, role).includes(next)) return { ok: false, reason: "That scope is not available for this permission and role.", blockedBy: key };
+  const gate = def.shipGate?.[role];
+  if (gate && policy.gates?.[gate] !== true && scopeRank(next) > scopeRank(def.existingSnapshot[role])) {
+    return { ok: false, reason: `Not yet available: ${GATES[gate]}.`, blockedBy: gate };
+  }
   for (const req of def.requires) {
     const reqDef = catalogByKey.get(req);
-    const cap = effectiveScope(role, req, values);
+    const cap = effectiveScope(role, req, policy, new Set([key]));
     if (scopeRank(cap) < scopeRank(next)) {
       return {
         ok: false,
@@ -882,7 +978,6 @@ export function checkChange(role: Role, key: string, next: Scope, values: RoleVa
   }
   return { ok: true };
 }
-
 // The Markdown table that docs/security/permissions-catalog.md embeds between its markers. Generated, never hand-edited:
 // a test regenerates it and compares.
 const LABEL: Record<Scope, string> = { off: "Off", own: "Own", studio: "Studio" };
@@ -893,7 +988,7 @@ export function renderCatalogMarkdown(): string {
     lines.push("| Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate |");
     lines.push("|---|---|---|---|---|---|---|");
     for (const d of (CATALOG as readonly PermissionDef[]).filter((x) => x.group === g)) {
-      const gates = Object.entries(d.shipGate ?? {}).map(([r, t]) => `${r}: ${t}`).join("; ") || "–";
+      const gates = Object.entries(d.shipGate ?? {}).map(([r, g]) => `${r}: ${GATES[g as GateId]}`).join("; ") || "–";
       const off = ROLES.filter((r) => !d.offeredTo[r]).map((r) => `${r} not offered`);
       lines.push(
         `| \`${d.key}\`${d.ownerConfigurable ? "" : " (fixed)"}${off.length ? ` (${off.join(", ")})` : ""} | ${d.scopes.map((s) => LABEL[s]).join(" / ")} | ${d.requires.map((r) => `\`${r}\``).join(", ") || "–"} | ${LABEL[d.newStudioDefault.practitioner]} / ${LABEL[d.newStudioDefault.receptionist]} | ${LABEL[d.existingSnapshot.practitioner]} / ${LABEL[d.existingSnapshot.receptionist]} | ${d.snapshotBasis} | ${gates} |`,
