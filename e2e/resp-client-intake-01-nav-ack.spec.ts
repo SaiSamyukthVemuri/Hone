@@ -299,7 +299,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the two raw anchors are soft navigations n
 
     // The href must be byte-identical to the one the <a> carried.
     expect(await control.getAttribute("href")).toBe(
-      `/clients/${clientId}?tab=consultation`,
+      `/clients/${clientId}?tab=treatment`,
     );
 
     let rsc = 0;
@@ -322,7 +322,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the two raw anchors are soft navigations n
     // `<h2>Skin</h2>` for the retired legacy column, so a loose match would
     // have resolved against the ORIGIN page and this test would have passed
     // without the navigation ever happening.
-    await page.waitForURL((u) => u.search === "?tab=consultation", {
+    await page.waitForURL((u) => u.search === "?tab=treatment", {
       timeout: 20_000,
     });
     await expect(
@@ -339,7 +339,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the two raw anchors are soft navigations n
     expect(stamp, "the document must survive the navigation").toBe("alive");
 
     // Query preserved exactly.
-    expect(new URL(page.url()).search).toBe("?tab=consultation");
+    expect(new URL(page.url()).search).toBe("?tab=treatment");
   });
 
   test("Intake history View →: RSC soft navigation, document NOT replaced", async ({
@@ -472,11 +472,10 @@ test.describe("RESP-CLIENT-INTAKE-01: mobile and reduced motion", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     const { seed, clientId } = await seedFixture();
     await loginAsOwner(page, seed);
-    await page.goto(`/clients/${clientId}`);
+    await page.goto(`/clients/${clientId}?tab=photos`);
 
-    // At 390px the md+ tab row is display:none, so this resolves the MOBILE
-    // form of the control — the one under the section select.
-    const control = page.getByRole("link", { name: "Treatment Photos →" });
+    // Photos is its own tab now; the link to the images route lives on it.
+    const control = page.getByRole("link", { name: "Open treatment photos" });
     await expect(control).toBeVisible();
 
     const { navigations } = await proveAcknowledgement(page, {
@@ -493,12 +492,9 @@ test.describe("RESP-CLIENT-INTAKE-01: mobile and reduced motion", () => {
   test("the desktop Treatment Photos link acknowledges", async ({ page }) => {
     const { seed, clientId } = await seedFixture();
     await loginAsOwner(page, seed);
-    await page.goto(`/clients/${clientId}`);
+    await page.goto(`/clients/${clientId}?tab=photos`);
 
-    const control = page.getByRole("link", {
-      name: "Treatment Photos",
-      exact: true,
-    });
+    const control = page.getByRole("link", { name: "Open treatment photos" });
     await expect(control).toBeVisible();
 
     const { navigations } = await proveAcknowledgement(page, {
@@ -538,8 +534,9 @@ test.describe("RESP-CLIENT-INTAKE-01: mobile and reduced motion", () => {
 
     // One direct child — the switcher's own voice.
     await expect(nav.locator(':scope > [role="status"]')).toHaveCount(1);
-    // Three in total: the switcher's, plus the mobile and md+ photo links'.
-    await expect(nav.locator('[role="status"]')).toHaveCount(3);
+    // One in total: the Photos link moved out of the bar onto the Photos tab, so the switcher's
+    // is the only region the bar hosts.
+    await expect(nav.locator('[role="status"]')).toHaveCount(1);
     // Every one of them silent at rest, so none contributes to any control's
     // accessible name until there is genuinely something to say.
     await expect(nav.locator('[role="status"]:not(:empty)')).toHaveCount(0);

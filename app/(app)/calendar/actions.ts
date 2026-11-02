@@ -1,6 +1,5 @@
 "use server";
 
-import { clientCommunicationName } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -186,15 +185,15 @@ export async function bookAppointmentForClientAction(
     };
   }
 
-  // Part 4: a capacity-ON OWNER may book FOR another practitioner (submitted
-  // practitioner_id); every other case (Legacy, member, owner-without-selection)
-  // books for the acting practitioner. The canonical command re-validates the
-  // target authoritatively (active, same-studio, service-eligible). This is
+  // An OWNER may book FOR another practitioner (submitted practitioner_id) in BOTH capacity modes
+  // (Sam 1 Nov: assignment is not a capacity feature; in a capacity-off studio it records WHO does the
+  // work and changes nothing about collision, which stays studio-wide, 0134). Every other case (member,
+  // owner-without-selection) books for the acting practitioner. The canonical command re-validates the
+  // target authoritatively (active, same-studio; service-eligible only when capacity is ON). This is
   // only the default; nothing here is trusted as the final authority.
   const submittedPractitionerId = formDataStrOrNull(formData, "practitioner_id");
-  const capacityOn = studio.practitioner_capacity_enabled === true;
   const targetPractitionerId =
-    capacityOn && practitioner.role === "owner" && submittedPractitionerId
+    practitioner.role === "owner" && submittedPractitionerId
       ? submittedPractitionerId
       : practitioner.id;
 
@@ -221,7 +220,7 @@ export async function bookAppointmentForClientAction(
   // by a practitioner action that is out of scope for this PR.
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name, preferred_name, email, phone, sms_consent_at, sms_opted_out_at")
+    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -413,8 +412,7 @@ export async function bookAppointmentForClientAction(
       service,
       studio,
       ...(await assignedNotificationContact()),
-      // HON-58: ordinary client communication uses the preferred name where a name is needed.
-      clientName: clientCommunicationName(client),
+      clientName: client.name,
       clientEmail: client.email,
       clientPhone: client.phone,
       clientSmsConsentAt: client.sms_consent_at,
@@ -533,7 +531,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
   if (appt) {
     const { data: client } = await supabase
       .from("clients")
-      .select("name, preferred_name, email")
+      .select("name, email")
       .eq("id", appt.client_id)
       .maybeSingle();
     const { data: service } = appt.service_id
@@ -549,8 +547,8 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
         await sendCancellationEmail({
           appointmentId,
           to: client.email,
-          recipientName: clientCommunicationName(client),
-          clientName: clientCommunicationName(client),
+          recipientName: client.name,
+          clientName: client.name,
           studio,
           serviceName: service?.name ?? "your appointment",
           durationMinutes: appt.duration_minutes,
@@ -1166,7 +1164,7 @@ export async function sendPostcareEmailAction(
   const { data: appt, error: lookupErr } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, preferred_name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)",
+      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)",
     )
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
@@ -1286,7 +1284,7 @@ export async function sendPostcareEmailAction(
   const startsAt = appt.starts_at ? new Date(appt.starts_at) : null;
   const result = await sendPostcareToClient({
     appointmentId,
-    clientName: clientCommunicationName(client),
+    clientName: client.name ?? "",
     clientEmail: client.email,
     studio: studioRow as unknown as import("@/lib/types/database").Studio,
     practitionerName: performer?.display_name ?? null,

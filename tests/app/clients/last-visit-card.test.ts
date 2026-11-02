@@ -53,24 +53,25 @@ describe("Overview Last visit card — placement + wiring", () => {
     const consent = OVERVIEW.indexOf("<ConsentSignaturesCard");
     expect(skin).toBeGreaterThan(-1);
     expect(card).toBeGreaterThan(skin);
-    expect(portal).toBeGreaterThan(card);
+    // Portal access moved to the Messages tab (Q3): it is no longer on Overview at all.
+    expect(portal).toBe(-1);
     expect(consent).toBeGreaterThan(card);
   });
 
   it("preserves the existing Overview order (pinned < allergies < skin < info < pricing)", () => {
-    const pinned = OVERVIEW.indexOf("ClientPinnedNotesCard");
+    const pinned = OVERVIEW.indexOf("{pinnedNotesCard}");
     const allergies = OVERVIEW.indexOf("Allergies");
     const skin = OVERVIEW.indexOf(">\n              Skin");
     const info = OVERVIEW.indexOf("Client info");
-    const pricing = OVERVIEW.lastIndexOf("Pricing");
     expect(allergies).toBeGreaterThan(pinned);
     expect(skin).toBeGreaterThan(allergies);
     expect(info).toBeGreaterThan(skin);
-    expect(pricing).toBeGreaterThan(info);
+    // Pricing moved to the owner-only Billing tab.
+    expect(OVERVIEW).not.toMatch(/>\s*Pricing\s*</);
   });
 
   it("uses clear retrospective language, not forward-looking prep language", () => {
-    expect(CARD).toMatch(/>\s*Last visit\s*</);
+    expect(CARD).toMatch(/>\s*Last charted treatment\s*</);
     expect(CARD).toMatch(/What we did last time/);
     // BeforeToday owns the forward framing; this card must not.
     expect(CARD).not.toMatch(/Remember today/);

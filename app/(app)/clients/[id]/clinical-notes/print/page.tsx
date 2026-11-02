@@ -11,9 +11,6 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getClientById } from "@/lib/supabase/queries";
-import { createClient } from "@/lib/supabase/server";
-import { clinicalPacketName, type WithPreferredName } from "@/lib/clients/identity";
-import { readLegalIdentity } from "@/lib/clients/legal-identity";
 import { getClinicalNotesForExport } from "@/lib/clinical-notes/queries";
 import type { ClinicalNoteKind, ClinicalNoteWithAuthor } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
@@ -56,18 +53,10 @@ export default async function ClinicalNotesPrintPage({
   if (!data) notFound();
   const { client } = data;
 
-  const [consultation, skinHair, legalRead] = await Promise.all([
+  const [consultation, skinHair] = await Promise.all([
     getClinicalNotesForExport(id, "consultation"),
     getClinicalNotesForExport(id, "skin_hair_analysis"),
-    // HON-58: a clinical packet carries the legal identity, with the preferred
-    // name beside it in parentheses (OPS Q2). Signed-in read, owner/practitioner only.
-    createClient().then((supabase) => readLegalIdentity(supabase, id)),
   ]);
-  const legalOk = legalRead.ok;
-  const packetName = clinicalPacketName({
-    ...(client as WithPreferredName & { name: string }),
-    ...(legalRead.ok && legalRead.value ? legalRead.value : {}),
-  });
   const sections: Array<{ kind: ClinicalNoteKind; notes: ClinicalNoteWithAuthor[] }> = [
     { kind: "consultation", notes: sortNewestFirst(consultation) },
     { kind: "skin_hair_analysis", notes: sortNewestFirst(skinHair) },
@@ -77,19 +66,14 @@ export default async function ClinicalNotesPrintPage({
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 print:px-0 print:py-0">
       <header className="flex items-start justify-between gap-4 border-b border-neutral-300 pb-4 print:border-black">
         <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-semibold">Clinical notes: {packetName}</h1>
-          {!legalOk && (
-            <p className="text-xs text-neutral-500">
-              The legal name could not be loaded; this printout shows the name on file.
-            </p>
-          )}
+          <h1 className="text-lg font-semibold">Clinical notes: {client.name}</h1>
           <p className="text-xs text-neutral-500">
             {studio.name} · exported {formatDate(new Date().toISOString())}
           </p>
         </div>
         <div className="flex items-center gap-3 print:hidden">
           <Link
-            href={`/clients/${id}?tab=consultation`}
+            href={`/clients/${id}?tab=treatment`}
             className="text-sm font-medium text-neutral-600 underline dark:text-neutral-300"
           >
             Back

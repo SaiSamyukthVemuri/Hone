@@ -94,6 +94,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "revert_appointment_outcome",
   },
   {
+    path: "app/(app)/calendar/check-practitioner/actions.ts",
+    purpose: "Owner-only explicit practitioner correction for one open appointment (the 'check the practitioner' list).",
+    why: "The action resolves the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and refuses any non-owner before any read; the browser supplies only an appointment id and a target practitioner id, both UUID-validated. The appointment is read through the admin client filtered by BOTH id and the server-derived studio_id, and the only write is the move_or_reassign_appointment RPC (service_role-only), which independently re-validates the owner, the target (same studio, active) and the appointment state, and writes the audit row. This file performs no appointment DML of its own, sends no client email and writes no payment data.",
+    scopeGuard: "move_or_reassign_appointment",
+  },
+  {
     path: "app/(app)/calendar/move-appointment-actions.ts",
     purpose: "Practitioner Move/reassign appointment — authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
     // PR B1 CORRECTION. This entry previously named `practitioner_move_appointment`
@@ -231,6 +237,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "app/(app)/settings/team/actions.ts",
     purpose: "Owner team management — practitioner deactivation via the locked set_practitioner_active_locked command (Part 4 Item 2).",
     why: "removePractitionerAction resolves the owner + studio server-side (assertOwner → getCurrentPractitionerWithStudio) then calls the service-role-only locked RPC with the server-derived studio + actor ids; the RPC re-validates active-owner and same-studio target.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner receptionist management: revoke access via the locked set_studio_receptionist_active command (0216).",
+    why: "removeReceptionistAccessAction resolves the active owner + studio server-side (getCurrentPractitionerWithStudio, role owner, active) then calls the service-role-only locked RPC with the server-derived studio and owner ids and a uuid-validated receptionist id; the RPC re-validates active-owner and same-studio target. The invite action uses the session client only.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
@@ -799,7 +811,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "app/(app)/settings/tracking/page.tsx",
+    path: "app/(app)/settings/integrations/marketing/page.tsx",
     purpose: "Authenticated OWNER settings page (redacted status read).",
     why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
     scopeGuard: "requirePractitionerWithStudio",

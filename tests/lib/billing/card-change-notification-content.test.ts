@@ -26,7 +26,7 @@ describe("buildCardChangeNotification — first add (card_added)", () => {
   });
 
   it("href deep-links to the client's overview tab", () => {
-    expect(out.href).toBe(`/clients/${CLIENT_ID}?tab=overview`);
+    expect(out.href).toBe(`/clients/${CLIENT_ID}?tab=billing`);
   });
 });
 
@@ -51,7 +51,7 @@ describe("buildCardChangeNotification — replacement (card_replaced)", () => {
   });
 
   it("href deep-links to the client's overview tab", () => {
-    expect(out.href).toBe(`/clients/${CLIENT_ID}?tab=overview`);
+    expect(out.href).toBe(`/clients/${CLIENT_ID}?tab=billing`);
   });
 });
 

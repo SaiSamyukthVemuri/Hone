@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { deskHomeFor, type HomeSupabase } from "@/lib/desk/home";
 
 export type AcceptState = { error: string } | null;
 
@@ -62,5 +63,15 @@ export async function acceptInvitationAction(
   if (res.choose_studio === true) {
     await clearSelectedStudioId();
   }
-  redirect("/dashboard");
+  // Receptionist landing, the same rule as the sign-in callback (lib/desk/home.ts): a user whose
+  // ONLY membership is an active receptionist row lands on /desk. Flag off: no read at all. A
+  // failure keeps the ordinary landing.
+  let dest = "/dashboard";
+  try {
+    const home = await deskHomeFor(supabase as unknown as HomeSupabase, user.id);
+    if (home) dest = home;
+  } catch {
+    // keep the ordinary landing
+  }
+  redirect(dest);
 }

@@ -194,6 +194,9 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // HELD portrait policy: OFF unless the outer process explicitly enables it
   // for a dedicated server run (e2e/fett-client-portrait.spec.ts).
   ...(process.env.HONE_CLIENT_PORTRAIT_ENABLED === "true" ? { HONE_CLIENT_PORTRAIT_ENABLED: "true" } : {}),
+  // HELD receptionist desk: OFF unless the outer process explicitly enables it for a dedicated server run on an OWNED
+  // isolated stack (e2e/receptionist-removal.spec.ts). Never set in CI's lanes, where that spec self-skips.
+  ...(process.env.HONE_RECEPTIONIST_DESK_ENABLED === "true" ? { HONE_RECEPTIONIST_DESK_ENABLED: "true" } : {}),
   // RESCHEDULE-E2E-01: THE FAKE EMAIL TRANSPORT IS ARMED FOR EVERY RUN OF THIS
   // LANE, not only when the outer job opts in.
   //

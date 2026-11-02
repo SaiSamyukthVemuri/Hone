@@ -231,7 +231,6 @@ export default async function CalendarPage({
   const drawerClients = clients.map((c) => ({
     id: c.id,
     name: c.name,
-    preferred_name: c.preferred_name ?? null,
     email: c.email,
     phone: c.phone,
     pronouns: c.pronouns,
@@ -802,7 +801,6 @@ async function renderTeamDayView(opts: {
   const drawerClients = clients.map((c) => ({
     id: c.id,
     name: c.name,
-    preferred_name: c.preferred_name ?? null,
     email: c.email,
     phone: c.phone,
     pronouns: c.pronouns,

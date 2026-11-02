@@ -256,11 +256,6 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
-      // HON-58 identity (0258): preferred/legal names on one client. Here and not
-      // in `sessions` for the same two reasons as UI-04 below: /clients/** has no
-      // PATH_TO_GROUP pattern, and `sessions` carries a cost pin. DB-coupled: it
-      // needs 0258 in the stack.
-      "hon58-identity.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
@@ -294,6 +289,12 @@ export const BROWSER_GROUPS = {
       // already fails safe to EXTENDED coverage, so the spec runs whenever it
       // matters.
       "authenticated-route-error-containment.spec.ts",
+      // Receptionist desk revocation (HELD): the same session cookie is refused after the owner removes access. Needs
+      // HONE_RECEPTIONIST_DESK_ENABLED=true on the app server, which no lane sets, so it SELF-SKIPS in CI and runs only in a
+      // dedicated run on an owned isolated stack. Beside the shell/auth-gate family for the same reason as above.
+      "receptionist-removal.spec.ts",
+      // Same hold: the owner's Team-page invite/remove/revoke flow, the old-invitation refusal (0275) and the buttons-return-after-move proof.
+      "receptionist-team-flow.spec.ts",
       // DAT-002 (E-GAPS): a REAL read failure (a revoked SELECT grant on the
       // disposable stack) reaches the dashboard boundary, the /records section
       // refusal and the global-search refusal, never 0 or empty. Beside the

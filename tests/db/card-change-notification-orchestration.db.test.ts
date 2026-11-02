@@ -156,7 +156,7 @@ describe("real ensureCardChangeNotification against the local DB", () => {
     expect(row.practitioner_id).toBe(s.practitionerId); // WS-D: owner-only delivery, never studio-wide
     expect(row.event_type).toBe("card_added");
     expect(row.client_id).toBe(s.clientId);
-    expect(row.href).toBe(`/clients/${s.clientId}?tab=overview`);
+    expect(row.href).toBe(`/clients/${s.clientId}?tab=billing`);
     expect(row.title).toBe("Card added on file");
     expect(row.body).toBe("Client card-change-orch added visa ending in 4242.");
     expect(row.body).not.toMatch(/\d{5,}/); // no full PAN

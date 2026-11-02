@@ -299,7 +299,7 @@ export function buildGettingStarted(
           "emails-review",
           "Confirmation/reminder emails reviewed",
           "Check the wording on a test booking's confirmation and reminders.",
-          "/settings/studio",
+          "/settings/studio/email",
         ),
       ],
     },

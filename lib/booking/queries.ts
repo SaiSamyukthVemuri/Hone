@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { serviceSelect, type ProfileReadOptions } from "@/lib/clients/profile-pricing";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import type {
@@ -13,7 +14,6 @@ import type {
   StudioTimedBlock,
 } from "@/lib/types/database";
 import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
-import { clientDisplayName } from "@/lib/clients/identity";
 
 // Active services for the studio, ordered by the practitioner-
 // controlled sort_order ascending and then by name as a deterministic
@@ -22,18 +22,23 @@ import { clientDisplayName } from "@/lib/clients/identity";
 // the public booking page means internal pickers (calendar quick-book,
 // client profile, dashboard) all show services in the same order the
 // practitioner arranged and the same order their clients see on the
-// public booking menu.
-export async function getActiveServices(studioId: string): Promise<Service[]> {
+// public booking menu. `{ includePrices: false }` selects no price column
+// (the Client Profile for a non-owner).
+export async function getActiveServices(
+  studioId: string,
+  o: ProfileReadOptions = {},
+): Promise<Service[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
-    .select("*")
+    .select(serviceSelect(o))
     .eq("studio_id", studioId)
     .eq("active", true)
     .order("sort_order", { ascending: true })
     .order("name");
   if (error) throw new Error(`Failed to load services: ${dbErrorCode(error)}`);
-  return (data ?? []) as Service[];
+  const rows = (data ?? []) as unknown as Service[];
+  return o.includePrices === false ? rows.map((r) => ({ ...r, price_cents: null })) : rows;
 }
 
 // Explicit "does the services.calendar_color column exist yet?" probe for the
@@ -233,7 +238,7 @@ export async function getAppointmentsForRange(
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name, preferred_name), ";
+    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
   const runSelect = (serviceEmbed: string, afterId: string | null) => {
     let query = supabase
       .from("appointments")
@@ -283,8 +288,8 @@ export async function getAppointmentsForRange(
       | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
-      | { id: string; name: string; preferred_name?: string | null }
-      | { id: string; name: string; preferred_name?: string | null }[]
+      | { id: string; name: string }
+      | { id: string; name: string }[]
       | null;
     service:
       | { id: string; name: string; modality: string | null; calendar_color?: string | null }
@@ -298,13 +303,9 @@ export async function getAppointmentsForRange(
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
-    const rawC = Array.isArray(row.client)
+    const c = Array.isArray(row.client)
       ? row.client[0] ?? null
       : row.client;
-    // HON-58: on the calendar, `client.name` IS the display name (the preferred
-    // name when the client has one, else the stored name). The preferred name is
-    // not carried further: the calendar is an ordinary staff surface.
-    const c = rawC ? { id: rawC.id, name: clientDisplayName(rawC) } : null;
     const rawS = Array.isArray(row.service)
       ? row.service[0] ?? null
       : row.service;

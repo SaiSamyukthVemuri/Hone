@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { BookingSettingsError, bookingSettingsErrorUrl, type BookingSettingsErrorCode } from "@/lib/booking/settings-error-codes";
+import {
+  BookingSettingsError,
+  bookingSettingsErrorUrl,
+  parseBookingSettingsView,
+  type BookingSettingsErrorCode,
+} from "@/lib/booking/settings-error-codes";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
@@ -107,45 +112,62 @@ export async function updateStudioBookingPrefsAction(
   formData: FormData,
 ): Promise<void> {
   let failureCode: BookingSettingsErrorCode | null = null;
+  // Which focused view posted this (a hidden field); only the two known views
+  // count, anything else falls back to the doorway.
+  const view = parseBookingSettingsView(formData.get("view"));
 
   try {
     const { studioId, currentSlug } = await assertOwner();
 
-    const tz = trimmed(formData.get("timezone")) || "America/Toronto";
-    const defaultDuration = parseInteger(
-      formData.get("default_appointment_duration_minutes"),
-      60,
-    );
-    const buffer = parseBufferPreset(formData.get("buffer_minutes"));
-    const publicBookingHorizonMonths = parsePublicBookingHorizonMonths(
-      formData.get("public_booking_horizon_months"),
-    );
-    const slugRaw = trimmed(formData.get("slug")).toLowerCase();
-    const address = nullable(formData.get("address"));
-    const bookingDescription = nullable(formData.get("booking_description"));
-
-    if (!SLUG_RE.test(slugRaw)) {
-      throw new BookingSettingsError("slug_invalid");
+    // R2: the booking link and the booking window are separate views, each
+    // posting only its own fields. Write ONLY the fields present, so one view's
+    // save can never reset the other's fields to a default. Every validation
+    // below is unchanged; it just runs for the fields that were sent.
+    const update: Record<string, string | number | null> = {};
+    if (formData.has("timezone")) {
+      update.timezone = trimmed(formData.get("timezone")) || "America/Toronto";
     }
-    if (slugRaw !== currentSlug && RESERVED_SLUGS.has(slugRaw)) {
-      throw new BookingSettingsError("slug_reserved");
+    if (formData.has("default_appointment_duration_minutes")) {
+      const defaultDuration = parseInteger(
+        formData.get("default_appointment_duration_minutes"),
+        60,
+      );
+      if (defaultDuration < 5 || defaultDuration > 480) {
+        throw new BookingSettingsError("duration_invalid");
+      }
+      update.default_appointment_duration_minutes = defaultDuration;
     }
-    if (defaultDuration < 5 || defaultDuration > 480) {
-      throw new BookingSettingsError("duration_invalid");
+    if (formData.has("buffer_minutes")) {
+      update.buffer_minutes = parseBufferPreset(formData.get("buffer_minutes"));
+    }
+    if (formData.has("public_booking_horizon_months")) {
+      update.public_booking_horizon_months = parsePublicBookingHorizonMonths(
+        formData.get("public_booking_horizon_months"),
+      );
+    }
+    let slugRaw = currentSlug;
+    if (formData.has("slug")) {
+      slugRaw = trimmed(formData.get("slug")).toLowerCase();
+      if (!SLUG_RE.test(slugRaw)) {
+        throw new BookingSettingsError("slug_invalid");
+      }
+      if (slugRaw !== currentSlug && RESERVED_SLUGS.has(slugRaw)) {
+        throw new BookingSettingsError("slug_reserved");
+      }
+      update.slug = slugRaw;
+    }
+    if (formData.has("address")) update.address = nullable(formData.get("address"));
+    if (formData.has("booking_description")) {
+      update.booking_description = nullable(formData.get("booking_description"));
+    }
+    if (Object.keys(update).length === 0) {
+      throw new BookingSettingsError("save_failed");
     }
 
     const supabase = await createClient();
     const { error } = await supabase
       .from("studios")
-      .update({
-        timezone: tz,
-        default_appointment_duration_minutes: defaultDuration,
-        buffer_minutes: buffer,
-        slug: slugRaw,
-        address,
-        booking_description: bookingDescription,
-        public_booking_horizon_months: publicBookingHorizonMonths,
-      })
+      .update(update)
       .eq("id", studioId);
     if (error) {
       if (error.code === "23505") {
@@ -172,17 +194,17 @@ export async function updateStudioBookingPrefsAction(
       );
       throw new BookingSettingsError("save_failed");
     }
-    revalidatePath("/settings/booking");
+    revalidatePath("/settings/booking", "layout");
     revalidatePath("/settings/availability");
-    revalidatePath("/settings/studio");
+    revalidatePath("/settings/studio", "layout");
     revalidatePath("/calendar");
     if (slugRaw) revalidatePath(`/book/${slugRaw}`);
   } catch (err) {
     failureCode = err instanceof BookingSettingsError ? err.code : "save_failed";
   }
 
-  if (failureCode) redirect(bookingSettingsErrorUrl(failureCode));
-  redirect("/settings/booking?saved=1");
+  if (failureCode) redirect(bookingSettingsErrorUrl(failureCode, view));
+  redirect(`/settings/booking${view ? `/${view}` : ""}?saved=1`);
 }
 
 // ===========================================================================
@@ -243,6 +265,6 @@ export async function updateNewClientAdmissionModeAction(
     failureCode = "admission_save_failed";
   }
 
-  revalidatePath("/settings/booking");
-  redirect(failureCode ? bookingSettingsErrorUrl(failureCode) : "/settings/booking?saved=1");
+  revalidatePath("/settings/booking", "layout");
+  redirect(failureCode ? bookingSettingsErrorUrl(failureCode, "link") : "/settings/booking/link?saved=1");
 }

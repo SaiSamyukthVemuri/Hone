@@ -6,7 +6,7 @@ import path from "node:path";
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
-const PAGE = read("app/(app)/settings/tracking/page.tsx");
+const PAGE = read("app/(app)/settings/integrations/marketing/page.tsx");
 const SELECTOR = read("app/(app)/settings/tracking/TrackingProviderSelector.tsx");
 const FORM = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
 

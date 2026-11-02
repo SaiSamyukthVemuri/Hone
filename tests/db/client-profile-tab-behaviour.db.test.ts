@@ -289,15 +289,16 @@ describe("Client Profile — what each tab shows a practitioner", () => {
 
   it("shows each tab the data that tab owns", () => {
     expect(rendered.overview).toContain(T.pinned);
-    expect(rendered.personal).toContain(T.personal);
-    expect(rendered.personal).toContain(T.warning);
+    expect(rendered.notes).toContain(T.pinned);
+    expect(rendered.notes).toContain(T.personal);
+    expect(rendered.notes).toContain(T.warning);
     expect(rendered.treatment).toContain(T.plan);
     expect(rendered.messages).toContain(T.messageSubject);
     expect(rendered.messages).toContain(T.messageBody);
     expect(rendered.messages).toContain(T.reply);
-    expect(rendered.consultation).toContain(T.consultation);
-    expect(rendered.consultation).toContain(T.skinHair);
-    expect(rendered.consultation).toContain(T.budget);
+    expect(rendered.treatment).toContain(T.consultation);
+    expect(rendered.treatment).toContain(T.skinHair);
+    expect(rendered.treatment).toContain(T.budget);
     expect(rendered.sessions).toContain(T.goal);
     // Health has no free-text token to carry: the tab renders the intake's
     // STATUS, which is derived from the row this suite seeded as submitted and
@@ -309,11 +310,11 @@ describe("Client Profile — what each tab shows a practitioner", () => {
     // Clinical notes serve BOTH the Consultation tab and Overview's briefing.
     expect(rendered.overview).toContain(T.consultation);
     expect(rendered.overview).toContain(T.skinHair);
-    // Portal messages serve BOTH the Messages tab and Overview's pending
-    // tasks. Overview renders the DERIVED count, not the message body, which
-    // is why this asserts the task line rather than a token.
-    expect(rendered.overview).toContain("1 unread portal message");
-    expect(rendered.overview).not.toContain("No pending portal tasks");
+    // The pending-tasks card moved to Messages (Q3). It renders the DERIVED count, not the message
+    // body, which is why this asserts the task line rather than a token; Overview no longer shows it.
+    expect(rendered.messages).toContain("1 unread portal message");
+    expect(rendered.messages).not.toContain("No pending portal tasks");
+    expect(rendered.overview).not.toContain("unread portal message");
     // The most recent session, which Overview and Sessions both render —
     // under their own headings, which is why this asserts two strings.
     // Both render the LAST TREATMENT itself, so this asserts the charted
@@ -326,21 +327,21 @@ describe("Client Profile — what each tab shows a practitioner", () => {
   it("does not carry a tab's own data onto tabs that defer it", () => {
     // Left of the arrow: whose data. Right: the tabs that must not need it.
     const deferred: Array<[string, string[]]> = [
-      [T.personal, ALL_TABS.filter((t) => t !== "personal")],
-      [T.warning, ALL_TABS.filter((t) => t !== "personal")],
+      [T.personal, ALL_TABS.filter((t) => t !== "notes")],
+      [T.warning, ALL_TABS.filter((t) => t !== "notes")],
       [T.plan, ALL_TABS.filter((t) => t !== "treatment")],
       [T.messageSubject, ALL_TABS.filter((t) => t !== "messages")],
       [T.messageBody, ALL_TABS.filter((t) => t !== "messages")],
-      [T.budget, ALL_TABS.filter((t) => t !== "consultation")],
+      [T.budget, ALL_TABS.filter((t) => t !== "treatment")],
       [T.goal, ALL_TABS.filter((t) => t !== "sessions")],
-      [T.pinned, ALL_TABS.filter((t) => t !== "overview")],
+      [T.pinned, ALL_TABS.filter((t) => t !== "overview" && t !== "notes")],
       [T.reply, ALL_TABS.filter((t) => t !== "messages")],
       // The last treatment serves Overview's briefing and the Sessions tab.
       [T.lastTreatment, ALL_TABS.filter((t) => t !== "overview" && t !== "sessions")],
       // Clinical notes are the documented shared case: Consultation renders
       // them and Overview briefs on them. Nowhere else.
-      [T.consultation, ALL_TABS.filter((t) => t !== "consultation" && t !== "overview")],
-      [T.skinHair, ALL_TABS.filter((t) => t !== "consultation" && t !== "overview")],
+      [T.consultation, ALL_TABS.filter((t) => t !== "treatment" && t !== "overview")],
+      [T.skinHair, ALL_TABS.filter((t) => t !== "treatment" && t !== "overview")],
     ];
     for (const [token, tabs] of deferred) {
       for (const tab of tabs) {
@@ -353,13 +354,13 @@ describe("Client Profile — what each tab shows a practitioner", () => {
     // The deferral is only safe because navigation re-runs the page. Render a
     // tab that defers each token, then its owner, and watch it appear.
     for (const [away, owner, token] of [
-      ["overview", "personal", T.personal],
+      ["overview", "notes", T.personal],
       ["overview", "treatment", T.plan],
       ["overview", "messages", T.messageSubject],
-      ["personal", "sessions", T.goal],
-      ["personal", "consultation", T.budget],
-      ["personal", "messages", T.reply],
-      ["personal", "sessions", T.lastTreatment],
+      ["notes", "sessions", T.goal],
+      ["notes", "treatment", T.budget],
+      ["notes", "messages", T.reply],
+      ["notes", "sessions", T.lastTreatment],
     ] as const) {
       expect(await seen(away)).not.toContain(token);
       expect(await seen(owner)).toContain(token);

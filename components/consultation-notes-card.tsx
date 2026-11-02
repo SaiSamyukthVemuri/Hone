@@ -92,7 +92,7 @@ export function ConsultationNotesCard({
   // Nothing to say and nothing to prompt: render nothing at all.
   if (!isConsultation && !hasAnyNote) return null;
 
-  const href = `/clients/${clientId}?tab=consultation`;
+  const href = `/clients/${clientId}?tab=treatment`;
 
   return (
     <section

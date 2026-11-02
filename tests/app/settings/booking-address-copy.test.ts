@@ -17,7 +17,7 @@ const ROOT = process.cwd();
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 
-const page = collapse(read("app/(app)/settings/booking/page.tsx"));
+const page = collapse(read("app/(app)/settings/booking/BookingView.tsx"));
 
 function control(): string {
   const start = page.indexOf('id="public-address"');
