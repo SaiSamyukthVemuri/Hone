@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import type {
   StudioAvailabilityDefault,
@@ -20,6 +21,7 @@ import {
   presetConfirmControl,
   settlePendingPreset,
 } from "@/lib/availability/preset-state";
+import { fieldControlClass } from "@/components/ui/field";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_NAMES_LONG = [
@@ -243,6 +245,22 @@ export function AvailabilityClient({
     (typeof PRESETS)[number] | null
   >(null);
 
+  // An open day editor whose draft differs from the draft it OPENED with is
+  // unsaved work. (Compared with the saved day it would read dirty the moment a
+  // closed day opened with its Open default, before any edit.)
+  const [openedDraft, setOpenedDraft] = useState<{ is_open: boolean; open_time: string; close_time: string } | null>(null);
+  useUnsavedChangesGuard(
+    "availability-day",
+    editingDow != null &&
+      draft != null &&
+      openedDraft != null &&
+      savingDow == null &&
+      (draft.is_open !== openedDraft.is_open ||
+        (draft.is_open &&
+          (draft.open_time !== openedDraft.open_time ||
+            draft.close_time !== openedDraft.close_time))),
+  );
+
   // Keep local map in sync if server props change after a revalidation.
   useEffect(() => {
     setDays(initialDays);
@@ -255,16 +273,19 @@ export function AvailabilityClient({
     setSavedFor(null);
     // Click a closed day to default into "Open" mode with sensible hours;
     // the user can still toggle Open off and save to keep it closed.
-    setDraft({
+    const opened = {
       is_open: true,
       open_time: current?.open_time || DEFAULT_OPEN,
       close_time: current?.close_time || DEFAULT_CLOSE,
-    });
+    };
+    setOpenedDraft(opened);
+    setDraft(opened);
   }
 
   function closeEditor() {
     setEditingDow(null);
     setDraft(null);
+    setOpenedDraft(null);
     setError(null);
   }
 
@@ -750,7 +771,7 @@ export function DayEditor({
                   if (v) onCopyFrom(Number(v));
                   e.target.value = "";
                 }}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+                className={fieldControlClass({ fullWidth: false })}
               >
                 <option value="">Pick a day…</option>
                 {openDaysForCopy.map((d) => (
@@ -823,7 +844,7 @@ function TimeField({
       value={value}
       aria-label={label}
       onChange={(e) => onChange(e.target.value)}
-      className="min-w-[110px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+      className={fieldControlClass({ fullWidth: false, className: "min-w-[110px] tabular-nums" })}
     />
   );
 }
@@ -910,6 +931,14 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  useUnsavedChangesGuard(
+    "availability-override",
+    date !== "" ||
+      note !== "" ||
+      !isOpenToggle ||
+      openTime !== DEFAULT_OPEN ||
+      closeTime !== DEFAULT_CLOSE,
+  );
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -959,7 +988,7 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
             value={date}
             onChange={(e) => setDate(e.target.value)}
             required
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
         <label className="inline-flex items-center gap-2 self-end pb-2 text-sm">
@@ -999,7 +1028,7 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
         value={note}
         onChange={(e) => setNote(e.target.value)}
         placeholder="Note (optional)"
-        className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        className={fieldControlClass({ fullWidth: false })}
       />
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex items-center gap-2">
@@ -1097,6 +1126,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  useUnsavedChangesGuard("availability-blockout", starts !== "" || ends !== "" || reason !== "");
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -1142,7 +1172,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
             value={starts}
             onChange={(e) => setStarts(e.target.value)}
             required
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
         <label className="flex flex-col gap-1.5">
@@ -1154,7 +1184,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
             value={ends}
             onChange={(e) => setEnds(e.target.value)}
             required
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
         <label className="flex flex-col gap-1.5">
@@ -1165,7 +1195,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Optional"
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            className={fieldControlClass({ fullWidth: false })}
           />
         </label>
       </div>

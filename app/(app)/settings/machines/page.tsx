@@ -10,16 +10,13 @@ import {
   MachineRegisterForm,
   type RegisterResult,
 } from "@/components/machines/machine-register-form";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 export default async function MachineSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can register machines.
-      </div>
-    );
+    return <OwnerOnlyNotice>Only studio owners can register machines.</OwnerOnlyNotice>;
   }
 
   // Reviewed models only. `registerMachineAction` re-checks the same rule and
@@ -52,7 +49,7 @@ export default async function MachineSettingsPage() {
   return (
     <div className="space-y-8">
       <section>
-        <h2 className="text-lg font-semibold">Machines</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-lg font-semibold outline-none">Machines</h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           Register the machines in your studio so they appear when you chart.{" "}
           {OWNER_INPUT_REQUEST}

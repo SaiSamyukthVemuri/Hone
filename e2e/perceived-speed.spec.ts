@@ -1314,7 +1314,7 @@ test.describe("NAV-ACK-01 GlobalSearch anchor — desktop", () => {
     await loginAsOwner(page, seed);
 
     await page.goto("/settings/booking");
-    await expect(page).toHaveURL(/\/settings\/booking$/, { timeout: T });
+    await expect(page).toHaveURL(/\/settings\/booking\/link$/, { timeout: T });
 
     const field = page.getByRole("searchbox", { name: "Search Hone" });
     await expect(field).toBeVisible({ timeout: T });
@@ -1327,7 +1327,7 @@ test.describe("NAV-ACK-01 GlobalSearch anchor — desktop", () => {
     await result.click();
 
     // THE REGRESSION, as a user would meet it: the URL must carry the anchor.
-    await expect(page).toHaveURL(/\/settings\/booking#buffer$/, { timeout: T });
+    await expect(page).toHaveURL(/\/settings\/booking\/window$/, { timeout: T });
 
     // The panel still closes, exactly as for any other activation.
     await expect(field).toHaveValue("");

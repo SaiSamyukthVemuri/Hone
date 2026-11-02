@@ -28,13 +28,15 @@ test("unauthenticated cannot reach the owner Integrations page", async ({ page }
   await expect(page).toHaveURL(/\/login/);
 });
 
-test("a non-owner is redirected away from the owner Integrations page", async ({ page }) => {
+test("a non-owner is refused in place on the owner Integrations page", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   const member = await seedE2eMember(seed);
   await loginByMagicLink(page, member.email);
   await page.goto("/settings/integrations");
-  await expect(page).toHaveURL(/\/settings\/profile/);
+  // The doorway refuses in place (no redirect, no hop to a child that refuses).
+  await expect(page).toHaveURL(/\/settings\/integrations$/);
+  await expect(page.getByTestId("owner-only-denied")).toBeVisible();
   await expect(page.getByTestId("gcal-destination-chooser")).toHaveCount(0);
 });
 
