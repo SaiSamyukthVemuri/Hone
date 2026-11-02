@@ -34,11 +34,11 @@ describe("scoped to the admin area; audit page stays admin-gated", () => {
     expect(APP_LAYOUT).not.toMatch(/\/admin\/audit/);
   });
   it("the /admin/audit page remains isAdmin-gated (unchanged)", () => {
-    expect(AUDIT_PAGE).toMatch(/isAdmin\(user\.email\)/);
+    expect(AUDIT_PAGE).toMatch(/isProvenPlatformAdmin\(supabase, user\)/);
     expect(AUDIT_PAGE).toMatch(/redirect\("\/no-access"\)/);
   });
   it("the /admin layout still gates every admin route on isAdmin (unchanged)", () => {
-    expect(ADMIN_LAYOUT).toMatch(/isAdmin\(user\.email\)/);
+    expect(ADMIN_LAYOUT).toMatch(/isProvenPlatformAdmin\(supabase, user\)/);
   });
 });
 

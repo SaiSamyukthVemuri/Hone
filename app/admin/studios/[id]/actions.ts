@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 // (welcome email is one truthful invitation; no account-variant)
@@ -30,7 +30,7 @@ export async function resendWelcomeEmailAction(
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
+  if (!user || !(await isProvenPlatformAdmin(supabase, user))) {
     await logAdminAction({
       actorUserId: user?.id ?? null,
       actorEmail: user?.email ?? null,

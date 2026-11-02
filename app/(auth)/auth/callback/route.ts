@@ -5,15 +5,28 @@ import {
   identifyServerUser,
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
+import type { EmailOtpType } from "@supabase/supabase-js";
+import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { hardenAccountAfterMailboxProof } from "@/lib/auth/proof-hardening";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+
+const EMAIL_OTP_TYPES: readonly EmailOtpType[] = ["signup", "magiclink", "invite", "recovery", "email"];
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/dashboard";
 
-  if (code) {
+  const tokenHash = searchParams.get("token_hash");
+  const otpType = searchParams.get("type") as EmailOtpType | null;
+
+  if (code || (tokenHash && otpType && EMAIL_OTP_TYPES.includes(otpType))) {
     const supabase = await createClient();
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    // PKCE code (magic link, Google) or a token_hash link (signup confirmation / invitation templates). Both create a session
+    // whose access token records HOW it was proven; that, not email_confirmed_at, is what the checks below read.
+    const { data, error } = code
+      ? await supabase.auth.exchangeCodeForSession(code)
+      : await supabase.auth.verifyOtp({ token_hash: tokenHash as string, type: otpType as EmailOtpType });
     if (!error && data.user) {
       // Post-response, bounded: sign-in must never fail or stall because
       // PostHog is unavailable (P1/P2-ANALYTICS-03). Identify by opaque UUID
@@ -36,7 +49,27 @@ export async function GET(request: Request) {
       // block sign-in, so any failure falls through to the default destination.
       let dest = next;
       let clearSelection = false;
+
+      // MAILBOX PROOF (2 Nov). A session proves control of the account's email only when this very sign-in was a link/code sent
+      // to it, or Google asserting that exact verified address. A password sign-in on an account auto-confirmed while "Confirm
+      // email" was off proves nothing, so it must not link a membership. Not proven -> no reconcile; the person lands on the
+      // accept page, which asks for a link to the address first.
+      const accessToken = data.session?.access_token ?? null;
+      const proven =
+        mailboxProofMethod(claimsFromAccessToken(accessToken), {
+          email: data.user.email,
+          identities: data.user.identities,
+        }) !== null;
+      if (proven && accessToken) {
+        // Once per account: rotate away any password a pre-registrant set and sign out their other sessions (never blocks).
+        try {
+          await hardenAccountAfterMailboxProof(createAdminClient(), data.user, accessToken);
+        } catch {
+          // Never block sign-in on hardening.
+        }
+      }
       try {
+        if (!proven) throw new Error("mailbox not proven in this session");
         const { data: rec } = await supabase.rpc(
           "reconcile_my_pending_invitation",
         );

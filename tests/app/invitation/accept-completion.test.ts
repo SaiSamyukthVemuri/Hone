@@ -2,16 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ctx = vi.hoisted(() => ({
   result: null as unknown,
-  user: { id: "session-user" } as { id: string } | null,
+  user: { id: "session-user", email: "invitee@harness.local" } as { id: string; email: string } | null,
+  amr: [{ method: "otp" }] as unknown[],
+  otp: vi.fn(),
   error: null as { message: string } | null,
   rpc: vi.fn(),
   clearSelection: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: (to: string) => { throw new Error(`REDIRECT:${to}`); } }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser: async () => ({ data: { user: ctx.user } }) } }),
+  createClient: async () => ({ auth: {
+    getUser: async () => ({ data: { user: ctx.user } }),
+    getClaims: async () => ({ data: { claims: { amr: ctx.amr } }, error: null }),
+    signInWithOtp: ctx.otp,
+  } }),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: ctx.rpc }) }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.example.test" }));
 vi.mock("@/lib/supabase/selected-studio", () => ({ clearSelectedStudioId: ctx.clearSelection }));
 const { acceptInvitationAction } = await import("@/app/(auth)/accept-invitation/actions");
 const consented = () => { const fd = new FormData(); fd.set("consent", "on"); return fd; };
@@ -19,7 +26,10 @@ const failed = { error: "Something went wrong. Please try again." };
 
 beforeEach(() => {
   ctx.result = null;
-  ctx.user = { id: "session-user" };
+  ctx.user = { id: "session-user", email: "invitee@harness.local" };
+  ctx.amr = [{ method: "otp" }];
+  ctx.otp.mockReset();
+  ctx.otp.mockResolvedValue({ error: null });
   ctx.error = null;
   ctx.rpc.mockReset();
   ctx.rpc.mockImplementation(async () => ({ data: ctx.result, error: ctx.error }));
@@ -79,5 +89,45 @@ describe("invitation completion requires an explicit command success", () => {
     ctx.error = { message: "private database detail" };
     expect(await acceptInvitationAction(null, consented())).toEqual(failed);
     expect(ctx.clearSelection).not.toHaveBeenCalled();
+  });
+});
+
+describe("invitation acceptance requires mailbox proof in THIS session (email-trust, 2 Nov)", () => {
+  it("NEGATIVE: a password session on an auto-confirmed account cannot accept; the command is never called", async () => {
+    ctx.amr = [{ method: "password" }];
+    ctx.result = { status: "linked", choose_studio: false };
+    expect(await acceptInvitationAction(null, consented())).toMatchObject({ needsVerification: true });
+    expect(ctx.rpc).not.toHaveBeenCalled();
+    expect(ctx.clearSelection).not.toHaveBeenCalled();
+  });
+  it("POSITIVE: an OTP/magic-link session accepts", async () => {
+    ctx.result = { status: "linked", choose_studio: false };
+    await expect(acceptInvitationAction(null, consented())).rejects.toThrow("REDIRECT:/dashboard");
+    expect(ctx.rpc).toHaveBeenCalledOnce();
+  });
+  it("POSITIVE: verified Google for the same address accepts", async () => {
+    ctx.amr = [{ method: "oauth", provider: "google" }];
+    (ctx.user as unknown as Record<string, unknown>).identities = [{ provider: "google", identity_data: { email: "invitee@harness.local", email_verified: true } }];
+    ctx.result = { status: "linked", choose_studio: false };
+    await expect(acceptInvitationAction(null, consented())).rejects.toThrow("REDIRECT:/dashboard");
+  });
+});
+
+describe("sendMailboxProofLinkAction", () => {
+  it("sends the link ONLY to the session user's own address, never creating a user", async () => {
+    const { sendMailboxProofLinkAction } = await import("@/app/(auth)/accept-invitation/actions");
+    const fd = new FormData(); fd.set("email", "attacker-chosen@harness.local");
+    expect(await sendMailboxProofLinkAction({ status: "idle" }, fd)).toEqual({ status: "sent" });
+    expect(ctx.otp).toHaveBeenCalledExactlyOnceWith({
+      email: "invitee@harness.local",
+      options: { shouldCreateUser: false, emailRedirectTo: "https://hone.example.test/auth/callback?next=/accept-invitation" },
+    });
+  });
+  it("redirects to login without a session and reports a send failure without leaking it", async () => {
+    const { sendMailboxProofLinkAction } = await import("@/app/(auth)/accept-invitation/actions");
+    ctx.otp.mockResolvedValue({ error: { message: "rate limit internal detail" } });
+    expect(await sendMailboxProofLinkAction({ status: "idle" }, new FormData())).toEqual({ status: "error", message: expect.not.stringContaining("internal") });
+    ctx.user = null;
+    await expect(sendMailboxProofLinkAction({ status: "idle" }, new FormData())).rejects.toThrow("REDIRECT:/login");
   });
 });

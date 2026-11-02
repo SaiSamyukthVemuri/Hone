@@ -4,8 +4,13 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { sessionMailboxProof } from "@/lib/auth/session-email-proof";
 
-export type AcceptState = { error: string } | null;
+export type AcceptState = { error: string; needsVerification?: boolean } | null;
+
+export const MAILBOX_PROOF_REQUIRED =
+  "Confirm that this email address is yours first: we will send a one-time link to it.";
 
 // THE authoritative acceptance point. The browser cannot call the acceptance
 // command directly (it is service-role only). This trusted server adapter:
@@ -32,6 +37,12 @@ export async function acceptInvitationAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // PROOF OF MAILBOX CONTROL IN THIS SESSION. The invited address is the authority for the membership, and Supabase
+  // auto-confirms accounts created while "Confirm email" was off, so a password session on such an account proves nothing.
+  // Only a session created by a link/code sent to the address (or Google asserting it) may accept (lib/auth/email-proof.ts).
+  const proof = await sessionMailboxProof(supabase, user);
+  if (!proof.method) return { error: MAILBOX_PROOF_REQUIRED, needsVerification: true };
 
   // Service-role acceptance command; the browser cannot reach it.
   const admin = createAdminClient();
@@ -63,4 +74,29 @@ export async function acceptInvitationAction(
     await clearSelectedStudioId();
   }
   redirect("/dashboard");
+}
+
+export type ProofLinkState = { status: "idle" } | { status: "sent" } | { status: "error"; message: string };
+
+// Sends the one-time link/code to the SESSION USER'S OWN address (never an address from the form), so redeeming it creates a
+// session that proves the mailbox. shouldCreateUser is false: this can only sign an existing account in.
+export async function sendMailboxProofLinkAction(
+  _prev: ProofLinkState,
+  _formData: FormData,
+): Promise<ProofLinkState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!user.email) return { status: "error", message: "This account has no email address." };
+  const { error } = await supabase.auth.signInWithOtp({
+    email: user.email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: `${getRequiredAppOrigin()}/auth/callback?next=/accept-invitation`,
+    },
+  });
+  if (error) return { status: "error", message: "We could not send the link. Please try again in a minute." };
+  return { status: "sent" };
 }

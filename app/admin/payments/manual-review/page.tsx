@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { AdminModeBadge } from "@/app/admin/mode-badge";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   STUCK_PENDING_THRESHOLD_MINUTES,
@@ -47,7 +47,7 @@ export default async function PaymentManualReviewPage() {
   const {
     data: { user },
   } = await rls.auth.getUser();
-  if (!user || !isAdmin(user.email)) notFound();
+  if (!user || !(await isProvenPlatformAdmin(rls, user))) notFound();
 
   const admin = createAdminClient();
   const cutoffIso = new Date(

@@ -1,6 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -194,7 +194,7 @@ export async function updateSession(request: NextRequest) {
     // /no-access below.
     const isAdminRoute =
       pathname === "/admin" || pathname.startsWith("/admin/");
-    if (!(isAdminRoute && isAdmin(user.email))) {
+    if (!(isAdminRoute && (await isProvenPlatformAdmin(supabase, user)))) {
       // Load active memberships explicitly (NOT .maybeSingle(), which errors on
       // 2+ rows). A user may be an active practitioner in more than one studio
       // (unique key is (studio_id, user_id)):

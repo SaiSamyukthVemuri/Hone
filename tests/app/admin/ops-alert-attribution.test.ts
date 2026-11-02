@@ -52,6 +52,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     auth: {
+      getClaims: async () => ({ data: { claims: { amr: [{ method: "otp" }] } }, error: null }),
       getUser: async () => ({
         data: { user: { id: "admin-user-id", email: "admin@hone.care" } },
       }),

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import {
   getRecentAdminActionEvents,
   type AdminActionEventRow,
@@ -40,7 +40,7 @@ export default async function AdminAuditPage() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
+  if (!user || !(await isProvenPlatformAdmin(supabase, user))) {
     redirect("/no-access");
   }
 

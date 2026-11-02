@@ -13,7 +13,7 @@ import {
   listActiveStudioMemberships,
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import { todayInTz } from "@/lib/booking/tz";
 import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { AppFooter } from "@/app/_components/AppFooter";
@@ -39,7 +39,7 @@ export default async function AppLayout({
   const { practitioner, studio } = await timed("shell.identity", () =>
     requirePractitionerWithStudio(),
   );
-  const admin = isAdmin(practitioner.email);
+  const admin = await isProvenPlatformAdmin(await createClient());
 
   // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role
   // only). Moved off the browser: the authenticated app sends no browser

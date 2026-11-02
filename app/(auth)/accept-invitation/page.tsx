@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { sessionMailboxProof } from "@/lib/auth/session-email-proof";
 import { AcceptForm } from "./AcceptForm";
+import { VerifyMailbox } from "./VerifyMailbox";
 
 export const metadata: Metadata = {
   title: "Accept invitation: Hone",
@@ -20,6 +22,22 @@ export default async function AcceptInvitationPage() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // The pending invitation (studio name, role) is shown only to a session that has proven control of this address. A password
+  // session on an auto-confirmed account has not, and must not learn which studio invited the address (lib/auth/email-proof.ts).
+  const proof = await sessionMailboxProof(supabase, user);
+  if (!proof.method) {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-16">
+        <div className="rounded-lg border border-neutral-200 p-6 dark:border-neutral-800">
+          <h1 className="font-[var(--font-fraunces)] text-2xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50">
+            Confirm your email
+          </h1>
+          <VerifyMailbox email={user.email ?? "your address"} />
+        </div>
+      </main>
+    );
+  }
 
   const { data: rec } = await supabase.rpc("my_pending_invitation");
   const info = (rec && typeof rec === "object" ? rec : {}) as {

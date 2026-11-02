@@ -29,21 +29,21 @@ const MIDDLEWARE = read("lib/supabase/middleware.ts");
 describe("operator-only access (reuses the existing isAdmin gate)", () => {
   it("the admin layout guards every /admin route (so the wizard inherits it)", () => {
     expect(LAYOUT).toMatch(/if \(!user\) redirect\("\/login"\);/);
-    expect(LAYOUT).toMatch(/if \(!isAdmin\(user\.email\)\) redirect\("\/dashboard"\);/);
+    expect(LAYOUT).toMatch(/if \(!\(await isProvenPlatformAdmin\(supabase, user\)\)\) redirect\("\/dashboard"\);/);
   });
 
   it("the create action re-checks isAdmin server-side BEFORE any write", () => {
-    expect(ACTION_CODE).toMatch(/if \(!user \|\| !isAdmin\(user\.email\)\)/);
+    expect(ACTION_CODE).toMatch(/if \(!user \|\| !\(await isProvenPlatformAdmin\(supabase, user\)\)\)/);
     expect(ACTION_CODE).toMatch(/throw new Error\("Not authorized\."\)/);
     // The isAdmin check must come before the service-role client is created.
-    const gateIdx = ACTION_CODE.indexOf("isAdmin(user.email)");
+    const gateIdx = ACTION_CODE.indexOf("isProvenPlatformAdmin(supabase, user)");
     const adminIdx = ACTION_CODE.indexOf("createAdminClient()");
     expect(gateIdx).toBeGreaterThan(-1);
     expect(adminIdx).toBeGreaterThan(gateIdx);
   });
 
-  it("reuses isAdmin from @/lib/admin — no new operator allowlist is introduced", () => {
-    expect(ACTION).toMatch(/from "@\/lib\/admin"/);
+  it("reuses the existing allowlist via isProvenPlatformAdmin (which adds mailbox proof) — no new operator allowlist is introduced", () => {
+    expect(ACTION).toMatch(/from "@\/lib\/auth\/session-email-proof"/);
     expect(ACTION).not.toMatch(/HONE_OPERATOR_EMAILS|OPERATOR_EMAILS/);
   });
 });
@@ -109,9 +109,9 @@ describe("the wizard page is a safe internal surface", () => {
 
 describe("PR #253 invite-only gate stays closed for non-operators", () => {
   it("middleware exempts /admin ONLY for isAdmin operators, still gating others to /no-access", () => {
-    expect(MIDDLEWARE).toMatch(/from "@\/lib\/admin"/);
+    expect(MIDDLEWARE).toMatch(/from "@\/lib\/auth\/session-email-proof"/);
     expect(MIDDLEWARE).toMatch(/isAdminRoute/);
-    expect(MIDDLEWARE).toMatch(/isAdminRoute && isAdmin\(user\.email\)/);
+    expect(MIDDLEWARE).toMatch(/isAdminRoute && \(await isProvenPlatformAdmin\(supabase, user\)\)/);
     // The no-studio -> /no-access redirect is still present for everyone else.
     expect(MIDDLEWARE).toMatch(/url\.pathname = "\/no-access"/);
     expect(MIDDLEWARE).toMatch(/\.from\("practitioners"\)/);

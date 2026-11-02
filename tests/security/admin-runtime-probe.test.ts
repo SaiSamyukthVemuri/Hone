@@ -46,7 +46,7 @@ function fakeSupabase() {
       reject?: (e: unknown) => unknown,
     ) => Promise.resolve({ data: h.memberships, error: null }).then(resolve, reject),
   };
-  return { auth: { getUser: h.getUser }, from: () => query };
+  return { auth: { getUser: h.getUser, getClaims: async () => ({ data: { claims: { amr: [{ method: "otp" }] } }, error: null }) }, from: () => query };
 }
 
 function anonymous() {

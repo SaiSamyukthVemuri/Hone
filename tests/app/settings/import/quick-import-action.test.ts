@@ -300,13 +300,13 @@ describe("IMPORT-01: execution is gated on the server, before any write", () => 
 
   it("operator standing is decided on the AUTH user, never on a DB column", () => {
     expect(GATE_CODE).toMatch(/supabase\.auth\.getUser\(\)/);
-    expect(GATE_CODE).toMatch(/isAdmin\(user\?\.email\)/);
+    expect(GATE_CODE).toMatch(/isProvenPlatformAdmin\(/);
     // practitioners.email is application data; it must not decide authority.
     expect(GATE_CODE).not.toMatch(/practitioner\.email|practitioners\.email/);
   });
 
   it("reuses the existing platform-operator allowlist, not a new env var", () => {
-    expect(GATE).toMatch(/from "@\/lib\/admin"/);
+    expect(GATE).toMatch(/from "@\/lib\/auth\/session-email-proof"/);
     expect(GATE_CODE).not.toMatch(/process\.env/);
   });
 

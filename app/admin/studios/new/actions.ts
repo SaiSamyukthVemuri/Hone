@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import { parseNewStudioInput } from "@/lib/studios/new-studio";
 import { logAdminAction } from "@/lib/audit/admin-actions";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -37,7 +37,7 @@ export async function createStudioWithOwnerInvite(
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
+  if (!user || !(await isProvenPlatformAdmin(supabase, user))) {
     // Record the blocked attempt (an authenticated non-admin reaching an admin
     // action) with the actor's own id/email; safe metadata only.
     await logAdminAction({

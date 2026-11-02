@@ -28,13 +28,13 @@ const ACTIONS_CODE = codeOnly(ACTIONS);
 describe("admin-only access", () => {
   it("the admin layout guards every /admin route including ops-alerts", () => {
     expect(LAYOUT).toMatch(/if \(!user\) redirect\("\/login"\);/);
-    expect(LAYOUT).toMatch(/if \(!isAdmin\(user\.email\)\) redirect\("\/dashboard"\);/);
+    expect(LAYOUT).toMatch(/if \(!\(await isProvenPlatformAdmin\(supabase, user\)\)\) redirect\("\/dashboard"\);/);
     expect(LAYOUT).toMatch(/href="\/admin\/ops-alerts"/);
   });
 
   it("the resolve action re-checks isAdmin server-side (non-admin refused)", () => {
     expect(ACTIONS_CODE).toMatch(
-      /if \(!user \|\| !isAdmin\(user\.email\)\) \{\s*\n?\s*throw new Error\("Unauthorized\."\);/,
+      /if \(!user \|\| !\(await isProvenPlatformAdmin\(supabase, user\)\)\) \{\s*\n?\s*throw new Error\("Unauthorized\."\);/,
     );
   });
 });
@@ -111,7 +111,7 @@ describe("PR #195: app-path smoke action", () => {
       ACTIONS_CODE.indexOf("export async function sendTestCriticalAlertAction"),
       ACTIONS_CODE.indexOf("export async function resolveOpsAlertAction"),
     );
-    expect(body).toMatch(/if \(!user \|\| !isAdmin\(user\.email\)\)/);
+    expect(body).toMatch(/if \(!user \|\| !\(await isProvenPlatformAdmin\(supabase, user\)\)\)/);
     expect(body).toMatch(/await recordOpsAlert\(\{/);
     expect(ACTIONS).toMatch(/import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/);
   });
@@ -171,7 +171,7 @@ vi.mock("next/navigation", () => ({
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser: async () => ({
+  createClient: async () => ({ auth: { getClaims: async () => ({ data: { claims: { amr: [{ method: "otp" }] } }, error: null }), getUser: async () => ({
     data: { user: authState.user }, error: authState.error,
   }) } }),
 }));

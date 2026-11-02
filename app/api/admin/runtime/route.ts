@@ -1,7 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 
 // HON-57: platform-operator runtime probe (CVE-2026-111497 verification).
 //
@@ -36,7 +36,8 @@ async function callerIsPlatformAdmin(): Promise<boolean> {
     const supabase = await createClient();
     const { data, error } = await supabase.auth.getUser();
     if (error) return false;
-    return isAdmin(data.user?.email);
+    if (!data.user) return false;
+    return await isProvenPlatformAdmin(supabase, data.user);
   } catch {
     return false;
   }

@@ -112,6 +112,7 @@ function rlsClient() {
   return {
     auth: {
       getUser: async () => ({ data: { user: h.user }, error: null }),
+      getClaims: async () => ({ data: { claims: { amr: [{ method: "otp" }] } }, error: null }),
     },
     from: () => query,
   };

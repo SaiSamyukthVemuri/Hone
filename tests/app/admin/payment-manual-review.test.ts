@@ -264,12 +264,12 @@ const codeOnly = (s: string) =>
 
 describe("manual-review page: admin-only access", () => {
   it("inherits the app/admin layout gate (redirects non-admins) and re-checks isAdmin", () => {
-    expect(ADMIN_LAYOUT).toMatch(/isAdmin\(/);
+    expect(ADMIN_LAYOUT).toMatch(/isProvenPlatformAdmin\(/);
     expect(ADMIN_LAYOUT).toMatch(/redirect\("\/login"\)|redirect\("\/dashboard"\)/);
     // The page re-verifies and 404s a non-admin (defense in depth).
-    expect(PAGE).toMatch(/import \{ isAdmin \} from "@\/lib\/admin"/);
+    expect(PAGE).toMatch(/import \{ isProvenPlatformAdmin \} from "@\/lib\/auth\/session-email-proof"/);
     expect(PAGE).toMatch(/auth\.getUser\(\)/);
-    expect(PAGE).toMatch(/if \(!user \|\| !isAdmin\(user\.email\)\) notFound\(\)/);
+    expect(PAGE).toMatch(/if \(!user \|\| !\(await isProvenPlatformAdmin\(rls, user\)\)\) notFound\(\)/);
   });
 
   it("is force-dynamic and reads via the service-role admin client", () => {
