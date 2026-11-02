@@ -987,7 +987,7 @@ export default async function DashboardPage({
         ) : (
           <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {visibleAppointments.map((appt) => (
-              <li key={appt.id}>
+              <li key={appt.id} className="min-w-0">
                 <AppointmentRow
                   appt={appt}
                   workflow={workflowByAppointment.get(appt.id) ?? null}
@@ -1248,6 +1248,7 @@ function AppointmentRow({
   // already has one, and never off an `unavailable` read.
   const offerPortalLink = shouldOfferPortalLink(cardOnFile);
 
+  const clientLabel = appt.client ? clientDisplayName(appt.client) : "Client deleted";
   return (
     // PR #236: the row body still opens the appointment (calendar
     // detail), and a separate primary-action button sits beside it,
@@ -1260,7 +1261,7 @@ function AppointmentRow({
     <div
       data-testid={isCurrent ? "today-current-row" : undefined}
       data-current={isCurrent ? "true" : undefined}
-      className={`flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center ${
+      className={`min-w-0 max-w-full flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center ${
         isCurrent
           ? "border-l-4 border-l-blue-500 bg-blue-50 pl-3 hover:bg-blue-100/70 dark:border-l-blue-400 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
           : "pl-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
@@ -1310,7 +1311,7 @@ function AppointmentRow({
           href={`/calendar/${appt.id}`}
           data-testid="today-row-body"
           pendingLabel="Opening appointment…"
-          className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"
+          className="flex min-w-0 max-w-full basis-full gap-3 lg:basis-0 lg:flex-1"
         >
           <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
             <span>{time}</span>
@@ -1320,8 +1321,14 @@ function AppointmentRow({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 text-xs leading-4">
-              <span className="truncate text-sm font-medium leading-5">
-                {appt.client ? clientDisplayName(appt.client) : "Client deleted"}
+              {/* An unbroken long name ellipsizes inside the row (min-w-0 / max-w-full all the way up
+                  from here) and is never wider than the phone; the title carries the full name. */}
+              <span
+                className="min-w-0 max-w-full truncate text-sm font-medium leading-5"
+                data-testid="today-row-client-name"
+                title={clientLabel}
+              >
+                {clientLabel}
               </span>
               {isCurrent && <CurrentPill />}
               <AppointmentStatusPill status={appt.status} />

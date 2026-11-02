@@ -62,6 +62,20 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
   });
 });
 
+describe("long client names never widen the row (T-1: 22px horizontal scroll at 390)", () => {
+  const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+  it("every box from the list item down to the name can shrink and is capped at its parent", () => {
+    expect(page).toMatch(/<li key=\{appt\.id\} className="min-w-0">/);
+    expect(page).toMatch(/className=\{`min-w-0 max-w-full flex flex-wrap items-start gap-x-3/);
+    expect(page).toMatch(/className="flex min-w-0 max-w-full basis-full gap-3 lg:basis-0 lg:flex-1"/);
+    expect(page).toMatch(/className="min-w-0 max-w-full truncate text-sm font-medium leading-5"/);
+  });
+  it("the truncated name carries the full name in a title", () => {
+    expect(page).toMatch(/data-testid="today-row-client-name"\s*title=\{clientLabel\}/);
+    expect(page).toContain('const clientLabel = appt.client ? clientDisplayName(appt.client) : "Client deleted";');
+  });
+});
+
 describe("Clients to review comes from the Needs attention model", () => {
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
@@ -221,7 +235,7 @@ describe("compact appointment rows (fidelity C)", () => {
   // The pinned note, failed-read marker and caution line live in RowSafetyLines (rendered INSIDE the row-body link).
   const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8");
   it("the collapsed row keeps time+end, name, service, practitioner, status, pinned note and allergy flag", () => {
-    for (const marker of ["today-row-end-time", "clientDisplayName", "serviceName", "performerName", "AppointmentStatusPill", "Allergies", "<RowSafetyLines"]) {
+    for (const marker of ["today-row-end-time", "clientLabel", "serviceName", "performerName", "AppointmentStatusPill", "Allergies", "<RowSafetyLines"]) {
       expect(link).toContain(marker);
     }
     expect(safety).toContain("Pinned");
