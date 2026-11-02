@@ -4,6 +4,7 @@ import {
   baselineFromRow,
   CLEAR_PREFERRED_ERROR,
   describeConflicts,
+  MAX_BASELINE_CHARS,
   parseBaseline,
   planProfileUpdate,
   type ProfileBaseline,
@@ -150,5 +151,19 @@ describe("guard conflict, then Save again (Insurance Q-3)", () => {
     expect(again.patch).toEqual({ name: "Dana R. Reyes" });
     expect(again.conditions).toContainEqual({ key: "phone", value: "604-555-0199", guard: true });
     expect(describeConflicts(again, stored)).toEqual([]);
+  });
+});
+
+describe("a large stored profile stays editable (Codex P2: the old 20,000-character cap)", () => {
+  it("round-trips a baseline with a >20k allergies field and a >20k address, and a small edit still plans", () => {
+    const big = { ...LOADED, allergies: "a".repeat(25_000), address: "b".repeat(30_000) };
+    const wire = JSON.stringify(baselineFromRow(big));
+    expect(wire.length).toBeGreaterThan(20_000);
+    expect(parseBaseline(wire)).toEqual(big);
+    const plan = planProfileUpdate(fd({ pronouns: "they/them", allergies: big.allergies, address: big.address }), big);
+    expect(plan).toEqual({ ok: true, patch: { pronouns: "they/them" }, conditions: [{ key: "pronouns", value: "she/her" }] });
+  });
+  it("still refuses a baseline beyond the sanity ceiling", () => {
+    expect(parseBaseline(JSON.stringify({ ...LOADED, allergies: "a".repeat(MAX_BASELINE_CHARS) }))).toBeNull();
   });
 });

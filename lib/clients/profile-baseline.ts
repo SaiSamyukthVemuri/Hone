@@ -62,9 +62,17 @@ export function baselineFromRow(row: Record<string, unknown>): ProfileBaseline {
   return out;
 }
 
+/**
+ * Upper bound on the baseline JSON. It is a sanity ceiling, NOT a limit on what a record may hold: a client whose
+ * stored allergies or address text is long must still be editable, so this sits far above any real profile. The
+ * request itself is already bounded by the server-action body limit (16mb in next.config.ts), and the submission
+ * carries the same values again, so half of that is the most a baseline could ever be.
+ */
+export const MAX_BASELINE_CHARS = 4_000_000;
+
 /** Strict: every key present, each a string, number or null. Anything else is not a baseline. */
 export function parseBaseline(raw: unknown): ProfileBaseline | null {
-  if (typeof raw !== "string" || raw.length === 0 || raw.length > 20_000) return null;
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_BASELINE_CHARS) return null;
   let value: unknown;
   try {
     value = JSON.parse(raw);
