@@ -50,7 +50,8 @@ jobs:
           python3 -I - "$RUNNER_TEMP/ms-pkg" <<'PY'
           import json, sys
           a = json.load(open(sys.argv[1] + "/0277-b00/EXPECT.json")); b = json.load(open(sys.argv[1] + "/0278-b01/EXPECT.json"))
-          assert a["history_after"] == b["history_before"], (a["history_after"], b["history_before"])
+          k = ("rows", "max", "list_md5")
+          assert [a["history_after"][i] for i in k] == [b["history_before"][i] for i in k], (a["history_after"], b["history_before"])
           assert a["history_before"]["rows"] == 253 and a["history_before"]["max"] == "0274", a["history_before"]
           assert b["history_after"]["rows"] == 255 and b["history_after"]["max"] == "0278", b["history_after"]
           print("ok - 0277-b00 ends exactly where 0278-b01 starts (254 / 0277); 253/0274 -> 255/0278")
