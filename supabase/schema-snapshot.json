@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
+    "count": 254,
     "last": "0278_practitioner_own_working_hours.sql",
-    "sha256": "1eb0fddcf9f177c2de480590c1c22bd63b71d15dfe9f106b5da92b4b3b671a5b"
+    "sha256": "14efb1d053240be7d23973335bef7071d92fb2ebd41781b153f51b7a03cd04f9"
   },
   "public": {
     "tables": [
@@ -384,11 +384,14 @@
       "receptionist_booking_options",
       "receptionist_calendar",
       "receptionist_calendar_closures",
+      "receptionist_calendar_v2",
       "receptionist_cancel_appointment",
       "receptionist_client_contacts",
       "receptionist_client_contacts_v2",
+      "receptionist_client_directory",
       "receptionist_create_appointment",
       "receptionist_move_appointment",
+      "receptionist_studio_timezone",
       "reconcile_bound_payment_event",
       "reconcile_card_payment_succeeded",
       "reconcile_dispute_closed",
