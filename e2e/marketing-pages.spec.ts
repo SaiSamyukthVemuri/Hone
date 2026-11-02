@@ -12,7 +12,7 @@ const ROUTES: { path: string; h1: string }[] = [
   // and /electrolysis-software, the two /features pages and /demo are MKT-02E's.
   // Each lane changed only its own rows; the conflict was purely positional.
   { path: "/", h1: "Start the next treatment where the last one ended" },
-  { path: "/pricing", h1: "Plans in Canadian dollars" },
+  { path: "/pricing", h1: "Plans in US dollars (USD)" },
   { path: "/electrolysis-software", h1: "Electrolysis software built around the treatment record" },
   { path: "/features/treatment-memory", h1: "See the last treatment before the client sits down" },
   { path: "/features/booking-calendar", h1: "Booking connected to the treatment record" },
