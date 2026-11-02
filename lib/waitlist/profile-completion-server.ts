@@ -59,6 +59,11 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // question; acting on it is the sender's.
   recordsSmsConsent: true,
 
+  // 0286 is HELD and not applied anywhere. The single-name option stays off, and the adapter
+  // refuses a single-name completion, until that migration is applied and this is flipped in
+  // its own reviewed change.
+  singleLegalName: false,
+
   // FALSE, AND THE REASON HAS NARROWED AGAIN RATHER THAN GONE AWAY.
   //
   // PRODUCTION NOW HAS A WRITER. `0203` was applied on 2026-09-27 and is the
@@ -129,6 +134,13 @@ export async function completeWaitlistProfile(
 ): Promise<CompletionOutcome> {
   const { patch } = input;
 
+  // ONE LEGAL NAME goes through the v2 command only, and only once 0286 is applied and the capability
+  // is flipped. Until then it is refused here and NOTHING is written: the alternative is a made-up
+  // family name or a dropped answer. The two-name path below is byte-for-byte what it was.
+  if (patch.singleLegalName && WAIT_04B_CAPABILITIES.singleLegalName !== true) {
+    return { ok: false, code: "unavailable" };
+  }
+
   try {
     // CONSTRUCTED INSIDE THE BOUNDARY. This sat outside the `try`, so a client
     // that failed to construct — a missing service-role key, a malformed URL —
@@ -137,10 +149,12 @@ export async function completeWaitlistProfile(
     // The failure mode it produced was the worst available: an exception on a
     // path whose whole job is to report IN DOUBT rather than raise.
     const admin = createAdminClient();
-    const { data, error } = await admin.rpc("complete_waitlist_profile_by_grant", {
+    const { data, error } = await admin.rpc(
+      patch.singleLegalName ? "complete_waitlist_profile_by_grant_v2" : "complete_waitlist_profile_by_grant",
+      {
       p_raw_token: input.capabilityToken,
       p_first_name: patch.firstName,
-      p_last_name: patch.lastName,
+      p_last_name: patch.singleLegalName ? "" : patch.lastName,
       p_treatment_area_ids: patch.treatmentAreaIds,
       p_preference: patch.availabilityPreference,
       // THE ARM IS CARRIED BY THE PATCH, NOT BY A NULL CHECK. `unchanged` has
@@ -156,7 +170,9 @@ export async function completeWaitlistProfile(
       p_sms_consent: WAIT_04B_CAPABILITIES.recordsSmsConsent
         ? input.smsOperationalConsent
         : false,
-    });
+      ...(patch.singleLegalName ? { p_single_name: true } : {}),
+      },
+    );
 
     // A transport failure is IN DOUBT, not a refusal: the statement may or may
     // not have committed, and `unavailable` is the only code that says so.
