@@ -105,13 +105,20 @@ function normalizeStored(key: ProfileKey, raw: BaselineValue): string | number |
   return trimmedOrNull(raw === null ? null : String(raw));
 }
 
+/** The fields the possible-duplicate check combines. */
+export const IDENTITY_KEYS = ["name", "phone", "date_of_birth"] as const satisfies readonly ProfileKey[];
+
 export type ProfilePlan =
   | {
       ok: true;
       /** Only the changed columns, parsed. Empty = nothing to save. */
       patch: Partial<Record<ProfileKey, string | number | null>>;
-      /** The stored value each changed column must still have for the write to apply. */
-      conditions: Array<{ key: ProfileKey; value: BaselineValue }>;
+      /**
+       * The stored value each changed column must still have for the write to apply. When an identity field
+       * (name, phone, date of birth) changes, the OTHER identity fields are guarded too (`guard: true`): the
+       * duplicate check combines them, so the combination that was checked must be the one that is saved.
+       */
+      conditions: Array<{ key: ProfileKey; value: BaselineValue; guard?: boolean }>;
     }
   | { ok: false; error: string };
 
@@ -121,7 +128,7 @@ export type ProfilePlan =
  */
 export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline): ProfilePlan {
   const patch: Partial<Record<ProfileKey, string | number | null>> = {};
-  const conditions: Array<{ key: ProfileKey; value: BaselineValue }> = [];
+  const conditions: Array<{ key: ProfileKey; value: BaselineValue; guard?: boolean }> = [];
 
   for (const key of PROFILE_KEYS) {
     if (!formData.has(key)) continue;
@@ -149,10 +156,22 @@ export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline)
     patch[key] = submitted;
     conditions.push({ key, value: baseline[key] });
   }
+  if (IDENTITY_KEYS.some((k) => k in patch)) {
+    for (const key of IDENTITY_KEYS) {
+      if (!(key in patch)) conditions.push({ key, value: baseline[key], guard: true });
+    }
+  }
   return { ok: true, patch, conditions };
 }
 
-export type ProfileConflict = { key: ProfileKey; label: string; current: string; yours: string };
+export type ProfileConflict = {
+  key: ProfileKey;
+  label: string;
+  current: string;
+  yours: string;
+  /** True when this page did not change the field: it only guards the duplicate check. */
+  guard?: boolean;
+};
 
 function asFormString(value: BaselineValue | undefined): string {
   return value === null || value === undefined ? "" : String(value);
@@ -167,7 +186,7 @@ export function describeConflicts(
   stored: Record<string, unknown>,
 ): ProfileConflict[] {
   const conflicts: ProfileConflict[] = [];
-  for (const { key, value } of plan.conditions) {
+  for (const { key, value, guard } of plan.conditions) {
     const now = stored[key];
     const nowValue: BaselineValue = typeof now === "string" || typeof now === "number" ? now : null;
     if (nowValue === value) continue;
@@ -175,7 +194,9 @@ export function describeConflicts(
       key,
       label: PROFILE_FIELD_LABELS[key],
       current: asFormString(nowValue),
-      yours: asFormString(plan.patch[key] ?? null),
+      ...(guard ? { guard: true } : {}),
+      // A guard-only field was not changed on this page: "yours" is the value this page still shows.
+      yours: guard ? asFormString(value) : asFormString(plan.patch[key] ?? null),
     });
   }
   return conflicts;

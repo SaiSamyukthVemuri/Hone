@@ -64,13 +64,20 @@ export function LegalIdentityForm({
     fd.set("legal_family_name", values.family);
     fd.set("legal_baseline", stored === null ? "none" : JSON.stringify(stored));
     setConflict(null);
+    const submitted = { ...values };
     startTransition(async () => {
       try {
         const result = await saveLegalIdentityAction(fd);
         if (result.ok) {
           // The server's normalised values are what is stored now: they are the new baseline.
           setSaved(result.value);
-          setValues(result.value);
+          // Keep anything typed while the request was pending: adopt the normalised values only when the draft
+          // still equals what was submitted (otherwise the form stays dirty and the unsaved notice shows).
+          setValues((cur) =>
+            cur.given === submitted.given && cur.middle === submitted.middle && cur.family === submitted.family
+              ? result.value
+              : cur,
+          );
           setStored(toStored(result.value));
           setMessage({ kind: "ok", text: "Legal name saved." });
         } else {

@@ -58,6 +58,8 @@ describe("planProfileUpdate writes only submitted, changed fields", () => {
     if (plan.ok) {
       expect(plan.conditions).toEqual([
         { key: "phone", value: "604-555-0100" }, { key: "fitzpatrick_type", value: 3 }, { key: "allergies", value: "none" },
+        // phone is an identity field: the other two identity fields are guarded for the duplicate check
+        { key: "name", value: "Dana Reyes", guard: true }, { key: "date_of_birth", value: "1990-01-02", guard: true },
       ]);
     }
   });
@@ -95,7 +97,7 @@ describe("conflict review after a zero-row write", () => {
   it("names only the fields that no longer hold the loaded value, with both sides", () => {
     const plan = planProfileUpdate(fd({ phone: "778-555-0123", address: "2 New Rd" }), LOADED);
     if (!plan.ok) throw new Error("plan");
-    const conflicts = describeConflicts(plan, { phone: "250-555-0000", address: "1 Test St" });
+    const conflicts = describeConflicts(plan, { phone: "250-555-0000", address: "1 Test St", name: "Dana Reyes", date_of_birth: "1990-01-02" });
     expect(conflicts).toEqual([{ key: "phone", label: "Phone", current: "250-555-0000", yours: "778-555-0123" }]);
   });
   it("adopting the current value moves the baseline so a second save is not a false conflict", () => {
@@ -103,5 +105,30 @@ describe("conflict review after a zero-row write", () => {
     expect(next.phone).toBe("250-555-0000");
     expect(next.name).toBe(LOADED.name);
     expect(adoptCurrent(LOADED, [{ key: "allergies", label: "Allergies", current: "", yours: "x" }]).allergies).toBeNull();
+  });
+});
+
+describe("identity fields are guarded together (Codex P2: the checked combination is the saved one)", () => {
+  it("changing only the name also guards the stored phone and date of birth", () => {
+    const plan = planProfileUpdate(fd({ name: "Dana R. Reyes" }), LOADED);
+    expect(plan).toMatchObject({ ok: true, patch: { name: "Dana R. Reyes" } });
+    if (plan.ok) {
+      expect(plan.conditions).toEqual([
+        { key: "name", value: "Dana Reyes" },
+        { key: "phone", value: "604-555-0100", guard: true },
+        { key: "date_of_birth", value: "1990-01-02", guard: true },
+      ]);
+    }
+  });
+  it("a non-identity change guards nothing extra", () => {
+    const plan = planProfileUpdate(fd({ address: "2 New Rd" }), LOADED);
+    if (plan.ok) expect(plan.conditions.every((c) => !c.guard)).toBe(true);
+  });
+  it("a moved guard field is reported as a conflict marked guard, with the value this page still showed", () => {
+    const plan = planProfileUpdate(fd({ name: "Dana R. Reyes" }), LOADED);
+    if (!plan.ok) throw new Error("plan");
+    expect(describeConflicts(plan, { name: "Dana Reyes", phone: "604-555-0100", date_of_birth: "1991-05-05" })).toEqual([
+      { key: "date_of_birth", label: "Date of birth", current: "1991-05-05", yours: "1990-01-02", guard: true },
+    ]);
   });
 });

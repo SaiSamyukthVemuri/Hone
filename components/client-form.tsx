@@ -204,6 +204,19 @@ export function ClientForm({
     if (!conflicts || !baseline) return;
     const next = adoptCurrent(baseline, conflicts);
     setBaseline(next);
+    const guards = conflicts.filter((c) => c.guard);
+    if (guards.length > 0) {
+      // A field this page did not change moved underneath it (it feeds the duplicate check). Show the new
+      // value and let the staff member look again before saving; never write the old one back.
+      setValues((v) => {
+        const nv = { ...v } as Record<string, string>;
+        for (const c of guards) nv[c.key] = c.current;
+        return nv as unknown as ClientFormValues;
+      });
+      setConflicts(undefined);
+      setError("A field you did not change was updated by someone else. Check it, then press Save again.");
+      return;
+    }
     submit(null, { baseline: next });
   }
 
