@@ -27,3 +27,23 @@ if n != 249:
 spec["hosted"]["dir"] = os.path.abspath(dest)
 json.dump(spec, open(os.path.join(os.path.dirname(sys.argv[1]), "s3.ci.json"), "w"), indent=1)
 PY
+# The FIXED variant: Team's pack.json lists the chain-guard column (at_hosted_0274 / at_hosted_0277) among the boolean "fields", but the generated rule already
+# checks that column as the NUMBER 1 and then also demands isTrue(), which a number never satisfies, so the generated preflight rule refuses every correct
+# hosted state. The 0272 and 0274 packs do not list it. The variant removes exactly that one entry per pack; everything else is byte-identical.
+python3 -I - "$SPEC" <<'PY'
+import json, os, shutil, sys
+spec_dir = sys.argv[1]
+gp = os.path.join(os.path.dirname(spec_dir), "gate-packs"); fx = os.path.join(os.path.dirname(spec_dir), "gate-packs-fixed")
+shutil.rmtree(fx, ignore_errors=True); os.makedirs(fx)
+for n in ("0277", "0278"):
+    shutil.copytree(os.path.join(gp, n), os.path.join(fx, n))
+    pj = os.path.join(fx, n, "pack.json"); d = json.load(open(pj))
+    before = list(d["preflight"]["fields"]); d["preflight"]["fields"] = [f for f in before if not f.startswith("at_hosted_")]
+    assert len(before) - len(d["preflight"]["fields"]) == 1, before
+    json.dump(d, open(pj, "w"), indent=1)
+spec = json.load(open(os.path.join(spec_dir, "s3.ci.json")))
+for st in spec["steps"]:
+    st["gate_pack"] = st["gate_pack"].replace("../gate-packs/", "../gate-packs-fixed/")
+json.dump(spec, open(os.path.join(spec_dir, "s3.fixed.json"), "w"), indent=1)
+print("ok   fixed variant written: spec/s3.fixed.json + gate-packs-fixed/ (one entry removed per pack)")
+PY

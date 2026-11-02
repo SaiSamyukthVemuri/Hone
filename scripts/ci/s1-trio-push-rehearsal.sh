@@ -31,7 +31,7 @@ pj() { python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print(eval(
 OS=$(uname -s)
 # A failed read of the plan (a missing PLAN.json, a typo in the sequence name, a plan without a stage list) is NOT an empty sequence: it stops here with a FAIL,
 # so only a sequence that really lists no stage reaches the no-op below.
-STAGES=$(pj "$PKG/PLAN.json" '" ".join(d["sequences"]["'"$SEQ"'"]["stages"])' 2> "$OUT/plan-read.err") || { say "FAIL  could not read the stage list of sequence '$SEQ' from $PKG/PLAN.json: $(tail -1 "$OUT/plan-read.err")"; exit 1; }
+STAGES=${STAGES_OVERRIDE:-$(pj "$PKG/PLAN.json" '" ".join(d["sequences"]["'"$SEQ"'"]["stages"])' 2> "$OUT/plan-read.err")} || { say "FAIL  could not read the stage list of sequence '$SEQ' from $PKG/PLAN.json: $(tail -1 "$OUT/plan-read.err")"; exit 1; }
 ex() { pj "$PKG/$1/EXPECT.json" "$2"; }
 # an empty sequence (every step dropped) applies nothing: there is no first stage, no bundle to build the synthetic hosted database from and no root EXPECT.json to read.
 # It is an explicit no-op, decided before anything else touches a stage or downloads the CLI.

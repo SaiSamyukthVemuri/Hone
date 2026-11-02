@@ -9,7 +9,7 @@ on:
     paths:
       - "rehearsal/multi-stage/**"
       - "scripts/ci/s1-trio-push-rehearsal.sh"
-      - "scripts/ci/multi-stage-push-rehearsal.sh"
+      - "scripts/ci/s1-trio-push-rehearsal.sh"
       - "scripts/ci/gate-pack-stack-rehearsal.sh"
       - ".github/workflows/rehearsal-s3-stage.yml"
   workflow_dispatch:
@@ -41,10 +41,25 @@ jobs:
           want="$(tr -d '[:space:]' < rehearsal/multi-stage/spec/s3.package-tree-sha256)"
           echo "built $got pinned $want"
           [ "$got" = "$want" ]
-      - name: The 0277 manifest is the one the approval request names (17969bb3)
+      - name: The FIXED variant differs from the pinned package only by the generated preflight rule line (the defect, shown)
         run: |
-          got="$(cd "$RUNNER_TEMP/ms-pkg" && sha256sum 0277-b00/SHA256SUMS.txt | cut -c1-12)"
-          echo "0277-b00 SHA256SUMS.txt sha256 $got"
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s3.fixed.json "$RUNNER_TEMP/ms-pkg-fixed"
+          diff -r "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/ms-pkg-fixed" | grep -E '^(diff|Only|[<>] .*isTrue)' | cut -c1-260 || true
+          diff -rq "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/ms-pkg-fixed" | sed 's#'"$RUNNER_TEMP"'##g'
+      - name: The CI-built 0277 manifest is the one the approval request names (17969bb3), and the two stages chain
+        run: |
+          # Team's MANIFEST-0277.sha256 (its own sha256 starts 17969bb3) lists every file of 0277-b00 as "sha256  ./path"; its line SET, sorted bytewise, hashes to the pin below
+          got="$(cd "$RUNNER_TEMP/ms-pkg/0277-b00" && find . -type f | xargs sha256sum | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+          echo "manifest line-set sha256 $got"
+          [ "$got" = db9a1a9bbb31d5ade608e8692379845f4145e81ff11eec7e8bd61a4286013f24 ]
+          python3 -I - "$RUNNER_TEMP/ms-pkg" <<'PY'
+          import json, sys
+          a = json.load(open(sys.argv[1] + "/0277-b00/EXPECT.json")); b = json.load(open(sys.argv[1] + "/0278-b01/EXPECT.json"))
+          assert a["history_after"] == b["history_before"], (a["history_after"], b["history_before"])
+          assert a["history_before"]["rows"] == 253 and a["history_before"]["max"] == "0274", a["history_before"]
+          assert b["history_after"]["rows"] == 255 and b["history_after"]["max"] == "0278", b["history_after"]
+          print("ok - 0277-b00 ends exactly where 0278-b01 starts (254 / 0277); 253/0274 -> 255/0278")
+          PY
       - name: Builder checks (refusals, determinism, content-gate flags)
         run: |
           set -o pipefail
@@ -58,6 +73,10 @@ jobs:
           for q in full drop-0278 "drop-0277+0278"; do
             echo "=========== S3 sequence $q" | tee -a "$RUNNER_TEMP/seq-s3.txt"
             bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/s3-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s3.txt" | tail -3
+          done
+          for q in full drop-0278; do
+            echo "=========== S3 FIXED sequence $q" | tee -a "$RUNNER_TEMP/seq-s3.txt"
+            bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg-fixed" "$RUNNER_TEMP/s3-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s3.txt" | tail -3
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-s3.txt" "$RUNNER_TEMP/builder-s3.txt"
 
@@ -91,25 +110,24 @@ jobs:
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/ms-push-out
         run: |
-          bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
-          for q in drop-0278 "drop-0277+0278"; do
-            REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/$q" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "$q" | tail -2
-          done
+          # stage 1 (0277-b00): the hosted set is its bundle minus 0277; stage 2 (0278-b01): its bundle minus 0278, i.e. 254 rows with 0277
+          bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
+          REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/stage2" STAGES_OVERRIDE=0278-b01 bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
       - name: H1 control, an unreadable plan is a FAIL and only a really empty sequence is a no-op
         shell: bash
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/ms-h1
         run: |
-          rc=0; o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" no-such-sequence 2>&1) || rc=$?
+          rc=0; o=$(bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" no-such-sequence 2>&1) || rc=$?
           [ "$rc" != 0 ] && echo "$o" | grep -q "^FAIL  could not read the stage list" || { echo "FAIL - a mistyped sequence name was not refused: rc=$rc $o"; exit 1; }
-          rc=0; o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/no-such-package" full 2>&1) || rc=$?
+          rc=0; o=$(bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/no-such-package" full 2>&1) || rc=$?
           [ "$rc" != 0 ] && echo "$o" | grep -q "^FAIL  could not read the stage list" || { echo "FAIL - a missing PLAN.json was not refused: rc=$rc $o"; exit 1; }
           python3 - "$RUNNER_TEMP/ms-pkg/PLAN.json" "$RUNNER_TEMP/ms-h1-pkg" <<'PY'
           import json, os, sys
           d = json.load(open(sys.argv[1])); d["sequences"]["empty-control"] = {"stages": []}
           os.makedirs(sys.argv[2], exist_ok=True); json.dump(d, open(os.path.join(sys.argv[2], "PLAN.json"), "w"))
           PY
-          o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-h1-pkg" empty-control 2>&1) && echo "$o" | grep -q "RESULT: 0 passed, 0 failed (empty sequence" || { echo "FAIL - a genuinely empty sequence was not a no-op: $o"; exit 1; }
+          o=$(bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-h1-pkg" empty-control 2>&1) && echo "$o" | grep -q "RESULT: 0 passed, 0 failed (empty sequence" || { echo "FAIL - a genuinely empty sequence was not a no-op: $o"; exit 1; }
           echo "ok - mistyped sequence FAIL, missing plan FAIL, genuinely empty sequence no-op"
       - name: Upload rehearsal logs
         if: ${{ always() }}
@@ -159,8 +177,8 @@ jobs:
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/ms-push-out
         run: |
-          bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
-          REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/drop-0278" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" drop-0278
+          bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
+          REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/stage2" STAGES_OVERRIDE=0278-b01 bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -319,8 +337,16 @@ jobs:
         run: |
           bash rehearsal/multi-stage/prepare-s3.sh "$RUNNER_TEMP/s3-hosted249"
           python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s3.ci.json "$RUNNER_TEMP/ms-pkgx"
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s3.fixed.json "$RUNNER_TEMP/ms-pkgx-fixed"
           test "$(ls supabase/migrations | wc -l | tr -d ' ')" = 253
-      - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
+      - name: CONTROL, the PINNED package (Team's as built) - its generated preflight rule must refuse the correct hosted-shaped stack (the defect; nothing is applied)
+        run: |
+          mkdir -p "$RUNNER_TEMP/s3-extras"
+          for f in 0258_hon58_identity.sql 0266_legal_name_receptionist_access.sql 0272_hon58_legal_identity_hardening.sql 0274_receptionist_desk_projection.sql; do cp "supabase/migrations/$f" "$RUNNER_TEMP/s3-extras/"; done
+          EXTRA_DIR="$RUNNER_TEMP/s3-extras" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-pinned" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" full 2>&1 | tee "$RUNNER_TEMP/gates-pinned.txt" || true
+          grep -q "^FAIL - step 0277 (0277-b00): PRE g12 refused" "$RUNNER_TEMP/gates-pinned.txt"
+          grep -q "wrong shape: at_hosted_0274" "$RUNNER_TEMP/gates-pinned.txt"
+      - name: Gate packs on the FIXED variant, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/s3-extras"
@@ -331,7 +357,7 @@ jobs:
             if [ "$first" = 0 ]; then git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset.log" 2>&1 || { echo "FAIL - db reset between sequences"; tail -20 "$RUNNER_TEMP/reset.log"; exit 1; }; fi
             first=0
             echo "=========== S3 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
-            EXTRA_DIR="$RUNNER_TEMP/s3-extras" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
+            EXTRA_DIR="$RUNNER_TEMP/s3-extras" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx-fixed" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
       - name: Upload the read-back results (read-only catalog facts, no data)

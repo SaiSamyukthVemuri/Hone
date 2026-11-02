@@ -78,7 +78,7 @@ c=0; for f in "$T"/a/*/; do S=$(basename "$f"); [ -f "$f/s1-apply-$S-online/s1-a
 [ $c = 0 ] && ok "every apply script embeds EXACTLY its bundle's reviewed allowlist (file name + sha256 of every migration)"
 c=0; for f in $(find "$T/a" -name '*.sh'); do bash -n "$f" || { c=1; bad "syntax: $f"; }; done; [ $c = 0 ] && ok "every generated shell script parses (bash -n)"
 # GATE PACKS: reproducible from mkpacks.py; the expected policy sets match the repository history and the sealed body; every expected object name is in the sealed body; every generated node check parses
-mkdir -p "$T/gp"; MKPACKS_OUT="$T/gp" python3 "$D/gate-packs/mkpacks.py" && diff -r -q "$T/gp" "$D/gate-packs" 2>&1 | grep -v "Only in $D/gate-packs: \(0254\|s1-trio\|s2-0274\|mkpacks.py\|__pycache__\)" | grep -q . \
+mkdir -p "$T/gp"; MKPACKS_OUT="$T/gp" python3 "$D/gate-packs/mkpacks.py" && diff -r -q "$T/gp" "$D/gate-packs" 2>&1 | grep -v "Only in $D/gate-packs: \(0254\|0277\|0278\|s1-trio\|s2-0274\|mkpacks.py\|__pycache__\)" | grep -q . \
   && bad "gate packs are not exactly what mkpacks.py writes" "$(diff -r -q "$T/gp" "$D/gate-packs" | head -3)" || ok "the committed gate packs are exactly what mkpacks.py writes (reproducible, reviewable)"
 python3 -I - "$D" "$SPEC" <<'PY' && ok "gate pack facts: the expected 0253 policy set BEFORE equals the repository history and AFTER equals the sealed body applied on it; every expected object name appears in its sealed body" || bad "gate pack facts"
 import glob, json, os, re, sys
