@@ -168,6 +168,17 @@ describe("source contracts", () => {
     expect(page).toContain("sessions(performed_by_practitioner_id, deleted_at)");
     expect(page).toMatch(/\.filter\(\(s\) => s\.deleted_at === null \|\| s\.deleted_at === undefined\)/);
   });
+  it("every open appointment is read in pages and an incomplete read never claims 'Nothing to check' (Codex P2)", () => {
+    const page = read("app/(app)/calendar/check-practitioner/page.tsx");
+    expect(page).not.toMatch(/\.limit\(/);
+    expect(page).toContain(".range(page * PAGE, page * PAGE + PAGE - 1)");
+    expect(page).toContain('.order("starts_at")');
+    expect(page).toContain('.order("id")');
+    expect(page).toContain("MAX_PAGES");
+    expect(page).toContain("if (got.length < PAGE) { complete = true; break; }");
+    expect(page).toContain("check-practitioner-partial");
+    expect(page).toMatch(/complete\s*\?\s*"Nothing to check/);
+  });
   it("the suggestion only pre-selects a dropdown; only a submit calls the action", () => {
     const row = read("app/(app)/calendar/check-practitioner/ReassignRow.tsx");
     expect(row.match(/reassignOpenAppointmentAction\(/g)).toHaveLength(1);

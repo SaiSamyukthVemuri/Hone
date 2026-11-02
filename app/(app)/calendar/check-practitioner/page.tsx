@@ -17,14 +17,18 @@ import { ReassignRow } from "./ReassignRow";
 // "Change practitioner" on a row (audited by the command). Owner only; a practitioner gets a 404.
 
 export const dynamic = "force-dynamic";
-const LIMIT = 300;
+// Every open appointment is read, in pages (Codex P2: a fixed window can hide the misassigned ones behind started
+// rows and then say "Nothing to check"). A hard ceiling keeps the page bounded; if it is hit the page says so and
+// never claims the list is complete.
+const PAGE = 500;
+const MAX_PAGES = 20;
 
 export default async function CheckPractitionerPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") notFound();
 
   const supabase = await createClient();
-  const [apptRes, pracRes] = await Promise.all([
+  const readPage = (page: number) =>
     // preferred_name arrives with 0258; until the database has it the read retries without it (shows the stored name).
     readWithPreferredName((withPreferred) =>
       supabase
@@ -35,10 +39,22 @@ export default async function CheckPractitionerPage() {
         .eq("studio_id", studio.id)
         .eq("status", "confirmed")
         .order("starts_at")
-        .limit(LIMIT),
-    ),
-    supabase.from("practitioners").select("id, role, active, display_name").eq("studio_id", studio.id),
-  ]);
+        .order("id")
+        .range(page * PAGE, page * PAGE + PAGE - 1),
+    );
+  const pracPromise = supabase.from("practitioners").select("id, role, active, display_name").eq("studio_id", studio.id);
+  const pageData: unknown[] = [];
+  let apptError: unknown = null;
+  let complete = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await readPage(page);
+    if (res.error) { apptError = res.error; break; }
+    const got = (res.data ?? []) as unknown[];
+    pageData.push(...got);
+    if (got.length < PAGE) { complete = true; break; }
+  }
+  const pracRes = await pracPromise;
+  const apptRes = { error: apptError, data: pageData };
   if (apptRes.error || pracRes.error) {
     return (
       <p role="alert" className="text-sm text-neutral-600">
@@ -94,12 +110,16 @@ export default async function CheckPractitionerPage() {
           chart and is never applied for you.
         </p>
       </header>
-      {rows.length === LIMIT && (
-        <p className="text-xs text-neutral-500">Showing the first {LIMIT} open appointments.</p>
+      {!complete && (
+        <p role="status" data-testid="check-practitioner-partial" className="text-xs text-neutral-600">
+          Only the first {rows.length} open appointments (earliest first) were checked. This list is not complete.
+        </p>
       )}
       {items.length === 0 ? (
         <p data-testid="check-practitioner-empty" className="text-sm">
-          Nothing to check: every open appointment has a practitioner who does not look misassigned.
+          {complete
+            ? "Nothing to check: every open appointment has a practitioner who does not look misassigned."
+            : `Nothing to check among the ${rows.length} appointments read, but not all open appointments were read.`}
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
