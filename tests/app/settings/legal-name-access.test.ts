@@ -128,9 +128,15 @@ describe("source contract: owner-only, default OFF, nothing turns it on", () => 
     expect(page).toMatch(/<LegalNameAccessSwitch initialEnabled=\{legalNameAccess\.receptionistAccess\}/);
     expect(page).toMatch(/legal-name-access-unavailable/);
   });
-  it("the wording says plainly that it lets receptionists see legal names", () => {
-    expect(page).toMatch(/lets receptionists see client legal names/);
-    expect(ui).toMatch(/receptionists will be able to see every client/);
+  it("the wording is honest that no receptionist screen shows legal names yet (Insurance N-1)", () => {
+    const flat = page.replace(/\s+/g, " ");
+    expect(flat).toMatch(/No receptionist screen shows legal names yet/);
+    expect(flat).toMatch(/only records your permission for when one does/);
+    expect(flat).toMatch(/off by default and every change is recorded/);
+    // the old promise is gone
+    expect(flat).not.toMatch(/lets receptionists see client legal names/);
+    expect(ui).toMatch(/once a receptionist screen shows legal names/);
+    expect(ui).not.toMatch(/Receptionists can now see legal names/);
   });
   it("nothing defaults it ON: the UI starts from the stored value, ON needs a checkbox, the action needs 'on' + 'yes'", () => {
     expect(ui).toMatch(/useState\(initialEnabled\)/);

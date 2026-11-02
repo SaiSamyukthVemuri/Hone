@@ -95,8 +95,9 @@ export default async function TeamSettingsPage() {
           </h2>
           <p className="mt-1 text-sm text-neutral-500">
             Owners and practitioners can always see and record a client&rsquo;s legal name. Receptionists
-            only ever see the preferred name, or the name on file when there is none. Turning this on
-            lets receptionists see client legal names too. It is off by default and every change is recorded.
+            only ever see the preferred name, or the name on file when there is none. No receptionist
+            screen shows legal names yet, so turning this on changes nothing a receptionist sees today; it
+            only records your permission for when one does. It is off by default and every change is recorded.
           </p>
         </div>
         {legalNameAccess.ok ? (

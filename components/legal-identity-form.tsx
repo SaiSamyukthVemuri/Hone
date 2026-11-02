@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { saveLegalIdentityAction } from "@/app/(app)/clients/[id]/legal-identity-actions";
 
 // HON-58: the legal name entered by staff, for clinical and insurer output.
@@ -13,8 +13,24 @@ const FIELD =
 
 export function LegalIdentityForm({ clientId, initial }: { clientId: string; initial: LegalIdentityValues }) {
   const [values, setValues] = useState(initial);
+  // What is stored right now: the loaded value, then whatever the last successful save wrote.
+  const [saved, setSaved] = useState(initial);
+  const dirty = values.given !== saved.given || values.middle !== saved.middle || values.family !== saved.family;
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // This is a separate form from the client form, so saving the client (or reloading) would silently drop a
+  // legal name typed here. Ask the browser to confirm closing or reloading while it differs from what is
+  // stored. Limit, stated: an in-app link click is not intercepted; the visible notice below is the cue.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -27,6 +43,7 @@ export function LegalIdentityForm({ clientId, initial }: { clientId: string; ini
     startTransition(async () => {
       try {
         const result = await saveLegalIdentityAction(fd);
+        if (result.ok) setSaved(values);
         setMessage(result.ok ? { kind: "ok", text: "Legal name saved." } : { kind: "error", text: result.error });
       } catch {
         setMessage({ kind: "error", text: "Couldn't save the legal name. Please try again." });
@@ -65,6 +82,11 @@ export function LegalIdentityForm({ clientId, initial }: { clientId: string; ini
         >
           {pending ? "Saving…" : "Save legal name"}
         </button>
+        {dirty && !pending && (
+          <span data-testid="legal-name-unsaved" role="status" className="text-sm text-amber-800 dark:text-amber-300">
+            Unsaved legal name. Press Save legal name before leaving this page.
+          </span>
+        )}
         {message && (
           <span role="status" className={message.kind === "ok" ? "text-sm text-green-700" : "text-sm text-red-700"}>
             {message.text}

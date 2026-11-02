@@ -22,7 +22,7 @@ export function LegalNameAccessSwitch({ initialEnabled }: { initialEnabled: bool
         if (r.ok) {
           setEnabled(r.receptionistAccess);
           setConfirm(false);
-          setMessage({ kind: "ok", text: r.receptionistAccess ? "Receptionists can now see legal names." : "Receptionists can no longer see legal names." });
+          setMessage({ kind: "ok", text: r.receptionistAccess ? "Saved. Receptionists are allowed to see legal names once a screen shows them." : "Saved. Receptionists are not allowed to see legal names." });
         } else {
           setMessage({ kind: "error", text: r.error });
         }
@@ -35,7 +35,7 @@ export function LegalNameAccessSwitch({ initialEnabled }: { initialEnabled: bool
   return (
     <div className="flex flex-col gap-3" data-testid="legal-name-access">
       <p className="text-sm" data-testid="legal-name-access-state">
-        Receptionists can see legal names: <strong>{enabled ? "On" : "Off"}</strong>
+        Receptionists allowed to see legal names: <strong>{enabled ? "On" : "Off"}</strong>
       </p>
       {enabled ? (
         <button
@@ -50,7 +50,7 @@ export function LegalNameAccessSwitch({ initialEnabled }: { initialEnabled: bool
         <>
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-1" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />
-            <span>I understand receptionists will be able to see every client&rsquo;s legal name.</span>
+            <span>I understand that once a receptionist screen shows legal names, receptionists will see every client&rsquo;s legal name.</span>
           </label>
           <button
             type="button"
