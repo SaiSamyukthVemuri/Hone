@@ -1,0 +1,25 @@
+{
+  "migration": "0277",
+  "requires_before_max": "0274",
+  "note": "requires_before_max is the DECLARED position (Sam's sequence S1 -> 0274 -> 0277 -> 0278). If 0274 is not the hosted max when this runs, the chain guard divides by zero and the read stops.",
+  "tables": [
+    "appointments",
+    "practitioners",
+    "studios",
+    "studio_receptionists"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "at_hosted_0274",
+      "single_overload",
+      "body_is_0175",
+      "definer_pinned_path",
+      "acl_service_role_only"
+    ]
+  },
+  "verify_sql": [
+    "c01_function-state.sql"
+  ],
+  "verify_label": "history, one function read-back (body md5 = sealed 0277, definer, search_path, service_role-only)"
+}
