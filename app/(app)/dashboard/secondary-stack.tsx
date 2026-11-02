@@ -229,10 +229,10 @@ export async function SecondaryStack({
   const readiness = await bookingReadiness;
 
   // PR #208: read-only practice metrics for the selected period.
-  // A failed metrics read (it reads session_blocks) used to throw out of this component and replace the whole
-  // dashboard. It now degrades to the same "no snapshot" branch the card already had, with a stated note.
-  const practiceMetricsRead = await settleOrUnavailable(practiceMetricsPromise, null);
-  const practiceMetrics = practiceMetricsRead.value;
+  // DAT-002 (#981/#1095): a failed practice-metrics read REFUSES the page (route error boundary), it is never
+  // rendered as a zero or missing snapshot. e2e/dat-002-read-failure-refusal.spec.ts pins this on a real
+  // revoke, so it is deliberately awaited bare. Isolating it would change that contract (a product decision).
+  const practiceMetrics = await practiceMetricsPromise;
 
   // PR #215: Getting Started progress for the dashboard card.
   const gettingStartedSignals = await gettingStartedSignalsPromise;
@@ -297,11 +297,6 @@ export async function SecondaryStack({
         >
           {capacityLink}
         </PracticeSnapshot>
-      )}
-      {isOwner && practiceMetricsRead.unavailable && (
-        <p data-testid="practice-snapshot-unavailable" className="text-sm text-neutral-500">
-          The practice snapshot could not be loaded just now. Reload to try again.
-        </p>
       )}
       {isOwner && !practiceMetrics && capacityLink}
 
