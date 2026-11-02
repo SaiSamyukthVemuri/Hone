@@ -15,17 +15,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-11-01T22:02:45Z-22:03:37Z, post-S2 apply; `0274` APPLIED above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+## Current state (verified 2026-11-01T22:02:45Z-22:03:37Z, post-S2 apply; `0274` APPLIED above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo > hosted by the pending `0277`)
 
-> **CURRENT RELATIONSHIP: repo == hosted at `0274`, with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265`, `0267`-`0271` and `0273` declared unhosted.** The single sealed migration `0274_receptionist_desk_projection.sql` (sha256 `4de5175cf6129801f99a5d83af0427469caa7e304a744ae49070b6928c987b29`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/S2-AUTHORIZATION-20261101.md`, recorded 2026-11-01). Carrier PR #1294 head `290e55fb7029173c0f2e5aa251b09e80c6a9183f`; package manifest sha256 `85c8fd8a7b21a47ab48d24ef4b1aec190ea5da5723bae2d3c65a480f5440f62a`.
+> **CURRENT RELATIONSHIP: repo > hosted (MIGRATION-FIRST PENDING `0277`; hosted max `0274`), with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265`, `0267`-`0271` and `0273` declared unhosted.** The single sealed migration `0274_receptionist_desk_projection.sql` (sha256 `4de5175cf6129801f99a5d83af0427469caa7e304a744ae49070b6928c987b29`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/S2-AUTHORIZATION-20261101.md`, recorded 2026-11-01). Carrier PR #1294 head `290e55fb7029173c0f2e5aa251b09e80c6a9183f`; package manifest sha256 `85c8fd8a7b21a47ab48d24ef4b1aec190ea5da5723bae2d3c65a480f5440f62a`.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0274**, declared in `docs/production/migration-state.json`. Read back 2026-11-01T22:02:45Z-22:03:37Z: APPLIED+VERIFIED as recorded by OPS: 253 history rows, max 0274, `0274` exactly once, the S1 trio once each; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0274** (`0274_receptionist_desk_projection.sql`), derived from the source files on this tree; the file is present at the applied bytes. |
+| **Repo migration max** | **0277** (`0277_appointment_completion_assigned_only.sql`, HELD, **NOT applied**), derived from the source files on this tree. `0274` is present at the applied bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271` and `0273` are declared unhosted gaps below it, not a pending suffix. |
-| **Next free number** | Next free number is **0275** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **`0277`** — `0277_appointment_completion_assigned_only.sql`, authored and **NOT applied** (the MIGRATION-FIRST PENDING shape); held, never applied without Sam's per-change approval. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271` and `0273` remain declared unhosted gaps below the hosted head, not a pending suffix. |
+| **Next free number** | Next free number is **0278** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The S2 apply (facts as recorded by OPS, 2026-11-01)

@@ -965,7 +965,8 @@ describe("T5.3 actor model — internal practitioner commands", () => {
     {
       name: "mark_appointment_complete",
       run: async (f) => {
-        const a = await mkAppt(f, { startsAt: at(-9, 9) });
+        // 0277: a non-owner completes only an appointment assigned to them.
+        const a = await mkAppt(f, { startsAt: at(-9, 9), practitionerId: f.memberId });
         await adminQuery(`select public.mark_appointment_complete($1,$2,$3)`, [
           a.id,
           f.studioId,
