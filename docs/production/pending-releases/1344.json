@@ -1,0 +1,6 @@
+{
+  "pr": 1344,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0289_roles_edit_record_protections.sql"],
+  "release_receipt": "01-ops/1344-release-receipt.json"
+}
