@@ -165,6 +165,11 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
     expect(r.preview.roles.find((x) => x.role === "practitioner")!.diff.fixedNarrowings.map((n) => n.id)).toEqual(["archive_client"]);
     expect(r.preview.roles.find((x) => x.role === "receptionist")!.diff.fixedNarrowings).toEqual([]);
   });
+  it("takes the sensitive flag from the core's diff entry when it gives one", () => {
+    const r = parsePreview({ ok: true, version: 1, changes: { practitioner: [{ key: "appt.move", before: "off", after: "studio", sensitive: true }] }, affected: {} });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.preview.roles[0].diff.newlyEnabledSensitive).toBe(1);
+  });
   it("answers a malformed preview with unexpected, never with a guess", () => {
     expect(parsePreview({ ok: true })).toEqual({ ok: false, error: { code: "unexpected" } });
   });

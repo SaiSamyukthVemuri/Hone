@@ -77,8 +77,8 @@ function toDiff(entries: unknown, sensitiveKeys: Set<string> | null, narrowings:
       from,
       to,
       direction: widens ? "widens" : "narrows",
-      // The core names the sensitive keys a save widens; for reset and adopt it does not, so the catalog flag marks them.
-      newlyEnabledSensitive: widens && (sensitiveKeys ? sensitiveKeys.has(key) : def?.sensitive === true),
+      // The core names the sensitive keys a save widens, and flags each diff entry; the catalog flag is the last resort.
+      newlyEnabledSensitive: widens && (sensitiveKeys ? sensitiveKeys.has(key) : typeof e.sensitive === "boolean" ? e.sensitive : def?.sensitive === true),
       futureBusiness: def?.affectsFutureStudioBusiness === true,
     });
   }
