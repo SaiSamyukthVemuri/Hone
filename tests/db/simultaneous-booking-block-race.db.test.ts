@@ -35,11 +35,17 @@ const plus = (hhmm: string, minutes: number) => {
 };
 const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
 
-type Outcome = { kind: "created" | "refused" | "error"; detail: string };
+type Outcome = { kind: "created" | "refused" | "error"; detail: string; ctx?: string };
+// BK1 (Privacy PEER-1346): ONLY these are honest refusals: the hard-overlap exclusion the app maps to "that time is no longer
+// available", and the buffer conflict. Any other named result (not_eligible, invalid_service, not_authorized, ...) means the setup or
+// the actor is wrong, not that the block won, so it is an ERROR and fails the round instead of passing vacuously.
+const HONEST_REFUSALS = new Set(["23P01", "buffer_conflict"]);
 // A refusal is honest when it is the hard-overlap exclusion, or a named (non-exception) result from the booking command.
 const classify = (e: unknown): Outcome => {
   const code = (e as { code?: string }).code ?? "unknown";
-  return { kind: code === "23P01" ? "refused" : "error", detail: code };
+  const pg = e as { detail?: string; where?: string };
+  // ctx = the server's DETAIL (which processes wait on which lock) and CONTEXT (which statement/function), used to tell the known deadlock from any other.
+  return { kind: HONEST_REFUSALS.has(code) ? "refused" : "error", detail: code, ctx: `${pg.detail ?? ""} | ${pg.where ?? ""}`.replace(/\s+/g, " ").trim() };
 };
 
 async function setup(capacity: boolean) {
@@ -84,7 +90,7 @@ const bookerService = (target: () => string, start: string) => async (): Promise
       [B.studioId, owner(), target(), B.clientId, serviceId, start, hash64()],
     );
     const result = (r.rows[0] as { result: string }).result;
-    return result === "created" ? { kind: "created", detail: "created" } : { kind: "refused", detail: result };
+    return result === "created" ? { kind: "created", detail: "created" } : { kind: HONEST_REFUSALS.has(result) ? "refused" : "error", detail: result };
   } catch (e) {
     return classify(e);
   }
@@ -93,7 +99,7 @@ const bookerDesk = (target: () => string, start: string) => async (): Promise<Ou
   try {
     const r = await asUser(deskUserId, (x) => x(`select * from public.receptionist_create_appointment($1,$2,$3,$4,$5::timestamptz)`, [B.studioId, target(), B.clientId, serviceId, start]));
     const result = (r.rows[0] as { result: string }).result;
-    return result === "created" ? { kind: "created", detail: "created" } : { kind: "refused", detail: result };
+    return result === "created" ? { kind: "created", detail: "created" } : { kind: HONEST_REFUSALS.has(result) ? "refused" : "error", detail: result };
   } catch (e) {
     return classify(e);
   }
@@ -120,8 +126,26 @@ afterAll(async () => { await closePool(); });
 const ROUNDS = 6;
 const HOURS = ["00", "03", "06", "09", "12", "15"]; // 3 hours apart: a 60-minute visit plus the 30-minute buffer never touches the next round
 const KNOWN_DEADLOCK = "40P01";
-const KNOWN_DEFECT_HON48_DEADLOCK = true; // flip to false when Willow's fix lands
-const recorded: string[] = []; // every allowed 40P01, for the run summary
+// OWNER: Willow (diagnosis of HON-48-DEADLOCK, routed by OPS 3 Nov 2026). Flip to false when the fix merges. It EXPIRES on
+// KNOWN_DEFECT_EXPIRES: the guard test below fails after that date while this is still true, forcing a decision (fix landed, or OPS
+// and Sam accept the known defect for longer and move the date).
+const KNOWN_DEFECT_HON48_DEADLOCK = true;
+const KNOWN_DEFECT_EXPIRES = "2026-11-24";
+// BA-1 (Insurance PEER-1346): the allowance is narrowed to the KNOWN cycle only: SQLSTATE 40P01 AND the error's DETAIL/CONTEXT matches this
+// signature (the lock/function names seen in the observed deadlock) AND it happened in one of the scenarios where it was observed. A
+// different deadlock (other tables, other functions, another scenario) fails the round.
+// Pinned from a capture run at e9723b829 (13 deadlocks across the 7 scenarios, two shapes of ONE cycle family): the studio-capacity advisory
+// lock (acquire_studio_capacity_lock, reached through create_internal_appointment_v2 / create_appointment_core) against a transaction
+// lock, either as the booking command waiting on the advisory lock (11) or as the block insert's foreign-key check on the studios row
+// (FOR KEY SHARE, 2). DETAIL must show BOTH waits, and CONTEXT must name the capacity-lock function or the studios row.
+const KNOWN_DEADLOCK_CONTEXT = /^(?=.*ExclusiveLock on advisory lock)(?=.*ShareLock on transaction)(?=.*(acquire_studio_capacity_lock|relation "studios"))/;
+const KNOWN_DEADLOCK_SCENARIOS = new Set<string>([
+  "off|studio-wide block|same-time", "off|studio-wide block|partial",
+  "on|block scoped to the owner|same-time", "on|block scoped to the owner|partial",
+  "on|studio-wide block|same-time", "on|studio-wide block|partial",
+  "on|owner-block-vs-second-practitioner|unrelated",
+]);
+const recorded: string[] = []; // every allowed 40P01 with its DETAIL/CONTEXT, for the run summary
 afterAll(() => {
   if (recorded.length) console.info(`HON-48-DEADLOCK recorded ${recorded.length} allowed 40P01 outcome(s) (KNOWN_DEFECT_HON48_DEADLOCK=${KNOWN_DEFECT_HON48_DEADLOCK}):\n${recorded.join("\n")}`);
 });
@@ -131,19 +155,60 @@ type Round = { tag: string; results: Outcome[]; blockDelta: number; bookingDelta
  * The contract checks, run on EVERY round whether or not a racer errored: no booking inside a block, no error other than the known
  * deadlock, and the row counts equal the outcomes (an errored racer left nothing behind).
  */
-async function checkRound(i: number, results: Outcome[], before: { blocks: number; bookings: number }, blockIndex: number | null): Promise<Round> {
+async function checkRound(i: number, results: Outcome[], before: { blocks: number; bookings: number }, blockIndex: number | null, scenario: string): Promise<Round> {
   const tag = `round ${i}: ${JSON.stringify(results)}`;
   expect(await bookingsInsideBlocks(), tag).toBe(0);
-  const allowed = (o: Outcome) => KNOWN_DEFECT_HON48_DEADLOCK && o.detail === KNOWN_DEADLOCK;
+  // The racing pair is always (block insert, booking command): checkRound is only called with the block racer at blockIndex.
+  const allowed = (o: Outcome) =>
+    KNOWN_DEFECT_HON48_DEADLOCK && o.detail === KNOWN_DEADLOCK && blockIndex !== null && KNOWN_DEADLOCK_SCENARIOS.has(scenario) && KNOWN_DEADLOCK_CONTEXT.test(o.ctx ?? "");
   expect(results.filter((o) => o.kind === "error" && !allowed(o)), tag).toHaveLength(0);
-  for (const o of results) if (o.kind === "error") recorded.push(tag);
+  for (const o of results) if (o.kind === "error") recorded.push(`${scenario} ${tag} ctx=${o.ctx}`);
   const after = await counts();
   const blockWon = blockIndex !== null && results[blockIndex].kind === "created";
   const bookingsWon = results.filter((o, k) => k !== blockIndex && o.kind === "created").length;
   expect(after.blocks - before.blocks, tag).toBe(blockWon ? 1 : 0);
   expect(after.bookings - before.bookings, tag).toBe(bookingsWon);
+  // Non-vacuous: someone won every round (a block or a booking), so a round of refusals/errors alone cannot pass.
+  expect(results.filter((o) => o.kind === "created").length, tag).toBeGreaterThanOrEqual(1);
   return { tag, results, blockDelta: after.blocks - before.blocks, bookingDelta: after.bookings - before.bookings };
 }
+
+/**
+ * Positive control, run at the start of every race test on the same fresh studio: with NO competing block a service booking and a
+ * front-desk booking both land, and a block in an empty hour lands. This proves the actors, service and setup can book at all, so a
+ * race round where the booking is refused is a real refusal and not a broken fixture (BK1).
+ */
+async function positiveControl() {
+  expect(await bookerService(owner, T("18:00"))(), "control: service booking with no block must land").toEqual({ kind: "created", detail: "created" });
+  expect(await bookerDesk(owner, T("21:00"))(), "control: front-desk booking with no block must land").toEqual({ kind: "created", detail: "created" });
+  expect(await blocker(T("23:00"), null)(), "control: a block in an empty hour must land").toEqual({ kind: "created", detail: "block created" });
+}
+
+// BA-1: the signature accepts the two captured shapes and REJECTS a different deadlock (pure, no database).
+describe("HON-48-DEADLOCK signature", () => {
+  const bookingVictim = 'Process 1 waits for ExclusiveLock on advisory lock [5,1,2,1]; blocked by process 2. Process 2 waits for ShareLock on transaction 9; blocked by process 1. | SQL function "acquire_studio_capacity_lock" statement 1 SQL statement "SELECT public.acquire_studio_capacity_lock(p_studio_id)" PL/pgSQL function public.create_appointment_core(text) line 23 at PERFORM';
+  const blockVictim = 'Process 1 waits for ShareLock on transaction 9; blocked by process 2. Process 2 waits for ExclusiveLock on advisory lock [5,1,2,1]; blocked by process 1. | while locking tuple (0,16) in relation "studios" SQL statement "SELECT 1 FROM ONLY "public"."studios" x WHERE "id" OPERATOR(pg_catalog.=) $1 FOR KEY SHARE OF x"';
+  it("accepts the two captured shapes", () => {
+    expect(KNOWN_DEADLOCK_CONTEXT.test(bookingVictim)).toBe(true);
+    expect(KNOWN_DEADLOCK_CONTEXT.test(blockVictim)).toBe(true);
+  });
+  it("rejects a different deadlock (other locks, other tables or functions) and an empty context", () => {
+    expect(KNOWN_DEADLOCK_CONTEXT.test('Process 1 waits for ShareLock on transaction 9; blocked by process 2. Process 2 waits for ShareLock on transaction 8; blocked by process 1. | while updating tuple (0,3) in relation "appointments"')).toBe(false);
+    expect(KNOWN_DEADLOCK_CONTEXT.test('Process 1 waits for ExclusiveLock on advisory lock [5,1,2,1]; blocked by process 2. | PL/pgSQL function public.some_other_function() line 4')).toBe(false);
+    expect(KNOWN_DEADLOCK_CONTEXT.test("")).toBe(false);
+  });
+});
+
+// BK2 expiry guard: fails after KNOWN_DEFECT_EXPIRES while the known-defect allowance is still on.
+describe("HON-48-DEADLOCK known-defect expiry", () => {
+  it(`the allowance for the known deadlock is not past its expiry (${KNOWN_DEFECT_EXPIRES}, owner Willow)`, () => {
+    const expired = Date.now() > Date.parse(`${KNOWN_DEFECT_EXPIRES}T23:59:59Z`);
+    expect(
+      KNOWN_DEFECT_HON48_DEADLOCK && expired,
+      `KNOWN_DEFECT_HON48_DEADLOCK is still true after ${KNOWN_DEFECT_EXPIRES}. If Willow's HON-48-DEADLOCK fix has merged set it to false; otherwise OPS and Sam must accept the defect for longer and move KNOWN_DEFECT_EXPIRES.`,
+    ).toBe(false);
+  });
+});
 
 for (const capacity of [false, true]) {
   const mode = capacity ? "capacity ON (one resource per practitioner)" : "capacity OFF (the studio is one resource)";
@@ -157,12 +222,13 @@ for (const capacity of [false, true]) {
 
     for (const scope of scopes) {
       const sameTime = async (): Promise<Round[]> => {
+        await positiveControl();
         const rounds: Round[] = [];
         for (let i = 0; i < ROUNDS; i += 1) {
           const start = T(`${HOURS[i]}:00`);
           const before = await counts();
           const results = await Promise.all([blocker(start, scope.practitioner())(), bookerService(owner, start)(), bookerDesk(owner, start)()]);
-          const round = await checkRound(i, results, before, 0);
+          const round = await checkRound(i, results, before, 0, `${capacity ? "on" : "off"}|${scope.name}|same-time`);
           // At most one of block and booking exists (they are the same time); a deadlocked racer can leave none, never two.
           expect(round.blockDelta + round.bookingDelta, round.tag).toBeLessThanOrEqual(1);
           rounds.push(round);
@@ -170,12 +236,13 @@ for (const capacity of [false, true]) {
         return rounds;
       };
       const partial = async (): Promise<Round[]> => {
+        await positiveControl();
         const rounds: Round[] = [];
         for (let i = 0; i < ROUNDS; i += 1) {
           const hh = HOURS[i];
           const before = await counts();
           const results = await Promise.all([blocker(T(`${hh}:00`), scope.practitioner())(), bookerService(owner, T(plus(`${hh}:00`, 30)))()]);
-          const round = await checkRound(i, results, before, 0);
+          const round = await checkRound(i, results, before, 0, `${capacity ? "on" : "off"}|${scope.name}|partial`);
           // They overlap, so they cannot both exist.
           expect(round.blockDelta + round.bookingDelta, round.tag).toBeLessThanOrEqual(1);
           rounds.push(round);
@@ -194,16 +261,17 @@ for (const capacity of [false, true]) {
 
     if (capacity) {
       const unrelated = async (): Promise<Round[]> => {
+        await positiveControl();
         const rounds: Round[] = [];
         for (let i = 0; i < ROUNDS; i += 1) {
           const start = T(`${HOURS[i]}:00`);
           const before = await counts();
           const results = await Promise.all([blocker(start, owner())(), bookerService(member, start)()]);
-          rounds.push(await checkRound(i, results, before, 0));
+          rounds.push(await checkRound(i, results, before, 0, "on|owner-block-vs-second-practitioner|unrelated"));
         }
         return rounds;
       };
-      it("a block scoped to the OWNER and a booking for the SECOND practitioner at the same time: the block always lands, nothing is inside a block", async () => {
+      it("a block scoped to the OWNER and a booking for the SECOND practitioner at the same time: the owner's block is never refused, nothing is inside a block (both-land is asserted only once the known defect is cleared)", async () => {
         const rounds = await unrelated();
         for (const r of rounds) {
           expect(r.results[0].kind, r.tag).not.toBe("refused"); // the owner's block is never refused by an unrelated booking
