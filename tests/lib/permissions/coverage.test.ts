@@ -208,6 +208,8 @@ describe("Sam's batch 1 (3 Nov): Q1, Q3, Q4, Q6, Q7", () => {
     expect(ASSIGNED_CLIENT).toMatch(/at least one appointment/);
     expect(ASSIGNED_CLIENT).toMatch(/CURRENTLY assigned/);
     expect(ASSIGNED_CLIENT).toMatch(/no clinical access/);
+    expect(ASSIGNED_CLIENT).toMatch(/last such appointment/);
+    expect(ASSIGNED_CLIENT).toMatch(/unless you hold a studio-wide permission/);
     expect(catalogByKey.get("price.view_client_prices")!.own).toBe(ASSIGNED_CLIENT);
     expect(k.existingSnapshot).toEqual({ practitioner: "studio", receptionist: "off" });
     expect(k.pendingDecision).toBeUndefined();

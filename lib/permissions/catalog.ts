@@ -92,12 +92,12 @@ const BOOL = ["off", "studio"] as const;
 const SCOPED = ["off", "own", "studio"] as const;
 const BOTH = { practitioner: true, receptionist: true } as const;
 const ASSIGNED = "an appointment whose assigned practitioner is the actor";
-// Shown to owners beside the "own" scope of every client-based key (portal replies, client-price view). Decided (Sam, 3 Nov, batch 4):
-// a client with a NON-CANCELLED appointment assigned to the actor, past or upcoming, WITHIN THIS STUDIO. The CURRENT assignment is evaluated
-// on the server, so after a reassignment no access remains through an appointment no longer assigned to the actor. The relationship alone
-// grants no additional clinical access.
+// Shown to owners beside the "own" scope of every client-based key (portal replies, client-price view). Decided (Sam, 3 Nov, batch 4 and its
+// clarification): a client with a NON-CANCELLED appointment assigned to the actor, past or upcoming, WITHIN THIS STUDIO. The CURRENT assignment is
+// evaluated on the server. After a reassignment the former practitioner is denied ONLY when no other qualifying appointment still makes the client
+// theirs AND no broader studio-wide permission applies. The relationship alone grants no additional clinical access.
 export const ASSIGNED_CLIENT =
-  "an assigned client: a client of this studio with at least one appointment, past or upcoming and not cancelled, that is CURRENTLY assigned to you. Access ends when that appointment is reassigned away or cancelled. Being assigned grants no clinical access by itself";
+  "an assigned client: a client of this studio with at least one appointment, past or upcoming and not cancelled, that is CURRENTLY assigned to you. If your last such appointment is reassigned away or cancelled, access ends on your next request, unless you hold a studio-wide permission for the action. Being assigned grants no clinical access by itself";
 
 const CALENDAR = "appt.view_calendar";
 const PAY_VIEW = "pay.view_appointment";
@@ -1708,7 +1708,7 @@ export const MANDATORY: readonly string[] = [
   "Decided (Sam, 3 Nov, Q17 / R0-Q3): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be an active practitioner of the same studio configured for the service, and it is refused once the appointment has started or been treated",
   "Reading a fee amount clients see at booking is open to staff; any other fee field needs price.fee_amounts or pay.view_appointment at any scope, through a column-limited studios read, never the whole row (DN-27, Q14b)",
   "Decided (Sam, 3 Nov, batch 4): waitlist rule and automation settings (wlrules.*) need no queue-view access; anything that reads or changes an individual entry still needs the relevant wl.* permission",
-  "Decided (Sam, 3 Nov, batch 4): an assigned client is a client of this studio with a non-cancelled appointment CURRENTLY assigned to the actor, past or upcoming; the current assignment is evaluated on the server, access ends on reassignment or cancellation, and the relationship alone grants no clinical access",
+  "Decided (Sam, 3 Nov, batch 4): an assigned client is a client of this studio with a non-cancelled appointment CURRENTLY assigned to the actor, past or upcoming; the current assignment is evaluated on the server, access ends only when no other qualifying appointment remains and no studio-wide permission applies, and the relationship alone grants no clinical access",
   "Decided (Sam, 3 Nov, batch 4): names and basic contact details are a fixed baseline for active practitioners and receptionists of the studio, with preferred-name privacy kept and no legal identity, clinical information, bulk export or other-studio access",
   "Decided (Sam, 3 Nov, Q8 / DN-15a): every waitlist action (wl.*) requires queue-view access; expiring and closing unbooked entries is its own key; importing never creates consent or sends a message",
   "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
