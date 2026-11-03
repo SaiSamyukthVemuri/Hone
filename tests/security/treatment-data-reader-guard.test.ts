@@ -307,6 +307,8 @@ function actionClasses(f: string, body: string): Map<DataClass, string> {
 // Files with no practitioner viewer in the loop: token links and the client's own portal, owner-only and operator-only pages, payment owner paths.
 const EXEMPT_ACTION_CLASSES = new Set(["system-side", "owner-only", "operator-only", "billing-owner"]);
 const ACTIONS_NO_DATA: Record<string, string> = {
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::removeSessionAreaAction": "chart edit gated on clin.view_records; the photos class is only the count of block-scoped images it voids (entriesRemoved/imagesRemoved), no image or path is returned",
+  "app/(app)/calendar/actions.ts::bookAppointmentForClientAction": "returns the new appointment id; ensureIntakeForClient only creates the intake request row and link, no answers are read or returned",
   "app/(app)/calendar/actions.ts::fetchLastServiceForClientAction": "returns the last service name from appointments, not chart data; the intake name matched belongs to a helper after it",
   // "<file>::<exportName>": reason it returns no table data
   "app/(app)/calendar/appointment-repair-actions.ts::loadAppointmentRepairStateAction": "returns repairable true/false and a fixed reason, no chart content",
@@ -318,14 +320,7 @@ const ACTIONS_NO_DATA: Record<string, string> = {
   "app/(app)/clients/[id]/intake/actions.ts::requestIntakeUpdateAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
   "app/(app)/clients/[id]/intake/actions.ts::resendIntakeEmailAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
   "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPriceAction": "write action; returns only ok/error or a flag, no chart content",
-  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateNextSessionNoteAction": "write action; returns only ok/error or a flag, no chart content",
   "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPerformerAction": "write action; returns only ok/error or a flag, no chart content",
-  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::editSessionStartedAtAction": "write action; returns only ok/error or a flag, no chart content",
-  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::softDeleteSessionAction": "write action; returns only ok/error or a flag, no chart content",
-  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::softDeleteSessionBlockAction": "returns ok/error and counts only",
-  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::removeSessionAreaAction": "returns ok/error and counts only",
-  "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts::recordSetupSubmissionAction": "returns only ok/error or a written count; the readings read is gated in readingsForBlockAction",
-  "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts::commitWholeSessionCopyAction": "returns ids and counts of rows it created, no chart content",
   "app/(app)/clients/[id]/sessions/new/actions.ts::startSessionAction": "redirects to the new chart; returns no data",
   "app/(app)/clients/[id]/treatment-plans-actions.ts::createTreatmentPlanAction": "write action; returns only ok/error",
   "app/(app)/clients/[id]/treatment-plans-actions.ts::closeTreatmentPlanAction": "write action; returns only ok/error",
@@ -338,16 +333,47 @@ const ACTIONS_NO_DATA: Record<string, string> = {
   "app/(app)/records/actions.ts::markAftercareExplainedAction": "write action; returns only ok/error",
 };
 const RAW_SRC = new Map(FILES.map((f) => [f, readFileSync(f, "utf8")]));
+// RU-1 (Insurance): an action that calls a same-file helper which reads a protected table reads it too. Functions are cut at every
+// top-level function/const-arrow marker (exported or not), and an action's scan includes the bodies of same-file functions it calls,
+// followed transitively within the file. Cross-file helpers are covered by the import-graph taint above.
+type Fn = { name: string; exported: boolean; body: string };
+function functionsOf(src: string): Fn[] {
+  const marks = [...src.matchAll(/^(export\s+)?(?:async\s+)?function\s+(\w+)|^(export\s+)?const\s+(\w+)\s*(?::[^=]+)?=\s*(?:async\s*)?\(/gm)];
+  return marks.map((m, i) => ({
+    name: (m[2] ?? m[4])!,
+    exported: Boolean(m[1] || m[3]),
+    body: src.slice(m.index!, marks[i + 1]?.index ?? src.length),
+  }));
+}
+function withLocalHelpers(fns: Fn[], fn: Fn): string {
+  const seen = new Set([fn.name]);
+  let text = fn.body;
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const h of fns) {
+      if (h.exported || seen.has(h.name)) continue;
+      if (new RegExp(`\\b${h.name}\\s*[(<]`).test(text)) {
+        seen.add(h.name);
+        text += "\n" + h.body;
+        grew = true;
+      }
+    }
+  }
+  return text;
+}
 const ACTION_FINDINGS: string[] = [];
 for (const [f, raw] of RAW_SRC) {
   if (!isUseServer(raw)) continue;
   if (EXEMPT_ACTION_CLASSES.has(ALLOW[f]?.cls ?? "")) continue;
-  for (const ex of exportsOf(SRC.get(f)!)) {
-    if (!/^export\s+async\s+function/.test(ex.body)) continue;
-    for (const [c, why] of actionClasses(f, ex.body)) {
-      if (hasCall(ex.body, KEY[c])) continue;
-      if (ACTIONS_NO_DATA[`${f}::${ex.name}`]) continue;
-      ACTION_FINDINGS.push(`${f}::${ex.name} ${why} (${c}) without a ${KEY[c]} call inside the action`);
+  const fns = functionsOf(SRC.get(f)!);
+  for (const fn of fns) {
+    if (!fn.exported || !/^export\s+async\s+function/.test(fn.body)) continue;
+    const scope = withLocalHelpers(fns, fn);
+    for (const [c, why] of actionClasses(f, scope)) {
+      // the key call must be in the action itself or in a same-file helper it calls
+      if (hasCall(scope, KEY[c])) continue;
+      if (ACTIONS_NO_DATA[`${f}::${fn.name}`]) continue;
+      ACTION_FINDINGS.push(`${f}::${fn.name} ${why} (${c}) without a ${KEY[c]} call inside the action`);
     }
   }
 }
@@ -365,8 +391,23 @@ describe("server actions that touch treatment data ask the key themselves (open-
   });
   it("the scan sees the known reader: getWholeSessionCopySourceAction counts as a reader", () => {
     const f = "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts";
-    const ex = exportsOf(SRC.get(f)!).find((e) => e.name === "getWholeSessionCopySourceAction")!;
-    expect(actionClasses(f, ex.body).has("records")).toBe(true);
+    const fns = functionsOf(strip(readFileSync(f, "utf8")).replace(/requirePermission\s*\([^;]*;/g, ""));
+    const fn = fns.find((e) => e.name === "getWholeSessionCopySourceAction")!;
+    expect(actionClasses(f, withLocalHelpers(fns, fn)).has("records")).toBe(true);
+  });
+
+  it("a same-file helper that reads a protected table makes its caller a reader (RU-1)", () => {
+    const src = strip(`"use server";
+export async function act() { return load(); }
+async function load() { return db.from("client_intake_forms").select("*"); }`);
+    const fns = functionsOf(src);
+    const scope = withLocalHelpers(fns, fns.find((x) => x.name === "act")!);
+    expect(actionClasses("lib/none.ts", scope).get("intake")).toMatch(/reads/);
+    // control: no helper call, no finding
+    const lone = functionsOf(strip(`"use server";
+export async function act() { return 1; }
+async function load() { return db.from("client_intake_forms").select("*"); }`));
+    expect(actionClasses("lib/none.ts", withLocalHelpers(lone, lone.find((x) => x.name === "act")!)).size).toBe(0);
   });
 });
 
@@ -377,6 +418,7 @@ export const STATED_LIMITS = [
   "Names of tables built at runtime from user input, config or concatenation are not seen; only quoted literals, embedded select strings, and template/constant names in a file that also has a non-literal .from(x) are.",
   "Views and functions that are not in supabase/migrations (hosted-only objects) are unknown; no view over a protected table exists in the migrations today. RPC bodies are matched by table name, so a function that reaches the data through another function or a view is not seen.",
   "Import resolution handles static import/export-from of project paths (@/ and relative); dynamic import(), require() and re-export barrels with renamed bindings are not followed.",
+  "Same-file helper following is by name and transitive within one file; a helper reached through an object, a callback or a variable alias is not followed, and a key call in a helper counts for every action that calls that helper.",
   "Taint is by exported name and by identifier match inside an exported function body; reads reached through a callback, a class method or a value passed as an argument are not followed.",
   "Reads outside app/, lib/ and components/ (scripts, edge functions, supabase/functions, cron outside app/api) are not scanned.",
   "Storage objects and signed URLs for treatment images are covered only through the treatment_images table and the signing-site test in tests/lib/permissions/enforcement-wiring.test.ts.",

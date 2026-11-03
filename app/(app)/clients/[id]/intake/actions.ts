@@ -360,8 +360,15 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
 // ---------------------------------------------------------------------------
 
 export type IntakeReissueResult =
-  | { ok: true; intakeId: string; intakeUrl: string; emailSent: boolean }
+  // intakeUrl is null when the viewer lacks clin.view_intake: the email may still be sent, but a bearer link that opens saved answers is not handed back.
+  | { ok: true; intakeId: string; intakeUrl: string | null; emailSent: boolean }
   | { ok: false; error: string };
+
+// A fresh intake link is a bearer credential that opens saved answers. Messaging the client does not need it back, so the staff member
+// only receives it while clin.view_intake is on (Codex, #1341 35883d5d1; Sam's group 4).
+async function mayReceiveIntakeLink(studioId: string, clientId: string): Promise<boolean> {
+  return (await requirePermission(await createClient(), studioId, "clin.view_intake", { client: clientId })).allowed;
+}
 
 // Loads the client and verifies it belongs to the practitioner's
 // studio. Returns the client row (with email) or an error result.
@@ -509,7 +516,7 @@ export async function requestIntakeUpdateAction(
   return {
     ok: true,
     intakeId: created.id,
-    intakeUrl: created.url,
+    intakeUrl: (await mayReceiveIntakeLink(auth.studioId, auth.client.id)) ? created.url : null,
     emailSent,
   };
 }
@@ -666,7 +673,7 @@ export async function resendIntakeEmailAction(
   return {
     ok: true,
     intakeId: intake.id,
-    intakeUrl: url,
+    intakeUrl: (await mayReceiveIntakeLink(auth.studioId, auth.client.id)) ? url : null,
     emailSent: true,
   };
 }
@@ -805,6 +812,13 @@ export async function saveAssistedIntakeStepAction(payload: {
   // The step must be one a practitioner may fill in. The acknowledgements
   // step is not in this set, so it cannot even be addressed here.
   const step = Math.floor(Number(payload.step));
+
+  // loadAssistedIntake reads the intake row: ask the intake key first (RU-1).
+  const who = await loadAuthorisedClient(clientId);
+  if (!who.ok) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  if (!(await requirePermission(await createClient(), who.studioId, "clin.view_intake", { client: who.client.id })).allowed) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
 
   const loaded = await loadAssistedIntake(intakeId, clientId);
   if (!loaded.ok) return loaded;

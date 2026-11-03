@@ -85,6 +85,17 @@ describe("open-tab replay after clin.view_records is revoked", () => {
     expect(touched).not.toHaveBeenCalled();
   });
 
+  it("NQ-10: charting writes refuse too (void/remove block and area, whole-session copy commit)", async () => {
+    const m = await import(`${DIR}/block-actions`);
+    const reason = "a long enough reason";
+    const r1 = await m.softDeleteSessionBlockAction({ clientId: "c1", sessionId: "s1", blockId: "b1", reason } as never);
+    const r2 = await m.removeSessionAreaAction({ clientId: "c1", sessionId: "s1", blockId: "b1", reason } as never);
+    const { commitWholeSessionCopyAction } = await import(`${DIR}/whole-session-copy-actions`);
+    const r3 = await commitWholeSessionCopyAction({ clientId: "c1", sessionId: "s1", drafts: [], idempotencyKey: "k", sourceSessionId: null, sourceFingerprint: null });
+    for (const r of [r1, r2, r3]) expect(r.ok).toBe(false);
+    expect(touched).not.toHaveBeenCalled();
+  });
+
   it("while the key is on, the same call proceeds past the gate (the refusal is the key, not an accident)", async () => {
     allowed.value = true;
     const { getWholeSessionCopySourceAction } = await import(`${DIR}/whole-session-copy-actions`);

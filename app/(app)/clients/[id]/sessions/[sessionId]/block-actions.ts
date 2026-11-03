@@ -804,6 +804,9 @@ export async function softDeleteSessionBlockAction(
     return { ok: false, error: "Inactive practitioners cannot delete blocks." };
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   // L18 Phase 2: soft retirement through soft_delete_session_block (0166).
@@ -856,6 +859,9 @@ export async function removeSessionAreaAction(
   // Defense in depth: the RPC re-derives studio + actor from auth.uid(); this
   // early lineage check gives a clean error before the round-trip.
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("soft_delete_session_area", {
