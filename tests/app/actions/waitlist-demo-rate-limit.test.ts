@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // PR #187. submitWaitlistEntry and submitDemoRequest are anonymous
@@ -218,5 +218,24 @@ describe("Q-F: the anonymous direct write is closed, so the action is the only w
     expect(down).toContain('create policy "waitlist_anonymous_insert" on public.waitlist for insert to anon, authenticated with check (true);');
     expect(down).toContain('create policy "demo_requests_anonymous_insert" on public.demo_requests for insert to anon, authenticated with check (true);');
     expect(down).toContain("drop table if exists public.rate_limit_fallback_counters;");
+  });
+
+  // F-2 / R3 (Insurance): each submission now also writes a platform lead-alert row through 0213, and NOTHING sends it yet.
+  it("no send: the only platform-lead-alert code in the app is the two record commands; no sweep, claim, freeze, settle or outbound message exists", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((e) => {
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(rel);
+        return /\.(ts|tsx|mjs|js)$/.test(e.name) ? [rel] : [];
+      });
+    const users = [...walk("app"), ...walk("lib"), ...walk("scripts")].filter((f) => /platform_lead_alert|record_platform_|lead_alert/.test(readFileSync(path.join(ROOT, f), "utf8")));
+    expect(users.sort()).toEqual(["app/actions/demo.ts", "app/actions/waitlist.ts", "lib/export/resource-registry.ts"].sort());
+    for (const code of [WAITLIST_CODE, DEMO_CODE]) {
+      for (const sender of ["claim_platform_lead_alert", "freeze_platform_lead_alert_message", "settle_platform_lead_alert", "requeue_platform_lead_alert", "expire_platform_lead_alerts", "record_platform_lead_alerts_unconfigured"]) {
+        expect(code).not.toContain(sender);
+      }
+      expect(code).not.toMatch(/resend|sendgrid|nodemailer|twilio|sendEmail|sendSms|fetch\(/i);
+    }
+    expect(readFileSync(path.join(ROOT, "lib/export/resource-registry.ts"), "utf8")).not.toMatch(/claim_platform_lead_alert|settle_platform_lead_alert/);
   });
 });

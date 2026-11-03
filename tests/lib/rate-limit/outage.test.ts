@@ -259,7 +259,7 @@ describe("through the real limiter functions (Upstash unconfigured)", () => {
     const m = await import("@/lib/rate-limit/public");
     expect(await m.limitTokenRoute({ routeClass: "cancel_submit", token: "t", headers })).toMatchObject({ allowed: false });
     expect(await m.limitPublicBooking({ headers, slug: "studio", email: null })).toEqual({ allowed: true });
-    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledTimes(3); // F-1 visitor-only bucket, then visitor + studio
   });
 
   it("the counter receives only hashes: the raw IP and the slug-free visitor key never appear in the clear", async () => {
@@ -347,36 +347,59 @@ describe("Insurance D-3: the studio bucket is keyed by the RESOLVED studio id", 
   });
 
   it("UNKNOWN slug: refused, NO studio bucket is counted, the visitor bucket is keyed 'unknown', nothing about the slug reaches the counter", async () => {
+    rpc.mockResolvedValue(over());
+    rpc.mockImplementationOnce(async () => ok()); // the F-1 visitor-only bucket is within its bound
     studioLookup.mockResolvedValue({ data: null, error: null });
     const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
     const r = await onLimiterUnavailable(bookBySlug("spray-123"));
     expect(r.allowed).toBe(false);
     const sent = rpc.mock.calls.map((c) => c[1]);
-    expect(sent).toHaveLength(1);
-    expect(sent[0].p_scope).toBe("book_visitor");
-    expect(sent[0].p_key_hash).toBe(kh("book_visitor", "ipHash:unknown"));
+    expect(sent).toHaveLength(2);
+    expect(sent[0].p_scope).toBe("book_visitor_any"); // F-1, before the lookup
+    expect(sent[1].p_scope).toBe("book_visitor");
+    expect(sent[1].p_key_hash).toBe(kh("book_visitor", "ipHash:unknown"));
     expect(JSON.stringify(sent)).not.toContain("spray-123");
   });
 
   it("many different unknown slugs from one visitor share ONE visitor bucket (spraying cannot create unbounded buckets)", async () => {
+    rpc.mockResolvedValue(ok());
     studioLookup.mockResolvedValue({ data: null, error: null });
     const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
     for (const slug of ["a1", "b2", "c3", "d4"]) await onLimiterUnavailable(bookBySlug(slug));
-    expect(new Set(rpc.mock.calls.map((c) => c[1].p_key_hash)).size).toBe(1);
+    expect(new Set(rpc.mock.calls.map((c) => c[1].p_key_hash)).size).toBe(2); // the F-1 visitor-only key and the visitor:unknown key, whatever the slug
   });
 
   it("slots: same rule (key = IP + resolved id, or + unknown)", async () => {
     rpc.mockResolvedValue(ok());
     const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
     await onLimiterUnavailable({ kind: "slots", routeClass: "public_slots", reason: "disabled", keys: { scope: "slots", visitor: "ipHash", studioSlug: "s" } });
-    expect(rpc.mock.calls[0][1].p_key_hash).toBe(kh("slots_visitor", "ipHash:studio-id-1"));
+    expect(rpc.mock.calls[1][1].p_key_hash).toBe(kh("slots_visitor", "ipHash:studio-id-1"));
   });
 
   it("a failing studio lookup REFUSES (counter-unreachable class) and counts nothing", async () => {
     studioLookup.mockResolvedValue({ data: null, error: { message: "db down" } });
     const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
     expect(await onLimiterUnavailable(bookBySlug("s"))).toEqual({ allowed: false, retryAfterSeconds: 60 });
-    expect(rpc).not.toHaveBeenCalled();
+    expect(rpc.mock.calls.map((c) => c[1].p_scope)).toEqual(["book_visitor_any"]); // only the F-1 visitor bucket; no studio bucket
+  });
+
+  it("F-1: a slug-sprayer over the visitor bound is refused BEFORE any studio lookup", async () => {
+    rpc.mockImplementation(async (_n: string, a: { p_scope: string }) => (a.p_scope === "book_visitor_any" ? over(300) : ok()));
+    const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
+    for (const slug of ["a1", "b2", "c3", "d4", "e5"]) expect(await onLimiterUnavailable(bookBySlug(slug))).toMatchObject({ allowed: false });
+    expect(studioLookup).not.toHaveBeenCalled();
+    expect(rpc.mock.calls.every((c) => c[1].p_scope === "book_visitor_any")).toBe(true);
+  });
+
+  it("F-1: the visitor-only key carries no slug and no studio id, and is the same for every slug", async () => {
+    rpc.mockResolvedValue(ok());
+    const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
+    await onLimiterUnavailable(bookBySlug("one"));
+    await onLimiterUnavailable(bookBySlug("two"));
+    const pre = rpc.mock.calls.filter((c) => c[1].p_scope === "book_visitor_any").map((c) => c[1].p_key_hash);
+    expect(pre).toHaveLength(2);
+    expect(pre[0]).toBe(pre[1]);
+    expect(pre[0]).toBe(kh("book_visitor_any", "ipHash"));
   });
 
   it("a resolved slug is remembered in-process: ten requests, one lookup", async () => {

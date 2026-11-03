@@ -89,6 +89,11 @@ describe("E-4 / Privacy Q2: the down step restores the old app's anonymous inser
         await q(`insert into public.waitlist (email, source) values ($1, 'landing')`, [e]);
         await q(`insert into public.demo_requests (name, email) values ('Qf Down', $1)`, [e]);
         await q("reset role");
+        for (const role of ["anon", "authenticated", "service_role"]) {
+          for (const tbl of ["waitlist", "demo_requests"]) {
+            expect((await q(`select has_table_privilege($1, $2, 'insert') as ok`, [role, `public.${tbl}`])).rows[0].ok, `${role} insert on ${tbl}`).toBe(true);
+          }
+        }
         const gone = await q(`select to_regclass('public.rate_limit_fallback_counters') as t`);
         expect(gone.rows[0].t).toBeNull();
         throw new Undo();

@@ -1,4 +1,5 @@
--- DOWN step for 0294 (HELD). NOT a migration: it lives outside supabase/migrations so no tool applies it automatically.
+-- BREAK-GLASS ONLY. This RE-OPENS anonymous direct writes to waitlist and demo_requests; prefer a forward fix. After running it, check
+-- has_table_privilege (see the activation package). DOWN step for 0294 (HELD). NOT a migration: it lives outside supabase/migrations so no tool applies it automatically.
 -- Run it FIRST, and only then roll the application back below the release that carries the 0213-command waitlist/demo actions
 -- (docs/production/0294-rate-limit-fallback-activation-and-rollback.md). Reversed order loses leads: the old app inserts with the
 -- public key, which 0294 removed.

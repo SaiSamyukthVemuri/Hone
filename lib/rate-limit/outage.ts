@@ -268,6 +268,16 @@ function hitsFor(kind: OutageKind, k: OutageKeys, unknownStudio = false): Hit[] 
   return null;
 }
 
+/** F-1 (Insurance): the visitor-only bucket counted BEFORE the studio lookup (hashed IP, no slug, no studio), so a slug-sprayer is capped at
+ *  the visitor bound before any studio database read. Same window and limit as the kind's visitor bucket; its own scope, so it never shares a key. */
+function preLookupHit(kind: OutageKind, k: OutageKeys): Hit | null {
+  if (!k.visitor) return null;
+  const min = 60;
+  if (kind === "book") return { scope: `${k.scope}_visitor_any`, key: k.visitor, windowSeconds: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_VISITOR_WINDOW_MIN") * min, limit: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_VISITOR_MAX") };
+  if (kind === "slots") return { scope: `${k.scope}_visitor_any`, key: k.visitor, windowSeconds: fallbackParam("HONE_LIMITER_FALLBACK_SLOTS_VISITOR_WINDOW_MIN") * min, limit: fallbackParam("HONE_LIMITER_FALLBACK_SLOTS_VISITOR_MAX") };
+  return null;
+}
+
 /**
  * Called by a public limiter when Upstash is unconfigured (reason "disabled") or threw (reason "error").
  * Returns the decision the limiter must return to its caller.
@@ -303,6 +313,20 @@ export async function onLimiterUnavailable(args: {
   let keys = args.keys;
   let unknownStudio = false;
   if (keys?.studioSlug !== undefined) {
+    // F-1: count the visitor-only bucket before the studio lookup; over its bound the request is refused with no studio read.
+    const pre = preLookupHit(args.kind, keys);
+    if (pre) {
+      try {
+        const early = await decideHits([pre], secret);
+        if (!early.allowed) {
+          emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "fallback_limited", classOf(args.err));
+          return early;
+        }
+      } catch (counterErr) {
+        emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_counter_unreachable", classOf(counterErr));
+        return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
+      }
+    }
     // D-3: resolve the slug FIRST. An unknown slug is refused and never gets a studio bucket (only the visitor bucket, keyed with
     // 'unknown', is counted so slug-spraying is still bounded). The visitor key is hashed IP + resolved id (or 'unknown').
     try {

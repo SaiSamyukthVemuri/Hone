@@ -30,7 +30,7 @@
 --   which work with or without this migration; the OLD app inserts with the public key and would be refused the moment the policies drop.
 --   Until the migration is applied, an Upstash outage meets no counter and the app REFUSES the bounded classes (fail closed), it
 --   does not fail open.
--- ROLLBACK ORDER (the reverse, and it matters): once this is applied, rolling the app back BELOW the release that carries the 0213-command
+-- ROLLBACK (break-glass, forward fix preferred; the order matters): once this is applied, rolling the app back BELOW the release that carries the 0213-command
 --   actions makes every landing/demo submission fail and LOSES the lead (the old app inserts with the public key, which this
 --   migration removed). Run supabase/rollbacks/0294_rate_limit_fallback_counter.down.sql FIRST, then roll the app back.
 --   See docs/production/0294-rate-limit-fallback-activation-and-rollback.md.

@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0294_rate_limit_fallback_counter.sql",
-    "sha256": "de62ced0e2dcfed4fa5c53313d8ac32ef77d4fa22b3ce1523508abf7706ccbd4"
+    "sha256": "e9f33bcb32ebb125370806c5daef8329fba5d8b05dd603f661c9c42a74bc539a"
   },
   "public": {
     "tables": [
