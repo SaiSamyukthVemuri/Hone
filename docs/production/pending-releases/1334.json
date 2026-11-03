@@ -1,0 +1,6 @@
+{
+  "pr": 1334,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0292_auth_block_password_tokens_hook.sql"],
+  "release_receipt": "01-ops/1334-release-receipt.json"
+}
