@@ -67,6 +67,7 @@ import {
   getLatestSubmittedOrReviewedIntakeForClient,
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
+import { intakeForViewer } from "@/lib/intake/status-only";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { questionnaireForRow } from "@/lib/intake/questionnaire";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
@@ -332,7 +333,8 @@ export default async function ClientCheatSheetPage({
   // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
   const needsCard = isOwnerBilling;
   const needsSessionsData = activeTab === "sessions" && canViewRecords;
-  const needsTreatmentPlans = activeTab === "treatment";
+  // Plan progress is counted from treatment sessions and logged minutes, so plans follow the same key (never shown as 0 minutes).
+  const needsTreatmentPlans = activeTab === "treatment" && canViewRecords;
   const needsPersonalNotes = activeTab === "notes";
   // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
   const needsPinnedNotes = isOverview || activeTab === "notes";
@@ -397,8 +399,8 @@ export default async function ClientCheatSheetPage({
     getActiveServices(studio.id, priceReads),
     needsIntake
       ? Promise.all([getLatestIntakeForClient(studio.id, client.id), canViewIntakePromise]).then(([row, ok]) =>
-          // Without clin.view_intake the row keeps its status and dates (status-only) but carries no answers.
-          ok || !row ? row : { ...row, responses: {} },
+          // Without clin.view_intake only the status-only allow-list survives (id, status, started/submitted/reviewed timestamps).
+          intakeForViewer(row, ok),
         )
       : Promise.resolve(null),
     // Portal access hints (last link sent / last sign-in). Overview card.
@@ -1209,11 +1211,17 @@ export default async function ClientCheatSheetPage({
             lastChartedAt={lastTreatment?.started_at ?? null}
             lastChartedSessionId={lastTreatment?.id ?? null}
             lastChartedUnavailable={clinicalHistoryUnavailable}
+            historyNotAvailableToRole={!canViewRecords}
             next={pickNextAppointment({ appointments: overviewVisitAppointments, nowMs: visitNowMs })}
             timezone={studio.timezone}
             timeFormat={resolveTimeFormat(studio)}
           />
 
+          {!canViewRecords ? (
+            <p role="status" data-testid="last-visit-not-available" className="text-sm text-neutral-500">
+              Last treatment is not available to your role.
+            </p>
+          ) : (
           <LastVisitCard
             clientId={client.id}
             sessionId={lastTreatment?.id ?? null}
@@ -1226,6 +1234,7 @@ export default async function ClientCheatSheetPage({
             summary={lastTreatmentSummary}
             unavailable={clinicalHistoryUnavailable}
           />
+          )}
 
           {/* PR #134. Consent / e-sign per-template signed status for
               this client. Renders active templates only; archived
@@ -1337,10 +1346,12 @@ export default async function ClientCheatSheetPage({
 
           {/* PR #211: "Before today" pre-treatment briefing; below
               Client info, above Treatment Intelligence. */}
-          <BeforeTodayCard
-            briefing={beforeToday}
-            importedMemory={importedMemory}
-          />
+          {canViewRecords && (
+            <BeforeTodayCard
+              briefing={beforeToday}
+              importedMemory={importedMemory}
+            />
+          )}
 
           {/* Migration 0126: at-a-glance latest consultation + skin/hair
               analysis for appointment prep. Read-only; links to the
@@ -1356,10 +1367,16 @@ export default async function ClientCheatSheetPage({
           {/* PR #210: Treatment Intelligence; recorded-history summary
               (areas, minutes, hairs, latest setup, reactions, watch/
               plan). Below Client info, above Pricing. */}
-          <TreatmentIntelligenceCard
-            intelligence={treatmentIntelligence}
-            unavailable={intelligenceUnavailable}
-          />
+          {canViewRecords ? (
+            <TreatmentIntelligenceCard
+              intelligence={treatmentIntelligence}
+              unavailable={intelligenceUnavailable}
+            />
+          ) : (
+            <p role="status" data-testid="treatment-intelligence-not-available" className="text-sm text-neutral-500">
+              Treatment history is not available to your role.
+            </p>
+          )}
 
         </>
       )}
@@ -1883,7 +1900,7 @@ export default async function ClientCheatSheetPage({
           <ClientBudgetCardUnavailable />
         )}
 
-      {activeTab === "treatment" && (
+      {activeTab === "treatment" && canViewRecords && (
         <TreatmentPlansCard
           clientId={client.id}
           plans={treatmentPlans}

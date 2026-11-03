@@ -30,7 +30,7 @@ export async function getPersonalChartedWithin24h(
 ): Promise<ChartedWithin24hMetrics> {
   const supabase = await createClient();
   // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
-  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return summarizeChartedWithin24h([]);
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { ...summarizeChartedWithin24h([]), notAvailable: true };
   const windowStartIso = new Date(
     new Date(nowIso).getTime() - CHARTED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();

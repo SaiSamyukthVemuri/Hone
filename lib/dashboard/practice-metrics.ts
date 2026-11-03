@@ -199,6 +199,8 @@ export type ChartedWithin24hInput = ReadonlyArray<{
 export type ChartedWithin24hMetrics = {
   completedCount: number;
   chartedWithin24hCount: number;
+  // True when the viewer lacks clin.view_records: nothing was read, so 0 of 0 is NOT a fact.
+  notAvailable?: true;
 };
 
 export function summarizeChartedWithin24h(

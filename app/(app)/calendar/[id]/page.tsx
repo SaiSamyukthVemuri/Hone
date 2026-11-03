@@ -6,6 +6,7 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import { intakeForViewer, type IntakeStatusOnly } from "@/lib/intake/status-only";
 import { practitionerIntakeReviewHref } from "@/lib/dashboard/today-intake";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
@@ -263,7 +264,7 @@ export default async function AppointmentDetailPage({
   // already used elsewhere in the app. No new RPCs, no mutations.
   let pinnedNotes: Awaited<ReturnType<typeof getPinnedNotesForClient>> = [];
   let tags: ClientTag[] = [];
-  let intake: ClientIntakeForm | null = null;
+  let intake: IntakeStatusOnly | null = null;
   let treatmentPlans: Awaited<
     ReturnType<typeof getTreatmentPlansForClient>
   > = [];
@@ -375,7 +376,7 @@ export default async function AppointmentDetailPage({
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;
-    intake = canViewIntake || !intakeRes ? intakeRes : { ...intakeRes, responses: {} };
+    intake = intakeForViewer(intakeRes, canViewIntake);
     treatmentPlans = plansRes;
     if (linkedSessionRes?.error) {
       throw new Error(
@@ -932,7 +933,7 @@ function ClientBriefingCard({
 }: {
   client: ClientBriefing | null;
   tags: ClientTag[];
-  intake: ClientIntakeForm | null;
+  intake: IntakeStatusOnly | null;
   fitzpatrick: string | null;
   appointmentId: string;
 }) {
@@ -1060,7 +1061,7 @@ function IntakeStatusLine({
   intake,
   clientId,
 }: {
-  intake: ClientIntakeForm | null;
+  intake: IntakeStatusOnly | null;
   clientId: string;
 }) {
   // Intake color convention (see app/(app)/dashboard/page.tsx):
