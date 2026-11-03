@@ -106,6 +106,20 @@ describe("actions answer with codes and never claim success before the core is o
   });
 });
 
+describe("history", () => {
+  it("is owner-only and honest about the core being off", async () => {
+    expect(await actions.listPermissionAuditAction(null)).toEqual({ ok: false, error: { code: "unavailable" } });
+    owner.role = "practitioner";
+    expect(await actions.listPermissionAuditAction(null)).toEqual({ ok: false, error: { code: "refused" } });
+  });
+  it("renders rows from the core with resolved names, and a removed member as a former member", () => {
+    const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(src).toContain("props.loadHistory");
+    expect(src).toContain('r.personState === "removed" ? "former member"');
+    expect(src).not.toMatch(/\.email/);
+  });
+});
+
 describe("the editor", () => {
   const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
   it("never recomputes a diff on the client", () => {

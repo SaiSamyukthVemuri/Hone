@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { ROLES, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
@@ -13,7 +13,10 @@ import {
   reasonAcceptable,
   reasonRequired,
   roleErrorMessage,
+  AUDIT_KIND_LABEL,
+  type AuditRow,
   type CommandResult,
+  type HistoryResult,
   type PreviewResult,
   type RoleError,
   type RolePreview,
@@ -56,6 +59,7 @@ export type RolesEditorProps = {
   save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string) => Promise<CommandResult>;
   reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
   adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
+  loadHistory: (before: string | null) => Promise<HistoryResult>;
 };
 
 type View = "people" | "permissions" | "history";
@@ -266,15 +270,7 @@ export function RolesEditor(props: RolesEditorProps) {
 
       {view === "people" && <PeoplePanel people={props.people} saved={saved} />}
 
-      {view === "history" && (
-        <section data-testid="roles-history" className="flex flex-col gap-2">
-          <h3 className="text-base font-medium">Change history</h3>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            History starts when saving turns on. Each entry will show who changed a role or permission, when, the person or role
-            affected, and the before and after values. It cannot be edited or deleted by staff.
-          </p>
-        </section>
-      )}
+      {view === "history" && <HistoryPanel load={props.loadHistory} />}
 
       {view === "permissions" && (
         <div className="flex min-w-0 flex-col gap-8">
@@ -527,6 +523,57 @@ function RowList({
         );
       })}
     </ul>
+  );
+}
+
+function HistoryPanel({ load }: { load: (before: string | null) => Promise<HistoryResult> }): ReactNode {
+  const [state, setState] = useState<{ kind: "loading" } | { kind: "error"; message: string } | { kind: "rows"; rows: AuditRow[]; next: string | null }>({ kind: "loading" });
+  useEffect(() => {
+    let live = true;
+    load(null).then((r) => {
+      if (!live) return;
+      setState(r.ok ? { kind: "rows", rows: r.rows, next: r.next } : { kind: "error", message: roleErrorMessage(r.error) });
+    });
+    return () => {
+      live = false;
+    };
+  }, [load]);
+  return (
+    <section data-testid="roles-history" className="flex min-w-0 flex-col gap-3">
+      <h3 className="text-base font-medium">Change history</h3>
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        Every role and permission change: who made it, when, who or what it affected, and the before and after. Staff cannot edit or delete it.
+      </p>
+      {state.kind === "loading" && <p className="text-sm text-neutral-500">Loading&hellip;</p>}
+      {state.kind === "error" && (
+        <p data-testid="history-unavailable" className="text-sm text-neutral-600 dark:text-neutral-400">
+          History is not available yet. {state.message}
+        </p>
+      )}
+      {state.kind === "rows" && state.rows.length === 0 && <p className="text-sm text-neutral-500">No changes have been recorded yet.</p>}
+      {state.kind === "rows" && (
+        <ul className="flex flex-col gap-2">
+          {state.rows.map((r) => (
+            <li key={r.id} data-audit-kind={r.kind} className="min-w-0 break-words rounded-lg border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+              <p className="font-medium">{AUDIT_KIND_LABEL[r.kind]}</p>
+              <p className="text-neutral-600 dark:text-neutral-400">
+                {r.actorName} on <time dateTime={r.at}>{r.at}</time>
+                {r.role ? `, ${ROLE_LABELS[r.role].toLowerCase()}s` : ""}
+                {r.personName ? `, ${r.personState === "removed" ? "former member" : r.personName}` : ""}
+              </p>
+              {r.reason && <p className="mt-1">Reason: {r.reason}</p>}
+              <ul className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                {Object.keys(r.after).map((k) => (
+                  <li key={k}>
+                    {k}: {r.before[k] ?? "unset"} to {r.after[k]}
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

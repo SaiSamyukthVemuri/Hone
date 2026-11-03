@@ -6,6 +6,7 @@ import { validateEdits } from "@/lib/settings/roles/validate";
 import {
   reasonAcceptable,
   type CommandResult,
+  type HistoryResult,
   type Operation,
   type PreviewResult,
   type RoleError,
@@ -93,4 +94,12 @@ export async function resetRolePolicyAction(role: unknown, expectedVersion: unkn
 /** The only way an existing studio takes the new defaults. */
 export async function adoptNewDefaultsAction(expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
   return guardedWrite("adopt", expectedVersion, reason, false);
+}
+
+/** The change history, newest first. Read-only; the core's list_permission_audit answers it. */
+export async function listPermissionAuditAction(_before: unknown): Promise<HistoryResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  // R1: call list_permission_audit(studio, limit, before) here.
+  return refuse({ code: "unavailable" });
 }

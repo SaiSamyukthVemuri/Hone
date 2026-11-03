@@ -6,6 +6,7 @@ import { loadStudioPolicyState } from "@/lib/settings/roles/policy-store";
 import type { Role } from "@/lib/permissions/catalog";
 import {
   adoptNewDefaultsAction,
+  listPermissionAuditAction,
   previewAdoptAction,
   previewResetAction,
   previewRoleChangesAction,
@@ -83,6 +84,7 @@ export default async function RolesSettingsPage() {
         save={saveRolePolicyAction}
         reset={resetRolePolicyAction}
         adopt={adoptNewDefaultsAction}
+        loadHistory={listPermissionAuditAction}
       />
     </div>
   );

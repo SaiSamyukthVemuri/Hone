@@ -35,6 +35,30 @@ export type ServerPreview = { version: number; roles: RolePreview[] };
 export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; error: RoleError };
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
 
+export type AuditKind = "role_permissions_saved" | "defaults_adopted" | "role_reset" | "staff_role_changed";
+
+/** One audit row as list_permission_audit returns it: names resolved at read time, no emails. A removed member reads as "former member". */
+export type AuditRow = {
+  id: string;
+  at: string;
+  kind: AuditKind;
+  role: Role | null;
+  actorName: string;
+  personName: string | null;
+  personState: "active" | "removed" | null;
+  reason: string | null;
+  before: Record<string, string>;
+  after: Record<string, string>;
+};
+export type HistoryResult = { ok: true; rows: AuditRow[]; next: string | null } | { ok: false; error: RoleError };
+
+export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
+  role_permissions_saved: "Permissions changed",
+  defaults_adopted: "New defaults adopted",
+  role_reset: "Role reset to defaults",
+  staff_role_changed: "Staff role changed",
+};
+
 export type Operation = "save" | "reset" | "adopt";
 
 // Sam, batch 4: a reason is REQUIRED when adopting defaults, resetting saved permissions, or expanding sensitive access (including
