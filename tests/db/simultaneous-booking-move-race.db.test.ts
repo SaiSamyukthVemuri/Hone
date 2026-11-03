@@ -12,7 +12,8 @@ import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/s
 //     deadlock (40P01), serialisation failure (40001), lock timeout (55P03) or any other error;
 //   * ground truth agrees: a move that won frees the old time, a move that lost leaves the appointment where it was, and no
 //     appointment is ever lost or duplicated.
-// Synthetic data on the run's own stack only. Test-only; stacked on #1337's harness. Plan-stage: not run until a slot is granted.
+// Synthetic data on the run's own stack only. Test-only; stacked on #1337's harness. Run on e9723b829's chain (own isolated stack):
+// passes; no 40P01 has been seen in this file's runs, and there is NO deadlock allowance here: a 40P01 in a move race fails (BL-4/BK4).
 
 let B: SynthStudio;
 let serviceId: string;

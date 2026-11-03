@@ -71,7 +71,10 @@ async function setup(capacity: boolean) {
   await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic Front Desk',true)", [B.studioId, deskUserId]);
 }
 
-/** A 60-minute timed block. practitioner null = studio-wide. */
+/**
+ * A 60-minute timed block. practitioner null = studio-wide. BK3: this is a direct insert on the admin connection, the statement the
+ * block writers ultimately run; whether it mirrors the app's block-writing path exactly is for Willow's HON-48-DEADLOCK diagnosis to confirm.
+ */
 const blocker = (start: string, practitionerId: string | null) => async (): Promise<Outcome> => {
   try {
     await adminQuery(
@@ -138,7 +141,12 @@ const KNOWN_DEFECT_EXPIRES = "2026-11-24";
 // lock (acquire_studio_capacity_lock, reached through create_internal_appointment_v2 / create_appointment_core) against a transaction
 // lock, either as the booking command waiting on the advisory lock (11) or as the block insert's foreign-key check on the studios row
 // (FOR KEY SHARE, 2). DETAIL must show BOTH waits, and CONTEXT must name the capacity-lock function or the studios row.
-const KNOWN_DEADLOCK_CONTEXT = /^(?=.*ExclusiveLock on advisory lock)(?=.*ShareLock on transaction)(?=.*(acquire_studio_capacity_lock|relation "studios"))/;
+// BL-1/BL2: the DETAIL must also show EXACTLY two processes (a three-way cycle is a different deadlock). The block-victim shape's captured
+// CONTEXT names the studios foreign-key check, not the studio_timed_blocks statement, so the statement cannot be required without data
+// we do not have; this pattern is therefore a family match, not proof of the exact cycle (Willow's diagnosis is the authority).
+const KNOWN_DEADLOCK_CONTEXT = /^(?=.*ExclusiveLock on advisory lock)(?=.*ShareLock on transaction)(?=(?:.*?Process \d+ waits for){2})(?!(?:.*?Process \d+ waits for){3})(?=.*(acquire_studio_capacity_lock|relation "studios"))/;
+// BL-2/BL2: this set lists every scenario the file runs, so it is a TYPO GUARD (a new scenario must be added here on purpose), not a
+// narrowing; the block-insert-versus-booking pair comes from the structure of the tests (checkRound is only called with the block racer).
 const KNOWN_DEADLOCK_SCENARIOS = new Set<string>([
   "off|studio-wide block|same-time", "off|studio-wide block|partial",
   "on|block scoped to the owner|same-time", "on|block scoped to the owner|partial",
@@ -192,6 +200,9 @@ describe("HON-48-DEADLOCK signature", () => {
     expect(KNOWN_DEADLOCK_CONTEXT.test(bookingVictim)).toBe(true);
     expect(KNOWN_DEADLOCK_CONTEXT.test(blockVictim)).toBe(true);
   });
+  it("rejects a three-process cycle even when the locks and function match", () => {
+    expect(KNOWN_DEADLOCK_CONTEXT.test(`${bookingVictim} Process 3 waits for ShareLock on transaction 7; blocked by process 1.`)).toBe(false);
+  });
   it("rejects a different deadlock (other locks, other tables or functions) and an empty context", () => {
     expect(KNOWN_DEADLOCK_CONTEXT.test('Process 1 waits for ShareLock on transaction 9; blocked by process 2. Process 2 waits for ShareLock on transaction 8; blocked by process 1. | while updating tuple (0,3) in relation "appointments"')).toBe(false);
     expect(KNOWN_DEADLOCK_CONTEXT.test('Process 1 waits for ExclusiveLock on advisory lock [5,1,2,1]; blocked by process 2. | PL/pgSQL function public.some_other_function() line 4')).toBe(false);
@@ -202,7 +213,12 @@ describe("HON-48-DEADLOCK signature", () => {
 // BK2 expiry guard: fails after KNOWN_DEFECT_EXPIRES while the known-defect allowance is still on.
 describe("HON-48-DEADLOCK known-defect expiry", () => {
   it(`the allowance for the known deadlock is not past its expiry (${KNOWN_DEFECT_EXPIRES}, owner Willow)`, () => {
-    const expired = Date.now() > Date.parse(`${KNOWN_DEFECT_EXPIRES}T23:59:59Z`);
+    const expiresAt = Date.parse(`${KNOWN_DEFECT_EXPIRES}T23:59:59Z`);
+    const expired = Date.now() > expiresAt;
+    // BL-3: warn for the last 7 days (visible in the run) before this turns the DB lane red; the decision belongs in the decision log.
+    if (KNOWN_DEFECT_HON48_DEADLOCK && !expired && expiresAt - Date.now() < 7 * 24 * 3600 * 1000) {
+      console.warn(`KNOWN_DEFECT_HON48_DEADLOCK expires ${KNOWN_DEFECT_EXPIRES}: decide now (fix landed? flip to false; otherwise OPS and Sam extend it).`);
+    }
     expect(
       KNOWN_DEFECT_HON48_DEADLOCK && expired,
       `KNOWN_DEFECT_HON48_DEADLOCK is still true after ${KNOWN_DEFECT_EXPIRES}. If Willow's HON-48-DEADLOCK fix has merged set it to false; otherwise OPS and Sam must accept the defect for longer and move KNOWN_DEFECT_EXPIRES.`,
