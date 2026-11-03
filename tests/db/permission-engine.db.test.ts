@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, type PermissionDef, type Role, type Scope, type StudioPolicy, GATES } from "@/lib/permissions/catalog";
+import { consequenceClass } from "@/lib/permissions/consequence";
 import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0287 (held): the permission engine, proved on the real migrated database. Synthetic values only.
@@ -72,6 +73,7 @@ describe("seed parity and resolver parity with lib/permissions/catalog.ts", () =
       expect([r.offered_practitioner, r.offered_receptionist], d.key).toEqual([d.offeredTo.practitioner, d.offeredTo.receptionist]);
       expect([r.gate_practitioner, r.gate_receptionist], d.key).toEqual([d.shipGate?.practitioner ?? null, d.shipGate?.receptionist ?? null]);
       expect(r.sensitive, d.key).toBe(!!d.sensitive);
+      expect(r.consequence, d.key).toBe(consequenceClass(d));
     }
   });
 
@@ -277,6 +279,11 @@ describe("reasons (Sam, 3 Nov): required to expand sensitive access, adopt or re
     expect(pa).toMatchObject({ ok: true, version: 1, reason_required: true });
     expect(Array.isArray(pa.fixed_narrowings)).toBe(true);
     expect(pa.fixed_narrowings.length).toBeGreaterThan(0);
+    // each item says whether a practitioner LOSES something or is merely protected, and archive/delete/restore are listed as losses (DN-25)
+    for (const f of pa.fixed_narrowings) expect(["narrows", "safeguard"]).toContain(f.practitioner_access);
+    const kindOf = (id: string) => pa.fixed_narrowings.find((f: { id: string }) => f.id === id)?.practitioner_access;
+    for (const id of ["performer_change", "exposure_incident_history", "colleague_private_fields", "studio_columns_read", "archive_clients", "delete_treatment_records_and_photos", "restore_deleted_records"]) expect(kindOf(id), id).toBe("narrows");
+    for (const id of ["getting_started_filter", "notification_read_state", "portal_reply_immutable", "anonymous_public_writes_closed", "rate_limit_outage", "google_flags_operator_only", "deactivated_calendar_owner"]) expect(kindOf(id), id).toBe("safeguard");
     expect((await adminQuery("select basis from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0].basis).toBe("existing_snapshot");
     expect(await call(s.userId, "select public.adopt_new_defaults($1,1,'n/a') as r", [s.studioId])).toMatchObject({ code: "reason_required" });
     expect(await call(s.userId, "select public.adopt_new_defaults($1,0,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ code: "stale_version", current_version: 1 });
@@ -423,5 +430,28 @@ describe("change_staff_role", () => {
     await seedAppt(s, m.practitionerId, c);
     expect(await call(s.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ code: "has_upcoming_appointments", count: 1 });
     expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(true);
+  });
+});
+
+describe("the page can tell when a reason is needed: sensitive flag and consequence class on get_role_permissions and the preview (OPS, Photos gap)", () => {
+  it("get_role_permissions exposes sensitive and consequence for every catalogued key, equal to the catalog", async () => {
+    const s = await seedStudio("engine-consequence");
+    const r = await getp(s.userId, s.studioId);
+    expect(Object.keys(r.keys).sort()).toEqual(DEFS.map((d) => d.key).sort());
+    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d) });
+    expect(r.keys["pay.refund"].consequence).toBe("financial");
+    expect(r.keys["appt.cancel"].consequence).toBeNull();
+    expect(Object.values(r.keys).some((k: any) => k.consequence === "destructive")).toBe(false);
+  });
+
+  it("the preview and a refused-or-saved diff carry the same two fields, and a preview still writes nothing", async () => {
+    const s = await seedStudio("engine-consequence-preview");
+    const sensKey = DEFS.find((d) => d.sensitive && d.ownerConfigurable !== false && d.offeredTo.receptionist && !d.shipGate?.receptionist && d.scopes.includes("studio") && d.requires.every((q) => ["client.view_directory", "appt.view_calendar"].includes(q)) && d.newStudioDefault.receptionist === "off")!;
+    const p = await call(s.userId, "select public.preview_role_changes($1,$2::jsonb) as r", [s.studioId, JSON.stringify({ receptionist: { [sensKey.key]: "studio" } })]);
+    const entry = JSON.stringify(p).includes(sensKey.key) ? p : null;
+    expect(entry).not.toBeNull();
+    const hit = (function find(o: any): any { if (o && typeof o === "object") { if (o.key === sensKey.key && "before" in o) return o; for (const v of Object.values(o)) { const f = find(v); if (f) return f; } } return null; })(p);
+    expect(hit).toMatchObject({ key: sensKey.key, sensitive: true, consequence: consequenceClass(sensKey) });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
   });
 });
