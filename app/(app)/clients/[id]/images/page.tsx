@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -97,6 +98,8 @@ export default async function ClientImagesPage({
       .filter((x): x is string => Boolean(x)),
     studio.id,
   );
+  // Roles engine (0287), the STORAGE plane: without clin.view_photos no URL is signed and every card reads "Image not available".
+  const canViewPhotos = (await requirePermission(supabase, studio.id, "clin.view_photos", { client: id })).allowed;
   const admin = createAdminClient();
   const rows = await Promise.all(
     meta.map(async (m) => {
@@ -105,7 +108,7 @@ export default async function ClientImagesPage({
       // Trust boundary (PR #276): only sign a path that binds to this studio +
       // client; a forged/malformed row yields previewUrl=null ("Image not
       // available") instead of being signed.
-      const pathOk = validateTreatmentImagePath({
+      const pathOk = canViewPhotos && validateTreatmentImagePath({
         expectedStudioId: studio.id,
         rowStudioId: studio.id,
         rowClientId: id,

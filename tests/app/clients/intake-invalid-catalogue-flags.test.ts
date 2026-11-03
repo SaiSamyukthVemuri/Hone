@@ -17,6 +17,10 @@ const h = vi.hoisted(() => ({
   intake: null as Record<string, unknown> | null,
 }));
 
+// The Roles engine has its own tests; this file is about the code around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/navigation", () => ({
   notFound: () => { throw new Error("notFound"); },
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
