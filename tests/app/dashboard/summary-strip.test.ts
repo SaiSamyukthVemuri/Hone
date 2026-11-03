@@ -58,7 +58,13 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
     const out = renderToStaticMarkup(
       createElement(SummaryStrip, { appointmentCount: 1, clientCount: 1, bookedTime: "Unavailable", clientsToReview: "Unavailable" }),
     );
-    expect(out.match(/\[overflow-wrap:anywhere\]/g)).toHaveLength(3);
+    // three values and, since the 320px label fix, the three labels
+    expect(out.match(/\[overflow-wrap:anywhere\]/g)).toHaveLength(6);
+  });
+  it("the uppercase LABEL can wrap and shrinks under 360px, so 'APPOINTMENTS' stays inside its cell (Photos, fa5183e8d)", () => {
+    expect(strip).toMatch(/const LABEL =[\s\S]*?min-w-0[\s\S]*?\[overflow-wrap:anywhere\][\s\S]*?max-\[359px\]:text-\[10px\][\s\S]*?max-\[359px\]:tracking-normal/);
+    // from 360px up the label is exactly as before
+    expect(strip).toMatch(/text-\[11px\] font-medium uppercase tracking-wider/);
   });
 });
 

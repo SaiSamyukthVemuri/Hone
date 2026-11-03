@@ -67,6 +67,33 @@ async function assertNoSidewaysOverflow(page: Page, width: number) {
   }, width);
   expect(report.scrollWidth, `document scrollWidth ${report.scrollWidth}`).toBeLessThanOrEqual(width);
   expect(report.offenders, report.offenders.join("\n")).toEqual([]);
+  await assertSummaryStripTextInsideCells(page);
+}
+
+// The strip's LABELS and values, not only its cards: text that overflows its own cell does not widen the page, so the page-level
+// checks above cannot see it (Photos, fa5183e8d at 320: "APPOINTMENTS" ran past its card and touched "BOOKED TIME"). Each dt/dd must
+// fit its own box (scrollWidth) and end inside its cell, and no label may reach into the next cell.
+async function assertSummaryStripTextInsideCells(page: Page) {
+  const bad = await page.evaluate(() => {
+    const out: string[] = [];
+    const strip = document.querySelector('[data-testid="dashboard-summary-strip"]');
+    if (!strip) return ["summary strip not found"];
+    strip.querySelectorAll<HTMLElement>("dt, dd").forEach((el) => {
+      const cell = el.parentElement!.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const text = (el.textContent ?? "").trim();
+      if (el.scrollWidth > el.clientWidth + 1) out.push(`${text}: content ${el.scrollWidth} > box ${el.clientWidth}`);
+      // Range over the text itself: a block's own box can look fine while its glyphs spill out.
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const t = range.getBoundingClientRect();
+      if (t.right > cell.right + 0.5 || t.left < cell.left - 0.5 || r.right > cell.right + 0.5) {
+        out.push(`${text}: text right ${Math.round(t.right)} vs cell right ${Math.round(cell.right)}`);
+      }
+    });
+    return out;
+  });
+  expect(bad, bad.join("\n")).toEqual([]);
 }
 
 for (const width of [320, 390]) {

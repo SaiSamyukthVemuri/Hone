@@ -14,7 +14,10 @@ import type { ReactNode } from "react";
 // viewport wider. From 360px up the cells are exactly as before.
 const CELL =
   "min-w-0 rounded-lg border border-neutral-200 px-2 py-3 min-[360px]:px-4 dark:border-neutral-800";
-const LABEL = "text-[11px] font-medium uppercase tracking-wider text-neutral-500";
+// The uppercase LABEL can be wider than its cell at 320 ("APPOINTMENTS" at 11px with wide tracking ran into the next card), so it may
+// wrap or break and steps down in size and tracking under 360px; from 360px up it is exactly as before.
+const LABEL =
+  "min-w-0 text-[11px] font-medium uppercase tracking-wider text-neutral-500 [overflow-wrap:anywhere] max-[359px]:text-[10px] max-[359px]:tracking-normal";
 const VALUE =
   "mt-1 min-w-0 text-xl font-semibold tracking-tight text-neutral-900 [overflow-wrap:anywhere] max-[359px]:text-sm dark:text-neutral-100";
 
