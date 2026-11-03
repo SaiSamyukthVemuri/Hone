@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { releaseAllKeys } from "./helpers/permission-release";
 import { adminQuery, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
@@ -70,8 +71,8 @@ describe("0289: edit key at the database", () => {
 
   it("attribution on a plan cannot be rewritten", async () => {
     const on = await setup("e89attr", "studio", "studio");
-    const id = (await insertPlan(on.m.userId, on.s)).rows[0].id as string;
-    await adminQuery("update public.treatment_plans set created_by_practitioner_id=$2 where id=$1", [id, on.m.practitionerId]);
+    const id = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count, created_by_practitioner_id) values ($1,$2,$3,'Synthetic plan',4,$4)", [id, on.s.clientId, on.s.studioId, on.m.practitionerId]);
     await expect(
       adminQuery("update public.treatment_plans set created_by_practitioner_id=$2 where id=$1", [id, on.s.practitionerId]),
     ).rejects.toMatchObject({ code: "55000" });

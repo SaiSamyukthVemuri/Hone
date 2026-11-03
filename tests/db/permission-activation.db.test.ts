@@ -15,8 +15,11 @@ const effMap = async (s: SeededStudio) =>
   (await adminQuery("select role, key, public.perm_effective_scope($1,role,key) as e from public.permission_catalog cross join (values ('practitioner'),('receptionist')) v(role) order by 1,2", [s.studioId])).rows;
 
 let KEYS: { key: string; practitioner_new: string; practitioner_snap: string }[] = [];
+let SAVED: { key: string; released_at: string; release_tag: string }[] = [];
 afterAll(async () => {
-  await adminQuery("delete from public.permission_key_release where key = any($1) and release_tag in ('ACT-TEST', 'ACT-OLD')", [KEYS.map((k) => k.key)]);
+  // Put the registry back exactly as found (other suites released every key long ago).
+  await adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
+  for (const r of SAVED) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag) values ($1,$2,$3)", [r.key, r.released_at, r.release_tag]);
   await closePool();
 });
 beforeAll(async () => {
@@ -24,9 +27,9 @@ beforeAll(async () => {
   KEYS = (await adminQuery(
     `select key, new_practitioner as practitioner_new, snapshot_practitioner as practitioner_snap from public.permission_catalog
       where owner_configurable and offered_practitioner and gate_practitioner is null and requires = '{}' and new_practitioner <> snapshot_practitioner
-        and key not in (select key from public.permission_key_release where release_tag not in ('ACT-TEST','ACT-OLD'))
       order by key limit 2`)).rows;
   expect(KEYS.length).toBe(2);
+  SAVED = (await adminQuery("select key, released_at::text released_at, release_tag from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)])).rows;
   await adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
 });
 const releaseNow = (tag = "ACT-TEST") => adminQuery("insert into public.permission_key_release(key,released_at,release_tag) select unnest($1::text[]), now(), $2", [KEYS.map((k) => k.key), tag]);
