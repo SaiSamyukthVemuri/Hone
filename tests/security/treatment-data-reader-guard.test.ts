@@ -88,6 +88,17 @@ const ALLOW: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
   "lib/supabase/queries.ts": { cls: "caller-gated", why: "client and session loaders; importers are checked from the import graph" },
   "lib/machines/machine-queries.ts": { cls: "caller-gated", why: "machine registry and recorded setups; importers are checked from the import graph" },
 };
+// Rows for files that exist on the base branch but not on every stack of this program (the Roles branches are cut from an older base).
+// Applied only when the file is present AND reads a protected table, so the stale-row check below still holds for everything else and a base
+// merge cannot go red on a file version this branch has never seen.
+const ALLOW_WHEN_PRESENT: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
+  "app/(app)/calendar/check-practitioner/actions.ts": {
+    cls: "owner-only",
+    why: "reassignOpenAppointmentAction refuses unless the caller is the active studio owner (practitioner.role === 'owner'); it counts live sessions linked to the appointment (head count, exists-or-not) to refuse a reassignment and returns only fixed copy, never a row. The owner holds every key.",
+  },
+};
+// ...and only while that file actually reads a protected table (an older copy of the file on this branch does not, so it needs no row).
+for (const [f, row] of Object.entries(ALLOW_WHEN_PRESENT)) if (existsSync(f) && /\.from\(\s*["']sessions["']/.test(readFileSync(f, "utf8"))) ALLOW[f] = row;
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 function walk(dir: string): string[] {
