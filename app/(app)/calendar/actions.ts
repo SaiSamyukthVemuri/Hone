@@ -478,6 +478,13 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
   if (!appointmentId) return { ok: false, error: "Missing appointment id." };
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Roles engine (0287). Existing-snapshot basis: every active practitioner, so nothing changes until an owner adopts new defaults.
+  const permission = await requirePermission(await createClient(), studio.id, "appt.cancel", {
+    appointment: appointmentId,
+  });
+  if (!permission.allowed) {
+    return { ok: false, error: "You don't have permission to cancel this appointment." };
+  }
 
   // P0-3: route the actual cancellation through the SECURITY DEFINER
   // RPC practitioner_cancel_appointment. The RPC validates the
@@ -691,6 +698,13 @@ export async function markAppointmentNoShowAction(
   if (!appointmentId) return { ok: false, error: "Missing appointment id." };
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Roles engine (0287). Existing-snapshot basis: every active practitioner, so nothing changes until an owner adopts new defaults.
+  const permission = await requirePermission(await createClient(), studio.id, "appt.mark_no_show", {
+    appointment: appointmentId,
+  });
+  if (!permission.allowed) {
+    return { ok: false, error: "You don't have permission to mark this appointment as a no-show." };
+  }
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot mark no-shows." };
   }
