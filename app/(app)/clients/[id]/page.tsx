@@ -273,6 +273,11 @@ export default async function ClientCheatSheetPage({
   const canViewIntakePromise = createClient()
     .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
     .then((d) => d.allowed);
+  // clin.view_aftercare guards the postcare send times and attempts on the Sessions tab. Started un-awaited (no serial stage); it joins
+  // the single parallel wave below.
+  const canViewAftercarePromise = createClient()
+    .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
+    .then((d) => d.allowed);
   const canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed;
   const priceReads = { includePrices: isOwner, includeSessions: canViewRecords };
   const data = await getClientById(studio.id, id, priceReads);
@@ -388,12 +393,13 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     overviewVisitAppointments,
+    canViewAftercare,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
     // on the Sessions tab.
     needsSessionsData
-      ? getAppointmentsForClientProfile(studio.id, client.id)
+      ? canViewAftercarePromise.then((includeAftercare) => getAppointmentsForClientProfile(studio.id, client.id, { includeAftercare }))
       : Promise.resolve([] as Awaited<ReturnType<typeof getAppointmentsForClientProfile>>),
     // Rendered outside every tab block, so always needed.
     getActiveServices(studio.id, priceReads),
@@ -478,6 +484,7 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
+    canViewAftercarePromise,
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -1808,6 +1815,7 @@ export default async function ClientCheatSheetPage({
           <ClientAppointmentTimeline
             clientId={client.id}
             rows={appointmentTimeline}
+            aftercareAvailable={canViewAftercare}
           />
 
           {/* PR #197 (Chloe round 3): "Charted" and "Session history"

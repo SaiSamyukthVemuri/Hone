@@ -171,6 +171,9 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
     return { ok: false, error: "Inactive practitioners cannot review intakes." };
   }
 
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_intake", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
   const supabase = await createClient();
 
   // 0246 requires every serving/rollback reader to decode known provenance
@@ -301,6 +304,9 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
     return { ok: false, error: "Inactive practitioners cannot edit intakes." };
   }
 
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_intake", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("client_intake_forms")
