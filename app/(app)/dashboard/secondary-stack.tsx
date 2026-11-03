@@ -230,9 +230,15 @@ export async function SecondaryStack({
       {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
           not its counts, period filter or copy, is rendered into the response. the metrics loader itself no longer runs for a non-owner (WS-DB); the roll-up they need comes from `getProcedureActionMetrics`. */}
       {!isOwner && personalCharting !== null && (
-        <PersonalChartingCard
-          metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
-        />
+        personalCharting !== CHECK_UNAVAILABLE && personalCharting.notAvailable ? (
+          <p role="status" data-testid="personal-charting-not-available" className="text-sm text-neutral-500">
+            Charting timeliness is not available to your role.
+          </p>
+        ) : (
+          <PersonalChartingCard
+            metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
+          />
+        )
       )}
       {isOwner && staffManagedUnknown && (
         <p

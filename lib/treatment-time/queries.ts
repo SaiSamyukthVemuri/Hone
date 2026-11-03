@@ -69,6 +69,8 @@ async function loadElectrolysisRows(
   clientId: string,
 ): Promise<Row[]> {
   const supabase = await createClient();
+  // Roles R4: treatment data. Without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return [];
   const { data, error } = await supabase
     .from("sessions")
     .select(

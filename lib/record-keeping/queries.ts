@@ -970,6 +970,9 @@ export type LotTraceability = {
   lot: string;
   sterileItems: RecordKeepingSterileItem[];
   usages: LotUsage[];
+  // True when the viewer lacks clin.view_records: usages were NOT read, so an empty list is not "never used". Sterile items are
+  // operational records and are still returned.
+  usagesNotAvailable?: true;
 };
 
 export async function getLotTraceability(
@@ -982,7 +985,17 @@ export async function getLotTraceability(
 
   const supabase = await createClient();
   // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
-  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { lot, sterileItems: [], usages: [] };
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) {
+    const { data: items, error } = await supabase
+      .from("record_keeping_sterile_items")
+      .select("*")
+      .eq("studio_id", studioId)
+      .ilike("lot_number", pattern)
+      .order("date_purchased", { ascending: false })
+      .limit(50);
+    if (error) throw new Error("Failed to load lot traceability");
+    return { lot, sterileItems: (items ?? []) as RecordKeepingSterileItem[], usages: [], usagesNotAvailable: true };
+  }
   const [
     { data: items, error: itemsError },
     { data: blockRows, error: blockRowsError },

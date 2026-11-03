@@ -1181,7 +1181,11 @@ function LotTraceabilityPanel({
         <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
           Used in
         </p>
-        {trace.usages.length === 0 ? (
+        {trace.usagesNotAvailable ? (
+          <p data-testid="lot-usage-not-available" className="mt-0.5 text-xs text-neutral-500">
+            Lot usage is not available to your role. Ask the owner for a recall trace.
+          </p>
+        ) : trace.usages.length === 0 ? (
           <p className="mt-0.5 text-xs text-neutral-500">
             {trace.sterileItems.length > 0
               ? "No charted treatment areas have used this lot yet."
