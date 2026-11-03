@@ -462,6 +462,64 @@ describe("the page can tell when a reason is needed: sensitive flag and conseque
   });
 });
 
+// avail.* are three independent on/off keys; "own" versus "colleague" is the app choosing between avail.manage_own and avail.manage_others
+// (lib/permissions/enforcement-wiring.test.ts proves which key each action asks). This proves the keys the app asks resolve as promised.
+describe("avail.* keys: existing snapshot is unchanged, ON and OFF are independent, other studios are refused", () => {
+  const AVAIL = ["avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"] as const;
+  const setBasis = (studioId: string, basis: "existing_snapshot" | "new_studio") =>
+    adminQuery("update public.studio_permission_policy set basis=$2 where studio_id=$1", [studioId, basis]);
+  const store = (studioId: string, role: Role, key: string, scope: Scope) =>
+    adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,$2,$3,$4) on conflict (studio_id,role,key) do update set scope=excluded.scope", [studioId, role, key, scope]);
+
+  it("existing snapshot: the owner holds all three, a practitioner and a receptionist hold none (no behaviour change)", async () => {
+    const s = await seedStudio("avail-snap");
+    const p = await seedMember(s, "pa");
+    const d = await seedDesk(s, "front");
+    await setBasis(s.studioId, "existing_snapshot");
+    for (const k of AVAIL) {
+      expect(await can(s.userId, s.studioId, k), `owner ${k}`).toBe(true);
+      expect(await can(p.userId, s.studioId, k), `practitioner ${k}`).toBe(false);
+      expect(await can(d.userId, s.studioId, k), `receptionist ${k}`).toBe(false);
+    }
+  });
+
+  it("key ON affects only that key; turning it OFF again refuses on the next request", async () => {
+    const s = await seedStudio("avail-onoff");
+    const p = await seedMember(s, "pa");
+    await setBasis(s.studioId, "existing_snapshot");
+    await store(s.studioId, "practitioner", "avail.manage_own", "studio");
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(true);
+    expect(await can(p.userId, s.studioId, "avail.manage_others")).toBe(false); // own is not colleague
+    expect(await can(p.userId, s.studioId, "avail.manage_studio_hours")).toBe(false);
+    await store(s.studioId, "practitioner", "avail.manage_own", "off");
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(false);
+    await store(s.studioId, "practitioner", "avail.manage_others", "studio");
+    expect(await can(p.userId, s.studioId, "avail.manage_others")).toBe(true);
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(false); // colleague is not own
+  });
+
+  it("new studio: a practitioner manages their own hours only; nobody gains colleague or studio hours", async () => {
+    const s = await seedStudio("avail-new");
+    const p = await seedMember(s, "pa");
+    await setBasis(s.studioId, "new_studio");
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(true);
+    expect(await can(p.userId, s.studioId, "avail.manage_others")).toBe(false);
+    expect(await can(p.userId, s.studioId, "avail.manage_studio_hours")).toBe(false);
+  });
+
+  it("another studio's owner and practitioner are refused even when the key is ON here", async () => {
+    const s = await seedStudio("avail-x");
+    const other = await seedStudio("avail-y");
+    const op = await seedMember(other, "pz");
+    await setBasis(s.studioId, "existing_snapshot");
+    await store(s.studioId, "practitioner", "avail.manage_own", "studio");
+    for (const k of AVAIL) {
+      expect(await can(other.userId, s.studioId, k), `foreign owner ${k}`).toBe(false);
+      expect(await can(op.userId, s.studioId, k), `foreign practitioner ${k}`).toBe(false);
+    }
+  });
+});
+
 describe("change_staff_role is behind the operator gate, needs a reason to widen, and locks upcoming appointments (Privacy E2, Insurance RB-3, RB-5)", () => {
   const callRole = (u: string, s: string, m: string, to: string, from: string, reason: string | null) =>
     call(u, "select public.change_staff_role($1,$2,$3,$4,$5) as r", [s, m, to, from, reason]);
@@ -579,6 +637,7 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
     const base = await counts(adminQuery);
     class Rollback extends Error {}
     let gone: Record<string, unknown> = {};
+    let realError: { code?: string; message?: string } = {};
     try {
       await adminTx(async (q) => {
         // the file opens its own begin/commit; run its body statements inside this test's transaction instead of committing
@@ -591,12 +650,23 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
                   to_regclass('public.studio_role_permissions') is null as t3,
                   not exists (select 1 from pg_trigger where tgname='studios_permission_policy_seed_trg') as trg`,
         )).rows[0];
+        // the REAL error Postgres gives for the missing engine, fed to the app's detector (release-order fallback, Privacy X1)
+        await q("savepoint probe");
+        try {
+          await q("select public.has_studio_permission($1,'appt.book',null,null,null)", [randomUUID()]);
+        } catch (e) {
+          realError = { code: (e as { code?: string }).code, message: (e as Error).message };
+        }
+        await q("rollback to savepoint probe");
         throw new Rollback();
       });
     } catch (e) {
       if (!(e instanceof Rollback)) throw e;
     }
     expect(gone).toEqual({ fn: true, role_fn: true, t1: true, t2: true, t3: true, trg: true });
+    expect(realError.code).toBe("42883");
+    const { isEngineAbsent } = await import("@/lib/permissions/require-permission");
+    expect(isEngineAbsent(realError)).toBe(true); // with the engine dropped the app falls back to legacy checks, it does not lock out
     expect(await counts(adminQuery)).toEqual(base); // nothing else moved
     // the transaction rolled back: the engine is still there
     expect((await getp(s.userId, s.studioId)).ok).toBe(true);

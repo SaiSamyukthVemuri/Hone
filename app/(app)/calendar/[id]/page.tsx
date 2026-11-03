@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -108,6 +109,9 @@ export default async function AppointmentDetailPage({
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
+  // Roles engine (0287): the aftercare section (what is sent and its state) needs clin.view_aftercare. Existing-snapshot basis:
+  // every active practitioner (unchanged). Sending is a separate key (appt.aftercare_send).
+  const canViewAftercare = (await requirePermission(supabase, studio.id, "clin.view_aftercare", { appointment: id })).allowed;
 
   const { data, error } = await supabase
     .from("appointments")
@@ -559,7 +563,7 @@ export default async function AppointmentDetailPage({
           renders a clear "Postcare unavailable: no client email"
           state instead of vanishing when the client has no EMAIL. (A deleted
           client row is a different case and still renders nothing.) */}
-      {data.client && (
+      {data.client && canViewAftercare && (
         <PostcareSection
           clientEmail={data.client?.email ?? null}
           appointmentStatus={typedStatus}

@@ -12,6 +12,14 @@ set local lock_timeout = '5s';
 
 drop trigger if exists studios_permission_policy_seed_trg on public.studios;
 
+-- Tables first: the audit table's triggers depend on a helper function, so the function cannot be dropped before the table.
+drop table if exists public.permission_audit;
+drop table if exists public.permission_ship_gates;
+drop table if exists public.studio_role_permissions;
+drop table if exists public.studio_permission_policy;
+drop table if exists public.permission_narrowings;
+drop table if exists public.permission_catalog;
+
 drop function if exists public.change_staff_role(uuid, uuid, text, text, text);
 drop function if exists public.list_permission_audit(uuid, integer, bigint);
 drop function if exists public.effective_access(uuid, uuid);
@@ -40,10 +48,4 @@ begin
   end loop;
 end $$;
 
-drop table if exists public.permission_audit;
-drop table if exists public.permission_ship_gates;
-drop table if exists public.studio_role_permissions;
-drop table if exists public.studio_permission_policy;
-drop table if exists public.permission_narrowings;
-drop table if exists public.permission_catalog;
 commit;

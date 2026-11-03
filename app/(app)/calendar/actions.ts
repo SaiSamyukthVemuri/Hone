@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { generateCancellationToken } from "@/lib/booking/tokens";
@@ -198,6 +199,15 @@ export async function bookAppointmentForClientAction(
       : practitioner.id;
 
   const supabase = await createClient();
+
+  // Roles engine (0287): on the existing-snapshot basis this answers exactly as the checks above do (an owner holds
+  // every key; a practitioner books for themselves), so behaviour is unchanged until an owner adopts new defaults.
+  const bookPermission = await requirePermission(supabase, studio.id, "appt.book", {
+    practitioner: targetPractitionerId,
+  });
+  if (!bookPermission.allowed) {
+    return { ok: false, error: "You don't have permission to book this appointment." };
+  }
 
   // Pull service for duration; also confirms it's in this studio.
   const { data: service, error: serviceErr } = await supabase
@@ -468,6 +478,13 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
   if (!appointmentId) return { ok: false, error: "Missing appointment id." };
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Roles engine (0287). Existing-snapshot basis: every active practitioner, so nothing changes until an owner adopts new defaults.
+  const permission = await requirePermission(await createClient(), studio.id, "appt.cancel", {
+    appointment: appointmentId,
+  });
+  if (!permission.allowed) {
+    return { ok: false, error: "You don't have permission to cancel this appointment." };
+  }
 
   // P0-3: route the actual cancellation through the SECURITY DEFINER
   // RPC practitioner_cancel_appointment. The RPC validates the
@@ -613,6 +630,12 @@ export async function markAppointmentCompleteAction(
     return { ok: false, error: "Inactive practitioners cannot mark appointments complete." };
   }
 
+  // Roles engine (0287), OBSERVE mode: today any active practitioner may complete any started appointment and the
+  // assigned-only rule waits for #1315/0277, so this records what the engine would say and never blocks.
+  await requirePermission(await createClient(), studio.id, "appt.complete", {
+    appointment: appointmentId,
+  });
+
   const { createAdminClient } = await import("@/lib/supabase/admin-server");
   const admin = createAdminClient();
   const { error: rpcErr } = await admin.rpc("mark_appointment_complete", {
@@ -675,6 +698,13 @@ export async function markAppointmentNoShowAction(
   if (!appointmentId) return { ok: false, error: "Missing appointment id." };
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Roles engine (0287). Existing-snapshot basis: every active practitioner, so nothing changes until an owner adopts new defaults.
+  const permission = await requirePermission(await createClient(), studio.id, "appt.mark_no_show", {
+    appointment: appointmentId,
+  });
+  if (!permission.allowed) {
+    return { ok: false, error: "You don't have permission to mark this appointment as a no-show." };
+  }
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot mark no-shows." };
   }

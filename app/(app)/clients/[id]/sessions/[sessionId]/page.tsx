@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -119,6 +120,10 @@ export default async function SessionDetailPage({
   );
 
   if (!clientData || !session) notFound();
+
+  // Roles engine (0287): the treatment chart. Without clin.view_records the page is the same not-found as a missing chart.
+  // Existing-snapshot basis: every active practitioner (unchanged).
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed) notFound();
 
   // ------------------------------------------------------------------
   // SESSION-START-01 slice 2A. ONE WAVE, not eight round trips.

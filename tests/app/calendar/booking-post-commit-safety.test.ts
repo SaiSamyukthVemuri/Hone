@@ -26,6 +26,10 @@ const booking = vi.hoisted(() => ({
   rpc: vi.fn(async () => ({ data: [{ result: booking.rpcResult, appointment_id: "appointment" }], error: booking.rpcError })),
   event: vi.fn(),
 }));
+// The Roles engine has its own tests; this file is about the action around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({
   practitioner: { id: "A", role: "owner", active: true, display_name: "Owner A", email: "a@example.test" },
