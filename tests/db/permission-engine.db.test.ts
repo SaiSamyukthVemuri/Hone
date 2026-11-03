@@ -74,7 +74,6 @@ describe("seed parity and resolver parity with lib/permissions/catalog.ts", () =
       expect([r.gate_practitioner, r.gate_receptionist], d.key).toEqual([d.shipGate?.practitioner ?? null, d.shipGate?.receptionist ?? null]);
       expect(r.sensitive, d.key).toBe(!!d.sensitive);
       expect(r.consequence, d.key).toBe(consequenceClass(d));
-      expect(r.enforcement, d.key).toBe(d.enforcement ?? "not_yet");
     }
   });
 
@@ -457,7 +456,7 @@ describe("the page can tell when a reason is needed: sensitive flag and conseque
     const s = await seedStudio("engine-consequence");
     const r = await getp(s.userId, s.studioId);
     expect(Object.keys(r.keys).sort()).toEqual(DEFS.map((d) => d.key).sort());
-    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d), enforcement: d.enforcement ?? "not_yet" });
+    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d) });
     expect(r.keys["pay.refund"].consequence).toBe("financial");
     expect(r.keys["appt.cancel"].consequence).toBeNull();
     expect(Object.values(r.keys).some((k: any) => k.consequence === "destructive")).toBe(false);
