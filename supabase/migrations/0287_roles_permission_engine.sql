@@ -606,10 +606,10 @@ begin
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
       -- A reason and a confirmation are required when a SENSITIVE key's EFFECTIVE scope rises for any affected role, whether the owner
       -- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.
-      select v_sens || coalesce(jsonb_agg(a.key order by a.key), '[]'::jsonb) into v_sens
-        from jsonb_each_text(v_after_eff -> v_role) a
-        join public.permission_catalog c on c.key = a.key
-       where c.sensitive and public.perm_rank(a.value) > public.perm_rank(v_before_eff -> v_role ->> a.key);
+      select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after_eff -> v_role) e
+        join public.permission_catalog pc on pc.key = e.key
+       where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before_eff -> v_role ->> e.key);
     end loop;
     v_widen := jsonb_array_length(v_sens) > 0;
 
@@ -976,10 +976,6 @@ begin
   if p_new_role = p_expected_current_role then return public.perm_fail('nothing_changed'); end if;
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
   if v_reason is not null and not public.perm_reason_ok(v_reason) then return public.perm_fail('reason_invalid'); end if;
-  -- Moving a receptionist to practitioner widens clinical access, so a meaningful reason is required (Insurance RB-3).
-  if p_expected_current_role = 'receptionist' and p_new_role = 'practitioner' and v_reason is null then
-    return public.perm_fail('reason_required');
-  end if;
 
   if p_expected_current_role = 'practitioner' then
     select pr.user_id, pr.display_name, pr.email, pr.active into v_user, v_name, v_email, v_active
@@ -997,6 +993,10 @@ begin
   end if;
   if v_user is not null and v_user = auth.uid() then return public.perm_fail('self_change'); end if;
   if not v_active then return public.perm_fail('not_active'); end if;
+  -- (After the membership checks, so a refusal never depends on the reason.) Moving a receptionist to practitioner widens clinical access, so a meaningful reason is required (Insurance RB-3).
+  if p_expected_current_role = 'receptionist' and p_new_role = 'practitioner' and v_reason is null then
+    return public.perm_fail('reason_required');
+  end if;
 
   if p_expected_current_role = 'practitioner' then
     -- Lock the practitioner's future appointments, then count EVERY one that is not cancelled (confirmed, completed, no_show), so a
