@@ -517,6 +517,8 @@ describe("avail.* keys: existing snapshot is unchanged, ON and OFF are independe
       expect(await can(other.userId, s.studioId, k), `foreign owner ${k}`).toBe(false);
       expect(await can(op.userId, s.studioId, k), `foreign practitioner ${k}`).toBe(false);
     }
+  });
+});
 
 describe("change_staff_role is behind the operator gate, needs a reason to widen, and locks upcoming appointments (Privacy E2, Insurance RB-3, RB-5)", () => {
   const callRole = (u: string, s: string, m: string, to: string, from: string, reason: string | null) =>

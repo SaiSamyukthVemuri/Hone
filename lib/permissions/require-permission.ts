@@ -14,6 +14,11 @@ import { catalogByKey } from "./catalog";
 //   observe  the snapshot is an approved policy the database does not enforce yet (appt.complete: today any
 //            practitioner can complete any started appointment; assigned-only waits for #1315/0277). Denying
 //            would narrow behaviour, so the answer is logged and never blocks. Fails OPEN, by design, and only here.
+//
+// Release order (Privacy X1): the engine is migration 0287, which is applied BEFORE this app. If the database says the engine does not
+// exist at all (has_studio_permission is missing), enforcement is not active yet: the helper reports `engineAbsent`, allows, and the
+// action keeps the legacy checks it always had (studio, role, owner). It alerts the operator once per process, never refuses everyone.
+// Only "the function does not exist" counts as absent; an engine that is present but errors, throws or answers oddly still fails closed.
 
 export type PermissionMode = "enforce" | "observe";
 
@@ -34,7 +39,40 @@ export type PermissionDecision = {
   mode: PermissionMode;
   // What the engine said (null when it could not be read).
   engine: boolean | null;
+  // True when the engine is not installed in this database. Then `allowed` is true and the caller's legacy checks stand.
+  engineAbsent?: boolean;
 };
+
+// Postgres 42883 (undefined_function) or PostgREST PGRST202 (function not in the schema cache): the function itself is missing.
+export function isEngineAbsent(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  const text = typeof message === "string" ? message : "";
+  // PGRST202 is raised for the function the call named. 42883 must name has_studio_permission itself: a present engine whose inner helper is
+  // missing (a partial apply) is NOT "absent", and must keep failing closed.
+  if (code === "PGRST202") return true;
+  if (code === "42883") return /has_studio_permission/i.test(text);
+  return /could not find the function public\.has_studio_permission/i.test(text);
+}
+
+let engineAbsentAlerted = false;
+// Test hook: the alert fires once per process.
+export function resetEngineAbsentAlert(): void {
+  engineAbsentAlerted = false;
+}
+function alertEngineAbsentOnce(): void {
+  if (engineAbsentAlerted) return;
+  engineAbsentAlerted = true;
+  console.error(
+    JSON.stringify({
+      event: "permission_engine_absent",
+      ops_alert: true,
+      severity: "high",
+      message: "has_studio_permission is missing: permission enforcement is inactive and legacy checks apply. Apply migration 0287 before the app that enforces it.",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
 
 export function permissionMode(key: string): PermissionMode {
   const def = catalogByKey.get(key);
@@ -51,6 +89,7 @@ export async function requirePermission(
 ): Promise<PermissionDecision> {
   const mode = permissionMode(key);
   let engine: boolean | null = null;
+  let absent = false;
   try {
     const { data, error } = await db.rpc("has_studio_permission", {
       p_studio: studioId,
@@ -60,8 +99,15 @@ export async function requirePermission(
       p_practitioner: ctx.practitioner ?? null,
     });
     if (!error && typeof data === "boolean") engine = data;
-  } catch {
+    else if (error && isEngineAbsent(error)) absent = true;
+  } catch (e) {
     engine = null;
+    absent = isEngineAbsent(e);
+  }
+
+  if (absent) {
+    alertEngineAbsentOnce();
+    return { allowed: true, mode, engine: null, engineAbsent: true };
   }
 
   if (mode === "observe") {

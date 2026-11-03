@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { permissionMode, requirePermission, type PermissionDb } from "@/lib/permissions/require-permission";
+import { isEngineAbsent, permissionMode, requirePermission, resetEngineAbsentAlert, type PermissionDb } from "@/lib/permissions/require-permission";
 
 const db = (data: unknown, error: unknown = null): PermissionDb & { rpc: ReturnType<typeof vi.fn> } => ({
   rpc: vi.fn(async () => ({ data, error })),
@@ -42,5 +42,43 @@ describe("requirePermission", () => {
     expect(Object.keys(line).sort()).toEqual(["appointmentId", "engine", "event", "key", "timestamp"]);
     expect((await requirePermission(db(null, { code: "x" }), "S", "appt.complete")).allowed).toBe(true);
     warn.mockRestore();
+  });
+
+  describe("release order: the engine (0287) may not be installed yet (Privacy X1)", () => {
+    const absent = (code = "42883") => db(null, { code, message: "function public.has_studio_permission(uuid, text, uuid, uuid, uuid) does not exist" });
+
+    it("absent engine: allow so the legacy checks stand, in BOTH modes, and alert the operator exactly once", async () => {
+      resetEngineAbsentAlert();
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      for (const key of ["appt.book", "clin.view_photos", "appt.complete"]) {
+        expect(await requirePermission(absent(), "S", key), key).toMatchObject({ allowed: true, engineAbsent: true, engine: null });
+      }
+      expect(await requirePermission(absent("PGRST202"), "S", "appt.cancel")).toMatchObject({ allowed: true, engineAbsent: true });
+      const alerts = err.mock.calls.map((c) => JSON.parse(String(c[0]))).filter((l) => l.event === "permission_engine_absent");
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toMatchObject({ ops_alert: true });
+      expect(JSON.stringify(alerts[0])).not.toMatch(/"S"|client|email/);
+      err.mockRestore();
+    });
+
+    it("present engine: enforcement is active, so a no is a refusal and any other failure still fails closed", async () => {
+      resetEngineAbsentAlert();
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      expect(await requirePermission(db(false), "S", "appt.book")).toMatchObject({ allowed: false });
+      expect(await requirePermission(db(true), "S", "appt.book")).toMatchObject({ allowed: true });
+      expect(await requirePermission(db(null, { code: "57014", message: "timeout" }), "S", "appt.book")).toMatchObject({ allowed: false });
+      expect(await requirePermission(db(null, { code: "42501", message: "permission denied for function has_studio_permission" }), "S", "appt.book")).toMatchObject({ allowed: false });
+      expect(err.mock.calls.filter((c) => String(c[0]).includes("permission_engine_absent"))).toHaveLength(0);
+      err.mockRestore();
+    });
+
+    it("only a missing has_studio_permission counts as absent", () => {
+      expect(isEngineAbsent({ code: "42883", message: "function public.has_studio_permission(uuid) does not exist" })).toBe(true);
+      expect(isEngineAbsent({ code: "42883", message: "function public.perm_actor(uuid) does not exist" })).toBe(false); // partial apply fails closed
+      expect(isEngineAbsent({ code: "PGRST202" })).toBe(true);
+      expect(isEngineAbsent({ code: "42501" })).toBe(false);
+      expect(isEngineAbsent({ message: "boom" })).toBe(false);
+      expect(isEngineAbsent(null)).toBe(false);
+    });
   });
 });

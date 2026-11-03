@@ -53,6 +53,28 @@ export default async function ClientImagesPage({
   if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
 
+  // Roles engine (0287), the STORAGE plane. Without clin.view_photos nothing about the photos is listed: no rows, dates, counts or
+  // consent label (Insurance RC-4), and no URL is signed. One neutral line instead.
+  const canViewPhotos = (await requirePermission(supabase, studio.id, "clin.view_photos", { client: id })).allowed;
+  if (!canViewPhotos) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Link
+          href={`/clients/${id}`}
+          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          ← {client.name}
+        </Link>
+        <header>
+          <h1 className="text-3xl font-semibold tracking-tight">Treatment Photos</h1>
+        </header>
+        <p role="status" data-testid="photos-not-available" className="text-sm text-neutral-500">
+          Photos are not available to your role.
+        </p>
+      </div>
+    );
+  }
+
   // PR #274: also select the existing context links (session_id /
   // session_block_id) and embed the attached session block's structured area
   // fields (primary_area / side / custom_area_detail) so each card can show
@@ -98,8 +120,6 @@ export default async function ClientImagesPage({
       .filter((x): x is string => Boolean(x)),
     studio.id,
   );
-  // Roles engine (0287), the STORAGE plane: without clin.view_photos no URL is signed and every card reads "Image not available".
-  const canViewPhotos = (await requirePermission(supabase, studio.id, "clin.view_photos", { client: id })).allowed;
   const admin = createAdminClient();
   const rows = await Promise.all(
     meta.map(async (m) => {
