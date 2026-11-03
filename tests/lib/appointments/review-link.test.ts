@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldShowReviewLink } from "@/lib/appointments/review-link";
+import { CANDIDATE_LIMIT, MAX_CANDIDATE_IDS, shouldShowReviewLink } from "@/lib/appointments/review-link";
 
 // Sam 2 Nov: the review link is hidden for a solo owner with nothing to review, shown once another practitioner is ACTIVE, and shown in a
 // solo studio that still has rows the review page would list. Pending invitations and receptionists are not practitioner rows.
@@ -12,6 +12,7 @@ type Appt = { id: string; status?: string; starts_at: string; practitioner_id: s
 // query's meaning and not just its shape.
 function db(opts: { pracs: Prac[] | Error; appts?: Appt[] | Error }) {
   const log: { table: string; select: string; head: boolean }[] = [];
+  const inSizes: number[] = [];
   const fromAppointments = (select: string, o?: { count?: string; head?: boolean }) => {
     const top: ((a: Appt) => boolean)[] = [];
     const emb: ((s: Sess) => boolean)[] = [];
@@ -27,7 +28,7 @@ function db(opts: { pracs: Prac[] | Error; appts?: Appt[] | Error }) {
       neq: (c: string, v: unknown) => (col(c, (x) => x !== v), chain),
       is: (c: string, v: unknown) => (col(c, (x) => (x ?? null) === v), chain),
       not: (c: string, op: string, v: unknown) => (op === "is" ? col(c, (x) => (x ?? null) !== v) : null, chain),
-      in: (c: string, v: string[]) => (col(c, (x) => v.includes(x as string)), chain),
+      in: (c: string, v: string[]) => (inSizes.push(v.length), col(c, (x) => v.includes(x as string)), chain),
       limit: (n: number) => ((limit = n), chain),
       then: (resolve: (v: unknown) => void) => {
         if (opts.appts instanceof Error) return resolve({ data: null, error: { code: "XX" }, count: null });
@@ -41,6 +42,7 @@ function db(opts: { pracs: Prac[] | Error; appts?: Appt[] | Error }) {
   };
   return {
     log,
+    inSizes,
     client: {
       from: (table: string) => {
         if (table === "practitioners") {
@@ -108,6 +110,24 @@ describe("shouldShowReviewLink", () => {
     expect(await shouldShowReviewLink("s", t.client)).toBe(false);
     expect(t.log.filter((x) => x.table === "appointments")).toHaveLength(3);
     expect(t.log.filter((x) => x.head)).toHaveLength(1);
+  });
+  it("V-2b: the candidate limit bounds the final id filter, so its URL stays far under the gateway line limit", async () => {
+    // worst case: both reads return LIMIT - 1 distinct rows. A uuid is 36 characters; PostgREST joins them with commas (%2C when encoded).
+    const worst = `id=in.(${Array.from({ length: MAX_CANDIDATE_IDS }, () => "00000000-0000-4000-8000-000000000000").join(",")})`;
+    expect(MAX_CANDIDATE_IDS).toBe(2 * (CANDIDATE_LIMIT - 1));
+    expect(encodeURIComponent(worst).length).toBeLessThan(4096); // half of a typical 8 KB gateway line limit
+    expect(CANDIDATE_LIMIT).toBeLessThanOrEqual(50);
+    // and the code really sends no more ids than that: 49 + 49 distinct candidates (one short of a full page each)
+    const gone = Array.from({ length: CANDIDATE_LIMIT - 1 }, (_, i) => appt({ id: `x${i}`, practitioner_id: "gone", created_by_practitioner_id: "other", sessions: [sess("o")] }));
+    const other = Array.from({ length: CANDIDATE_LIMIT - 1 }, (_, i) => appt({ id: `y${i}`, sessions: [sess("gone")] }));
+    const t = db({ pracs: [owner], appts: [...gone, ...other] });
+    await shouldShowReviewLink("s", t.client);
+    expect(t.inSizes).toHaveLength(1);
+    expect(t.inSizes[0]).toBeLessThanOrEqual(MAX_CANDIDATE_IDS);
+  });
+  it("a read that fills the (smaller) candidate page shows the link rather than guess", async () => {
+    const flood = Array.from({ length: CANDIDATE_LIMIT }, (_, i) => appt({ id: `f${i}`, practitioner_id: "gone", created_by_practitioner_id: "other", sessions: [sess("o")] }));
+    expect(await shouldShowReviewLink("s", db({ pracs: [owner], appts: flood }).client)).toBe(true);
   });
   it("fails toward showing: an unreadable studio, an unreadable appointment list, or a full candidate page never hides the link", async () => {
     expect(await shouldShowReviewLink("s", db({ pracs: new Error("x") }).client)).toBe(true);

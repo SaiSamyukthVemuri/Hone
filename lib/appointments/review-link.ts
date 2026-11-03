@@ -12,7 +12,11 @@ type Db = Awaited<ReturnType<typeof createClient>>;
 // A solo studio can only have something to review in three ways: a confirmed appointment with no practitioner, or one whose
 // charted performer differs from its (former) practitioner. Both are found with a count and two bounded candidate reads instead of
 // paging every confirmed appointment; the exact page classifier then runs on the candidates only. A full candidate page fails toward SHOWING.
-const CANDIDATE_LIMIT = 100;
+// The final read names the candidates in ONE `id=in.(...)` URL filter, so the limit also bounds that URL (Insurance V-2b): each read returns
+// at most CANDIDATE_LIMIT - 1 rows before it fails toward showing, so the filter carries at most MAX_CANDIDATE_IDS uuids (about 3.7 KB encoded,
+// against a gateway line limit of about 8 KB). A test pins the bound.
+export const CANDIDATE_LIMIT = 50;
+export const MAX_CANDIDATE_IDS = 2 * (CANDIDATE_LIMIT - 1);
 const SELECT_FULL = "id, starts_at, practitioner_id, created_by_practitioner_id, sessions(performed_by_practitioner_id, started_at, deleted_at)";
 
 export async function shouldShowReviewLink(studioId: string, client?: Db): Promise<boolean> {
