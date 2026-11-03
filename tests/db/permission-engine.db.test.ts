@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, type PermissionDef, type Role, type Scope, type StudioPolicy, GATES } from "@/lib/permissions/catalog";
 import { consequenceClass } from "@/lib/permissions/consequence";
+import { releaseAllKeys } from "./helpers/permission-release";
 import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0287 (held): the permission engine, proved on the real migrated database. Synthetic values only.
@@ -57,6 +58,7 @@ beforeAll(async () => {
   prac2 = await seedMember(A, "pb");
   desk = await seedDesk(A, "front");
 });
+beforeAll(async () => releaseAllKeys());
 afterAll(async () => closePool());
 
 describe("seed parity and resolver parity with lib/permissions/catalog.ts", () => {
@@ -137,14 +139,14 @@ describe("basis, ownership and privileges", () => {
   });
 
   it("no API role can read or write the tables; anon and service_role cannot execute any command; authenticated can execute only the API", async () => {
-    for (const t of ["permission_catalog", "studio_permission_policy", "studio_role_permissions", "permission_ship_gates", "permission_audit", "permission_narrowings"]) {
+    for (const t of ["permission_catalog", "studio_permission_policy", "studio_role_permissions", "permission_ship_gates", "permission_audit", "permission_narrowings", "permission_key_release", "permission_key_activation"]) {
       for (const role of ["anon", "authenticated", "service_role"]) {
         const r = await adminQuery("select has_table_privilege($1, $2, 'select') or has_table_privilege($1, $2, 'insert') or has_table_privilege($1, $2, 'update') or has_table_privilege($1, $2, 'delete') as p", [role, `public.${t}`]);
         expect(r.rows[0].p, `${role}.${t}`).toBe(false);
       }
     }
-    const fns = (await adminQuery("select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'perm\\_%' or p.proname in ('has_studio_permission','preview_role_changes','save_role_permissions','preview_reset','reset_role_to_defaults','preview_adopt_new_defaults','adopt_new_defaults','get_role_permissions','effective_access','list_permission_audit','change_staff_role','studios_permission_policy_seed','permission_audit_append_only'))")).rows;
-    const api = new Set(["has_studio_permission", "preview_role_changes", "save_role_permissions", "preview_reset", "reset_role_to_defaults", "preview_adopt_new_defaults", "adopt_new_defaults", "get_role_permissions", "effective_access", "list_permission_audit", "change_staff_role"]);
+    const fns = (await adminQuery("select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'perm\\_%' or p.proname in ('has_studio_permission','preview_role_changes','save_role_permissions','preview_reset','reset_role_to_defaults','preview_adopt_new_defaults','adopt_new_defaults','preview_activation','activate_released_permissions','get_role_permissions','effective_access','list_permission_audit','change_staff_role','studios_permission_policy_seed','permission_audit_append_only'))")).rows;
+    const api = new Set(["has_studio_permission", "preview_role_changes", "save_role_permissions", "preview_reset", "reset_role_to_defaults", "preview_adopt_new_defaults", "adopt_new_defaults", "preview_activation", "activate_released_permissions", "get_role_permissions", "effective_access", "list_permission_audit", "change_staff_role"]);
     expect(fns.length).toBeGreaterThan(20);
     for (const f of fns) {
       for (const role of ["anon", "service_role"]) expect((await adminQuery("select has_function_privilege($1,$2,'execute') as p", [role, f.sig])).rows[0].p, `${role} ${f.sig}`).toBe(false);
