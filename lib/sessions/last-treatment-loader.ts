@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -574,6 +575,8 @@ export async function loadLastChartedTreatmentsForClients(input: {
   const out = new Map<string, AppointmentPrepLoad>();
   const requests = input.requests.filter((r) => Boolean(r.clientId) && Boolean(r.requestKey));
   if (requests.length === 0) return out;
+  // Roles R4: the previous treatment is treatment data. Without clin.view_records nothing is read and the map is empty.
+  if (!(await requirePermission(await createClient(), input.studioId, "clin.view_records")).allowed) return out;
 
   const perClient = Math.max(1, input.limitPerClient ?? DEFAULT_CHARTED_SESSION_LIMIT);
   const clientIds = [...new Set(requests.map((r) => r.clientId))];

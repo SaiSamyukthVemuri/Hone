@@ -6,8 +6,10 @@ import {
   catalogByKey,
   checkChange,
   effectiveScope,
+  enforcementOf as catalogEnforcementOf,
   scopeRank,
   scopesFor,
+  type EnforcementState,
   type PermissionDef,
   type SnapshotBasis,
   type Role,
@@ -48,22 +50,20 @@ export const SCOPE_LABELS: Record<Scope, string> = { off: "Off", own: "Own assig
 export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
   d.scopes.length === 2 ? (scope === "off" ? "Off" : "On") : SCOPE_LABELS[scope];
 
-// Whether the database/app yet enforces a key. The permission core reports it per key (get_role_permissions keys{key:{enforcement}});
-// the catalog entry carries the same value. ONLY "enforced" makes a key editable. Absent or unrecognised reads as "not_yet": a late or
-// missing flag makes the page more read-only, never more open (OPS decision, 3 Nov).
+// Whether the app yet enforces a key is a fact about APP WIRING, so it lives in the TypeScript catalog (`enforcement`, proven against the
+// wired keys by #1341's truth test) and NOT in the database (OPS decision, 3 Nov). ONLY "enforced" makes a key fully editable. An absent or
+// unrecognised value reads as "not_yet": a missing flag makes the page more read-only, never more open.
 // "deny_only": refusal works but a wider grant may be inert because a legacy check still stands in front, so the key can be set at or
-// BELOW the studio's current snapshot/default and wider options are disabled (OPS, 3 Nov). Only "enforced" takes effect both ways.
-export type Enforcement = "enforced" | "deny_only" | "observe" | "not_yet";
+// BELOW the studio's current snapshot/default and wider options are disabled. Only "enforced" takes effect both ways.
+export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
-export type EnforcementMap = Readonly<Record<string, string>>;
 export const NOT_ENFORCED_LINE = "Not enforced yet. This switch will apply when that area is wired.";
 export const ENFORCEMENT_SCOPE_LINE = "This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
-export function enforcementOf(key: string, map: EnforcementMap | undefined, catalogValue?: unknown): Enforcement {
-  // The core's report is the authority whenever the page has one (even an empty one: a key it does not name is not enforced). The
-  // catalog value is used only where no report is passed at all (the model's own unit tests).
-  const v = map ? map[key] : catalogValue;
-  return v === "enforced" || v === "deny_only" || v === "observe" ? v : "not_yet";
-}
+const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
+const enforcementState = (key: string): Enforcement => {
+  const v = catalogEnforcementOf(key);
+  return KNOWN_ENFORCEMENT.includes(v) ? v : "not_yet";
+};
 
 export type OptionState = { scope: Scope; label: string; selected: boolean; disabled: boolean; reason: string | null };
 
@@ -106,7 +106,7 @@ const dependentsOf = (key: string, role: Role): PermissionDef[] =>
 /** The scope a deny_only key may not be raised above: the studio's current baseline (new-studio default or existing snapshot). */
 const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scope => (policy.basis === "new_studio" ? d.newStudioDefault[role] : d.existingSnapshot[role]);
 
-export function buildRoleModel(role: Role, policy: StudioPolicy, enforcementMap?: EnforcementMap): RoleGroupModel[] {
+export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel[] {
   const defs = CATALOG as readonly PermissionDef[];
   const order = [...GROUPS, ...Array.from(new Set(defs.map((d) => d.group))).filter((g) => !(GROUPS as readonly string[]).includes(g))];
   const out: RoleGroupModel[] = [];
@@ -120,7 +120,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy, enforcementMap?
         : !d.offeredTo[role]
           ? `Not offered to ${ROLE_LABELS[role].toLowerCase()}s in this version.`
           : null;
-      const enforcement = enforcementOf(d.key, enforcementMap, (d as { enforcement?: unknown }).enforcement);
+      const enforcement = enforcementState(d.key);
       const options: OptionState[] = scopesFor(d, role).map((scope) => {
         const check = scope === chosen || locked ? ({ ok: true } as const) : checkChange(role, d.key, scope, policy);
         const widerThanBaseline = enforcement === "deny_only" && scope !== chosen && scopeRank(scope) > scopeRank(baselineScope(d, role, policy));
@@ -175,10 +175,9 @@ export function applyEdit(
   policy: StudioPolicy,
   key: string,
   next: Scope,
-  enforcementMap?: EnforcementMap,
 ): { ok: true; policy: StudioPolicy } | { ok: false; reason: string } {
-  if (enforcementMap) {
-    const mode = enforcementOf(key, enforcementMap, (catalogByKey.get(key) as { enforcement?: unknown } | undefined)?.enforcement);
+  {
+    const mode = enforcementState(key);
     if (mode === "observe" || mode === "not_yet") return { ok: false, reason: NOT_ENFORCED_LINE };
     const defOf = catalogByKey.get(key);
     if (mode === "deny_only" && defOf && scopeRank(next) > scopeRank(baselineScope(defOf, role, policy)) && policy.values[key] !== next) {
@@ -198,8 +197,8 @@ export function applyEdit(
 export type RoleSectionModel = { id: SectionId; label: string; common: RoleRow[]; advanced: RoleRow[] };
 
 /** The eight sections for a role, common actions first and finer controls under Advanced. Presentation only: every row is one key. */
-export function buildRoleSections(role: Role, policy: StudioPolicy, enforcementMap?: EnforcementMap): RoleSectionModel[] {
-  const rows = buildRoleModel(role, policy, enforcementMap).flatMap((g) => g.rows);
+export function buildRoleSections(role: Role, policy: StudioPolicy): RoleSectionModel[] {
+  const rows = buildRoleModel(role, policy).flatMap((g) => g.rows);
   return SECTIONS.map((s) => {
     const mine = rows.filter((r) => r.section === s.id);
     return { id: s.id, label: s.label, common: mine.filter((r) => !r.advanced), advanced: mine.filter((r) => r.advanced) };

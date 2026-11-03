@@ -502,7 +502,9 @@ export async function getClientById(
           .eq("client_id", clientId)
           .order("effective_from", { ascending: false })
       : Promise.resolve({ data: [] as ClientPricing[], error: null }),
-    supabase
+    options.includeSessions === false
+      ? Promise.resolve({ data: [] as unknown[], error: null })
+      : supabase
       .from("sessions")
       .select(
         `${includePrices ? "*" : SESSION_COLUMNS_WITHOUT_PRICE}, electrolysis_entries(*), laser_entries(*)`,

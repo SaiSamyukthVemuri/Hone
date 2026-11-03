@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
@@ -284,6 +285,8 @@ export async function getClientsNeedingAttention(
   studioId: string,
 ): Promise<ClientsNeedingAttention> {
   const supabase = await createClient();
+  // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return buildClientsNeedingAttention([], []);
   // HON-58: staff see the display name; the read still works before 0258 exists.
   const { data: sessionRows, error: sessionsError } = await readWithPreferredName((withPreferred) =>
     supabase

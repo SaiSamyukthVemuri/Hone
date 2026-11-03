@@ -1772,7 +1772,9 @@ export const MANDATORY: readonly string[] = [
 //             set at or below the studio's current value and disables wider options ("Widening arrives in a later release").
 //   observe   asked, but only logged: the snapshot is an approved policy the database does not enforce yet (appt.complete).
 //   not_yet   nothing asks it in this release.
-// tests/lib/permissions/enforcement-wiring.test.ts proves the keys marked here equal the keys the app actually asks.
+// This tree (R0) is data only and wires nothing, so EVERY key here is `not_yet` (the field is left unset). The enforcement branch that wires a key
+// sets the field on that key in the same change, and its truth test (tests/lib/permissions/enforcement-wiring.test.ts, #1341) proves the keys
+// marked equal the keys the app actually asks.
 export const enforcementOf = (key: string): EnforcementState => catalogByKey.get(key)?.enforcement ?? "not_yet";
 
 export const catalogByKey: ReadonlyMap<string, PermissionDef> = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));

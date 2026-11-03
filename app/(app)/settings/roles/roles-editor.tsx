@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
@@ -23,6 +23,7 @@ import {
   type RolePreview,
   type ServerPreview,
 } from "@/lib/settings/roles/api";
+import type { StudioPolicyState } from "@/lib/settings/roles/policy-store";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
@@ -52,8 +53,6 @@ export type RolesEditorProps = {
   reviewed: boolean;
   writable: boolean;
   notWritableReason: string | null;
-  // The core's per-key enforcement. Only "enforced" keys are editable; a key it does not name is shown as not enforced yet.
-  enforcement: Record<string, string>;
   // The operator ship gate for changing a person's role (change_staff_role). Off: the page says it is not available yet.
   staffRoleChange: boolean;
   initialView?: "people" | "permissions" | "history";
@@ -65,6 +64,8 @@ export type RolesEditorProps = {
   previewReset: (role: Role) => Promise<PreviewResult>;
   previewAdopt: () => Promise<PreviewResult>;
   save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string) => Promise<CommandResult>;
+  // The authoritative policy as the core holds it now; read after a save so the page never assumes its draft became the saved state.
+  reload: () => Promise<{ ok: true; state: StudioPolicyState } | { ok: false; error: RoleError }>;
   reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
   adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
   loadHistory: (before: string | null) => Promise<HistoryResult>;
@@ -72,7 +73,8 @@ export type RolesEditorProps = {
 };
 
 type View = "people" | "permissions" | "history";
-type Preview = { kind: "reset" | "adopt"; data: ServerPreview };
+// `role` is the role that was PREVIEWED: a reset is confirmed for that role, whatever tab is showing when the owner clicks.
+type Preview = { kind: "reset" | "adopt"; role: Role; data: ServerPreview };
 
 const scopeText = (s: Scope) => (s === "off" ? "Off" : s === "own" ? "Own assigned" : "Whole studio");
 
@@ -91,23 +93,25 @@ export function RolesEditor(props: RolesEditorProps) {
   const [reviewed, setReviewed] = useState(props.reviewed);
   const feedback = useSaveFeedback();
   const baseId = useId();
+  // Bumped whenever a pending preview stops being wanted (tab switch, cancel), so a late response is ignored.
+  const previewSeq = useRef(0);
 
   const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
   const dirty = dirtyRoles.length > 0;
   useUnsavedChangesGuard("roles-draft", dirty);
   const readOnly = !props.writable;
 
-  const sections = useMemo(() => buildRoleSections(role, drafts[role], props.enforcement), [role, drafts, props.enforcement]);
+  const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
   const savedRows = useMemo(
-    () => new Map(buildRoleSections(role, saved[role], props.enforcement).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
-    [role, saved, props.enforcement],
+    () => new Map(buildRoleSections(role, saved[role]).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
+    [role, saved],
   );
 
   const peopleWith = (r: Role) => props.people.filter((p) => p.role === r && p.state === "active");
   const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
 
   function choose(key: string, scope: Scope) {
-    const result = applyEdit(role, drafts[role], key, scope, props.enforcement);
+    const result = applyEdit(role, drafts[role], key, scope);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
       return;
@@ -164,8 +168,16 @@ export function RolesEditor(props: RolesEditorProps) {
     feedback.saving();
     const result = await props.save(changedEdits(), reviewData.version, confirmed, reason.trim());
     if (result.ok) {
-      setSaved(drafts);
-      setReviewed(true);
+      // The core owns what was saved: read it back rather than assume the draft became the saved state.
+      const fresh = await props.reload();
+      if (fresh.ok) {
+        setSaved(fresh.state.policies);
+        setDrafts(fresh.state.policies);
+        setReviewed(fresh.state.reviewed);
+      } else {
+        // Could not read it back: do not claim a state we have not seen. Refresh the page from the server.
+        router.refresh();
+      }
       setReviewing(false);
       setReviewData(null);
       setConfirmed(false);
@@ -188,15 +200,19 @@ export function RolesEditor(props: RolesEditorProps) {
 
   async function openPreview(kind: Preview["kind"]) {
     setReason("");
-    const r = await (kind === "adopt" ? props.previewAdopt() : props.previewReset(role));
-    if (r.ok) setPreview({ kind, data: r.preview });
+    const forRole = role;
+    const seq = ++previewSeq.current;
+    const r = await (kind === "adopt" ? props.previewAdopt() : props.previewReset(forRole));
+    // A tab switch or cancel while the core was answering makes this response stale: it belongs to a view that is gone.
+    if (seq !== previewSeq.current) return;
+    if (r.ok) setPreview({ kind, role: forRole, data: r.preview });
     else handleError(r.error);
   }
 
   async function confirmPreview() {
     if (!preview) return;
     feedback.saving();
-    const result = preview.kind === "adopt" ? await props.adopt(preview.data.version, reason.trim()) : await props.reset(role, preview.data.version, reason.trim());
+    const result = preview.kind === "adopt" ? await props.adopt(preview.data.version, reason.trim()) : await props.reset(preview.role, preview.data.version, reason.trim());
     if (result.ok) {
       // The core owns the resulting policy; reload to read it rather than guess it here.
       setPreview(null);
@@ -297,6 +313,7 @@ export function RolesEditor(props: RolesEditorProps) {
                 data-role-tab={r}
                 data-state={role === r ? "selected" : "idle"}
                 onClick={() => {
+                  previewSeq.current += 1;
                   setRole(r);
                   setPreview(null);
                   setRowError(null);
@@ -326,14 +343,17 @@ export function RolesEditor(props: RolesEditorProps) {
           {preview && (
             <PreviewPanel
               kind={preview.kind}
-              role={role}
+              role={preview.role}
               data={preview.data}
               canConfirm={props.writable && reasonAcceptable(preview.kind, false, reason)}
               blockedReason={props.writable ? null : props.notWritableReason}
               reason={reason}
               onReason={setReason}
               onConfirm={confirmPreview}
-              onCancel={() => setPreview(null)}
+              onCancel={() => {
+                previewSeq.current += 1;
+                setPreview(null);
+              }}
             />
           )}
 

@@ -15,7 +15,6 @@ export type StudioPolicyState = {
   version: number;
   writable: boolean;
   notWritableReason: string | null;
-  enforcement: Record<string, string>;
   staffRoleChange: boolean;
 };
 
@@ -33,9 +32,8 @@ export async function loadStudioPolicyState(studioId: string): Promise<StudioPol
       version: 0,
       writable: false,
       notWritableReason: NOT_WRITABLE_REASON,
-      enforcement: {},
       staffRoleChange: false,
     };
   }
-  return { policies: state.policies, reviewed: state.reviewed, version: state.version, writable: true, notWritableReason: null, enforcement: state.enforcement, staffRoleChange: state.staffRoleChange };
+  return { policies: state.policies, reviewed: state.reviewed, version: state.version, writable: true, notWritableReason: null, staffRoleChange: state.staffRoleChange };
 }

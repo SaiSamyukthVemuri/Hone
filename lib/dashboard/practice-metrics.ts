@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
@@ -435,6 +436,10 @@ export async function getPracticeDashboardMetrics(
 export async function getProcedureActionMetrics(
   studioId: string,
 ): Promise<ProcedureActionMetrics> {
+  // Roles R4: procedure completeness is derived from treatment records; without clin.view_records there is nothing to summarize.
+  if (!(await requirePermission(await createClient(), studioId, "clin.view_records")).allowed) {
+    return summarizeProcedureCompleteness([]);
+  }
   return summarizeProcedureCompleteness(
     await getClientProcedureRecords(studioId, { limit: PROCEDURE_RECORD_WINDOW }),
   );

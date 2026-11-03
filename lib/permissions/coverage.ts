@@ -104,7 +104,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "CLIN-21": { label: "Insert a session audit row directly", cls: "safeguard", keys: [] },
   "CLIN-22": { label: "Write the legacy photos table", cls: "safeguard", keys: [] },
   "CLIN-23": { label: "Read imported treatment memories ('Before today')", cls: "key", keys: ["clin.view_records"], matrix: ["clin.view_records"] },
-  "CLIN-24": { label: "Any receptionist clinical, photo, notes or intake access", cls: "owner_only", keys: [] },
+  "CLIN-24": { label: "Receptionist clinical access: view-only switches for records, photos, intake answers and aftercare (Q16)", cls: "key", keys: ["clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare"], matrix: ["clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare"] },
   "INT-1": { label: "Read intake answers, history, consent responses", cls: "key", keys: ["clin.view_intake"], matrix: ["clin.view_intake"] },
   "INT-2": { label: "Mark intake reviewed; save review notes", cls: "key", keys: ["clin.review_intake"], dn: ["DN-30"], team: true, matrix: ["clin.edit_intake"], departs: "Sam's DN-30 decision: reviewing intake is separately configurable from editing the answers" },
   "INT-3": { label: "Request update, get link, resend intake email", cls: "key", keys: ["comm.send_intake_link", "clin.view_intake_status"], dn: ["DN-9", "DN-30"], team: true, matrix: ["clin.view_intake", "comm.send_routine"], departs: "Sam's DN-9 decision: the intake link is its own messaging key and needs the intake STATUS read, never the answers" },

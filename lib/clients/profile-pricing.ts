@@ -52,6 +52,8 @@ export const SERVICE_COLUMNS_WITHOUT_PRICE = [
 export type ProfileReadOptions = {
   /** Owners only. Absent or false: no client pricing, session price or service price is fetched. */
   includePrices?: boolean;
+  /** Absent or true: the client's sessions are read. false (the viewer lacks clin.view_records): no session or entry row is read at all. */
+  includeSessions?: boolean;
 };
 
 /** The services column list for a read: "*" unless the caller must not carry the price. */

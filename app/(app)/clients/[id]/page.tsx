@@ -8,6 +8,7 @@ import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
@@ -264,7 +265,10 @@ export default async function ClientCheatSheetPage({
   // Sam's ruling: a non-owner's profile payload carries no client price, session
   // price or service price. The loaders are told, and do not fetch them.
   const isOwner = canViewClientBilling(practitioner.role);
-  const priceReads = { includePrices: isOwner };
+  // Roles engine (0287): clin.view_records covers EVERY treatment-record read on this profile. Off: no session, entry, block, imported
+  // treatment memory, treatment time or clinical-notes row is read, so every card derived from them is empty (never a stale or partial record).
+  const canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed;
+  const priceReads = { includePrices: isOwner, includeSessions: canViewRecords };
   const data = await getClientById(studio.id, id, priceReads);
 
   if (!data) {
@@ -322,7 +326,7 @@ export default async function ClientCheatSheetPage({
   const needsConsent = isOverview || isMessages || isOwnerBilling;
   // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
   const needsCard = isOwnerBilling;
-  const needsSessionsData = activeTab === "sessions";
+  const needsSessionsData = activeTab === "sessions" && canViewRecords;
   const needsTreatmentPlans = activeTab === "treatment";
   const needsPersonalNotes = activeTab === "notes";
   // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
@@ -448,7 +452,7 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve(null),
     // PR #259: read-only imported treatment memory for the Before Today
     // briefing. Overview card.
-    isOverview
+    isOverview && canViewRecords
       ? getImportedTreatmentMemoriesForClient(studio.id, client.id, {
           limit: BEFORE_TODAY_IMPORTED_CAP,
         })
@@ -655,7 +659,7 @@ export default async function ClientCheatSheetPage({
 
   await Promise.all([
     (async () => {
-      if (isOverview) {
+      if (isOverview && canViewRecords) {
         clinicalNotesSummary = await getClinicalNotesSummary(client.id);
       }
     })().catch((err: unknown) => {
@@ -1644,7 +1648,13 @@ export default async function ClientCheatSheetPage({
         </section>
       )}
 
-      {activeTab === "sessions" && (
+      {activeTab === "sessions" && !canViewRecords && (
+        <p role="status" data-testid="records-not-available" className="text-sm text-neutral-500">
+          Treatment records are not available to your role.
+        </p>
+      )}
+
+      {activeTab === "sessions" && canViewRecords && (
         <>
           {/* PR #191 (Chloe smoke feedback): the Sessions tab order is
                 hers, verbatim:
