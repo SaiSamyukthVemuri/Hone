@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // Activation rule (Sam, 3 Nov; held 0287). Synthetic values only.
@@ -37,7 +37,28 @@ const releaseNow = async (tag = "ACT-TEST") => { await clearReleases(); return a
 const dated = (s: SeededStudio, key: string, scope: string, ageDays: number) =>
   adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope,set_at) values ($1,'practitioner',$2,$3, now() - ($4 || ' days')::interval) on conflict (studio_id,role,key) do update set scope=excluded.scope, set_at=excluded.set_at", [s.studioId, key, scope, String(ageDays)]);
 
+// Every case starts and ends with no release rows for the two test keys, so no case inherits (or leaks) another's registry state and a
+// refusal case fails for the reason it names, not because of a duplicate-key error from a previous case.
+beforeEach(() => clearReleases());
+afterEach(() => clearReleases());
+
 describe("activation rule", () => {
+  it("Discard works: saving the snapshot value replaces an INACTIVE stored choice instead of reporting nothing_changed", async () => {
+    const s = await seedStudio("act0");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    const [k] = KEYS;
+    await dated(s, k.key, k.practitioner_new, 3);
+    await releaseNow();
+    const g = await getp(s.userId, s.studioId);
+    expect(g.roles.practitioner[k.key]).toMatchObject({ stored: k.practitioner_new, effective: k.practitioner_snap, source: "inactive_until_activated" });
+    const r = await call(s.userId, "select public.save_role_permissions($1,$2,$3::jsonb,$4,$5) as r", [s.studioId, g.version, JSON.stringify({ practitioner: { [k.key]: k.practitioner_snap } }), GOOD, true]);
+    expect(r.ok).toBe(true);
+    expect((await adminQuery("select scope from public.studio_role_permissions where studio_id=$1 and role='practitioner' and key=$2", [s.studioId, k.key])).rows[0].scope).toBe(k.practitioner_snap);
+    // saving the same value again is now a real no-op
+    const g2 = await getp(s.userId, s.studioId);
+    expect(await call(s.userId, "select public.save_role_permissions($1,$2,$3::jsonb,$4,$5) as r", [s.studioId, g2.version, JSON.stringify({ practitioner: { [k.key]: k.practitioner_snap } }), GOOD, true])).toMatchObject({ ok: false, code: "nothing_changed" });
+  });
+
   it("storing an intended value before release is inert; inserting the release row alone changes NO effective access", async () => {
     const s = await seedStudio("act1");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);

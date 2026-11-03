@@ -599,6 +599,7 @@ declare
   v_affected jsonb := '{}'::jsonb;
   v_sens jsonb := '[]'::jsonb;
   v_changed boolean := false;
+  v_stored_prev text;
   v_widen boolean := false;
   v_result jsonb;
 begin
@@ -656,9 +657,12 @@ begin
           raise exception using errcode = 'PM001', message = public.perm_fail('gate_unmet', v_key, v_role, null, jsonb_build_object('gate', v_gate))::text;
         end if;
         v_base := public.perm_base_scope(p_studio, v_role, v_key);
-        if v_scope <> v_base then
+        -- The owner's STORED intent is compared as well as the effective value: a stored choice that is inactive (set before its key's
+        -- release, no activation) resolves to the snapshot, so saving the snapshot value must still REPLACE it (Discard must work).
+        select s.scope into v_stored_prev from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_role and s.key = v_key;
+        if v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) then
           v_changed := true;
-          v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', v_base));
+          v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', coalesce(v_stored_prev, v_base)));
         end if;
       end loop;
     end loop;
