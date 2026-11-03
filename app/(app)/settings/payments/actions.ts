@@ -173,7 +173,7 @@ export async function refreshStripeStatusAction(): Promise<RefreshStatusResult> 
       studioId: studio.id,
       stripeAccountId: settings.stripe_account_id,
     });
-    revalidatePath("/settings/payments");
+    revalidatePath("/settings/payments", "layout");
     return { ok: true, status: snapshot };
   } catch (err) {
     logInternal("refresh_status_call_failed", {

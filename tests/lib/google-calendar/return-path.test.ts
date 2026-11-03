@@ -8,9 +8,12 @@ import {
 // disconnect actions. It must be open-redirect-safe: only exact allow-listed
 // in-app settings paths are honored; anything else falls back to the default.
 describe("safeReturnPath — open-redirect allowlist", () => {
-  it("honors the two allow-listed settings paths", () => {
+  it("honors the allow-listed settings paths", () => {
     expect(safeReturnPath("/settings/profile")).toBe("/settings/profile");
     expect(safeReturnPath("/settings/integrations")).toBe("/settings/integrations");
+    expect(safeReturnPath("/settings/integrations/google-calendar")).toBe(
+      "/settings/integrations/google-calendar",
+    );
   });
 
   it("falls back to the default for anything else", () => {
@@ -26,6 +29,8 @@ describe("safeReturnPath — open-redirect allowlist", () => {
       "/settings/integrations?x=1",
       "javascript:alert(1)",
       "/SETTINGS/INTEGRATIONS",
+      "/settings/integrations/google-calendar/",
+      "/settings/integrations/marketing",
     ]) {
       expect(safeReturnPath(bad as string | null | undefined)).toBe(DEFAULT_RETURN_PATH);
     }

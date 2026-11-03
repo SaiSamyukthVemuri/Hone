@@ -34,6 +34,12 @@ export type MoveConfirmInput = {
   /** Owner of a capacity-ON studio. Members + Legacy studios never reassign. */
   reassignEnabled: boolean;
   eligibleIds: readonly string[];
+  /**
+   * The database requires a valid (active, eligible) holder to move an appointment: true on a capacity-ON studio,
+   * false on capacity OFF, where `move_appointment_core` lets an owner move the time while keeping an inactive or
+   * missing holder. Defaults to true (the capacity-ON law). Server-authoritative; never a UI-only rule.
+   */
+  holderMustBeValid?: boolean;
   /** "" = nothing chosen. */
   target: string;
   /** "" when the appointment holds no practitioner (practitioner_id is nullable). */
@@ -117,6 +123,7 @@ export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
     submitting,
     reassignEnabled,
     eligibleIds,
+    holderMustBeValid = true,
     target,
     currentPractitionerId,
     hasSlot,
@@ -135,7 +142,8 @@ export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
 
   // Fail closed: with reassignment enabled the target must be a RESOLVED
   // eligible practitioner. An empty or failed lookup leaves it unresolved.
-  const targetChosen = !reassignEnabled || eligibleIds.includes(target);
+  // With capacity OFF an empty target means "keep the current holder", which the database permits.
+  const targetChosen = !reassignEnabled || (target === "" ? !holderMustBeValid : eligibleIds.includes(target));
   const isReassign = reassignEnabled && !!target && target !== currentPractitionerId;
 
   // The current holder cannot carry the appointment forward. Deliberately NOT
@@ -146,7 +154,7 @@ export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
   // enabled when capacity is ON. Proved by the negative control in
   // e2e/move-appointment-custom-time.spec.ts; kept so the gate stays correct if
   // that constraint is ever relaxed.
-  const reassignmentRequired = reassignEnabled && !eligibleIds.includes(currentPractitionerId);
+  const reassignmentRequired = reassignEnabled && holderMustBeValid && !eligibleIds.includes(currentPractitionerId);
   const reassignmentNotice = !reassignmentRequired
     ? null
     : currentPractitionerId

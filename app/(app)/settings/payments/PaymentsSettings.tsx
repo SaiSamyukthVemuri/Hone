@@ -50,6 +50,10 @@ export type PaymentsSettingsProps = {
   // itself is rendered in Settings → Intake & Postcare.
   hasCancellationPolicy: boolean;
   hasNoShowPolicy: boolean;
+  // R2: Payment setup and Card-on-file readiness are separate focused views.
+  // Each view renders only its own part; neither adds, removes or changes a
+  // control, a status claim or any authority.
+  view: "setup" | "card-on-file";
 };
 
 // Plain-English status headline + supporting note. Owners shouldn't
@@ -102,6 +106,7 @@ export function PaymentsSettings({
   paidServiceCount,
   hasCancellationPolicy,
   hasNoShowPolicy,
+  view,
 }: PaymentsSettingsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -189,6 +194,8 @@ export function PaymentsSettings({
 
   return (
     <div className="flex flex-col gap-4">
+      {view === "setup" && (
+      <>
       <div className={`rounded-lg border p-4 ${bannerStyles}`}>
         <p className={`text-sm font-medium ${bannerText}`}>
           {banner.headline}
@@ -290,9 +297,16 @@ export function PaymentsSettings({
         </div>
       </section>
 
+      </>
+      )}
+
       {/* State-driven card-on-file + booking-collection facts (presenter).
           Replaces the pre-PR-A static payments-not-enabled/coming-later
-          block, which was false once live billing shipped. */}
+          block, which was false once live billing shipped. Shown on the
+          readiness view too: the checklist below does not check the
+          authorization template or the publishable key, so this derived
+          message is the only place a missing prerequisite is named. */}
+      {(view === "setup" || view === "card-on-file") && (
       <div className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900/50">
         <p className="font-medium">{portalCardMessage}</p>
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
@@ -300,7 +314,9 @@ export function PaymentsSettings({
           anyone.
         </p>
       </div>
+      )}
 
+      {view === "card-on-file" && (
       <CardOnFileReadiness
         connectComplete={
           status.chargesEnabled && status.onboardingCompletedAt != null
@@ -310,7 +326,9 @@ export function PaymentsSettings({
         hasCancellationPolicy={hasCancellationPolicy}
         hasNoShowPolicy={hasNoShowPolicy}
       />
+      )}
 
+      {view === "setup" && (
       <details className="text-xs text-neutral-500">
         <summary className="cursor-pointer select-none">
           Technical details
@@ -347,6 +365,7 @@ export function PaymentsSettings({
           </Field>
         </dl>
       </details>
+      )}
     </div>
   );
 }
@@ -517,7 +536,7 @@ function CardOnFileReadiness({
           Review services
         </a>
         <a
-          href="/settings/intake"
+          href="/settings/forms/cancellation-policy"
           className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           Edit cancellation / no-show policy

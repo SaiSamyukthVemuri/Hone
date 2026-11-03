@@ -181,16 +181,22 @@ describe("census integrity — every audited control is still real", () => {
     const pages = new Set(SETTINGS_CONTROLS.map((c) => c.page));
     for (const required of [
       "/settings/profile",
-      "/settings/studio",
-      "/settings/booking",
+      "/settings/studio/details",
+      "/settings/studio/email",
+      "/settings/booking/link",
+      "/settings/booking/window",
       "/settings/availability",
       "/settings/services",
       "/settings/team",
       "/settings/consent",
-      "/settings/intake",
-      "/settings/payments",
-      "/settings/integrations",
-      "/settings/tracking",
+      "/settings/forms/intake-preview",
+      "/settings/forms/postcare",
+      "/settings/forms/cancellation-policy",
+      "/settings/payments/setup",
+      "/settings/payments/card-on-file",
+      "/settings/payments/fees",
+      "/settings/integrations/google-calendar",
+      "/settings/integrations/marketing",
       "/settings/import",
       "/settings/data",
       "/settings/launch",
@@ -303,39 +309,37 @@ describe("control coverage — the exact visible label finds the setting", () =>
 // ---------------------------------------------------------------------------
 
 describe("anchors keep sibling controls distinct", () => {
-  it("every control-level entry on a shared page has its own anchor", () => {
-    // Group searchable controls by page and count how many DIFFERENT registry
-    // entries serve them. Where a page has more than one entry, those entries
-    // must have distinct hrefs — otherwise href dedupe silently collapses them
-    // and only one control on the page is ever findable.
-    const byPage = new Map<string, Set<string>>();
+  it("every control-level entry lands on the view that holds it, with no anchor", () => {
+    // Settings R2: one route per focused view, opened at its heading. Several
+    // controls on one view legitimately share that view's href (the search
+    // dedupes by href, so the first match stands for the view); what must never
+    // return is a fragment, which would scroll the view away from its heading.
+    const views = new Set<string>();
     for (const control of searchable) {
-      const set = byPage.get(control.page) ?? new Set<string>();
-      set.add(control.entryId!);
-      byPage.set(control.page, set);
+      // Only the split views (/settings/<group>/<view>) are one-view-per-route;
+      // flat pages keep their existing anchors.
+      if (control.page.split("/").length < 4) continue;
+      const entry = ENTRY_BY_ID.get(control.entryId!)!;
+      expect(entry.href, `${control.label}: ${entry.id}`).not.toContain("#");
+      views.add(control.page);
     }
-
-    let pagesWithMultipleEntries = 0;
-    for (const [page, entryIds] of byPage) {
-      if (entryIds.size < 2) continue;
-      pagesWithMultipleEntries += 1;
-      const hrefs = [...entryIds].map((id) => ENTRY_BY_ID.get(id)!.href);
-      expect(
-        new Set(hrefs).size,
-        `${page} has ${entryIds.size} searchable entries but only ${new Set(hrefs).size} distinct hrefs — dedupe will hide some`,
-      ).toBe(hrefs.length);
-    }
-    // Not vacuous: several settings pages genuinely carry multiple controls.
-    expect(pagesWithMultipleEntries).toBeGreaterThanOrEqual(5);
+    // Not vacuous: the audited controls span many views.
+    expect(views.size).toBeGreaterThanOrEqual(8);
   });
 
-  it("all nine Booking controls resolve to nine distinct destinations", () => {
-    const booking = searchable.filter((c) => c.page === "/settings/booking");
+  it("all nine Booking controls resolve to a Booking view, link or window", () => {
+    const booking = searchable.filter((c) =>
+      c.page.startsWith("/settings/booking/"),
+    );
     // 9 since NEW-CLIENT-MODE-01 added the new-client admission control.
     expect(booking).toHaveLength(9);
-    const hrefs = booking.map((c) => ENTRY_BY_ID.get(c.entryId!)!.href);
-    expect(new Set(hrefs).size).toBe(9);
-    for (const href of hrefs) expect(href).toMatch(/^\/settings\/booking#/);
+    // Settings R2: one route per view, no anchors. A control lands on the view
+    // that holds it, opened at its heading.
+    for (const control of booking) {
+      const href = ENTRY_BY_ID.get(control.entryId!)!.href;
+      expect(href, control.label).toBe(control.page);
+      expect(href).not.toContain("#");
+    }
   });
 });
 
@@ -389,12 +393,12 @@ describe("structural sweep — a new control cannot slip in unaudited", () => {
     );
     const undecided: string[] = [];
 
-    for (const { file, page } of STRUCTURAL_LABEL_SOURCES) {
+    for (const { file, pages } of STRUCTURAL_LABEL_SOURCES) {
       for (const label of extractLabels(
         readFileSync(path.join(ROOT, file), "utf8"),
       )) {
-        if (!censusLabels.has(`${page}::${label}`)) {
-          undecided.push(`${page} :: ${label}   (${file})`);
+        if (!pages.some((page) => censusLabels.has(`${page}::${label}`))) {
+          undecided.push(`${pages.join(" | ")} :: ${label}   (${file})`);
         }
       }
     }
@@ -453,8 +457,8 @@ describe("regression — the reported production failure", () => {
 
   it("it lands on the control, and that anchor exists in the page", () => {
     const entry = ENTRY_BY_ID.get("settings-booking-horizon")!;
-    expect(entry.href).toBe("/settings/booking#booking-horizon");
-    expect(sourceTextFor("/settings/booking")).toContain(
+    expect(entry.href).toBe("/settings/booking/window");
+    expect(sourceTextFor("/settings/booking/window")).toContain(
       'id="booking-horizon"',
     );
   });
@@ -498,7 +502,17 @@ describe("settings pages are all represented", () => {
     const audited = new Set(SETTINGS_CONTROLS.map((c) => c.page));
     // Every settings page with a page.tsx is audited, including /settings/calendar
     // (the studio-wide display preferences live there now).
-    const exempt = new Set<string>();
+    // Doorways/legacy URLs that only redirect to a focused view.
+    const exempt = new Set<string>([
+      "/settings/booking",
+      "/settings/calendar",
+      "/settings/forms",
+      "/settings/intake",
+      "/settings/integrations",
+      "/settings/payments",
+      "/settings/studio",
+      "/settings/tracking",
+    ]);
     const missing = routes.filter((r) => !audited.has(r) && !exempt.has(r));
     expect(
       missing.sort(),
