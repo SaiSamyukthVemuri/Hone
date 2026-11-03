@@ -248,6 +248,16 @@ export function describeConflicts(
   return conflicts;
 }
 
+/** Max characters of a conflicting value the review panel prints. The full value is kept in state; only the display is clipped. */
+export const CONFLICT_PREVIEW_CHARS = 300;
+
+/** A conflicting value as shown in the review panel: clipped, with its true length, so a very long field cannot bury the buttons. */
+export function previewConflictValue(value: string): string {
+  if (value === "") return "(empty)";
+  if (value.length <= CONFLICT_PREVIEW_CHARS) return value;
+  return `${value.slice(0, CONFLICT_PREVIEW_CHARS)}… (${value.length.toLocaleString("en-US")} characters in all)`;
+}
+
 /** Baseline for the form after the staff member reviewed a conflict: adopt the current stored value. */
 export function adoptCurrent(baseline: ProfileBaseline, conflicts: ReadonlyArray<ProfileConflict>): ProfileBaseline {
   const next = { ...baseline };

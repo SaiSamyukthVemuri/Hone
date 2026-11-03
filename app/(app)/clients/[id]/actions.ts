@@ -290,6 +290,27 @@ export async function updateClientAction(
     }
   }
 
+  // Only short conditions go in the URL (see splitConditions). A changed field whose baseline is too long for a URL
+  // gets no equality condition on the write. Instead its CURRENT value is read here, in the same action just before
+  // the write (a select, answered in the body, no URL condition), and compared with the baseline; a difference is
+  // the "changed by someone else" review and nothing is written. What remains is the gap between that read and the
+  // write for those fields only (allergies and address in practice); the atomic fix is a JSON-body database function.
+  const { inUrl, unconditioned } = splitConditions(plan.conditions);
+  if (unconditioned.length > 0) {
+    const { data: current, error: currentError } = await supabase
+      .from("clients")
+      .select(unconditioned.map((c) => c.key).join(","))
+      .eq("id", clientId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (currentError) return { ok: false, error: NOT_SAVED_ERROR };
+    if (!current) return { ok: false, error: "Client not found." };
+    const moved = describeConflicts(
+      { ...plan, conditions: unconditioned },
+      current as unknown as Record<string, unknown>,
+    );
+    if (moved.length > 0) return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts: moved };
+  }
   // ONE conditional UPDATE: it applies only while every column it changes still holds the value the page
   // loaded, and it returns the row it changed. Zero rows is "not saved", never success.
   // Chloe Session 1A: `clients.skin_notes` is retired as an editor and is never written here.
@@ -313,27 +334,6 @@ export async function updateClientAction(
     })
     .eq("id", clientId)
     .eq("studio_id", studio.id);
-  // Only short conditions go in the URL (see splitConditions). A changed field whose baseline is too long for a URL
-  // gets no equality condition on the write. Instead its CURRENT value is read here, in the same action just before
-  // the write (a select, answered in the body, no URL condition), and compared with the baseline; a difference is
-  // the "changed by someone else" review and nothing is written. What remains is the gap between that read and the
-  // write for those fields only (allergies and address in practice); the atomic fix is a JSON-body database function.
-  const { inUrl, unconditioned } = splitConditions(plan.conditions);
-  if (unconditioned.length > 0) {
-    const { data: current, error: currentError } = await supabase
-      .from("clients")
-      .select(unconditioned.map((c) => c.key).join(","))
-      .eq("id", clientId)
-      .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (currentError) return { ok: false, error: NOT_SAVED_ERROR };
-    if (!current) return { ok: false, error: "Client not found." };
-    const moved = describeConflicts(
-      { ...plan, conditions: unconditioned },
-      current as unknown as Record<string, unknown>,
-    );
-    if (moved.length > 0) return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts: moved };
-  }
   for (const { key, value } of inUrl) {
     update = value === null ? update.is(key, null) : update.eq(key, value);
   }

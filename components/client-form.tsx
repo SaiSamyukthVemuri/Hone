@@ -15,6 +15,7 @@ import {
 } from "@/lib/clients/client-form-submit";
 import {
   adoptCurrent,
+  previewConflictValue,
   type ProfileBaseline,
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
@@ -396,10 +397,10 @@ export function ClientForm({
           <p>{error}</p>
           <ul className="flex flex-col gap-1">
             {conflicts.map((c) => (
-              <li key={c.key}>
+              <li key={c.key} className="[overflow-wrap:anywhere]">
                 <span className="font-medium">{c.label}:</span> now{" "}
-                <span className="font-medium">{c.current || "(empty)"}</span>, your change{" "}
-                <span className="font-medium">{c.yours || "(empty)"}</span>
+                <span className="font-medium">{previewConflictValue(c.current)}</span>, your change{" "}
+                <span className="font-medium">{previewConflictValue(c.yours)}</span>
               </li>
             ))}
           </ul>

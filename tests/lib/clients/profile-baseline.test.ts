@@ -7,6 +7,8 @@ import {
   MAX_BASELINE_CHARS,
   parseBaseline,
   planProfileUpdate,
+  previewConflictValue,
+  CONFLICT_PREVIEW_CHARS,
   splitConditions,
   URL_CONDITION_MAX_VALUE_CHARS,
   URL_CONDITION_TOTAL_CHARS,
@@ -238,5 +240,18 @@ describe("a long field changed underneath is a conflict, not a silent overwrite 
   it("the same stored value is no conflict, and a cleared field is a conflict", () => {
     expect(check({ allergies: big.allergies })).toEqual([]);
     expect(check({ allergies: null })).toHaveLength(1);
+  });
+});
+
+describe("the conflict panel stays usable with a very long value (Insurance M-4)", () => {
+  it("short values are shown as they are, empty as (empty)", () => {
+    expect(previewConflictValue("latex")).toBe("latex");
+    expect(previewConflictValue("")).toBe("(empty)");
+  });
+  it("a 25,000-character value is clipped to the preview length plus its true size", () => {
+    const out = previewConflictValue("a".repeat(25_000));
+    expect(out.startsWith("a".repeat(CONFLICT_PREVIEW_CHARS) + "…")).toBe(true);
+    expect(out).toContain("25,000 characters in all");
+    expect(out.length).toBeLessThan(CONFLICT_PREVIEW_CHARS + 60);
   });
 });
