@@ -103,4 +103,17 @@ describe("open-tab replay after clin.view_intake is revoked", () => {
     expect(gate).toBeLessThan(body.indexOf('.from("client_intake_forms")'));
     expect(body.slice(gate, gate + 250)).toMatch(/return \{ ok: false, error: INTAKE_NOT_AVAILABLE \}/);
   });
+
+  it.each([
+    ["handOffAssistedIntakeAction", "loadAssistedIntake(", "ASSISTED_NOT_PERMITTED"],
+    ["startAssistedIntakeAction", '.from("client_intake_forms")', "START_NOT_PERMITTED"],
+  ])("%s asks clin.view_intake before any intake read and refuses with its generic error", (name, firstRead, err) => {
+    const src = readFileSync("app/(app)/clients/[id]/intake/actions.ts", "utf8");
+    const start = src.indexOf(`export async function ${name}`);
+    const body = src.slice(start, src.indexOf("\nexport ", start + 10));
+    const gate = body.search(/requirePermission\([\s\S]{0,120}?"clin\.view_intake"/);
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(body.indexOf(firstRead));
+    expect(body.slice(gate, gate + 250)).toContain(`return { ok: false, error: ${err} }`);
+  });
 });

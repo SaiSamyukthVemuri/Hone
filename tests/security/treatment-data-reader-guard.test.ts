@@ -317,8 +317,6 @@ const ACTIONS_NO_DATA: Record<string, string> = {
   "app/(app)/clients/[id]/intake/actions.ts::saveIntakeNotesAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
   "app/(app)/clients/[id]/intake/actions.ts::requestIntakeUpdateAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
   "app/(app)/clients/[id]/intake/actions.ts::resendIntakeEmailAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
-  "app/(app)/clients/[id]/intake/actions.ts::handOffAssistedIntakeAction": "returns a tokened link or an intake id, no answers; clin.edit_intake is not wired yet (judgement call, flagged to OPS)",
-  "app/(app)/clients/[id]/intake/actions.ts::startAssistedIntakeAction": "returns a tokened link or an intake id, no answers; clin.edit_intake is not wired yet (judgement call, flagged to OPS)",
   "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPriceAction": "write action; returns only ok/error or a flag, no chart content",
   "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateNextSessionNoteAction": "write action; returns only ok/error or a flag, no chart content",
   "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPerformerAction": "write action; returns only ok/error or a flag, no chart content",
