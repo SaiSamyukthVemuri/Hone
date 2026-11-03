@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0287_roles_permission_engine.sql",
-    "sha256": "3fde8bbdb313d6bd39197b7d6a95a356250d3bd8e811d8d665876af6246cc278"
+    "sha256": "874d857439019feee0b14aba5eb43940e867b6f691ca3db40c14dade7e061967"
   },
   "public": {
     "tables": [
