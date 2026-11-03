@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { revalidatePath } from "next/cache";
 import { safeLog } from "@/lib/logging/safe-log";
 import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
@@ -230,6 +231,9 @@ export async function addElectrolysisEntryAction(
       : null;
 
   const { studio } = await getCurrentPractitionerWithStudio();
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    return { ok: false, code: "not_persisted", error: "Not available to your role." };
+  }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   // Migration 0011: Apilus parameters are now per-entry. Galvanic carries
@@ -415,6 +419,9 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
   if (!zone) throw new Error("Zone is required.");
 
   const { studio } = await getCurrentPractitionerWithStudio();
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const equipmentParams: Record<string, string> = {};

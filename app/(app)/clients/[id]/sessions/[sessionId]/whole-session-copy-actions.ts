@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -59,6 +60,9 @@ export async function getWholeSessionCopySourceAction(input: {
     throw e;
   }
 
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
   const supabase = await createClient();
 
   // SERVER-authoritative source: the DB derives the canonical eligible previous

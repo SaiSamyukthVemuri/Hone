@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
@@ -243,6 +244,9 @@ export async function loadMachineSetupContext(input: {
   // The session must belong to BOTH this studio AND this route client, or the
   // prior-setup read below would be reading another client's chart. Throws.
   await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ...ANONYMOUS, priorSetupUnavailable: true, recordedSetupUnavailable: true };
+  }
 
   const db = await machineDb();
   const catalogue = [...catalogueForRuntime()];
@@ -1064,6 +1068,9 @@ export async function readingsForBlockAction(input: {
   // the check was added, the hole was reported closed, and the read still
   // filtered on an unbound block id (Codex, #860 4298457378).
   await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false };
+  }
   const db = await machineDb();
   // ...and this one binds the BLOCK to that session, in the query.
   const got = await readingsForBlock(db, input.blockId, input.sessionId);

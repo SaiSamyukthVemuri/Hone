@@ -287,6 +287,91 @@ describe("treatment-data reader guard (a tripwire, not a proof)", () => {
   });
 });
 
+// Server actions (OPS, 3 Nov, Codex at 48133681f): a "use server" export is callable from an already-open tab after a key is revoked, so
+// a file-level "write-path" class does NOT excuse an action that RETURNS treatment data. Every exported action whose body touches a
+// protected class (directly, by RPC, or through a tainted loader) must make the key call INSIDE that function, or be listed here by name
+// as returning no table data.
+const isUseServer = (src: string) => /^\s*["']use server["']/.test(src);
+function actionClasses(f: string, body: string): Map<DataClass, string> {
+  const out = new Map<DataClass, string>();
+  for (const t of tablesIn(body)) out.set(CLASS_OF[t]!, `reads ${t}`);
+  for (const c of rpcClasses(body)) if (!out.has(c)) out.set(c, "calls an rpc over it");
+  for (const imp of IMPORTS.get(f) ?? []) {
+    for (const [n, cs] of TAINT.get(imp.file) ?? []) {
+      if (!(imp.names.includes(n) || imp.names.includes("*")) || !new RegExp(`\\b${n}\\b`).test(body)) continue;
+      for (const c of cs) if (!out.has(c)) out.set(c, `uses ${n}`);
+    }
+  }
+  return out;
+}
+// Files with no practitioner viewer in the loop: token links and the client's own portal, owner-only and operator-only pages, payment owner paths.
+const EXEMPT_ACTION_CLASSES = new Set(["system-side", "owner-only", "operator-only", "billing-owner"]);
+const ACTIONS_NO_DATA: Record<string, string> = {
+  "app/(app)/calendar/actions.ts::fetchLastServiceForClientAction": "returns the last service name from appointments, not chart data; the intake name matched belongs to a helper after it",
+  // "<file>::<exportName>": reason it returns no table data
+  "app/(app)/calendar/appointment-repair-actions.ts::loadAppointmentRepairStateAction": "returns repairable true/false and a fixed reason, no chart content",
+  "app/(app)/clients/[id]/images/actions.ts::uploadTreatmentImageAction": "returns only ok/error; the photo signing path asks clin.view_photos",
+  "app/(app)/clients/[id]/images/actions.ts::updateTreatmentImageNoteAction": "returns only ok/error; the photo signing path asks clin.view_photos",
+  "app/(app)/clients/[id]/images/actions.ts::archiveTreatmentImageAction": "returns only ok/error; the photo signing path asks clin.view_photos",
+  "app/(app)/clients/[id]/intake/actions.ts::markIntakeReviewedAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::saveIntakeNotesAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::requestIntakeUpdateAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::resendIntakeEmailAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::handOffAssistedIntakeAction": "returns a tokened link or an intake id, no answers; clin.edit_intake is not wired yet (judgement call, flagged to OPS)",
+  "app/(app)/clients/[id]/intake/actions.ts::startAssistedIntakeAction": "returns a tokened link or an intake id, no answers; clin.edit_intake is not wired yet (judgement call, flagged to OPS)",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPriceAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateNextSessionNoteAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPerformerAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::editSessionStartedAtAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::softDeleteSessionAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::softDeleteSessionBlockAction": "returns ok/error and counts only",
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::removeSessionAreaAction": "returns ok/error and counts only",
+  "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts::recordSetupSubmissionAction": "returns only ok/error or a written count; the readings read is gated in readingsForBlockAction",
+  "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts::commitWholeSessionCopyAction": "returns ids and counts of rows it created, no chart content",
+  "app/(app)/clients/[id]/sessions/new/actions.ts::startSessionAction": "redirects to the new chart; returns no data",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::createTreatmentPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::closeTreatmentPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::attachChartEntryToPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::detachChartEntryFromPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::updateTreatmentPlanNotesAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::createTreatmentPlanStageAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::updateTreatmentPlanStageAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::deleteTreatmentPlanStageAction": "write action; returns only ok/error",
+  "app/(app)/records/actions.ts::markAftercareExplainedAction": "write action; returns only ok/error",
+};
+const RAW_SRC = new Map(FILES.map((f) => [f, readFileSync(f, "utf8")]));
+const ACTION_FINDINGS: string[] = [];
+for (const [f, raw] of RAW_SRC) {
+  if (!isUseServer(raw)) continue;
+  if (EXEMPT_ACTION_CLASSES.has(ALLOW[f]?.cls ?? "")) continue;
+  for (const ex of exportsOf(SRC.get(f)!)) {
+    if (!/^export\s+async\s+function/.test(ex.body)) continue;
+    for (const [c, why] of actionClasses(f, ex.body)) {
+      if (hasCall(ex.body, KEY[c])) continue;
+      if (ACTIONS_NO_DATA[`${f}::${ex.name}`]) continue;
+      ACTION_FINDINGS.push(`${f}::${ex.name} ${why} (${c}) without a ${KEY[c]} call inside the action`);
+    }
+  }
+}
+
+describe("server actions that touch treatment data ask the key themselves (open-tab replay)", () => {
+  it("every exported server action touching a protected class makes the key call inside itself or is listed as returning no table data", () => {
+    expect(ACTION_FINDINGS, ACTION_FINDINGS.join("\n")).toEqual([]);
+  });
+  it("each no-data listing names a real action with a reason", () => {
+    for (const [k, why] of Object.entries(ACTIONS_NO_DATA)) {
+      const [f, n] = k.split("::");
+      expect(RAW_SRC.get(f!)?.includes(`export async function ${n}`), `${k} does not exist`).toBe(true);
+      expect(why.length, k).toBeGreaterThan(15);
+    }
+  });
+  it("the scan sees the known reader: getWholeSessionCopySourceAction counts as a reader", () => {
+    const f = "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts";
+    const ex = exportsOf(SRC.get(f)!).find((e) => e.name === "getWholeSessionCopySourceAction")!;
+    expect(actionClasses(f, ex.body).has("records")).toBe(true);
+  });
+});
+
 // Z4. STATED LIMITS: what this guard does NOT see. It is a tripwire for the common shapes of a new reader, not proof that no path reads
 // treatment data without a check.
 export const STATED_LIMITS = [
