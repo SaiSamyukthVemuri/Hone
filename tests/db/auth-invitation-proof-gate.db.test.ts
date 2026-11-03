@@ -146,6 +146,79 @@ describe("0291 session_proves_mailbox: oauth counts only with a verified Google 
   });
 });
 
+describe("0291 S-2b: link proof counts only if made at or after the account's last email change (WRITTEN, NOT YET RUN)", () => {
+  const T = 1_793_674_853; // whole epoch seconds of the change
+  const at = (sec: number, ms = 0) => new Date(sec * 1000 + ms).toISOString();
+  const amrAt = (sec: number, method = "magiclink") => [{ method, timestamp: sec }];
+  const setChange = (id: string, o: { sent?: string | null; identity?: string | null }) =>
+    adminQuery(`update auth.users set email_change_sent_at = $2 where id = $1`, [id, o.sent ?? null]).then(() =>
+      o.identity === undefined
+        ? undefined
+        : adminQuery(`update auth.identities set updated_at = $2 where user_id = $1 and provider = 'email'`, [id, o.identity]),
+    );
+  async function withEmailIdentity(u: { id: string; email: string }) {
+    await adminQuery(
+      `insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+       values ($1, $2, $3::jsonb, 'email', now(), now(), now())`,
+      [u.id, u.id, JSON.stringify({ sub: u.id, email: u.email })],
+    );
+  }
+
+  it.each(["otp", "magiclink", "recovery"])("%s: the earlier session is proof_required, a fresh one on the SAME account is ok", async (method) => {
+    const u = await invitedUser();
+    await withEmailIdentity(u);
+    await setChange(u.id, { sent: at(T), identity: at(T) });
+    expect(await pending(u.id, amrAt(T - 3, method))).toEqual({ status: "proof_required" });
+    expect(await reconcile(u.id, amrAt(T - 3, method))).toEqual({ status: "proof_required", choose_studio: false });
+    await assertNothingChanged(u);
+    expect((await pending(u.id, amrAt(T + 2, method))).status).toBe("ok");
+  });
+
+  it("an account whose address never changed (both columns null) is proven whatever the timestamp", async () => {
+    const u = await invitedUser();
+    expect((await pending(u.id, amrAt(1))).status).toBe("ok");
+    expect((await pending(u.id, [{ method: "otp" }])).status).toBe("ok");
+  });
+
+  it("an equal second counts (>=)", async () => {
+    const u = await invitedUser();
+    await setChange(u.id, { sent: at(T, 900) });
+    expect((await pending(u.id, amrAt(T))).status).toBe("ok");
+    expect(await pending(u.id, amrAt(T - 1))).toEqual({ status: "proof_required" });
+  });
+
+  it("uses the LATER of email_change_sent_at and the email identity's updated_at", async () => {
+    const u = await invitedUser();
+    await withEmailIdentity(u);
+    await setChange(u.id, { sent: at(T), identity: at(T + 5) });
+    expect(await pending(u.id, amrAt(T + 1))).toEqual({ status: "proof_required" });
+    await setChange(u.id, { sent: at(T + 5), identity: at(T) });
+    expect(await pending(u.id, amrAt(T + 1))).toEqual({ status: "proof_required" });
+    expect((await pending(u.id, amrAt(T + 6))).status).toBe("ok");
+  });
+
+  it("with a change time, an entry with no timestamp or a string timestamp is proof_required", async () => {
+    const u = await invitedUser();
+    await setChange(u.id, { sent: at(T) });
+    expect(await pending(u.id, [{ method: "otp" }])).toEqual({ status: "proof_required" });
+    expect(await pending(u.id, [{ method: "otp", timestamp: String(T + 100) }])).toEqual({ status: "proof_required" });
+  });
+
+  it("a Google identity's updated_at never moves the floor", async () => {
+    const u = await invitedUser();
+    await googleIdentity(u.id, u.email);
+    await adminQuery(`update auth.identities set updated_at = $2 where user_id = $1 and provider = 'google'`, [u.id, at(T + 100)]);
+    expect((await pending(u.id, amrAt(T - 50))).status).toBe("ok");
+  });
+
+  it("oauth is unaffected by the change time (bound by the verified Google identity's own address)", async () => {
+    const u = await invitedUser();
+    await googleIdentity(u.id, u.email);
+    await setChange(u.id, { sent: at(T) });
+    expect((await pending(u.id, [{ method: "oauth", timestamp: T - 500 }])).status).toBe("ok");
+  });
+});
+
 describe("0291 privileges", () => {
   it("the helper is callable by no browser or service role", async () => {
     for (const role of ["anon", "authenticated", "service_role"] as const) {

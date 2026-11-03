@@ -22,7 +22,7 @@ language sql stable security invoker set search_path = ''
 as $$
   select exists (
     select 1 from jsonb_array_elements(coalesce(auth.jwt() -> 'amr', '[]'::jsonb)) a
-    where a ->> 'method' in ('otp','magiclink','email/signup','invite','recovery')
+    where a ->> 'method' in ('otp','magiclink','recovery')
        or (a ->> 'method' = 'oauth' and a ->> 'provider' = 'google'
            and exists (select 1 from auth.identities i
                         where i.user_id = auth.uid() and i.provider = 'google'
@@ -56,3 +56,11 @@ grant execute on function public.auth_account_has_password(uuid) to service_role
 ```
 It returns a boolean only (never the hash). With the 0292 hook in place a password is already unusable, so this probe is needed only
 for targeted remediation after verified mailbox ownership; the hook alone removes the exposure without modifying any account.
+
+## S-2b address binding (Insurance Z-1/G-3, 3 Nov) - amendment to the sketch above
+The sketch is historical; the migration file is the authority. A link-type amr entry now also has to be at or after the account's
+last email-change activity: `since = floor(epoch(greatest(auth.users.email_change_sent_at, max(updated_at) of the account's
+'email' identity)))`, NULL = never changed = no constraint, entry `timestamp` must be a JSON number `>= since`. Columns chosen from
+the measured matrix (machines/AUTH-S2B-columns-evidence.json): `users.updated_at` also moves on OTP requests, sign-ins and refreshes, so
+it is not used. Measured cost: only an account with email-change activity after the session began is asked to confirm again; nobody is
+locked out. DB proof (minted claims before/after the change, plus a real-GoTrue magic-link attacker) is written and runs in the next slot.

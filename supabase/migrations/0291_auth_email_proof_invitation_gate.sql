@@ -14,6 +14,9 @@
 --     `recovery` for a recovery link; password sign-in AND password sign-up produce `password`. No other method counts.
 --   * an `oauth` entry (GoTrue writes NO provider on it) counts only when the user has a Google identity whose email_verified is
 --     true and whose email equals the account email (same rule as lib/auth/email-proof.ts).
+-- S-2b (Insurance Z-1/G-3): a link-type entry counts only if its amr timestamp (whole seconds) is at or after the account's last
+-- email-change activity, so a proven session that predates an email change to someone else's address stops proving. Measured
+-- cost: only an account with email-change activity after the session began is asked to confirm again (a fresh link; no lockout).
 -- An unproven caller gets {"status":"proof_required"}: no studio data is returned, nothing is written. A session with no amr (an
 -- old or hand-minted token) is unproven. The two function bodies are 0141's, unchanged except for the gate that follows the
 -- authentication check; signatures, security-definer and grants are unchanged (0141 step 7 is re-stated below).
@@ -28,12 +31,24 @@ returns boolean
 language sql stable security definer
 set search_path = pg_catalog, pg_temp
 as $$
+  with change as (
+    -- S-2b: the account's last email-change activity. email_change_sent_at moves on an email-change request and on each confirm
+    -- half; the `email` identity's updated_at moves when the change is applied. Neither moves on an OTP request, a sign-in or a
+    -- refresh (users.updated_at moves on all of those, so it is NOT used). NULL = the address never changed = no constraint.
+    select floor(extract(epoch from greatest(
+             (select u.email_change_sent_at from auth.users u where u.id = auth.uid()),
+             (select max(i.updated_at) from auth.identities i where i.user_id = auth.uid() and i.provider = 'email')
+           ))) as since
+  )
   select exists (
     select 1
       from jsonb_array_elements(
              case when jsonb_typeof(auth.jwt() -> 'amr') = 'array' then auth.jwt() -> 'amr' else '[]'::jsonb end
-           ) as a
-     where a ->> 'method' in ('otp', 'magiclink', 'recovery')
+           ) as a,
+           change
+     where (a ->> 'method' in ('otp', 'magiclink', 'recovery')
+            and (change.since is null
+                 or (jsonb_typeof(a -> 'timestamp') = 'number' and floor((a ->> 'timestamp')::numeric) >= change.since)))
         or (a ->> 'method' = 'oauth'
             and exists (
               select 1
@@ -47,7 +62,7 @@ as $$
 $$;
 
 comment on function public.session_proves_mailbox() is
-  '0291: true when the verified JWT amr shows a one-time mailbox credential (otp, magiclink or recovery amr) or a verified-Google oauth session. Internal helper; no role may call it directly.';
+  '0291: true when the verified JWT amr shows a one-time mailbox credential (otp, magiclink or recovery amr) made at or after the last email change of the account, or a verified-Google oauth session. Internal helper; no role may call it directly.';
 
 revoke execute on function public.session_proves_mailbox() from public;
 revoke execute on function public.session_proves_mailbox() from anon;

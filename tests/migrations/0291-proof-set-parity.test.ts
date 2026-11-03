@@ -24,7 +24,8 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
   });
 
   it("the oauth providers are identical (the SQL names each provider it accepts)", () => {
-    const providers = [...sql.matchAll(/i\.provider = '([^']+)'/g)].map((x) => x[1]).sort();
+    // 'email' is the S-2b address-binding lookup (the account's own email identity), not an oauth provider.
+    const providers = [...sql.matchAll(/i\.provider = '([^']+)'/g)].map((x) => x[1]).filter((p) => p !== "email").sort();
     expect(providers).toEqual(tsSet("OAUTH_PROVIDERS"));
   });
 
@@ -32,5 +33,25 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
     const comment = sql.match(/comment on function public\.session_proves_mailbox\(\) is\s*'([^']*)'/);
     expect(comment).not.toBeNull();
     for (const method of tsSet("MAILBOX_METHODS")) expect((comment as RegExpMatchArray)[1]).toContain(method);
+  });
+
+  it("S-2b: both sides bind link proof to the same two columns, the same floor and the same >= comparison", () => {
+    // TS
+    expect(ts).toContain("user?.email_change_sent_at");
+    expect(ts).toContain('norm(identity.provider) === "email"');
+    expect(ts).toContain("stamps.push(identity.updated_at)");
+    expect(ts).toContain("Math.floor(ms / 1000)");
+    expect(ts).toContain("Math.floor(entry.timestamp) >= lastChange");
+    // SQL
+    expect(sql).toMatch(/u\.email_change_sent_at from auth\.users u/);
+    expect(sql).toMatch(/max\(i\.updated_at\) from auth\.identities i where i\.user_id = auth\.uid\(\) and i\.provider = 'email'/);
+    expect(sql).toContain("floor(extract(epoch from greatest(");
+    expect(sql).toContain("floor((a ->> 'timestamp')::numeric) >= change.since");
+    expect(sql).toContain("change.since is null");
+    expect(sql).toContain("jsonb_typeof(a -> 'timestamp') = 'number'");
+    // the unusable column stays unused on both sides
+    const code = (src: string) => src.split("\n").filter((l) => !/^\s*(--|\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(code(sql)).not.toMatch(/u\.updated_at|users\.updated_at/);
+    expect(code(ts)).not.toMatch(/user\??\.updated_at/);
   });
 });
