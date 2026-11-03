@@ -46,9 +46,9 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
     expect(sql).toMatch(/u\.email_change_sent_at from auth\.users u/);
     expect(sql).toMatch(/max\(i\.updated_at\) from auth\.identities i where i\.user_id = auth\.uid\(\) and i\.provider = 'email'/);
     expect(sql).toContain("floor(extract(epoch from greatest(");
-    expect(sql).toContain("floor((a ->> 'timestamp')::numeric) >= change.since");
+    // Y1 (Privacy): the numeric cast is inside a CASE, so it can never run on a non-number whatever the planner's AND order.
+    expect(sql).toContain("floor(case when jsonb_typeof(a -> 'timestamp') = 'number' then (a ->> 'timestamp')::numeric end) >= change.since");
     expect(sql).toContain("change.since is null");
-    expect(sql).toContain("jsonb_typeof(a -> 'timestamp') = 'number'");
     // the unusable column stays unused on both sides
     const code = (src: string) => src.split("\n").filter((l) => !/^\s*(--|\/\/|\*|\/\*)/.test(l)).join("\n");
     expect(code(sql)).not.toMatch(/u\.updated_at|users\.updated_at/);

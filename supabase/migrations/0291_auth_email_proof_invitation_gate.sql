@@ -48,7 +48,7 @@ as $$
            change
      where (a ->> 'method' in ('otp', 'magiclink', 'recovery')
             and (change.since is null
-                 or (jsonb_typeof(a -> 'timestamp') = 'number' and floor((a ->> 'timestamp')::numeric) >= change.since)))
+                 or floor(case when jsonb_typeof(a -> 'timestamp') = 'number' then (a ->> 'timestamp')::numeric end) >= change.since))
         or (a ->> 'method' = 'oauth'
             and exists (
               select 1
