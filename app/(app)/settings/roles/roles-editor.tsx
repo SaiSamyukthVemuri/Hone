@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
@@ -430,7 +430,7 @@ function RowList({
         const unsaved = savedRows.get(row.key)?.chosen !== row.chosen;
         return (
           <li key={row.key} data-permission-row={row.key} data-chosen={row.chosen} data-effective={row.effective} data-unsaved={unsaved ? "true" : "false"} className="flex min-w-0 flex-col gap-2 px-4 py-3">
-            <fieldset disabled={readOnly || row.locked !== null || row.enforcement !== "enforced"} className="min-w-0">
+            <fieldset disabled={readOnly || row.locked !== null || (row.enforcement === "observe" || row.enforcement === "not_yet")} className="min-w-0">
               <legend className="min-w-0 break-words text-sm font-medium">{row.label}</legend>
               <p className="mt-0.5 break-words text-xs text-neutral-500">{row.description}</p>
               {row.ownMeaning && <p className="mt-0.5 break-words text-xs text-neutral-500">Own assigned means: {row.ownMeaning}.</p>}
@@ -486,7 +486,12 @@ function RowList({
               </p>
             ))}
             {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
-            {row.enforcement !== "enforced" && (
+            {row.enforcement === "deny_only" && (
+              <p data-testid="deny-only-note" className="break-words text-xs text-neutral-600 dark:text-neutral-400">
+                Turning this down takes effect now. {WIDENING_LATER_LINE}
+              </p>
+            )}
+            {(row.enforcement === "observe" || row.enforcement === "not_yet") && (
               <p data-testid="not-enforced-yet" data-enforcement={row.enforcement} className="break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
                 {NOT_ENFORCED_LINE}
               </p>

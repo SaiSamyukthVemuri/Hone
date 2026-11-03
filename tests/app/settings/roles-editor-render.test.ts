@@ -141,3 +141,17 @@ describe("change_staff_role stays unavailable while its gate is off", () => {
     expect(render({ staffRoleChange: true })).not.toContain("change-role-unavailable");
   });
 });
+
+describe("deny_only keys can be turned down now and not widened", () => {
+  const row = (html: string, key: string) => html.split(`data-permission-row="${key}"`)[1]?.split("data-permission-row=")[0] ?? "";
+  const html = render({ initialView: "permissions", writable: true, notWritableReason: null, enforcement: { "appt.book": "deny_only", "appt.move": "enforced" } });
+  it("keeps the fieldset live, says widening is later, and disables only the options above the baseline", () => {
+    const r = row(html, "appt.book");
+    expect(r).not.toMatch(/<fieldset[^>]*disabled/);
+    expect(r).toContain('data-testid="deny-only-note"');
+    expect(r).toContain("Widening arrives in a later release.");
+  });
+  it("an enforced key has no deny-only note", () => {
+    expect(row(html, "appt.move")).not.toContain("deny-only-note");
+  });
+});

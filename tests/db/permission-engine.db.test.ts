@@ -637,6 +637,7 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
     const base = await counts(adminQuery);
     class Rollback extends Error {}
     let gone: Record<string, unknown> = {};
+    let realError: { code?: string; message?: string } = {};
     try {
       await adminTx(async (q) => {
         // the file opens its own begin/commit; run its body statements inside this test's transaction instead of committing
@@ -649,12 +650,23 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
                   to_regclass('public.studio_role_permissions') is null as t3,
                   not exists (select 1 from pg_trigger where tgname='studios_permission_policy_seed_trg') as trg`,
         )).rows[0];
+        // the REAL error Postgres gives for the missing engine, fed to the app's detector (release-order fallback, Privacy X1)
+        await q("savepoint probe");
+        try {
+          await q("select public.has_studio_permission($1,'appt.book',null,null,null)", [randomUUID()]);
+        } catch (e) {
+          realError = { code: (e as { code?: string }).code, message: (e as Error).message };
+        }
+        await q("rollback to savepoint probe");
         throw new Rollback();
       });
     } catch (e) {
       if (!(e instanceof Rollback)) throw e;
     }
     expect(gone).toEqual({ fn: true, role_fn: true, t1: true, t2: true, t3: true, trg: true });
+    expect(realError.code).toBe("42883");
+    const { isEngineAbsent } = await import("@/lib/permissions/require-permission");
+    expect(isEngineAbsent(realError)).toBe(true); // with the engine dropped the app falls back to legacy checks, it does not lock out
     expect(await counts(adminQuery)).toEqual(base); // nothing else moved
     // the transaction rolled back: the engine is still there
     expect((await getp(s.userId, s.studioId)).ok).toBe(true);
