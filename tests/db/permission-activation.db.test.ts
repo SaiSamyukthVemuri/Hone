@@ -8,18 +8,21 @@ type J = Record<string, any>;
 const GOOD = "Reviewed the front desk duties with the team";
 const call = async (userId: string, sql: string, params: unknown[]): Promise<J> => asUser(userId, async (q) => (await q(sql, params)).rows[0].r as J);
 const preview = (u: string, s: string) => call(u, "select public.preview_activation($1) as r", [s]);
-const activate = (u: string, s: string, keys: string[] | null, v: number, reason: string | null = GOOD, confirmed = true) =>
-  call(u, "select public.activate_released_permissions($1,$2::text[],$3,$4,$5) as r", [s, keys, v, reason, confirmed]);
+// hash undefined = the fingerprint of the CURRENT pending set for these keys (what a preview would have shown just now); null = none supplied.
+const hashFor = async (studio: string, keys: string[] | null) =>
+  keys ? ((await adminQuery("select public.perm_activation_hash($1,$2::text[]) h", [studio, keys])).rows[0].h as string) : null;
+const activate = async (u: string, s: string, keys: string[] | null, v: number, reason: string | null = GOOD, confirmed = true, hash?: string | null) =>
+  call(u, "select public.activate_released_permissions($1,$2::text[],$3,$4,$5,$6) as r", [s, keys, v, reason, hash === undefined ? await hashFor(s, keys) : hash, confirmed]);
 const getp = (u: string, s: string) => call(u, "select public.get_role_permissions($1) as r", [s]);
 const effMap = async (s: SeededStudio) =>
   (await adminQuery("select role, key, public.perm_effective_scope($1,role,key) as e from public.permission_catalog cross join (values ('practitioner'),('receptionist')) v(role) order by 1,2", [s.studioId])).rows;
 
 let KEYS: { key: string; practitioner_new: string; practitioner_snap: string }[] = [];
-let SAVED: { key: string; released_at: string; release_tag: string }[] = [];
+let SAVED: { key: string; released_at: string | null; release_tag: string; release_kind: string }[] = [];
 afterAll(async () => {
   // Put the registry back exactly as found (other suites released every key long ago).
   await adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
-  for (const r of SAVED) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag) values ($1,$2,$3)", [r.key, r.released_at, r.release_tag]);
+  for (const r of SAVED) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,$2,$3,$4)", [r.key, r.released_at, r.release_tag, r.release_kind]);
   await closePool();
 });
 beforeAll(async () => {
@@ -29,7 +32,7 @@ beforeAll(async () => {
       where owner_configurable and offered_practitioner and gate_practitioner is null and requires = '{}' and new_practitioner <> snapshot_practitioner
       order by key limit 2`)).rows;
   expect(KEYS.length).toBe(2);
-  SAVED = (await adminQuery("select key, released_at::text released_at, release_tag from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)])).rows;
+  SAVED = (await adminQuery("select key, released_at::text released_at, release_tag, release_kind from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)])).rows;
   await adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
 });
 const clearReleases = () => adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
@@ -43,6 +46,27 @@ beforeEach(() => clearReleases());
 afterEach(() => clearReleases());
 
 describe("activation rule", () => {
+  it("a commit needs an explicit non-empty key list and the hash of the preview the owner saw; a changed pending set is stale (AA-1)", async () => {
+    const s = await seedStudio("act9");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    const [k] = KEYS;
+    await dated(s, k.key, k.practitioner_new, 3);
+    await releaseNow();
+    const v = (await getp(s.userId, s.studioId)).version as number;
+    expect(await activate(s.userId, s.studioId, null, v)).toMatchObject({ ok: false, code: "keys_required" });
+    expect(await activate(s.userId, s.studioId, [], v)).toMatchObject({ ok: false, code: "keys_required" });
+    expect(await activate(s.userId, s.studioId, [k.key], v, GOOD, true, null)).toMatchObject({ ok: false, code: "preview_required" });
+    const seen = (await call(s.userId, "select public.preview_activation($1,$2::text[]) as r", [s.studioId, [k.key]])).preview_hash as string;
+    expect(seen).toMatch(/^[0-9a-f]{64}$/);
+    // the owner's stored choice changes after the preview was shown: the commit is stale and nothing activates
+    await dated(s, k.key, k.practitioner_new === "off" ? "studio" : "off", 2);
+    expect(await activate(s.userId, s.studioId, [k.key], v, GOOD, true, seen)).toMatchObject({ ok: false, code: "stale_preview" });
+    expect(Number((await adminQuery("select count(*) n from public.permission_key_activation where studio_id=$1", [s.studioId])).rows[0].n)).toBe(0);
+    const fresh = (await call(s.userId, "select public.preview_activation($1,$2::text[]) as r", [s.studioId, [k.key]])).preview_hash as string;
+    expect(fresh).not.toBe(seen);
+    expect((await activate(s.userId, s.studioId, [k.key], v, GOOD, true, fresh)).ok).toBe(true);
+  });
+
   it("Discard works: saving the snapshot value replaces an INACTIVE stored choice instead of reporting nothing_changed", async () => {
     const s = await seedStudio("act0");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
@@ -94,7 +118,7 @@ describe("activation rule", () => {
       expect(await activate(s.userId, s.studioId, [KEYS[0].key], p.version, GOOD, false)).toMatchObject({ ok: false, code: "sensitive_unconfirmed" });
       expect(await effMap(s)).toEqual(before);
     }
-    const r = await activate(s.userId, s.studioId, [KEYS[0].key], p.version);
+    const r = await activate(s.userId, s.studioId, [KEYS[0].key], p.version, GOOD, true, (await call(s.userId, "select public.preview_activation($1,$2::text[]) as r", [s.studioId, [KEYS[0].key]])).preview_hash);
     expect(r.ok).toBe(true);
     const after = await effMap(s);
     const changed = after.filter((a, i) => a.e !== before[i].e).map((a) => `${a.role}:${a.key}`);

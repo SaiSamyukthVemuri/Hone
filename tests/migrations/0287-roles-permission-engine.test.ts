@@ -80,7 +80,7 @@ const fnBodies = () => code.split(/(?=create or replace function public\.)/).map
 describe("0287 activation rule: source contract", () => {
   it("every key the catalog marks enforced is in the release seed", async () => {
     const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
-    const seeded = [...(code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0]).matchAll(/\('([a-z_.]+)', now\(\)/g)].map((m) => m[1]).sort();
+    const seeded = [...(code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0]).matchAll(/\('([a-z_.]+)', null, 'R1-R2', '(?:full|narrow)'\)/g)].map((m) => m[1]).sort();
     const enforced = (CATALOG as readonly { key: string }[]).filter((d) => enforcementOf(d.key) === "enforced").map((d) => d.key).sort();
     // Every enforced key MUST be released, or its owner-stored values would be inert forever. (Released but not yet enforced is harmless.)
     expect(enforced.filter((k) => !seeded.includes(k))).toEqual([]);
@@ -99,8 +99,9 @@ describe("0287 activation rule: source contract", () => {
     expect(activationWriters).toEqual(["perm_run_activation"]);
     const releaseWriters = fnBodies()
       .filter((m) => /(insert into|update|delete from)\s+public\.permission_key_release\b/.test(m[0]));
-    expect(releaseWriters).toEqual([]);
-    expect(writes("permission_key_release")).toBe(1); // the migration seed only
+    // the operator-only command is the one function that writes it; it is granted to no API role (see the grant test)
+    expect(releaseWriters.map((m) => m[1])).toEqual(["mark_permissions_released"]);
+    expect(writes("permission_key_release")).toBe(3); // the seed, plus the two updates inside mark_permissions_released
   });
 
   it("no application code and no other migration writes these tables", () => {
@@ -113,10 +114,28 @@ describe("0287 activation rule: source contract", () => {
   });
 
   it("the resolver treats a missing release row as today's snapshot (fail closed) and a studio basis_at / stored set_at gate the intended values", () => {
-    expect(code).toMatch(/if not found then return v_snap; end if;/);
+    expect(code).toMatch(/if not found or v_rel\.released_at is null then return v_snap; end if;/);
     expect(code).toContain("v_stored_at >= v_rel.released_at");
     expect(code).toContain("v_basis_at >= v_rel.released_at");
     expect(code).toContain("'inactive_until_activated'");
+  });
+
+  it("releases are seeded PENDING; the six deny_only keys are narrow releases; observe keys are not released (AA-4, AH1)", () => {
+    const seed = code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0];
+    const rows = [...seed.matchAll(/\('([a-z_.]+)', (null|now\(\)[^,]*), '([^']+)', '(full|narrow)'\)/g)].map((m) => ({ key: m[1], at: m[2], kind: m[4] }));
+    expect(rows.length).toBe(13);
+    expect(rows.every((r) => r.at === "null")).toBe(true);
+    expect(rows.filter((r) => r.kind === "narrow").map((r) => r.key).sort()).toEqual(["appt.book", "appt.move", "appt.reassign", "avail.manage_others", "avail.manage_own", "avail.manage_studio_hours"]);
+    expect(rows.map((r) => r.key)).not.toContain("appt.complete");
+  });
+
+  it("activation requires an explicit non-empty key list and a preview hash; mark_permissions_released is granted to no API role (AA-1, AA-4)", () => {
+    expect(code).toContain("perm_fail('keys_required')");
+    expect(code).toContain("perm_fail('preview_required')");
+    expect(code).toContain("perm_fail('stale_preview'");
+    expect(code).toMatch(/revoke all on function public\.mark_permissions_released\(text\[\], text, text\) from public, anon, authenticated, service_role;/);
+    expect(code).not.toMatch(/grant execute on function public\.mark_permissions_released/);
+    expect(code).not.toMatch(/grant execute on function public\.perm_activation_hash/);
   });
 
   it("adopt, reset and activation require sensitive_confirmed when their result newly enables a sensitive key (Insurance PY-1)", () => {
