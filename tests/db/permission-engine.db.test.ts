@@ -279,6 +279,11 @@ describe("reasons (Sam, 3 Nov): required to expand sensitive access, adopt or re
     expect(pa).toMatchObject({ ok: true, version: 1, reason_required: true });
     expect(Array.isArray(pa.fixed_narrowings)).toBe(true);
     expect(pa.fixed_narrowings.length).toBeGreaterThan(0);
+    // each item says whether a practitioner LOSES something or is merely protected, and archive/delete/restore are listed as losses (DN-25)
+    for (const f of pa.fixed_narrowings) expect(["narrows", "safeguard"]).toContain(f.practitioner_access);
+    const kindOf = (id: string) => pa.fixed_narrowings.find((f: { id: string }) => f.id === id)?.practitioner_access;
+    for (const id of ["performer_change", "exposure_incident_history", "colleague_private_fields", "studio_columns_read", "archive_clients", "delete_treatment_records_and_photos", "restore_deleted_records"]) expect(kindOf(id), id).toBe("narrows");
+    for (const id of ["getting_started_filter", "notification_read_state", "portal_reply_immutable", "anonymous_public_writes_closed", "rate_limit_outage", "google_flags_operator_only", "deactivated_calendar_owner"]) expect(kindOf(id), id).toBe("safeguard");
     expect((await adminQuery("select basis from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0].basis).toBe("existing_snapshot");
     expect(await call(s.userId, "select public.adopt_new_defaults($1,1,'n/a') as r", [s.studioId])).toMatchObject({ code: "reason_required" });
     expect(await call(s.userId, "select public.adopt_new_defaults($1,0,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ code: "stale_version", current_version: 1 });
