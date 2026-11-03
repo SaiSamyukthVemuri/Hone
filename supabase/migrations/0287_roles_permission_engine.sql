@@ -49,6 +49,10 @@ create table public.permission_narrowings (
   label            text not null,
   stage            text not null,
   narrows_existing boolean not null,
+  -- The adopt preview lists EVERY row, each tagged with this kind, so the page can show losses and safeguards apart.
+  -- What a practitioner experiences: 'narrows' = they lose something they can do or read today; 'safeguard' = a protection that does not take a
+  -- practitioner capability away. The adopt preview shows the two apart.
+  practitioner_access text not null check (practitioner_access in ('narrows', 'safeguard')),
   notice           text not null
 );
 
@@ -213,19 +217,22 @@ values
   ('records.view_sterilisation_disinfection', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
   ('records.log_sterilisation_disinfection', array['off', 'studio']::text[], null, true, true, true, array['records.view_sterilisation_disinfection']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null);
 
-insert into public.permission_narrowings (id, decision, label, stage, narrows_existing, notice)
+insert into public.permission_narrowings (id, decision, label, stage, narrows_existing, practitioner_access, notice)
 values
-  ('performer_change', 'DN-8', 'Changing a session''s performer: owner or the currently recorded performer only', 'R4', true, 'Any member can name any peer as a session''s performer today. From adoption only the owner or the recorded performer can, with a reason.'),
-  ('exposure_incident_history', 'DN-3', 'Exposure-incident history: owner and the reporter only; a removed reporter loses access through that studio', 'R4', true, 'Other practitioners can read and update exposure incidents today. From adoption only the owner and the person who reported can.'),
-  ('colleague_private_fields', 'DN-21', 'Colleague email, Google account email and calendar-feed hash: owner and that person only', 'R1', true, 'Practitioners can read colleagues'' emails and feed-token hashes through the API today. From adoption they see names and colours only.'),
-  ('studio_columns_read', 'DN-27', 'Staff read studio name, timezone, booking preferences and the fee amounts clients see at booking; other fee fields need a pay or price key', 'R1', true, 'Members can read every studio column through the API today, including fee amounts.'),
-  ('getting_started_filter', 'DN-28', 'Getting Started shows only the tasks the viewer may perform', 'R5', false, 'Tasks the viewer cannot perform are no longer listed.'),
-  ('notification_read_state', 'DN-22', 'Notification read state is per person; users read only notifications they may see and change only their own state', 'R5', true, 'Any member can edit any notification row and mark everyone''s as read today. From adoption each person has their own read state.'),
-  ('google_flags_operator_only', 'DN-16', 'Google Calendar studio feature flags are operator-only, enforced in the database; owners keep their normal connect and disconnect', 'R5', true, 'A studio owner could turn the Google studio flags on in the app. From adoption only the operator can; connecting and disconnecting a calendar is unchanged.'),
-  ('deactivated_calendar_owner', 'G7:calendar-owner', 'No active owner left: studio calendar sync pauses and the operator is alerted (no client data); it resumes only when an active owner explicitly reconnects', 'R4', false, 'Other studios'' connections are untouched. Events already copied into an external calendar may remain there. Sync does not resume by itself.'),
-  ('rate_limit_outage', 'DN-29', 'When the rate limiter is down, token and link operations refuse with a retry message and public booking uses a bounded fallback', 'R5', false, 'Sensitive token and link operations ask the person to retry later during an outage. Public booking stays available with bounded protection, never unlimited submissions. The operator is alerted without client data or secret links.'),
-  ('anonymous_public_writes_closed', 'G7:anon-writes', 'Anonymous waitlist and demo submissions go through validated server endpoints with rate and quantity limits; direct database writes are closed', 'R5', true, 'Public sign-up must keep working through the server endpoint, and no privileged key may reach the browser.'),
-  ('portal_reply_immutable', 'DN-14', 'Staff can never rewrite a client''s original portal reply', 'R5', true, 'Staff can edit message rows through the API today. From adoption a client''s original reply is immutable and the sender of every staff message is recorded.');
+  ('performer_change', 'DN-8', 'Changing a session''s performer: owner or the currently recorded performer only', 'R4', true, 'narrows', 'Any member can name any peer as a session''s performer today. From adoption only the owner or the recorded performer can, with a reason.'),
+  ('exposure_incident_history', 'DN-3', 'Exposure-incident history: owner and the reporter only; a removed reporter loses access through that studio', 'R4', true, 'narrows', 'Other practitioners can read and update exposure incidents today. From adoption only the owner and the person who reported can.'),
+  ('colleague_private_fields', 'DN-21', 'Colleague email, Google account email and calendar-feed hash: owner and that person only', 'R1', true, 'narrows', 'Practitioners can read colleagues'' emails and feed-token hashes through the API today. From adoption they see names and colours only.'),
+  ('studio_columns_read', 'DN-27', 'Staff read studio name, timezone, booking preferences and the fee amounts clients see at booking; other fee fields need a pay or price key', 'R1', true, 'narrows', 'Members can read every studio column through the API today, including fee amounts.'),
+  ('getting_started_filter', 'DN-28', 'Getting Started shows only the tasks the viewer may perform', 'R5', false, 'safeguard', 'Tasks the viewer cannot perform are no longer listed.'),
+  ('notification_read_state', 'DN-22', 'Notification read state is per person; users read only notifications they may see and change only their own state', 'R5', true, 'safeguard', 'Any member can edit any notification row and mark everyone''s as read today. From adoption each person has their own read state.'),
+  ('google_flags_operator_only', 'DN-16', 'Google Calendar studio feature flags are operator-only, enforced in the database; owners keep their normal connect and disconnect', 'R5', true, 'safeguard', 'A studio owner could turn the Google studio flags on in the app. From adoption only the operator can; connecting and disconnecting a calendar is unchanged.'),
+  ('deactivated_calendar_owner', 'G7:calendar-owner', 'No active owner left: studio calendar sync pauses and the operator is alerted (no client data); it resumes only when an active owner explicitly reconnects', 'R4', false, 'safeguard', 'Other studios'' connections are untouched. Events already copied into an external calendar may remain there. Sync does not resume by itself.'),
+  ('rate_limit_outage', 'DN-29', 'When the rate limiter is down, token and link operations refuse with a retry message and public booking uses a bounded fallback', 'R5', false, 'safeguard', 'Sensitive token and link operations ask the person to retry later during an outage. Public booking stays available with bounded protection, never unlimited submissions. The operator is alerted without client data or secret links.'),
+  ('anonymous_public_writes_closed', 'G7:anon-writes', 'Anonymous waitlist and demo submissions go through validated server endpoints with rate and quantity limits; direct database writes are closed', 'R5', true, 'safeguard', 'Public sign-up must keep working through the server endpoint, and no privileged key may reach the browser.'),
+  ('portal_reply_immutable', 'DN-14', 'Staff can never rewrite a client''s original portal reply', 'R5', true, 'safeguard', 'Staff can edit message rows through the API today. From adoption a client''s original reply is immutable and the sender of every staff message is recorded.'),
+  ('archive_clients', 'DN-25', 'Archiving clients becomes owner-only', 'R4', true, 'narrows', 'Any practitioner can archive any client today. From the enforcement release only the owner can; existing studios get advance notice before it takes effect.'),
+  ('delete_treatment_records_and_photos', 'DN-25', 'Deleting whole sessions and photos becomes owner-only', 'R4', true, 'narrows', 'Practitioners can delete a colleague''s session and photos today. From the enforcement release only the owner can; removing a pass, block or treated area stays editing under the records permission.'),
+  ('restore_deleted_records', 'DN-25', 'Restoring deleted records becomes owner-only', 'R4', true, 'narrows', 'Restoring deleted records is open to practitioners today. From the enforcement release only the owner can.');
 
 -- A NEW studio starts on the new-studio basis; an existing studio has no row and resolves to its existing snapshot until its owner adopts.
 create or replace function public.studios_permission_policy_seed()
@@ -736,8 +743,8 @@ begin
     if p_mode = 'adopt' then
       v_result := v_result || jsonb_build_object(
         'fixed_narrowings',
-        (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'decision', n.decision, 'label', n.label, 'stage', n.stage, 'notice', n.notice) order by n.id), '[]'::jsonb)
-           from public.permission_narrowings n where n.narrows_existing));
+        (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'decision', n.decision, 'label', n.label, 'stage', n.stage, 'practitioner_access', n.practitioner_access, 'notice', n.notice) order by n.id), '[]'::jsonb)
+           from public.permission_narrowings n));
     end if;
 
     if not p_commit then
