@@ -451,27 +451,58 @@ describe("scroll arithmetic and the first differing run (W-1/N5-1, W-2)", () => 
 });
 
 describe("bounded re-sync search (P-1/R6-1)", () => {
-  it("30,000-character values with edits at both ends finish well inside a time budget", () => {
+  // Distinct, non-repeating text so an anchor can only match where it truly re-appears.
+  const unique = (tag: string, n: number) => Array.from({ length: n }, (_, i) => `${tag}${String(i).padStart(5, "0")} `).join("");
+
+  /** Runs conflictPreview while counting String.prototype.indexOf calls: the work bound, independent of machine speed. */
+  function withIndexOfCount<T>(fn: () => T): { result: T; calls: number } {
+    const original = String.prototype.indexOf;
+    let calls = 0;
+    String.prototype.indexOf = function (this: string, ...args: Parameters<typeof original>) {
+      calls += 1;
+      return original.apply(this, args);
+    } as typeof original;
+    try {
+      return { result: fn(), calls };
+    } finally {
+      String.prototype.indexOf = original;
+    }
+  }
+
+  it("30,000-character values with edits at both ends do a bounded number of searches", () => {
     const mid = "m".repeat(29_900);
-    const a = "FIRST" + mid + "tail-A";
-    const b = "first" + mid + "tail-B";
-    const t0 = performance.now();
-    const p = conflictPreview(a, b);
-    const ms = performance.now() - t0;
-    expect(ms).toBeLessThan(50);
+    const { result: p, calls } = withIndexOfCount(() => conflictPreview("FIRST" + mid + "tail-A", "first" + mid + "tail-B"));
+    expect(calls).toBeLessThanOrEqual(CONFLICT_RESYNC_WINDOW_POINTS + 1);
     expect(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).toBe("FIRST");
     expect(p.moreChanges).toBe(true);
   });
-  it("completely different 30,000-character values stay bounded and say more changes follow", () => {
+  it("completely different 30,000-character values stay inside the window bound and say more changes follow", () => {
     const t0 = performance.now();
-    const p = conflictPreview("a".repeat(30_000), "b".repeat(30_000));
-    expect(performance.now() - t0).toBeLessThan(50);
+    const { result: p, calls } = withIndexOfCount(() => conflictPreview("a".repeat(30_000), "b".repeat(30_000)));
+    expect(calls).toBeLessThanOrEqual(CONFLICT_RESYNC_WINDOW_POINTS + 1);
+    expect(performance.now() - t0).toBeLessThan(2_000); // generous ceiling only; the call count above is the real bound
     expect(p.moreChanges).toBe(true);
     expect(Array.from(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).length).toBe(CONFLICT_RESYNC_WINDOW_POINTS);
   });
-  it("a re-sync beyond the window is not found: highlight to the window end and report more changes", () => {
-    const far = "m".repeat(CONFLICT_RESYNC_WINDOW_POINTS + 500);
-    const p = conflictPreview("X" + far + "tail-end-of-text-here", "Y" + far + "tail-end-of-text-here" + "Z".repeat(10));
+  it("a re-sync only PAST the window is not found: the run ends exactly at the window and more changes are reported", () => {
+    // Both sides differ for far more than 4,000 code points, then share a unique tail that could re-sync them.
+    const common = unique("tail", 40);
+    const a = unique("a", 800) + common;
+    const b = unique("b", 800) + common;
+    expect(Array.from(unique("a", 800)).length).toBeGreaterThan(CONFLICT_RESYNC_WINDOW_POINTS);
+    const { result: p, calls } = withIndexOfCount(() => conflictPreview(a, b));
+    expect(calls).toBeLessThanOrEqual(CONFLICT_RESYNC_WINDOW_POINTS + 1);
+    // Only the window-end path returns a run of exactly the window length on both sides.
+    expect(Array.from(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).length).toBe(CONFLICT_RESYNC_WINDOW_POINTS);
+    expect(Array.from(p.yours.full.slice(p.yours.diffStart, p.yours.diffEnd)).length).toBe(CONFLICT_RESYNC_WINDOW_POINTS);
     expect(p.moreChanges).toBe(true);
+  });
+  it("a re-sync INSIDE the window is found (control for the beyond-window case)", () => {
+    const common = unique("tail", 40);
+    const a = unique("a", 50) + common;
+    const b = unique("b", 50) + common;
+    const p = conflictPreview(a, b);
+    expect(Array.from(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).length).toBeLessThan(CONFLICT_RESYNC_WINDOW_POINTS);
+    expect(p.moreChanges).toBe(false);
   });
 });
