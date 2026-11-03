@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { Suspense } from "react";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
@@ -562,7 +563,9 @@ export default async function DashboardPage({
     string,
     { sessionId: string; hasChartedArea: boolean }
   >();
-  if (apptIds.length > 0) {
+  // Roles R4: which visits are charted is treatment data; without clin.view_records the lookup is not issued.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
+  if (apptIds.length > 0 && canViewRecords) {
     const { data: linkedSessions, error: linkedError } = await supabase
       .from("sessions")
       .select("id, appointment_id")

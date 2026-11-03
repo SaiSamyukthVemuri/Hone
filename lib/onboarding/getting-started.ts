@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getActiveServices } from "@/lib/booking/queries";
@@ -557,6 +558,9 @@ export async function getGettingStartedSignals(
   opts: { viewerIsOwner: boolean },
 ): Promise<GettingStartedSignals> {
   const supabase = await createClient();
+  // Roles R4: the charting completeness signals are derived from treatment data. Without clin.view_records neither read is issued
+  // and the viewer's checklist is built from empty block and note reads.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
   const count = (table: string) =>
     supabase
       .from(table)
@@ -590,7 +594,9 @@ export async function getGettingStartedSignals(
           .eq("stripe_livemode", inferStripeLivemode())
       : Promise.resolve(null),
     getTreatmentConsentReadiness(studio.id),
-    supabase
+    !canViewRecords
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
       .from("session_blocks")
       // Charting unification: reactions may live as chips in the block's live
       // entries' observation_chips; embed them so the completeness check reads
@@ -601,7 +607,9 @@ export async function getGettingStartedSignals(
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
       .limit(BLOCK_SIGNAL_CAP + 1),
-    supabase
+    !canViewRecords
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
       .from("sessions")
       .select("id, next_session_note")
       .eq("studio_id", studio.id)
