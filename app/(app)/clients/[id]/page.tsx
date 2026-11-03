@@ -267,6 +267,11 @@ export default async function ClientCheatSheetPage({
   const isOwner = canViewClientBilling(practitioner.role);
   // Roles engine (0287): clin.view_records covers EVERY treatment-record read on this profile. Off: no session, entry, block, imported
   // treatment memory, treatment time or clinical-notes row is read, so every card derived from them is empty (never a stale or partial record).
+  // clin.view_intake covers the intake ANSWERS and everything derived from them (self-reported Fitzpatrick); status-only access is a separate key.
+  // Started here (not awaited) so it adds no serial stage; each intake read below waits on it.
+  const canViewIntakePromise = createClient()
+    .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
+    .then((d) => d.allowed);
   const canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed;
   const priceReads = { includePrices: isOwner, includeSessions: canViewRecords };
   const data = await getClientById(studio.id, id, priceReads);
@@ -332,7 +337,8 @@ export default async function ClientCheatSheetPage({
   // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
   const needsPinnedNotes = isOverview || activeTab === "notes";
   const needsPortalMessageReplies = activeTab === "messages";
-  const needsConsultationNotes = activeTab === "treatment";
+  // Consultation and skin/hair clinical-note history are treatment records: clin.view_records (Codex #1341). Off: not read, not rendered.
+  const needsConsultationNotes = activeTab === "treatment" && canViewRecords;
 
   const portalLoginUrl = studio.slug
     ? `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`
@@ -390,7 +396,10 @@ export default async function ClientCheatSheetPage({
     // Rendered outside every tab block, so always needed.
     getActiveServices(studio.id, priceReads),
     needsIntake
-      ? getLatestIntakeForClient(studio.id, client.id)
+      ? Promise.all([getLatestIntakeForClient(studio.id, client.id), canViewIntakePromise]).then(([row, ok]) =>
+          // Without clin.view_intake the row keeps its status and dates (status-only) but carries no answers.
+          ok || !row ? row : { ...row, responses: {} },
+        )
       : Promise.resolve(null),
     // Portal access hints (last link sent / last sign-in). Overview card.
     isMessages
@@ -403,7 +412,7 @@ export default async function ClientCheatSheetPage({
     // practitioner-confirmed value lives on client.fitzpatrick_type and is
     // never overwritten by this derived display. Overview card.
     isOverview
-      ? getLatestSubmittedOrReviewedIntakeForClient(studio.id, client.id)
+      ? canViewIntakePromise.then((ok) => (ok ? getLatestSubmittedOrReviewedIntakeForClient(studio.id, client.id) : null))
       : Promise.resolve(null),
     needsPinnedNotes
       ? getPinnedNotesForClient(studio.id, client.id)
@@ -1817,6 +1826,12 @@ export default async function ClientCheatSheetPage({
             );
           })()}
         </>
+      )}
+
+      {activeTab === "treatment" && !canViewRecords && (
+        <p role="status" data-testid="consultation-not-available" className="text-sm text-neutral-500">
+          Consultation notes are not available to your role.
+        </p>
       )}
 
       {activeTab === "treatment" && clinicalNoteSections && (

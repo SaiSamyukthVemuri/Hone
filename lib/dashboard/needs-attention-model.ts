@@ -76,6 +76,8 @@ export type NeedsAttention = {
   // Names of checks that could not be read, in plain words. When non-empty the
   // panel says the list may be incomplete and never shows the all-clear.
   unavailableChecks: string[];
+  // True when the viewer's role cannot see treatment records: the panel says "Not available to your role", never an all-clear or a zero.
+  notAvailableToRole: boolean;
   // When the per-session details check ran, how many recent sessions it covers;
   // null when it did not run. The panel prints it (Insurance N3).
   detailsWindow: number | null;
@@ -102,6 +104,7 @@ export function buildNeedsAttention(input: {
   intakesAwaitingReview: ReadonlyArray<IntakeAwaitingReview>;
   todo: DashboardTodo;
   unavailableChecks?: ReadonlyArray<string>;
+  notAvailableToRole?: boolean;
   // Clients with a confirmed visit coming up. An intake gap for one of them is
   // PREPARATION (listed first); for anyone else it sorts with the general
   // follow-up work. Omitted when the read failed: every intake gap stays in the
@@ -260,6 +263,7 @@ export function buildNeedsAttention(input: {
         !(input.recordDetailGaps && i.kind === "records_details"),
     ),
     unavailableChecks: [...(input.unavailableChecks ?? [])],
+    notAvailableToRole: input.notAvailableToRole === true,
     detailsWindow: input.detailsWindow ?? null,
     notReturnedCount:
       Math.max(0, (input.assistant.allTotal ?? allItems.length) - allItems.length) +
