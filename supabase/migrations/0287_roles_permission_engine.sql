@@ -763,7 +763,8 @@ as $$ select public.perm_run_changes(p_studio, p_changes, p_reason, p_sensitive_
 
 -- Reset a role to the studio's OWN basis (an existing studio returns to its snapshot, never to the new defaults) / adopt new defaults.
 create or replace function public.perm_run_basis(
-  p_studio uuid, p_mode text, p_role text, p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean
+  p_studio uuid, p_mode text, p_role text, p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean,
+  p_confirmed boolean default false
 )
 returns jsonb
 language plpgsql
@@ -786,6 +787,7 @@ declare
   v_affected jsonb := '{}'::jsonb;
   v_result jsonb;
   v_any boolean := false;
+  v_sens jsonb := '[]'::jsonb;
 begin
   select * into a from public.perm_actor(p_studio);
   if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
@@ -827,9 +829,14 @@ begin
       v_after := v_after || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
       v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before -> v_role, v_after -> v_role));
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
+      -- Same rule as save (Insurance PY-1): a SENSITIVE or financial key whose EFFECTIVE scope newly rises needs an explicit confirmation.
+      select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after -> v_role) e
+        join public.permission_catalog pc on pc.key = e.key
+       where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before -> v_role ->> e.key);
     end loop;
 
-    v_result := jsonb_build_object('ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected, 'reason_required', true);
+    v_result := jsonb_build_object('ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected, 'reason_required', true, 'sensitive_keys', v_sens, 'confirmation_required', jsonb_array_length(v_sens) > 0);
     if p_mode = 'adopt' then
       v_result := v_result || jsonb_build_object(
         'fixed_narrowings',
@@ -839,6 +846,9 @@ begin
 
     if not p_commit then
       raise exception using errcode = 'PM002', message = 'preview';
+    end if;
+    if jsonb_array_length(v_sens) > 0 and not coalesce(p_confirmed, false) then
+      raise exception using errcode = 'PM001', message = public.perm_fail('sensitive_unconfirmed')::text;
     end if;
 
     update public.studio_permission_policy set version = version + 1 where studio_id = p_studio returning version into v_new_version;
@@ -863,17 +873,17 @@ create or replace function public.preview_reset(p_studio uuid, p_role text)
 returns jsonb language sql volatile security definer set search_path = ''
 as $$ select public.perm_run_basis(p_studio, 'reset', p_role, null, null, false, false) $$;
 
-create or replace function public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text)
+create or replace function public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean default false)
 returns jsonb language sql volatile security definer set search_path = ''
-as $$ select public.perm_run_basis(p_studio, 'reset', p_role, p_reason, p_expected_version, true, true) $$;
+as $$ select public.perm_run_basis(p_studio, 'reset', p_role, p_reason, p_expected_version, true, true, p_sensitive_confirmed) $$;
 
 create or replace function public.preview_adopt_new_defaults(p_studio uuid)
 returns jsonb language sql volatile security definer set search_path = ''
 as $$ select public.perm_run_basis(p_studio, 'adopt', null, null, null, false, false) $$;
 
-create or replace function public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text)
+create or replace function public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean default false)
 returns jsonb language sql volatile security definer set search_path = ''
-as $$ select public.perm_run_basis(p_studio, 'adopt', null, p_reason, p_expected_version, true, true) $$;
+as $$ select public.perm_run_basis(p_studio, 'adopt', null, p_reason, p_expected_version, true, true, p_sensitive_confirmed) $$;
 
 -- ---------------------------------------------------------------------------
 -- 4b) ACTIVATION (owner only). One body for preview and commit, like the commands above: a preview runs the change and rolls it back.
@@ -881,7 +891,8 @@ as $$ select public.perm_run_basis(p_studio, 'adopt', null, p_reason, p_expected
 --     owner's intended values (stored, or the new-studio default) take effect for the named keys.
 -- ---------------------------------------------------------------------------
 create or replace function public.perm_run_activation(
-  p_studio uuid, p_keys text[], p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean
+  p_studio uuid, p_keys text[], p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean,
+  p_confirmed boolean default false
 )
 returns jsonb
 language plpgsql
@@ -899,6 +910,7 @@ declare
   v_keys text[];
   v_key text;
   v_tag text;
+  v_sens jsonb := '[]'::jsonb;
   v_before jsonb := '{}'::jsonb;
   v_after jsonb := '{}'::jsonb;
   v_changes jsonb := '{}'::jsonb;
@@ -949,14 +961,21 @@ begin
       v_after := v_after || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
       v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before -> v_role, v_after -> v_role));
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
+      select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after -> v_role) e
+        join public.permission_catalog pc on pc.key = e.key
+       where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before -> v_role ->> e.key);
     end loop;
-    v_result := jsonb_build_object('ok', true, 'version', v_version, 'keys', to_jsonb(v_keys), 'changes', v_changes, 'affected', v_affected, 'reason_required', true);
+    v_result := jsonb_build_object('ok', true, 'version', v_version, 'keys', to_jsonb(v_keys), 'changes', v_changes, 'affected', v_affected, 'reason_required', true, 'sensitive_keys', v_sens, 'confirmation_required', jsonb_array_length(v_sens) > 0);
 
     if not p_commit then
       raise exception using errcode = 'PM002', message = 'preview';
     end if;
     if cardinality(v_keys) = 0 then
       raise exception using errcode = 'PM001', message = public.perm_fail('nothing_changed', null, null, v_version)::text;
+    end if;
+    if jsonb_array_length(v_sens) > 0 and not coalesce(p_confirmed, false) then
+      raise exception using errcode = 'PM001', message = public.perm_fail('sensitive_unconfirmed')::text;
     end if;
 
     update public.studio_permission_policy set version = version + 1 where studio_id = p_studio returning version into v_new_version;
@@ -983,9 +1002,9 @@ create or replace function public.preview_activation(p_studio uuid)
 returns jsonb language sql volatile security definer set search_path = ''
 as $$ select public.perm_run_activation(p_studio, null, null, null, false, false) $$;
 
-create or replace function public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text)
+create or replace function public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean default false)
 returns jsonb language sql volatile security definer set search_path = ''
-as $$ select public.perm_run_activation(p_studio, p_keys, p_reason, p_expected_version, true, true) $$;
+as $$ select public.perm_run_activation(p_studio, p_keys, p_reason, p_expected_version, true, true, p_sensitive_confirmed) $$;
 
 -- ---------------------------------------------------------------------------
 -- 5) Reads (owner only). Names are resolved at read time; no email is ever returned.
@@ -1249,9 +1268,9 @@ revoke all on function public.permission_audit_append_only() from public, anon, 
 revoke all on function public.studios_permission_policy_seed() from public, anon, authenticated, service_role;
 revoke all on function public.perm_rank(text) from public, anon, authenticated, service_role;
 revoke all on function public.perm_scope_source(uuid, text, text) from public, anon, authenticated, service_role;
-revoke all on function public.perm_run_activation(uuid, text[], text, bigint, boolean, boolean) from public, anon, authenticated, service_role;
+revoke all on function public.perm_run_activation(uuid, text[], text, bigint, boolean, boolean, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.preview_activation(uuid) from public, anon, authenticated, service_role;
-revoke all on function public.activate_released_permissions(uuid, text[], bigint, text) from public, anon, authenticated, service_role;
+revoke all on function public.activate_released_permissions(uuid, text[], bigint, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.perm_reason_ok(text) from public, anon, authenticated, service_role;
 revoke all on function public.perm_actor(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.perm_base_scope(uuid, text, text) from public, anon, authenticated, service_role;
@@ -1261,14 +1280,14 @@ revoke all on function public.perm_diff(jsonb, jsonb) from public, anon, authent
 revoke all on function public.perm_affected_people(uuid, text) from public, anon, authenticated, service_role;
 revoke all on function public.perm_fail(text, text, text, bigint, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean) from public, anon, authenticated, service_role;
-revoke all on function public.perm_run_basis(uuid, text, text, text, bigint, boolean, boolean) from public, anon, authenticated, service_role;
+revoke all on function public.perm_run_basis(uuid, text, text, text, bigint, boolean, boolean, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.has_studio_permission(uuid, text, uuid, uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.preview_role_changes(uuid, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.save_role_permissions(uuid, bigint, jsonb, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.preview_reset(uuid, text) from public, anon, authenticated, service_role;
-revoke all on function public.reset_role_to_defaults(uuid, text, bigint, text) from public, anon, authenticated, service_role;
+revoke all on function public.reset_role_to_defaults(uuid, text, bigint, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.preview_adopt_new_defaults(uuid) from public, anon, authenticated, service_role;
-revoke all on function public.adopt_new_defaults(uuid, bigint, text) from public, anon, authenticated, service_role;
+revoke all on function public.adopt_new_defaults(uuid, bigint, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.get_role_permissions(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.effective_access(uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.list_permission_audit(uuid, integer, bigint) from public, anon, authenticated, service_role;
@@ -1278,12 +1297,12 @@ grant execute on function public.has_studio_permission(uuid, text, uuid, uuid, u
 grant execute on function public.preview_role_changes(uuid, jsonb) to authenticated;
 grant execute on function public.save_role_permissions(uuid, bigint, jsonb, text, boolean) to authenticated;
 grant execute on function public.preview_reset(uuid, text) to authenticated;
-grant execute on function public.reset_role_to_defaults(uuid, text, bigint, text) to authenticated;
+grant execute on function public.reset_role_to_defaults(uuid, text, bigint, text, boolean) to authenticated;
 grant execute on function public.preview_adopt_new_defaults(uuid) to authenticated;
-grant execute on function public.adopt_new_defaults(uuid, bigint, text) to authenticated;
+grant execute on function public.adopt_new_defaults(uuid, bigint, text, boolean) to authenticated;
 grant execute on function public.get_role_permissions(uuid) to authenticated;
 grant execute on function public.preview_activation(uuid) to authenticated;
-grant execute on function public.activate_released_permissions(uuid, text[], bigint, text) to authenticated;
+grant execute on function public.activate_released_permissions(uuid, text[], bigint, text, boolean) to authenticated;
 grant execute on function public.effective_access(uuid, uuid) to authenticated;
 grant execute on function public.list_permission_audit(uuid, integer, bigint) to authenticated;
 grant execute on function public.change_staff_role(uuid, uuid, text, text, text) to authenticated;
