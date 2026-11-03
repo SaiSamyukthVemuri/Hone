@@ -363,6 +363,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
+    enforcement: "enforced",
   },
   {
     key: "client.edit_contact",
@@ -639,6 +640,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
+    enforcement: "enforced",
     note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. A NEW studio gets Sam's section C.4 default: ON for both staff roles (practitioner: whole studio, matching today's access so no studio gains or loses; receptionist: whole studio). Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
   },
   {

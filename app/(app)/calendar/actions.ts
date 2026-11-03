@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { routineMessageAllowed } from "@/lib/permissions/routine-message";
 import { requirePermission } from "@/lib/permissions/require-permission";
 import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -559,7 +560,8 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           .maybeSingle()
       : { data: null };
 
-    if (client?.email) {
+    // Roles engine (R5): the cancellation message is withheld, not the cancellation, without comm.send_routine.
+    if (client?.email && (await routineMessageAllowed(supabase, studio.id, { appointment: appointmentId }))) {
       try {
         await sendCancellationEmail({
           appointmentId,
@@ -809,6 +811,10 @@ export async function createClientForCalendarBookingAction(
   }
 
   const supabase = await createClient();
+  // Roles engine (0287, R5): the quick-book drawer creates a client, so it asks the same key as the new-client page.
+  if (!(await requirePermission(supabase, studio.id, "client.create")).allowed) {
+    return { ok: false, error: "You don't have permission to add clients." };
+  }
   const { data, error } = await supabase
     .from("clients")
     .insert({
@@ -959,6 +965,8 @@ type DispatchParams = {
 };
 
 async function dispatchBookingEmails(p: DispatchParams) {
+  // Roles engine (R5): the booking messages are a side effect of the booking; withheld (not failed) without comm.send_routine.
+  if (!(await routineMessageAllowed(await createClient(), p.studio.id, { appointment: p.appointment.id }))) return;
   // Single helper call up front; downstream lines share the same origin.
   const appOrigin = getRequiredAppOrigin();
   // PR #260/#264: appointment tokens are hash-only at rest (the raw

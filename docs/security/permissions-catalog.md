@@ -315,3 +315,5 @@ Every step keeps a reason and history. Archiving (recoverable) remains the ordin
 ## Enforcement state per key (Privacy X3)
 
 The `enforcement` field on each catalog key says which keys the code acts on in this release: `enforced`, `observe` (asked and logged, never blocks) or `not_yet` (default). The Roles page shows `not_yet` keys as "Not enforced yet" and not editable. The map is proved equal to the keys the app asks by the wiring test.
+
+R5 slice 1 (stacked on R4): `client.create` (new-client page and the quick-book drawer) and `comm.send_routine` (booking confirmation, cancellation and move messages) are `enforced`. A denied message key withholds the MESSAGE and never fails the committed action. `client.edit_contact` stays `not_yet` on purpose: its masked audit needs a governed database command that ships with the held R5 migration, and the key is not gated before that audit exists.

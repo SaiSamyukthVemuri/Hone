@@ -15,6 +15,10 @@ const db = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => { throw new Error(`NEXT_REDIRECT:${to}`); },
 }));
+// The Roles engine has its own tests; this file is about the code around it (client.create, R5).
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: () => undefined }));
 vi.mock("@/lib/supabase/queries", () => ({
