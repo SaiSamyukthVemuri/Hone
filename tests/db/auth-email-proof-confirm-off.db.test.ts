@@ -104,3 +104,50 @@ describe("S-2: an attacker changes the account email to the victim's address fro
     expect(proofForVictim, "SECURE outcome: no proof for an address the session never received mail at").toBeNull();
   });
 });
+
+describe("S-2b: the VICTIM themselves confirms the attacker's pending email change (Insurance residual)", () => {
+  it("the account now carries the victim's address; the attacker's PASSWORD session on it still proves nothing", async () => {
+    const attacker = addr("atk2");
+    const victim = addr("vic2");
+    // The attacker pre-registers with a password (Confirm OFF: a session at once), then asks to change the email to the victim's.
+    const su = await post("signup", { email: attacker, password: PW }, ANON);
+    expect([200, 201]).toContain(su.status);
+    const atkToken = su.body.access_token as string;
+    const change = await gotrue("PUT", "user", { email: victim }, ANON, atkToken);
+    const pendingRow = (await adminQuery(`select id, email, email_change from auth.users where email=$1`, [attacker])).rows[0];
+    expect(pendingRow?.email_change, "setup: the change is pending for the victim").toBe(victim);
+
+    // The victim receives the confirmation mail and redeems it (the admin link is the same token the mail carries).
+    const link = await post("admin/generate_link", { type: "email_change_new", email: attacker, new_email: victim });
+    expect(link.status, "setup: generate email_change link").toBe(200);
+    const confirmed = await post("verify", { type: "email_change", token_hash: link.body.hashed_token as string }, ANON);
+    const confirmedToken = confirmed.body.access_token as string | undefined;
+    let row = (await adminQuery(`select email, email_change from auth.users where id=$1`, [pendingRow.id])).rows[0];
+    // With double_confirm_changes (the tracked config) the change also waits for the CURRENT address's confirmation; the attacker
+    // controls that mailbox, so redeem that link too: the worst case for the victim is a fully applied change.
+    if (row.email !== victim) {
+      const cur = await post("admin/generate_link", { type: "email_change_current", email: attacker, new_email: victim });
+      if (cur.status === 200) await post("verify", { type: "email_change", token_hash: cur.body.hashed_token as string }, ANON);
+      row = (await adminQuery(`select email, email_change from auth.users where id=$1`, [pendingRow.id])).rows[0];
+    }
+    const confirmedProof = confirmedToken ? mailboxProofMethod(claimsFromAccessToken(confirmedToken), (await userOf(confirmedToken)) as never) : null;
+
+    // Afterwards the attacker signs in with the password they set. That session must prove nothing for the victim's address.
+    const pw = await post("token?grant_type=password", { email: victim, password: PW }, ANON);
+    const pwToken = pw.body.access_token as string | undefined;
+    const pwUser = pwToken ? await userOf(pwToken) : null;
+    const pwProof = pwToken ? mailboxProofMethod(claimsFromAccessToken(pwToken), pwUser as never) : null;
+    evidence.s2b = {
+      changeStatus: change.status,
+      verifyStatus: confirmed.status,
+      accountEmailAfterConfirm: row.email === victim ? "VICTIM" : "attacker",
+      pendingCleared: !row.email_change,
+      confirmedSessionAmr: confirmedToken ? amrOf(confirmedToken) : null,
+      confirmedSessionProof: confirmedProof,
+      attackerPasswordSignInStatus: pw.status,
+      attackerPasswordAmr: pwToken ? amrOf(pwToken) : null,
+      attackerPasswordProof: pwProof,
+    };
+    expect(pwProof, "SECURE outcome: the attacker's password session on the victim-addressed account carries no mailbox proof").toBeNull();
+  });
+});

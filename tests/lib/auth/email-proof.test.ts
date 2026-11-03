@@ -6,12 +6,13 @@ const U = { email: "Member@Harness.local", identities: [] as never[] };
 const google = (email: string, verified: unknown) => ({ ...U, identities: [{ provider: "google", identity_data: { email, email_verified: verified } }] });
 
 describe("mailboxProofMethod (email-trust)", () => {
-  it("otp proves the mailbox (every real mailbox link/code type produces it: measured)", () => {
-    expect(mailboxProofMethod({ amr: [{ method: "otp" }] }, U)).toBe("email_link_or_otp");
+  it.each(["otp", "magiclink", "recovery"])("%s proves the mailbox (measured: implicit links are otp; PKCE magic link is magiclink; PKCE recovery is recovery)", (method) => {
+    expect(mailboxProofMethod({ amr: [{ method }] }, U)).toBe("email_link_or_otp");
   });
-  it.each(["magiclink", "email/signup", "invite", "recovery", "sso/saml", "anonymous"])("NEGATIVE: %s is never produced by a real mailbox flow and proves nothing (Insurance S-1)", (method) => {
+  it.each(["email/signup", "invite", "sso/saml", "anonymous", "password", "mfa/totp"])("NEGATIVE: %s is not a measured mailbox method and proves nothing", (method) => {
     expect(mailboxProofMethod({ amr: [{ method }] }, U)).toBeNull();
   });
+
   it("NEGATIVE: a password session proves nothing, even next to nothing else", () => {
     expect(mailboxProofMethod({ amr: [{ method: "password" }] }, U)).toBeNull();
   });
@@ -192,4 +193,17 @@ describe("applyProofHardening: what each flag value does", () => {
     expect(Object.keys(r.admin)).toEqual(["auth", "rpc"]);
     expect(r.admin.rpc.mock.calls.every((c) => c[0] === "auth_account_has_password")).toBe(true);
   });
+  // Insurance G-1: the provider set is closed. A provider enabled later proves nothing until it is added to the proof set on purpose.
+  it.each(["github", "apple", "azure", "facebook", "twitter", "discord", "keycloak", "workos", "phone"])(
+    "NEGATIVE (closed provider set): a verified %s identity for the account's own address is not mailbox proof",
+    (provider) => {
+      const user = { email: U.email, identities: [{ provider, identity_data: { email: U.email, email_verified: true } }] };
+      // Positive control: the SAME shape with google IS proof, so the refusal below is about the provider and nothing else.
+      const google = { email: U.email, identities: [{ provider: "google", identity_data: { email: U.email, email_verified: true } }] };
+      expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, google)).toBe("oauth_verified");
+      expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, user)).toBeNull();
+      expect(mailboxProofMethod({ amr: [{ method: "oauth", provider, timestamp: 1 }] }, user)).toBeNull();
+    },
+  );
+
 });

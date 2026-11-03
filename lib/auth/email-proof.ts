@@ -8,7 +8,7 @@
 //
 // PROOF is a property of the SESSION, read from the verified access-token claims' `amr` (authentication methods
 // references), never from the account row:
-//   * `otp`: a one-time credential (any link or code type) that was DELIVERED TO THE
+//   * `otp` / `magiclink` / `recovery`: a one-time credential that was DELIVERED TO THE
 //     ACCOUNT'S EMAIL was redeemed to create this session (GoTrue records the method that created the session).
 //   * `oauth` with provider google: the provider asserted email_verified for THE SAME ADDRESS as the account (checked on the
 //     Google identity, so a differently-addressed linked identity proves nothing about the account email).
@@ -21,12 +21,21 @@ export type ProofIdentity = { provider?: unknown; identity_data?: Record<string,
 export type ProofUser = { email?: string | null; identities?: ProofIdentity[] | null } | null | undefined;
 
 /** Methods whose credential is delivered to the account's own email address. */
-// MEASURED on real GoTrue (isolated stack, Confirm email ON and OFF, 3 Nov): EVERY mailbox-delivered link or code produces amr
-// `otp`: magic link, email code, signup-confirmation link, invite link and recovery link alike. `email/signup`, `magiclink`,
-// `invite` and `recovery` were never observed as an amr method, and a password SIGN-UP (Confirm email OFF) returns a session whose
-// amr is `password`. So only `otp` counts: a method that no real flow produces must not be an accepted proof (Insurance S-1).
-const MAILBOX_METHODS: ReadonlySet<string> = new Set(["otp"]);
-/** OAuth providers whose `email_verified` assertion Hone accepts as mailbox proof. */
+// MEASURED on real GoTrue (isolated stack, 3 Nov, Confirm email ON and OFF), per FLOW, because the amr depends on the flow:
+//   * implicit /verify (link redeemed by token_hash: invite, magic link, signup-confirmation, recovery, email code): `otp`;
+//   * PKCE (what the browser sign-in and /auth/callback actually use): a magic link, new or existing address, is `magiclink`
+//     and a recovery link is `recovery`; a PKCE session keeps its amr across refresh (machines/AUTH-PKCE-amr-evidence.json);
+//   * a password sign-in AND a password sign-up (Confirm OFF) are `password`.
+// So exactly `otp`, `magiclink` and `recovery` count. `email/signup` and `invite` were never observed as an amr method (the
+// first cut to `otp` alone refused every browser magic-link sign-in: CI run 41553749973), so they stay unproven until measured.
+const MAILBOX_METHODS: ReadonlySet<string> = new Set(["otp", "magiclink", "recovery"]);
+/**
+ * OAuth providers whose `email_verified` assertion Hone accepts as mailbox proof. THE SET IS CLOSED ON PURPOSE (Insurance G-1):
+ * the hosted provider list is email + Google only, and a provider Hone does not list here proves nothing even if it is enabled
+ * later. Enabling a new provider (including phone/SMS, which produces no mailbox amr at all) does NOT make it proof; add it HERE,
+ * with a unit-test row proving its verified-email semantics, and add it to public.session_proves_mailbox() (held 0291) in the same
+ * change. tests/lib/auth/email-proof.test.ts pins this set so an edit cannot go unnoticed.
+ */
 const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["google"]);
 
 export type ProofMethod = "email_link_or_otp" | "oauth_verified" | null;
