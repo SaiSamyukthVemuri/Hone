@@ -61,6 +61,8 @@ export type DecisionRef = DecisionId | QuestionId;
 //   not_built        the capability does not exist in the product today, so nothing can be preserved
 export type SnapshotBasis = "verified" | "source" | "approved_policy" | "not_built";
 
+export type EnforcementState = "enforced" | "observe" | "not_yet";
+
 export type PermissionDef = {
   readonly key: string;
   readonly group: Group;
@@ -76,6 +78,8 @@ export type PermissionDef = {
   readonly offeredTo: Readonly<Record<Role, boolean>>;
   readonly ownerConfigurable: boolean; // false = a fixed baseline of the role (the calendar view)
   readonly enforcedIn: Phase; // which program step switches enforcement on
+  // Is this key acted on by code in THIS release? Absent = not_yet. The Roles page edits a key only when this is "enforced" (fail safe).
+  readonly enforcement?: EnforcementState;
   readonly killSwitch?: boolean; // the operator kill switch returns every non-owner check for this key to false (R1)
   readonly affectsFutureStudioBusiness?: boolean; // studio-wide price/fee settings are labelled as such on the page
   readonly futureBusinessEffect?: string; // the SPECIFIC effect shown beside the label; required whenever affectsFutureStudioBusiness is true
@@ -159,6 +163,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
   },
   {
     key: "appt.move",
@@ -174,6 +179,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     note: "Today the UI offers Move on colleagues' appointments and the database refuses it; the snapshot is the database's value.",
   },
   {
@@ -189,6 +195,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (decided, Sam 3 Nov, Q17 / R0-Q3); the Own scope was removed from this key (OPS technical call, 3 Nov), so Off or Studio only.",
   },
   {
@@ -220,6 +227,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
   },
   {
     key: "appt.mark_no_show",
@@ -235,6 +243,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
   },
   {
     key: "appt.edit_notes",
@@ -250,6 +259,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     shipGate: { receptionist: "receptionist_scheduling_notes" },
     note: "R4 requirements (Privacy F6/F9): confirm scheduling and clinical notes are separate fields before a receptionist can read or write notes. Decided (OPS technical call, 3 Nov): an EDIT grant implies READ of the same scheduling notes, never clinical notes, and there is no separate read key; R4 enforces it; colleagues' note edits by practitioners are an approved policy only once note versions (0283) ship, so R4 must not enforce the new-studio default for colleagues' notes before them.",
   },
@@ -268,6 +278,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "observe",
     shipGate: { practitioner: "practitioner_completion" },
     note: "Today's code lets any practitioner complete any started appointment in the studio. Sam's assigned-only rule is the approved policy and #1315/0277 is its vehicle, so the snapshot is 'own' and R4 may not ship before them (open point R0-Q1). Not offered to receptionists in this version.",
   },
@@ -301,6 +312,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     note: "Settled (OPS, 3 Nov, DN-13): ON for practitioners in a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot stays Off (today's approved access) and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
   },
   {
@@ -316,6 +328,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
   },
   {
     key: "avail.manage_studio_hours",
@@ -330,6 +343,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes the hours the studio can be booked in. Appointments already booked are not moved or cancelled.",
     note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
@@ -446,6 +460,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     sensitive: true,
   },
   {
@@ -477,6 +492,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     sensitive: true,
   },
   {
@@ -508,6 +524,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     sensitive: true,
   },
   {
@@ -523,6 +540,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     sensitive: true,
     note: "Decided (Sam, 3 Nov, Q16): one of the four receptionist view-only switches (records, photos, intake answers, aftercare), Off by default and read-only. Today aftercare is read inside the session record (audit row CLIN-10), so practitioners keep the same studio-wide reading as clin.view_records. The key name is Team's; OPS confirmed the switch, not the name.",
   },
@@ -1506,11 +1524,12 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     note: "Decided (Sam, 3 Nov, Q1/Q2, DN-23b): an owner-set studio policy in whole hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable. Not a staff key. Charging it also needs pay.charge_saved_card.",
   },
   {
-    id: "id_photos_portraits",
+    id: "id_portraits_owner_only",
     label: "ID photos and portraits",
     source: "this_version",
-    existingEffect: "none",
-    note: "Decided (Sam, 2 Nov, DN-24): owner-only and not delegable until the separate ID-photo review (#1296 / 0275) is complete.",
+    existingEffect: "narrows",
+    enforcedBy: ["lib/images/client-portrait.ts (observe-only until the ID-photo review; logs a would-deny for non-owners and refuses nobody)"],
+    note: "Decided (Sam, 2 Nov, DN-24): owner-only and not delegable until the separate ID-photo review (#1296 / 0275) is complete. The portrait feature is OFF everywhere today (HONE_CLIENT_PORTRAIT_ENABLED is unset, and no page calls the signer), so nobody loses anything on the release; the entry exists so the adopt preview and the release notice name it before it can be turned on. Privacy C1.",
   },
   {
     id: "archive_clients",
@@ -1744,6 +1763,14 @@ export const MANDATORY: readonly string[] = [
 ];
 
 // ───────────────────────── pure helpers ─────────────────────────
+
+// Is a key's setting acted on by the code in this release? The Roles page shows `not_yet` keys as "Not enforced yet" and not editable
+// (Privacy X3/H3): saving a switch that nothing reads would otherwise look like control.
+//   enforced  a server action, page or signer asks the key and a denial refuses (R4, #1341).
+//   observe   asked, but only logged: the snapshot is an approved policy the database does not enforce yet (appt.complete).
+//   not_yet   nothing asks it in this release.
+// tests/lib/permissions/enforcement-wiring.test.ts proves the keys marked here equal the keys the app actually asks.
+export const enforcementOf = (key: string): EnforcementState => catalogByKey.get(key)?.enforcement ?? "not_yet";
 
 export const catalogByKey: ReadonlyMap<string, PermissionDef> = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
 
