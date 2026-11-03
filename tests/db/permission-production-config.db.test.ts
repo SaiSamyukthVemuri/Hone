@@ -34,6 +34,12 @@ afterAll(async () => {
 const mark = (keys: string[], tag: string, kind = "full") => adminQuery("select public.mark_permissions_released($1::text[],$2,$3) n", [keys, tag, kind]);
 
 describe("production configuration: releases are pending", () => {
+  it("the observe key (appt.complete) has no release row and the seeded kinds match (checked before any case marks a key)", async () => {
+    const rows = (await adminQuery("select key, release_kind, released_at from public.permission_key_release order by key")).rows;
+    expect(rows.map((r) => r.key)).not.toContain("appt.complete");
+    expect(rows.filter((r) => r.release_kind === "narrow").map((r) => r.key).sort()).toEqual(SEED.filter((r) => r.kind === "narrow").map((r) => r.key).sort());
+  });
+
   it("while pending, an owner's stored choice for a full key is inert and the practitioner keeps today's access", async () => {
     const s = await seedStudio("prod1");
     const m = await seedMember(s, "prod1");
@@ -85,22 +91,19 @@ describe("production configuration: releases are pending", () => {
     expect(await eff(s, "practitioner", "appt.move")).toBe("studio");
   });
 
-  it("the observe key (appt.complete) has no release row; seeded kinds match; a release cannot be marked twice or downgraded", async () => {
-    const rows = (await adminQuery("select key, release_kind, released_at from public.permission_key_release order by key")).rows;
-    expect(rows.map((r) => r.key)).not.toContain("appt.complete");
-    expect(rows.filter((r) => r.release_kind === "narrow").map((r) => r.key).sort()).toEqual(SEED.filter((r) => r.kind === "narrow").map((r) => r.key).sort());
-    await expect(mark(["appt.cancel"], "X", "bogus")).rejects.toThrow();
-    await mark(["appt.cancel"], "R1-R2", "full");
-    await expect(mark(["appt.cancel"], "R9", "full")).rejects.toThrow(/already_released/);
-    await expect(mark(["appt.cancel"], "R9", "narrow")).rejects.toThrow(/already_released/);
-    await expect(mark([], "R9")).rejects.toThrow(/invalid_release/);
-  });
-
   it("no API role can execute the operator command or read the release table", async () => {
     for (const role of ["anon", "authenticated", "service_role"]) {
       const r = await adminQuery("select has_function_privilege($1,'public.mark_permissions_released(text[],text,text)','execute') or has_function_privilege($1,'public.perm_activation_hash(uuid,text[])','execute') p", [role]);
       expect(r.rows[0].p, role).toBe(false);
     }
+  });
+
+  it("a release cannot be marked twice or downgraded; a bad kind or an empty list is refused", async () => {
+    await expect(mark(["appt.cancel"], "X", "bogus")).rejects.toThrow();
+    await mark(["appt.cancel"], "R1-R2", "full");
+    await expect(mark(["appt.cancel"], "R9", "full")).rejects.toThrow(/already_released/);
+    await expect(mark(["appt.cancel"], "R9", "narrow")).rejects.toThrow(/already_released/);
+    await expect(mark([], "R9")).rejects.toThrow(/invalid_release/);
   });
 
   it("save refuses nothing it should accept: a pending key can still be saved (stored, inert) and an owner can Discard it", async () => {
