@@ -4,9 +4,10 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isLegacyProfileTab, resolveProfileTab } from "@/lib/clients/profile-tabs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { SEED, answered, appEnv, assertDrillOnly, clientListShowsClient, controlVerdict, localDemoKeys, originalSha256, photoBytesMatch, providerFenceViolations, recordRendersFields, signIn, uncontainedSentryRecords } from "../../scripts/ops/restore-drill-app-check.mjs";
+import { RECORD_TAB, SEED, answered, appEnv, assertDrillOnly, clientListShowsClient, controlVerdict, localDemoKeys, originalSha256, photoBytesMatch, providerFenceViolations, recordRendersFields, signIn, uncontainedSentryRecords } from "../../scripts/ops/restore-drill-app-check.mjs";
 
 // DR-01A. The application-readability check runs only in its own CI job
 // (.github/workflows/restore-drill.yml), against a real restored stack. These
@@ -578,5 +579,27 @@ describe("the egress fence probes IPv6 through the same fenced process, or says 
     expect(runbook).toMatch(/IPv6 probe/);
     expect(runbook).toMatch(/UNPROBED/);
     expect(runbook).toMatch(/loopback (stub )?resolver/i);
+  });
+});
+
+describe("the record read asks for a tab the app serves, not a redirected alias", () => {
+  // 2026-11-03: a5c8c87bb made ?tab=consultation a legacy alias (307 to ?tab=treatment); the check does
+  // not follow redirects, so the drill went red on a restore that was fine. The drill must request a
+  // CURRENT tab, for a non-owner too (the seeded user is a practitioner).
+  it("RECORD_TAB is not a legacy alias and resolves to itself for a practitioner", () => {
+    expect(isLegacyProfileTab(RECORD_TAB)).toBe(false);
+    expect(resolveProfileTab(RECORD_TAB, { isOwner: false })).toEqual({ tab: RECORD_TAB, denied: false });
+  });
+
+  it("the previous request value would be refused by this guard", () => {
+    expect(isLegacyProfileTab("consultation")).toBe(true);
+    expect(isLegacyProfileTab("personal")).toBe(true);
+  });
+
+  it("the script builds the record URL from RECORD_TAB and names no other ?tab= literal", () => {
+    const src = readFileSync("scripts/ops/restore-drill-app-check.mjs", "utf8");
+    expect(src).toContain("?tab=${RECORD_TAB}");
+    const literals = [...src.matchAll(/\?tab=([a-z]+)/g)].map((m) => m[1]);
+    for (const t of literals) expect(isLegacyProfileTab(t), `legacy tab '${t}' requested`).toBe(false);
   });
 });
