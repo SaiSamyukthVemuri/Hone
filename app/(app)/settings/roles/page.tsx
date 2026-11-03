@@ -11,6 +11,7 @@ import {
   previewAdoptAction,
   previewResetAction,
   previewRoleChangesAction,
+  reloadPolicyAction,
   resetRolePolicyAction,
   saveRolePolicyAction,
 } from "./actions";
@@ -99,6 +100,7 @@ export default async function RolesSettingsPage() {
         previewReset={previewResetAction}
         previewAdopt={previewAdoptAction}
         save={saveRolePolicyAction}
+        reload={reloadPolicyAction}
         reset={resetRolePolicyAction}
         adopt={adoptNewDefaultsAction}
         loadHistory={listPermissionAuditAction}

@@ -11,6 +11,7 @@ import {
   coreReset,
   coreSave,
 } from "@/lib/settings/roles/core";
+import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
 import { reasonAcceptable, type AccessResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
 // Server actions of the Roles page (R2). Each one re-checks on the server that the caller is the owner, then hands the request to the
@@ -45,6 +46,15 @@ function changesShape(edits: unknown): Record<string, Record<string, string>> | 
 }
 
 const reasonText = (v: unknown) => (typeof v === "string" ? v : "");
+
+/** The authoritative policy as get_role_permissions holds it NOW. The page reads this after a save instead of assuming its draft became the saved state. */
+export async function reloadPolicyAction(): Promise<{ ok: true; state: StudioPolicyState } | { ok: false; error: RoleError }> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  const state = await loadStudioPolicyState(owner.studioId);
+  // A snapshot fallback is not authoritative: the core could not be read.
+  return state.writable ? { ok: true, state } : refuse({ code: "unavailable" });
+}
 
 /** Pure preview of a draft's changed keys; returns the version it was computed against. Writes nothing. */
 export async function previewRoleChangesAction(edits: unknown): Promise<PreviewResult> {

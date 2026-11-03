@@ -280,7 +280,7 @@ describe("the editor", () => {
   it("runs every preview through the core's preview calls", () => {
     expect(src).toContain("props.previewSave(changedEdits())");
     expect(src).toContain("props.previewAdopt()");
-    expect(src).toContain("props.previewReset(role)");
+    expect(src).toContain("props.previewReset(forRole)");
   });
   it("saves only changed keys at the version the preview returned", () => {
     expect(src).toMatch(/props\.save\(changedEdits\(\), reviewData\.version, confirmed, reason\.trim\(\)\)/);

@@ -34,6 +34,7 @@ const render = (over: Record<string, unknown> = {}) =>
       adopt: noop,
       loadHistory: noop,
       loadAccess: noop,
+      reload: noop,
       ...over,
     }),
   );
