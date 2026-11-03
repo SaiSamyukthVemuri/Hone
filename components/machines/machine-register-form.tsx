@@ -45,9 +45,10 @@ export function MachineRegisterForm({ models, register }: Props) {
         className="text-sm text-neutral-600 dark:text-neutral-400"
         data-testid="machine-register-none"
       >
-        No machine model has passed its evidence review yet, so there is
-        nothing to register. To have yours reviewed, send Hone the details
-        listed above.
+        No machine model is available to register yet. A model appears here
+        once its evidence review is complete and its settings contract is
+        published. To have yours reviewed, send Hone the details listed
+        above.
       </p>
     );
   }

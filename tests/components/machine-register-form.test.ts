@@ -146,3 +146,45 @@ describe("R3: a non-owner gets the refusal and nothing else", () => {
     vi.doUnmock("@/lib/supabase/queries");
   });
 });
+
+describe("owner page state: reviewed-active models without a published contract are not offered", () => {
+  const load = async (published: string[] | null) => {
+    vi.resetModules();
+    const registerMachineAction = vi.fn();
+    vi.doMock("@/lib/supabase/queries", () => ({
+      requirePractitionerWithStudio: async () => ({ practitioner: { role: "owner" }, studio: { id: "studio-synthetic" } }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
+    vi.doMock("@/lib/machines/machine-queries", () => ({
+      listStudioMachines: async () => ({ ok: true, value: [] }),
+      publishedModesFor: async (_db: unknown, profileId: string) =>
+        published === null
+          ? { ok: false, error: "read failed" }
+          : { ok: true, value: profileId === "dectro-apilus:senior-3g" ? published : [] },
+    }));
+    vi.doMock("../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions", () => ({ registerMachineAction }));
+    const { default: Page } = await import("../../app/(app)/settings/machines/page");
+    return renderToStaticMarkup(await Page());
+  };
+  const SENIOR_MODES = ["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"];
+
+  it("nothing published: the honest 'not available yet' message, no Apilus option", async () => {
+    const html = await load([]);
+    expect(html).toContain("machine-register-none");
+    expect(html).toContain("No machine model is available to register yet");
+    expect(html).not.toContain("Senior 3G");
+    expect(html).not.toContain("Junior 3G");
+  });
+  it("a failed contract read offers nothing", async () => {
+    expect(await load(null)).toContain("machine-register-none");
+  });
+  it("a partly published model is not offered", async () => {
+    expect(await load(SENIOR_MODES.slice(1))).not.toContain("Senior 3G");
+  });
+  it("fully published: only that model is offered (Junior stays absent)", async () => {
+    const html = await load(SENIOR_MODES);
+    expect(html).toContain("Senior 3G");
+    expect(html).not.toContain("Junior 3G");
+    expect(html).not.toContain("machine-register-none");
+  });
+});
