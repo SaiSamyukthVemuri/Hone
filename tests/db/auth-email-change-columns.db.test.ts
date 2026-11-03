@@ -91,6 +91,15 @@ describe("part 1: which columns move on which event (real GoTrue, tracked config
       return gotrue("POST", "verify", { type: "email_change", token_hash: l.body.hashed_token as string }, ANON);
     });
     const final = await cols(u.id);
+    // The covering pair is CLEAN: neither column moves on any routine event, only on email-change activity. users.updated_at is NOT
+    // usable: it moves on an OTP request, a sign-in, a refresh and a metadata update (an hourly refresh would un-prove every session).
+    const routine = ["otp_request", "magic_link_sign_in", "refresh", "metadata_update", "password_set"];
+    for (const ev of routine) {
+      expect(matrix[ev], `${ev} must not move email_change_sent_at`).not.toContain("email_change_sent_at");
+      expect(matrix[ev], `${ev} must not move identity_updated_at`).not.toContain("identity_updated_at");
+    }
+    expect(matrix.refresh, "documents why users.updated_at is not used").toContain("users_updated_at");
+    expect(matrix.email_change_confirm_current_half, "the APPLY moves the email identity").toContain("identity_updated_at");
     evidence.matrix = matrix;
     evidence.matrixFinalAccountEmail = final.email === victim ? "VICTIM (change applied)" : "unchanged";
     // Sanity only: the harness actually drove the change. The columns are the finding (read the evidence).
@@ -128,9 +137,9 @@ describe("part 2: the magic-link attacker (Insurance Z-1) with the candidate rul
     const freshTs = amrTs(fresh.body.access_token as string);
 
     // Candidate rule: proof counts only if amr timestamp >= the account's last email change. The covering value is the max of the
-    // candidate columns that moved on the change in part 1 (read from the real row here).
-    const changeTimes = [after.users_updated_at, after.email_change_sent_at, after.identity_updated_at].filter((x): x is number => typeof x === "number");
-    const lastChange = Math.max(...changeTimes);
+    // clean pair measured in part 1 (email_change_sent_at, identity_updated_at) (read from the real row here).
+    const changeTimes = [after.email_change_sent_at, after.identity_updated_at].filter((x): x is number => typeof x === "number");
+    const lastChange = Math.floor(Math.max(...changeTimes)); // amr timestamps are whole seconds: compare against the whole second of the change
     evidence.magicLinkAttacker = { oldAmrTs: oldTs, oldAmrTsAfterRefresh: oldAfter, freshAmrTs: freshTs, columnsAfterChange: after, lastChangeCovering: lastChange, oldSessionStillRefreshable: refreshed.status === 200 };
     expect(oldTs, "SECURE: the attacker's old session predates the change, so the rule refuses it").toBeLessThan(lastChange);
     expect(freshTs, "WORKS: a new magic-link session for the victim's address postdates the change, so the rule accepts it").toBeGreaterThanOrEqual(lastChange);
