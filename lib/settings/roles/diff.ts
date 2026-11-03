@@ -1,5 +1,6 @@
 import {
   CATALOG,
+  FIXED_OWNER_ONLY,
   effectiveScope,
   scopeRank,
   type PermissionDef,
@@ -25,8 +26,13 @@ export type RoleChange = {
   futureBusiness: boolean;
 };
 
+export type FixedNarrowing = { id: string; label: string; note: string | null };
+
 export type RoleDiff = {
   changes: RoleChange[];
+  // Fixed owner-only items that take today's access AWAY from existing staff when the studio adopts (the catalog's existingEffect
+  // 'narrows'). They are not keys, so the key comparison cannot see them; the owner must be told (Codex P2 on #1335).
+  fixedNarrowings: FixedNarrowing[];
   widened: number;
   narrowed: number;
   newlyEnabledSensitive: number;
@@ -52,8 +58,13 @@ export function diffPolicies(role: Role, before: StudioPolicy, after: StudioPoli
       futureBusiness: d.affectsFutureStudioBusiness === true,
     });
   }
+  const fixedNarrowings: FixedNarrowing[] =
+    role === "practitioner" && before.basis === "existing_snapshot" && after.basis === "new_studio"
+      ? FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => ({ id: f.id, label: f.label, note: f.note ?? null }))
+      : [];
   return {
     changes,
+    fixedNarrowings,
     widened: changes.filter((c) => c.direction === "widens").length,
     narrowed: changes.filter((c) => c.direction === "narrows").length,
     newlyEnabledSensitive: changes.filter((c) => c.newlyEnabledSensitive).length,

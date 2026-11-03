@@ -20,8 +20,9 @@ export type RolesEditorProps = {
   writable: boolean;
   notWritableReason: string | null;
   staff: Record<Role, ReactNode>;
-  save: (role: Role, values: Record<string, Scope>) => Promise<RolesActionResult>;
-  reset: (role: Role) => Promise<RolesActionResult>;
+  version: string | null;
+  save: (role: Role, values: Record<string, Scope>, expectedVersion: string | null) => Promise<RolesActionResult>;
+  reset: (role: Role, expectedVersion: string | null) => Promise<RolesActionResult>;
 };
 
 type Preview = { kind: "reset" | "adopt"; diff: RoleDiff };
@@ -55,7 +56,7 @@ export function RolesEditor(props: RolesEditorProps) {
 
   async function onSave() {
     feedback.saving();
-    const result = await props.save(role, draft.values as Record<string, Scope>);
+    const result = await props.save(role, draft.values as Record<string, Scope>, props.version);
     if (result.ok) {
       setSaved((s) => ({ ...s, [role]: draft }));
       feedback.saved();
@@ -72,7 +73,7 @@ export function RolesEditor(props: RolesEditorProps) {
   async function confirmPreview() {
     if (!preview) return;
     feedback.saving();
-    const result = await props.reset(role);
+    const result = await props.reset(role, props.version);
     if (result.ok) {
       const next = defaultsPolicy(draft);
       setSaved((s) => ({ ...s, [role]: next }));
@@ -219,6 +220,11 @@ export function RolesEditor(props: RolesEditorProps) {
                       If you turn this off, these switch off with it (their settings are kept): {row.alsoSwitchesOff.join(", ")}.
                     </p>
                   )}
+                  {row.snapshotBasis === "approved_policy" && (
+                    <p data-testid="approved-policy-note" className="break-words text-xs text-amber-800 dark:text-amber-300">
+                      Approved policy: not yet enforced everywhere. The setting shown is the approved one; the database may still allow more until the closing changes ship.
+                    </p>
+                  )}
                   {row.pendingDecision && <p className="text-xs text-neutral-500">This default is still being decided; it keeps today&rsquo;s behaviour.</p>}
                   {rowError?.key === row.key && (
                     <p role="alert" className="break-words text-xs text-red-700 dark:text-red-400">
@@ -281,7 +287,7 @@ function PreviewPanel({
       <h3 className="text-base font-medium">
         {kind === "adopt" ? "Adopt the new defaults" : "Reset to defaults"} for {ROLE_LABELS[role].toLowerCase()}s
       </h3>
-      {diff.changes.length === 0 ? (
+      {diff.changes.length === 0 && diff.fixedNarrowings.length === 0 ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing would change. These settings already match the defaults.</p>
       ) : (
         <>
@@ -292,6 +298,16 @@ function PreviewPanel({
             <p data-testid="preview-sensitive" role="alert" className="rounded-md bg-red-50 p-2 text-sm font-medium text-red-900 dark:bg-red-950 dark:text-red-200">
               {diff.newlyEnabledSensitive} newly enabled financial or sensitive {diff.newlyEnabledSensitive === 1 ? "permission" : "permissions"}. Check these before you confirm.
             </p>
+          )}
+          {diff.fixedNarrowings.length > 0 && (
+            <div data-testid="preview-fixed-narrowings" className="rounded-md bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              <p className="font-medium">These become owner-only, so practitioners lose the access they have today:</p>
+              <ul className="mt-1 list-disc pl-5">
+                {diff.fixedNarrowings.map((f) => (
+                  <li key={f.id} data-fixed-narrowing={f.id}>{f.label}</li>
+                ))}
+              </ul>
+            </div>
           )}
           <ul className="flex flex-col gap-1">
             {diff.changes.map((c) => (

@@ -11,6 +11,7 @@ import { validateRoleSubmission } from "@/lib/settings/roles/validate";
 
 export type RolesActionResult = { ok: true } | { ok: false; error: string; field?: string };
 
+const STALE = "This page is out of date. Reload it and review the changes again.";
 const OWNER_ONLY = "Only the studio owner can change roles and permissions.";
 
 async function assertOwner(): Promise<{ studioId: string } | null> {
@@ -21,10 +22,13 @@ async function assertOwner(): Promise<{ studioId: string } | null> {
 async function guarded(
   role: unknown,
   values: unknown,
+  expectedVersion: unknown,
 ): Promise<RolesActionResult> {
   const owner = await assertOwner();
   if (!owner) return { ok: false, error: OWNER_ONLY };
   const state = await loadStudioPolicyState(owner.studioId);
+  // A preview or a draft is bound to the policy version it was computed from. A stale one is refused, never applied (P-3).
+  if (expectedVersion !== state.version) return { ok: false, error: STALE };
   const checked = validateRoleSubmission(role, values, state.policy);
   if (!checked.ok) return checked;
   if (!state.writable) return { ok: false, error: state.notWritableReason ?? "Saving is not available yet." };
@@ -32,11 +36,11 @@ async function guarded(
   return { ok: false, error: "Saving is not available yet." };
 }
 
-export async function saveRolePolicyAction(role: unknown, values: unknown): Promise<RolesActionResult> {
-  return guarded(role, values);
+export async function saveRolePolicyAction(role: unknown, values: unknown, expectedVersion: unknown): Promise<RolesActionResult> {
+  return guarded(role, values, expectedVersion);
 }
 
 /** Reset to the shipped defaults, or adopt them: a role's stored overrides are replaced by none and the basis becomes new-studio. */
-export async function resetRolePolicyAction(role: unknown): Promise<RolesActionResult> {
-  return guarded(role, {});
+export async function resetRolePolicyAction(role: unknown, expectedVersion: unknown): Promise<RolesActionResult> {
+  return guarded(role, {}, expectedVersion);
 }

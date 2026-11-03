@@ -20,7 +20,7 @@ export type StudioPolicyState = {
 };
 
 export const NOT_WRITABLE_REASON =
-  "Saving role changes turns on with the permission core. Until then this page shows what each role can do today.";
+  "Saving role changes turns on with the permission core. Until then this page shows the approved access for each role. Some of it is not enforced everywhere yet, and those rows say so.";
 
 export async function loadStudioPolicyState(_studioId: string): Promise<StudioPolicyState> {
   return {

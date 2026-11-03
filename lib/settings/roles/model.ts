@@ -8,6 +8,7 @@ import {
   scopeRank,
   scopesFor,
   type PermissionDef,
+  type SnapshotBasis,
   type Role,
   type Scope,
   type StudioPolicy,
@@ -61,6 +62,8 @@ export type RoleRow = {
   futureBusiness: boolean;
   sensitive: boolean;
   pendingDecision: boolean;
+  // approved_policy: the value shown is the APPROVED narrower policy; the database may still allow more until the closing PRs ship (P-1).
+  snapshotBasis: SnapshotBasis;
   gateNote: string | null;
   needs: string[]; // labels of prerequisites
   alsoSwitchesOff: string[]; // labels of dependents that follow this key down (their stored values are kept)
@@ -117,6 +120,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         futureBusiness: d.affectsFutureStudioBusiness === true,
         sensitive: d.sensitive === true,
         pendingDecision: isPending(d),
+        snapshotBasis: d.snapshotBasis,
         gateNote: gate && policy.gates?.[gate] !== true ? GATES[gate] : null,
         needs: d.requires.map((r) => catalogByKey.get(r)?.label ?? r),
         alsoSwitchesOff: dependents.map((x) => x.label),

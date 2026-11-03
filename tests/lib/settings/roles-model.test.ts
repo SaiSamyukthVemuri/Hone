@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG, effectiveScope, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
+import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleModel, groupLabel } from "@/lib/settings/roles/model";
 import { defaultsPolicy, diffPolicies } from "@/lib/settings/roles/diff";
 import { validateRoleSubmission } from "@/lib/settings/roles/validate";
@@ -87,7 +87,27 @@ describe("group labels", () => {
   });
 });
 
+describe("truthfulness (Insurance P-1)", () => {
+  it("every approved_policy row says so, so the page never claims it is today's database behaviour", () => {
+    const rows = ROLES.flatMap((role) => buildRoleModel(role, snapshot).flatMap((g) => g.rows));
+    const approved = rows.filter((r) => r.snapshotBasis === "approved_policy");
+    expect(approved.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.snapshotBasis, r.key).toBe(defs.find((d) => d.key === r.key)!.snapshotBasis);
+  });
+});
+
 describe("Reset and adopt preview", () => {
+  it("an existing studio's adoption preview names every fixed owner-only item that takes access away (Codex P2)", () => {
+    const d = diffPolicies("practitioner", snapshot, defaultsPolicy(snapshot));
+    const ids = d.fixedNarrowings.map((f) => f.id).sort();
+    expect(ids).toEqual(FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => f.id).sort());
+    expect(ids.length).toBeGreaterThan(0);
+  });
+  it("no fixed narrowing is shown to receptionists or once the studio is already on the new defaults", () => {
+    expect(diffPolicies("receptionist", snapshot, defaultsPolicy(snapshot)).fixedNarrowings).toEqual([]);
+    expect(diffPolicies("practitioner", defaultsPolicy(snapshot), defaultsPolicy(snapshot)).fixedNarrowings).toEqual([]);
+  });
+
   it("the preview is exactly the effective difference to the new-studio defaults, and applying nothing leaves an already-default policy unchanged", () => {
     for (const role of ROLES) {
       const d = diffPolicies(role, snapshot, defaultsPolicy(snapshot));

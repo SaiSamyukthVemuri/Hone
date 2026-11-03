@@ -29,6 +29,12 @@ describe("the Roles actions", () => {
     expect(store).toMatch(/writable: false/);
     expect(actions).not.toMatch(/return \{ ok: true \}/);
   });
+  it("bind a request to the policy version it was computed from (Insurance P-3)", () => {
+    expect(actions).toMatch(/expectedVersion !== state\.version/);
+    expect(actions.indexOf("expectedVersion !== state.version")).toBeLessThan(actions.indexOf("validateRoleSubmission(role"));
+    expect(actions).toMatch(/saveRolePolicyAction\(role: unknown, values: unknown, expectedVersion: unknown\)/);
+    expect(actions).toMatch(/resetRolePolicyAction\(role: unknown, expectedVersion: unknown\)/);
+  });
   it("only export async functions plus types (a 'use server' module)", () => {
     expect(actions.match(/^export (?!async function|type)/gm)).toBeNull();
   });

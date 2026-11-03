@@ -67,6 +67,7 @@ export default async function RolesSettingsPage() {
       <RolesEditor
         policies={{ practitioner: state.policy, receptionist: state.policy }}
         reviewed={state.reviewed}
+        version={state.version}
         writable={state.writable}
         notWritableReason={state.notWritableReason}
         staff={{
