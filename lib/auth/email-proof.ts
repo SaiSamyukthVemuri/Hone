@@ -46,12 +46,13 @@ export type ProofMethod = "email_link_or_otp" | "oauth_verified" | null;
 /**
  * S-2b (Insurance Z-1/G-3): mailbox proof must be about the account's CURRENT address. An attacker with a real mailbox can sign in
  * by link, ask to change the account email to a victim's address, and keep the proven session once the victim confirms. So a
- * link-type amr entry counts only if it was made at or after the account's last email-change activity:
+ * link-type amr entry counts only if it was made STRICTLY AFTER (a later whole second than) the account's last email-change activity:
  *   lastChange = max(auth.users.email_change_sent_at, updated_at of the account's `email` identity), whole epoch seconds.
  * Measured on real GoTrue (machines/AUTH-S2B-columns-evidence.json): email_change_sent_at moves on an email-change request and on
  * each confirm half; the email identity's updated_at moves only when the change is applied; neither moves on an OTP request, a
  * sign-in or a refresh (users.updated_at moves on all of those, so it is NOT used). Both null = the address never changed = no
- * constraint. A non-null value that cannot be read is treated as "changed just now" (fail closed). Cost: only an account with
+ * constraint. Equal seconds are AMBIGUOUS (both are floored, so a session made in the same second as the change may have come
+ * before it) and are refused (Codex P1 on db73497d0): the person signs in again a second later. A non-null value that cannot be read is treated as "changed just now" (fail closed). Cost: only an account with
  * email-change activity after the session began is asked to confirm again (a fresh link, no lockout).
  */
 function lastEmailChangeSeconds(user: ProofUser): number | null | "unreadable" {
@@ -71,7 +72,7 @@ function lastEmailChangeSeconds(user: ProofUser): number | null | "unreadable" {
 function madeAfterChange(entry: AmrEntry, lastChange: number | null | "unreadable"): boolean {
   if (lastChange === null) return true;
   if (lastChange === "unreadable") return false;
-  return typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp) && Math.floor(entry.timestamp) >= lastChange;
+  return typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp) && Math.floor(entry.timestamp) > lastChange;
 }
 
 function entries(claims: ProofClaims): AmrEntry[] {

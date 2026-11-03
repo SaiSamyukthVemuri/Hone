@@ -208,7 +208,7 @@ describe("applyProofHardening: what each flag value does", () => {
 
 });
 
-describe("S-2b: link proof counts only if made at or after the account's last email change", () => {
+describe("S-2b: link proof counts only if made STRICTLY AFTER the account's last email change", () => {
   const T = 1_793_674_853; // whole epoch seconds of the change
   const iso = (sec: number, ms = 0) => new Date(sec * 1000 + ms).toISOString();
   const link = (ts: number | undefined, method = "magiclink") => ({ amr: [{ method, ...(ts === undefined ? {} : { timestamp: ts }) }] });
@@ -229,8 +229,23 @@ describe("S-2b: link proof counts only if made at or after the account's last em
     expect(mailboxProofMethod(link(T + 2, m), u)).toBe("email_link_or_otp");
   });
 
-  it("an equal second counts (>=): a sign-in in the same second as the change is legitimate", () => {
-    expect(mailboxProofMethod(link(T), account({ email_change_sent_at: iso(T, 900) }))).toBe("email_link_or_otp");
+  it("an EQUAL second is refused (Codex P1): flooring makes it ambiguous, so a same-second session cannot be told from the attacker's", () => {
+    for (const method of ["otp", "magiclink", "recovery"]) {
+      // the change at T + 0.9 s and a session stamped T: the session could be 0.9 s older than the change
+      expect(mailboxProofMethod(link(T, method), account({ email_change_sent_at: iso(T, 900) })), `${method} at T`).toBeNull();
+      // the change at T + 0.0 s: still refused, the whole second is ambiguous both ways
+      expect(mailboxProofMethod(link(T, method), account({ email_change_sent_at: iso(T, 0) }, iso(T, 0))), `${method} at T (change at T.000)`).toBeNull();
+    }
+  });
+
+  it("the next whole second after the change IS proven (the user signs in again a second later), for either column", () => {
+    expect(mailboxProofMethod(link(T + 1), account({ email_change_sent_at: iso(T, 900) }))).toBe("email_link_or_otp");
+    expect(mailboxProofMethod(link(T + 1), account({}, iso(T, 999)))).toBe("email_link_or_otp");
+  });
+
+  it("the fractional timestamp of the session is floored too: T + 0.9 s is the equal second and is refused, T + 1.0 s is proven", () => {
+    expect(mailboxProofMethod(link(T + 0.9), account({ email_change_sent_at: iso(T) }))).toBeNull();
+    expect(mailboxProofMethod(link(T + 1.0), account({ email_change_sent_at: iso(T) }))).toBe("email_link_or_otp");
   });
 
   it("uses the LATER of the two columns (the request time alone, or the apply time alone, is not enough)", () => {
