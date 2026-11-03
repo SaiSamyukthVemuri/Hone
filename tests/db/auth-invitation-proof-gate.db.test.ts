@@ -73,9 +73,7 @@ describe("0291 session_proves_mailbox: unproven sessions are refused by both inv
     ["an amr that is not an array", "otp"],
     ["an amr that is an object", { method: "otp" }],
     ["method names no real mailbox flow produces: email/signup", [{ method: "email/signup", timestamp: 1 }]],
-    ["method names no real mailbox flow produces: magiclink", [{ method: "magiclink", timestamp: 1 }]],
     ["method names no real mailbox flow produces: invite", [{ method: "invite", timestamp: 1 }]],
-    ["method names no real mailbox flow produces: recovery", [{ method: "recovery", timestamp: 1 }]],
     ["a sso/saml entry", [{ method: "sso/saml", timestamp: 1 }]],
     ["an entry with no method", [{ timestamp: 1 }]],
   ])("NEGATIVE: %s is proof_required; no studio data, nothing written", async (_label, amr) => {
@@ -86,6 +84,11 @@ describe("0291 session_proves_mailbox: unproven sessions are refused by both inv
     const r = await reconcile(u.id, amr);
     expect(r).toEqual({ status: "proof_required", choose_studio: false });
     await assertNothingChanged(u);
+  });
+
+  it.each(["magiclink", "recovery"])("POSITIVE CONTROL: the measured PKCE method %s proves the mailbox", async (method) => {
+    const u = await invitedUser();
+    expect((await pending(u.id, [{ method, timestamp: 1 }])).status).toBe("ok");
   });
 
   it("a mixed [password, otp] session counts as proven (the app rule is the same; password-origin sessions are the 0292 hook's job)", async () => {

@@ -9,8 +9,9 @@
 -- directly. This migration makes both functions refuse such a session in the database.
 --
 -- WHAT. public.session_proves_mailbox() reads the verified JWT `amr` (PostgREST has already checked the signature):
---   * an `otp` entry proves the mailbox. MEASURED on real GoTrue: magic link, email code, signup-confirmation, invite and recovery
---     links all produce amr `otp`; password sign-in AND password sign-up produce `password`. No other method counts.
+--   * an `otp`, `magiclink` or `recovery` entry proves the mailbox. MEASURED on real GoTrue per flow: implicit links (invite, magic link,
+--     signup-confirmation, recovery, email code) produce `otp`; the PKCE flow the browser uses produces `magiclink` for a magic link and
+--     `recovery` for a recovery link; password sign-in AND password sign-up produce `password`. No other method counts.
 --   * an `oauth` entry (GoTrue writes NO provider on it) counts only when the user has a Google identity whose email_verified is
 --     true and whose email equals the account email (same rule as lib/auth/email-proof.ts).
 -- An unproven caller gets {"status":"proof_required"}: no studio data is returned, nothing is written. A session with no amr (an
@@ -32,7 +33,7 @@ as $$
       from jsonb_array_elements(
              case when jsonb_typeof(auth.jwt() -> 'amr') = 'array' then auth.jwt() -> 'amr' else '[]'::jsonb end
            ) as a
-     where a ->> 'method' = 'otp'
+     where a ->> 'method' in ('otp', 'magiclink', 'recovery')
         or (a ->> 'method' = 'oauth'
             and exists (
               select 1
