@@ -502,17 +502,19 @@ export async function getClientById(
           .eq("client_id", clientId)
           .order("effective_from", { ascending: false })
       : Promise.resolve({ data: [] as ClientPricing[], error: null }),
-    options.includeSessions === false
-      ? Promise.resolve({ data: [] as unknown[], error: null })
-      : supabase
-      .from("sessions")
-      .select(
-        `${includePrices ? "*" : SESSION_COLUMNS_WITHOUT_PRICE}, electrolysis_entries(*), laser_entries(*)`,
-      )
-      .eq("studio_id", studioId)
-      .eq("client_id", clientId)
-      .is("deleted_at", null)
-      .order("started_at", { ascending: false }),
+    (async () => {
+      const wanted = typeof options.includeSessions === "function" ? await options.includeSessions() : options.includeSessions !== false;
+      if (!wanted) return { data: [] as unknown[], error: null };
+      return supabase
+        .from("sessions")
+        .select(
+          `${includePrices ? "*" : SESSION_COLUMNS_WITHOUT_PRICE}, electrolysis_entries(*), laser_entries(*)`,
+        )
+        .eq("studio_id", studioId)
+        .eq("client_id", clientId)
+        .is("deleted_at", null)
+        .order("started_at", { ascending: false });
+    })(),
     getStudioRosters(studioId),
   ]);
 

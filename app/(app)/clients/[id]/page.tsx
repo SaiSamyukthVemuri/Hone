@@ -9,6 +9,7 @@ import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/permissions/require-permission";
+import { contained, gateClient, once } from "@/lib/permissions/ask-permission";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
@@ -270,21 +271,26 @@ export default async function ClientCheatSheetPage({
   // treatment memory, treatment time or clinical-notes row is read, so every card derived from them is empty (never a stale or partial record).
   // clin.view_intake covers the intake ANSWERS and everything derived from them (self-reported Fitzpatrick); status-only access is a separate key.
   // Started here (not awaited) so it adds no serial stage; each intake read below waits on it.
-  const canViewIntakePromise = createClient()
-    .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
-    .then((d) => d.allowed);
-  // clin.view_aftercare guards the postcare send times and attempts on the Sessions tab. Started un-awaited (no serial stage); it joins
-  // the single parallel wave below.
-  const canViewAftercarePromise = createClient()
-    .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
-    .then((d) => d.allowed);
-  const canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed;
-  const priceReads = { includePrices: isOwner, includeSessions: canViewRecords };
+  // Each gate is CONTAINED (a rejecting check is "not allowed", never a crashed page) and is asked only AFTER the client has resolved
+  // for this studio: no gate runs, and no profile work happens, for a client this practitioner must not serve.
+  const recordsGate = once(() =>
+    contained("clin.view_records", async () => (await requirePermission(await gateClient(), studio.id, "clin.view_records", { client: id })).allowed),
+  );
+  const priceReads = { includePrices: isOwner, includeSessions: recordsGate };
   const data = await getClientById(studio.id, id, priceReads);
 
   if (!data) {
     notFound();
   }
+  // clin.view_intake covers the intake ANSWERS and everything derived from them; clin.view_aftercare guards the postcare send times and attempts
+  // on the Sessions tab. Started here, un-awaited, so neither adds a serial stage: each read below waits on its own promise.
+  const canViewIntakePromise = contained("clin.view_intake", async () =>
+    (await requirePermission(await gateClient(), studio.id, "clin.view_intake", { client: id })).allowed,
+  );
+  const canViewAftercarePromise = contained("clin.view_aftercare", async () =>
+    (await requirePermission(await gateClient(), studio.id, "clin.view_aftercare", { client: id })).allowed,
+  );
+  const canViewRecords = await recordsGate();
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
   // HON-58: ONE display identity for the whole profile (preferred name alone when set; else the stored name, labelled Name on file).
