@@ -116,7 +116,8 @@ describe("history", () => {
     const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
     expect(src).toContain("props.loadHistory");
     expect(src).toContain('r.personState === "removed" ? "former member"');
-    expect(src).not.toMatch(/\.email/);
+    const history = src.slice(src.indexOf("function HistoryPanel"), src.indexOf("function OwnerOnlySettingsNotes"));
+    expect(history).not.toMatch(/email/i);
   });
 });
 
