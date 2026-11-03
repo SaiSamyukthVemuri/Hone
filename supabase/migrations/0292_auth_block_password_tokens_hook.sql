@@ -12,7 +12,7 @@
 --   * authentication_method = 'password'  (a password sign-in never yields a token), and
 --   * authentication_method = 'token_refresh' when the session's own `amr` contains a password entry (a password-origin
 --     session dies at its next refresh, within the access-token lifetime).
--- It allows exactly: otp, magiclink, email/signup, invite, recovery, oauth, and a token_refresh of a session with no password
+-- It allows exactly: otp, magiclink, recovery, oauth (the proof set measured on real GoTrue, plus oauth), and a token_refresh of a session with no password
 -- origin. Any other / unknown method is refused (fail closed). It changes no row and reads no table.
 --
 -- NOT ENABLED BY THIS FILE. The hook must also be switched on in the auth config (hosted: Authentication > Hooks, Custom Access
@@ -53,11 +53,12 @@ begin
     return jsonb_build_object('claims', event -> 'claims');
   end if;
 
-  if method in ('otp', 'magiclink', 'email/signup', 'invite', 'recovery', 'oauth') then
+  if method in ('otp', 'magiclink', 'recovery', 'oauth') then
     return jsonb_build_object('claims', event -> 'claims');
   end if;
 
-  -- 'password' and every unknown method: refused.
+  -- 'password', 'email/signup' (a PKCE password sign-up confirmation, which Hone never uses), 'invite' (measured as otp, never as
+  -- invite) and every unknown method: refused. The list equals the app's proof set plus oauth (tests/migrations parity guard).
   return jsonb_build_object('error', jsonb_build_object(
     'http_code', 403,
     'message', 'Password sign-in is not available. Sign in with an email link or Google.'));

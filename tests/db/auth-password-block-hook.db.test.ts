@@ -52,7 +52,11 @@ const denied = (r: Json) => (r.error as { http_code?: number } | undefined)?.htt
 const allowed = (r: Json, e: Json) => r.error === undefined && isDeepStrictEqual(r.claims, e.claims);
 
 describe("0292 hook function (direct calls)", () => {
-  it.each(["otp", "magiclink", "email/signup", "invite", "recovery", "oauth"])("POSITIVE: %s is allowed and the claims pass through unchanged", async (m) => {
+  it.each(["email/signup", "invite", "email_change", "sso/saml", "anonymous", "web3", "totp", "made_up_method"])("NEGATIVE (J-1: the allow-list equals the proof set plus oauth): %s is refused", async (method) => {
+    expect(denied(await hook(ev(method, [{ method, timestamp: 1 }])))).toBe(true);
+  });
+
+  it.each(["otp", "magiclink", "recovery", "oauth"])("POSITIVE: %s is allowed and the claims pass through unchanged", async (m) => {
     const e = ev(m);
     expect(allowed(await hook(e), e)).toBe(true);
   });
