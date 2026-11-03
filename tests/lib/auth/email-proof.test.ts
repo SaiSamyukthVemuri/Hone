@@ -207,3 +207,67 @@ describe("applyProofHardening: what each flag value does", () => {
   );
 
 });
+
+describe("S-2b: link proof counts only if made at or after the account's last email change", () => {
+  const T = 1_793_674_853; // whole epoch seconds of the change
+  const iso = (sec: number, ms = 0) => new Date(sec * 1000 + ms).toISOString();
+  const link = (ts: number | undefined, method = "magiclink") => ({ amr: [{ method, ...(ts === undefined ? {} : { timestamp: ts }) }] });
+  const account = (extra: Record<string, unknown> = {}, identityUpdated?: string) => ({
+    email: "victim@example.com",
+    identities: [{ provider: "email", identity_data: { email: "victim@example.com" }, ...(identityUpdated ? { updated_at: identityUpdated } : {}) }],
+    ...extra,
+  });
+
+  it("POSITIVE CONTROL: an account whose address never changed (both columns null) keeps its proof, timestamp or not", () => {
+    expect(mailboxProofMethod(link(1), account())).toBe("email_link_or_otp");
+    expect(mailboxProofMethod(link(undefined), account({ email_change_sent_at: null }))).toBe("email_link_or_otp");
+  });
+
+  it.each(["otp", "magiclink", "recovery"])("the attacker's earlier %s session is unproven after the change; a fresh one is proven (same fixture)", (m) => {
+    const u = account({ email_change_sent_at: iso(T) }, iso(T));
+    expect(mailboxProofMethod(link(T - 3, m), u)).toBeNull();
+    expect(mailboxProofMethod(link(T + 2, m), u)).toBe("email_link_or_otp");
+  });
+
+  it("an equal second counts (>=): a sign-in in the same second as the change is legitimate", () => {
+    expect(mailboxProofMethod(link(T), account({ email_change_sent_at: iso(T, 900) }))).toBe("email_link_or_otp");
+  });
+
+  it("uses the LATER of the two columns (the request time alone, or the apply time alone, is not enough)", () => {
+    expect(mailboxProofMethod(link(T + 1), account({ email_change_sent_at: iso(T) }, iso(T + 5)))).toBeNull();
+    expect(mailboxProofMethod(link(T + 1), account({ email_change_sent_at: iso(T + 5) }, iso(T)))).toBeNull();
+    expect(mailboxProofMethod(link(T + 6), account({ email_change_sent_at: iso(T + 5) }, iso(T)))).toBe("email_link_or_otp");
+  });
+
+  it("only the `email` identity's updated_at counts; another provider's identity update does not move the floor", () => {
+    const u = {
+      email: "victim@example.com",
+      identities: [
+        { provider: "email", identity_data: {}, updated_at: iso(T - 100) },
+        { provider: "google", identity_data: {}, updated_at: iso(T + 100) },
+      ],
+    };
+    expect(mailboxProofMethod(link(T - 50), u)).toBe("email_link_or_otp");
+  });
+
+  it("fails closed: with a change time, an entry with no/invalid timestamp is unproven; an unreadable column is unproven", () => {
+    const u = account({ email_change_sent_at: iso(T) });
+    expect(mailboxProofMethod(link(undefined), u)).toBeNull();
+    expect(mailboxProofMethod({ amr: [{ method: "otp", timestamp: "1793674999" }] }, u)).toBeNull();
+    expect(mailboxProofMethod(link(T + 100), account({ email_change_sent_at: "not a date" }))).toBeNull();
+    expect(mailboxProofMethod(link(T + 100), account({ email_change_sent_at: { x: 1 } }))).toBeNull();
+  });
+
+  it("a password entry never proves, before or after the change", () => {
+    expect(mailboxProofMethod({ amr: [{ method: "password", timestamp: T + 50 }] }, account({ email_change_sent_at: iso(T) }))).toBeNull();
+  });
+
+  it("oauth is unaffected: it is bound to the address by the verified Google identity itself", () => {
+    const u = {
+      email: "victim@example.com",
+      email_change_sent_at: iso(T),
+      identities: [{ provider: "google", identity_data: { email: "victim@example.com", email_verified: true } }],
+    };
+    expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: T - 500 }] }, u)).toBe("oauth_verified");
+  });
+});
