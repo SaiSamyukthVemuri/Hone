@@ -129,7 +129,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy, enforcementMap?
           label: scopeLabel(d, scope),
           selected: scope === chosen,
           disabled: locked !== null || (enforcement !== "enforced" && enforcement !== "deny_only") || widerThanBaseline || !check.ok,
-          reason: widerThanBaseline ? WIDENING_LATER_LINE : check.ok ? null : check.reason,
+          reason: check.ok ? (widerThanBaseline ? WIDENING_LATER_LINE : null) : check.reason, // a missing prerequisite is the more specific reason
         };
       });
       const dependents = dependentsOf(d.key, role).filter((x) => effectiveScope(role, x.key, policy) !== "off");
