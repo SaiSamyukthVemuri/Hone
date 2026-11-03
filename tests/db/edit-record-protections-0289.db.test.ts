@@ -111,9 +111,24 @@ describe("0289: guard ordering, attribution cascade, revision images (Codex 113/
       adminQuery("update public.treatment_plans set created_by_practitioner_id=null where id=$1", [id]),
     ).rejects.toMatchObject({ code: "55000" });
     expect((await adminQuery("select created_by_practitioner_id c from public.treatment_plans where id=$1", [id])).rows[0].c).toBe(on.m.practitionerId);
-    // the real cascade: removing the practitioner row nulls the link and is not refused
-    await adminQuery("delete from public.practitioners where id=$1", [on.m.practitionerId]);
-    expect((await adminQuery("select created_by_practitioner_id c from public.treatment_plans where id=$1", [id])).rows[0].c).toBeNull();
+    // FINDING: no FK nulls this column today. 0179 replaced the original ON DELETE SET NULL with a composite ON DELETE RESTRICT, so a practitioner
+    // who created a plan cannot be removed at all and the guard's cascade allowance is not reachable. It must still pass a genuine cascade if the
+    // restriction is ever lifted: prove that in a rolled-back transaction that swaps in an ON DELETE SET NULL FK, removes the practitioner and
+    // reads the nulled link.
+    const rollback = new Error("rollback-sentinel");
+    let seen: unknown = "unset";
+    await expect(
+      adminTx(async (q) => {
+        await q("alter table public.treatment_plans drop constraint treatment_plans_created_by_same_studio_fk");
+        await q("alter table public.treatment_plans add constraint tmp_created_by_set_null foreign key (created_by_practitioner_id) references public.practitioners(id) on delete set null");
+        await q("delete from public.practitioners where id=$1", [on.m.practitionerId]);
+        seen = ((await q("select created_by_practitioner_id c from public.treatment_plans where id=$1", [id])) as { rows: { c: unknown }[] }).rows[0].c;
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    expect(seen).toBeNull();
+    // and the refusal that exists today is the restricting FK, not the attribution guard
+    await expect(adminQuery("delete from public.practitioners where id=$1", [on.m.practitionerId])).rejects.toMatchObject({ code: "23503" });
   });
 
   it("revision images carry no price or payment column; a performer correction record never blocks deleting its session", async () => {
@@ -156,18 +171,21 @@ describe("0289: every covered table, parity (Privacy AI7)", () => {
       await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
       await fn((t, p = []) => q(t, p));
     });
-  const touch = (t: string, id: string) =>
-    t === "sessions" ? ["update public.sessions set next_session_note = 'Synthetic' where id = $1", [id]] as const : [`update public.${t} set id = id where id = $1`, [id]] as const;
+  // client_clinical_notes is append-only (its own trigger refuses any UPDATE before the edit guard is reached), so a note is exercised by INSERT.
+  const touch = (t: string, id: string, c?: { s: SeededStudio; practitionerId: string }) =>
+    t === "sessions" ? ["update public.sessions set next_session_note = 'Synthetic' where id = $1", [id]] as const
+    : t === "client_clinical_notes" ? ["insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body) values ($1,$2,$3,'consultation','Synthetic note')", [c!.s.clientId, c!.s.studioId, c!.practitionerId]] as const
+    : [`update public.${t} set id = id where id = $1`, [id]] as const;
 
   it("edit OFF refuses a write to each of the eight chart tables; edit ON allows the same write", async () => {
     const off = await rows("e89t-off", "studio", "off");
     for (const t of TABLES) {
-      const [sql, params] = touch(t, off.ids[t]);
+      const [sql, params] = touch(t, off.ids[t], { s: off.c.s, practitionerId: off.c.m.practitionerId });
       await expect(asMember(off.c.m.userId, async (q) => { await q(sql, [...params]); }), t).rejects.toMatchObject({ code: "42501" });
     }
     const on = await rows("e89t-on", "studio", "studio");
     for (const t of TABLES) {
-      const [sql, params] = touch(t, on.ids[t]);
+      const [sql, params] = touch(t, on.ids[t], { s: on.c.s, practitionerId: on.c.m.practitionerId });
       await asMember(on.c.m.userId, async (q) => { await q(sql, [...params]); });
     }
   });
