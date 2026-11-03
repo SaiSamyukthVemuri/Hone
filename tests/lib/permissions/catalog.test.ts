@@ -337,7 +337,7 @@ describe("Sam's spec, encoded", () => {
 
   it("C.5: the fixed items that NARROW existing practitioners are flagged, name what enforces them, and so require a notice", () => {
     const narrowing = FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows");
-    expect(narrowing.map((f) => f.id).sort()).toEqual(["archive_clients", "delete_treatment_records_and_photos", "restore_deleted_records"]);
+    expect(narrowing.map((f) => f.id).sort()).toEqual(["archive_clients", "delete_treatment_records_and_photos", "id_portraits_owner_only", "restore_deleted_records"]);
     for (const f of narrowing) expect(f.enforcedBy?.length, f.id).toBeGreaterThan(0);
     expect(FIXED_OWNER_ONLY.find((f) => f.id === "delete_treatment_records_and_photos")!.enforcedBy).toContain("public.soft_delete_session");
   });
@@ -594,5 +594,17 @@ describe("Sam's group 7 (3 Nov): platform and operations", () => {
   it("group 7 rules are carried as build requirements", () => {
     const m = MANDATORY.join("\n");
     for (const re of [/Google Calendar studio feature flags are operator-only/, /no active owner remains, studio calendar sync pauses and the operator is alerted without client data; it resumes only after an active owner explicitly reconnects/, /bounded fallback protection/, /no direct database writes/, /SMS STOP behaviour is unchanged/]) expect(m).toMatch(re);
+  });
+});
+
+describe("enforcement state (Privacy X3)", () => {
+  it("is set on exactly the keys the app asks; every other key resolves to not_yet", async () => {
+    const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
+    const marked = CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key).sort();
+    expect(marked).toHaveLength(14);
+    expect(enforcementOf("clin.edit_records")).toBe("not_yet");
+    expect(enforcementOf("appt.complete")).toBe("observe");
+    expect(enforcementOf("appt.cancel")).toBe("enforced");
+    expect(enforcementOf("not.a.key")).toBe("not_yet");
   });
 });
