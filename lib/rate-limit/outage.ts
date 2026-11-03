@@ -46,7 +46,7 @@ const PARAMS = {
 } as const satisfies Record<string, Bounds>;
 export type FallbackParam = keyof typeof PARAMS;
 
-export function fallbackParam(name: FallbackParam, env: NodeJS.ProcessEnv = process.env): number {
+export function fallbackParam(name: FallbackParam, env: Record<string, string | undefined> = process.env): number {
   const b: Bounds = PARAMS[name];
   const raw = env[name];
   if (typeof raw !== "string" || !/^\d{1,9}$/.test(raw.trim())) return b.def;
@@ -61,7 +61,7 @@ export function fallbackParam(name: FallbackParam, env: NodeJS.ProcessEnv = proc
 // HONE_LIMITER_OUTAGE_MODE=enforce turns the real fallback on for the proof runs.
 // ---------------------------------------------------------------------------
 export type OutageMode = "enforce" | "open";
-export function outageMode(env: NodeJS.ProcessEnv = process.env): OutageMode {
+export function outageMode(env: Record<string, string | undefined> = process.env): OutageMode {
   const hosted = Boolean(env.VERCEL) || env.VERCEL_ENV === "production" || env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development";
   if (hosted) return "enforce";
   return env.HONE_LIMITER_OUTAGE_MODE === "enforce" ? "enforce" : "open";
