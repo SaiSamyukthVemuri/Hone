@@ -897,6 +897,13 @@ export async function handOffAssistedIntakeAction(
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
 
+  // The hand-off link opens the form and any prefilled answers: ask the intake key before the intake row is read.
+  const who = await loadAuthorisedClient(clientId);
+  if (!who.ok) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  if (!(await requirePermission(await createClient(), who.studioId, "clin.view_intake", { client: who.client.id })).allowed) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+
   const expectedRevision = intakeRevision(formData.get("expected_revision"));
   if (expectedRevision === null) return { ok: false, error: INTAKE_CONFLICT };
   const loaded = await loadAssistedIntake(intakeId, clientId);
@@ -1001,6 +1008,9 @@ export async function startAssistedIntakeAction(
   // trusted beyond naming which client row to look for.
   const auth = await loadAuthorisedClient(clientId);
   if (!auth.ok) return { ok: false, error: START_NOT_PERMITTED };
+  if (!(await requirePermission(await createClient(), auth.studioId, "clin.view_intake", { client: auth.client.id })).allowed) {
+    return { ok: false, error: START_NOT_PERMITTED };
+  }
 
   // DUPLICATE SAFETY. An in_progress intake already open for this client IS
   // the one to complete with them, so open it rather than stacking a second
