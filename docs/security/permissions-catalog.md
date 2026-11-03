@@ -314,4 +314,4 @@ Every step keeps a reason and history. Archiving (recoverable) remains the ordin
 
 ## Enforcement state per key (Privacy X3)
 
-`ENFORCEMENT` in `catalog.ts` says which keys the code acts on in this release: `enforced`, `observe` (asked and logged, never blocks) or `not_yet` (default). The Roles page shows `not_yet` keys as "Not enforced yet" and not editable. The map is proved equal to the keys the app asks by the wiring test.
+The `enforcement` field on each catalog key says which keys the code acts on in this release: `enforced`, `observe` (asked and logged, never blocks) or `not_yet` (default). The Roles page shows `not_yet` keys as "Not enforced yet" and not editable. The map is proved equal to the keys the app asks by the wiring test.
