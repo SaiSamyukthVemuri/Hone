@@ -247,6 +247,9 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
+      // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
+      "review-assignments-navigation.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",

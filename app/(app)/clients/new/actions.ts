@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
@@ -83,6 +84,9 @@ export async function createClientAction(
     return { ok: false, error: "Name is required." };
   }
 
+  const preferred = parsePreferredName(formData.get("preferred_name"));
+  if (!preferred.ok) return { ok: false, error: preferred.error };
+
   const email = nullableString(formData.get("email"));
 
   const supabase = await createClient();
@@ -162,6 +166,8 @@ export async function createClientAction(
     .insert({
       studio_id: studio.id,
       name,
+      // HON-58: the name the client goes by, on the SAME client record (null when blank).
+      preferred_name: preferred.value,
       pronouns: nullableString(formData.get("pronouns")),
       phone,
       email,

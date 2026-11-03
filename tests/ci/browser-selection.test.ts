@@ -238,7 +238,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 48: #1308's dashboard-phone-overflow.spec.ts joined `sessions` with the other Today-roster specs.
     // RECORDED AS A DECISION per the note above. Cost: FIVE executed cases (320 and 390 x owner and practitioner, plus one
     // five-tap navigation case), each a seeded studio, a magic-link login and a page load or a few.
-        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(48);
+    // Now 49: the merge of production joined one more spec to this selection (production's own pin was 47 before #1308's two). The
+    // number is the measured count of the merged tree, not a re-decision of any group; no executed-case cost of mine changes.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(49);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

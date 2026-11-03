@@ -296,7 +296,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // ...and the booking LINK still lives on the pages that own it, so hiding
     // the ready card removed a banner, not a capability.
     for (const f of [
-      "app/(app)/settings/booking/page.tsx",
+      "app/(app)/settings/booking/BookingView.tsx",
       "app/(app)/settings/availability/AvailabilityClient.tsx",
     ]) {
       expect(readFileSync(join(process.cwd(), f), "utf8")).toMatch(

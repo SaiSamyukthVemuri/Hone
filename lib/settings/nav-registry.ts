@@ -42,6 +42,10 @@ const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx
   );
 };
 
+// Groups open one focused view each (R2): every child is its OWN route, entered
+// at its heading, with no anchors into a longer page. Flat entries have no
+// dropdown because they have no meaningful subsections. Old URLs and hashes are
+// redirected by lib/settings/redirects.ts and the thin group-index pages.
 export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
   ...launchNav,
   {
@@ -50,7 +54,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     label: "Profile",
     href: "/settings/profile",
     roles: BOTH,
-    sections: [{ id: "your-name", label: "Personal details" }],
+    children: [{ id: "profile-details", label: "Personal details", href: "/settings/profile" }],
     order: 10,
   },
   ...calendarNav,
@@ -60,44 +64,42 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     label: "Studio",
     href: "/settings/studio",
     roles: OWNER,
-    sections: [
-      { id: "studio-details", label: "Studio details" },
-      { id: "email-notifications", label: "Email notifications" },
-      { id: "sms-notifications", label: "Text messages" },
-      { id: "client-self-service", label: "Client self-service" },
+    children: [
+      { id: "studio-details", label: "Studio details", href: "/settings/studio/details" },
+      { id: "studio-email", label: "Email notifications", href: "/settings/studio/email" },
+      { id: "studio-text-messages", label: "Text-message preferences", href: "/settings/studio/text-messages" },
+      { id: "studio-client-self-service", label: "Client self-service", href: "/settings/studio/client-self-service" },
     ],
     order: 10,
   },
   {
     id: "forms",
     group: "studio",
-    label: "Forms & Postcare",
-    href: "/settings/intake",
+    label: "Forms & postcare",
+    href: "/settings/forms",
     roles: BOTH,
-    sections: [
-      { id: "postcare", label: "Postcare" },
-      { id: "intake-preview", label: "Intake form preview" },
-      { id: "policies", label: "Cancellation & no-show policy" },
+    children: [
+      // The postcare and policy editors render for an owner only; a practitioner
+      // keeps the read-only intake preview.
+      { id: "forms-postcare", label: "Postcare", href: "/settings/forms/postcare", roles: OWNER },
+      { id: "forms-intake-preview", label: "Intake form preview", href: "/settings/forms/intake-preview" },
+      { id: "forms-cancellation-policy", label: "Cancellation and no-show policy", href: "/settings/forms/cancellation-policy", roles: OWNER },
     ],
-    // The postcare and policy editors render for an owner only (the page shows a
-    // non-owner just the read-only intake preview).
-    sectionRoles: { postcare: OWNER, policies: OWNER },
     order: 20,
   },
+  { id: "team", group: "studio", label: "Team", href: "/settings/team", roles: OWNER, order: 30 },
   {
-    id: "team",
+    id: "booking",
     group: "studio",
-    label: "Team",
-    href: "/settings/team",
+    label: "Booking",
+    href: "/settings/booking",
     roles: OWNER,
-    sections: [
-      { id: "invite-practitioner", label: "Invite a practitioner" },
-      { id: "practitioners", label: "Practitioners" },
-      { id: "pending-invitations", label: "Pending invitations" },
+    children: [
+      { id: "booking-link", label: "Booking link", href: "/settings/booking/link" },
+      { id: "booking-window", label: "Booking window", href: "/settings/booking/window" },
     ],
-    order: 30,
+    order: 40,
   },
-  { id: "booking", group: "studio", label: "Booking", href: "/settings/booking", roles: OWNER, order: 40 },
   {
     id: "waitlist",
     group: "studio",
@@ -111,9 +113,32 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
   { id: "services", group: "studio", label: "Services", href: "/settings/services", roles: OWNER, order: 70 },
   { id: "machines", group: "studio", label: "Machines", href: "/settings/machines", roles: OWNER, order: 80 },
   { id: "consent", group: "studio", label: "Consent forms", href: "/settings/consent", roles: OWNER, order: 90 },
-  { id: "payments", group: "studio", label: "Payments", href: "/settings/payments", roles: OWNER, order: 100 },
-  { id: "integrations", group: "studio", label: "Integrations", href: "/settings/integrations", roles: OWNER, order: 110 },
-  { id: "tracking", group: "studio", label: "Marketing & analytics", href: "/settings/tracking", roles: OWNER, order: 120 },
+  {
+    id: "payments",
+    group: "studio",
+    label: "Payments",
+    href: "/settings/payments",
+    roles: OWNER,
+    children: [
+      { id: "payments-setup", label: "Payment setup", href: "/settings/payments/setup" },
+      { id: "payments-card-on-file", label: "Card-on-file readiness", href: "/settings/payments/card-on-file" },
+      { id: "payments-fees", label: "Cancellation & no-show fees", href: "/settings/payments/fees" },
+    ],
+    order: 100,
+  },
+  {
+    id: "integrations",
+    group: "studio",
+    label: "Integrations",
+    href: "/settings/integrations",
+    roles: OWNER,
+    children: [
+      { id: "integrations-google", label: "Google Calendar", href: "/settings/integrations/google-calendar" },
+      { id: "integrations-sms", label: "Text-message setup", href: "/settings/integrations/text-messaging" },
+      { id: "integrations-marketing", label: "Marketing & analytics", href: "/settings/integrations/marketing" },
+    ],
+    order: 110,
+  },
   { id: "import", group: "studio", label: "Import", href: "/settings/import", roles: OWNER, order: 130 },
   { id: "data", group: "studio", label: "Data", href: "/settings/data", roles: OWNER, order: 140 },
 ];

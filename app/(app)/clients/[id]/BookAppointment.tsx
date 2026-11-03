@@ -77,7 +77,7 @@ export function BookAppointment({
   // Item 6: owner practitioner selector. The selector is shown ONLY when capacity
   // is ON and the actor is an owner; members and Legacy studios always book the
   // acting practitioner (target === self, no selector).
-  const showSelector = practitionerCapacityEnabled && isOwner;
+  const showSelector = isOwner;
   const [eligible, setEligible] = useState<EligiblePractitioner[]>([]);
   const [eligibleError, setEligibleError] = useState<string | null>(null);
   const [target, setTarget] = useState<string>(currentPractitionerId);

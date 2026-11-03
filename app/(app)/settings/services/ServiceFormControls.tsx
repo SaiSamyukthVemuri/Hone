@@ -8,7 +8,7 @@
 // `default_duration_minutes`, `name`, etc., and is parsed by the
 // unchanged actions.ts handlers.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { SERVICE_COLOR_KEYS, isServiceColorKey } from "@/lib/calendar/service-colors";
 
@@ -45,9 +45,20 @@ export function CalendarColorField({
   const keys = SERVICE_COLOR_KEYS as readonly string[];
   const initial = defaultValue && keys.includes(defaultValue) ? defaultValue : "sky";
   const [value, setValue] = useState<string>(initial);
+  const hidden = useRef<HTMLInputElement>(null);
+  const first = useRef(true);
+  // setValue changes a controlled hidden input, which emits no DOM event, so the
+  // form's unsaved-changes guard would never see a colour pick. Announce it.
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    hidden.current?.dispatchEvent(new Event("input", { bubbles: true }));
+  }, [value]);
   return (
     <div className="flex flex-col gap-1.5">
-      <input type="hidden" name={name} value={value} />
+      <input ref={hidden} type="hidden" name={name} value={value} />
       <div className="flex flex-wrap gap-2">
         {SERVICE_COLOR_KEYS.map((key) => {
           const selected = value === key;

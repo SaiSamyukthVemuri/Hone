@@ -5,6 +5,7 @@ import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -216,6 +217,14 @@ export async function updateClientAction(
   const name = nullableString(formData.get("name"));
   if (!name) return { ok: false, error: "Name is required." };
 
+  // HON-58: the preferred name is written ONLY when the form submitted the field, so an older form
+  // (or any other caller) can never blank it. A blank submission clears it (null). Validated here to
+  // the same shape the database enforces (clients_preferred_name_shape: 1-200 chars, trimmed).
+  const preferredRead = formData.has("preferred_name")
+    ? parsePreferredName(formData.get("preferred_name"))
+    : null;
+  if (preferredRead && !preferredRead.ok) return { ok: false, error: preferredRead.error };
+
   const { studio } = await getCurrentPractitionerWithStudio();
   const visible = await isClientVisible(studio.id, clientId);
   if (!visible) return { ok: false, error: "Client not found." };
@@ -297,6 +306,7 @@ export async function updateClientAction(
     .from("clients")
     .update({
       name,
+      ...(preferredRead && preferredRead.ok ? { preferred_name: preferredRead.value } : {}),
       pronouns: nullableString(formData.get("pronouns")),
       phone,
       email,
