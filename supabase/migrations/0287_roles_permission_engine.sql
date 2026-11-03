@@ -234,7 +234,8 @@ values
   ('portal_reply_immutable', 'DN-14', 'Staff can never rewrite a client''s original portal reply', 'R5', true, 'safeguard', 'Staff can edit message rows through the API today. From adoption a client''s original reply is immutable and the sender of every staff message is recorded.'),
   ('archive_clients', 'DN-25', 'Archiving clients becomes owner-only', 'R4', true, 'narrows', 'Any practitioner can archive any client today. From the enforcement release only the owner can; existing studios get advance notice before it takes effect.'),
   ('delete_treatment_records_and_photos', 'DN-25', 'Deleting whole sessions and photos becomes owner-only', 'R4', true, 'narrows', 'Practitioners can delete a colleague''s session and photos today. From the enforcement release only the owner can; removing a pass, block or treated area stays editing under the records permission.'),
-  ('restore_deleted_records', 'DN-25', 'Restoring deleted records becomes owner-only', 'R4', true, 'narrows', 'Restoring deleted records is open to practitioners today. From the enforcement release only the owner can.');
+  ('restore_deleted_records', 'DN-25', 'Restoring deleted records becomes owner-only', 'R4', true, 'narrows', 'Restoring deleted records is open to practitioners today. From the enforcement release only the owner can.'),
+  ('id_portraits_owner_only', 'DN-24', 'Client ID photos and portraits are owner-only', 'R4', true, 'narrows', 'ID photos and portraits become owner-only and not delegable until the separate ID-photo review is complete. The feature is off today, so no practitioner loses a photo they can see now.');
 
 -- A NEW studio starts on the new-studio basis; an existing studio has no row and resolves to its existing snapshot until its owner adopts.
 create or replace function public.studios_permission_policy_seed()
