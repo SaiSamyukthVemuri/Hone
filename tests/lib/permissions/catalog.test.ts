@@ -605,6 +605,8 @@ describe("enforcement state (Privacy X3)", () => {
     expect(enforcementOf("clin.edit_records")).toBe("not_yet");
     expect(enforcementOf("appt.complete")).toBe("observe");
     expect(enforcementOf("appt.cancel")).toBe("enforced");
+    // widening is inert behind a legacy check for these, so they are deny_only, not enforced (OPS, delta review RE-1/RG-2/F1)
+    for (const k of ["appt.book", "appt.move", "appt.reassign", "avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"]) expect(enforcementOf(k), k).toBe("deny_only");
     expect(enforcementOf("not.a.key")).toBe("not_yet");
   });
 });
