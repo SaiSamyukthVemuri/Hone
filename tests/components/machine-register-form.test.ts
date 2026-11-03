@@ -70,9 +70,10 @@ describe("the owner route stays reviewed-only and owner-only", () => {
   });
 
   it("CONTROL: with the shipped catalogue the list is whatever is active, never inactive", () => {
-    const active = new Set(activeProfiles(MACHINE_CATALOGUE).map((p) => p.profileId));
+    // Keyed by id AND version: a retired v1/v2 shares its id with the active v3.
+    const active = new Set(activeProfiles(MACHINE_CATALOGUE).map((p) => `${p.profileId}@${p.version}`));
     for (const p of MACHINE_CATALOGUE) {
-      if (p.availability !== "active") expect(active.has(p.profileId)).toBe(false);
+      if (p.availability !== "active") expect(active.has(`${p.profileId}@${p.version}`)).toBe(false);
     }
   });
 });
