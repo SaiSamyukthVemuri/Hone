@@ -17,8 +17,11 @@
 
 export type AmrEntry = { method?: unknown; provider?: unknown; timestamp?: unknown };
 export type ProofClaims = { amr?: unknown } | null | undefined;
-export type ProofIdentity = { provider?: unknown; identity_data?: Record<string, unknown> | null };
-export type ProofUser = { email?: string | null; identities?: ProofIdentity[] | null } | null | undefined;
+export type ProofIdentity = { provider?: unknown; identity_data?: Record<string, unknown> | null; updated_at?: unknown };
+export type ProofUser =
+  | { email?: string | null; email_change_sent_at?: unknown; identities?: ProofIdentity[] | null }
+  | null
+  | undefined;
 
 /** Methods whose credential is delivered to the account's own email address. */
 // MEASURED on real GoTrue (isolated stack, 3 Nov, Confirm email ON and OFF), per FLOW, because the amr depends on the flow:
@@ -40,6 +43,37 @@ const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["google"]);
 
 export type ProofMethod = "email_link_or_otp" | "oauth_verified" | null;
 
+/**
+ * S-2b (Insurance Z-1/G-3): mailbox proof must be about the account's CURRENT address. An attacker with a real mailbox can sign in
+ * by link, ask to change the account email to a victim's address, and keep the proven session once the victim confirms. So a
+ * link-type amr entry counts only if it was made at or after the account's last email-change activity:
+ *   lastChange = max(auth.users.email_change_sent_at, updated_at of the account's `email` identity), whole epoch seconds.
+ * Measured on real GoTrue (machines/AUTH-S2B-columns-evidence.json): email_change_sent_at moves on an email-change request and on
+ * each confirm half; the email identity's updated_at moves only when the change is applied; neither moves on an OTP request, a
+ * sign-in or a refresh (users.updated_at moves on all of those, so it is NOT used). Both null = the address never changed = no
+ * constraint. A non-null value that cannot be read is treated as "changed just now" (fail closed). Cost: only an account with
+ * email-change activity after the session began is asked to confirm again (a fresh link, no lockout).
+ */
+function lastEmailChangeSeconds(user: ProofUser): number | null | "unreadable" {
+  const stamps: unknown[] = [user?.email_change_sent_at];
+  for (const identity of user?.identities ?? []) if (norm(identity.provider) === "email") stamps.push(identity.updated_at);
+  let latest: number | null = null;
+  for (const raw of stamps) {
+    if (raw === undefined || raw === null || raw === "") continue;
+    const ms = typeof raw === "string" || typeof raw === "number" ? new Date(raw).getTime() : NaN;
+    if (!Number.isFinite(ms)) return "unreadable";
+    const sec = Math.floor(ms / 1000);
+    if (latest === null || sec > latest) latest = sec;
+  }
+  return latest;
+}
+
+function madeAfterChange(entry: AmrEntry, lastChange: number | null | "unreadable"): boolean {
+  if (lastChange === null) return true;
+  if (lastChange === "unreadable") return false;
+  return typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp) && Math.floor(entry.timestamp) >= lastChange;
+}
+
 function entries(claims: ProofClaims): AmrEntry[] {
   const amr = claims && typeof claims === "object" ? (claims as { amr?: unknown }).amr : undefined;
   return Array.isArray(amr) ? (amr.filter((e) => e && typeof e === "object") as AmrEntry[]) : [];
@@ -53,7 +87,10 @@ export function mailboxProofMethod(claims: ProofClaims, user: ProofUser): ProofM
   if (!email) return null;
   const amr = entries(claims);
 
-  if (amr.some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method))) return "email_link_or_otp";
+  const lastChange = lastEmailChangeSeconds(user);
+  if (amr.some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method) && madeAfterChange(e, lastChange))) {
+    return "email_link_or_otp";
+  }
 
   // GoTrue's amr entry for OAuth is `{method:"oauth", timestamp}`: it does NOT carry the provider (only SAML does; Codex P1,
   // GoTrue v2.189.0 CalculateAALAndAMR). So the provider is read from the account's IDENTITIES: an oauth session counts only when
