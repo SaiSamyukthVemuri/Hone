@@ -18,7 +18,9 @@ import {
   applyMineAllowed,
   CONFLICT_REGION_TRUNCATED_NOTE,
   CONFLICT_WHITESPACE_ONLY_NOTE,
+  CONFLICT_MORE_CHANGES_NOTE,
   conflictOpenedKey,
+  scrollTopForMark,
   previewFor,
   type ConflictSide,
   type ConflictSideName,
@@ -123,7 +125,7 @@ function ConflictSideText({
 }) {
   const boxRef = useRef<HTMLPreElement>(null);
   const markRef = useRef<HTMLElement>(null);
-  const marked = side.clipped && side.diffEnd > side.diffStart;
+  const marked = side.clipped;
   return (
     <span className="inline-flex flex-col">
       <span className="font-medium whitespace-pre-wrap [overflow-wrap:anywhere]">{side.text}</span>
@@ -136,7 +138,7 @@ function ConflictSideText({
             // Bring the differing region into view inside the box (the box itself scrolls; the page does not).
             const box = boxRef.current;
             const mark = markRef.current;
-            if (box && mark) box.scrollTop = Math.max(0, mark.offsetTop - box.offsetTop - 24);
+            if (box && mark) box.scrollTop = scrollTopForMark(mark.offsetTop);
           }}
         >
           <summary className="cursor-pointer text-xs underline">Show full text ({label})</summary>
@@ -176,6 +178,11 @@ function ConflictRow({ conflict, onOpened }: { conflict: ProfileConflict; onOpen
       {preview.whitespaceOnly && (
         <span role="status" data-testid="conflict-whitespace-only" className="font-medium">
           {CONFLICT_WHITESPACE_ONLY_NOTE}
+        </span>
+      )}
+      {anyClipped && preview.moreChanges && (
+        <span role="status" data-testid="conflict-more-changes" className="font-medium">
+          {CONFLICT_MORE_CHANGES_NOTE}
         </span>
       )}
       {truncated && (

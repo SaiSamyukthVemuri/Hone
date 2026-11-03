@@ -268,7 +268,42 @@ export type ConflictSide = {
 
 export type ConflictSideName = "current" | "yours";
 
-export type ConflictPreview = { current: ConflictSide; yours: ConflictSide; whitespaceOnly: boolean };
+export type ConflictPreview = {
+  current: ConflictSide;
+  yours: ConflictSide;
+  whitespaceOnly: boolean;
+  /** True when the two values differ again after the first differing run (only that first run is highlighted). */
+  moreChanges: boolean;
+};
+
+export const CONFLICT_MORE_CHANGES_NOTE = "More changes below the highlighted part.";
+
+/** The expanded box is `position: relative`, so a mark's offsetTop is already box-relative; keep a little context above it. */
+export const CONFLICT_SCROLL_PAD_PX = 24;
+export function scrollTopForMark(markOffsetTop: number): number {
+  return Math.max(0, markOffsetTop - CONFLICT_SCROLL_PAD_PX);
+}
+
+const ANCHOR_POINTS = 32;
+
+/**
+ * End (in code points, per side) of the FIRST differing run: from the common prefix, the first place where a
+ * 32-character stretch of "now" reappears in "yours" re-synchronises the two. No re-sync means one run to the end.
+ */
+function firstRunEnd(a: string[], b: string[], prefix: number, suffix: number): { a: number; b: number; more: boolean } {
+  const aEnd = a.length - suffix;
+  const bEnd = b.length - suffix;
+  const index = new Map<string, number>();
+  for (let j = prefix; j + ANCHOR_POINTS <= b.length; j += 1) {
+    const k = b.slice(j, j + ANCHOR_POINTS).join("");
+    if (!index.has(k)) index.set(k, j);
+  }
+  for (let i = prefix; i + ANCHOR_POINTS <= a.length; i += 1) {
+    const j = index.get(a.slice(i, i + ANCHOR_POINTS).join(""));
+    if (j !== undefined) return { a: i, b: j, more: a.slice(i).join("") !== b.slice(j).join("") };
+  }
+  return { a: aEnd, b: bEnd, more: false };
+}
 
 export const CONFLICT_WHITESPACE_ONLY_NOTE = "These differ only in spaces or line breaks.";
 
@@ -276,9 +311,9 @@ export const CONFLICT_REGION_TRUNCATED_NOTE =
   "The changes are longer than this preview. Open the full text before choosing.";
 
 // All slicing is on CODE POINTS, never UTF-16 units, so an emoji or other astral character is never cut in half.
-function clipRegion(points: string[], full: string, prefix: number, suffix: number): ConflictSide {
+function clipRegion(points: string[], full: string, prefix: number, suffix: number, runEnd: number): ConflictSide {
   const diffStart = points.slice(0, prefix).join("").length;
-  const diffEnd = points.slice(0, points.length - suffix).join("").length;
+  const diffEnd = points.slice(0, runEnd).join("").length;
   const start = Math.max(0, prefix - CONFLICT_CONTEXT_CHARS);
   const end = Math.min(points.length, points.length - suffix + CONFLICT_CONTEXT_CHARS);
   let body = points.slice(start, end);
@@ -300,18 +335,20 @@ function clipRegion(points: string[], full: string, prefix: number, suffix: numb
  */
 export function conflictPreview(current: string, yours: string): ConflictPreview {
   const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, regionTruncated: false, full: v, diffStart: 0, diffEnd: 0 });
-  const whitespaceOnly = current !== yours && current.replace(/\s+/g, "") === yours.replace(/\s+/g, "");
+  const norm = (v: string) => v.replace(/\s+/g, " ").trim();
+  const whitespaceOnly = current !== yours && norm(current) === norm(yours);
   const a = Array.from(current);
   const b = Array.from(yours);
-  if (a.length <= CONFLICT_FULL_CHARS && b.length <= CONFLICT_FULL_CHARS) return { current: whole(current), yours: whole(yours), whitespaceOnly };
+  if (a.length <= CONFLICT_FULL_CHARS && b.length <= CONFLICT_FULL_CHARS) return { current: whole(current), yours: whole(yours), whitespaceOnly, moreChanges: false };
   const max = Math.min(a.length, b.length);
   let prefix = 0;
   while (prefix < max && a[prefix] === b[prefix]) prefix += 1;
   let suffix = 0;
   while (suffix < max - prefix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix += 1;
-  const side = (points: string[], full: string): ConflictSide =>
-    full === "" || points.length <= CONFLICT_FULL_CHARS ? whole(full) : clipRegion(points, full, prefix, suffix);
-  return { current: side(a, current), yours: side(b, yours), whitespaceOnly };
+  const run = firstRunEnd(a, b, prefix, suffix);
+  const side = (points: string[], full: string, runEnd: number): ConflictSide =>
+    full === "" || points.length <= CONFLICT_FULL_CHARS ? whole(full) : clipRegion(points, full, prefix, suffix, runEnd);
+  return { current: side(a, current, run.a), yours: side(b, yours, run.b), whitespaceOnly, moreChanges: run.more };
 }
 
 const previewCache = new WeakMap<object, { current: string; yours: string; preview: ConflictPreview }>();

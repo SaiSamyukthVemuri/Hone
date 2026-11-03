@@ -11,6 +11,8 @@ import {
   conflictOpenedKey,
   conflictPreview,
   CONFLICT_WHITESPACE_ONLY_NOTE,
+  CONFLICT_SCROLL_PAD_PX,
+  scrollTopForMark,
   previewFor,
   sidesToOpen,
   needsFullTextOpen,
@@ -404,12 +406,14 @@ describe("whitespace-only conflicts are labelled (Insurance N-3)", () => {
   it("flags a pair that differs only in spaces or line breaks, short or long", () => {
     expect(conflictPreview("a b", "a  b").whitespaceOnly).toBe(true);
     expect(conflictPreview("a\nb", "a b").whitespaceOnly).toBe(true);
+    expect(conflictPreview(" a  b ", "a b").whitespaceOnly).toBe(true);
     const long = "word ".repeat(200);
     expect(conflictPreview(long, long.replace(/ /g, "\n")).whitespaceOnly).toBe(true);
     expect(CONFLICT_WHITESPACE_ONLY_NOTE).toMatch(/spaces or line breaks/);
   });
   it("does not flag a real difference or an identical pair", () => {
     expect(conflictPreview("a b", "a c").whitespaceOnly).toBe(false);
+    expect(conflictPreview("a b", "ab").whitespaceOnly).toBe(false); // N5-2: removing the only space is a real change
     expect(conflictPreview("a b", "a b").whitespaceOnly).toBe(false);
     expect(conflictPreview("latex", "").whitespaceOnly).toBe(false);
   });
@@ -422,5 +426,25 @@ describe("preview memoisation (N-4/Z2)", () => {
     const first = previewFor(c);
     const changed = { ...c, yours: "z".repeat(400) };
     expect(previewFor(changed)).not.toBe(first);
+  });
+});
+
+describe("scroll arithmetic and the first differing run (W-1/N5-1, W-2)", () => {
+  it("the mark's offsetTop is box-relative: scrollTop is that minus the pad, never negative, and never subtracts the box", () => {
+    expect(scrollTopForMark(500)).toBe(500 - CONFLICT_SCROLL_PAD_PX);
+    expect(scrollTopForMark(10)).toBe(0);
+    expect(scrollTopForMark(0)).toBe(0);
+  });
+  it("two distant edits: only the FIRST run is marked and moreChanges is set", () => {
+    const mid = "m".repeat(3_000);
+    const p = conflictPreview("FIRST" + mid + "tail", "first" + mid + "tail-SECOND");
+    expect(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).toBe("FIRST");
+    expect(p.yours.full.slice(p.yours.diffStart, p.yours.diffEnd)).toBe("first");
+    expect(p.moreChanges).toBe(true);
+  });
+  it("a single run reports no more changes", () => {
+    const base = "x".repeat(2_000);
+    expect(conflictPreview(base + "AAA" + "y".repeat(2_000), base + "BBB" + "y".repeat(2_000)).moreChanges).toBe(false);
+    expect(conflictPreview("x".repeat(400), "x".repeat(400) + "!").moreChanges).toBe(false);
   });
 });
