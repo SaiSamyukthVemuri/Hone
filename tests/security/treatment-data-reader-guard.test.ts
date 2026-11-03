@@ -19,14 +19,18 @@ import { describe, expect, it } from "vitest";
 const RECORDS = ["sessions", "session_blocks", "session_block_areas", "electrolysis_entries", "laser_entries", "treatment_plans", "treatment_plan_stages", "client_clinical_notes", "imported_treatment_memories"];
 const INTAKE = ["client_intake_forms"];
 const PHOTOS = ["treatment_images"];
-type DataClass = "records" | "intake" | "photos";
-const KEY: Record<DataClass, string> = { records: "clin.view_records", intake: "clin.view_intake", photos: "clin.view_photos" };
+// aftercare: postcare send time and attempt counts live as COLUMNS on appointments, not in a table of their own, so the class is detected by
+// column name inside a select string (a pseudo-table, "__postcare").
+const AFTERCARE_COLUMNS = /postcare_email_sent_at|postcare_email_send_attempts/;
+type DataClass = "records" | "intake" | "photos" | "aftercare";
+const KEY: Record<DataClass, string> = { records: "clin.view_records", intake: "clin.view_intake", photos: "clin.view_photos", aftercare: "clin.view_aftercare" };
 const CLASS_OF: Record<string, DataClass> = {
   ...Object.fromEntries(RECORDS.map((t) => [t, "records" as const])),
   ...Object.fromEntries(INTAKE.map((t) => [t, "intake" as const])),
   ...Object.fromEntries(PHOTOS.map((t) => [t, "photos" as const])),
+  __postcare: "aftercare" as const,
 };
-const TABLES = Object.keys(CLASS_OF);
+const TABLES = Object.keys(CLASS_OF).filter((t) => t !== "__postcare");
 const T_ALT = TABLES.join("|");
 const DIRECT = new RegExp(`\\.from\\(\\s*["'\`](${T_ALT})["'\`]`, "g");
 const EMBED = new RegExp(`(?<![\\w.])(?:\\w+:)?(${T_ALT})\\s*(?:!\\w+)?\\(`, "g");
@@ -58,6 +62,7 @@ const ALLOW: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
   "app/portal/rebook-actions.ts": { cls: "system-side", why: "client portal, the client's own data" },
   "app/reschedule/[token]/actions.ts": { cls: "system-side", why: "client reschedule link, the client's own data" },
   "lib/portal/queries.ts": { cls: "system-side", why: "client portal, the client's own data" },
+  "app/(app)/calendar/postcare-auto-send.ts": { cls: "write-path", why: "sends and claims postcare (messaging); reads the send columns only to avoid a re-send and returns a fixed outcome name, never a time or a count" },
   "lib/intake/write-revision.ts": { cls: "write-path", why: "write_intake_revision RPC (write)" },
   "lib/audit/governed-writes.ts": { cls: "write-path", why: "audit write RPC (write only, returns no content)" },
   "lib/billing/appointment-payment-state.ts": { cls: "billing-owner", why: "payment state is owner-only (HON-44)" },
@@ -105,7 +110,12 @@ const selfGated = (f: string, c: DataClass) => hasCall(SRC.get(f)!, KEY[c]);
 function tablesIn(src: string): Set<string> {
   const out = new Set<string>();
   for (const m of src.matchAll(DIRECT)) out.add(m[1]!);
-  for (const m of src.matchAll(/\.select\(\s*([`"'])((?:\\.|(?!\1).)*)\1/gs)) for (const e of m[2]!.matchAll(EMBED)) out.add(e[1]!);
+  for (const m of src.matchAll(/\.select\(\s*([`"'])((?:\\.|(?!\1).)*)\1/gs)) {
+    for (const e of m[2]!.matchAll(EMBED)) out.add(e[1]!);
+    if (AFTERCARE_COLUMNS.test(m[2]!)) out.add("__postcare");
+  }
+  // a select list built with a conditional or a constant: any quoted column LIST that names the columns
+  if (/["'`][^"'`\n]*\b(?:postcare_email_sent_at|postcare_email_send_attempts)\b[^"'`\n]*,[^"'`\n]*["'`]|["'`][^"'`\n]*,[^"'`\n]*\b(?:postcare_email_sent_at|postcare_email_send_attempts)\b[^"'`\n]*["'`]/.test(src)) out.add("__postcare");
   // Z3: a constant or template table name behind a non-literal .from(x)
   if (/(?<!Array|Buffer|Object)\.from\(\s*(?!"|'|`)[^)\s]/.test(src)) for (const w of src.matchAll(WORD)) out.add(w[1]!);
   return out;
@@ -274,6 +284,13 @@ describe("treatment-data reader guard (a tripwire, not a proof)", () => {
     }
   });
 
+  it("the aftercare class is live: the timeline loader reads the postcare columns and its page asks clin.view_aftercare", () => {
+    expect(DIRECT_CLASSES.get("lib/supabase/queries.ts")?.has("aftercare")).toBe(true);
+    expect(selfGated("app/(app)/clients/[id]/page.tsx", "aftercare")).toBe(true);
+    // every file that reads the columns is either self-gated for aftercare or classified; the main rule test enforces it, this pins the page that reads them most
+    expect(selfGated("app/(app)/calendar/[id]/page.tsx", "aftercare")).toBe(true);
+  });
+
   it("the edit page really opts out of session reads", () => {
     expect(SRC.get("app/(app)/clients/[id]/edit/page.tsx")).toMatch(/getClientById\([^)]*includeSessions:\s*false/);
   });
@@ -307,6 +324,7 @@ function actionClasses(f: string, body: string): Map<DataClass, string> {
 // Files with no practitioner viewer in the loop: token links and the client's own portal, owner-only and operator-only pages, payment owner paths.
 const EXEMPT_ACTION_CLASSES = new Set(["system-side", "owner-only", "operator-only", "billing-owner"]);
 const ACTIONS_NO_DATA: Record<string, string> = {
+  "app/(app)/calendar/actions.ts::sendPostcareEmailAction": "sends postcare (messaging, not viewing); reads the send columns to refuse a duplicate and returns only ok/error with fixed copy, never a time or a count",
   "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::removeSessionAreaAction": "chart edit gated on clin.view_records; the photos class is only the count of block-scoped images it voids (entriesRemoved/imagesRemoved), no image or path is returned",
   "app/(app)/calendar/actions.ts::bookAppointmentForClientAction": "returns the new appointment id; ensureIntakeForClient only creates the intake request row and link, no answers are read or returned",
   "app/(app)/calendar/actions.ts::fetchLastServiceForClientAction": "returns the last service name from appointments, not chart data; the intake name matched belongs to a helper after it",

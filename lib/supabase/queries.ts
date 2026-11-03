@@ -682,12 +682,17 @@ const CLIENT_APPOINTMENT_TIMELINE_LIMIT = 100;
 export async function getAppointmentsForClientProfile(
   studioId: string,
   clientId: string,
+  // Postcare send times and attempt counts are aftercare detail: they are not even selected unless the viewer holds clin.view_aftercare
+  // (Codex, #1341 5b7d431e2). Required, so a new caller must decide.
+  opts: { includeAftercare: boolean },
 ): Promise<ClientAppointmentTimelineRow[]> {
   const supabase = await createClient();
   const { data: rawAppts, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, postcare_email_sent_at, postcare_email_send_attempts, service:services(name, modality)",
+      opts.includeAftercare
+        ? "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, postcare_email_sent_at, postcare_email_send_attempts, service:services(name, modality)"
+        : "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, service:services(name, modality)",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -698,7 +703,7 @@ export async function getAppointmentsForClientProfile(
       `Failed to load client appointments: ${dbErrorCode(apptErr)}`,
     );
   }
-  const appts = (rawAppts ?? []) as Array<{
+  const appts = (rawAppts ?? []) as unknown as Array<{
     id: string;
     starts_at: string;
     ends_at: string;
@@ -706,8 +711,8 @@ export async function getAppointmentsForClientProfile(
     service_id: string | null;
     cancelled_at: string | null;
     cancellation_reason: string | null;
-    postcare_email_sent_at: string | null;
-    postcare_email_send_attempts: number | null;
+    postcare_email_sent_at?: string | null;
+    postcare_email_send_attempts?: number | null;
     service:
       | { name: string; modality: string | null }
       | Array<{ name: string; modality: string | null }>
@@ -767,7 +772,7 @@ export async function getAppointmentsForClientProfile(
       service_modality: svc?.modality ?? null,
       cancelled_at: a.cancelled_at,
       cancellation_reason: a.cancellation_reason,
-      postcare_email_sent_at: a.postcare_email_sent_at,
+      postcare_email_sent_at: a.postcare_email_sent_at ?? null,
       postcare_email_send_attempts: a.postcare_email_send_attempts ?? 0,
       linked_session: latestByAppointment.get(a.id) ?? null,
     };

@@ -11,8 +11,8 @@ const { touched, allowed, asked } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/permissions/require-permission", () => ({
-  requirePermission: vi.fn(async (_db: unknown, _studio: string, key: string) => {
-    asked(key);
+  requirePermission: vi.fn(async (_db: unknown, _studio: string, key: string, ctx?: unknown) => {
+    asked(key, ctx);
     return { allowed: allowed.value, mode: "enforce", engine: allowed.value };
   }),
 }));
@@ -55,7 +55,7 @@ describe("open-tab replay after clin.view_records is revoked", () => {
     const res = await getWholeSessionCopySourceAction({ clientId: "c1", sessionId: "s1" });
     expect(res.ok).toBe(false);
     expect(JSON.stringify(res)).not.toMatch(/source":\[/);
-    expect(asked).toHaveBeenCalledWith("clin.view_records");
+    expect(asked).toHaveBeenCalledWith("clin.view_records", expect.anything());
     expect(touched).not.toHaveBeenCalled();
   });
 
@@ -140,7 +140,9 @@ describe("NQ-10 (Insurance RV-1, Privacy AC1): editing requires viewing, whateve
       const r = await (m[n] as (f: FormData) => Promise<{ ok: boolean }>)(fd);
       expect(r.ok, n).toBe(false);
     }
-    expect(asked).toHaveBeenCalledWith("clin.view_records");
+    // RW-1: every plan gate names the client, so a scoped (own/assigned) grant can be judged against that client
+    expect(asked).toHaveBeenCalledWith("clin.view_records", { client: "c1" });
+    expect(asked.mock.calls.filter((c) => c[0] === "clin.view_records" && (c[1] as { client?: string } | undefined)?.client === undefined)).toEqual([]);
     expect(touched).not.toHaveBeenCalled();
   });
 
