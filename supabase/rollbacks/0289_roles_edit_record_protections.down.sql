@@ -14,7 +14,7 @@ declare t text;
 begin
   foreach t in array array['sessions','session_blocks','session_block_areas','electrolysis_entries','laser_entries','treatment_plans','treatment_plan_stages','client_clinical_notes']
   loop
-    execute format('drop trigger if exists chart_write_guard_trg on public.%I', t);
+    execute format('drop trigger if exists zz_chart_write_guard_trg on public.%I', t);
     execute format('drop trigger if exists chart_revision_write_trg on public.%I', t);
   end loop;
 end $$;
@@ -28,6 +28,7 @@ drop table if exists public.chart_revisions;
 
 drop function if exists public.chart_attribution_guard();
 drop function if exists public.chart_revision_write();
+drop function if exists public.chart_revision_image(jsonb);
 drop function if exists public.chart_write_guard();
 drop function if exists public.chart_scope(text, jsonb);
 drop function if exists public.chart_revisions_append_only();

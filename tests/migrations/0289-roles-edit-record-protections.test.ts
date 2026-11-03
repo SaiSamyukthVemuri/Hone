@@ -22,7 +22,7 @@ describe("0289 edit-record protections: shape", () => {
 
   it("covers all eight chart tables, and its down file removes what it creates", () => {
     for (const t of TABLES) expect(sql).toContain(`'${t}'`);
-    for (const f of ["chart_write_guard", "chart_revision_write", "chart_attribution_guard", "chart_scope", "chart_revisions_append_only", "correct_session_performer"])
+    for (const f of ["chart_write_guard", "chart_revision_write", "chart_revision_image", "chart_attribution_guard", "chart_scope", "chart_revisions_append_only", "correct_session_performer"])
       expect(down).toContain(f);
     expect(down).toContain("drop table if exists public.chart_revisions");
     expect(down).toContain("create or replace function public.set_session_performer(");

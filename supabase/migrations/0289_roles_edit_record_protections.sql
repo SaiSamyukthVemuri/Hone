@@ -109,7 +109,13 @@ begin
     -- An update or delete is authorised against the row AS IT STANDS (a move into another studio is refused by the lineage triggers).
     v_row := case when tg_op = 'INSERT' then to_jsonb(new) else to_jsonb(old) end;
     select c.studio_id, c.client_id into v_studio, v_client from public.chart_scope(tg_table_name, v_row) c;
-    if v_studio is not null and not public.has_studio_permission(v_studio, 'clin.edit_records', v_client) then
+    if v_studio is null then
+      -- FAIL CLOSED: an end user's write whose studio cannot be resolved is refused. The one exception is a DELETE reached by an FK cascade
+      -- from a parent the caller was already authorised to delete (trigger depth > 1), where the parent row is gone and nothing can resolve.
+      if not (tg_op = 'DELETE' and pg_trigger_depth() > 1) then
+        raise exception 'edit_records_required' using errcode = '42501';
+      end if;
+    elsif not public.has_studio_permission(v_studio, 'clin.edit_records', v_client) then
       raise exception 'edit_records_required' using errcode = '42501';
     end if;
   end if;
@@ -118,11 +124,18 @@ begin
 end;
 $$;
 
+-- Price and payment columns are not chart content (pay.* / pricing keys govern them): they never enter a revision image.
+create or replace function public.chart_revision_image(p_row jsonb)
+returns jsonb language sql immutable security definer set search_path = '' as $$
+  select case when p_row is null then null
+    else coalesce((select jsonb_object_agg(k, v) from jsonb_each(p_row) e(k, v) where k !~* '(price|cents|paid|amount|payment)'), '{}'::jsonb) end;
+$$;
+
 create or replace function public.chart_revision_write()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare
-  v_before jsonb := case when tg_op = 'INSERT' then null else to_jsonb(old) end;
-  v_after  jsonb := case when tg_op = 'DELETE' then null else to_jsonb(new) end;
+  v_before jsonb := case when tg_op = 'INSERT' then null else public.chart_revision_image(to_jsonb(old)) end;
+  v_after  jsonb := case when tg_op = 'DELETE' then null else public.chart_revision_image(to_jsonb(new)) end;
   v_studio uuid;
   v_client uuid;
 begin
@@ -154,8 +167,12 @@ begin
       raise exception 'attribution_is_not_rewritable' using errcode = '55000';
     end if;
   elsif tg_table_name = 'treatment_plans' then
-    -- ON DELETE SET NULL (a practitioner row removed) is the one allowed change: it erases nothing but the link.
-    if new.created_by_practitioner_id is distinct from old.created_by_practitioner_id and new.created_by_practitioner_id is not null then
+    -- The ONE allowed change is the FK's ON DELETE SET NULL of a practitioner that was really removed: the NEW value is null AND the old
+    -- practitioner row no longer exists (the cascade runs after the delete, so it is gone). An explicit update to null, or to anyone else,
+    -- while that practitioner exists is a rewrite.
+    if new.created_by_practitioner_id is distinct from old.created_by_practitioner_id
+       and not (new.created_by_practitioner_id is null
+                and not exists (select 1 from public.practitioners pr where pr.id = old.created_by_practitioner_id)) then
       raise exception 'attribution_is_not_rewritable' using errcode = '55000';
     end if;
   elsif tg_table_name = 'client_clinical_notes' then
@@ -172,7 +189,7 @@ declare t text;
 begin
   foreach t in array array['sessions','session_blocks','session_block_areas','electrolysis_entries','laser_entries','treatment_plans','treatment_plan_stages','client_clinical_notes']
   loop
-    execute format('create trigger chart_write_guard_trg before insert or update or delete on public.%I for each row execute function public.chart_write_guard()', t);
+    execute format('create trigger zz_chart_write_guard_trg before insert or update or delete on public.%I for each row execute function public.chart_write_guard()', t);
     execute format('create trigger chart_revision_write_trg after insert or update or delete on public.%I for each row execute function public.chart_revision_write()', t);
   end loop;
 end $$;
@@ -186,7 +203,7 @@ create trigger chart_attribution_guard_notes before update on public.client_clin
 create table public.session_performer_corrections (
   id                    bigint generated always as identity primary key,
   studio_id             uuid not null,
-  session_id            uuid not null references public.sessions(id) on delete restrict,
+  session_id            uuid not null,    -- no FK: history must never block an owner-only delete (Privacy AI2)
   previous_performer_id uuid,
   new_performer_id      uuid,
   corrected_by          uuid not null,     -- auth.uid()
@@ -245,6 +262,7 @@ revoke all on function public.chart_revisions_append_only() from public, anon, a
 revoke all on function public.chart_scope(text, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.chart_write_guard() from public, anon, authenticated, service_role;
 revoke all on function public.chart_revision_write() from public, anon, authenticated, service_role;
+revoke all on function public.chart_revision_image(jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.chart_attribution_guard() from public, anon, authenticated, service_role;
 revoke all on function public.correct_session_performer(uuid, uuid, uuid, text) from public, anon, authenticated, service_role;
 revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from public;

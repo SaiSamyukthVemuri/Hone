@@ -79,6 +79,54 @@ describe("0289: edit key at the database", () => {
   });
 });
 
+describe("0289: guard ordering, attribution cascade, revision images (Codex 113/159, Privacy AI2-AI5)", () => {
+  it("edit OFF still refuses a note and a plan stage inserted with studio_id OMITTED (the guard runs after studio derivation)", async () => {
+    const off = await setup("e89omit", "studio", "off");
+    await expect(
+      asUser(off.m.userId, (q) =>
+        q("insert into public.client_clinical_notes (client_id, practitioner_id, kind, body) values ($1,$2,'consultation','Synthetic note')", [off.s.clientId, off.m.practitionerId])),
+    ).rejects.toMatchObject({ code: "42501", message: expect.stringContaining("edit_records_required") });
+    const planId = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan',4)", [planId, off.s.clientId, off.s.studioId]);
+    await expect(
+      asUser(off.m.userId, (q) =>
+        q("insert into public.treatment_plan_stages (plan_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,'weekly',30,4,'weeks')", [planId])),
+    ).rejects.toMatchObject({ code: "42501" });
+    expect(Number((await adminQuery("select count(*) n from public.client_clinical_notes where client_id=$1", [off.s.clientId])).rows[0].n)).toBe(0);
+    expect(Number((await adminQuery("select count(*) n from public.treatment_plan_stages where plan_id=$1", [planId])).rows[0].n)).toBe(0);
+    // edit ON accepts the same omitted-studio inserts
+    const on = await setup("e89omiton", "studio", "studio");
+    await asUser(on.m.userId, (q) =>
+      q("insert into public.client_clinical_notes (client_id, practitioner_id, kind, body) values ($1,$2,'consultation','Synthetic note')", [on.s.clientId, on.m.practitionerId]));
+  });
+
+  it("an ON practitioner cannot CLEAR created_by_practitioner_id; a real practitioner removal (FK set null) passes", async () => {
+    const on = await setup("e89null", "studio", "studio");
+    const id = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count, created_by_practitioner_id) values ($1,$2,$3,'Synthetic plan',4,$4)", [id, on.s.clientId, on.s.studioId, on.m.practitionerId]);
+    await expect(
+      asUser(on.m.userId, (q) => q("update public.treatment_plans set created_by_practitioner_id=null where id=$1", [id])),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      adminQuery("update public.treatment_plans set created_by_practitioner_id=null where id=$1", [id]),
+    ).rejects.toMatchObject({ code: "55000" });
+    expect((await adminQuery("select created_by_practitioner_id c from public.treatment_plans where id=$1", [id])).rows[0].c).toBe(on.m.practitionerId);
+    // the real cascade: removing the practitioner row nulls the link and is not refused
+    await adminQuery("delete from public.practitioners where id=$1", [on.m.practitionerId]);
+    expect((await adminQuery("select created_by_practitioner_id c from public.treatment_plans where id=$1", [id])).rows[0].c).toBeNull();
+  });
+
+  it("revision images carry no price or payment column; a performer correction record never blocks deleting its session", async () => {
+    const on = await setup("e89img", "studio", "studio");
+    await adminQuery("update public.sessions set price_paid_cents = 12345 where id=$1", [on.sessionId]);
+    await adminQuery("update public.sessions set next_session_note = 'Synthetic next' where id=$1", [on.sessionId]);
+    const r = await revs("sessions", on.sessionId);
+    expect(r.length).toBeGreaterThan(0);
+    for (const x of r) for (const img of [x.before_image, x.after_image]) if (img) expect(Object.keys(img).filter((k) => /price|cents|paid|amount|payment/i.test(k))).toEqual([]);
+    expect((await adminQuery("select count(*) n from pg_constraint where conrelid='public.session_performer_corrections'::regclass and contype='f'")).rows[0].n).toBe("0");
+  });
+});
+
 describe("0289: performer correction replaces the overwrite", () => {
   it("edit ON: corrects, preserves the original in history, records who/when/why", async () => {
     const t = await setup("e89cor", "studio", "studio");
