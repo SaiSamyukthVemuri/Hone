@@ -49,6 +49,7 @@ create table public.permission_narrowings (
   label            text not null,
   stage            text not null,
   narrows_existing boolean not null,
+  -- The adopt preview lists EVERY row, each tagged with this kind, so the page can show losses and safeguards apart.
   -- What a practitioner experiences: 'narrows' = they lose something they can do or read today; 'safeguard' = a protection that does not take a
   -- practitioner capability away. The adopt preview shows the two apart.
   practitioner_access text not null check (practitioner_access in ('narrows', 'safeguard')),
@@ -743,7 +744,7 @@ begin
       v_result := v_result || jsonb_build_object(
         'fixed_narrowings',
         (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'decision', n.decision, 'label', n.label, 'stage', n.stage, 'practitioner_access', n.practitioner_access, 'notice', n.notice) order by n.id), '[]'::jsonb)
-           from public.permission_narrowings n where n.narrows_existing));
+           from public.permission_narrowings n));
     end if;
 
     if not p_commit then

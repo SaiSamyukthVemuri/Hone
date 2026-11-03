@@ -22,7 +22,9 @@ describe("permission_narrowings seed (0287)", () => {
     }
   });
 
-  it("the adopt preview emits practitioner_access", () => {
+  it("the adopt preview emits practitioner_access for EVERY row, so safeguards that narrow nothing are not dropped", () => {
     expect(sql).toMatch(/'practitioner_access', n\.practitioner_access/);
+    expect(sql).toMatch(/from public\.permission_narrowings n\)\);/);
+    expect(sql).not.toMatch(/from public\.permission_narrowings n where n\.narrows_existing/);
   });
 });
