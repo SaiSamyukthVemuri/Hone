@@ -1,0 +1,22 @@
+{
+  "measured_on": "real GoTrue, owned local stack, 3 Nov 2026, hook ON via a recording wrapper (tests/db/auth-hook-methods.db.test.ts)",
+  "evidence": "machines/AUTH-HOOK-W1-evidence.json",
+  "legitimate_flows_received": {
+    "pkce_magic_link_existing_address": "magiclink",
+    "pkce_recovery": "recovery",
+    "implicit_magic_link": "otp",
+    "implicit_recovery": "otp",
+    "implicit_invite_new_user": "otp",
+    "email_otp_code": "otp",
+    "refresh_of_link_session": "token_refresh"
+  },
+  "refused_by_design_received": {
+    "password_signin": "password"
+  },
+  "open_finding_first_login_of_a_new_address": {
+    "confirm_off": "password",
+    "confirm_on": "email/signup",
+    "note": "refused by the hook today; widening is a product/security decision, not made here"
+  },
+  "unmeasured": ["oauth (Google)"]
+}

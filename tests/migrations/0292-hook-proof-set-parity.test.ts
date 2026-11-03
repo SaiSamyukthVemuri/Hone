@@ -28,4 +28,26 @@ describe("0292 hook allow-list parity with the proof set", () => {
   it("does not admit the methods measured as outside the proof set", () => {
     for (const m of ["password", "email/signup", "invite"]) expect(allowList()).not.toContain(m);
   });
+
+  // W2 (Privacy): the allow-list is checked against what the hook was MEASURED to receive, not only against literals.
+  const measured = JSON.parse(readFileSync(join(process.cwd(), "tests/db/fixtures/hook-measured-methods.json"), "utf8")) as {
+    legitimate_flows_received: Record<string, string>;
+    refused_by_design_received: Record<string, string>;
+  };
+  it("every method the hook was measured to receive on a legitimate flow is accepted by the hook (allow-list or the refresh rule)", () => {
+    const list = allowList();
+    for (const [flow, method] of Object.entries(measured.legitimate_flows_received)) {
+      const ok = method === "token_refresh" ? /authentication_method\s*=\s*'token_refresh'|method\s*=\s*'token_refresh'/.test(sql) : list.includes(method);
+      expect(ok, `${flow}: the hook received '${method}' and the migration must accept it`).toBe(true);
+    }
+  });
+  it("every method measured as refused-by-design is not on the allow-list", () => {
+    for (const [flow, method] of Object.entries(measured.refused_by_design_received)) {
+      expect(allowList(), flow).not.toContain(method);
+    }
+  });
+  it("the measured legitimate link methods are exactly the app proof-set methods (otp, magiclink, recovery)", () => {
+    const linkMethods = Object.values(measured.legitimate_flows_received).filter((m) => m !== "token_refresh");
+    expect([...new Set(linkMethods)].sort()).toEqual(appMailboxMethods().sort());
+  });
 });
