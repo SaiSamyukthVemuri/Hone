@@ -170,7 +170,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "WL-1": { label: "Read the waitlist queue (prospect name, email, phone, status, consent)", cls: "key", keys: ["wl.view_queue"], team: true },
   "WL-2": { label: "Read stated availability, invitations (no token hash), events, rounds", cls: "key", keys: ["wl.view_queue"], team: true },
   "WL-3": { label: "Remove (withdraw) an entry", cls: "key", keys: ["wl.withdraw_entry"], team: true },
-  "WL-4": { label: "Claim, release, expire, requeue, close unbooked; claim next N", cls: "key", keys: ["wl.manage_queue"], team: true },
+  "WL-4": { label: "Claim, release, expire, requeue, close unbooked; claim next N", cls: "key", keys: ["wl.manage_queue", "wl.expire_close"], team: true },
   "WL-5": { label: "Start inviting (open round with allowance) / close invitations", cls: "key", keys: ["wlrules.invitation_rounds"], team: true },
   "WL-6": { label: "Invite to book (admit, issue token, email + optional SMS)", cls: "key", keys: ["wl.offer_booking"], team: true },
   "WL-7": { label: "Add an entry manually", cls: "key", keys: ["wl.add_entry"], team: true },

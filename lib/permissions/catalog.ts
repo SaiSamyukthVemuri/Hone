@@ -203,7 +203,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (Sam, 3 Nov, Q17 / R0-Q3): OFF by default and owner-configurable. The recipient must be an eligible practitioner of the SAME studio (the eligibility definition is open point A6), and the hand-off is refused once the appointment has started or been treated. Moving someone else's appointment stays appt.reassign.",
+    note: "Decided (Sam, 3 Nov, Q17 / R0-Q3): OFF by default and owner-configurable. The recipient must be an ACTIVE practitioner of the SAME studio who is configured for the service (A6, decided 3 Nov), and the hand-off is refused once the appointment has started or been treated. Moving someone else's appointment stays appt.reassign.",
   },
   {
     key: "appt.cancel",
@@ -384,7 +384,6 @@ export const CATALOG = [
   },
   {
     key: "client.edit_legal_name",
-    touchedByDecision: ["Q-15"],
     group: "clients_identity",
     label: "Edit a client's legal name",
     description: "Change the legal name through the protected identity flow. Separate from viewing; enabling one never grants the other.",
@@ -843,7 +842,6 @@ export const CATALOG = [
   },
   {
     key: "price.fee_amounts",
-    touchedByDecision: ["Q-14b"],
     group: "pricing",
     label: "Change studio fee amounts",
     description: "Change the no-show and late-cancellation fee amounts.",
@@ -916,7 +914,6 @@ export const CATALOG = [
   },
   {
     key: "rep.bulk_export",
-    touchedByDecision: ["Q-19"],
     group: "reports",
     label: "Export or print bulk data",
     description: "Export client-list and schedule style outputs in bulk. Contains only fields and rows the actor's own keys would show on screen. NEVER the whole-studio data export or backup, which is fixed owner-only. Safeguarded: confirmation, row limits, audit.",
@@ -929,7 +926,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Staff exports are separately permission-controlled and OFF by default (Sam, 3 Nov, DN-19). The owner export is a different, fixed owner-only item.",
+    note: "Decided (Sam, 3 Nov, Q19 / DN-19): OFF by default; an export also needs access to EVERY included row and field, re-checked at generation AND at download. Credentials, payment secrets and other studios' data are always excluded. The owner export is a different, fixed owner-only item (link lifetime 15 minutes, single owner session, technical parameter set by OPS).",
   },
   {
     key: "rep.audit_log_view",
@@ -1022,10 +1019,9 @@ export const CATALOG = [
   },
   {
     key: "wl.manage_queue",
-    touchedByDecision: ["Q-8"],
     group: "waitlist_operations",
     label: "Claim, release and requeue entries",
-    description: "Claim, release, expire, requeue or close an unbooked entry, and claim the next few.",
+    description: "Claim, release or requeue an unbooked entry, and claim the next few (claim next N rides with claim). Expiring and closing are wl.expire_close.",
     scopes: BOOL,
     requires: ["wl.view_queue"],
     newStudioDefault: pair(["off", "studio"]),
@@ -1036,7 +1032,24 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_waitlist" },
-    note: " Audit rows WL-4.",
+    note: "Decided (Sam, 3 Nov, Q8 / DN-15a): expiring and closing moved to wl.expire_close; every waitlist action needs queue-view access. Importing never creates consent or sends a message. Audit rows WL-4.",
+  },
+  {
+    key: "wl.expire_close",
+    group: "waitlist_operations",
+    label: "Expire or close unbooked entries",
+    description: "Expire or close an unbooked waitlist entry. Separate from claiming, releasing and requeueing.",
+    scopes: BOOL,
+    requires: ["wl.view_queue"],
+    newStudioDefault: pair(["off", "studio"]),
+    existingSnapshot: pair(["off", "off"]),
+    snapshotBasis: "source",
+    offeredTo: BOTH,
+    ownerConfigurable: true,
+    enforcedIn: "R5",
+    sensitive: true,
+    shipGate: { receptionist: "receptionist_waitlist" },
+    note: "Decided (Sam, 3 Nov, Q8 / DN-15a): its own permission, separate from claim, release and requeue. Needs queue-view access. Audit rows WL-4.",
   },
   {
     key: "wl.offer_booking",
@@ -1128,7 +1141,6 @@ export const CATALOG = [
   {
     key: "admit.change_policy",
     touchedByDecision: ["B-3"],
-    pendingDecision: ["Q-13"],
     group: "accepting_new_clients",
     label: "Change the new-client admission policy",
     description: "Permission to change the admission policy. The studio's current Open, Waitlist or Closed setting is a separate studio setting.",
@@ -1141,12 +1153,11 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
-    note: "OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-4a). This is the PERMISSION to change the admission policy. The studio's actual Open / Waitlist / Closed setting is a studio setting, not a permission, and the page keeps the two visibly apart. The public enforcement of the mode stays a mandatory server rule.",
+    note: "OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-4a). This is the PERMISSION to change the admission policy. The studio's actual Open / Waitlist / Closed setting is a studio setting, not a permission, and the page keeps the two visibly apart. The public enforcement of the mode stays a mandatory server rule. Settled (Q13, from group 2): the setting is separate from this key.",
   },
   {
     key: "admit.booking_rules",
     touchedByDecision: ["B-3"],
-    pendingDecision: ["Q-12"],
     group: "accepting_new_clients",
     label: "Booking window and new-client booking rules",
     description: "How far ahead clients may book and the rules for public new-client booking.",
@@ -1159,7 +1170,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
-    note: "OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-4a). This is the PERMISSION to change the admission policy. The studio's actual Open / Waitlist / Closed setting is a studio setting, not a permission, and the page keeps the two visibly apart. The public enforcement of the mode stays a mandatory server rule.",
+    note: "Decided (Sam, 3 Nov, Q12 / DN-4a, DN-4b): covers booking windows and new-client booking rules ONLY. Studio identity (web address, timezone, address, intro) and service duration and buffers stay under their own separate controls. OFF for both staff roles, owner-configurable.",
   },
   // ───────────────────────────── single capabilities with an open decision ─────────────────────────────
   {
@@ -1460,14 +1471,14 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     label: "Permanent client erasure (request, review, confirmation)",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, DN-18): an owner-only request, review and confirmation workflow is DESIGNED now (see the design section of this document). EXECUTION stays unavailable until retention requirements and exceptions are reviewed. No retention period is invented and no promise is made that data is erased from backups.",
+    note: "Decided (Sam, 3 Nov, Q18 / DN-18): owner-only, tracked and audited. The UI states that recording a request deletes nothing and that execution remains unavailable. The tracked request needs a held table (number to be claimed from OPS when built). The workflow is DESIGNED (see the design section of this document). EXECUTION stays unavailable until retention requirements and exceptions are reviewed. No retention period is invented and no promise is made that data is erased from backups.",
   },
   {
     id: "client_portal_setting",
     label: "Turning the client portal on or off for the studio",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, DN-20): an owner-only studio setting, preserved ON for existing studios. OFF blocks existing portal links and sessions from further access, keeps all records, and explains which booking, intake and communication workflows are affected; those features stay independently controlled.",
+    note: "Decided (Sam, 3 Nov, DN-20): an owner-only studio setting, preserved ON for existing studios. OFF blocks existing portal links and sessions on their NEXT request, including messaging, rebooking and card saving, and keeps all records. Independent intake and consent flows keep working, but it must be verified that their links cannot bypass the portal restriction. The affected workflows are explained to the owner before confirmation (Q20).",
   },
   {
     id: "late_cancel_window",
@@ -1539,7 +1550,7 @@ export const NARROWINGS: readonly Narrowing[] = [
   {
     id: "exposure_incident_history",
     decision: "DN-3",
-    label: "Exposure-incident history: owner and the reporter only",
+    label: "Exposure-incident history: owner and the reporter only; a removed reporter loses access through that studio",
     stage: "R4",
     enforcedBy: ["to confirm: exposure-incident read and update path (audit rows REC-4, REC-5)"],
     narrowsExisting: true,
@@ -1557,7 +1568,7 @@ export const NARROWINGS: readonly Narrowing[] = [
   {
     id: "studio_columns_read",
     decision: "DN-27",
-    label: "Staff read studio name, timezone and booking preferences; fee amounts need a pay or price key",
+    label: "Staff read studio name, timezone, booking preferences and the fee amounts clients see at booking; other fee fields need a pay or price key",
     stage: "R1",
     enforcedBy: ["to confirm: a column-limited studios read replacing the member read of every column (audit row SET-9)"],
     narrowsExisting: true,
@@ -1593,11 +1604,11 @@ export const NARROWINGS: readonly Narrowing[] = [
   {
     id: "deactivated_calendar_owner",
     decision: "G7:calendar-owner",
-    label: "A removed or deactivated calendar owner stops receiving new studio sync; the destination must be an active, authorised owner",
-    stage: "R5",
+    label: "No active owner left: studio calendar sync pauses and the operator is alerted (no client data); it resumes only when an active owner explicitly reconnects",
+    stage: "R4",
     enforcedBy: ["to confirm: the studio calendar sync destination and push path (audit row GC-9)"],
     narrowsExisting: false,
-    notice: "The current owner is notified to reconnect. Other studios' connections are untouched. Events already copied into an external calendar may remain there.",
+    notice: "Other studios' connections are untouched. Events already copied into an external calendar may remain there. Sync does not resume by itself.",
   },
   {
     id: "rate_limit_outage",
@@ -1642,9 +1653,11 @@ export const OPERATOR_CONFIG: readonly OperatorSetting[] = [
 
 // Who may READ a fee amount (Insurance R-3). Changing one is price.fee_amounts; reading is separate and today every member can read every
 // studio column. Staff otherwise read only the studio name, timezone and booking preferences, through a column-limited read.
-// Decided (Sam, 3 Nov, Q14 / DN-27): practitioners may read PUBLISHED service prices needed for booking; no private financial setting and no
-// client-specific price is exposed outside its permitted scope. Fee-amount reads stay at today's behaviour until Sam answers Q14b.
+// Decided (Sam, 3 Nov, Q14 / DN-27, Q14b): staff may READ the service prices and fee amounts clients actually see when booking. Changing a fee
+// needs price.fee_amounts. Any other fee or financial setting needs one of `anyOf`; private financial settings and client-specific prices are
+// never exposed outside their permitted scope.
 export const FEE_AMOUNT_READ = {
+  shownToClientsAtBooking: "readable by staff",
   anyOf: ["price.fee_amounts", "pay.view_appointment"],
   staffOtherwise: ["studio name", "timezone", "booking preferences"],
 } as const;
@@ -1659,29 +1672,30 @@ export const MANDATORY: readonly string[] = [
   "Decided (OPS technical parameters, provisional, 3 Nov): anonymous waitlist and demo submissions are limited per visitor (5 per hour) and per email (3 per day) counting failures, with one active waitlist entry per email per studio (a repeat changes nothing and returns the same neutral response); operator-configurable, with the same concurrency, multi-instance and fail-closed tests",
   "Decided (Sam, 3 Nov, Q7 / DN-11): setting a client-specific price is whole-studio only (Off or On), OFF for both staff roles, owner-configurable, and grants no other pricing or payment permission",
   "Decided (Sam, 3 Nov, DN-16): the Google Calendar studio feature flags are operator-only, enforced by a database guard; owners keep their normal connect and disconnect",
-  "Decided (Sam, 3 Nov): a removed or deactivated calendar owner gets no new studio synchronisation; the destination must be an active, authorised owner, the current owner is notified to reconnect, other studios' connections are preserved, and the UI says events already copied into an external calendar may remain",
+  "Decided (Sam, 3 Nov, Q22): if no active owner remains, studio calendar sync pauses and the operator is alerted without client data; it resumes only after an active owner explicitly reconnects; other studios' connections are preserved, and the UI says events already copied into an external calendar may remain",
   "Decided (DN-29): when the rate limiter is down, token and link operations (intake, manage booking, invitation, portal sign-in) refuse safely with a retry message, public booking stays available only with bounded fallback protection (never unlimited), and the operator is alerted without client data or secret links",
   "Decided (Sam, 3 Nov): anonymous waitlist and demo submissions have no direct database writes; they go through validated server endpoints with rate and quantity limits, and tests prove normal public sign-up works and no privileged key reaches the browser",
   "Decided (DN-17): SMS STOP behaviour is unchanged and current opt-outs are retained; the provider configuration is investigated before any change is proposed; no activation or messages are authorized",
   "Decided (Sam, 3 Nov, DN-25): archive, delete and restore become owner-only only when the enforcement release goes live, with advance notice to existing studios; ordinary deletion stays recoverable with its history and no existing record is deleted by the rollout",
-  "Decided (DN-18): permanent client erasure has a designed owner-only request, review and confirmation workflow but no execution until retention requirements and exceptions are reviewed; no retention period is invented and no complete erasure from backups is promised",
-  "Decided (DN-19): the owner export covers all client-linked information the studio may export (intake, photos, messages, legal identity, consent, notes) and excludes credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped; staff exports stay separately permission-controlled and OFF by default",
-  "Decided (DN-20): turning the client portal off blocks existing portal links and sessions from further access, preserves records, explains which workflows are affected, and leaves booking, intake and communication features independently controlled",
+  "Decided (Q18 / DN-18): a permanent erasure request is owner-only, tracked and audited, and the UI says recording one deletes nothing and execution is unavailable; the workflow is designed but there is no execution until retention requirements and exceptions are reviewed; no retention period is invented and no complete erasure from backups is promised",
+  "Decided (DN-19): the owner export covers all client-linked information the studio may export (intake, photos, messages, legal identity, consent, notes) and excludes credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped; staff exports need the explicit export permission (OFF by default) AND access to every included row and field, are re-checked at generation and at download, and always exclude credentials, payment secrets and other studios' data (Q19)",
+  "Decided (Q20 / DN-20): turning the client portal off blocks existing portal links and sessions on their next request (messaging, rebooking and card saving included), preserves records and explains the affected workflows before confirmation; independent intake and consent flows keep working, and it must be verified that their links cannot bypass the portal restriction",
   "Decided (DN-26): receptionist legal-name permissions show \"Not available yet\" (not an actionable switch) until privacy enforcement and access logging are deployed and verified; the preferred name / \"Name on file\" behaviour is preserved",
   "Decided (Sam, 3 Nov, DN-10): card-authorisation consent is READ-ONLY, follows the payment-view permission and its scope (practitioners: own appointments; receptionists: studio-wide when enabled), shows only the authorisation relevant to THAT payment without granting intake or clinical access, and signed originals can never be edited or deleted",
   "Decided (DN-11): appointments already booked keep their agreed prices unless someone explicitly edits that appointment, and every client-specific price change is recorded",
   "Decided (DN-23b): a late-cancellation fee needs an explicit owner-configured window with NO invented default and is never activated automatically; the server decides eligibility from the recorded cancellation time, the appointment time and the policy snapshot taken at THAT booking; the fee-charging permission (pay.charge_saved_card) is also required; duplicate charges are prevented and the reason and history are kept",
-  "Decided (Sam, 3 Nov, Q14 / DN-27): practitioners may read published service prices needed for booking; private financial settings and client-specific prices are never exposed outside the permitted scope; fee-amount reads stay as today until Q14b is answered",
+  "Decided (Sam, 3 Nov, Q14 / Q14b / DN-27): staff may read published service prices and the fee amounts clients see when booking; changing fees stays price.fee_amounts; private financial settings and client-specific prices are never exposed outside the permitted scope",
   "Decided (Sam, 3 Nov, Q25): studio totals need no payment-view prerequisite and reports never reveal an individual payment, client or appointment detail",
-  "Decided (Sam, 3 Nov, Q17 / R0-Q3): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be eligible and in the same studio, and it is refused once the appointment has started or been treated",
-  "Reading a fee amount needs price.fee_amounts or pay.view_appointment at any scope; without either, staff read only the studio name, timezone and booking preferences, through a column-limited read, never the whole studios row (DN-27)",
+  "Decided (Sam, 3 Nov, Q17 / R0-Q3): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be an active practitioner of the same studio configured for the service, and it is refused once the appointment has started or been treated",
+  "Reading a fee amount clients see at booking is open to staff; any other fee field needs price.fee_amounts or pay.view_appointment at any scope, through a column-limited studios read, never the whole row (DN-27, Q14b)",
+  "Decided (Sam, 3 Nov, Q8 / DN-15a): every waitlist action (wl.*) requires queue-view access; expiring and closing unbooked entries is its own key; importing never creates consent or sends a message",
   "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
   "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",
   "Decided (DN-14): the sender of every staff portal message is recorded, history is preserved, and staff can never rewrite a client's original reply",
   "Decided (DN-22): notification read state is per person; a user reads only notifications they may see and changes only their own read state",
   "Decided (Sam, 3 Nov): all sending (messages, links, portal replies, aftercare) respects consent, opt-outs and existing channel-activation restrictions; no permission overrides them",
   "Decided (Sam, 2 Nov, DN-8): a session's performer is corrected only by the owner or the currently recorded performer, with a reason and audit history; the replacement must be an eligible practitioner of that studio; who actually entered each record is preserved; signatures, attestations and payment history are never rewritten; reassignment cannot be used to bypass a permission",
-  "Decided (DN-3): exposure-incident history is visible to the owner and the person who reported it only",
+  "Decided (Q23 / DN-3): exposure-incident history is visible to the owner and the person who reported it only; a removed reporter loses access through that studio and the owner keeps it",
   "Decided (Sam, 3 Nov, Q9 / DN-12): undoing a recorded outcome (completion, no-show or cancellation) is owner-only, has no time window and needs a reason; it never reverses money, erases records or resends messages (settlement goes through refund or correction)",
   "Decided (Sam, 2 Nov, DN-15): importing a waitlist entry never records consent and never sends a message; a waitlist rules permission never enables SMS and never overrides consent or opt-out restrictions",
   "Decided (DN-4a): the permission to change the admission policy is separate from the studio's actual Open / Waitlist / Closed setting, and public enforcement of that setting is a server rule no permission can bypass",
