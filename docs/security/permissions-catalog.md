@@ -101,6 +101,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `clin.view_photos` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
 | `clin.upload_photos` (receptionist not offered) | Off / Studio | `clin.view_photos` | Studio / Off | Studio / Off | source | – | – |
 | `clin.view_intake` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
+| `clin.view_aftercare` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
 | `clin.view_intake_status` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
 | `clin.edit_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | – |
 | `clin.review_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | – |
@@ -278,7 +279,7 @@ requirement; it remains the preserved **existing-studio snapshot** until an owne
 
 - **Q1 completion snapshot:** today's code lets any practitioner complete any started appointment. The snapshot is `own`
   (Sam's assigned-only rule, which #1315 and 0277 deliver); R4 may not ship before them.
-- **Q2 supported clinical keys for receptionists (decided 3 Nov, batch 2):** view-only keys offered and Off by default (records, photos, intake answers). Not offered: edit records, upload photos, edit intake answers, print, complete. An aftercare view-only key is awaiting an OPS answer: no such key exists today, only `appt.aftercare_send`.
+- **Q2 supported clinical keys for receptionists (decided 3 Nov, batch 2):** view-only keys offered and Off by default (records, photos, intake answers). Not offered: edit records, upload photos, edit intake answers, print, complete. The aftercare view-only switch is `clin.view_aftercare` (Sam accepted four receptionist view-only switches, each Off; the key name is Team's).
 - **Q3 reassigning your own appointment (decided 3 Nov, batch 2):** the separate key `appt.handoff_own`, OFF by default, owner-configurable.
 - **Q4 receptionist legal name:** both reviewers earlier wanted these keys unavailable this release. Sam's spec makes them
   enableable. They are gated on 0280/0290 name privacy and a read audit, and practitioner legal-name edit on stale-write

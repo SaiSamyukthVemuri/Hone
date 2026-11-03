@@ -90,7 +90,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "CLIN-7": { label: "Close a plan (any plan)", cls: "key", keys: ["clin.edit_records"], matrix: ["clin.edit_records"] },
   "CLIN-8": { label: "**Hard-delete** a plan stage", cls: "fixed_owner", keys: [] },
   "CLIN-9": { label: "Attach or detach a chart entry to a plan", cls: "key", keys: ["clin.edit_records"], matrix: ["clin.edit_records"] },
-  "CLIN-10": { label: "Read a session record (blocks, passes, areas, readings, aftercare)", cls: "key", keys: ["clin.view_records"], matrix: ["clin.view_records"] },
+  "CLIN-10": { label: "Read a session record (blocks, passes, areas, readings, aftercare)", cls: "key", keys: ["clin.view_records", "clin.view_aftercare"], matrix: ["clin.view_records"] },
   "CLIN-11": { label: "Start a session", cls: "key", keys: ["appt.complete"], matrix: ["appt.complete"] },
   "CLIN-12": { label: "Add passes, laser entries, blocks and areas; copy previous areas", cls: "key", keys: ["clin.edit_records"], matrix: ["clin.edit_records"] },
   "CLIN-13": { label: "Remove a pass (soft delete, optional reason)", cls: "key", keys: ["clin.edit_records"], dn: ["DN-7"], team: true, matrix: ["clin.edit_records"] },

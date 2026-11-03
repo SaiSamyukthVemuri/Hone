@@ -312,7 +312,7 @@ describe("Sam's spec, encoded", () => {
   it("C.4 receptionist defaults, with legal name and clinical read/write SEPARATE", () => {
     const r = (k: string) => d(k).newStudioDefault.receptionist;
     for (const k of ["appt.book", "appt.move", "appt.reassign", "appt.cancel", "appt.mark_no_show", "appt.edit_notes", "client.create", "client.edit_contact"]) expect(r(k)).toBe("studio");
-    for (const k of ["clin.view_records", "clin.edit_records", "clin.view_photos", "clin.view_intake", "appt.complete", "appt.aftercare_send", "client.view_legal_name", "client.edit_legal_name"]) expect(r(k)).toBe("off");
+    for (const k of ["clin.view_records", "clin.edit_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare", "appt.complete", "appt.aftercare_send", "client.view_legal_name", "client.edit_legal_name"]) expect(r(k)).toBe("off");
     expect(d("client.edit_legal_name").requires).toEqual(["client.view_legal_name"]);
     const v = pol("new_studio");
     expect(checkChange("receptionist", "client.edit_legal_name", "studio", v).ok).toBe(false); // refused, NOT silently enabling the view key
@@ -373,7 +373,8 @@ describe("Sam's spec, encoded", () => {
     expect(unverified).toEqual([
       "appt.aftercare_send:practitioner", "appt.book:practitioner", "appt.cancel:practitioner", "appt.edit_notes:practitioner", "appt.mark_no_show:practitioner", "appt.move:practitioner",
       "appt.view_calendar:practitioner", "appt.view_calendar:receptionist", "client.create:practitioner", "client.edit_contact:practitioner", "client.edit_legal_name:practitioner",
-      "client.view_directory:practitioner", "clin.edit_records:practitioner", "clin.print_record:practitioner", "clin.upload_photos:practitioner", "clin.view_intake:practitioner",
+      "client.view_directory:practitioner", "clin.edit_records:practitioner", "clin.print_record:practitioner", "clin.upload_photos:practitioner",
+      "clin.view_aftercare:practitioner", "clin.view_intake:practitioner",
       "clin.view_photos:practitioner", "clin.view_records:practitioner",
       "clin.edit_intake:practitioner", "comm.send_routine:practitioner",
       // DN-9, DN-14 and DN-30 (decided 3 Nov): separately configurable, each preserved for existing practitioners.
