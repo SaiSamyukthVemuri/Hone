@@ -455,3 +455,61 @@ describe("the page can tell when a reason is needed: sensitive flag and conseque
     expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
   });
 });
+
+// avail.* are three independent on/off keys; "own" versus "colleague" is the app choosing between avail.manage_own and avail.manage_others
+// (lib/permissions/enforcement-wiring.test.ts proves which key each action asks). This proves the keys the app asks resolve as promised.
+describe("avail.* keys: existing snapshot is unchanged, ON and OFF are independent, other studios are refused", () => {
+  const AVAIL = ["avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"] as const;
+  const setBasis = (studioId: string, basis: "existing_snapshot" | "new_studio") =>
+    adminQuery("update public.studio_permission_policy set basis=$2 where studio_id=$1", [studioId, basis]);
+  const store = (studioId: string, role: Role, key: string, scope: Scope) =>
+    adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,$2,$3,$4) on conflict (studio_id,role,key) do update set scope=excluded.scope", [studioId, role, key, scope]);
+
+  it("existing snapshot: the owner holds all three, a practitioner and a receptionist hold none (no behaviour change)", async () => {
+    const s = await seedStudio("avail-snap");
+    const p = await seedMember(s, "pa");
+    const d = await seedDesk(s, "front");
+    await setBasis(s.studioId, "existing_snapshot");
+    for (const k of AVAIL) {
+      expect(await can(s.userId, s.studioId, k), `owner ${k}`).toBe(true);
+      expect(await can(p.userId, s.studioId, k), `practitioner ${k}`).toBe(false);
+      expect(await can(d.userId, s.studioId, k), `receptionist ${k}`).toBe(false);
+    }
+  });
+
+  it("key ON affects only that key; turning it OFF again refuses on the next request", async () => {
+    const s = await seedStudio("avail-onoff");
+    const p = await seedMember(s, "pa");
+    await setBasis(s.studioId, "existing_snapshot");
+    await store(s.studioId, "practitioner", "avail.manage_own", "studio");
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(true);
+    expect(await can(p.userId, s.studioId, "avail.manage_others")).toBe(false); // own is not colleague
+    expect(await can(p.userId, s.studioId, "avail.manage_studio_hours")).toBe(false);
+    await store(s.studioId, "practitioner", "avail.manage_own", "off");
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(false);
+    await store(s.studioId, "practitioner", "avail.manage_others", "studio");
+    expect(await can(p.userId, s.studioId, "avail.manage_others")).toBe(true);
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(false); // colleague is not own
+  });
+
+  it("new studio: a practitioner manages their own hours only; nobody gains colleague or studio hours", async () => {
+    const s = await seedStudio("avail-new");
+    const p = await seedMember(s, "pa");
+    await setBasis(s.studioId, "new_studio");
+    expect(await can(p.userId, s.studioId, "avail.manage_own")).toBe(true);
+    expect(await can(p.userId, s.studioId, "avail.manage_others")).toBe(false);
+    expect(await can(p.userId, s.studioId, "avail.manage_studio_hours")).toBe(false);
+  });
+
+  it("another studio's owner and practitioner are refused even when the key is ON here", async () => {
+    const s = await seedStudio("avail-x");
+    const other = await seedStudio("avail-y");
+    const op = await seedMember(other, "pz");
+    await setBasis(s.studioId, "existing_snapshot");
+    await store(s.studioId, "practitioner", "avail.manage_own", "studio");
+    for (const k of AVAIL) {
+      expect(await can(other.userId, s.studioId, k), `foreign owner ${k}`).toBe(false);
+      expect(await can(op.userId, s.studioId, k), `foreign practitioner ${k}`).toBe(false);
+    }
+  });
+});
