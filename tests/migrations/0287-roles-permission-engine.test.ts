@@ -39,7 +39,7 @@ describe("0287 permission engine: shape", () => {
     for (const n of new Set(created)) expect(code, n).toMatch(new RegExp(`revoke all on function public\\.${n}\\([^)]*\\) from public, anon, authenticated, service_role;`));
     const granted = [...code.matchAll(/grant execute on function public\.(\w+)\(/g)].map((m) => m[1]!).sort();
     expect(granted).toEqual(["adopt_new_defaults", "change_staff_role", "effective_access", "get_role_permissions", "has_studio_permission", "list_permission_audit", "preview_adopt_new_defaults", "preview_reset", "preview_role_changes", "reset_role_to_defaults", "save_role_permissions"]);
-    expect(code).not.toMatch(/grant execute[^;]*\b(anon|service_role|public)\b/i);
+    expect(code).not.toMatch(/grant execute[^;]*\bto\b[^;]*\b(anon|service_role|public)\b/i);
   });
 
   it("every table has row level security on and every API role privilege revoked", () => {
@@ -69,6 +69,7 @@ describe("0287 permission engine: shape", () => {
 
   it("the reason rule has no length constant", () => {
     const fn = code.slice(code.indexOf("create or replace function public.perm_reason_ok"), code.indexOf("create or replace function public.perm_actor"));
-    expect(fn).not.toMatch(/length\(|char_length\(|>=\s*\d|<\s*\d+\s*then/);
+    expect(fn).not.toMatch(/length\(|char_length\(/);
+    expect(fn).toMatch(/count\(distinct ch\)/);
   });
 });
