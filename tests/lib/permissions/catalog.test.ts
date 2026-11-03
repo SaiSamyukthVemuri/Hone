@@ -35,11 +35,11 @@ const pol = (basis: PolicyBasis | null, values: Record<string, Scope> = {}, gate
 const isEffectiveAllowed = (role: Role, def: PermissionDef, s: Scope) => scopesFor(def, role).includes(s);
 
 describe("catalog shape", () => {
-  it("has unique keys, each in exactly one of Sam's eight groups, and every group is used", () => {
+  it("has unique keys, each in exactly one group (Sam's eight plus the three added by the capability audit), and every group is used", () => {
     expect(new Set(DEFS.map((x) => x.key)).size).toBe(DEFS.length);
     for (const x of DEFS) expect(GROUPS).toContain(x.group);
     for (const g of GROUPS) expect(DEFS.some((x) => x.group === g)).toBe(true);
-    expect(GROUPS).toEqual(["appointments", "clients_identity", "clinical_records", "communications", "payments", "pricing", "availability", "reports"]);
+    expect(GROUPS).toEqual(["appointments", "clients_identity", "clinical_records", "communications", "payments", "pricing", "availability", "reports", "waitlist_operations", "waitlist_rules", "accepting_new_clients", "safety_records"]);
   });
 
   it("keys follow group.name, scopes start with off, and 'own' is explained exactly when offered", () => {
@@ -306,7 +306,10 @@ describe("Sam's spec, encoded", () => {
   });
 
   it("C.4: routine communications are ON within scope and both bulk and audit-log access are OFF for both roles", () => {
-    for (const r of ROLES) { expect(d("comm.send_routine").newStudioDefault[r]).not.toBe("off"); expect(d("comm.bulk_message").newStudioDefault[r]).toBe("off"); expect(d("rep.audit_log_view").newStudioDefault[r]).toBe("off"); }
+    // comm.send_routine is pinned to today's behaviour (practitioner Studio, receptionist Off) until DN-30 is decided, so the receptionist
+    // value is checked by the pending-decision tests; the practitioner value is ON.
+    expect(d("comm.send_routine").newStudioDefault.practitioner).not.toBe("off");
+    for (const r of ROLES) { expect(d("comm.send_routine").newStudioDefault[r]).toBe(d("comm.send_routine").existingSnapshot[r]); expect(d("comm.bulk_message").newStudioDefault[r]).toBe("off"); expect(d("rep.audit_log_view").newStudioDefault[r]).toBe("off"); }
   });
 
   it("C.5 / F4: the fixed owner-only items have NO key, including staff management, ownership transfer and permission-system administration", () => {
@@ -348,8 +351,11 @@ describe("Sam's spec, encoded", () => {
   });
 
   it("D-3: where today's behaviour is only a source reading that could widen, the snapshot takes the NARROWER value, and the rest is pinned for verification", () => {
-    expect(d("clin.edit_intake").existingSnapshot.practitioner).toBe("off");
-    expect(d("comm.send_routine").existingSnapshot.practitioner).toBe("off");
+    // DN-30 (OPS verified from source): practitioners do both today, so the snapshot is Studio and the key is pinned pending Sam's decision.
+    expect(d("clin.edit_intake").existingSnapshot.practitioner).toBe("studio");
+    expect(d("comm.send_routine").existingSnapshot.practitioner).toBe("studio");
+    expect(d("clin.edit_intake").pendingDecision).toContain("DN-30");
+    expect(d("comm.send_routine").pendingDecision).toContain("DN-30");
     // every remaining non-off snapshot resting on a source reading is listed here; adding one is a visible, reviewed change
     const unverified = DEFS.flatMap((x) => ROLES.filter((r) => x.snapshotBasis === "source" && x.existingSnapshot[r] !== "off").map((r) => `${x.key}:${r}`)).sort();
     expect(unverified).toEqual([
@@ -357,7 +363,11 @@ describe("Sam's spec, encoded", () => {
       "appt.view_calendar:practitioner", "appt.view_calendar:receptionist", "client.create:practitioner", "client.edit_contact:practitioner", "client.edit_legal_name:practitioner",
       "client.view_directory:practitioner", "clin.edit_records:practitioner", "clin.print_record:practitioner", "clin.upload_photos:practitioner", "clin.view_intake:practitioner",
       "clin.view_photos:practitioner", "clin.view_records:practitioner",
-    ]);
+      "clin.edit_intake:practitioner", "comm.send_routine:practitioner",
+      // DN-3 and DN-5 (decided, 2 Nov): practitioners keep today's studio-wide access to these data groups and to the safety records.
+      ...["dob_address", "allergies_cautions", "budget_goals", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
+      "records.view_sterilisation_disinfection:practitioner", "records.log_sterilisation_disinfection:practitioner",
+    ].sort());
   });
 
   it("F5/F10: derived outputs are bound to the actor's other keys", () => {
