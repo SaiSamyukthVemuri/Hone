@@ -1,7 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   limitDemoRequestSubmit,
   RATE_LIMIT_MESSAGE,
@@ -66,7 +66,8 @@ export async function submitDemoRequest(
     return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
-  const supabase = await createClient();
+  // Service-role write behind the limiter above (DN-29 / Q-F); the anonymous insert policy is retired by 0294.
+  const supabase = createAdminClient();
   const { error } = await supabase.from("demo_requests").insert({
     name,
     email,

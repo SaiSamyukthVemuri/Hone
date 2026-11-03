@@ -63,7 +63,7 @@ describe("rate_limit_fallback_hit: counting", () => {
   it("DOCUMENTED EDGE: fixed windows can admit up to twice the limit across a boundary (two windows, two full budgets)", async () => {
     const k = key();
     await adminQuery(
-      `insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, n) values ('t_edge', $1, to_timestamp(floor(extract(epoch from clock_timestamp()) / 3600) * 3600) - interval '1 hour', 5)`,
+      `insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, window_seconds, n) values ('t_edge', $1, to_timestamp(floor(extract(epoch from clock_timestamp()) / 3600) * 3600) - interval '1 hour', 3600, 5)`,
       [k],
     );
     // The previous window is full (5 of 5); this one still gives a fresh budget of 5.
@@ -95,7 +95,7 @@ describe("rate_limit_fallback_hit: input and housekeeping", () => {
   it("deletes long-expired windows opportunistically and leaves current ones", async () => {
     const old = key();
     const fresh = key();
-    await adminQuery(`insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, n) values ('t_clean', $1, now() - interval '3 days', 1)`, [old]);
+    await adminQuery(`insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, window_seconds, n) values ('t_clean', $1, now() - interval '3 days', 3600, 1)`, [old]);
     await adminQuery(`select public.rate_limit_fallback_hit('t_clean', $1, 3600, 5)`, [fresh]);
     // About 1 call in 50 sweeps; 1500 calls make a miss astronomically unlikely.
     await adminQuery(`select count(*) from generate_series(1, 1500) g, lateral (select public.rate_limit_fallback_hit('t_clean_bulk', g::text, 60, 5)) x`);
@@ -105,12 +105,57 @@ describe("rate_limit_fallback_hit: input and housekeeping", () => {
   });
 });
 
+describe("P2: cleanup is by window END, never deleting an active window", () => {
+  const seed = (scope: string, k: string, ago: string, windowSeconds: number) =>
+    adminQuery(
+      `insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, window_seconds, n) values ($1, $2, now() - $3::interval, $4, 1)`,
+      [scope, k, ago, windowSeconds],
+    );
+  const present = async (scope: string) => (await adminQuery(`select key_hash from public.rate_limit_fallback_counters where scope = $1`, [scope])).rows.map((r: { key_hash: string }) => r.key_hash);
+
+  it("a 7-day window that started 3 days ago is ACTIVE and survives; a 1-hour window from 3 days ago is expired and goes; a window still open survives", async () => {
+    const longActive = key();
+    const shortExpired = key();
+    const stillOpen = key();
+    await seed("t_p2", longActive, "3 days", 604800); // ends in 4 days
+    await seed("t_p2", shortExpired, "3 days", 3600); // ended 71 hours ago
+    await seed("t_p2", stillOpen, "30 minutes", 3600); // ends in 30 minutes
+    await adminQuery(`select public.rate_limit_fallback_cleanup(500)`);
+    const left = await present("t_p2");
+    expect(left).toContain(longActive);
+    expect(left).toContain(stillOpen);
+    expect(left).not.toContain(shortExpired);
+  });
+
+  it("the old rule would have deleted the active long window (control: its window_start is older than two days)", async () => {
+    const k = key();
+    await seed("t_p2b", k, "3 days", 604800);
+    const r = await adminQuery(`select (window_start < now() - interval '2 days') as old_by_start, (window_start + make_interval(secs => window_seconds) > now()) as still_active from public.rate_limit_fallback_counters where key_hash = $1`, [k]);
+    expect(r.rows[0]).toEqual({ old_by_start: true, still_active: true });
+    await adminQuery(`select public.rate_limit_fallback_cleanup(500)`);
+    expect(await present("t_p2b")).toContain(k);
+  });
+
+  it("the opportunistic sweep in the hit function applies the same rule", async () => {
+    const longActive = key();
+    await seed("t_p2c", longActive, "3 days", 604800);
+    await adminQuery(`select count(*) from generate_series(1, 1500) g, lateral (select public.rate_limit_fallback_hit('t_p2c_bulk', g::text, 60, 5)) x`);
+    expect(await present("t_p2c")).toContain(longActive);
+  });
+
+  it("the cleanup function is not callable by any browser or service role", async () => {
+    for (const role of ["anon", "authenticated", "service_role"] as const) {
+      await expect(asRole(role, (q) => q(`select public.rate_limit_fallback_cleanup(10)`))).rejects.toThrow(/permission denied|42501/i);
+    }
+  });
+});
+
 describe("0294 privileges", () => {
   it("anon and authenticated cannot execute the function or read the table; service_role can execute it", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       await expect(asRole(role, (q) => q(`select public.rate_limit_fallback_hit('t_priv', 'k', 60, 5)`))).rejects.toThrow(/permission denied|42501/i);
       await expect(asRole(role, (q) => q(`select * from public.rate_limit_fallback_counters limit 1`))).rejects.toThrow(/permission denied|42501/i);
-      await expect(asRole(role, (q) => q(`insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, n) values ('t_priv','k',now(),1)`))).rejects.toThrow(/permission denied|42501/i);
+      await expect(asRole(role, (q) => q(`insert into public.rate_limit_fallback_counters (scope, key_hash, window_start, window_seconds, n) values ('t_priv','k',now(),60,1)`))).rejects.toThrow(/permission denied|42501/i);
     }
     const r = await asRole("service_role", (q) => q(`select public.rate_limit_fallback_hit('t_priv_sr', $1, 60, 5) as r`, [key()]));
     expect((r.rows[0].r as Hit).allowed).toBe(true);

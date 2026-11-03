@@ -20,6 +20,18 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/actions/waitlist.ts",
+    purpose: "DN-29 / Q-F: the landing early-access insert, after the anonymous direct-insert policy is retired (held 0294).",
+    why: "An unauthenticated visitor is not a database user, so the write has to be server-side. The limiter runs first and refuses before any write; the action validates and lowercases the email, inserts exactly {email, source: 'landing'} and reads nothing back. No studio or client data is reachable: the table holds early-access emails only, and 0294 revokes every browser role from it.",
+    scopeGuard: "limitWaitlistSubmit",
+  },
+  {
+    path: "app/actions/demo.ts",
+    purpose: "DN-29 / Q-F: the /demo request insert, after the anonymous direct-insert policy is retired (held 0294).",
+    why: "An unauthenticated visitor is not a database user, so the write has to be server-side. The limiter runs first and refuses before any write; name and email are validated, enumerated fields are checked against closed lists, and the insert returns nothing. The table holds prospect contact requests only and 0294 revokes every browser role from it.",
+    scopeGuard: "limitDemoRequestSubmit",
+  },
+  {
     path: "lib/rate-limit/outage.ts",
     purpose: "DN-29: the shared Postgres fixed-window counter the public limiters use when Upstash is down (held 0294).",
     why: "The counter table is RLS-locked with every browser role revoked and the function is service_role-only; an unauthenticated visitor cannot be a database user. The caller passes only already-hashed keys and a fixed scope; it reads nothing and returns only allowed/count/retry.",

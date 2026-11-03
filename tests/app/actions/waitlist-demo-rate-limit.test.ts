@@ -187,3 +187,26 @@ describe("PR #187 boundaries", () => {
     expect(all).not.toMatch(/calendar_feed_token/);
   });
 });
+
+describe("Q-F: the anonymous direct write is closed, so the action is the only write path", () => {
+  for (const [name, code, table] of [
+    ["waitlist", WAITLIST_CODE, "waitlist"],
+    ["demo", DEMO_CODE, "demo_requests"],
+  ] as const) {
+    it(`${name}: inserts through the service-role client, never the visitor's public-key client`, () => {
+      expect(code).toContain('import { createAdminClient } from "@/lib/supabase/admin-server";');
+      expect(code).not.toContain("@/lib/supabase/server");
+      expect(code).not.toMatch(/createClient\(/);
+      expect(code).toMatch(new RegExp(`createAdminClient\\(\\);[\\s\\S]*\\.from\\("${table}"\\)`));
+    });
+  }
+
+  it("migration 0294 drops both anonymous insert policies and revokes every browser role from both tables", () => {
+    const sql = readFileSync(path.join(process.cwd(), "supabase/migrations/0294_rate_limit_fallback_counter.sql"), "utf8");
+    for (const [policy, table] of [["waitlist_anonymous_insert", "waitlist"], ["demo_requests_anonymous_insert", "demo_requests"]]) {
+      expect(sql).toContain(`drop policy if exists "${policy}" on public.${table};`);
+      for (const role of ["public", "anon", "authenticated"]) expect(sql).toContain(`revoke all on table public.${table} from ${role};`);
+      expect(sql).toContain(`grant select, insert on table public.${table} to service_role;`);
+    }
+  });
+});

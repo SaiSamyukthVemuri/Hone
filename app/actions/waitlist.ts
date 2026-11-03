@@ -1,7 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   limitWaitlistSubmit,
   RATE_LIMIT_MESSAGE,
@@ -32,7 +32,9 @@ export async function submitWaitlistEntry(
     return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
-  const supabase = await createClient();
+  // Service-role write behind the limiter above (DN-29 / Q-F): the anonymous insert policy is retired by 0294, so a visitor can no
+  // longer write the table directly with the public key and walk around the limit.
+  const supabase = createAdminClient();
   const { error } = await supabase
     .from("waitlist")
     .insert({ email: normalized, source: "landing" });

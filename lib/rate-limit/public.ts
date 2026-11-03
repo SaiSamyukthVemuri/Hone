@@ -6,7 +6,7 @@ import {
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
 import { thrownErrorClass } from "@/lib/logging/error-class";
-import { onLimiterUnavailable } from "@/lib/rate-limit/outage";
+import { onLimiterUnavailable, outageMode } from "@/lib/rate-limit/outage";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
 //   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
@@ -81,12 +81,17 @@ let loggedEnvMissing = false;
 function logEnvMissingOnce(): void {
   if (loggedEnvMissing) return;
   loggedEnvMissing = true;
+  const enforcing = outageMode() === "enforce";
   const payload = JSON.stringify({
     event: "ratelimit_disabled_env_missing",
+    // D-1: say plainly whether the process is enforcing, and that this is "not configured", which is not an outage.
+    reason: "not_configured",
+    mode: enforcing ? "enforce" : "open",
+    effect: enforcing ? "refuse-class routes refuse; booking, slots and marketing use the bounded fallback" : "limiters allow (local or CI)",
     environment: currentEnvironment(),
     timestamp: new Date().toISOString(),
   });
-  if (isProduction()) console.error(payload);
+  if (isProduction() || enforcing) console.error(payload);
   else console.warn(payload);
 }
 
@@ -215,7 +220,7 @@ export async function limitPublicSlots(args: {
 }): Promise<RateLimitResult> {
   const limiter = slotsLimiter();
   const ip = clientIpFromHeaders(args.headers);
-  const outage = { kind: "slots", routeClass: "public_slots", keys: { scope: "slots", visitor: `${hashId(ip)}:${args.slug}` } } as const;
+  const outage = { kind: "slots", routeClass: "public_slots", keys: { scope: "slots", visitor: hashId(ip), studioSlug: args.slug } } as const;
   if (!limiter) return onLimiterUnavailable({ ...outage, reason: "disabled" });
   try {
     const { success, reset } = await limiter.limit(`${hashId(ip)}:${args.slug}`);
@@ -242,7 +247,7 @@ export async function limitPublicBooking(args: {
   const ipLimiter = bookIpLimiter();
   const emailLimiter = bookEmailLimiter();
   const ip = clientIpFromHeaders(args.headers);
-  const outage = { kind: "book", routeClass: "public_book", keys: { scope: "book", visitor: `${hashId(ip)}:${args.slug}`, studio: args.slug } } as const;
+  const outage = { kind: "book", routeClass: "public_book", keys: { scope: "book", visitor: hashId(ip), studioSlug: args.slug } } as const;
   if (!ipLimiter || !emailLimiter) return onLimiterUnavailable({ ...outage, reason: "disabled" });
   try {
     const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.slug}`);

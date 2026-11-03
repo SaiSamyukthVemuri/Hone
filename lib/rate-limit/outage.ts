@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { thrownErrorClass } from "@/lib/logging/error-class";
 import { reportLimiterOutage } from "@/lib/observability/limiter-outage-alert";
@@ -15,13 +16,30 @@ import { reportLimiterOutage } from "@/lib/observability/limiter-outage-alert";
 // cannot be enforced is not a bound. Fixed windows can admit up to twice the limit across a window boundary (a burst at the
 // end of one window and the start of the next); the fallback is a bound, not a precise limiter.
 //
-// Identifiers arrive here ALREADY HASHED by the caller (SHA-256, truncated). Nothing in this file logs or stores a raw IP,
-// email, token or slug, and the alert event carries no identifier at all.
+// Identifiers arrive here ALREADY HASHED by the caller (SHA-256, truncated) and are then keyed with HMAC-SHA-256 under a server-only
+// secret (HONE_LIMITER_HMAC_SECRET, read from the environment, never in code or logs) before they reach the database, so the counter
+// table holds nothing that can be reversed or guessed from an IP, email or slug (Privacy P1). With no secret configured the fallback
+// classes REFUSE (a bound that cannot be keyed safely is not a bound) and the operator log says so. Nothing in this file logs or
+// stores a raw IP, email, token or slug, and the alert event carries no identifier at all.
 
 export type OutageKind = "refuse" | "book" | "slots" | "marketing" | "open";
 export type OutageReason = "disabled" | "error";
 export type OutageResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
 
+/** Name of the environment variable holding the HMAC secret (name only; the value is never in the repository). */
+export const HMAC_SECRET_ENV = "HONE_LIMITER_HMAC_SECRET";
+/** The secret must be at least this long to count as configured. */
+const HMAC_SECRET_MIN_LENGTH = 16;
+/**
+ * NQ-6 (Insurance D-2, open for Sam): one visitor can drain the studio bucket. When true, the visitor bucket is checked FIRST and
+ * a visitor-refused attempt does not consume the studio bucket. DEFAULT stays false (every attempt is counted in every bucket)
+ * until Sam answers; the recommendation is true.
+ */
+export const VISITOR_FIRST_SKIPS_STUDIO_BUCKET = false;
+/** D-4: how long an in-process "this key is already over its limit" memory lasts at most. The shared counter stays authoritative. */
+const OVER_LIMIT_CACHE_MAX_SECONDS = 15;
+/** D-3: how long a resolved studio slug is remembered in-process. */
+const STUDIO_ID_CACHE_SECONDS = 60;
 /** Seconds a refused caller is told to wait when the limiter is down and no counter decided it. */
 const REFUSE_RETRY_SECONDS = 60;
 /** The counter must answer quickly: a slow counter is an unreachable counter. */
@@ -76,14 +94,16 @@ const lastAlertAt = new Map<string, number>();
 export function resetOutageAlertThrottleForTests(): void {
   lastAlertAt.clear();
 }
-function emitOutageEvent(routeClass: string, kind: OutageKind, mode: OutageMode, reason: OutageReason, outcome: string, err?: unknown): void {
+/** The error CLASS only (a closed name), never the error: no raw error object, message or code reaches a log call. */
+const classOf = (e: unknown): string | undefined => (e === undefined ? undefined : thrownErrorClass(e));
+function emitOutageEvent(routeClass: string, kind: OutageKind, mode: OutageMode, reason: OutageReason, outcome: string, errorClass?: string): void {
   const now = Date.now();
   const k = `${routeClass}:${outcome}`;
   if (now - (lastAlertAt.get(k) ?? 0) < ALERT_THROTTLE_MS) return;
   lastAlertAt.set(k, now);
   const environment = process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown";
   // The operator alert (Sentry, closed values only) and the console line share one throttle.
-  reportLimiterOutage({ routeClass, kind, mode, reason, outcome, errorClass: err === undefined ? undefined : thrownErrorClass(err), environment });
+  reportLimiterOutage({ routeClass, kind, mode, reason, outcome, errorClass, environment });
   try {
     console.error(
       JSON.stringify({
@@ -93,7 +113,7 @@ function emitOutageEvent(routeClass: string, kind: OutageKind, mode: OutageMode,
         mode,
         reason,
         outcome,
-        ...(err === undefined ? {} : { errorClass: thrownErrorClass(err) }),
+        ...(errorClass === undefined ? {} : { errorClass }),
         environment,
         timestamp: new Date().toISOString(),
       }),
@@ -104,15 +124,68 @@ function emitOutageEvent(routeClass: string, kind: OutageKind, mode: OutageMode,
 }
 
 // ---------------------------------------------------------------------------
+// Keying (P1), the over-limit memory (D-4) and studio resolution (D-3).
+// ---------------------------------------------------------------------------
+export function hmacSecret(env: Record<string, string | undefined> = process.env): string | null {
+  const v = env[HMAC_SECRET_ENV];
+  return typeof v === "string" && v.trim().length >= HMAC_SECRET_MIN_LENGTH ? v : null;
+}
+/** HMAC-SHA-256 of "scope\nkey" under the secret, hex. Scope-bound so one key never collides across routes. */
+export function counterKey(secret: string, scope: string, key: string): string {
+  return createHmac("sha256", secret).update(`${scope}\n${key}`).digest("hex");
+}
+
+let secretMissingLogged = false;
+export function resetOutageStateForTests(): void {
+  secretMissingLogged = false;
+  overLimit.clear();
+  studioIds.clear();
+  lastAlertAt.clear();
+}
+function logSecretMissingOnce(): void {
+  if (secretMissingLogged) return;
+  secretMissingLogged = true;
+  try {
+    console.error(JSON.stringify({ event: "ratelimit_hmac_secret_missing", envVar: HMAC_SECRET_ENV, effect: "fallback classes refuse", timestamp: new Date().toISOString() }));
+  } catch {
+    /* never throws */
+  }
+}
+
+const overLimit = new Map<string, number>();
+const overKey = (h: Hit) => `${h.scope}\n${h.key}`;
+function cachedOver(hits: Hit[], now: number): boolean {
+  return hits.some((h) => (overLimit.get(overKey(h)) ?? 0) > now);
+}
+function rememberOver(h: Hit, retryAfterSeconds: number, now: number): void {
+  if (overLimit.size > 5000) overLimit.clear(); // bounded memory
+  overLimit.set(overKey(h), now + Math.min(retryAfterSeconds, OVER_LIMIT_CACHE_MAX_SECONDS) * 1000);
+}
+
+const studioIds = new Map<string, { id: string | null; until: number }>();
+/** The studio id for a public slug, or null when no such studio. Throws when the lookup itself fails (the caller then refuses). */
+async function resolveStudioId(slug: string): Promise<string | null> {
+  const now = Date.now();
+  const hit = studioIds.get(slug);
+  if (hit && hit.until > now) return hit.id;
+  const { data, error } = await createAdminClient().from("studios").select("id").eq("slug", slug).maybeSingle();
+  if (error) throw new Error("studio lookup error");
+  const id = (data as { id?: string } | null)?.id ?? null;
+  if (studioIds.size > 2000) studioIds.clear();
+  studioIds.set(slug, { id, until: now + STUDIO_ID_CACHE_SECONDS * 1000 });
+  return id;
+}
+
+// ---------------------------------------------------------------------------
 // The shared counter.
 // ---------------------------------------------------------------------------
-type Hit = { scope: string; key: string; windowSeconds: number; limit: number };
+export type Hit = { scope: string; key: string; windowSeconds: number; limit: number };
 type HitResult = { allowed: boolean; retryAfterSeconds: number };
 
-async function hitCounter(hit: Hit): Promise<HitResult> {
+async function hitCounter(hit: Hit, secret: string): Promise<HitResult> {
   const call = createAdminClient().rpc("rate_limit_fallback_hit", {
     p_scope: hit.scope,
-    p_key_hash: hit.key,
+    p_key_hash: counterKey(secret, hit.scope, hit.key),
     p_window_seconds: hit.windowSeconds,
     p_limit: hit.limit,
   });
@@ -124,10 +197,27 @@ async function hitCounter(hit: Hit): Promise<HitResult> {
   return { allowed: row.allowed, retryAfterSeconds: Math.max(1, Number(row.retry_after_seconds) || REFUSE_RETRY_SECONDS) };
 }
 
-/** Count every hit (all of them, even when an earlier one is over its limit) and refuse if any is over or any call fails. */
-async function decide(hits: Hit[]): Promise<OutageResult> {
-  const results = await Promise.all(hits.map(hitCounter));
+/**
+ * Count every hit (all of them, even when an earlier one is over its limit) and refuse if any is over or any call fails.
+ * A key this instance already saw over its limit moments ago is refused WITHOUT a database write (D-4); the shared counter stays
+ * authoritative because the memory is short and per key. With VISITOR_FIRST_SKIPS_STUDIO_BUCKET (NQ-6) the first hit is the visitor
+ * and a refusal there skips the rest.
+ */
+export async function decideHits(hits: Hit[], secret: string, visitorFirst: boolean = VISITOR_FIRST_SKIPS_STUDIO_BUCKET): Promise<OutageResult> {
+  const now = Date.now();
+  if (cachedOver(hits, now)) return { allowed: false, retryAfterSeconds: OVER_LIMIT_CACHE_MAX_SECONDS };
+  let results: HitResult[];
+  if (visitorFirst) {
+    const first = await hitCounter(hits[0], secret);
+    results = [first];
+    if (first.allowed) for (const h of hits.slice(1)) results.push(await hitCounter(h, secret));
+  } else {
+    results = await Promise.all(hits.map((h) => hitCounter(h, secret)));
+  }
   const refused = results.filter((r) => !r.allowed);
+  hits.forEach((h, i) => {
+    if (results[i] && !results[i].allowed) rememberOver(h, results[i].retryAfterSeconds, now);
+  });
   if (refused.length === 0) return { allowed: true };
   return { allowed: false, retryAfterSeconds: Math.max(...refused.map((r) => r.retryAfterSeconds)) };
 }
@@ -135,18 +225,22 @@ async function decide(hits: Hit[]): Promise<OutageResult> {
 export type OutageKeys = {
   /** hashed visitor identifier (IP), already scoped by the caller where the route is studio-scoped */
   visitor?: string;
-  /** studio scope key (slug or id): a PUBLIC identifier, hashed anyway by the caller */
+  /** studio id (already resolved by the caller): a PUBLIC identifier, hashed anyway by the caller */
   studio?: string;
+  /** public studio SLUG to resolve here to the studio id (D-3). The bucket key is the id, never the slug. */
+  studioSlug?: string;
   /** hashed email */
   email?: string;
   /** namespace for the counter scopes, so unrelated routes never share a bucket */
   scope: string;
 };
 
-function hitsFor(kind: OutageKind, k: OutageKeys): Hit[] | null {
+function hitsFor(kind: OutageKind, k: OutageKeys, unknownStudio = false): Hit[] | null {
   const min = 60;
   if (kind === "book") {
-    if (!k.visitor || !k.studio) return null;
+    if (!k.visitor) return null;
+    if (unknownStudio) return [{ scope: `${k.scope}_visitor`, key: k.visitor, windowSeconds: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_VISITOR_WINDOW_MIN") * min, limit: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_VISITOR_MAX") }];
+    if (!k.studio) return null;
     return [
       { scope: `${k.scope}_visitor`, key: k.visitor, windowSeconds: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_VISITOR_WINDOW_MIN") * min, limit: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_VISITOR_MAX") },
       { scope: `${k.scope}_studio`, key: k.studio, windowSeconds: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_STUDIO_WINDOW_MIN") * min, limit: fallbackParam("HONE_LIMITER_FALLBACK_BOOK_STUDIO_MAX") },
@@ -181,22 +275,47 @@ export async function onLimiterUnavailable(args: {
   if (args.kind === "open" || mode === "open") return { allowed: true };
 
   if (args.kind === "refuse") {
-    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused", args.err);
+    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused", classOf(args.err));
     return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
   }
 
-  const hits = args.keys ? hitsFor(args.kind, args.keys) : null;
+  const secret = hmacSecret();
+  if (!secret) {
+    logSecretMissingOnce();
+    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_no_secret", classOf(args.err));
+    return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
+  }
+
+  let keys = args.keys;
+  let unknownStudio = false;
+  if (keys?.studioSlug !== undefined) {
+    // D-3: resolve the slug FIRST. An unknown slug is refused and never gets a studio bucket (only the visitor bucket, keyed with
+    // 'unknown', is counted so slug-spraying is still bounded). The visitor key is hashed IP + resolved id (or 'unknown').
+    try {
+      const id = await resolveStudioId(keys.studioSlug);
+      unknownStudio = id === null;
+      keys = { ...keys, visitor: keys.visitor ? `${keys.visitor}:${id ?? "unknown"}` : keys.visitor, studio: id ?? undefined };
+    } catch (lookupErr) {
+      emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_counter_unreachable", classOf(lookupErr));
+      return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
+    }
+  }
+  const hits = keys ? hitsFor(args.kind, keys, unknownStudio) : null;
   if (!hits) {
     // A fallback class without the keys it needs cannot be bounded: refuse.
-    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_no_keys", args.err);
+    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_no_keys", classOf(args.err));
     return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
   }
   try {
-    const decision = await decide(hits);
-    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, decision.allowed ? "fallback_active" : "fallback_limited", args.err);
+    const decision = await decideHits(hits, secret);
+    if (unknownStudio) {
+      emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_unknown_studio", classOf(args.err));
+      return { allowed: false, retryAfterSeconds: decision.allowed ? REFUSE_RETRY_SECONDS : decision.retryAfterSeconds };
+    }
+    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, decision.allowed ? "fallback_active" : "fallback_limited", classOf(args.err));
     return decision;
   } catch (counterErr) {
-    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_counter_unreachable", counterErr);
+    emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused_counter_unreachable", classOf(counterErr));
     return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
   }
 }

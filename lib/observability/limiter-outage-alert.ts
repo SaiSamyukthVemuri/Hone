@@ -19,7 +19,7 @@ const ROUTE_CLASSES = new Set([
 const KINDS = new Set(["refuse", "book", "slots", "marketing", "open"]);
 const MODES = new Set(["enforce", "open"]);
 const REASONS = new Set(["disabled", "error"]);
-const OUTCOMES = new Set(["refused", "refused_no_keys", "refused_counter_unreachable", "fallback_active", "fallback_limited"]);
+const OUTCOMES = new Set(["refused", "refused_no_keys", "refused_counter_unreachable", "refused_no_secret", "refused_unknown_studio", "fallback_active", "fallback_limited"]);
 const ENVIRONMENTS = new Set(["production", "preview", "development", "test"]);
 const ERROR_CLASSES: ReadonlySet<string> = new Set(THROWN_ERROR_CLASSES);
 
