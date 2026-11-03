@@ -1,33 +1,37 @@
 import "server-only";
 
-import type { StudioPolicy } from "@/lib/permissions/catalog";
+import type { Role, StudioPolicy } from "@/lib/permissions/catalog";
+import { coreGetState } from "./core";
 
-// Where the Roles page gets a studio's policy. The permission core (R1: the overrides table, the policy basis, the audit and the
-// version token) is not in production yet, so until it is this returns today's APPROVED policy for every studio: the existing-
-// studio snapshot with no overrides and no gate satisfied, marked not reviewed and not writable. The page therefore shows the
-// truth (what staff can do today) and cannot save. When R1 lands this is the ONE function that changes; the page and the actions
-// already read the shape below. Nothing here reads or writes the database.
+// Where the Roles page gets a studio's policy: the permission core's get_role_permissions (0287), as the signed-in owner. The core
+// returns the stored choices, the studio's basis and the version a save must bind to. If the core cannot be read the page falls
+// back to today's APPROVED snapshot, marked not reviewed and not writable, so it still shows the truth and cannot save.
 
 export type StudioPolicyState = {
-  policy: StudioPolicy;
+  policies: Record<Role, StudioPolicy>;
   // The owner has adopted new defaults or saved a custom configuration. False keeps the review banner up (C.6).
   reviewed: boolean;
-  // Policy version the save sends back so a stale edit is refused instead of overwriting a newer one. 0 before any row exists.
+  // Policy version; 0 before any row exists. A write binds to the version a PREVIEW returned, not to this one.
   version: number;
-  // Saving needs R1's audited writer. False renders the controls as a read-only review and the save actions refuse.
   writable: boolean;
   notWritableReason: string | null;
 };
 
 export const NOT_WRITABLE_REASON =
-  "Saving role changes turns on with the permission core. Until then this page shows the approved access for each role. Some of it is not enforced everywhere yet, and those rows say so.";
+  "The permission core could not be read, so this page shows the approved access for each role and cannot save. Reload to try again.";
 
-export async function loadStudioPolicyState(_studioId: string): Promise<StudioPolicyState> {
-  return {
-    policy: { basis: "existing_snapshot", values: {}, gates: {} },
-    reviewed: false,
-    version: 0,
-    writable: false,
-    notWritableReason: NOT_WRITABLE_REASON,
-  };
+const snapshot = (): StudioPolicy => ({ basis: "existing_snapshot", values: {}, gates: {} });
+
+export async function loadStudioPolicyState(studioId: string): Promise<StudioPolicyState> {
+  const state = await coreGetState(studioId);
+  if (!state) {
+    return {
+      policies: { practitioner: snapshot(), receptionist: snapshot() },
+      reviewed: false,
+      version: 0,
+      writable: false,
+      notWritableReason: NOT_WRITABLE_REASON,
+    };
+  }
+  return { policies: state.policies, reviewed: state.reviewed, version: state.version, writable: true, notWritableReason: null };
 }

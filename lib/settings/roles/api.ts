@@ -18,6 +18,17 @@ export const ROLE_ERROR_CODES = [
   "sensitive_unconfirmed",
   "reason_required",
   "nothing_changed",
+  "invalid_changes",
+  "version_required",
+  "unknown_role",
+  "reason_invalid",
+  "not_found",
+  "owner_role_fixed",
+  "self_change",
+  "not_active",
+  "has_upcoming_appointments",
+  "email_required",
+  "unexpected",
   "unavailable",
 ] as const;
 export type RoleErrorCode = (typeof ROLE_ERROR_CODES)[number];
@@ -45,11 +56,16 @@ export type AuditRow = {
   role: Role | null;
   actorName: string;
   personName: string | null;
-  personState: "active" | "removed" | null;
+  personState: "active" | "deactivated" | null;
   reason: string | null;
+  // Only what changed, as display strings keyed by permission key (or "role" for a staff role change).
   before: Record<string, string>;
   after: Record<string, string>;
 };
+
+/** One row of effective_access: the scope in force, where it came from, and what capped it. */
+export type AccessRow = { key: string; scope: string; source: string; cappedBy: string | null };
+export type AccessResult = { ok: true; state: "active" | "deactivated"; role: string; rows: AccessRow[] } | { ok: false; error: RoleError };
 export type HistoryResult = { ok: true; rows: AuditRow[]; next: string | null } | { ok: false; error: RoleError };
 
 export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
@@ -102,6 +118,17 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   sensitive_unconfirmed: "Confirm that you understand the newly enabled financial or sensitive access, then save again.",
   reason_required: "Say why you are making this change.",
   nothing_changed: "There is nothing to save. Your choices match what is already saved.",
+  invalid_changes: "That request was not understood. Nothing was saved.",
+  version_required: "This page is out of date. Reload it and try again.",
+  unknown_role: "That role does not exist. Nothing was saved.",
+  reason_invalid: "That reason is not meaningful. Say why in your own words.",
+  not_found: "That person was not found in this studio.",
+  owner_role_fixed: "The owner role is fixed and cannot be changed here.",
+  self_change: "You cannot change your own role.",
+  not_active: "That person is not active.",
+  has_upcoming_appointments: "That practitioner still has upcoming appointments. Move them first.",
+  email_required: "That person needs an email address on file first.",
+  unexpected: "Something went wrong. Nothing was changed.",
   unavailable: "Saving role changes turns on with the permission core. Nothing was changed.",
 };
 

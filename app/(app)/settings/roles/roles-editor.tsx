@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { ROLES, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
+import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
@@ -14,6 +14,7 @@ import {
   reasonRequired,
   roleErrorMessage,
   AUDIT_KIND_LABEL,
+  type AccessResult,
   type AuditRow,
   type CommandResult,
   type HistoryResult,
@@ -60,6 +61,7 @@ export type RolesEditorProps = {
   reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
   adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
   loadHistory: (before: string | null) => Promise<HistoryResult>;
+  loadAccess: (membershipId: string) => Promise<AccessResult>;
 };
 
 type View = "people" | "permissions" | "history";
@@ -153,6 +155,7 @@ export function RolesEditor(props: RolesEditorProps) {
     const result = await props.save(changedEdits(), reviewData.version, confirmed, reason.trim());
     if (result.ok) {
       setSaved(drafts);
+      setReviewed(true);
       setReviewing(false);
       setReviewData(null);
       setConfirmed(false);
@@ -268,7 +271,7 @@ export function RolesEditor(props: RolesEditorProps) {
         ))}
       </div>
 
-      {view === "people" && <PeoplePanel people={props.people} saved={saved} />}
+      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} />}
 
       {view === "history" && <HistoryPanel load={props.loadHistory} />}
 
@@ -559,7 +562,7 @@ function HistoryPanel({ load }: { load: (before: string | null) => Promise<Histo
               <p className="text-neutral-600 dark:text-neutral-400">
                 {r.actorName} on <time dateTime={r.at}>{r.at}</time>
                 {r.role ? `, ${ROLE_LABELS[r.role].toLowerCase()}s` : ""}
-                {r.personName ? `, ${r.personState === "removed" ? "former member" : r.personName}` : ""}
+                {r.personName ? `, ${r.personName}${r.personState === "deactivated" ? " (no longer active)" : ""}` : r.kind === "staff_role_changed" ? ", former member" : ""}
               </p>
               {r.reason && <p className="mt-1">Reason: {r.reason}</p>}
               <ul className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
@@ -601,7 +604,7 @@ function OwnerOnlySettingsNotes(): ReactNode {
   );
 }
 
-function PeoplePanel({ people, saved }: { people: PersonView[]; saved: Record<Role, StudioPolicy> }) {
+function PeoplePanel({ people, loadAccess }: { people: PersonView[]; loadAccess: RolesEditorProps["loadAccess"] }) {
   const [open, setOpen] = useState<string | null>(null);
   const groups: { state: PersonView["state"]; label: string; empty: string }[] = [
     { state: "active", label: "Active", empty: "" },
@@ -647,7 +650,7 @@ function PeoplePanel({ people, saved }: { people: PersonView[]; saved: Record<Ro
                     >
                       {open === p.id ? "Hide access" : "View access"}
                     </button>
-                    {open === p.id && <AccessSummary person={p} saved={saved} />}
+                    {open === p.id && <AccessSummary person={p} load={loadAccess} />}
                   </li>
                 ))}
               </ul>
@@ -659,30 +662,45 @@ function PeoplePanel({ people, saved }: { people: PersonView[]; saved: Record<Ro
   );
 }
 
-function AccessSummary({ person, saved }: { person: PersonView; saved: Record<Role, StudioPolicy> }) {
-  if (person.state === "invited") return <p data-testid="access-summary" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">An invitation has no access to the studio until it is accepted.</p>;
-  if (person.state === "deactivated") return <p data-testid="access-summary" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">This person is deactivated and has no access to the studio.</p>;
-  if (person.role === "owner")
-    return <p data-testid="access-summary" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">Owners have every permission. Owner access is protected and cannot be changed here.</p>;
-  const sections = buildRoleSections(person.role, saved[person.role]);
-  return (
-    <div data-testid="access-summary" className="mt-2 flex flex-col gap-3 text-sm">
-      <p className="text-neutral-600 dark:text-neutral-400">
-        Saved access for a {ROLE_LABELS[person.role].toLowerCase()}, as it applies today. Unsaved edits are not shown here.
+const CAP_TEXT = (c: string): string =>
+  c === "deactivated" ? "person is deactivated" : c === "not_offered" ? "not offered to this role" : c.startsWith("gate:") ? "not available yet" : c.startsWith("requires:") ? "needs another permission first" : c;
+
+function AccessSummary({ person, load }: { person: PersonView; load: RolesEditorProps["loadAccess"] }) {
+  const [state, setState] = useState<{ kind: "loading" } | { kind: "error"; message: string } | Extract<AccessResult, { ok: true }>>({ kind: "loading" });
+  const fixed = person.state !== "active" || person.role === "owner";
+  useEffect(() => {
+    if (fixed) return;
+    let live = true;
+    load(person.id).then((r) => {
+      if (live) setState(r.ok ? r : { kind: "error", message: roleErrorMessage(r.error) });
+    });
+    return () => {
+      live = false;
+    };
+  }, [fixed, load, person.id]);
+  const note = "mt-2 text-sm text-neutral-600 dark:text-neutral-400";
+  if (person.state === "invited") return <p data-testid="access-summary" className={note}>An invitation has no access to the studio until it is accepted.</p>;
+  if (person.state === "deactivated") return <p data-testid="access-summary" className={note}>This person is deactivated and has no access to the studio.</p>;
+  if (person.role === "owner") return <p data-testid="access-summary" className={note}>Owners have every permission. Owner access is protected and cannot be changed here.</p>;
+  if ("kind" in state) {
+    return (
+      <p data-testid="access-summary" className={note}>
+        {state.kind === "loading" ? "Loading what this person can do now…" : state.message}
       </p>
-      {sections.map((s) => (
-        <div key={s.id}>
-          <h4 className="font-medium">{s.label}</h4>
-          <ul className="mt-1 flex flex-col gap-0.5">
-            {[...s.common, ...s.advanced].map((r) => (
-              <li key={r.key} data-access-row={r.key} data-effective={r.effective} className="break-words text-xs">
-                {r.label}: <span className="font-medium">{r.effective === "off" ? "Off" : r.options.find((o) => o.scope === r.effective)?.label ?? scopeText(r.effective)}</span>
-                {r.inactiveBecause ? <span className="text-neutral-500"> ({r.inactiveBecause})</span> : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+    );
+  }
+  const defs = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
+  return (
+    <div data-testid="access-summary" className="mt-2 flex flex-col gap-2 text-sm">
+      <p className="text-neutral-600 dark:text-neutral-400">What this person can do right now, from the saved settings. Unsaved edits are not shown here.</p>
+      <ul className="flex flex-col gap-0.5">
+        {state.rows.map((r) => (
+          <li key={r.key} data-access-row={r.key} data-effective={r.scope} className="break-words text-xs">
+            {defs.get(r.key)?.label ?? r.key}: <span className="font-medium">{scopeText(r.scope === "own" || r.scope === "studio" ? r.scope : "off")}</span>
+            {r.cappedBy ? <span className="text-neutral-500"> ({CAP_TEXT(r.cappedBy)})</span> : null}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

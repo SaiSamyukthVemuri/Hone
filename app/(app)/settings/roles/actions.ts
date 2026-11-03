@@ -1,20 +1,22 @@
 "use server";
 
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { loadStudioPolicyState } from "@/lib/settings/roles/policy-store";
-import { validateEdits } from "@/lib/settings/roles/validate";
 import {
-  reasonAcceptable,
-  type CommandResult,
-  type HistoryResult,
-  type Operation,
-  type PreviewResult,
-  type RoleError,
-} from "@/lib/settings/roles/api";
+  coreAccess,
+  coreAdopt,
+  coreHistory,
+  corePreviewAdopt,
+  corePreviewChanges,
+  corePreviewReset,
+  coreReset,
+  coreSave,
+} from "@/lib/settings/roles/core";
+import { reasonAcceptable, type AccessResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
-// Server actions of the Roles page (R2). Every one re-checks that the caller is the OWNER of the studio on the server. The preview
-// and the write are the permission core's (R1): the page never computes a diff. Until the core is on, previews and writes answer
-// code "unavailable": a refusal is honest, never a fake save. A submission is atomic: one invalid key refuses the lot.
+// Server actions of the Roles page (R2). Each one re-checks on the server that the caller is the owner, then hands the request to the
+// permission core, which decides everything again from the CURRENT membership row and answers with a code. The page never computes a
+// diff and never decides whether a change is valid. Pre-checks here are only shape and the "reason" convenience; the core refuses the
+// same things. A submission is atomic in the core: one invalid key refuses the lot.
 
 const refuse = (error: RoleError): { ok: false; error: RoleError } => ({ ok: false, error });
 
@@ -24,82 +26,96 @@ async function assertOwner(): Promise<{ studioId: string } | null> {
 }
 
 const isRole = (v: unknown): v is "practitioner" | "receptionist" => v === "practitioner" || v === "receptionist";
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isVersion = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 
-/** Pure preview of a draft's changed keys. Bound to nothing; returns the version it was computed against. */
+// { role: { key: scope } } with string scopes only. Anything else is refused before the core is called.
+function changesShape(edits: unknown): Record<string, Record<string, string>> | null {
+  if (!isObj(edits)) return null;
+  const out: Record<string, Record<string, string>> = {};
+  for (const [role, keys] of Object.entries(edits)) {
+    if (!isRole(role) || !isObj(keys)) return null;
+    out[role] = {};
+    for (const [k, v] of Object.entries(keys)) {
+      if (typeof v !== "string") return null;
+      out[role][k] = v;
+    }
+  }
+  return out;
+}
+
+const reasonText = (v: unknown) => (typeof v === "string" ? v : "");
+
+/** Pure preview of a draft's changed keys; returns the version it was computed against. Writes nothing. */
 export async function previewRoleChangesAction(edits: unknown): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
-  const state = await loadStudioPolicyState(owner.studioId);
-  const checked = validateEdits(edits, { practitioner: state.policy, receptionist: state.policy });
-  if (!checked.ok) return refuse({ code: "unknown_key", key: checked.field });
-  // R1: call preview_role_changes(studio, changes) here.
-  return refuse({ code: "unavailable" });
+  const changes = changesShape(edits);
+  if (!changes) return refuse({ code: "invalid_changes" });
+  return corePreviewChanges(owner.studioId, changes);
 }
 
 export async function previewResetAction(role: unknown): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
-  if (!isRole(role)) return refuse({ code: "unknown_key" });
-  // R1: call preview_reset(studio, role) here.
-  return refuse({ code: "unavailable" });
+  if (!isRole(role)) return refuse({ code: "unknown_role" });
+  return corePreviewReset(owner.studioId, role);
 }
 
 export async function previewAdoptAction(): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
-  // R1: call preview_adopt_new_defaults(studio) here.
-  return refuse({ code: "unavailable" });
+  return corePreviewAdopt(owner.studioId);
 }
 
-async function guardedWrite(
-  op: Operation,
-  expectedVersion: unknown,
-  reason: unknown,
-  sensitive: boolean,
-  validate?: (policyState: Awaited<ReturnType<typeof loadStudioPolicyState>>) => RoleError | null,
-): Promise<CommandResult> {
-  const owner = await assertOwner();
-  if (!owner) return refuse({ code: "refused" });
-  const state = await loadStudioPolicyState(owner.studioId);
-  // A draft is bound to the policy version its preview was computed against. A stale one is refused, never applied (P-3).
-  if (expectedVersion !== state.version) return refuse({ code: "stale_version", currentVersion: state.version });
-  if (!reasonAcceptable(op, sensitive, typeof reason === "string" ? reason : "")) return refuse({ code: "reason_required" });
-  const invalid = validate?.(state);
-  if (invalid) return refuse(invalid);
-  if (!state.writable) return refuse({ code: "unavailable" });
-  // R1: call save_role_permissions / reset_role_to_defaults / adopt_new_defaults here. Until then the line above always returns.
-  return refuse({ code: "unavailable" });
-}
-
-/** Save the changed keys of both roles in one atomic request. `edits` is { role: { key: scope } } with ONLY the changed keys. */
+/** Save the changed keys of both roles in one atomic request, bound to the version a preview returned. */
 export async function saveRolePolicyAction(
   edits: unknown,
   expectedVersion: unknown,
   sensitiveConfirmed: unknown,
   reason: unknown,
 ): Promise<CommandResult> {
-  return guardedWrite("save", expectedVersion, reason, sensitiveConfirmed === true, (state) => {
-    const empty = typeof edits === "object" && edits !== null && Object.values(edits).every((v) => typeof v === "object" && v !== null && Object.keys(v).length === 0);
-    if (empty) return { code: "nothing_changed" };
-    const checked = validateEdits(edits, { practitioner: state.policy, receptionist: state.policy });
-    return checked.ok ? null : { code: "unknown_key", key: checked.field };
-  });
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  const changes = changesShape(edits);
+  if (!changes) return refuse({ code: "invalid_changes" });
+  if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
+  const text = reasonText(reason);
+  // Optional here; the core requires it when the save widens sensitive access. Placeholder-only text is never entered.
+  if (!reasonAcceptable("save", false, text)) return refuse({ code: "reason_invalid" });
+  return coreSave(owner.studioId, expectedVersion, changes, text.trim(), sensitiveConfirmed === true);
 }
 
-/** Reset one role to the studio's own basis. Separate from Save: it replaces the role's overrides and has its own preview. */
+/** Reset one role to the studio's own basis. Separate from Save; it has its own preview. */
 export async function resetRolePolicyAction(role: unknown, expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
-  return guardedWrite("reset", expectedVersion, reason, false, () => (isRole(role) ? null : { code: "unknown_key" }));
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  if (!isRole(role)) return refuse({ code: "unknown_role" });
+  if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
+  if (!reasonAcceptable("reset", false, reasonText(reason))) return refuse({ code: "reason_required" });
+  return coreReset(owner.studioId, role, expectedVersion, reasonText(reason).trim());
 }
 
 /** The only way an existing studio takes the new defaults. */
 export async function adoptNewDefaultsAction(expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
-  return guardedWrite("adopt", expectedVersion, reason, false);
-}
-
-/** The change history, newest first. Read-only; the core's list_permission_audit answers it. */
-export async function listPermissionAuditAction(_before: unknown): Promise<HistoryResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
-  // R1: call list_permission_audit(studio, limit, before) here.
-  return refuse({ code: "unavailable" });
+  if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
+  if (!reasonAcceptable("adopt", false, reasonText(reason))) return refuse({ code: "reason_required" });
+  return coreAdopt(owner.studioId, expectedVersion, reasonText(reason).trim());
+}
+
+/** The change history, newest first. Read-only. */
+export async function listPermissionAuditAction(before: unknown): Promise<HistoryResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  return coreHistory(owner.studioId, typeof before === "string" && /^\d+$/.test(before) ? before : null);
+}
+
+/** What one person can do right now, from the core's resolver. */
+export async function effectiveAccessAction(membershipId: unknown): Promise<AccessResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  if (typeof membershipId !== "string" || membershipId.length === 0) return refuse({ code: "not_found" });
+  return coreAccess(owner.studioId, membershipId);
 }

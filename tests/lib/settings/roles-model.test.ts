@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleModel, groupLabel } from "@/lib/settings/roles/model";
 import { defaultsPolicy, diffPolicies, releaseNarrowings } from "@/lib/settings/roles/diff";
-import { validateEdits } from "@/lib/settings/roles/validate";
 import { SECTIONS, sectionKeys, sectionOfGroup } from "@/lib/settings/roles/sections";
 
 const defs = CATALOG as readonly PermissionDef[];
@@ -57,18 +56,23 @@ describe("Roles page model reads the one catalog", () => {
   });
 
   it("an allowed edit changes exactly that key and no other", () => {
-    const edit = applyEdit("practitioner", snapshot, "appt.reassign", "own");
+    const withMove = applyEdit("practitioner", snapshot, "appt.move", "studio");
+    if (!withMove.ok) throw new Error(withMove.reason);
+    const edit = applyEdit("practitioner", withMove.policy, "appt.reassign", "studio");
     if (!edit.ok) throw new Error(edit.reason);
-    expect(Object.keys(edit.policy.values)).toEqual(["appt.reassign"]);
+    expect(Object.keys(edit.policy.values).sort()).toEqual(["appt.move", "appt.reassign"]);
+    expect(withMove.policy.values).toEqual({ "appt.move": "studio" }); // the move edit changed only that key
   });
 
   it("turning a prerequisite Off keeps dependents' stored values but they stop being in force, and the page says so", () => {
-    const withReassign = applyEdit("practitioner", snapshot, "appt.reassign", "own");
+    const withMove = applyEdit("practitioner", snapshot, "appt.move", "studio");
+    if (!withMove.ok) throw new Error(withMove.reason);
+    const withReassign = applyEdit("practitioner", withMove.policy, "appt.reassign", "studio");
     if (!withReassign.ok) throw new Error(withReassign.reason);
     const lowered = applyEdit("practitioner", withReassign.policy, "appt.move", "off");
     if (!lowered.ok) throw new Error(lowered.reason);
     const row = buildRoleModel("practitioner", lowered.policy).flatMap((g) => g.rows).find((r) => r.key === "appt.reassign")!;
-    expect(row.chosen).toBe("own");
+    expect(row.chosen).toBe("studio");
     expect(row.effective).toBe("off");
     expect(row.inactiveBecause).toMatch(/Move appointments/);
   });
@@ -187,39 +191,7 @@ describe("Reset and adopt preview", () => {
   });
 });
 
-const both = { practitioner: snapshot, receptionist: snapshot };
 
-describe("a submission is validated against the catalog, atomically, across both roles", () => {
-  it("refuses an unknown role, key and scope, and an empty or malformed body", () => {
-    expect(validateEdits({ owner: { "appt.book": "studio" } }, both).ok).toBe(false);
-    expect(validateEdits({ practitioner: { "no.such_key": "studio" } }, both).ok).toBe(false);
-    expect(validateEdits({ practitioner: { "appt.book": "everyone" } }, both).ok).toBe(false);
-    expect(validateEdits([], both).ok).toBe(false);
-    expect(validateEdits({}, both).ok).toBe(false);
-  });
-  it("refuses a dependent above its prerequisite, and one bad key refuses the whole submission, in either role", () => {
-    const r = validateEdits({ practitioner: { "appt.book": "own" }, receptionist: { "appt.move": "off", "appt.reassign": "studio" } }, both);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.role).toBe("receptionist");
-      expect(r.field).toBe("appt.reassign");
-    }
-  });
-  it("accepts a prerequisite and its dependent together when consistent, for two roles at once", () => {
-    const r = validateEdits({ practitioner: { "appt.move": "studio", "appt.reassign": "own" }, receptionist: { "appt.book": "studio" } }, both);
-    expect(r.ok).toBe(true);
-  });
-  it("refuses a scope the role cannot hold and a fixed baseline", () => {
-    expect(validateEdits({ receptionist: { "appt.book": "own" } }, both).ok).toBe(false);
-    expect(validateEdits({ practitioner: { "appt.view_calendar": "off" } }, both).ok).toBe(false);
-  });
-  it("a key that is not submitted stays exactly as stored (an omitted key is never reset)", () => {
-    const stored = { ...both, practitioner: { ...snapshot, values: { "appt.cancel": "own" as const } } };
-    const r = validateEdits({ practitioner: { "appt.book": "own" } }, stored);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(Object.keys(r.edits.practitioner!)).toEqual(["appt.book"]);
-  });
-});
 
 describe("the eight sections (presentation only)", () => {
   it("there are eight, and every catalog key is in exactly one", () => {

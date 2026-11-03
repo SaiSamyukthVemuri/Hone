@@ -21,23 +21,35 @@ describe("the Roles page shows only names and addresses, never tokens or hashes 
 });
 
 describe("the Roles actions", () => {
-  it("re-check the owner on the server before anything else", () => {
+  const bodies = actions.split(/^export async function /m).slice(1);
+  it("re-check the owner on the server before the core is called, in every action", () => {
     expect(actions).toMatch(/practitioner\.role === "owner"/);
-    expect(actions.indexOf("await assertOwner()")).toBeGreaterThan(0);
-    expect(actions.indexOf("await assertOwner()")).toBeLessThan(actions.indexOf("await loadStudioPolicyState"));
+    expect(bodies).toHaveLength(8);
+    for (const b of bodies) {
+      const name = b.slice(0, b.indexOf("("));
+      expect(b.indexOf("await assertOwner()"), name).toBeGreaterThan(-1);
+      expect(b.indexOf("await assertOwner()"), name).toBeLessThan(b.search(/return core[A-Z]/));
+    }
   });
-  it("never report success while the policy store cannot write", () => {
-    expect(store).toMatch(/writable: false/);
-    expect(actions).not.toMatch(/return \{ ok: true \}/);
+  it("never report success on its own: success only ever comes from the core's answer", () => {
+    expect(actions).not.toMatch(/ok: true/);
   });
-  it("bind a request to the policy version it was computed from (Insurance P-3)", () => {
-    expect(actions).toMatch(/expectedVersion !== state\.version/);
-    expect(actions.indexOf("expectedVersion !== state.version")).toBeLessThan(actions.indexOf("validate?.(state)"));
-    expect(actions).toMatch(/saveRolePolicyAction\(\s*edits: unknown,\s*expectedVersion: unknown/);
-    expect(actions).toMatch(/resetRolePolicyAction\(role: unknown, expectedVersion: unknown/);
-    expect(actions).toMatch(/adoptNewDefaultsAction\(expectedVersion: unknown/);
+  it("bind every write to the version a preview returned, and send it to the core (Insurance P-3)", () => {
+    for (const fn of ["saveRolePolicyAction", "resetRolePolicyAction", "adoptNewDefaultsAction"]) {
+      const b = bodies.find((x) => x.startsWith(fn))!;
+      expect(b, fn).toMatch(/isVersion\(expectedVersion\)/);
+      expect(b, fn).toMatch(/expectedVersion[,)]/);
+    }
   });
   it("only export async functions plus types (a 'use server' module)", () => {
     expect(actions.match(/^export (?!async function|type)/gm)).toBeNull();
+  });
+});
+
+describe("the policy store", () => {
+  it("is writable only when the core answered, and otherwise says why", () => {
+    expect(store).toMatch(/coreGetState\(studioId\)/);
+    expect(store).toMatch(/writable: true/);
+    expect(store).toMatch(/NOT_WRITABLE_REASON/);
   });
 });

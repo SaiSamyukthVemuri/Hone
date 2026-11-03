@@ -30,6 +30,7 @@ const render = (over: Record<string, unknown> = {}) =>
       reset: noop,
       adopt: noop,
       loadHistory: noop,
+      loadAccess: noop,
       ...over,
     }),
   );

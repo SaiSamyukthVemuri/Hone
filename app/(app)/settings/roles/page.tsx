@@ -6,6 +6,7 @@ import { loadStudioPolicyState } from "@/lib/settings/roles/policy-store";
 import type { Role } from "@/lib/permissions/catalog";
 import {
   adoptNewDefaultsAction,
+  effectiveAccessAction,
   listPermissionAuditAction,
   previewAdoptAction,
   previewResetAction,
@@ -21,7 +22,7 @@ import { RolesEditor, type PersonView } from "./roles-editor";
 
 // DN-21: this page reads ONLY the columns it shows. A practitioner row also carries a private calendar link and its checksum and an
 // invitation row carries more than a name and an address; none of that is selected, so none of it can reach a render or a prop.
-type StaffRow = { id: string; display_name: string; email: string; role: string; active: boolean };
+type StaffRow = { id: string; display_name: string; email: string | null; role: string; active: boolean };
 type InviteRow = { id: string; display_name: string | null; email: string; role: string };
 
 async function allStaff(studioId: string): Promise<StaffRow[]> {
@@ -33,6 +34,17 @@ async function allStaff(studioId: string): Promise<StaffRow[]> {
     .order("display_name", { ascending: true });
   if (error) throw new Error(`Failed to load practitioners: ${dbErrorCode(error)}`);
   return (data ?? []) as StaffRow[];
+}
+
+async function allReceptionists(studioId: string): Promise<StaffRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_receptionists")
+    .select("id, display_name, email, active")
+    .eq("studio_id", studioId)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load receptionists: ${dbErrorCode(error)}`);
+  return ((data ?? []) as Omit<StaffRow, "role">[]).map((r) => ({ ...r, role: "receptionist" }));
 }
 
 async function pendingInvitations(studioId: string): Promise<InviteRow[]> {
@@ -55,15 +67,16 @@ export default async function RolesSettingsPage() {
     return <OwnerOnlyNotice>Only the studio owner can see and change roles and permissions.</OwnerOnlyNotice>;
   }
 
-  const [staff, invitations, state] = await Promise.all([
+  const [staff, receptionists, invitations, state] = await Promise.all([
     allStaff(studio.id),
+    allReceptionists(studio.id),
     pendingInvitations(studio.id),
     loadStudioPolicyState(studio.id),
   ]);
 
   // Real members only. An invitation has no access, and a deactivated person has none either; the People view says so.
   const people: PersonView[] = [
-    ...staff.map((p): PersonView => ({ id: p.id, name: p.display_name, email: p.email, role: asRole(p.role), state: p.active ? "active" : "deactivated" })),
+    ...[...staff, ...receptionists].map((p): PersonView => ({ id: p.id, name: p.display_name, email: p.email ?? "", role: asRole(p.role), state: p.active ? "active" : "deactivated" })),
     ...invitations.map((i): PersonView => ({ id: i.id, name: i.display_name ?? "No name set", email: i.email, role: asRole(i.role), state: "invited" })),
   ];
 
@@ -73,7 +86,8 @@ export default async function RolesSettingsPage() {
         Choose what practitioners and receptionists can do in this studio. You always have every permission.
       </SettingsViewHeading>
       <RolesEditor
-        policies={{ practitioner: state.policy, receptionist: state.policy }}
+        key={state.version}
+        policies={state.policies}
         reviewed={state.reviewed}
         writable={state.writable}
         notWritableReason={state.notWritableReason}
@@ -85,6 +99,7 @@ export default async function RolesSettingsPage() {
         reset={resetRolePolicyAction}
         adopt={adoptNewDefaultsAction}
         loadHistory={listPermissionAuditAction}
+        loadAccess={effectiveAccessAction}
       />
     </div>
   );
