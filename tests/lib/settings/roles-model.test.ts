@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleModel, buildRoleSections, groupLabel } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleModel, buildRoleSections, groupLabel, WIDENING_LATER_LINE } from "@/lib/settings/roles/model";
 import { COMMON_KEYS } from "@/lib/settings/roles/sections";
 import { defaultsPolicy, diffPolicies, releaseNarrowings } from "@/lib/settings/roles/diff";
 import { SECTIONS, sectionKeys, sectionOfGroup } from "@/lib/settings/roles/sections";
@@ -242,5 +242,35 @@ describe("the eight sections (presentation only)", () => {
       if (!d.sensitive) expect(row.consequence, row.key).toBeNull();
       else expect(row.consequence, row.key).toBe(d.group === "payments" || d.group === "pricing" ? "financial" : "sensitive");
     }
+  });
+});
+
+describe("deny_only: set at or below the baseline, never above it (truth test both ways)", () => {
+  const snapshot: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
+  const def = (CATALOG as readonly PermissionDef[]).find((d) => d.key === "appt.move")!;
+  const map = { "appt.move": "deny_only" };
+  const rowOf = (policy: StudioPolicy) => buildRoleModel("practitioner", policy, map).flatMap((g) => g.rows).find((r) => r.key === "appt.move")!;
+  it("narrowing below the baseline is allowed", () => {
+    const r = applyEdit("practitioner", snapshot, "appt.move", "off", map);
+    expect(r.ok).toBe(true);
+  });
+  it("every option wider than the baseline is disabled with the later-release line; the baseline itself is not", () => {
+    const row = rowOf(snapshot);
+    const base = def.existingSnapshot.practitioner;
+    const rank = (s: string) => ["off", "own", "studio"].indexOf(s);
+    for (const o of row.options) {
+      if (o.selected) continue;
+      if (rank(o.scope) > rank(base)) {
+        expect(o.disabled, o.scope).toBe(true);
+        expect(o.reason).toBe(WIDENING_LATER_LINE);
+        expect(applyEdit("practitioner", snapshot, "appt.move", o.scope as never, map)).toEqual({ ok: false, reason: WIDENING_LATER_LINE });
+      } else {
+        expect(o.reason, o.scope).not.toBe(WIDENING_LATER_LINE);
+      }
+    }
+  });
+  it("an enforced key may be widened as before", () => {
+    const widen = applyEdit("practitioner", { ...snapshot, values: { "appt.move": "off" } }, "appt.move", "studio", { "appt.move": "enforced" });
+    expect(widen.ok).toBe(true);
   });
 });
