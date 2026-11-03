@@ -56,7 +56,9 @@ export type EnforcementMap = Readonly<Record<string, string>>;
 export const NOT_ENFORCED_LINE = "Not enforced yet. This switch will apply when that area is wired.";
 export const ENFORCEMENT_SCOPE_LINE = "This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
 export function enforcementOf(key: string, map: EnforcementMap | undefined, catalogValue?: unknown): Enforcement {
-  const v = map?.[key] ?? catalogValue;
+  // The core's report is the authority whenever the page has one (even an empty one: a key it does not name is not enforced). The
+  // catalog value is used only where no report is passed at all (the model's own unit tests).
+  const v = map ? map[key] : catalogValue;
   return v === "enforced" || v === "observe" ? v : "not_yet";
 }
 
