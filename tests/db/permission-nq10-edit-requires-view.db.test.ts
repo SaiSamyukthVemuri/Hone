@@ -47,7 +47,11 @@ describe("NQ-10: record editing requires record viewing (stored, but inactive wh
   it("turning edit ON while view is off does not turn view on and names the prerequisite", async () => {
     const s = await seedStudio("engine-nq10b");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
-    await adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,'practitioner','clin.view_records','off') on conflict (studio_id,role,key) do update set scope='off'", [s.studioId]);
+    // Setup: the edit key's snapshot default is already "studio", so saving "studio" would be a no-op (nothing_changed) before the prerequisite
+    // is judged. Store edit=off explicitly so that turning it on is a real change, and view=off so its prerequisite is unmet.
+    for (const [key, scope] of [["clin.view_records", "off"], ["clin.edit_records", "off"]] as const) {
+      await adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,'practitioner',$2,$3) on conflict (studio_id,role,key) do update set scope=excluded.scope", [s.studioId, key, scope]);
+    }
     const ver = (await getp(s.userId, s.studioId)).version as number;
     const r = await save(s.userId, s.studioId, ver, { practitioner: { "clin.edit_records": "studio" } }, GOOD_REASON, true);
     expect(r).toMatchObject({ ok: false, code: "prerequisite_unmet", blocked_by: "clin.view_records" });

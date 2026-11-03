@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type {
@@ -132,9 +133,21 @@ function parseTimelineMonths(
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+// NQ-10: plans are chart content, so editing them needs viewing the records. Asked inside every plan write so an open tab or a direct
+// server call cannot edit a plan after clin.view_records is revoked.
+async function recordsRefusal(formData: FormData): Promise<ActionResult | null> {
+  const { studio } = await getCurrentPractitionerWithStudio();
+  // The client is the scope target: a practitioner on the OWN (assigned) scope is allowed on their own clients only (Insurance RW-1).
+  const client = trimmed(formData.get("client_id")) || undefined;
+  const ok = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client })).allowed;
+  return ok ? null : { ok: false, error: "Not available to your role." };
+}
+
 export async function createTreatmentPlanAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const clientId = trimmed(formData.get("client_id"));
   const name = trimmed(formData.get("name"));
 
@@ -289,6 +302,8 @@ export async function createTreatmentPlanAction(
 export async function closeTreatmentPlanAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
 
@@ -355,6 +370,8 @@ export async function closeTreatmentPlanAction(
 export async function attachChartEntryToPlanAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const sessionId = trimmed(formData.get("session_id"));
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
@@ -396,6 +413,8 @@ export async function attachChartEntryToPlanAction(
 export async function detachChartEntryFromPlanAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const sessionId = trimmed(formData.get("session_id"));
   const clientId = trimmed(formData.get("client_id"));
   if (!sessionId) return { ok: false, error: "Missing session id." };
@@ -496,6 +515,8 @@ async function verifyPlanForCurrentStudio(
 export async function updateTreatmentPlanNotesAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
 
@@ -654,6 +675,8 @@ export async function updateTreatmentPlanNotesAction(
 export async function createTreatmentPlanStageAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
 
@@ -742,6 +765,8 @@ export async function createTreatmentPlanStageAction(
 export async function updateTreatmentPlanStageAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const stageId = trimmed(formData.get("stage_id"));
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
@@ -821,6 +846,8 @@ export async function updateTreatmentPlanStageAction(
 export async function deleteTreatmentPlanStageAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  const refused = await recordsRefusal(formData);
+  if (refused) return refused;
   const stageId = trimmed(formData.get("stage_id"));
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
