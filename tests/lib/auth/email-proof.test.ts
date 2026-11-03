@@ -6,12 +6,13 @@ const U = { email: "Member@Harness.local", identities: [] as never[] };
 const google = (email: string, verified: unknown) => ({ ...U, identities: [{ provider: "google", identity_data: { email, email_verified: verified } }] });
 
 describe("mailboxProofMethod (email-trust)", () => {
-  it("otp proves the mailbox (every real mailbox link/code type produces it: measured)", () => {
-    expect(mailboxProofMethod({ amr: [{ method: "otp" }] }, U)).toBe("email_link_or_otp");
+  it.each(["otp", "magiclink", "recovery"])("%s proves the mailbox (measured: implicit links are otp; PKCE magic link is magiclink; PKCE recovery is recovery)", (method) => {
+    expect(mailboxProofMethod({ amr: [{ method }] }, U)).toBe("email_link_or_otp");
   });
-  it.each(["magiclink", "email/signup", "invite", "recovery", "sso/saml", "anonymous"])("NEGATIVE: %s is never produced by a real mailbox flow and proves nothing (Insurance S-1)", (method) => {
+  it.each(["email/signup", "invite", "sso/saml", "anonymous", "password", "mfa/totp"])("NEGATIVE: %s is not a measured mailbox method and proves nothing", (method) => {
     expect(mailboxProofMethod({ amr: [{ method }] }, U)).toBeNull();
   });
+
   it("NEGATIVE: a password session proves nothing, even next to nothing else", () => {
     expect(mailboxProofMethod({ amr: [{ method: "password" }] }, U)).toBeNull();
   });

@@ -143,6 +143,7 @@ export default async function CalendarPage({
       // defaults to today when missing).
       lastWeekParam: params.week,
       peopleParam: params.people,
+      isOwner,
     });
   }
 
@@ -341,6 +342,7 @@ export default async function CalendarPage({
         todayHref={withSelection("/calendar?view=week", sidebar.param)}
         nextHref={withSelection(`/calendar?week=${nextWeek}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
+        reviewAssignmentsHref={practitioner.role === "owner" ? "/calendar/check-practitioner" : undefined}
         hideStepNavOnMobile
       />
       {days.some((date, dow) => availabilityForDate(date, dow).hoursVary) && (
@@ -540,8 +542,9 @@ async function renderMonthView(opts: {
   monthParam: string | undefined;
   lastWeekParam: string | undefined;
   peopleParam: string | undefined;
+  isOwner: boolean;
 }) {
-  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam } = opts;
+  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
@@ -673,6 +676,7 @@ async function renderMonthView(opts: {
         todayHref={withSelection("/calendar?view=month", sidebar.param)}
         nextHref={withSelection(`/calendar?view=month&month=${nextMonth}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
+        reviewAssignmentsHref={isOwner ? "/calendar/check-practitioner" : undefined}
         hideStepNavOnMobile={false}
       />
       {Array.from({ length: 31 }, (_, i) => addDays(monthAnchor, i))
@@ -835,6 +839,7 @@ async function renderTeamDayView(opts: {
         todayHref={withSelection("/calendar?view=day", sidebar.param)}
         nextHref={withSelection(`/calendar?view=day&day=${addDays(date, 1)}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
+        reviewAssignmentsHref={isOwner ? "/calendar/check-practitioner" : undefined}
         hideStepNavOnMobile={false}
       />
       {notWorking.length > 0 && (

@@ -105,6 +105,11 @@ describe("successful auth callback redirect boundary", () => {
       await GET(request("/dashboard"));
       expect(h.harden).not.toHaveBeenCalled();
     });
+    it.each(["magiclink", "recovery"])("POSITIVE: the PKCE code exchange of a real %s link (measured amr) is proven and reconciles", async (method) => {
+      h.exchange.mockResolvedValue(sessionWith([{ method, timestamp: 1 }]));
+      await GET(request("/dashboard"));
+      expect(h.reconcile).toHaveBeenCalledOnce();
+    });
     it("POSITIVE: Google asserting the same verified address proves the mailbox", async () => {
       const google = { ...user, identities: [{ provider: "google", identity_data: { email: user.email, email_verified: true } }] };
       h.exchange.mockResolvedValue(sessionWith([{ method: "oauth", timestamp: 1 }], google));
