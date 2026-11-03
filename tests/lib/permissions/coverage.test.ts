@@ -16,10 +16,10 @@ describe("coverage map: every audit row is covered by a key or a fixed rule", ()
       for (const k of row.keys) expect(catalogByKey.has(k), `${id} -> ${k}`).toBe(true);
     }
   });
-  it("every catalog key is reachable from an audit row, except the four capabilities the product does not have yet", () => {
+  it("every catalog key is reachable from an audit row, except the capabilities the product does not have yet (no audit row exists for them)", () => {
     const reached = new Set(Object.values(COVERAGE).flatMap((r) => r.keys));
     const unreached = DEFS.map((d) => d.key).filter((k) => !reached.has(k)).sort();
-    expect(unreached).toEqual(["client.merge", "comm.bulk_message", "rep.bulk_export"]);
+    expect(unreached).toEqual(["appt.handoff_own", "client.merge", "comm.bulk_message", "rep.bulk_export"]);
   });
   it("Sam's group 1 and 2 rows resolve to the decided keys", () => {
     expect(COVERAGE["WL-1"]!.keys).toEqual(["wl.view_queue"]);
@@ -111,7 +111,7 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
   it("catalog flags cite only known decisions (DN) that are still pending, or known OPEN questions (Q); a decided DN leaves no flag behind", () => {
     for (const d of DEFS) {
       for (const id of [...(d.pendingDecision ?? []), ...(d.touchedByDecision ?? [])]) {
-        if (id.startsWith("Q-")) expect(OPEN_QUESTIONS[id as keyof typeof OPEN_QUESTIONS], `${d.key} cites unknown ${id}`).toBeDefined();
+        if (id.startsWith("Q-") || id.startsWith("B-")) expect(OPEN_QUESTIONS[id as keyof typeof OPEN_QUESTIONS], `${d.key} cites unknown ${id}`).toBeDefined();
         else {
           expect(DECISIONS[id as keyof typeof DECISIONS], `${d.key} cites unknown ${id}`).toBeDefined();
           expect(DECISIONS[id as keyof typeof DECISIONS].status, `${d.key} still flagged by decided ${id}`).toBe("pending");
@@ -150,11 +150,14 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
 describe("open questions (OPS reconciliation, 3 Nov): flagged, never defaulted", () => {
   const NARROW = new Set(NARROWINGS.map((n) => n.id));
   const FIXED = new Set(FIXED_OWNER_ONLY.map((f) => f.id));
-  it("there are 19 questions from the reconciliation plus the three Team raised from its section b; batch 1 settled Q1 to Q4, Q6 and Q7", () => {
-    const ids = Object.keys(OPEN_QUESTIONS).map((q) => Number(q.slice(2)));
-    expect(ids.filter((n) => n <= 21)).toHaveLength(19);
-    expect(Object.entries(OPEN_QUESTIONS).filter(([, e]) => e.status === "settled").map(([q]) => q).sort()).toEqual(["Q-1", "Q-2", "Q-3", "Q-4", "Q-6", "Q-7"]);
-    expect(ids.filter((n) => n > 21)).toEqual([22, 23, 24]);
+  it("OPS's Q1 to Q25 (plus the Q14b follow-up) and Team's three B-n items are registered; batches 1 and 2 settled the rest named here", () => {
+    const keys = Object.keys(OPEN_QUESTIONS);
+    const q = keys.filter((k) => k.startsWith("Q-")).map((k) => Number.parseInt(k.slice(2), 10));
+    for (let n = 1; n <= 25; n += 1) if (n !== 5 && n !== 11) expect(q, `Q-${n}`).toContain(n);
+    expect(keys.filter((k) => k.startsWith("B-")).sort()).toEqual(["B-1", "B-2", "B-3"]);
+    expect(Object.entries(OPEN_QUESTIONS).filter(([, e]) => e.status === "settled").map(([k]) => k).sort())
+      .toEqual(["Q-1", "Q-10", "Q-14", "Q-16", "Q-17", "Q-2", "Q-25", "Q-3", "Q-4", "Q-6", "Q-7", "Q-9"]);
+    expect(keys).toContain("Q-14b");
   });
   it("every open question names a surface that exists: a key, FEE_AMOUNT_READ, a narrowing or a fixed owner-only item", () => {
     for (const [q, e] of Object.entries(OPEN_QUESTIONS)) {

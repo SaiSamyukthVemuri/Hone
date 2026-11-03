@@ -48,9 +48,10 @@ export type Phase = (typeof PHASES)[number];
 // VALUE is not guessed. Every studio (new or existing) gets today's behaviour (the existing-studio snapshot) until the decision is
 // made, and the page marks it. `touchedByDecision` means a decision concerns what the key covers but does NOT decide its value.
 export type DecisionId = `DN-${number}`;
-// An open question OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c, plus Q-22..Q-24 raised from its section b).
+// An open question OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c: Q-n; Q-14b is the follow-up to Q-14). B-n are
+// Team-raised items from its section b (a key or value no decision backs); OPS numbers the Q series, so B-n never collides with it.
 // A key flagged with one is built, but its value is not backed by a decision, so it is pinned like a pending DN.
-export type QuestionId = `Q-${number}`;
+export type QuestionId = `Q-${number}` | `Q-${number}b` | `B-${number}`;
 export type DecisionRef = DecisionId | QuestionId;
 
 // How well the snapshot value is known. A reviewer should look hardest at anything that is not "verified".
@@ -128,7 +129,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_directory",
-    touchedByDecision: ["Q-22"],
+    touchedByDecision: ["B-1"],
     group: "clients_identity",
     label: "View and search the client list and contact details",
     description: "See and search clients and their contact details. A role without the legal-name key sees the preferred name, otherwise 'Name on file'.",
@@ -175,7 +176,6 @@ export const CATALOG = [
   },
   {
     key: "appt.reassign",
-    touchedByDecision: ["Q-17"],
     group: "appointments",
     label: "Reassign appointments",
     description: "Change which practitioner an appointment is assigned to. Own = hand one of your own appointments to a colleague.",
@@ -188,7 +188,22 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Whether a practitioner may hand away their OWN appointment is not stated; defaulted OFF (open point R0-Q3).",
+    note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (decided, Sam 3 Nov, Q17 / R0-Q3).",
+  },
+  {
+    key: "appt.handoff_own",
+    group: "appointments",
+    label: "Hand one of your own appointments to a colleague",
+    description: "Pass an appointment assigned to you to another practitioner of the same studio. Never someone else's appointment.",
+    scopes: BOOL,
+    requires: [CALENDAR],
+    newStudioDefault: pair(["off", "off"]),
+    existingSnapshot: pair(["off", "off"]),
+    snapshotBasis: "not_built",
+    offeredTo: { practitioner: true, receptionist: false },
+    ownerConfigurable: true,
+    enforcedIn: "R4",
+    note: "Decided (Sam, 3 Nov, Q17 / R0-Q3): OFF by default and owner-configurable. The recipient must be an eligible practitioner of the SAME studio (the eligibility definition is open point A6), and the hand-off is refused once the appointment has started or been treated. Moving someone else's appointment stays appt.reassign.",
   },
   {
     key: "appt.cancel",
@@ -239,7 +254,6 @@ export const CATALOG = [
   },
   {
     key: "appt.complete",
-    pendingDecision: ["Q-16"],
     group: "appointments",
     label: "Complete treatments",
     description:
@@ -304,7 +318,7 @@ export const CATALOG = [
   },
   {
     key: "avail.manage_studio_hours",
-    touchedByDecision: ["Q-24"],
+    touchedByDecision: ["B-3"],
     group: "availability",
     label: "Manage the studio's opening hours",
     description: "Change the studio-wide weekly opening hours and overrides. Separate from managing a colleague's availability and from managing your own.",
@@ -436,7 +450,6 @@ export const CATALOG = [
   },
   {
     key: "clin.edit_records",
-    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Edit clinical records",
     description: "Write and edit charts, with authorship recorded and earlier versions preserved. Separate from deleting, which stays owner-only.",
@@ -449,7 +462,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-7): removing a pass, a block or a treated area counts as EDITING under this key; the original and its version history are preserved. Deleting a whole session stays owner-only. Not offered to receptionists in this version (open point R0-Q2).",
+    note: "Decided (Sam, 2 Nov, DN-7): removing a pass, a block or a treated area counts as EDITING under this key; the original and its version history are preserved. Deleting a whole session stays owner-only. Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only).",
   },
   {
     key: "clin.view_photos",
@@ -468,7 +481,6 @@ export const CATALOG = [
   },
   {
     key: "clin.upload_photos",
-    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Upload treatment photos",
     description: "Add treatment photos. Deleting photos stays owner-only.",
@@ -481,7 +493,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (open point R0-Q2).",
+    note: "Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only).",
   },
   {
     key: "clin.view_intake",
@@ -515,7 +527,6 @@ export const CATALOG = [
   },
   {
     key: "clin.edit_intake",
-    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Edit intake answers",
     description: "Change a client's intake answers on their behalf, with history.",
@@ -528,11 +539,10 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (open point R0-Q2). Decided (Sam, 3 Nov, DN-30): practitioners run assisted intake today (audit row 2:C2-53), so today's access is preserved for every existing studio and stays separately configurable; nothing is removed silently at rollout.",
+    note: "Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only). Decided (Sam, 3 Nov, DN-30): practitioners run assisted intake today (audit row 2:C2-53), so today's access is preserved for every existing studio and stays separately configurable; nothing is removed silently at rollout.",
   },
   {
     key: "clin.review_intake",
-    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Review intake",
     description: "Mark a client's intake reviewed and save review notes. Separate from changing the answers.",
@@ -549,7 +559,6 @@ export const CATALOG = [
   },
   {
     key: "clin.print_record",
-    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Print a client's clinical record",
     description: "Print the client's clinical notes view.",
@@ -562,7 +571,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (open point R0-Q2).",
+    note: "Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only).",
   },
   {
     key: "clin.edit_consent_templates",
@@ -795,7 +804,7 @@ export const CATALOG = [
   },
   {
     key: "price.view_client_prices",
-    touchedByDecision: ["Q-23"],
+    touchedByDecision: ["B-2"],
     group: "pricing",
     label: "See a client's special prices",
     description: "Read the per-client prices needed for authorized work (the client_pricing table). Closes M-4 together with the payment view.",
@@ -834,7 +843,7 @@ export const CATALOG = [
   },
   {
     key: "price.fee_amounts",
-    touchedByDecision: ["Q-14"],
+    touchedByDecision: ["Q-14b"],
     group: "pricing",
     label: "Change studio fee amounts",
     description: "Change the no-show and late-cancellation fee amounts.",
@@ -860,7 +869,7 @@ export const CATALOG = [
     label: "See studio money totals",
     description: "Studio-wide payment totals on the dashboard and financials.",
     scopes: BOOL,
-    requires: [PAY_VIEW],
+    requires: [],
     newStudioDefault: pair(["off", "off"]),
     existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "source",
@@ -869,7 +878,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-1): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business. Needs the payment view at Whole studio, because a total spans every appointment.",
+    note: "Decided (Sam, 2 Nov, DN-1): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business. Decided (Sam, 3 Nov, Q25): NO prerequisite on pay.view_appointment, and the payment view needs nothing from this key. A total must not expose any individual payment, client or appointment detail.",
   },
   {
     key: "rep.financial_reports",
@@ -1083,7 +1092,7 @@ export const CATALOG = [
   // ───────────────────────────── waitlist rules and automation ─────────────────────────────
   {
     key: "wlrules.invitation_rounds",
-    touchedByDecision: ["Q-24"],
+    touchedByDecision: ["B-3"],
     group: "waitlist_rules",
     label: "Start and close invitation rounds",
     description: "Open an invitation round with an allowance and close invitations.",
@@ -1100,7 +1109,7 @@ export const CATALOG = [
   },
   {
     key: "wlrules.policy_and_text",
-    touchedByDecision: ["Q-24"],
+    touchedByDecision: ["B-3"],
     group: "waitlist_rules",
     label: "Waitlist policy, preference grants and text",
     description: "Change the waitlist admission policy, preference grants, ordered-claim rules and the waitlist wording toggles.",
@@ -1118,7 +1127,7 @@ export const CATALOG = [
   // ───────────────────────────── accepting new clients ─────────────────────────────
   {
     key: "admit.change_policy",
-    touchedByDecision: ["Q-24"],
+    touchedByDecision: ["B-3"],
     pendingDecision: ["Q-13"],
     group: "accepting_new_clients",
     label: "Change the new-client admission policy",
@@ -1136,7 +1145,7 @@ export const CATALOG = [
   },
   {
     key: "admit.booking_rules",
-    touchedByDecision: ["Q-24"],
+    touchedByDecision: ["B-3"],
     pendingDecision: ["Q-12"],
     group: "accepting_new_clients",
     label: "Booking window and new-client booking rules",
@@ -1368,7 +1377,6 @@ export const CATALOG = [
   // ───────────── sterilisation and disinfection logs (Sam, 2 Nov, DN-3) ─────────────
   {
     key: "records.view_sterilisation_disinfection",
-    pendingDecision: ["Q-10"],
     group: "safety_records",
     label: "View sterilisation and disinfection records",
     description: "See the sterile-item, disinfectant and probe-lot records.",
@@ -1380,11 +1388,10 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (DN-3): ON for practitioners, OFF for receptionists, separate from logging. Exposure-incident history is NOT this key: it is visible to the owner and the person who reported it only.",
+    note: "Decided (Sam, 3 Nov, Q10 / DN-3): ON for practitioners, OFF for receptionists (offered, owner may turn on), separate from logging. Exposure-incident history is NOT this key: it is visible to the owner and the person who reported it only.",
   },
   {
     key: "records.log_sterilisation_disinfection",
-    pendingDecision: ["Q-10"],
     group: "safety_records",
     label: "Log sterilisation and disinfection",
     description: "Add or update a sterile item or a disinfectant record.",
@@ -1396,7 +1403,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (DN-3): a separate permission from viewing; ON for practitioners, OFF for receptionists.",
+    note: "Decided (Sam, 3 Nov, Q10 / DN-3): a separate permission from viewing and it requires viewing; ON for practitioners, OFF for receptionists.",
   },
 ] as const satisfies readonly PermissionDef[];
 
@@ -1439,7 +1446,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     label: "Undoing a recorded outcome",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. Whether a time window applies, and which outcomes can be undone, is open (Q-9); no window is stated here. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
+    note: "Decided (Sam, 3 Nov, Q9 / DN-12): owner-only, NO time window, a reason is required and the history is kept. The outcomes that can be undone are completion, no-show and cancellation. It never reverses money, erases records or resends messages; settlement goes through refund or correction.",
   },
   {
     id: "require_card_to_book",
@@ -1635,6 +1642,8 @@ export const OPERATOR_CONFIG: readonly OperatorSetting[] = [
 
 // Who may READ a fee amount (Insurance R-3). Changing one is price.fee_amounts; reading is separate and today every member can read every
 // studio column. Staff otherwise read only the studio name, timezone and booking preferences, through a column-limited read.
+// Decided (Sam, 3 Nov, Q14 / DN-27): practitioners may read PUBLISHED service prices needed for booking; no private financial setting and no
+// client-specific price is exposed outside its permitted scope. Fee-amount reads stay at today's behaviour until Sam answers Q14b.
 export const FEE_AMOUNT_READ = {
   anyOf: ["price.fee_amounts", "pay.view_appointment"],
   staffOtherwise: ["studio name", "timezone", "booking preferences"],
@@ -1662,6 +1671,9 @@ export const MANDATORY: readonly string[] = [
   "Decided (Sam, 3 Nov, DN-10): card-authorisation consent is READ-ONLY, follows the payment-view permission and its scope (practitioners: own appointments; receptionists: studio-wide when enabled), shows only the authorisation relevant to THAT payment without granting intake or clinical access, and signed originals can never be edited or deleted",
   "Decided (DN-11): appointments already booked keep their agreed prices unless someone explicitly edits that appointment, and every client-specific price change is recorded",
   "Decided (DN-23b): a late-cancellation fee needs an explicit owner-configured window with NO invented default and is never activated automatically; the server decides eligibility from the recorded cancellation time, the appointment time and the policy snapshot taken at THAT booking; the fee-charging permission (pay.charge_saved_card) is also required; duplicate charges are prevented and the reason and history are kept",
+  "Decided (Sam, 3 Nov, Q14 / DN-27): practitioners may read published service prices needed for booking; private financial settings and client-specific prices are never exposed outside the permitted scope; fee-amount reads stay as today until Q14b is answered",
+  "Decided (Sam, 3 Nov, Q25): studio totals need no payment-view prerequisite and reports never reveal an individual payment, client or appointment detail",
+  "Decided (Sam, 3 Nov, Q17 / R0-Q3): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be eligible and in the same studio, and it is refused once the appointment has started or been treated",
   "Reading a fee amount needs price.fee_amounts or pay.view_appointment at any scope; without either, staff read only the studio name, timezone and booking preferences, through a column-limited read, never the whole studios row (DN-27)",
   "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
   "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",
@@ -1670,7 +1682,7 @@ export const MANDATORY: readonly string[] = [
   "Decided (Sam, 3 Nov): all sending (messages, links, portal replies, aftercare) respects consent, opt-outs and existing channel-activation restrictions; no permission overrides them",
   "Decided (Sam, 2 Nov, DN-8): a session's performer is corrected only by the owner or the currently recorded performer, with a reason and audit history; the replacement must be an eligible practitioner of that studio; who actually entered each record is preserved; signatures, attestations and payment history are never rewritten; reassignment cannot be used to bypass a permission",
   "Decided (DN-3): exposure-incident history is visible to the owner and the person who reported it only",
-  "Decided (DN-12): undoing a recorded outcome never automatically refunds, charges, erases treatment records or reverses messages already sent",
+  "Decided (Sam, 3 Nov, Q9 / DN-12): undoing a recorded outcome (completion, no-show or cancellation) is owner-only, has no time window and needs a reason; it never reverses money, erases records or resends messages (settlement goes through refund or correction)",
   "Decided (Sam, 2 Nov, DN-15): importing a waitlist entry never records consent and never sends a message; a waitlist rules permission never enables SMS and never overrides consent or opt-out restrictions",
   "Decided (DN-4a): the permission to change the admission policy is separate from the studio's actual Open / Waitlist / Closed setting, and public enforcement of that setting is a server rule no permission can bypass",
   "Decided (DN-6): starting a treatment follows the permitted completion scope; it never gives a receptionist clinical access and never completes an appointment automatically",
