@@ -295,7 +295,12 @@ describe("reasons (Sam, 3 Nov): required to expand sensitive access, adopt or re
     expect(rs).toMatchObject({ ok: true, new_version: 2 });
     expect((await adminQuery("select basis from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0].basis).toBe("existing_snapshot");
     expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
-    const ad = await call(s.userId, "select public.adopt_new_defaults($1,2,$2) as r", [s.studioId, GOOD_REASON]);
+    // Insurance PY-1: adopting newly enables sensitive keys for the receptionist role, so it needs the same explicit confirmation as save.
+    expect(pa.confirmation_required).toBe(true);
+    expect(pa.sensitive_keys.length).toBeGreaterThan(0);
+    expect(await call(s.userId, "select public.adopt_new_defaults($1,2,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ ok: false, code: "sensitive_unconfirmed" });
+    expect((await adminQuery("select basis, version from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0]).toMatchObject({ basis: "existing_snapshot", version: "2" });
+    const ad = await call(s.userId, "select public.adopt_new_defaults($1,2,$2,true) as r", [s.studioId, GOOD_REASON]);
     expect(ad).toMatchObject({ ok: true, new_version: 3 });
     expect((await adminQuery("select basis from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0].basis).toBe("new_studio");
     expect(await call(s.userId, "select public.adopt_new_defaults($1,3,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ code: "nothing_changed" });
@@ -699,5 +704,19 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
     expect(await counts(adminQuery)).toEqual(base); // nothing else moved
     // the transaction rolled back: the engine is still there
     expect((await getp(s.userId, s.studioId)).ok).toBe(true);
+  });
+
+  it("reset that newly enables a sensitive key also needs sensitive_confirmed (Insurance PY-1); one that enables nothing sensitive does not", async () => {
+    const s = await seedStudio("engine-py1");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    // snapshot gives the practitioner clin.view_records (sensitive); the owner stored OFF; a reset returns it to studio, which is a rise.
+    await adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,'practitioner','clin.view_records','off') on conflict (studio_id,role,key) do update set scope='off'", [s.studioId]);
+    const pv = await call(s.userId, "select public.preview_reset($1,'practitioner') as r", [s.studioId]);
+    expect(pv).toMatchObject({ ok: true, confirmation_required: true });
+    expect(pv.sensitive_keys).toContain("clin.view_records");
+    expect(await call(s.userId, "select public.reset_role_to_defaults($1,'practitioner',0,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ ok: false, code: "sensitive_unconfirmed" });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(1);
+    expect(await call(s.userId, "select public.reset_role_to_defaults($1,'practitioner',0,$2,true) as r", [s.studioId, GOOD_REASON])).toMatchObject({ ok: true });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
   });
 });
