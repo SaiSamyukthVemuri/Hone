@@ -125,6 +125,14 @@ describe("'Not available yet' is only for the receptionist legal-name keys (Sam,
   });
 });
 
+describe("an 'Own assigned' option always shows what 'own' means (Sam batch 1, Q6)", () => {
+  it("every practitioner row that offers Own carries the catalog's definition, so the owner reads it beside the scope", () => {
+    for (const row of buildRoleModel("practitioner", snapshot).flatMap((g) => g.rows)) {
+      if (row.options.some((o) => o.scope === "own")) expect(row.ownMeaning, row.key).toBeTruthy();
+    }
+  });
+});
+
 describe("truthfulness (Insurance P-1)", () => {
   it("every approved_policy row says so, so the page never claims it is today's database behaviour", () => {
     const rows = ROLES.flatMap((role) => buildRoleModel(role, snapshot).flatMap((g) => g.rows));
