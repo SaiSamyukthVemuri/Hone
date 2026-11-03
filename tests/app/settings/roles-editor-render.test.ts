@@ -59,3 +59,20 @@ describe("the Roles control center opens on People", () => {
     expect(html).not.toContain("Example");
   });
 });
+
+describe("batch 3 owner-only copy", () => {
+  const html = render({ initialView: "permissions" });
+  it("says recording an erasure request deletes nothing and erasure is not available yet", () => {
+    expect(html).toContain("Recording a request deletes nothing; erasure is not available yet");
+  });
+  it("lists every workflow the portal-OFF confirmation affects and says intake and consent forms continue", () => {
+    for (const w of ["Messaging clients", "Rebooking", "Saving a card", "Existing portal links and sessions"]) expect(html).toContain(w);
+    expect(html).toContain("Intake and consent forms continue to work");
+  });
+  it("describes the booking-rules key as windows plus new-client rules, linking to studio details and service settings", () => {
+    expect(html).toContain('data-testid="booking-rules-scope"');
+    expect(html).toContain("booking window and the public new-client booking rules only");
+    expect(html).toContain('href="/settings/studio/details"');
+    expect(html).toContain('href="/settings/services"');
+  });
+});

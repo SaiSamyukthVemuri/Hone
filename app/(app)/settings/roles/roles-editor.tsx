@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { ROLES, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
@@ -7,6 +8,13 @@ import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { defaultsPolicy, diffPolicies, releaseNarrowings, type RoleDiff } from "@/lib/settings/roles/diff";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
+import {
+  BOOKING_RULES_KEYS,
+  BOOKING_RULES_LINKS,
+  BOOKING_RULES_SCOPE_TEXT,
+  ERASURE_NOTE,
+  PORTAL_OFF_CONFIRMATION,
+} from "@/lib/settings/roles/studio-notes";
 import type { RolesActionResult } from "./actions";
 
 // The Roles control center (R2, People-first). Three views: People (who holds what, from the saved policy), Permissions (the eight
@@ -28,6 +36,7 @@ export type RolesEditorProps = {
   writable: boolean;
   notWritableReason: string | null;
   version: string | null;
+  initialView?: "people" | "permissions" | "history";
   people: PersonView[];
   save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: string | null) => Promise<RolesActionResult>;
   reset: (role: Role, expectedVersion: string | null) => Promise<RolesActionResult>;
@@ -39,7 +48,7 @@ type Preview = { kind: "reset" | "adopt"; diff: RoleDiff };
 const scopeText = (s: Scope) => (s === "off" ? "Off" : s === "own" ? "Own assigned" : "Whole studio");
 
 export function RolesEditor(props: RolesEditorProps) {
-  const [view, setView] = useState<View>("people");
+  const [view, setView] = useState<View>(props.initialView ?? "people");
   const [role, setRole] = useState<Role>("practitioner");
   const [saved, setSaved] = useState<Record<Role, StudioPolicy>>(props.policies);
   const [drafts, setDrafts] = useState<Record<Role, StudioPolicy>>(props.policies);
@@ -279,6 +288,8 @@ export function RolesEditor(props: RolesEditorProps) {
             </section>
           ))}
 
+          <OwnerOnlySettingsNotes />
+
           {reviewing && (
             <ReviewPanel
               diffs={reviewDiffs}
@@ -427,6 +438,20 @@ function RowList({
                 Approved policy: not yet enforced everywhere. The setting shown is the approved one; the database may still allow more until the closing changes ship.
               </p>
             )}
+            {BOOKING_RULES_KEYS.includes(row.key) && (
+              <p data-testid="booking-rules-scope" className="break-words text-xs text-neutral-500">
+                {BOOKING_RULES_SCOPE_TEXT} See{" "}
+                {BOOKING_RULES_LINKS.map((l, i) => (
+                  <span key={l.href}>
+                    {i > 0 && " and "}
+                    <Link href={l.href} className="underline">
+                      {l.label}
+                    </Link>
+                  </span>
+                ))}
+                .
+              </p>
+            )}
             {row.pendingDecision && <p className="text-xs text-neutral-500">This default is still being decided; it keeps today&rsquo;s behaviour.</p>}
             {rowError?.key === row.key && (
               <p role="alert" className="break-words text-xs text-red-700 dark:text-red-400">
@@ -437,6 +462,30 @@ function RowList({
         );
       })}
     </ul>
+  );
+}
+
+function OwnerOnlySettingsNotes(): ReactNode {
+  return (
+    <section data-testid="owner-only-settings" aria-label="Owner-only settings" className="flex min-w-0 flex-col gap-3">
+      <h3 className="text-base font-medium">Only you can change these</h3>
+      <div data-owner-only="erase_client_permanently" className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
+        <p className="font-medium">{ERASURE_NOTE.title}</p>
+        <p className="mt-1 break-words text-neutral-600 dark:text-neutral-400">{ERASURE_NOTE.body}</p>
+      </div>
+      <div data-owner-only="client_portal_setting" className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
+        <p className="font-medium">{PORTAL_OFF_CONFIRMATION.title}</p>
+        <p className="mt-1 text-neutral-600 dark:text-neutral-400">{PORTAL_OFF_CONFIRMATION.intro}</p>
+        <ul className="mt-1 list-disc pl-5 text-neutral-600 dark:text-neutral-400">
+          {PORTAL_OFF_CONFIRMATION.affected.map((a) => (
+            <li key={a} className="break-words">
+              {a}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-1 break-words text-neutral-600 dark:text-neutral-400">{PORTAL_OFF_CONFIRMATION.continues}</p>
+      </div>
+    </section>
   );
 }
 
