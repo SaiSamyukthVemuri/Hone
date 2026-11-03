@@ -723,12 +723,22 @@ function DiffList({ item, testPrefix }: { item: RolePreview; testPrefix: "review
           {diff.newlyEnabledSensitive} newly enabled financial or sensitive {diff.newlyEnabledSensitive === 1 ? "permission" : "permissions"}. Check these before you confirm.
         </p>
       )}
-      {diff.fixedNarrowings.length > 0 && (
+      {diff.fixedNarrowings.some((f) => f.kind === "narrows") && (
         <div data-testid="preview-fixed-narrowings" className="rounded-md bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          <p className="font-medium">These become owner-only, so practitioners lose the access they have today:</p>
+          <p className="font-medium">Practitioners lose today&apos;s access:</p>
           <ul className="mt-1 list-disc pl-5">
-            {diff.fixedNarrowings.map((f) => (
-              <li key={f.id} data-fixed-narrowing={f.id}>{f.label}</li>
+            {diff.fixedNarrowings.filter((f) => f.kind === "narrows").map((f) => (
+              <li key={f.id} data-fixed-narrowing={f.id} className="break-words">{f.label}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {diff.fixedNarrowings.some((f) => f.kind === "safeguard") && (
+        <div data-testid="preview-safeguards" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
+          <p className="font-medium">Safeguards that apply from the release:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {diff.fixedNarrowings.filter((f) => f.kind === "safeguard").map((f) => (
+              <li key={f.id} data-safeguard={f.id} className="break-words">{f.label}</li>
             ))}
           </ul>
         </div>

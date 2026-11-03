@@ -26,7 +26,11 @@ export type RoleChange = {
   futureBusiness: boolean;
 };
 
-export type FixedNarrowing = { id: string; label: string; note: string | null };
+// "narrows": a practitioner loses access they have today. "safeguard": a rule that applies from the release without taking a
+// practitioner's own access away (public endpoints, read state, flags). The permission core should say which (asked of Team,
+// field `practitioner_access`); until it does, `narrowingKind` falls back to the ids known to be true losses.
+export type NarrowingKind = "narrows" | "safeguard";
+export type FixedNarrowing = { id: string; label: string; note: string | null; kind: NarrowingKind };
 
 export type RoleDiff = {
   changes: RoleChange[];
@@ -41,7 +45,14 @@ export type RoleDiff = {
 // What the enforcement release will take away from existing practitioners, whatever the owner does on this page. These are fixed
 // owner-only items, so they are not keys and no setting can keep them. Shown as a standing notice (DN-25), not only in a preview.
 export function releaseNarrowings(): FixedNarrowing[] {
-  return FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => ({ id: f.id, label: f.label, note: f.note ?? null }));
+  return FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => ({ id: f.id, label: f.label, note: f.note ?? null, kind: "narrows" as const }));
+}
+
+// TEMPORARY fallback until the core sends `practitioner_access`: the release narrowings that do take a practitioner's own access away.
+const KNOWN_PRACTITIONER_LOSSES = new Set(["performer_change", "exposure_incident_history", "colleague_private_fields"]);
+export function narrowingKind(id: string, fromCore: unknown): NarrowingKind {
+  if (fromCore === "narrows" || fromCore === "safeguard") return fromCore;
+  return KNOWN_PRACTITIONER_LOSSES.has(id) || releaseNarrowings().some((f) => f.id === id) ? "narrows" : "safeguard";
 }
 
 export function diffPolicies(role: Role, before: StudioPolicy, after: StudioPolicy): RoleDiff {
