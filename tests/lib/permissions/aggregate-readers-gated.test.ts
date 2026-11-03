@@ -140,6 +140,27 @@ describe("the readers that stay in the page are gated at their call sites", () =
     expect(d).toContain("historyAsked={viewingToday && canViewRecords}");
     expect(d).toContain("Treatment history and charting status are not available to your role.");
   });
+  it("Codex (calendar page): plans, last treatment and consultation notes say not available instead of empty", () => {
+    const s = read("app/(app)/calendar/[id]/page.tsx");
+    expect(s).toMatch(/canViewRecords \? getTreatmentPlansForClient/);
+    expect(s).toContain("Treatment plans are not available to your role.");
+    expect(s).toContain("Last treatment is not available to your role.");
+    expect(s).toContain("Consultation notes are not available to your role.");
+    expect(s).toContain("notAvailableToRole={!canViewRecords}");
+  });
+  it("loader level: plans, imported memory, previous visit note and treatment time read nothing when the key is off", async () => {
+    const { getTreatmentPlansForClient, getTreatmentPlanWithCount, getActiveTreatmentPlansForClient } = await import("@/lib/treatment-plans/queries");
+    expect(await getTreatmentPlansForClient("s", "c")).toEqual([]);
+    expect(await getActiveTreatmentPlansForClient("s", "c")).toEqual([]);
+    expect(await getTreatmentPlanWithCount("s", "p")).toBeNull();
+    const { getImportedTreatmentMemoriesForClient } = await import("@/lib/imported-treatment-memory");
+    expect(await getImportedTreatmentMemoriesForClient("s", "c")).toMatchObject({ items: [], notAvailable: true });
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect(await loadPreviousVisitNote({ studioId: "s", clientId: "c", before: NOW })).toEqual({ note: null, unavailable: true });
+    const { getTotalTreatmentTime } = await import("@/lib/treatment-time/queries");
+    await getTotalTreatmentTime("s", "c");
+    expect(fromSpy).not.toHaveBeenCalled();
+  });
   it("the procedure-record print says it is not available instead of printing an empty log", () => {
     const s = read("app/(app)/records/print/page.tsx");
     const gate = s.indexOf('"clin.view_records"');

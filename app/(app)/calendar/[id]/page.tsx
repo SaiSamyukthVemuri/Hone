@@ -326,7 +326,8 @@ export default async function AppointmentDetailPage({
       getPinnedNotesForClient(studio.id, clientId),
       getClientTags(studio.id, clientId),
       getLatestIntakeForClient(studio.id, clientId),
-      getTreatmentPlansForClient(studio.id, clientId),
+      // Plans carry progress counted from treatment sessions and minutes: clin.view_records (Codex).
+      canViewRecords ? getTreatmentPlansForClient(studio.id, clientId) : Promise.resolve([] as Awaited<ReturnType<typeof getTreatmentPlansForClient>>),
       // THE newest charted treatment before this appointment. Same selector,
       // same batched block read and same fail-soft contract as the charting
       // screen and /sessions/new, this page just has to fetch its own bounded
@@ -452,6 +453,7 @@ export default async function AppointmentDetailPage({
       />
 
       <LastTreatmentSection
+        notAvailableToRole={!canViewRecords}
         memory={prepMemory}
         unavailable={prepUnavailable}
         narrative={prepNarrative}
@@ -488,18 +490,29 @@ export default async function AppointmentDetailPage({
           treatment (the same product fact the postcare section below encodes),
           so charting must remain reachable rather than being replaced by the
           notes CTA. Read-only; the write path is unchanged. */}
-      {!isCancelled && (
+      {!isCancelled && canViewRecords && (
         <ConsultationNotesCard
           clientId={data.client?.id ?? null}
           isConsultation={data.service?.modality === "consultation"}
           summary={clinicalNotesSummary}
         />
       )}
+      {!isCancelled && !canViewRecords && (
+        <p role="status" data-testid="consultation-notes-not-available" className="text-sm text-neutral-500">
+          Consultation notes are not available to your role.
+        </p>
+      )}
 
-      <TreatmentPlanCard
-        plans={activePlans}
-        clientId={data.client?.id ?? null}
-      />
+      {canViewRecords ? (
+        <TreatmentPlanCard
+          plans={activePlans}
+          clientId={data.client?.id ?? null}
+        />
+      ) : (
+        <p role="status" data-testid="treatment-plans-not-available" className="text-sm text-neutral-500">
+          Treatment plans are not available to your role.
+        </p>
+      )}
 
       {typedStatus === "confirmed" && (
         <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
@@ -1132,11 +1145,14 @@ function IntakeStatusLine({
 // not", and delegates everything else to the shared card.
 // ---------------------------------------------------------------------------
 function LastTreatmentSection({
+  notAvailableToRole,
   memory,
   unavailable,
   narrative,
   clientId,
 }: {
+  // The viewer lacks clin.view_records: nothing was read, so this must NOT say "no previous treatment".
+  notAvailableToRole: boolean;
   memory: AppointmentPrepMemory | null;
   unavailable: boolean;
   narrative: AppointmentPrepLoad["narrative"];
@@ -1153,6 +1169,13 @@ function LastTreatmentSection({
   // out the answer. `owned` is already rendered by the treatment card, so only
   // `external` is painted here, always attributed, never implied to belong to
   // the treatment above.
+  if (notAvailableToRole) {
+    return (
+      <p role="status" data-testid="last-treatment-not-available" className="text-sm text-neutral-500">
+        Last treatment is not available to your role.
+      </p>
+    );
+  }
   const { external } = buildPrepProvenanceModel({
     selected: memory
       ? { sessionId: memory.sessionId, startedAt: memory.startedAt }
