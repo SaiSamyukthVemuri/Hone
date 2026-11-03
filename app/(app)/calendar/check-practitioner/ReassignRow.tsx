@@ -13,27 +13,17 @@ export function ReassignRow({
   options,
   suggestionId,
   currentId,
-  canChange,
 }: {
   appointmentId: string;
   options: Option[];
   suggestionId: string | null;
   currentId: string | null;
-  canChange: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const initial = suggestionId ?? options.find((o) => o.id !== currentId)?.id ?? "";
   const [target, setTarget] = useState(initial);
-
-  if (!canChange) {
-    return (
-      <p data-testid="check-practitioner-started" className="text-xs text-neutral-500">
-        This appointment has already started. You, as the owner, complete this one from the calendar; its practitioner is not changed here.
-      </p>
-    );
-  }
 
   return (
     <form
