@@ -26,7 +26,13 @@ export type ProofUser = { email?: string | null; identities?: ProofIdentity[] | 
 // `invite` and `recovery` were never observed as an amr method, and a password SIGN-UP (Confirm email OFF) returns a session whose
 // amr is `password`. So only `otp` counts: a method that no real flow produces must not be an accepted proof (Insurance S-1).
 const MAILBOX_METHODS: ReadonlySet<string> = new Set(["otp"]);
-/** OAuth providers whose `email_verified` assertion Hone accepts as mailbox proof. */
+/**
+ * OAuth providers whose `email_verified` assertion Hone accepts as mailbox proof. THE SET IS CLOSED ON PURPOSE (Insurance G-1):
+ * the hosted provider list is email + Google only, and a provider Hone does not list here proves nothing even if it is enabled
+ * later. Enabling a new provider (including phone/SMS, which produces no mailbox amr at all) does NOT make it proof; add it HERE,
+ * with a unit-test row proving its verified-email semantics, and add it to public.session_proves_mailbox() (held 0291) in the same
+ * change. tests/lib/auth/email-proof.test.ts pins this set so an edit cannot go unnoticed.
+ */
 const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["google"]);
 
 export type ProofMethod = "email_link_or_otp" | "oauth_verified" | null;

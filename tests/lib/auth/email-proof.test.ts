@@ -192,4 +192,17 @@ describe("applyProofHardening: what each flag value does", () => {
     expect(Object.keys(r.admin)).toEqual(["auth", "rpc"]);
     expect(r.admin.rpc.mock.calls.every((c) => c[0] === "auth_account_has_password")).toBe(true);
   });
+  // Insurance G-1: the provider set is closed. A provider enabled later proves nothing until it is added to the proof set on purpose.
+  it.each(["github", "apple", "azure", "facebook", "twitter", "discord", "keycloak", "workos", "phone"])(
+    "NEGATIVE (closed provider set): a verified %s identity for the account's own address is not mailbox proof",
+    (provider) => {
+      const user = { email: U.email, identities: [{ provider, identity_data: { email: U.email, email_verified: true } }] };
+      // Positive control: the SAME shape with google IS proof, so the refusal below is about the provider and nothing else.
+      const google = { email: U.email, identities: [{ provider: "google", identity_data: { email: U.email, email_verified: true } }] };
+      expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, google)).toBe("oauth_verified");
+      expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, user)).toBeNull();
+      expect(mailboxProofMethod({ amr: [{ method: "oauth", provider, timestamp: 1 }] }, user)).toBeNull();
+    },
+  );
+
 });
