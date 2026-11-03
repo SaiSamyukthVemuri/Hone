@@ -14,7 +14,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     from: () => ({ select: () => ({ eq: (_c: string, slug: string) => ({ maybeSingle: () => studioLookup(slug) }) }) }),
   }),
 }));
-const SECRET = "test-secret-0123456789abcdef";
+const SECRET = "Tq3vZ8mK1xRw5NbY7cHd2LfGs9JpUa4EoXiV6tCyBn0"; // 43 chars: the 32-byte floor (Privacy Q3)
 /** what the counter must receive: HMAC-SHA-256 of "scope\nkey" under the server-only secret (Privacy P1) */
 const kh = (scope: string, key: string, secret = SECRET) => createHmac("sha256", secret).update(`${scope}\n${key}`).digest("hex");
 
@@ -290,7 +290,7 @@ describe("Privacy P1: counters are keyed with HMAC under a server-only secret; n
     expect(keys.every((k) => /^[0-9a-f]{64}$/.test(k))).toBe(true);
   });
 
-  it.each([["unset", undefined], ["empty", ""], ["too short", "short"], ["spaces", "                    "]])(
+  it.each([["unset", undefined], ["empty", ""], ["too short", "short"], ["16 chars (the old floor)", "abcdefghijklmnop"], ["42 chars", "Tq3vZ8mK1xRw5NbY7cHd2LfGs9JpUa4EoXiV6tCyBn"], ["long but one repeated char", "a".repeat(64)], ["spaces", "                    "]])(
     "NO SECRET (%s): a fallback class is REFUSED without touching the counter, the operator log says why, the secret value is never logged",
     async (_l, value) => {
       env({ VERCEL_ENV: "production", HONE_LIMITER_HMAC_SECRET: value });
@@ -302,6 +302,25 @@ describe("Privacy P1: counters are keyed with HMAC under a server-only secret; n
       expect(logged).toContain("ratelimit_hmac_secret_missing");
       expect(logged).toContain("HONE_LIMITER_HMAC_SECRET"); // the NAME only
       if (value && value.trim()) expect(logged).not.toContain(value);
+    },
+  );
+
+  it("a 43-character secret is accepted (the floor is inclusive)", async () => {
+    const { hmacSecret } = await import("@/lib/rate-limit/outage");
+    expect(hmacSecret({ HONE_LIMITER_HMAC_SECRET: SECRET })).toBe(SECRET);
+    expect(hmacSecret({ HONE_LIMITER_HMAC_SECRET: SECRET.slice(0, 42) })).toBeNull();
+  });
+
+  it.each(["", "Bad_Slug", "UPPER", "-lead", "trail-", "a".repeat(65), "has space", "a/b", "é", "a%20b"])(
+    "E-1: malformed slug %j is a cheap refusal: no studio lookup, no counter call, no operator alert",
+    async (slug) => {
+      env({ VERCEL_ENV: "production", HONE_LIMITER_HMAC_SECRET: SECRET });
+      const { onLimiterUnavailable } = await import("@/lib/rate-limit/outage");
+      const before = errors.length;
+      expect(await onLimiterUnavailable({ kind: "book", routeClass: "public_book", reason: "error", keys: { scope: "book", visitor: "v", studioSlug: slug } })).toEqual({ allowed: false, retryAfterSeconds: 60 });
+      expect(rpc).not.toHaveBeenCalled();
+      expect(studioLookup).not.toHaveBeenCalled();
+      expect(errors.length).toBe(before);
     },
   );
 

@@ -29,7 +29,9 @@ export type OutageResult = { allowed: true } | { allowed: false; retryAfterSecon
 /** Name of the environment variable holding the HMAC secret (name only; the value is never in the repository). */
 export const HMAC_SECRET_ENV = "HONE_LIMITER_HMAC_SECRET";
 /** The secret must be at least this long to count as configured. */
-const HMAC_SECRET_MIN_LENGTH = 16;
+// Privacy Q3: 32 bytes of entropy is 43 base64 characters (`openssl rand -base64 32`); anything shorter is refused, not accepted.
+const HMAC_SECRET_MIN_LENGTH = 43;
+const HMAC_SECRET_MIN_DISTINCT = 12; // rejects a long run of one repeated pattern that is long enough but is not random
 /**
  * NQ-6 (Insurance D-2, open for Sam): one visitor can drain the studio bucket. When true, the visitor bucket is checked FIRST and
  * a visitor-refused attempt does not consume the studio bucket. DEFAULT stays false (every attempt is counted in every bucket)
@@ -128,7 +130,9 @@ function emitOutageEvent(routeClass: string, kind: OutageKind, mode: OutageMode,
 // ---------------------------------------------------------------------------
 export function hmacSecret(env: Record<string, string | undefined> = process.env): string | null {
   const v = env[HMAC_SECRET_ENV];
-  return typeof v === "string" && v.trim().length >= HMAC_SECRET_MIN_LENGTH ? v : null;
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t.length >= HMAC_SECRET_MIN_LENGTH && new Set(t).size >= HMAC_SECRET_MIN_DISTINCT ? v : null;
 }
 /** HMAC-SHA-256 of "scope\nkey" under the secret, hex. Scope-bound so one key never collides across routes. */
 export function counterKey(secret: string, scope: string, key: string): string {
@@ -161,6 +165,10 @@ function rememberOver(h: Hit, retryAfterSeconds: number, now: number): void {
   if (overLimit.size > 5000) overLimit.clear(); // bounded memory
   overLimit.set(overKey(h), now + Math.min(retryAfterSeconds, OVER_LIMIT_CACHE_MAX_SECONDS) * 1000);
 }
+
+/** Hone's slug rule (lib/studios/new-studio.ts, booking settings): lowercase alphanumerics and hyphens, 1-64, no leading/trailing hyphen. */
+const SLUG_SHAPE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+export const isSlugShape = (slug: unknown): slug is string => typeof slug === "string" && slug.length <= 64 && SLUG_SHAPE.test(slug);
 
 const studioIds = new Map<string, { id: string | null; until: number }>();
 /** The studio id for a public slug, or null when no such studio. Throws when the lookup itself fails (the caller then refuses). */
@@ -276,6 +284,12 @@ export async function onLimiterUnavailable(args: {
 
   if (args.kind === "refuse") {
     emitOutageEvent(args.routeClass, args.kind, mode, args.reason, "refused", classOf(args.err));
+    return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
+  }
+
+  // E-1 (Insurance): a malformed slug is a cheap refusal BEFORE anything else: no studio lookup, no counter write, no operator
+  // alert, no studio bucket. It cannot be a real studio, so it is neither an outage signal nor worth a database call.
+  if (args.keys?.studioSlug !== undefined && !isSlugShape(args.keys.studioSlug)) {
     return { allowed: false, retryAfterSeconds: REFUSE_RETRY_SECONDS };
   }
 

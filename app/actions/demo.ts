@@ -66,23 +66,22 @@ export async function submitDemoRequest(
     return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
-  // Service-role write behind the limiter above (DN-29 / Q-F); the anonymous insert policy is retired by 0294.
+  // Service-role COMMAND behind the limiter above (DN-29 / Q-F, Privacy Q1): the anonymous insert policy is retired by 0294 and
+  // the 0213 definer command is the only write path; it also raises the platform lead alert intent in the same transaction.
   const supabase = createAdminClient();
-  const { error } = await supabase.from("demo_requests").insert({
-    name,
-    email,
-    practice_name: emptyToNull(payload.practice_name),
-    location: emptyToNull(payload.location),
-    practice_type: checkEnum(payload.practice_type, PRACTICE_TYPES),
-    practitioner_count: checkEnum(
-      payload.practitioner_count,
-      PRACTITIONER_COUNTS,
-    ),
-    current_tool: emptyToNull(payload.current_tool),
-    notes: emptyToNull(payload.notes),
+  const { data, error } = await supabase.rpc("record_platform_demo_request", {
+    p_name: name,
+    p_email: email,
+    p_practice_name: emptyToNull(payload.practice_name),
+    p_location: emptyToNull(payload.location),
+    p_practice_type: checkEnum(payload.practice_type, PRACTICE_TYPES),
+    p_practitioner_count: checkEnum(payload.practitioner_count, PRACTITIONER_COUNTS),
+    p_current_tool: emptyToNull(payload.current_tool),
+    p_notes: emptyToNull(payload.notes),
   });
+  const result = (Array.isArray(data) ? data[0] : data) as { result?: string } | null | undefined;
 
-  if (error) {
+  if (error || result?.result !== "recorded") {
     return {
       ok: false,
       error: `Your request didn't send. Try again in a moment, or email ${CONTACT_EMAIL}.`,

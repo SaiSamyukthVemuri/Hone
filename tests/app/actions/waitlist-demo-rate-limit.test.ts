@@ -57,7 +57,7 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
 
   it("rate-limit check happens BEFORE the Supabase insert", () => {
     const limitIdx = WAITLIST_CODE.indexOf("limitWaitlistSubmit(");
-    const insertIdx = WAITLIST_CODE.indexOf('.from("waitlist")');
+    const insertIdx = WAITLIST_CODE.indexOf('.rpc("record_platform_early_access_signup"');
     expect(limitIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(limitIdx);
   });
@@ -76,10 +76,8 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
     expect(limitIdx).toBeGreaterThan(validateIdx);
   });
 
-  it("duplicate-as-success handling is unchanged", () => {
-    expect(WAITLIST_CODE).toMatch(
-      /error\.code === PG_UNIQUE_VIOLATION/,
-    );
+  it("duplicate-as-success handling is unchanged: the 0213 command's 'duplicate' result is success, anything else is an error", () => {
+    expect(WAITLIST_CODE).toMatch(/result\.result !== "recorded" && result\.result !== "duplicate"/);
   });
 });
 
@@ -101,7 +99,7 @@ describe("demo request action: rate-limited via shared infrastructure", () => {
 
   it("rate-limit check happens BEFORE the Supabase insert", () => {
     const limitIdx = DEMO_CODE.indexOf("limitDemoRequestSubmit(");
-    const insertIdx = DEMO_CODE.indexOf('.from("demo_requests")');
+    const insertIdx = DEMO_CODE.indexOf('.rpc("record_platform_demo_request"');
     expect(limitIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(limitIdx);
   });
@@ -189,15 +187,17 @@ describe("PR #187 boundaries", () => {
 });
 
 describe("Q-F: the anonymous direct write is closed, so the action is the only write path", () => {
-  for (const [name, code, table] of [
-    ["waitlist", WAITLIST_CODE, "waitlist"],
-    ["demo", DEMO_CODE, "demo_requests"],
+  for (const [name, code, table, command] of [
+    ["waitlist", WAITLIST_CODE, "waitlist", "record_platform_early_access_signup"],
+    ["demo", DEMO_CODE, "demo_requests", "record_platform_demo_request"],
   ] as const) {
-    it(`${name}: inserts through the service-role client, never the visitor's public-key client`, () => {
+    it(`${name}: writes through the 0213 command (which raises the lead alert) on the service-role client, never a direct insert or the visitor's public-key client`, () => {
       expect(code).toContain('import { createAdminClient } from "@/lib/supabase/admin-server";');
       expect(code).not.toContain("@/lib/supabase/server");
       expect(code).not.toMatch(/createClient\(/);
-      expect(code).toMatch(new RegExp(`createAdminClient\\(\\);[\\s\\S]*\\.from\\("${table}"\\)`));
+      expect(code).toMatch(new RegExp(`createAdminClient\\(\\);[\\s\\S]*\\.rpc\\("${command}"`));
+      expect(code).not.toContain(`.from("${table}")`);
+      expect(code).not.toMatch(/\.insert\(/);
     });
   }
 
@@ -206,7 +206,17 @@ describe("Q-F: the anonymous direct write is closed, so the action is the only w
     for (const [policy, table] of [["waitlist_anonymous_insert", "waitlist"], ["demo_requests_anonymous_insert", "demo_requests"]]) {
       expect(sql).toContain(`drop policy if exists "${policy}" on public.${table};`);
       for (const role of ["public", "anon", "authenticated"]) expect(sql).toContain(`revoke all on table public.${table} from ${role};`);
-      expect(sql).toContain(`grant select, insert on table public.${table} to service_role;`);
+      expect(sql).toContain(`revoke all on table public.${table} from service_role;`);
+      expect(sql).not.toMatch(new RegExp(`grant[^;]*insert[^;]*on table public\\.${table} to service_role`));
     }
+    expect(sql).toContain("grant select on table public.waitlist to service_role;");
+    expect(sql).toContain("grant select, update on table public.demo_requests to service_role;");
+  });
+
+  it("the rollback SQL restores both policies and is not under supabase/migrations (nothing applies it automatically)", () => {
+    const down = readFileSync(path.join(process.cwd(), "supabase/rollbacks/0294_rate_limit_fallback_counter.down.sql"), "utf8");
+    expect(down).toContain('create policy "waitlist_anonymous_insert" on public.waitlist for insert to anon, authenticated with check (true);');
+    expect(down).toContain('create policy "demo_requests_anonymous_insert" on public.demo_requests for insert to anon, authenticated with check (true);');
+    expect(down).toContain("drop table if exists public.rate_limit_fallback_counters;");
   });
 });

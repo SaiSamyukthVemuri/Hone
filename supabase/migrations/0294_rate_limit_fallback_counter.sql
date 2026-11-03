@@ -21,14 +21,20 @@
 --   * Q-F: closes the anonymous DIRECT writes to public.waitlist (landing early access) and public.demo_requests. 0004 and 0006 let
 --     anon and authenticated INSERT with `with check (true)`, so anyone holding the public key could post to PostgREST and walk
 --     around every limiter. The two policies are dropped and all table privileges are revoked from public, anon and authenticated;
---     service_role keeps INSERT/SELECT. The app's two actions (app/actions/waitlist.ts, app/actions/demo.ts) now insert through the
---     service-role client AFTER the limiter, which is the only write path.
---
--- DEPLOYMENT ORDER (matters): deploy the application BEFORE applying this migration. The new app inserts with the service role, which
---   works with or without this migration; the OLD app inserts with the public key and would be refused the moment the policies drop.
+--     service_role keeps only what the application still needs: SELECT on both (the /admin pages) and UPDATE on demo_requests (the
+--     admin 'contacted' status). It has NO direct INSERT: the only write path is the 0213 definer commands
+--     record_platform_early_access_signup / record_platform_demo_request (service_role EXECUTE), which also raise the lead alert
+--     in the same transaction. The app's two actions (app/actions/waitlist.ts, app/actions/demo.ts) call them AFTER the limiter.
+
+-- DEPLOYMENT ORDER (matters): deploy the application BEFORE applying this migration. The new app writes through the 0213 commands,
+--   which work with or without this migration; the OLD app inserts with the public key and would be refused the moment the policies drop.
 --   Until the migration is applied, an Upstash outage meets no counter and the app REFUSES the bounded classes (fail closed), it
 --   does not fail open.
---
+-- ROLLBACK ORDER (the reverse, and it matters): once this is applied, rolling the app back BELOW the release that carries the 0213-command
+--   actions makes every landing/demo submission fail and LOSES the lead (the old app inserts with the public key, which this
+--   migration removed). Run supabase/rollbacks/0294_rate_limit_fallback_counter.down.sql FIRST, then roll the app back.
+--   See docs/production/0294-rate-limit-fallback-activation-and-rollback.md.
+
 -- GRANTS. service_role ONLY (counter function). Supabase default privileges grant EXECUTE to anon, authenticated and service_role at create
 -- time, so all of public, anon, authenticated are revoked by name; service_role is granted explicitly (CLAUDE.md section 5).
 
@@ -154,7 +160,9 @@ revoke all on table public.waitlist from authenticated;
 revoke all on table public.demo_requests from public;
 revoke all on table public.demo_requests from anon;
 revoke all on table public.demo_requests from authenticated;
-grant select, insert on table public.waitlist to service_role;
-grant select, insert on table public.demo_requests to service_role;
+revoke all on table public.waitlist from service_role;
+revoke all on table public.demo_requests from service_role;
+grant select on table public.waitlist to service_role;
+grant select, update on table public.demo_requests to service_role;
 
 commit;
