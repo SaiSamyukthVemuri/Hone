@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { catalogByKey } from "./catalog";
 
 // Enforcement point for the Roles permission engine (0287). It asks the database, never the browser or the
@@ -72,7 +73,21 @@ function alertEngineAbsentOnce(): void {
       timestamp: new Date().toISOString(),
     }),
   );
+  // Durable copy (Privacy Y1): a log line can be lost, so one Sentry event per process as well. CLOSED tags only, no studio, user, client
+  // or appointment id, and no free text beyond the fixed message.
+  try {
+    Sentry.captureMessage(ENGINE_ABSENT_SENTRY_MESSAGE, {
+      level: "error",
+      tags: ENGINE_ABSENT_SENTRY_TAGS,
+      fingerprint: ["permission_engine_absent"],
+    });
+  } catch {
+    // The alert must never change what the caller gets.
+  }
 }
+
+export const ENGINE_ABSENT_SENTRY_MESSAGE = "permission_engine_absent";
+export const ENGINE_ABSENT_SENTRY_TAGS = { area: "permissions", reason: "engine_absent" } as const;
 
 export function permissionMode(key: string): PermissionMode {
   const def = catalogByKey.get(key);

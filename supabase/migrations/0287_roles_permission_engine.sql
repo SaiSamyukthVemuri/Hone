@@ -41,8 +41,10 @@ create table public.permission_catalog (
   sensitive             boolean not null default false,
   -- Informational, for the Roles page: what kind of consequence the key carries. The reason RULE keys off `sensitive` only.
   consequence           text check (consequence in ('financial', 'sensitive', 'destructive')),
-  -- Is the key acted on by code in this release? The Roles page edits a key only when this is 'enforced' (absent or unknown = read-only).
-  enforcement           text not null default 'not_yet' check (enforcement in ('enforced', 'observe', 'not_yet'))
+  -- Is the key acted on by code in this release? 'enforced' = both directions take effect; 'deny_only' = turning it off refuses but widening
+  -- is inert behind a legacy check (the page allows only at-or-below the current value); 'observe' = logged only; 'not_yet' = nothing asks it.
+  -- The Roles page edits a key only when this is enforced or deny_only (absent or unknown = read-only).
+  enforcement           text not null default 'not_yet' check (enforcement in ('enforced', 'deny_only', 'observe', 'not_yet'))
 );
 
 create table public.permission_narrowings (
@@ -141,18 +143,18 @@ insert into public.permission_catalog
 values
   ('appt.view_calendar', array['off', 'studio']::text[], null, true, true, false, '{}'::text[], 'studio', 'studio', 'studio', 'studio', null, null, false, null, 'not_yet'),
   ('client.view_directory', array['off', 'studio']::text[], null, true, true, false, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'not_yet'),
-  ('appt.book', array['off', 'own', 'studio']::text[], 'practitioner', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'enforced'),
-  ('appt.move', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'enforced'),
-  ('appt.reassign', array['off', 'studio']::text[], null, true, true, true, array['appt.move']::text[], 'off', 'studio', 'off', 'off', null, null, false, null, 'enforced'),
+  ('appt.book', array['off', 'own', 'studio']::text[], 'practitioner', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'deny_only'),
+  ('appt.move', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'deny_only'),
+  ('appt.reassign', array['off', 'studio']::text[], null, true, true, true, array['appt.move']::text[], 'off', 'studio', 'off', 'off', null, null, false, null, 'deny_only'),
   ('appt.handoff_own', array['off', 'studio']::text[], null, true, false, true, array['appt.view_calendar']::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'not_yet'),
   ('appt.cancel', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'enforced'),
   ('appt.mark_no_show', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'enforced'),
   ('appt.edit_notes', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, 'receptionist_scheduling_notes', false, null, 'enforced'),
   ('appt.complete', array['off', 'own', 'studio']::text[], 'appointment', true, false, true, array['appt.view_calendar', 'clin.view_records']::text[], 'own', 'off', 'own', 'off', 'practitioner_completion', null, false, null, 'observe'),
   ('appt.aftercare_send', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null, 'not_yet'),
-  ('avail.manage_own', array['off', 'studio']::text[], null, true, false, true, '{}'::text[], 'studio', 'off', 'off', 'off', null, null, false, null, 'enforced'),
-  ('avail.manage_others', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'enforced'),
-  ('avail.manage_studio_hours', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'enforced'),
+  ('avail.manage_own', array['off', 'studio']::text[], null, true, false, true, '{}'::text[], 'studio', 'off', 'off', 'off', null, null, false, null, 'deny_only'),
+  ('avail.manage_others', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'deny_only'),
+  ('avail.manage_studio_hours', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'deny_only'),
   ('client.create', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'not_yet'),
   ('client.edit_contact', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, true, 'sensitive', 'not_yet'),
   ('client.view_legal_name', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'off', 'studio', 'off', null, 'receptionist_legal_name', true, 'sensitive', 'not_yet'),
@@ -606,10 +608,10 @@ begin
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
       -- A reason and a confirmation are required when a SENSITIVE key's EFFECTIVE scope rises for any affected role, whether the owner
       -- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.
-      select v_sens || coalesce(jsonb_agg(a.key order by a.key), '[]'::jsonb) into v_sens
-        from jsonb_each_text(v_after_eff -> v_role) a
-        join public.permission_catalog c on c.key = a.key
-       where c.sensitive and public.perm_rank(a.value) > public.perm_rank(v_before_eff -> v_role ->> a.key);
+      select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after_eff -> v_role) e
+        join public.permission_catalog pc on pc.key = e.key
+       where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before_eff -> v_role ->> e.key);
     end loop;
     v_widen := jsonb_array_length(v_sens) > 0;
 
@@ -976,10 +978,6 @@ begin
   if p_new_role = p_expected_current_role then return public.perm_fail('nothing_changed'); end if;
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
   if v_reason is not null and not public.perm_reason_ok(v_reason) then return public.perm_fail('reason_invalid'); end if;
-  -- Moving a receptionist to practitioner widens clinical access, so a meaningful reason is required (Insurance RB-3).
-  if p_expected_current_role = 'receptionist' and p_new_role = 'practitioner' and v_reason is null then
-    return public.perm_fail('reason_required');
-  end if;
 
   if p_expected_current_role = 'practitioner' then
     select pr.user_id, pr.display_name, pr.email, pr.active into v_user, v_name, v_email, v_active
@@ -997,8 +995,14 @@ begin
   end if;
   if v_user is not null and v_user = auth.uid() then return public.perm_fail('self_change'); end if;
   if not v_active then return public.perm_fail('not_active'); end if;
+  -- (After the membership checks, so a refusal never depends on the reason.) Moving a receptionist to practitioner widens clinical access, so a meaningful reason is required (Insurance RB-3).
+  if p_expected_current_role = 'receptionist' and p_new_role = 'practitioner' and v_reason is null then
+    return public.perm_fail('reason_required');
+  end if;
 
   if p_expected_current_role = 'practitioner' then
+    -- KNOWN GAP (Insurance RF-1), harmless while the staff_role_change gate is off: an appointment INSERTED after this count is not
+    -- locked. Before the gate is turned on, lock the practitioner membership row and re-check after the update (see docs/production/rollback-0287-roles-engine.md).
     -- Lock the practitioner's future appointments, then count EVERY one that is not cancelled (confirmed, completed, no_show), so a
     -- concurrent change to one of them cannot slip past the check (Insurance RB-5).
     select count(*) into v_upcoming from (

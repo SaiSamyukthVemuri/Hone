@@ -61,7 +61,7 @@ export type DecisionRef = DecisionId | QuestionId;
 //   not_built        the capability does not exist in the product today, so nothing can be preserved
 export type SnapshotBasis = "verified" | "source" | "approved_policy" | "not_built";
 
-export type EnforcementState = "enforced" | "observe" | "not_yet";
+export type EnforcementState = "enforced" | "deny_only" | "observe" | "not_yet";
 
 export type PermissionDef = {
   readonly key: string;
@@ -163,7 +163,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    enforcement: "enforced",
+    enforcement: "deny_only",
   },
   {
     key: "appt.move",
@@ -179,7 +179,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    enforcement: "enforced",
+    enforcement: "deny_only",
     note: "Today the UI offers Move on colleagues' appointments and the database refuses it; the snapshot is the database's value.",
   },
   {
@@ -195,7 +195,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    enforcement: "enforced",
+    enforcement: "deny_only",
     note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (decided, Sam 3 Nov, Q17 / R0-Q3); the Own scope was removed from this key (OPS technical call, 3 Nov), so Off or Studio only.",
   },
   {
@@ -312,7 +312,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    enforcement: "enforced",
+    enforcement: "deny_only",
     note: "Settled (OPS, 3 Nov, DN-13): ON for practitioners in a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot stays Off (today's approved access) and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
   },
   {
@@ -328,7 +328,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    enforcement: "enforced",
+    enforcement: "deny_only",
   },
   {
     key: "avail.manage_studio_hours",
@@ -343,7 +343,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    enforcement: "enforced",
+    enforcement: "deny_only",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes the hours the studio can be booked in. Appointments already booked are not moved or cancelled.",
     note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
@@ -1768,7 +1768,10 @@ export const MANDATORY: readonly string[] = [
 
 // Is a key's setting acted on by the code in this release? The Roles page shows `not_yet` keys as "Not enforced yet" and not editable
 // (Privacy X3/H3): saving a switch that nothing reads would otherwise look like control.
-//   enforced  a server action, page or signer asks the key and a denial refuses (R4, #1341).
+//   enforced  a server action, page or signer asks the key and BOTH directions take effect: turning it off refuses, turning it on grants.
+//   deny_only the key is asked and turning it off refuses, but a legacy check stands in front (the practitioner-only action path, the
+//             owner-only availability floor, the owner-only reassign refusal), so WIDENING it grants nothing yet. The Roles page lets it be
+//             set at or below the studio's current value and disables wider options ("Widening arrives in a later release").
 //   observe   asked, but only logged: the snapshot is an approved policy the database does not enforce yet (appt.complete).
 //   not_yet   nothing asks it in this release.
 // tests/lib/permissions/enforcement-wiring.test.ts proves the keys marked here equal the keys the app actually asks.
