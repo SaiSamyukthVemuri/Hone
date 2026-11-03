@@ -32,7 +32,8 @@ beforeAll(async () => {
   SAVED = (await adminQuery("select key, released_at::text released_at, release_tag from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)])).rows;
   await adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
 });
-const releaseNow = (tag = "ACT-TEST") => adminQuery("insert into public.permission_key_release(key,released_at,release_tag) select unnest($1::text[]), now(), $2", [KEYS.map((k) => k.key), tag]);
+const clearReleases = () => adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
+const releaseNow = async (tag = "ACT-TEST") => { await clearReleases(); return adminQuery("insert into public.permission_key_release(key,released_at,release_tag) select unnest($1::text[]), now(), $2", [KEYS.map((k) => k.key), tag]); };
 const dated = (s: SeededStudio, key: string, scope: string, ageDays: number) =>
   adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope,set_at) values ($1,'practitioner',$2,$3, now() - ($4 || ' days')::interval) on conflict (studio_id,role,key) do update set scope=excluded.scope, set_at=excluded.set_at", [s.studioId, key, scope, String(ageDays)]);
 
@@ -106,6 +107,7 @@ describe("activation rule", () => {
 
   it("a studio created AFTER a key's release takes the approved new-studio default; one created before does not until activation", async () => {
     const [k] = KEYS;
+    await clearReleases();
     await adminQuery("insert into public.permission_key_release(key,released_at,release_tag) values ($1, now() - interval '1 hour', 'ACT-OLD')", [k.key]);
     const fresh = await seedStudio("act4");
     const m = await seedMember(fresh, "act4");
