@@ -7,8 +7,9 @@
 //   base         a fixed baseline of the staff role, not a toggle
 //   not_staff    not a staff permission (anonymous, client token, portal, service, platform admin); governed by safeguards
 //   owner_only   owner-only this release (Sam, DN-4b), no key
+//   operator_only  the platform operator only, never the studio owner (DN-16)
 // `team: true` marks rows the audit left open or that Sam's groups 1 and 2 settled, mapped by the Team lane for reviewers to confirm.
-export type CoverageClass = "key" | "safeguard" | "fixed_owner" | "base" | "not_staff" | "owner_only";
+export type CoverageClass = "key" | "safeguard" | "fixed_owner" | "base" | "not_staff" | "owner_only" | "operator_only";
 export type CoverageRow = {
   readonly label: string; readonly cls: CoverageClass; readonly keys: readonly string[]; readonly dn?: readonly string[]; readonly team?: true;
   // Catalog keys the audit matrix recommends for this row. Keys must cover them unless `departs` gives the decided reason.
@@ -135,7 +136,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "SCH-9": { label: "Mark no-show (after end)", cls: "key", keys: ["appt.mark_no_show"], matrix: ["appt.mark_no_show"] },
   "SCH-10": { label: "Send or resend postcare (aftercare) email", cls: "key", keys: ["appt.aftercare_send"], matrix: ["appt.aftercare_send"] },
   "SCH-11": { label: "Read outcome repair state", cls: "key", keys: ["appt.view_calendar"], matrix: ["appt.view_calendar"] },
-  "SCH-12": { label: "Revert a completed / no-show / cancelled outcome (72 h)", cls: "fixed_owner", keys: [], dn: ["DN-12"], team: true },
+  "SCH-12": { label: "Revert a completed / no-show / cancelled outcome", cls: "fixed_owner", keys: [], dn: ["DN-12"], team: true },
   "SCH-13": { label: "Edit appointment notes", cls: "key", keys: ["appt.edit_notes", "client.edit_health_fields"], dn: ["DN-5"], team: true, matrix: ["appt.edit_notes"] },
   "AV-1": { label: "Edit studio weekly hours, date overrides, blockouts", cls: "key", keys: ["avail.manage_studio_hours"], dn: ["DN-13"], team: true, matrix: ["avail.manage_others"], departs: "Sam's DN-13 decision: studio-wide opening hours are their own key, separate from colleagues' availability" },
   "AV-2": { label: "Per-practitioner hours, overrides, reset, customize week", cls: "key", keys: ["avail.manage_own"], matrix: ["avail.manage_own"] },
@@ -198,7 +199,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "GC-8": { label: "Studio destination: mode, scope upgrade, provision dedicated, select owned, designate self as st", cls: "owner_only", keys: [] },
   "GC-9": { label: "Push studio appointments to the studio calendar owner's Google", cls: "safeguard", keys: [], dn: ["G7"], team: true, enforcement: "R5: no new sync to a removed or deactivated owner; active authorised owner required; owner notified (NARROWINGS deactivated_calendar_owner)" },
   "GC-10": { label: "Read event-link state", cls: "base", keys: [] },
-  "GC-11": { label: "Turn on the Google studio flags", cls: "safeguard", keys: [], dn: ["DN-16"], team: true, enforcement: "R5: operator-only; a database guard on the Google studio flags; owners keep connect and disconnect (NARROWINGS google_flags_operator_only, DN-16)" },
+  "GC-11": { label: "Turn on the Google studio flags", cls: "operator_only", keys: [], dn: ["DN-16"], team: true, enforcement: "R5: operator-only; a database guard on the Google studio flags; owners keep connect and disconnect (NARROWINGS google_flags_operator_only, DN-16)" },
   "GC-12": { label: "Global worker switch; outbox, control, metric, OAuth-state tables", cls: "safeguard", keys: [] },
   "GC-13": { label: "Calendar sync and reconcile crons", cls: "safeguard", keys: [] },
   "MA-1": { label: "Register a studio machine", cls: "owner_only", keys: [] },

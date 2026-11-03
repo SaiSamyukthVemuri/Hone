@@ -60,60 +60,60 @@ with a test, so there is never a second copy of a default. The table below is **
 | `appt.view_calendar` (fixed) | Off / Studio | – | Studio / Studio | Studio / Studio | source | – | – |
 | `appt.book` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Own / Off | source | – | – |
 | `appt.move` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Own / Off | source | – | – |
-| `appt.reassign` | Off / Own / Studio | `appt.move` | Off / Studio | Off / Off | source | – | – |
+| `appt.reassign` | Off / Own / Studio | `appt.move` | Off / Studio | Off / Off | source | – | Q-17 (coverage only) |
 | `appt.cancel` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `appt.mark_no_show` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `appt.edit_notes` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | receptionist: R4 has confirmed from source that scheduling notes are a different field from clinical notes, or limited the receptionist view to a scheduling-only field (Privacy F6) | – |
-| `appt.complete` (receptionist not offered) | Off / Own / Studio | `appt.view_calendar`, `clin.view_records` | Own / Off | Own / Off | approved_policy | practitioner: #1315 and the 0277 apply (the assigned-only completion rule) are in production | – |
+| `appt.complete` (receptionist not offered) | Off / Own / Studio | `appt.view_calendar`, `clin.view_records` | Own / Off | Own / Off | approved_policy | practitioner: #1315 and the 0277 apply (the assigned-only completion rule) are in production | Q-16 |
 | `appt.aftercare_send` | Off / Own / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | – |
 
 ### Clients and identity
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `client.view_directory` (fixed) | Off / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
+| `client.view_directory` (fixed) | Off / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | Q-22 (coverage only) |
 | `client.create` | Off / Studio | – | Studio / Studio | Studio / Off | source | – | – |
 | `client.edit_contact` | Off / Studio | – | Studio / Studio | Studio / Off | source | – | – |
 | `client.view_legal_name` | Off / Studio | – | Studio / Off | Studio / Off | approved_policy | receptionist: privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows "Not available yet", not a switch | – |
-| `client.edit_legal_name` | Off / Studio | `client.view_legal_name` | Studio / Off | Studio / Off | source | practitioner: Stale-write protection and versions for legal-name edits (#1328 / M1) are in production; receptionist: privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows "Not available yet", not a switch | – |
+| `client.edit_legal_name` | Off / Studio | `client.view_legal_name` | Studio / Off | Studio / Off | source | practitioner: Stale-write protection and versions for legal-name edits (#1328 / M1) are in production; receptionist: privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows "Not available yet", not a switch | Q-15 (coverage only) |
 | `client.merge` | Off / Studio | `client.edit_contact`, `client.view_legal_name` | Off / Off | Off / Off | not_built | – | – |
 | `client.import` | Off / Studio | `client.create` | Off / Off | Off / Off | source | – | – |
-| `client.view_dob_address` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `client.edit_dob_address` (receptionist not offered) | Off / Studio | `client.view_dob_address` | Studio / Off | Studio / Off | source | – | – |
-| `client.view_allergies_cautions` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `client.edit_allergies_cautions` (receptionist not offered) | Off / Studio | `client.view_allergies_cautions` | Studio / Off | Studio / Off | source | – | – |
-| `client.view_budget_goals` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `client.edit_budget_goals` (receptionist not offered) | Off / Studio | `client.view_budget_goals` | Studio / Off | Studio / Off | source | – | – |
-| `client.view_personal_notes` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `client.edit_personal_notes` (receptionist not offered) | Off / Studio | `client.view_personal_notes` | Studio / Off | Studio / Off | source | – | – |
-| `client.view_tags` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `client.edit_tags` (receptionist not offered) | Off / Studio | `client.view_tags` | Studio / Off | Studio / Off | source | – | – |
-| `client.view_health_fields` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `client.edit_health_fields` (receptionist not offered) | Off / Studio | `client.view_health_fields` | Studio / Off | Studio / Off | source | – | – |
+| `client.view_dob_address` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.edit_dob_address` (receptionist not offered) | Off / Studio | `client.view_dob_address` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.view_allergies_cautions` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.edit_allergies_cautions` (receptionist not offered) | Off / Studio | `client.view_allergies_cautions` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.view_budget_goals` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.edit_budget_goals` (receptionist not offered) | Off / Studio | `client.view_budget_goals` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.view_personal_notes` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.edit_personal_notes` (receptionist not offered) | Off / Studio | `client.view_personal_notes` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.view_tags` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.edit_tags` (receptionist not offered) | Off / Studio | `client.view_tags` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.view_health_fields` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-4 |
+| `client.edit_health_fields` (receptionist not offered) | Off / Studio | `client.view_health_fields` | Studio / Off | Studio / Off | source | – | Q-4 |
 
 ### Clinical records
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
 | `clin.view_records` | Off / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | – |
-| `clin.edit_records` (receptionist not offered) | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | – |
+| `clin.edit_records` (receptionist not offered) | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | Q-16 |
 | `clin.view_photos` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `clin.upload_photos` (receptionist not offered) | Off / Studio | `clin.view_photos` | Studio / Off | Studio / Off | source | – | – |
+| `clin.upload_photos` (receptionist not offered) | Off / Studio | `clin.view_photos` | Studio / Off | Studio / Off | source | – | Q-16 |
 | `clin.view_intake` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
 | `clin.view_intake_status` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
-| `clin.edit_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | – |
-| `clin.review_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | – |
-| `clin.print_record` (receptionist not offered) | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | – |
+| `clin.edit_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | Q-16 |
+| `clin.review_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | Q-16 |
+| `clin.print_record` (receptionist not offered) | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | Q-16 |
 | `clin.edit_consent_templates` | Off / Studio | – | Off / Off | Off / Off | approved_policy | – | – |
 
 ### Communications
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `comm.send_routine` | Off / Own / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | – |
+| `comm.send_routine` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `comm.send_intake_link` | Off / Studio | `comm.send_routine`, `clin.view_intake_status` | Studio / Off | Studio / Off | source | – | – |
 | `comm.send_portal_link` | Off / Studio | `comm.send_routine` | Studio / Off | Studio / Off | source | – | – |
-| `comm.send_portal_reply` | Off / Studio | `comm.send_routine`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
+| `comm.send_portal_reply` | Off / Studio | `comm.send_routine`, `client.view_directory` | Studio / Off | Studio / Off | source | – | Q-6 |
 | `comm.bulk_message` | Off / Studio | `comm.send_routine`, `client.view_directory` | Off / Off | Off / Off | not_built | – | – |
 
 ### Payments
@@ -132,10 +132,10 @@ with a test, so there is never a second copy of a default. The table below is **
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
 | `price.appointment` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
-| `price.view_client_prices` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
+| `price.view_client_prices` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | Q-23 (coverage only) |
 | `price.service_list` | Off / Studio | – | Studio / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
-| `price.fee_amounts` | Off / Studio | – | Studio / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
-| `price.edit_client_prices` | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | – |
+| `price.fee_amounts` | Off / Studio | – | Studio / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | Q-1 (coverage only), Q-2 (coverage only), Q-14 (coverage only) |
+| `price.edit_client_prices` | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | Q-7 |
 
 ### Availability
 
@@ -143,7 +143,7 @@ with a test, so there is never a second copy of a default. The table below is **
 |---|---|---|---|---|---|---|---|
 | `avail.manage_own` (receptionist not offered) | Off / Studio | – | Studio / Off | Off / Off | source | – | – |
 | `avail.manage_others` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
-| `avail.manage_studio_hours` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
+| `avail.manage_studio_hours` | Off / Studio | – | Off / Off | Off / Off | source | – | Q-24 (coverage only) |
 
 ### Reports
 
@@ -152,7 +152,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `rep.studio_totals` | Off / Studio | `pay.view_appointment` | Off / Off | Off / Off | source | – | – |
 | `rep.financial_reports` | Off / Studio | `pay.view_appointment` | Off / Off | Off / Off | source | – | – |
 | `rep.lifetime_spend` | Off / Studio | `pay.view_appointment` | Off / Off | Off / Off | approved_policy | – | – |
-| `rep.bulk_export` | Off / Studio | `client.view_directory` | Off / Off | Off / Off | source | – | – |
+| `rep.bulk_export` | Off / Studio | `client.view_directory` | Off / Off | Off / Off | source | – | Q-19 (coverage only) |
 | `rep.audit_log_view` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
 
 ### Waitlist operations
@@ -163,7 +163,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `wl.add_entry` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 | `wl.import_entry` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 | `wl.withdraw_entry` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
-| `wl.manage_queue` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
+| `wl.manage_queue` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | Q-8 (coverage only) |
 | `wl.offer_booking` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 | `wl.set_availability` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 | `wl.record_sms_consent` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
@@ -172,22 +172,22 @@ with a test, so there is never a second copy of a default. The table below is **
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `wlrules.invitation_rounds` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
-| `wlrules.policy_and_text` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
+| `wlrules.invitation_rounds` | Off / Studio | – | Off / Off | Off / Off | source | – | Q-24 (coverage only) |
+| `wlrules.policy_and_text` | Off / Studio | – | Off / Off | Off / Off | source | – | Q-24 (coverage only) |
 
 ### Accepting new clients
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `admit.change_policy` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
-| `admit.booking_rules` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
+| `admit.change_policy` | Off / Studio | – | Off / Off | Off / Off | source | – | Q-13, Q-24 (coverage only) |
+| `admit.booking_rules` | Off / Studio | – | Off / Off | Off / Off | source | – | Q-12, Q-24 (coverage only) |
 
 ### Safety records
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `records.view_sterilisation_disinfection` | Off / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | – |
-| `records.log_sterilisation_disinfection` | Off / Studio | `records.view_sterilisation_disinfection` | Studio / Off | Studio / Off | source | – | – |
+| `records.view_sterilisation_disinfection` | Off / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | Q-10 |
+| `records.log_sterilisation_disinfection` | Off / Studio | `records.view_sterilisation_disinfection` | Studio / Off | Studio / Off | source | – | Q-10 |
 <!-- catalog:end -->
 
 ## Decisions applied (Sam, 2 Nov) and the coverage map
@@ -212,7 +212,8 @@ Groups 1 to 7 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in th
 - **Payments (group 5, 3 Nov):** card-authorisation consent is read-only through `pay.view_appointment` and its scope, only for that payment, with no intake or clinical access (DN-10). `price.edit_client_prices` is OFF for both roles and owner-configurable; reads follow `price.view_client_prices`; booked appointments keep their price (DN-11). Requiring a card to book is an owner-only setting (DN-23a). A late-cancellation fee needs an owner-configured window with no invented default, is never auto-activated, is decided on the server from the policy snapshot at booking, and also needs `pay.charge_saved_card`; the database part is held migration 0293, inside R3 (DN-23b).
 - **Deletion, data rights, rollout (group 6, 3 Nov):** archive, delete and restore become owner-only only at the enforcement release, with advance notice, recoverable, nothing deleted by the rollout (DN-25). Permanent erasure: workflow designed below, execution unavailable (DN-18). Owner export is complete minus credentials, payment secrets, other studios' data and platform security, with short-lived owner-scoped links; staff exports stay OFF (DN-19). The portal is an owner-only setting, ON for existing studios; OFF blocks existing links and sessions and keeps records (DN-20). Receptionist legal-name keys show "Not available yet" until privacy enforcement and access logging are verified (DN-26).
 - **Platform and operations (group 7, 3 Nov):** Google studio flags are operator-only behind a database guard; a removed or deactivated calendar owner gets no new sync and the owner is told to reconnect; when the rate limiter is down token and link operations refuse with a retry message and public booking uses a bounded fallback; anonymous waitlist and demo writes go through validated, rate-limited server endpoints; SMS STOP is unchanged pending a provider investigation. All of these are in `NARROWINGS` or the mandatory list.
-- **Still pending:** none. `01-ops/ROLES-DECISIONS-LOG.md` is the single authoritative log; open ambiguities are listed in it and reported to OPS, never defaulted.
+- **Decisions:** DN-1 to DN-30 are all decided (`01-ops/ROLES-DECISIONS-LOG.md` is the authority).
+- **Open questions (`OPEN_QUESTIONS`, Q-1 to Q-21 from OPS' reconciliation, Q-22 to Q-24 raised from its section b):** not decided and not defaulted. A key flagged `pendingDecision` with a Q id ships with the existing-studio snapshot for every studio; a key flagged `touchedByDecision` keeps its value and is only marked. Settled by OPS on 3 Nov and no longer open: receptionist routine messaging is ON for a new studio (C.4); own availability is ON for practitioners in a new studio and Off for existing studios (DN-13); Google studio flags are operator-only; no 72-hour window is stated for undoing an outcome.
 - **Coverage map:** `lib/permissions/coverage.ts` maps all 258 rows of the audit's current-access matrix to a key or a fixed rule (key, safeguard, fixed owner-only, fixed baseline, not a staff permission, owner-only this release). Tests fail if a row is unmapped, a named key does not exist, or a key is unreachable (the exceptions are the four capabilities the product does not have yet: `client.merge`, `comm.bulk_message`, `rep.bulk_export`, `clin.view_id_portrait`). Rows marked `team` were mapped by this lane where the audit left them open, for reviewers to confirm.
 
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, FIXED_OWNER_ONLY, MANDATORY, NARROWINGS, catalogByKey, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
 import { COVERAGE, COVERAGE_ROW_COUNT } from "@/lib/permissions/coverage";
-import { DECISIONS } from "@/lib/permissions/decisions";
+import { DECISIONS, OPEN_QUESTIONS } from "@/lib/permissions/decisions";
 
 const DEFS = CATALOG as readonly PermissionDef[];
 
@@ -108,11 +108,14 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
     // After Sam's group 6 no key is pending; the invariant stays so any key flagged later is pinned to today's value.
     for (const d of pinned) for (const r of ROLES) expect(d.newStudioDefault[r], `${d.key}:${r}`).toBe(d.existingSnapshot[r]);
   });
-  it("catalog flags only cite known, still-pending decisions; a decided decision leaves no flag behind", () => {
+  it("catalog flags cite only known decisions (DN) that are still pending, or known OPEN questions (Q); a decided DN leaves no flag behind", () => {
     for (const d of DEFS) {
       for (const id of [...(d.pendingDecision ?? []), ...(d.touchedByDecision ?? [])]) {
-        expect(DECISIONS[id], `${d.key} cites unknown ${id}`).toBeDefined();
-        expect(DECISIONS[id].status, `${d.key} still flagged by decided ${id}`).toBe("pending");
+        if (id.startsWith("Q-")) expect(OPEN_QUESTIONS[id as keyof typeof OPEN_QUESTIONS], `${d.key} cites unknown ${id}`).toBeDefined();
+        else {
+          expect(DECISIONS[id as keyof typeof DECISIONS], `${d.key} cites unknown ${id}`).toBeDefined();
+          expect(DECISIONS[id as keyof typeof DECISIONS].status, `${d.key} still flagged by decided ${id}`).toBe("pending");
+        }
       }
     }
   });
@@ -137,9 +140,47 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
     for (const d of DEFS.filter((x) => x.group === "waitlist_rules" || x.group === "accepting_new_clients")) {
       expect(d.newStudioDefault, d.key).toEqual({ practitioner: "off", receptionist: "off" });
       expect(d.offeredTo, d.key).toEqual({ practitioner: true, receptionist: true });
-      expect(d.pendingDecision, d.key).toBeUndefined();
+      expect(d.pendingDecision ?? [], d.key).not.toEqual(expect.arrayContaining([expect.stringMatching(/^DN-/)]));
     }
     expect(catalogByKey.get("avail.manage_studio_hours")!.newStudioDefault).toEqual({ practitioner: "off", receptionist: "off" });
     expect(catalogByKey.get("avail.manage_others")!.newStudioDefault).toEqual({ practitioner: "off", receptionist: "off" });
+  });
+});
+
+describe("open questions (OPS reconciliation, 3 Nov): flagged, never defaulted", () => {
+  const NARROW = new Set(NARROWINGS.map((n) => n.id));
+  const FIXED = new Set(FIXED_OWNER_ONLY.map((f) => f.id));
+  it("there are 19 open questions from the reconciliation plus the three Team raised from its section b", () => {
+    const ids = Object.keys(OPEN_QUESTIONS).map((q) => Number(q.slice(2)));
+    expect(ids.filter((n) => n <= 21)).toHaveLength(19);
+    expect(ids.filter((n) => n > 21)).toEqual([22, 23, 24]);
+  });
+  it("every open question names a surface that exists: a key, FEE_AMOUNT_READ, a narrowing or a fixed owner-only item", () => {
+    for (const [q, e] of Object.entries(OPEN_QUESTIONS)) {
+      expect(e.surface.length, q).toBeGreaterThan(0);
+      for (const sf of e.surface) expect(catalogByKey.has(sf) || sf === "FEE_AMOUNT_READ" || NARROW.has(sf) || FIXED.has(sf), `${q} -> ${sf}`).toBe(true);
+    }
+  });
+  it("every open question that names a key is flagged on that key", () => {
+    for (const [q, e] of Object.entries(OPEN_QUESTIONS)) {
+      for (const sf of e.surface) {
+        const def = catalogByKey.get(sf);
+        if (def) expect([...(def.pendingDecision ?? []), ...(def.touchedByDecision ?? [])], `${sf} should carry ${q}`).toContain(q);
+      }
+    }
+  });
+  it("settled by OPS (3 Nov): receptionist routine messaging is ON for a new studio, existing studios keep today's access", () => {
+    const k = catalogByKey.get("comm.send_routine")!;
+    expect(k.newStudioDefault).toEqual({ practitioner: "studio", receptionist: "studio" });
+    expect(k.existingSnapshot).toEqual({ practitioner: "studio", receptionist: "off" });
+    expect(k.pendingDecision).toBeUndefined();
+  });
+  it("settled: own availability is Off for existing studios and ON for a new one; Google flags are operator-only, not owner-only; no 72-hour window is stated", () => {
+    const k = catalogByKey.get("avail.manage_own")!;
+    expect(k.existingSnapshot.practitioner).toBe("off");
+    expect(k.newStudioDefault.practitioner).toBe("studio");
+    expect(COVERAGE["GC-11"]!.cls).toBe("operator_only");
+    expect(COVERAGE["SCH-12"]!.label).not.toMatch(/72/);
+    expect(JSON.stringify(FIXED_OWNER_ONLY.find((f) => f.id === "revert_recorded_outcome"))).not.toMatch(/72/);
   });
 });

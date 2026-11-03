@@ -48,6 +48,10 @@ export type Phase = (typeof PHASES)[number];
 // VALUE is not guessed. Every studio (new or existing) gets today's behaviour (the existing-studio snapshot) until the decision is
 // made, and the page marks it. `touchedByDecision` means a decision concerns what the key covers but does NOT decide its value.
 export type DecisionId = `DN-${number}`;
+// An open question OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c, plus Q-22..Q-24 raised from its section b).
+// A key flagged with one is built, but its value is not backed by a decision, so it is pinned like a pending DN.
+export type QuestionId = `Q-${number}`;
+export type DecisionRef = DecisionId | QuestionId;
 
 // How well the snapshot value is known. A reviewer should look hardest at anything that is not "verified".
 //   verified         proved at runtime on an isolated copy of the production chain
@@ -75,8 +79,8 @@ export type PermissionDef = {
   readonly affectsFutureStudioBusiness?: boolean; // studio-wide price/fee settings are labelled as such on the page
   readonly sensitive?: boolean; // newly enabling it is highlighted in the Reset-to-defaults preview (financial, clinical, identity, bulk)
   readonly shipGate?: Readonly<Partial<Record<Role, GateId>>>; // effectively OFF for that role until the gate is satisfied (see GATES)
-  readonly pendingDecision?: readonly DecisionId[]; // value pinned to the snapshot for every studio until decided
-  readonly touchedByDecision?: readonly DecisionId[]; // informational: a decision touches this key's coverage, not its value
+  readonly pendingDecision?: readonly DecisionRef[]; // value pinned to the snapshot for every studio until decided
+  readonly touchedByDecision?: readonly DecisionRef[]; // informational: a decision touches this key's coverage, not its value
   readonly note?: string;
 };
 
@@ -120,6 +124,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_directory",
+    touchedByDecision: ["Q-22"],
     group: "clients_identity",
     label: "View and search the client list and contact details",
     description: "See and search clients and their contact details. A role without the legal-name key sees the preferred name, otherwise 'Name on file'.",
@@ -166,6 +171,7 @@ export const CATALOG = [
   },
   {
     key: "appt.reassign",
+    touchedByDecision: ["Q-17"],
     group: "appointments",
     label: "Reassign appointments",
     description: "Change which practitioner an appointment is assigned to. Own = hand one of your own appointments to a colleague.",
@@ -229,6 +235,7 @@ export const CATALOG = [
   },
   {
     key: "appt.complete",
+    pendingDecision: ["Q-16"],
     group: "appointments",
     label: "Complete treatments",
     description:
@@ -275,7 +282,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Studio is the shipped default for a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot is Off and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
+    note: "Settled (OPS, 3 Nov, DN-13): ON for practitioners in a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot stays Off (today's approved access) and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
   },
   {
     key: "avail.manage_others",
@@ -293,6 +300,7 @@ export const CATALOG = [
   },
   {
     key: "avail.manage_studio_hours",
+    touchedByDecision: ["Q-24"],
     group: "availability",
     label: "Manage the studio's opening hours",
     description: "Change the studio-wide weekly opening hours and overrides. Separate from managing a colleague's availability and from managing your own.",
@@ -305,7 +313,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     affectsFutureStudioBusiness: true,
-    note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate and is already ON for practitioners.",
+    note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
   },
 
   // ─────────────────────────── clients and identity ───────────────────────────
@@ -358,6 +366,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_legal_name",
+    touchedByDecision: ["Q-15"],
     group: "clients_identity",
     label: "Edit a client's legal name",
     description: "Change the legal name through the protected identity flow. Separate from viewing; enabling one never grants the other.",
@@ -423,6 +432,7 @@ export const CATALOG = [
   },
   {
     key: "clin.edit_records",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Edit clinical records",
     description: "Write and edit charts, with authorship recorded and earlier versions preserved. Separate from deleting, which stays owner-only.",
@@ -454,6 +464,7 @@ export const CATALOG = [
   },
   {
     key: "clin.upload_photos",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Upload treatment photos",
     description: "Add treatment photos. Deleting photos stays owner-only.",
@@ -500,6 +511,7 @@ export const CATALOG = [
   },
   {
     key: "clin.edit_intake",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Edit intake answers",
     description: "Change a client's intake answers on their behalf, with history.",
@@ -516,6 +528,7 @@ export const CATALOG = [
   },
   {
     key: "clin.review_intake",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Review intake",
     description: "Mark a client's intake reviewed and save review notes. Separate from changing the answers.",
@@ -532,6 +545,7 @@ export const CATALOG = [
   },
   {
     key: "clin.print_record",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Print a client's clinical record",
     description: "Print the client's clinical notes view.",
@@ -572,13 +586,13 @@ export const CATALOG = [
     scopes: SCOPED,
     own: ASSIGNED,
     requires: [CALENDAR],
-    newStudioDefault: pair(["studio", "off"]),
+    newStudioDefault: pair(["studio", "studio"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. The shipped default for a NEW studio is held equal to that snapshot until Sam confirms his section 4 default for it. Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
+    note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. A NEW studio gets Sam's section C.4 default: ON for both staff roles (practitioner: whole studio, matching today's access so no studio gains or loses; receptionist: whole studio). Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
   },
   {
     key: "comm.send_intake_link",
@@ -612,6 +626,7 @@ export const CATALOG = [
   },
   {
     key: "comm.send_portal_reply",
+    pendingDecision: ["Q-6"],
     group: "communications",
     label: "Reply to a client in the portal",
     description: "Send a staff message or reply in a client's portal thread, within the clients you may see.",
@@ -776,6 +791,7 @@ export const CATALOG = [
   },
   {
     key: "price.view_client_prices",
+    touchedByDecision: ["Q-23"],
     group: "pricing",
     label: "See a client's special prices",
     description: "Read the per-client prices needed for authorized work (the client_pricing table). Closes M-4 together with the payment view.",
@@ -814,6 +830,7 @@ export const CATALOG = [
   },
   {
     key: "price.fee_amounts",
+    touchedByDecision: ["Q-1", "Q-2", "Q-14"],
     group: "pricing",
     label: "Change studio fee amounts",
     description: "Change the no-show and late-cancellation fee amounts.",
@@ -886,6 +903,7 @@ export const CATALOG = [
   },
   {
     key: "rep.bulk_export",
+    touchedByDecision: ["Q-19"],
     group: "reports",
     label: "Export or print bulk data",
     description: "Export client-list and schedule style outputs in bulk. Contains only fields and rows the actor's own keys would show on screen. NEVER the whole-studio data export or backup, which is fixed owner-only. Safeguarded: confirmation, row limits, audit.",
@@ -991,6 +1009,7 @@ export const CATALOG = [
   },
   {
     key: "wl.manage_queue",
+    touchedByDecision: ["Q-8"],
     group: "waitlist_operations",
     label: "Claim, release and requeue entries",
     description: "Claim, release, expire, requeue or close an unbooked entry, and claim the next few.",
@@ -1060,6 +1079,7 @@ export const CATALOG = [
   // ───────────────────────────── waitlist rules and automation ─────────────────────────────
   {
     key: "wlrules.invitation_rounds",
+    touchedByDecision: ["Q-24"],
     group: "waitlist_rules",
     label: "Start and close invitation rounds",
     description: "Open an invitation round with an allowance and close invitations.",
@@ -1076,6 +1096,7 @@ export const CATALOG = [
   },
   {
     key: "wlrules.policy_and_text",
+    touchedByDecision: ["Q-24"],
     group: "waitlist_rules",
     label: "Waitlist policy, preference grants and text",
     description: "Change the waitlist admission policy, preference grants, ordered-claim rules and the waitlist wording toggles.",
@@ -1093,6 +1114,8 @@ export const CATALOG = [
   // ───────────────────────────── accepting new clients ─────────────────────────────
   {
     key: "admit.change_policy",
+    touchedByDecision: ["Q-24"],
+    pendingDecision: ["Q-13"],
     group: "accepting_new_clients",
     label: "Change the new-client admission policy",
     description: "Permission to change the admission policy. The studio's current Open, Waitlist or Closed setting is a separate studio setting.",
@@ -1109,6 +1132,8 @@ export const CATALOG = [
   },
   {
     key: "admit.booking_rules",
+    touchedByDecision: ["Q-24"],
+    pendingDecision: ["Q-12"],
     group: "accepting_new_clients",
     label: "Booking window and new-client booking rules",
     description: "How far ahead clients may book and the rules for public new-client booking.",
@@ -1126,6 +1151,7 @@ export const CATALOG = [
   // ───────────────────────────── single capabilities with an open decision ─────────────────────────────
   {
     key: "price.edit_client_prices",
+    pendingDecision: ["Q-7"],
     group: "pricing",
     label: "Set a client's own price",
     description: "Write a per-client price. Reading them is price.view_client_prices.",
@@ -1146,6 +1172,7 @@ export const CATALOG = [
   // not offered to receptionists), for example allergies and cautions without the full chart.
   {
     key: "client.view_dob_address",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "View date of birth and address",
     description: "See date of birth and address on a client's record without the rest of the chart.",
@@ -1162,6 +1189,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_dob_address",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "Edit date of birth and address",
     description: "Change date of birth and address. Separate from viewing; enabling one never grants the other.",
@@ -1178,6 +1206,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_allergies_cautions",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "View allergies and pinned cautions",
     description: "See allergies and pinned cautions on a client's record without the rest of the chart.",
@@ -1194,6 +1223,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_allergies_cautions",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "Edit allergies and pinned cautions",
     description: "Change allergies and pinned cautions. Separate from viewing; enabling one never grants the other.",
@@ -1210,6 +1240,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_budget_goals",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "View budget context and treatment goals",
     description: "See budget context and treatment goals on a client's record without the rest of the chart.",
@@ -1226,6 +1257,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_budget_goals",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "Edit budget context and treatment goals",
     description: "Change budget context and treatment goals. Separate from viewing; enabling one never grants the other.",
@@ -1242,6 +1274,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_personal_notes",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "View personal notes",
     description: "See personal notes on a client's record without the rest of the chart.",
@@ -1258,6 +1291,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_personal_notes",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "Edit personal notes",
     description: "Change personal notes. Separate from viewing; enabling one never grants the other.",
@@ -1274,6 +1308,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_tags",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "View client tags",
     description: "See client tags on a client's record without the rest of the chart.",
@@ -1290,6 +1325,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_tags",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "Edit client tags",
     description: "Change client tags. Separate from viewing; enabling one never grants the other.",
@@ -1306,6 +1342,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_health_fields",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "View the health fields on an appointment",
     description: "See the health fields on an appointment on a client's record without the rest of the chart.",
@@ -1322,6 +1359,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_health_fields",
+    pendingDecision: ["Q-4"],
     group: "clients_identity",
     label: "Edit the health fields on an appointment",
     description: "Change the health fields on an appointment. Separate from viewing; enabling one never grants the other.",
@@ -1339,6 +1377,7 @@ export const CATALOG = [
   // ───────────── sterilisation and disinfection logs (Sam, 2 Nov, DN-3) ─────────────
   {
     key: "records.view_sterilisation_disinfection",
+    pendingDecision: ["Q-10"],
     group: "safety_records",
     label: "View sterilisation and disinfection records",
     description: "See the sterile-item, disinfectant and probe-lot records.",
@@ -1354,6 +1393,7 @@ export const CATALOG = [
   },
   {
     key: "records.log_sterilisation_disinfection",
+    pendingDecision: ["Q-10"],
     group: "safety_records",
     label: "Log sterilisation and disinfection",
     description: "Add or update a sterile item or a disinfectant record.",
@@ -1405,10 +1445,10 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
   },
   {
     id: "revert_recorded_outcome",
-    label: "Undoing a recorded outcome (completed, no-show or cancelled) within the 72-hour window",
+    label: "Undoing a recorded outcome",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
+    note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. Whether a time window applies, and which outcomes can be undone, is open (Q-9); no window is stated here. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
   },
   {
     id: "require_card_to_book",
