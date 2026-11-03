@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { loginByMagicLink } from "./helpers/flows";
 import {
   insertPendingInvite,
+  seedConfirmedAppointment,
   seedClientInStudio,
   seedE2eMember,
   seedE2eStudio,
@@ -120,6 +121,31 @@ for (const vp of [{ name: "1280", width: 1280, height: 900 }, { name: "390", wid
       const { ctx, page } = await openWithOwner(browser, s.ownerEmail, vp.width, vp.height);
       try {
         await expectLinks(page, false);
+      } finally {
+        await ctx.close();
+      }
+    });
+
+    test("(g) solo owner charted an appointment booked by a former practitioner: shown (the candidate read is exact, not just the missing-practitioner case)", async ({ browser }) => {
+      test.setTimeout(240_000);
+      const s = await seedE2eStudio();
+      await setStudioCapacityEnabled(s.studioId, false);
+      const m = await seedE2eMember(s);
+      const ownerId = (await sql<{ id: string }>(`select id from public.practitioners where studio_id = $1 and role = 'owner'`, [s.studioId]))[0]!.id;
+      const cli = await seedClientInStudio(s.studioId, `SOLOG${vp.name}`);
+      const starts = new Date(Date.now() + 3 * 86_400_000);
+      starts.setUTCHours(11, 0, 0, 0);
+      const apptId = await seedConfirmedAppointment(s.studioId, m.practitionerId, cli.clientId, starts.toISOString(), new Date(starts.getTime() + 3_600_000).toISOString());
+      await sql(`update public.appointments set created_by_practitioner_id = $2 where id = $1`, [apptId, m.practitionerId]);
+      await sql(
+        `insert into public.sessions (studio_id, client_id, practitioner_id, performed_by_practitioner_id, appointment_id, modality, started_at)
+         values ($1, $2, $3, $3, $4, 'electrolysis', now())`,
+        [s.studioId, cli.clientId, ownerId, apptId],
+      );
+      await setPractitionerActive(m.practitionerId, false);
+      const { ctx, page } = await openWithOwner(browser, s.ownerEmail, vp.width, vp.height);
+      try {
+        await expectLinks(page, true);
       } finally {
         await ctx.close();
       }

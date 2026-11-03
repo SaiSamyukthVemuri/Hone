@@ -9,8 +9,11 @@ import { classifyForCheck, type OpenAppointment, type PractitionerLite } from "@
 // Reads with the owner's own session client (the same rows the page reads); no new data is exposed, only a boolean is returned.
 
 type Db = Awaited<ReturnType<typeof createClient>>;
-const PAGE = 500;
-const MAX_PAGES = 4;
+// A solo studio can only have something to review in three ways: a confirmed appointment with no practitioner, or one whose
+// charted performer differs from its (former) practitioner. Both are found with a count and two bounded candidate reads instead of
+// paging every confirmed appointment; the exact page classifier then runs on the candidates only. A full candidate page fails toward SHOWING.
+const CANDIDATE_LIMIT = 100;
+const SELECT_FULL = "id, starts_at, practitioner_id, created_by_practitioner_id, sessions(performed_by_practitioner_id, started_at, deleted_at)";
 
 export async function shouldShowReviewLink(studioId: string, client?: Db): Promise<boolean> {
   const supabase = client ?? (await createClient());
@@ -23,46 +26,64 @@ export async function shouldShowReviewLink(studioId: string, client?: Db): Promi
     displayName: (p.display_name as string) ?? "",
     email: (p.email as string | null) ?? null,
   }));
-  if (practitioners.filter((p) => p.active).length > 1) return true;
+  const active = practitioners.filter((p) => p.active);
+  if (active.length > 1) return true;
+  const soleId = active[0]?.id ?? null;
 
   // Solo owner: show the link only while the review page would still list something.
-  let complete = false;
-  const open: OpenAppointment[] = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const res = await supabase
+  const none = await supabase
+    .from("appointments")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .eq("status", "confirmed")
+    .is("practitioner_id", null);
+  if (none.error || (none.count ?? 0) > 0) return true;
+
+  const candidates = () =>
+    supabase
       .from("appointments")
-      .select("id, starts_at, practitioner_id, created_by_practitioner_id, sessions(performed_by_practitioner_id, started_at, deleted_at)")
+      .select("id, sessions!inner(performed_by_practitioner_id)")
       .eq("studio_id", studioId)
       .eq("status", "confirmed")
-      .order("starts_at")
-      .order("id")
-      .range(page * PAGE, page * PAGE + PAGE - 1);
-    if (res.error) return true;
-    const rows = (res.data ?? []) as unknown as {
-      id: string;
-      starts_at: string;
-      practitioner_id: string | null;
-      created_by_practitioner_id: string | null;
-      sessions: { performed_by_practitioner_id: string | null; started_at: string | null; deleted_at: string | null }[] | null;
-    }[];
-    for (const r of rows) {
-      const live = (r.sessions ?? []).filter((s) => s.deleted_at === null || s.deleted_at === undefined);
-      const starts = live.map((s) => s.started_at).filter((x): x is string => !!x).sort();
-      open.push({
-        id: r.id,
-        startsAt: r.starts_at,
-        practitionerId: r.practitioner_id,
-        createdByPractitionerId: r.created_by_practitioner_id,
-        performedBy: live.map((s) => s.performed_by_practitioner_id).filter((x): x is string => !!x),
-        linkedSessionCount: live.length,
-        treatmentStartedAt: starts[0] ?? null,
-      });
-    }
-    if (rows.length < PAGE) {
-      complete = true;
-      break;
-    }
+      .not("practitioner_id", "is", null)
+      .is("sessions.deleted_at", null)
+      .not("sessions.performed_by_practitioner_id", "is", null)
+      .limit(CANDIDATE_LIMIT);
+  // Charted by anyone but the sole active practitioner, or charted by them on an appointment that belongs to someone else.
+  const reads = soleId
+    ? [candidates().neq("sessions.performed_by_practitioner_id", soleId), candidates().neq("practitioner_id", soleId).eq("sessions.performed_by_practitioner_id", soleId)]
+    : [candidates()];
+  const results = await Promise.all(reads);
+  const ids = new Set<string>();
+  for (const r of results) {
+    if (r.error) return true;
+    const rows = (r.data ?? []) as unknown as { id: string }[];
+    if (rows.length >= CANDIDATE_LIMIT) return true; // could not read every candidate: do not hide
+    for (const row of rows) ids.add(row.id);
   }
-  if (classifyForCheck(open, practitioners, new Date()).length > 0) return true;
-  return !complete; // could not read everything: do not hide
+  if (ids.size === 0) return false;
+
+  const res = await supabase.from("appointments").select(SELECT_FULL).eq("studio_id", studioId).eq("status", "confirmed").in("id", [...ids]);
+  if (res.error) return true;
+  const rows = (res.data ?? []) as unknown as {
+    id: string;
+    starts_at: string;
+    practitioner_id: string | null;
+    created_by_practitioner_id: string | null;
+    sessions: { performed_by_practitioner_id: string | null; started_at: string | null; deleted_at: string | null }[] | null;
+  }[];
+  const open: OpenAppointment[] = rows.map((r) => {
+    const live = (r.sessions ?? []).filter((x) => x.deleted_at === null || x.deleted_at === undefined);
+    const starts = live.map((x) => x.started_at).filter((x): x is string => !!x).sort();
+    return {
+      id: r.id,
+      startsAt: r.starts_at,
+      practitionerId: r.practitioner_id,
+      createdByPractitionerId: r.created_by_practitioner_id,
+      performedBy: live.map((x) => x.performed_by_practitioner_id).filter((x): x is string => !!x),
+      linkedSessionCount: live.length,
+      treatmentStartedAt: starts[0] ?? null,
+    };
+  });
+  return classifyForCheck(open, practitioners, new Date()).length > 0;
 }
