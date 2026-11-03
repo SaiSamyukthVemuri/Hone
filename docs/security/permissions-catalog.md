@@ -60,7 +60,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `appt.view_calendar` (fixed) | Off / Studio | – | Studio / Studio | Studio / Studio | source | – | – |
 | `appt.book` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Own / Off | source | – | – |
 | `appt.move` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Own / Off | source | – | – |
-| `appt.reassign` | Off / Own / Studio | `appt.move` | Off / Studio | Off / Off | source | – | – |
+| `appt.reassign` | Off / Studio | `appt.move` | Off / Studio | Off / Off | source | – | – |
 | `appt.handoff_own` (receptionist not offered) | Off / Studio | `appt.view_calendar` | Off / Off | Off / Off | not_built | – | – |
 | `appt.cancel` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `appt.mark_no_show` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |

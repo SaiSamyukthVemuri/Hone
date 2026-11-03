@@ -468,6 +468,13 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
     expect(d("appt.handoff_own").note).toMatch(/ACTIVE practitioner of the SAME studio who is configured for the service/);
     for (const x of DEFS.filter((k) => k.key.startsWith("wl.") && k.key !== "wl.view_queue")) expect(x.requires, x.key).toContain("wl.view_queue");
   });
+  it("OPS technical calls (3 Nov): reassign has no Own scope (handoff_own is the only way to hand away one's own); notes edit implies read of scheduling notes only", () => {
+    expect(d("appt.reassign").scopes).toEqual(["off", "studio"]);
+    expect(d("appt.reassign").own).toBeUndefined();
+    expect(d("appt.handoff_own").offeredTo).toEqual({ practitioner: true, receptionist: false });
+    expect(d("appt.edit_notes").note).toMatch(/EDIT grant implies READ of the same scheduling notes, never clinical notes, and there is no separate read key/);
+    expect(catalogByKey.has("appt.view_notes")).toBe(false);
+  });
   it("batch 4 (Sam, 3 Nov): the consequence label is on exactly prices, fees, hours, waitlist rules and admission rules, each with its own effect line", () => {
     const flagged = DEFS.filter((x) => x.affectsFutureStudioBusiness).map((x) => x.key).sort();
     expect(flagged).toEqual(["admit.booking_rules", "admit.change_policy", "avail.manage_studio_hours", "price.fee_amounts", "price.service_list", "wlrules.invitation_rounds", "wlrules.policy_and_text"]);
