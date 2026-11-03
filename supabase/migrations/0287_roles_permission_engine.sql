@@ -41,8 +41,10 @@ create table public.permission_catalog (
   sensitive             boolean not null default false,
   -- Informational, for the Roles page: what kind of consequence the key carries. The reason RULE keys off `sensitive` only.
   consequence           text check (consequence in ('financial', 'sensitive', 'destructive')),
-  -- Is the key acted on by code in this release? The Roles page edits a key only when this is 'enforced' (absent or unknown = read-only).
-  enforcement           text not null default 'not_yet' check (enforcement in ('enforced', 'observe', 'not_yet'))
+  -- Is the key acted on by code in this release? 'enforced' = both directions take effect; 'deny_only' = turning it off refuses but widening
+  -- is inert behind a legacy check (the page allows only at-or-below the current value); 'observe' = logged only; 'not_yet' = nothing asks it.
+  -- The Roles page edits a key only when this is enforced or deny_only (absent or unknown = read-only).
+  enforcement           text not null default 'not_yet' check (enforcement in ('enforced', 'deny_only', 'observe', 'not_yet'))
 );
 
 create table public.permission_narrowings (
@@ -141,18 +143,18 @@ insert into public.permission_catalog
 values
   ('appt.view_calendar', array['off', 'studio']::text[], null, true, true, false, '{}'::text[], 'studio', 'studio', 'studio', 'studio', null, null, false, null, 'not_yet'),
   ('client.view_directory', array['off', 'studio']::text[], null, true, true, false, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'not_yet'),
-  ('appt.book', array['off', 'own', 'studio']::text[], 'practitioner', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'enforced'),
-  ('appt.move', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'enforced'),
-  ('appt.reassign', array['off', 'studio']::text[], null, true, true, true, array['appt.move']::text[], 'off', 'studio', 'off', 'off', null, null, false, null, 'enforced'),
+  ('appt.book', array['off', 'own', 'studio']::text[], 'practitioner', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'deny_only'),
+  ('appt.move', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null, 'deny_only'),
+  ('appt.reassign', array['off', 'studio']::text[], null, true, true, true, array['appt.move']::text[], 'off', 'studio', 'off', 'off', null, null, false, null, 'deny_only'),
   ('appt.handoff_own', array['off', 'studio']::text[], null, true, false, true, array['appt.view_calendar']::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'not_yet'),
   ('appt.cancel', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'enforced'),
   ('appt.mark_no_show', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'enforced'),
   ('appt.edit_notes', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, 'receptionist_scheduling_notes', false, null, 'enforced'),
   ('appt.complete', array['off', 'own', 'studio']::text[], 'appointment', true, false, true, array['appt.view_calendar', 'clin.view_records']::text[], 'own', 'off', 'own', 'off', 'practitioner_completion', null, false, null, 'observe'),
   ('appt.aftercare_send', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null, 'not_yet'),
-  ('avail.manage_own', array['off', 'studio']::text[], null, true, false, true, '{}'::text[], 'studio', 'off', 'off', 'off', null, null, false, null, 'enforced'),
-  ('avail.manage_others', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'enforced'),
-  ('avail.manage_studio_hours', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'enforced'),
+  ('avail.manage_own', array['off', 'studio']::text[], null, true, false, true, '{}'::text[], 'studio', 'off', 'off', 'off', null, null, false, null, 'deny_only'),
+  ('avail.manage_others', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'deny_only'),
+  ('avail.manage_studio_hours', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null, 'deny_only'),
   ('client.create', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null, 'not_yet'),
   ('client.edit_contact', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, true, 'sensitive', 'not_yet'),
   ('client.view_legal_name', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'off', 'studio', 'off', null, 'receptionist_legal_name', true, 'sensitive', 'not_yet'),
@@ -999,6 +1001,8 @@ begin
   end if;
 
   if p_expected_current_role = 'practitioner' then
+    -- KNOWN GAP (Insurance RF-1), harmless while the staff_role_change gate is off: an appointment INSERTED after this count is not
+    -- locked. Before the gate is turned on, lock the practitioner membership row and re-check after the update (see docs/production/rollback-0287-roles-engine.md).
     -- Lock the practitioner's future appointments, then count EVERY one that is not cancelled (confirmed, completed, no_show), so a
     -- concurrent change to one of them cannot slip past the check (Insurance RB-5).
     select count(*) into v_upcoming from (
