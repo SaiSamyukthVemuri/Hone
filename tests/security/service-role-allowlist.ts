@@ -20,6 +20,24 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/actions/waitlist.ts",
+    purpose: "DN-29 / Q-F: the landing early-access signup, through the 0213 command record_platform_early_access_signup, after the anonymous direct-insert policy is retired (held 0294).",
+    why: "An unauthenticated visitor is not a database user, so the write has to be server-side. The limiter runs first and refuses before any write; the action validates and lowercases the email, calls only the service_role-only 0213 definer command (which also raises the lead alert) with that email, and reads back only its result code. No studio or client data is reachable: the table holds early-access emails only, and 0294 revokes every browser role from it.",
+    scopeGuard: "limitWaitlistSubmit",
+  },
+  {
+    path: "app/actions/demo.ts",
+    purpose: "DN-29 / Q-F: the /demo request, through the 0213 command record_platform_demo_request, after the anonymous direct-insert policy is retired (held 0294).",
+    why: "An unauthenticated visitor is not a database user, so the write has to be server-side. The limiter runs first and refuses before any write; name and email are validated, enumerated fields are checked against closed lists, and only the service_role-only 0213 definer command is called (it also raises the lead alert), returning a result code. The table holds prospect contact requests only and 0294 revokes every browser role from it.",
+    scopeGuard: "limitDemoRequestSubmit",
+  },
+  {
+    path: "lib/rate-limit/outage.ts",
+    purpose: "DN-29: the shared Postgres fixed-window counter the public limiters use when Upstash is down (held 0294).",
+    why: "The counter table is RLS-locked with every browser role revoked and the function is service_role-only; an unauthenticated visitor cannot be a database user. The caller passes only already-hashed keys and a fixed scope; it reads nothing and returns only allowed/count/retry.",
+    scopeGuard: "rate_limit_fallback_hit",
+  },
+  {
     path: "lib/audit/governed-writes.ts",
     purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
     why: "Internal server-only existing archive/unarchive and owner-export writers. Session getUser and exact active actor/user/studio checks precede service-client construction; archive additionally checks exact client via RLS and export requires owner plus bounded registry metadata. Final membership FOR UPDATE and hardcoded audit insertion are in two explicit narrow service-only 0242 commands under their same existing trusted non-runtime owner. Owner/context/ACL and runtime MEMBER/SET assumptions are checked fail-closed;0178 keeps service_role SELECT-only on practitioner identity, with no new UPDATE grant. There is no separate app-read/direct-INSERT authority decision. Missing/refused/malformed commands fail closed, no old API/table fallback. New command EXECUTE capability needs explicit source/ACL approval; no user/table grants. No generic caller-supplied action/entity/actor metadata. Export refuses bytes on failure; archive failures, including thrown audit reads/transport, return the curated best-effort refusal so committed state/revalidation/redirect survive.",

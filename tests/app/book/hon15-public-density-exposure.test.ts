@@ -230,12 +230,14 @@ describe("HON-15 exposure today (unauthenticated visitor)", () => {
     expect(slotsFn).toMatch(/default_appointment_duration_minutes[\s\S]*params\.date,\s*service\.default_duration_minutes,\s*\)/);
   });
 
-  it("the only throttle is 60 requests per minute per (IP, studio), and it FAILS OPEN when unset or when the backend errors", () => {
+  it("the only primary throttle is 60 requests per minute per (IP, studio); when unset or when the backend errors it uses the DN-29 slots fallback (bounded, counter-down refuses)", () => {
     const rl = readFileSync(join(process.cwd(), "lib/rate-limit/public.ts"), "utf8");
     const fn = rl.slice(rl.indexOf("export async function limitPublicSlots"), rl.indexOf("export async function limitPublicBooking"));
     expect(rl).toContain("60 req / 60 s per (IP, slug)");
-    expect(fn).toContain("if (!limiter) return { allowed: true }; // disabled when env unset");
-    expect(fn).toContain("return { allowed: true }; // fail open");
+    expect(fn).toContain('kind: "slots"');
+    expect(fn).toContain('onLimiterUnavailable({ ...outage, reason: "disabled" })');
+    expect(fn).toContain('onLimiterUnavailable({ ...outage, reason: "error", err })');
+    expect(fn).not.toContain("// fail open");
     // there is no cumulative or per-day budget: the key is IP + slug only
     expect(fn).toContain("limiter.limit(`${hashId(ip)}:${args.slug}`)");
   });

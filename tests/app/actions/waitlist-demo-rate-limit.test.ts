@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // PR #187. submitWaitlistEntry and submitDemoRequest are anonymous
@@ -57,7 +57,7 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
 
   it("rate-limit check happens BEFORE the Supabase insert", () => {
     const limitIdx = WAITLIST_CODE.indexOf("limitWaitlistSubmit(");
-    const insertIdx = WAITLIST_CODE.indexOf('.from("waitlist")');
+    const insertIdx = WAITLIST_CODE.indexOf('.rpc("record_platform_early_access_signup"');
     expect(limitIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(limitIdx);
   });
@@ -76,10 +76,8 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
     expect(limitIdx).toBeGreaterThan(validateIdx);
   });
 
-  it("duplicate-as-success handling is unchanged", () => {
-    expect(WAITLIST_CODE).toMatch(
-      /error\.code === PG_UNIQUE_VIOLATION/,
-    );
+  it("duplicate-as-success handling is unchanged: the 0213 command's 'duplicate' result is success, anything else is an error", () => {
+    expect(WAITLIST_CODE).toMatch(/result\.result !== "recorded" && result\.result !== "duplicate"/);
   });
 });
 
@@ -101,7 +99,7 @@ describe("demo request action: rate-limited via shared infrastructure", () => {
 
   it("rate-limit check happens BEFORE the Supabase insert", () => {
     const limitIdx = DEMO_CODE.indexOf("limitDemoRequestSubmit(");
-    const insertIdx = DEMO_CODE.indexOf('.from("demo_requests")');
+    const insertIdx = DEMO_CODE.indexOf('.rpc("record_platform_demo_request"');
     expect(limitIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(limitIdx);
   });
@@ -121,12 +119,12 @@ describe("demo request action: rate-limited via shared infrastructure", () => {
 });
 
 describe("limiter module: marketing form buckets", () => {
-  it("declares the marketing windows: 5/1h per IP, 2/1d per email", () => {
+  it("declares the marketing windows: 5/1h per IP, 3/1d per email (Q21)", () => {
     expect(LIMITER_CODE).toMatch(
       /ip: \{ limit: 5, window: "1 h" \}/,
     );
     expect(LIMITER_CODE).toMatch(
-      /email: \{ limit: 2, window: "1 d" \}/,
+      /email: \{ limit: 3, window: "1 d" \}/,
     );
   });
 
@@ -146,13 +144,15 @@ describe("limiter module: marketing form buckets", () => {
     expect(block).toMatch(/emailLimiter\.limit\(hashId\(args\.email\)\)/);
   });
 
-  it("fails open on backend errors, matching the file's design contract", () => {
+  it("on a backend error or missing Upstash it uses the DN-29 marketing fallback (bounded, counter-down refuses), no longer fail open", () => {
     const block = LIMITER_CODE.slice(
       LIMITER_CODE.indexOf("async function limitMarketingForm"),
       LIMITER_CODE.indexOf("export async function limitWaitlistSubmit"),
     );
     expect(block).toMatch(/logBackendUnavailable\(form, err\)/);
-    expect(block).toMatch(/return \{ allowed: true \};\s*\/\/ fail open/);
+    expect(block).toMatch(/onLimiterUnavailable\(\{ \.\.\.outage, reason: "error", err \}\)/);
+    expect(block).toMatch(/kind: "marketing"/);
+    expect(block).not.toMatch(/return \{ allowed: true \};\s*\/\/ fail open/);
   });
 
   it("the shared generic refusal copy is unchanged", () => {
@@ -183,5 +183,59 @@ describe("PR #187 boundaries", () => {
   it("no calendar feed surface touched", () => {
     const all = WAITLIST_CODE + DEMO_CODE + LIMITER_CODE;
     expect(all).not.toMatch(/calendar_feed_token/);
+  });
+});
+
+describe("Q-F: the anonymous direct write is closed, so the action is the only write path", () => {
+  for (const [name, code, table, command] of [
+    ["waitlist", WAITLIST_CODE, "waitlist", "record_platform_early_access_signup"],
+    ["demo", DEMO_CODE, "demo_requests", "record_platform_demo_request"],
+  ] as const) {
+    it(`${name}: writes through the 0213 command (which raises the lead alert) on the service-role client, never a direct insert or the visitor's public-key client`, () => {
+      expect(code).toContain('import { createAdminClient } from "@/lib/supabase/admin-server";');
+      expect(code).not.toContain("@/lib/supabase/server");
+      expect(code).not.toMatch(/createClient\(/);
+      expect(code).toMatch(new RegExp(`createAdminClient\\(\\);[\\s\\S]*\\.rpc\\("${command}"`));
+      expect(code).not.toContain(`.from("${table}")`);
+      expect(code).not.toMatch(/\.insert\(/);
+    });
+  }
+
+  it("migration 0294 drops both anonymous insert policies and revokes every browser role from both tables", () => {
+    const sql = readFileSync(path.join(process.cwd(), "supabase/migrations/0294_rate_limit_fallback_counter.sql"), "utf8");
+    for (const [policy, table] of [["waitlist_anonymous_insert", "waitlist"], ["demo_requests_anonymous_insert", "demo_requests"]]) {
+      expect(sql).toContain(`drop policy if exists "${policy}" on public.${table};`);
+      for (const role of ["public", "anon", "authenticated"]) expect(sql).toContain(`revoke all on table public.${table} from ${role};`);
+      expect(sql).toContain(`revoke all on table public.${table} from service_role;`);
+      expect(sql).not.toMatch(new RegExp(`grant[^;]*insert[^;]*on table public\\.${table} to service_role`));
+    }
+    expect(sql).toContain("grant select on table public.waitlist to service_role;");
+    expect(sql).toContain("grant select, update on table public.demo_requests to service_role;");
+  });
+
+  it("the rollback SQL restores both policies and is not under supabase/migrations (nothing applies it automatically)", () => {
+    const down = readFileSync(path.join(process.cwd(), "supabase/rollbacks/0294_rate_limit_fallback_counter.down.sql"), "utf8");
+    expect(down).toContain('create policy "waitlist_anonymous_insert" on public.waitlist for insert to anon, authenticated with check (true);');
+    expect(down).toContain('create policy "demo_requests_anonymous_insert" on public.demo_requests for insert to anon, authenticated with check (true);');
+    expect(down).toContain("drop table if exists public.rate_limit_fallback_counters;");
+  });
+
+  // F-2 / R3 (Insurance): each submission now also writes a platform lead-alert row through 0213, and NOTHING sends it yet.
+  it("no send: the only platform-lead-alert code in the app is the two record commands; no sweep, claim, freeze, settle or outbound message exists", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((e) => {
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(rel);
+        return /\.(ts|tsx|mjs|js)$/.test(e.name) ? [rel] : [];
+      });
+    const users = [...walk("app"), ...walk("lib"), ...walk("scripts")].filter((f) => /platform_lead_alert|record_platform_|lead_alert/.test(readFileSync(path.join(ROOT, f), "utf8")));
+    expect(users.sort()).toEqual(["app/actions/demo.ts", "app/actions/waitlist.ts", "lib/export/resource-registry.ts"].sort());
+    for (const code of [WAITLIST_CODE, DEMO_CODE]) {
+      for (const sender of ["claim_platform_lead_alert", "freeze_platform_lead_alert_message", "settle_platform_lead_alert", "requeue_platform_lead_alert", "expire_platform_lead_alerts", "record_platform_lead_alerts_unconfigured"]) {
+        expect(code).not.toContain(sender);
+      }
+      expect(code).not.toMatch(/resend|sendgrid|nodemailer|twilio|sendEmail|sendSms|fetch\(/i);
+    }
+    expect(readFileSync(path.join(ROOT, "lib/export/resource-registry.ts"), "utf8")).not.toMatch(/claim_platform_lead_alert|settle_platform_lead_alert/);
   });
 });

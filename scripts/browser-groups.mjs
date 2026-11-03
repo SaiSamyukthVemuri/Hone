@@ -222,6 +222,8 @@ export const BROWSER_GROUPS = {
       "settings-booking-error-param.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
+      // DN-29: two real `next start` instances under a limiter outage, behind the Sentry egress guard (needs HONE_LIMITER_OUTAGE_MODE=enforce, else skipped).
+      "limiter-outage-two-instance.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
       // the confirmation SMS, and the lane's Twilio egress fake answers it
       // in-process. The booking surface is what drives the send.

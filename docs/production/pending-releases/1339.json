@@ -1,0 +1,6 @@
+{
+  "pr": 1339,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0294_rate_limit_fallback_counter.sql"],
+  "release_receipt": "01-ops/1339-release-receipt.json"
+}
