@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { adminQuery, asUser, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
@@ -154,7 +156,17 @@ const KNOWN_DEADLOCK_SCENARIOS = new Set<string>([
   "on|owner-block-vs-second-practitioner|unrelated",
 ]);
 const recorded: string[] = []; // every allowed 40P01 with its DETAIL/CONTEXT, for the run summary
+// Durable record (not console-only) and a ceiling: the defect getting WORSE must not stay green. Observed at e9723b829: 13, 16 and 17 allowed
+// deadlock outcomes per run (of 42 race rounds); the ceiling leaves headroom but fails a collapse (Privacy BK2/BL3).
+const MAX_ALLOWED_DEADLOCK_OUTCOMES = 30;
 afterAll(() => {
+  if (recorded.length) {
+    try {
+      const dir = process.env.HON48_DEADLOCK_RECORD_DIR ?? path.join(process.cwd(), "test-results");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "hon48-deadlock-record.json"), JSON.stringify({ known_defect: "HON-48-DEADLOCK", allowed_outcomes: recorded.length, ceiling: MAX_ALLOWED_DEADLOCK_OUTCOMES, rounds: recorded }, null, 1));
+    } catch { /* the record is best-effort; the ceiling test below is the gate */ }
+  }
   if (recorded.length) console.info(`HON-48-DEADLOCK recorded ${recorded.length} allowed 40P01 outcome(s) (KNOWN_DEFECT_HON48_DEADLOCK=${KNOWN_DEFECT_HON48_DEADLOCK}):\n${recorded.join("\n")}`);
 });
 
@@ -189,6 +201,9 @@ async function checkRound(i: number, results: Outcome[], before: { blocks: numbe
 async function positiveControl() {
   expect(await bookerService(owner, T("18:00"))(), "control: service booking with no block must land").toEqual({ kind: "created", detail: "created" });
   expect(await bookerDesk(owner, T("21:00"))(), "control: front-desk booking with no block must land").toEqual({ kind: "created", detail: "created" });
+  // The SECOND practitioner can book too (a 30-minute gap from the other bookings, which both capacity modes accept), so a refusal of
+  // their booking in a race is a real refusal and not a fixture problem (Privacy BL1).
+  expect(await bookerService(member, T("19:30"))(), "control: the second practitioner's booking with no block must land").toEqual({ kind: "created", detail: "created" });
   expect(await blocker(T("23:00"), null)(), "control: a block in an empty hour must land").toEqual({ kind: "created", detail: "block created" });
 }
 
@@ -291,6 +306,8 @@ for (const capacity of [false, true]) {
         const rounds = await unrelated();
         for (const r of rounds) {
           expect(r.results[0].kind, r.tag).not.toBe("refused"); // the owner's block is never refused by an unrelated booking
+          // Regardless of the constant: an owner's block must never refuse ANOTHER practitioner's booking in capacity ON (created, or the allowed deadlock).
+          expect(r.results[1].kind === "created" || r.results[1].kind === "error", `second practitioner's booking was refused: ${r.tag}`).toBe(true);
           if (!KNOWN_DEFECT_HON48_DEADLOCK) expect(r.results.map((o) => o.kind), r.tag).toEqual(["created", "created"]);
         }
       });
@@ -304,3 +321,10 @@ for (const capacity of [false, true]) {
     }
   });
 }
+
+// Ceiling on the allowed known deadlock per run. Runs last in the file; a filtered run that skipped the race tests records none.
+describe("HON-48-DEADLOCK ceiling", () => {
+  it(`allowed deadlock outcomes stay at or under ${MAX_ALLOWED_DEADLOCK_OUTCOMES} per run`, () => {
+    expect(recorded.length, `the known deadlock hit ${recorded.length} outcomes; the ceiling is ${MAX_ALLOWED_DEADLOCK_OUTCOMES}. It is getting worse: tell Willow.`).toBeLessThanOrEqual(MAX_ALLOWED_DEADLOCK_OUTCOMES);
+  });
+});

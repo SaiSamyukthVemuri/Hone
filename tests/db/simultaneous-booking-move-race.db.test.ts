@@ -27,6 +27,7 @@ const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
 
 type Outcome = { kind: "created" | "moved" | "refused" | "error"; detail: string };
 const HONEST_REFUSALS = new Set(["buffer_conflict", "23P01"]);
+// Reviewed (Privacy BK4, Insurance BA-4): move_or_reassign_appointment has no named overlap refusal; a conflict is the 23P01 exclusion, and buffer_conflict comes from the booking core. Widening this list without an observed code would reintroduce vacuous passes, so it stays at these two.
 const classify = (e: unknown): Outcome => {
   const code = (e as { code?: string }).code ?? "unknown";
   return { kind: HONEST_REFUSALS.has(code) ? "refused" : "error", detail: code };
