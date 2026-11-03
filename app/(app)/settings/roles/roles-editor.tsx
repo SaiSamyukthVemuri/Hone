@@ -131,7 +131,10 @@ export function RolesEditor(props: RolesEditorProps) {
       setRowError({ key: err.key, message: roleErrorMessage(err) });
     }
     if (err.code === "stale_version") {
+      // Back to the draft, every choice kept, with the Review button available again for a fresh preview.
+      setReviewing(false);
       setReviewData(null);
+      setConfirmed(false);
       setPreview(null);
     }
     feedback.failed(roleErrorMessage(err));

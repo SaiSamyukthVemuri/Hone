@@ -247,6 +247,10 @@ describe("the editor", () => {
     expect(src).toMatch(/props\.save\(changedEdits\(\), reviewData\.version, confirmed, reason\.trim\(\)\)/);
     expect(src).toContain("if (saved[r].values[k] !== v) e[k] = v");
   });
+  it("returns to the draft with Review available after a stale version (found in the integrated run)", () => {
+    const handler = src.slice(src.indexOf("function handleError"), src.indexOf("async function onReview"));
+    expect(handler).toMatch(/stale_version[\s\S]*setReviewing\(false\)/);
+  });
   it("keeps the draft on every refusal", () => {
     const handler = src.slice(src.indexOf("function handleError"), src.indexOf("async function onReview"));
     expect(handler).not.toMatch(/setDrafts|setSaved/);
