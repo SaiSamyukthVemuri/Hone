@@ -1,6 +1,6 @@
 # Proposal (HELD, claimed number 0291): database-level mailbox-proof gate for invitation linking
 
-Status: proposal only, HELD. Number 0291 is claimed by OPS for this (no migration file exists). Claims: OPS (`01-ops/MIGRATION-NUMBER-CLAIMS.md`); applying needs Sam's per-change approval.
+Status: migration file written, HELD: `supabase/migrations/0291_auth_email_proof_invitation_gate.sql` (DB test `tests/db/auth-invitation-proof-gate.db.test.ts`). Not applied; applying needs Sam's per-change approval. Claims: OPS (`01-ops/MIGRATION-NUMBER-CLAIMS.md`). The sketch below is superseded by the file: the proof set is `otp` only (measured) plus a verified-Google oauth identity.
 
 ## Why
 

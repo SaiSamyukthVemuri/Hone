@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
+    "count": 254,
+    "last": "0291_auth_email_proof_invitation_gate.sql",
+    "sha256": "c6bd64b9628deae59ed9b68ebae4fd99a2c984b8d2841a9e80829f963fbfba01"
   },
   "public": {
     "tables": [
@@ -474,6 +474,7 @@
       "session_actor_practitioner",
       "session_block_areas_derive_studio",
       "session_is_visible",
+      "session_proves_mailbox",
       "set_appointment_capacity_enabled",
       "set_appointment_notes",
       "set_client_portrait",
