@@ -435,6 +435,21 @@ describe("change_staff_role", () => {
     expect(await rowCount("select count(*) n from public.studio_receptionists where studio_id=$1", [s.studioId])).toBe(1);
   });
 
+  it("rejects a NULL role (Codex: `null not in (...)` is null and skipped the checks and the reason rule)", async () => {
+    const s = await seedStudio("engine-role-null");
+    await openStaffRoleGate(s.studioId);
+    const m = await seedMember(s, "rnull");
+    for (const sql of [
+      "select public.change_staff_role($1,$2,null,'practitioner',null) as r",
+      "select public.change_staff_role($1,$2,'receptionist',null,null) as r",
+      "select public.change_staff_role($1,$2,null,null,null) as r",
+    ]) {
+      expect(await call(s.userId, sql, [s.studioId, m.practitionerId]), sql).toMatchObject({ ok: false, code: "unknown_role" });
+    }
+    expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(true);
+    expect(await call(s.userId, "select public.preview_reset($1,null) as r", [s.studioId])).toMatchObject({ ok: false, code: "unknown_role" });
+  });
+
   it("refuses self, an owner as source or target, a stale expected role, upcoming appointments, and a non-owner", async () => {
     const s = await seedStudio("engine-role2");
     await openStaffRoleGate(s.studioId);
