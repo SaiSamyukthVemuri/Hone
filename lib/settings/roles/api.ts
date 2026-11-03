@@ -5,7 +5,7 @@ import type { RoleDiff } from "./diff";
 // Types and pure helpers only, so the client editor, the server actions and the tests share one shape. The DB computes every preview
 // and every refusal; the page never recomputes a diff and never decides whether a save is valid.
 
-/** Refusal codes the permission core returns. `unavailable` is the page's own: the core is not on yet, nothing was attempted. */
+/** Refusal codes the permission core returns. `unavailable`, `not_enforced` and `widening_not_yet` are the page's own: the first means the core is not on yet; the other two are the server action's wiring guard (enforcement lives in the TypeScript catalog, not the core). Nothing was attempted in any of them. */
 export const ROLE_ERROR_CODES = [
   "stale_version",
   "refused",
@@ -15,6 +15,8 @@ export const ROLE_ERROR_CODES = [
   "scope_not_allowed",
   "prerequisite_unmet",
   "gate_unmet",
+  "not_enforced",
+  "widening_not_yet",
   "sensitive_unconfirmed",
   "reason_required",
   "nothing_changed",
@@ -115,6 +117,8 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   scope_not_allowed: "This role cannot have that scope for this setting. Nothing was saved.",
   prerequisite_unmet: "A setting this one depends on is off. Turn that on first. Nothing was saved.",
   gate_unmet: "This setting is not available yet. Nothing was saved.",
+  not_enforced: "Not enforced yet. This switch will apply when that area is wired. Nothing was saved.",
+  widening_not_yet: "Widening arrives in a later release. You can turn this down now. Nothing was saved.",
   sensitive_unconfirmed: "Confirm that you understand the newly enabled financial or sensitive access, then save again.",
   reason_required: "Say why you are making this change.",
   nothing_changed: "There is nothing to save. Your choices match what is already saved.",
@@ -137,6 +141,6 @@ export const roleErrorMessage = (e: RoleError): string => MESSAGES[e.code];
 /** Codes that point at one row. The page keeps the draft, opens that role and shows the message on the row. */
 export const isRowError = (e: RoleError): e is RoleError & { key: string } =>
   e.key !== undefined &&
-  (["unknown_key", "fixed_key", "not_offered", "scope_not_allowed", "prerequisite_unmet", "gate_unmet"] as const).includes(
+  (["unknown_key", "fixed_key", "not_offered", "scope_not_allowed", "prerequisite_unmet", "gate_unmet", "not_enforced", "widening_not_yet"] as const).includes(
     e.code as never,
   );

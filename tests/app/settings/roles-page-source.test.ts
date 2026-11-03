@@ -29,7 +29,7 @@ describe("the Roles actions", () => {
       const name = b.slice(0, b.indexOf("("));
       expect(b.indexOf("await assertOwner()"), name).toBeGreaterThan(-1);
       // reloadPolicyAction reads the stored policy through the policy store, which reads get_role_permissions.
-      expect(b.indexOf("await assertOwner()"), name).toBeLessThan(b.search(/return core[A-Z]|await loadStudioPolicyState/));
+      expect(b.indexOf("await assertOwner()"), name).toBeLessThan(b.search(/\bcore[A-Z][A-Za-z]*\(|await loadStudioPolicyState|await wiringRefusal/));
     }
   });
   it("never report success on its own: success only ever comes from the core's answer", () => {
@@ -43,6 +43,15 @@ describe("the Roles actions", () => {
       expect(b, fn).toMatch(/isVersion\(expectedVersion\)/);
       expect(b, fn).toMatch(/expectedVersion[,)]/);
     }
+  });
+  it("run the wiring guard before the core on every free-form change, from the catalog and not the core", () => {
+    for (const fn of ["previewRoleChangesAction", "saveRolePolicyAction"]) {
+      const b = bodies.find((x) => x.startsWith(fn))!;
+      expect(b.indexOf("await wiringRefusal("), fn).toBeGreaterThan(-1);
+      expect(b.indexOf("await wiringRefusal("), fn).toBeLessThan(b.search(/\bcore(PreviewChanges|Save)\(/));
+    }
+    expect(actions).toMatch(/enforcementRefusal\(/);
+    expect(actions).not.toMatch(/\.enforcement\b/); // never read from the core's state
   });
   it("only export async functions plus types (a 'use server' module)", () => {
     expect(actions.match(/^export (?!async function|type)/gm)).toBeNull();

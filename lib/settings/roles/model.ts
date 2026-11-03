@@ -169,6 +169,22 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
   return out;
 }
 
+/**
+ * The wiring rule, for the server action as much as the page: a key the app does not yet enforce cannot be changed, and a deny_only key
+ * cannot be raised above the studio's baseline. A choice equal to what is already in force is no change and is never refused here.
+ * Unknown keys return null: the core refuses them with its own code.
+ */
+export function enforcementRefusal(role: Role, policy: StudioPolicy, key: string, next: string): "not_enforced" | "widening_not_yet" | null {
+  const def = catalogByKey.get(key);
+  if (!def) return null;
+  const inForce = policy.values[key] ?? baselineScope(def, role, policy);
+  if (inForce === next) return null;
+  const mode = enforcementState(key);
+  if (mode === "observe" || mode === "not_yet") return "not_enforced";
+  if (mode === "deny_only" && scopeRank(next as Scope) > scopeRank(baselineScope(def, role, policy))) return "widening_not_yet";
+  return null;
+}
+
 /** Apply one owner edit to a draft. It changes ONLY that key, and only when the catalog allows it; otherwise it returns the refusal. */
 export function applyEdit(
   role: Role,
