@@ -114,6 +114,13 @@ describe("the readers that stay in the page are gated at their call sites", () =
     expect(read("app/(app)/clients/[id]/intake/assist/page.tsx")).toContain('"clin.view_intake"');
     expect(read("app/(app)/calendar/[id]/page.tsx")).toContain('"clin.view_intake"');
   });
+  it("the procedure-record print says it is not available instead of printing an empty log", () => {
+    const s = read("app/(app)/records/print/page.tsx");
+    const gate = s.indexOf('"clin.view_records"');
+    expect(gate).toBeGreaterThan(-1);
+    expect(s.indexOf("Procedure records are not available to your role.")).toBeGreaterThan(gate);
+    expect(gate).toBeLessThan(s.indexOf("await getClientProcedureRecords("));
+  });
   it("the dashboard's charted-visit lookup needs the key", () => {
     const s = read("app/(app)/dashboard/page.tsx");
     expect(s).toMatch(/apptIds\.length > 0 && canViewRecords/);
