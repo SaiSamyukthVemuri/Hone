@@ -25,13 +25,14 @@ async function seedDesk(studio: SeededStudio, label: string): Promise<{ userId: 
   const r = await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,email,active) values ($1,$2,$3,$4,true) returning id", [studio.studioId, userId, `Desk ${label}`, `${label}-${userId.slice(0, 8)}@harness.local`]);
   return { userId, id: r.rows[0].id };
 }
+let slot = 0; // a distinct hour per appointment: the studio forbids overlapping appointments
 async function seedAppt(studio: SeededStudio, practitionerId: string, clientId: string, o: { status?: string; offsetDays?: number } = {}): Promise<string> {
   const id = randomUUID();
   const d = o.offsetDays ?? 3;
   await adminQuery(
     `insert into public.appointments (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status)
-     values ($1,$2,$3,$4, now() + ($5 || ' days')::interval, now() + ($5 || ' days')::interval + interval '1 hour', 60, $6)`,
-    [id, studio.studioId, practitionerId, clientId, String(d), o.status ?? "confirmed"],
+     values ($1,$2,$3,$4, now() + ($5 || ' days')::interval + ($7 || ' hours')::interval, now() + ($5 || ' days')::interval + ($7 || ' hours')::interval + interval '30 minutes', 30, $6)`,
+    [id, studio.studioId, practitionerId, clientId, String(d), o.status ?? "confirmed", String((slot += 1) * 2)],
   );
   return id;
 }
