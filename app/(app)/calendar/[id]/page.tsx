@@ -112,6 +112,8 @@ export default async function AppointmentDetailPage({
   // Roles engine (0287): the aftercare section (what is sent and its state) needs clin.view_aftercare. Existing-snapshot basis:
   // every active practitioner (unchanged). Sending is a separate key (appt.aftercare_send).
   const canViewAftercare = (await requirePermission(supabase, studio.id, "clin.view_aftercare", { appointment: id })).allowed;
+  // The prior treatment, the linked session and the clinical-notes summary are treatment RECORDS: without clin.view_records they are not read at all.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records", { appointment: id })).allowed;
 
   const { data, error } = await supabase
     .from("appointments")
@@ -331,7 +333,7 @@ export default async function AppointmentDetailPage({
       // Two round-trips, independent of how long the client's history is, how
       // many areas each block treats and how many passes each area carries. It
       // replaces three: newest row → that row's blocks → structured areas.
-      loadLastChartedTreatmentForClient({
+      !canViewRecords ? null : loadLastChartedTreatmentForClient({
         studioId: studio.id,
         clientId,
         // Strictly before this appointment. Not now(), which would let a
@@ -349,7 +351,7 @@ export default async function AppointmentDetailPage({
       // returns the most recent linked session in case future flows
       // ever produce more than one (today the action treats the FK
       // as effectively one-to-one per coalesce window).
-      supabase
+      !canViewRecords ? null : supabase
         .from("sessions")
         .select("id, started_at, modality")
         .eq("studio_id", studio.id)
@@ -366,19 +368,19 @@ export default async function AppointmentDetailPage({
       // electrolysis and laser visits where the card goes on to render
       // nothing. Same helper the client profile calls: no new query shape, no
       // second note model, no write path.
-      getClinicalNotesSummary(clientId),
+      !canViewRecords ? null : getClinicalNotesSummary(clientId),
     ]);
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;
     intake = intakeRes;
     treatmentPlans = plansRes;
-    if (linkedSessionRes.error) {
+    if (linkedSessionRes?.error) {
       throw new Error(
-        `Failed to load linked session: ${dbErrorCode(linkedSessionRes.error)}`,
+        `Failed to load linked session: ${dbErrorCode(linkedSessionRes!.error)}`,
       );
     }
-    linkedSession = (linkedSessionRes.data ?? null) as
+    linkedSession = (linkedSessionRes?.data ?? null) as
       | Pick<Session, "id" | "started_at" | "modality">
       | null;
 
@@ -392,9 +394,9 @@ export default async function AppointmentDetailPage({
     //
     // Structured areas arrive inside the same block select the loader already
     // performs, so the old attachStructuredAreas round-trip is gone.
-    prepUnavailable = lastTreatment.unavailable;
-    prepNarrative = lastTreatment.narrative;
-    if (lastTreatment.treatment) {
+    prepUnavailable = lastTreatment?.unavailable ?? false;
+    if (lastTreatment) prepNarrative = lastTreatment.narrative;
+    if (lastTreatment?.treatment) {
       const selected = lastTreatment.treatment;
       prepMemory = buildAppointmentPrepMemory(
         prepMemoryInputFromTreatment(selected),

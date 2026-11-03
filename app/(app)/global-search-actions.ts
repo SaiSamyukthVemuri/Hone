@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCurrentPractitionerWithStudio,
@@ -329,6 +330,8 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
   }
   const like = containsPattern(query);
   const supabase = await createClient();
+  // Treatment-record search results (charted blocks, treated areas, next-visit notes) need clin.view_records; without it they are not read.
+  const canViewRecords = (await requirePermission(supabase, studioId, "clin.view_records")).allowed;
 
   const [
     clientSearch,
@@ -339,7 +342,8 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     disinfectantRows,
   ] = await Promise.all([
     searchClientRows(supabase, studioId, query, like),
-    supabase
+    canViewRecords
+      ? supabase
       .from("session_blocks")
       .select(MEMORY_BLOCK_SELECT)
       .eq("studio_id", studioId)
@@ -357,7 +361,8 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       )
       .order("created_at", { ascending: false })
       .limit(MEMORY_CAP)
-      .then(rowsOrFail),
+      .then(rowsOrFail)
+      : Promise.resolve([]),
     // Structured treatment areas (migration 0128). The block columns above
     // only carry the LEGACY primary_area, so a block charted as
     // "Left Cheek · Right Sideburn" is stored with primary_area "Cheek" and
@@ -369,15 +374,18 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     // never become a result on its own. session_block_areas has no soft-delete
     // column of its own: it cascades with the parent, so every liveness
     // decision belongs to the parent fetch.
-    supabase
+    canViewRecords
+      ? supabase
       .from("session_block_areas")
       .select("session_block_id")
       .eq("studio_id", studioId)
       .ilike("area", like)
       .order("created_at", { ascending: false })
       .limit(MEMORY_CHILD_CANDIDATE_CAP)
-      .then(rowsOrFail),
-    supabase
+      .then(rowsOrFail)
+      : Promise.resolve([]),
+    canViewRecords
+      ? supabase
       .from("sessions")
       .select("id, client_id, started_at, next_session_note, client:clients(name)")
       .eq("studio_id", studioId)
@@ -388,7 +396,8 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       .ilike("next_session_note", like)
       .order("started_at", { ascending: false })
       .limit(2)
-      .then(rowsOrFail),
+      .then(rowsOrFail)
+      : Promise.resolve([]),
     supabase
       .from("record_keeping_sterile_items")
       .select("id, item_description, lot_number, date_purchased")

@@ -114,8 +114,13 @@ describe("independent reads run in one parallel wave", () => {
     //
     // Keep this ceiling equal to the measured count, never slack: a ceiling
     // with headroom stops catching the drift it exists to catch.
+    //
+    // Roles R4: 9 -> 10. The clin.view_records check must resolve BEFORE
+    // getClientById, because a viewer without it must not have the sessions
+    // read issued at all (not read-then-hide), so it is one genuinely serial
+    // stage in front of the read.
     const waves = serialWaves();
-    expect(waves.length).toBeLessThanOrEqual(9);
+    expect(waves.length).toBeLessThanOrEqual(10);
   });
 
   // PERF-02A. The invariant the ceiling above cannot express, and the one this
@@ -195,6 +200,8 @@ describe("independent reads run in one parallel wave", () => {
       "searchParams",
       "client-profile.identity",
       "getClientById",
+      // Roles R4: the clin.view_records gate that decides whether getClientById may read sessions.
+      "requirePermission",
       "Promise.all",
       "buildClinicalNoteSections",
       "getClientBudgetContext",
