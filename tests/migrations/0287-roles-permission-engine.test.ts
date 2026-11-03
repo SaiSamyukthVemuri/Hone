@@ -129,6 +129,18 @@ describe("0287 activation rule: source contract", () => {
     expect(rows.map((r) => r.key)).not.toContain("appt.complete");
   });
 
+  it("every key the catalog marks deny_only is a NARROW release; no observe or not_yet key is released (AH1)", async () => {
+    const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
+    const seed = code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0];
+    const narrow = [...seed.matchAll(/\('([a-z_.]+)', null, '[^']+', 'narrow'\)/g)].map((m) => m[1]).sort();
+    const all = [...seed.matchAll(/\('([a-z_.]+)', null, '[^']+', '(?:full|narrow)'\)/g)].map((m) => m[1]);
+    const keys = (CATALOG as readonly { key: string }[]).map((d) => d.key);
+    const denyOnly = keys.filter((k) => enforcementOf(k) === "deny_only").sort();
+    // vacuous before the enforcement branch sets the field; the literal list above pins the six either way
+    expect(denyOnly.filter((k) => !narrow.includes(k))).toEqual([]);
+    expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)))).toEqual([]);
+  });
+
   it("activation requires an explicit non-empty key list and a preview hash; mark_permissions_released is granted to no API role (AA-1, AA-4)", () => {
     expect(code).toContain("perm_fail('keys_required')");
     expect(code).toContain("perm_fail('preview_required')");
