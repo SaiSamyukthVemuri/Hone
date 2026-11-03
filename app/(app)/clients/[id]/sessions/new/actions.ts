@@ -8,6 +8,7 @@ import {
 } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -119,6 +120,10 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     getCurrentPractitionerWithStudio(),
   );
   const supabase = await createClient();
+  // Starting a session creates a chart: editing records (NQ-11/12, asked ahead of enforcement; the database trigger is the backstop).
+  if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
 
   // PR #156. Validate the optional appointment lineage BEFORE touching
   // sessions. The lookup runs through the authenticated practitioner's

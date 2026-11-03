@@ -402,6 +402,9 @@ export async function createSessionBlockAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   // Validate the new structured-area fields up front so the caller gets a
   // clean message instead of an opaque CHECK violation. Existing block
@@ -541,6 +544,9 @@ export async function updateSessionBlockAction(
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
 
@@ -807,6 +813,9 @@ export async function softDeleteSessionBlockAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   // L18 Phase 2: soft retirement through soft_delete_session_block (0166).
@@ -860,6 +869,9 @@ export async function removeSessionAreaAction(
   // early lineage check gives a clean error before the round-trip.
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
 
@@ -1213,6 +1225,9 @@ export async function createTreatmentAreaWithEntryAction(
     throw cause;
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role.", unresolved: false };
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
     return { ok: false, error: "Not available to your role.", unresolved: false };
   }
   // WHY THAT CATCH EXISTS (Codex, #860 4305702526). `assertSessionForClient`
@@ -1721,6 +1736,9 @@ export async function updateTreatmentAreaWithEntryAction(
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
 

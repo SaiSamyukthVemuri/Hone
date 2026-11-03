@@ -234,6 +234,9 @@ export async function addElectrolysisEntryAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, code: "not_persisted", error: "Not available to your role." };
   }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    return { ok: false, code: "not_persisted", error: "Not available to your role." };
+  }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   // Migration 0011: Apilus parameters are now per-entry. Galvanic carries
@@ -422,6 +425,9 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const equipmentParams: Record<string, string> = {};
@@ -494,6 +500,9 @@ async function softDeleteEntry(
   // Verifies the session belongs to THIS studio + client (rejects cross-studio).
   await assertSessionVisible(studio.id, clientId, sessionId);
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
 
@@ -653,6 +662,9 @@ export async function updateNextSessionNoteAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("set_next_session_note", {
@@ -680,6 +692,9 @@ export async function updateSessionPerformerAction(
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
 
@@ -806,6 +821,9 @@ export async function editSessionStartedAtAction(
     return { ok: false, error: "Inactive practitioners cannot edit sessions." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
 

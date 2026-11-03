@@ -690,6 +690,9 @@ export async function recordReadingsAction(input: {
   if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
     return { ok: false, code: "rejected", error: "Not available to your role." };
   }
+  if (!(await requirePermission(await createClient(), scope.studioId, "clin.edit_records", { client: input.clientId })).allowed) {
+    return { ok: false, code: "rejected", error: "Not available to your role." };
+  }
   if (input.readings.length === 0) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
@@ -909,6 +912,9 @@ export async function recordSetupSubmissionAction(input: {
     throw e;
   }
   if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, code: "rejected", error: "Not available to your role." };
+  }
+  if (!(await requirePermission(await createClient(), scope.studioId, "clin.edit_records", { client: input.clientId })).allowed) {
     return { ok: false, code: "rejected", error: "Not available to your role." };
   }
 

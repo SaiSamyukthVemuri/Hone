@@ -10,6 +10,8 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 vi.mock("next/cache", () => ({ revalidatePath: runtime.revalidate }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: runtime.from, rpc: runtime.rpc }) }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "practitioner" }, studio: { id: "studio" } }) }));
+// Roles (NQ-12): starting a chart asks clin.edit_records first; these cases are about the appointment lineage, so the gate allows.
+vi.mock("@/lib/permissions/require-permission", () => ({ requirePermission: async () => ({ allowed: true }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: runtime.adminRpc }) }));
 vi.mock("@/app/(app)/calendar/postcare-auto-send", () => ({ autoSendPostcareOnComplete: runtime.postcare }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: runtime.analytics }));

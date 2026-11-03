@@ -197,6 +197,9 @@ async function insertClinicalNote(params: {
   if (!(await requirePermission(supabase, studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, code: "error", error: "Not available to your role." };
   }
+  if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    return { ok: false, code: "error", error: "Not available to your role." };
+  }
 
   // studio_id passed for documentation; the BEFORE INSERT trigger overwrites it
   // from the parent client. practitioner_id is the signed-in practitioner.

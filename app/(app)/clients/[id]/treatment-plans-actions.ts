@@ -142,7 +142,11 @@ async function recordsRefusal(formData: FormData): Promise<ActionResult | null> 
   const client = trimmed(formData.get("client_id")) || undefined;
   // The gate's client comes from gateClient (not createClient in this file): the close-authority interleave seam counts createClient calls made
   // from THIS file to find the gap between the plan check and the mutation, and the gate must not shift that count.
-  const ok = (await requirePermission(await gateClient(), studio.id, "clin.view_records", { client })).allowed;
+  const gate = await gateClient();
+  // Plans are chart content: viewing is the floor (NQ-10) and editing is its own key (NQ-11/12, ahead of enforcement).
+  const ok =
+    (await requirePermission(gate, studio.id, "clin.view_records", { client })).allowed &&
+    (await requirePermission(gate, studio.id, "clin.edit_records", { client })).allowed;
   return ok ? null : { ok: false, error: "Not available to your role." };
 }
 
