@@ -58,6 +58,7 @@ export async function GET(request: Request) {
       const proven =
         mailboxProofMethod(claimsFromAccessToken(accessToken), {
           email: data.user.email,
+          email_change_sent_at: data.user.email_change_sent_at,
           identities: data.user.identities,
         }) !== null;
       if (proven) {
