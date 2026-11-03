@@ -60,7 +60,9 @@ create table public.studio_permission_policy (
   studio_id  uuid primary key references public.studios(id) on delete cascade,
   basis      text not null check (basis in ('existing_snapshot', 'new_studio')),
   version    bigint not null default 0 check (version >= 0),
-  adopted_at timestamptz
+  adopted_at timestamptz,
+  -- When the studio's basis was set (seeded as new_studio, or adopted). A default only counts for a key released at or before this.
+  basis_at   timestamptz not null default now()
 );
 
 create table public.studio_role_permissions (
@@ -68,7 +70,30 @@ create table public.studio_role_permissions (
   role      text not null check (role in ('practitioner', 'receptionist')),
   key       text not null references public.permission_catalog(key),
   scope     text not null check (scope in ('off', 'own', 'studio')),
+  -- When the owner stored this value. A value stored BEFORE its key's release is inert until activated (Activation rule).
+  set_at    timestamptz not null default now(),
   primary key (studio_id, role, key)
+);
+
+-- ACTIVATION RULE (Sam, 3 Nov). The release registry records when a key's enforcement became real. Written ONLY by a migration or the operator;
+-- no function writes it and an owner cannot read or change it.
+create table public.permission_key_release (
+  key         text primary key references public.permission_catalog(key),
+  released_at timestamptz not null,
+  release_tag text not null check (length(release_tag) > 0)
+);
+
+-- One row per (studio, key, release): the owner's explicit decision to let that key's intended values take effect. Written only by
+-- activate_released_permissions.
+create table public.permission_key_activation (
+  studio_id      uuid not null references public.studios(id) on delete cascade,
+  key            text not null references public.permission_catalog(key),
+  release_tag    text not null,
+  activated_by   uuid not null,
+  activated_at   timestamptz not null default now(),
+  reason         text not null,
+  policy_version bigint not null,
+  primary key (studio_id, key, release_tag)
 );
 
 -- Operator-only. No function below writes it; an owner cannot read or change it. An absent row is NOT satisfied (fail closed).
@@ -87,7 +112,7 @@ create table public.permission_audit (
   at                    timestamptz not null default now(),
   actor_user_id         uuid,
   actor_membership_id   uuid,
-  kind                  text not null check (kind in ('role_permissions_saved', 'defaults_adopted', 'role_reset', 'staff_role_changed')),
+  kind                  text not null check (kind in ('role_permissions_saved', 'defaults_adopted', 'role_reset', 'staff_role_changed', 'permissions_activated')),
   role                  text,
   membership_id         uuid,
   membership_kind       text check (membership_kind in ('practitioner', 'receptionist')),
@@ -123,6 +148,8 @@ alter table public.studio_permission_policy enable row level security;
 alter table public.studio_role_permissions enable row level security;
 alter table public.permission_ship_gates enable row level security;
 alter table public.permission_audit enable row level security;
+alter table public.permission_key_release enable row level security;
+alter table public.permission_key_activation enable row level security;
 
 revoke all on public.permission_catalog from public, anon, authenticated, service_role;
 revoke all on public.permission_narrowings from public, anon, authenticated, service_role;
@@ -130,6 +157,8 @@ revoke all on public.studio_permission_policy from public, anon, authenticated, 
 revoke all on public.studio_role_permissions from public, anon, authenticated, service_role;
 revoke all on public.permission_ship_gates from public, anon, authenticated, service_role;
 revoke all on public.permission_audit from public, anon, authenticated, service_role;
+revoke all on public.permission_key_release from public, anon, authenticated, service_role;
+revoke all on public.permission_key_activation from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- 2) Catalog seed (generated from lib/permissions/catalog.ts; a test compares the two).
@@ -235,6 +264,12 @@ values
   ('restore_deleted_records', 'DN-25', 'Restoring deleted records becomes owner-only', 'R4', true, 'narrows', 'Restoring deleted records is open to practitioners today. From the enforcement release only the owner can.'),
   ('id_portraits_owner_only', 'DN-24', 'Client ID photos and portraits are owner-only', 'R4', true, 'narrows', 'ID photos and portraits become owner-only and not delegable until the separate ID-photo review is complete. The feature is off today, so no practitioner loses a photo they can see now.');
 
+-- Release registry seed: the keys whose enforcement is real in THIS release (a test compares this list with the catalog's enforced keys).
+-- Every other key is unreleased: its stored or default value is inert and it resolves to the existing snapshot.
+insert into public.permission_key_release (key, released_at, release_tag) values
+  ('appt.cancel', now(), 'R1-R2'), ('appt.mark_no_show', now(), 'R1-R2'), ('appt.edit_notes', now(), 'R1-R2'),
+  ('clin.view_records', now(), 'R1-R2'), ('clin.view_photos', now(), 'R1-R2'), ('clin.view_intake', now(), 'R1-R2'), ('clin.view_aftercare', now(), 'R1-R2');
+
 -- A NEW studio starts on the new-studio basis; an existing studio has no row and resolves to its existing snapshot until its owner adopts.
 create or replace function public.studios_permission_policy_seed()
 returns trigger
@@ -315,20 +350,71 @@ as $$
 declare
   c public.permission_catalog%rowtype;
   v_basis text;
+  v_basis_at timestamptz;
   v_stored text;
+  v_stored_at timestamptz;
+  v_rel public.permission_key_release%rowtype;
+  v_active boolean;
+  v_snap text;
 begin
   select * into c from public.permission_catalog where key = p_key;
   if not found then return 'off'; end if;
-  select spp.basis into v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio;
+  v_snap := case p_role when 'practitioner' then c.snapshot_practitioner else c.snapshot_receptionist end;
+  select spp.basis, spp.basis_at into v_basis, v_basis_at from public.studio_permission_policy spp where spp.studio_id = p_studio;
+  v_basis := coalesce(v_basis, 'existing_snapshot');
+  -- Activation rule: a key with no release row is unreleased, so only today's behaviour applies. Fail closed.
+  select * into v_rel from public.permission_key_release r where r.key = p_key;
+  if not found then return v_snap; end if;
+  select exists (select 1 from public.permission_key_activation k
+                  where k.studio_id = p_studio and k.key = p_key and k.release_tag = v_rel.release_tag) into v_active;
+  if c.owner_configurable then
+    select s.scope, s.set_at into v_stored, v_stored_at from public.studio_role_permissions s where s.studio_id = p_studio and s.role = p_role and s.key = p_key;
+  end if;
+  if v_stored is not null and (v_active or v_stored_at >= v_rel.released_at) then return v_stored; end if;
+  if v_basis = 'new_studio' and (v_active or v_basis_at >= v_rel.released_at) then
+    return case p_role when 'practitioner' then c.new_practitioner else c.new_receptionist end;
+  end if;
+  return v_snap;
+end;
+$$;
+
+-- Where the base value came from: 'stored' | 'default' | 'snapshot' | 'inactive_until_activated' (an owner value or new-studio default exists but
+-- pre-dates its key's release and has no activation, so today's behaviour applies) | 'unreleased' (no release row; same fail-closed result).
+create or replace function public.perm_scope_source(p_studio uuid, p_role text, p_key text)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  c public.permission_catalog%rowtype;
+  v_basis text;
+  v_basis_at timestamptz;
+  v_stored text;
+  v_stored_at timestamptz;
+  v_rel public.permission_key_release%rowtype;
+  v_active boolean;
+begin
+  select * into c from public.permission_catalog where key = p_key;
+  if not found then return 'snapshot'; end if;
+  select spp.basis, spp.basis_at into v_basis, v_basis_at from public.studio_permission_policy spp where spp.studio_id = p_studio;
   v_basis := coalesce(v_basis, 'existing_snapshot');
   if c.owner_configurable then
-    select s.scope into v_stored from public.studio_role_permissions s where s.studio_id = p_studio and s.role = p_role and s.key = p_key;
+    select s.scope, s.set_at into v_stored, v_stored_at from public.studio_role_permissions s where s.studio_id = p_studio and s.role = p_role and s.key = p_key;
   end if;
-  return coalesce(
-    v_stored,
-    case when v_basis = 'new_studio' then (case p_role when 'practitioner' then c.new_practitioner else c.new_receptionist end)
-         else (case p_role when 'practitioner' then c.snapshot_practitioner else c.snapshot_receptionist end) end
-  );
+  select * into v_rel from public.permission_key_release r where r.key = p_key;
+  if not found then
+    return case when v_stored is not null or v_basis = 'new_studio' then 'unreleased' else 'snapshot' end;
+  end if;
+  select exists (select 1 from public.permission_key_activation k where k.studio_id = p_studio and k.key = p_key and k.release_tag = v_rel.release_tag) into v_active;
+  if v_stored is not null then
+    return case when v_active or v_stored_at >= v_rel.released_at then 'stored' else 'inactive_until_activated' end;
+  end if;
+  if v_basis = 'new_studio' then
+    return case when v_active or v_basis_at >= v_rel.released_at then 'default' else 'inactive_until_activated' end;
+  end if;
+  return 'snapshot';
 end;
 $$;
 
@@ -583,7 +669,7 @@ begin
     for v_item in select * from jsonb_array_elements(v_apply) loop
       insert into public.studio_role_permissions (studio_id, role, key, scope)
       values (p_studio, v_item ->> 'role', v_item ->> 'key', v_item ->> 'scope')
-      on conflict (studio_id, role, key) do update set scope = excluded.scope;
+      on conflict (studio_id, role, key) do update set scope = excluded.scope, set_at = now();
     end loop;
 
     -- Prerequisites must hold on the RESULTING set.
@@ -677,7 +763,8 @@ as $$ select public.perm_run_changes(p_studio, p_changes, p_reason, p_sensitive_
 
 -- Reset a role to the studio's OWN basis (an existing studio returns to its snapshot, never to the new defaults) / adopt new defaults.
 create or replace function public.perm_run_basis(
-  p_studio uuid, p_mode text, p_role text, p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean
+  p_studio uuid, p_mode text, p_role text, p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean,
+  p_confirmed boolean default false
 )
 returns jsonb
 language plpgsql
@@ -700,6 +787,7 @@ declare
   v_affected jsonb := '{}'::jsonb;
   v_result jsonb;
   v_any boolean := false;
+  v_sens jsonb := '[]'::jsonb;
 begin
   select * into a from public.perm_actor(p_studio);
   if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
@@ -728,7 +816,7 @@ begin
       if v_basis = 'new_studio' then
         raise exception using errcode = 'PM001', message = public.perm_fail('nothing_changed', null, null, v_version)::text;
       end if;
-      update public.studio_permission_policy set basis = 'new_studio', adopted_at = now() where studio_id = p_studio;
+      update public.studio_permission_policy set basis = 'new_studio', adopted_at = now(), basis_at = now() where studio_id = p_studio;
     else
       select exists (select 1 from public.studio_role_permissions s where s.studio_id = p_studio and s.role = p_role) into v_any;
       if not v_any then
@@ -741,9 +829,14 @@ begin
       v_after := v_after || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
       v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before -> v_role, v_after -> v_role));
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
+      -- Same rule as save (Insurance PY-1): a SENSITIVE or financial key whose EFFECTIVE scope newly rises needs an explicit confirmation.
+      select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after -> v_role) e
+        join public.permission_catalog pc on pc.key = e.key
+       where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before -> v_role ->> e.key);
     end loop;
 
-    v_result := jsonb_build_object('ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected, 'reason_required', true);
+    v_result := jsonb_build_object('ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected, 'reason_required', true, 'sensitive_keys', v_sens, 'confirmation_required', jsonb_array_length(v_sens) > 0);
     if p_mode = 'adopt' then
       v_result := v_result || jsonb_build_object(
         'fixed_narrowings',
@@ -753,6 +846,9 @@ begin
 
     if not p_commit then
       raise exception using errcode = 'PM002', message = 'preview';
+    end if;
+    if jsonb_array_length(v_sens) > 0 and not coalesce(p_confirmed, false) then
+      raise exception using errcode = 'PM001', message = public.perm_fail('sensitive_unconfirmed')::text;
     end if;
 
     update public.studio_permission_policy set version = version + 1 where studio_id = p_studio returning version into v_new_version;
@@ -777,17 +873,138 @@ create or replace function public.preview_reset(p_studio uuid, p_role text)
 returns jsonb language sql volatile security definer set search_path = ''
 as $$ select public.perm_run_basis(p_studio, 'reset', p_role, null, null, false, false) $$;
 
-create or replace function public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text)
+create or replace function public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean default false)
 returns jsonb language sql volatile security definer set search_path = ''
-as $$ select public.perm_run_basis(p_studio, 'reset', p_role, p_reason, p_expected_version, true, true) $$;
+as $$ select public.perm_run_basis(p_studio, 'reset', p_role, p_reason, p_expected_version, true, true, p_sensitive_confirmed) $$;
 
 create or replace function public.preview_adopt_new_defaults(p_studio uuid)
 returns jsonb language sql volatile security definer set search_path = ''
 as $$ select public.perm_run_basis(p_studio, 'adopt', null, null, null, false, false) $$;
 
-create or replace function public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text)
+create or replace function public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean default false)
 returns jsonb language sql volatile security definer set search_path = ''
-as $$ select public.perm_run_basis(p_studio, 'adopt', null, p_reason, p_expected_version, true, true) $$;
+as $$ select public.perm_run_basis(p_studio, 'adopt', null, p_reason, p_expected_version, true, true, p_sensitive_confirmed) $$;
+
+-- ---------------------------------------------------------------------------
+-- 4b) ACTIVATION (owner only). One body for preview and commit, like the commands above: a preview runs the change and rolls it back.
+--     p_keys null = every released key with no activation for its current release. Activation does not change a stored value; it lets the
+--     owner's intended values (stored, or the new-studio default) take effect for the named keys.
+-- ---------------------------------------------------------------------------
+create or replace function public.perm_run_activation(
+  p_studio uuid, p_keys text[], p_reason text, p_expected_version bigint, p_require_version boolean, p_commit boolean,
+  p_confirmed boolean default false
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  a record;
+  v_version bigint;
+  v_new_version bigint;
+  v_reason text;
+  v_msg text;
+  v_role text;
+  v_keys text[];
+  v_key text;
+  v_tag text;
+  v_sens jsonb := '[]'::jsonb;
+  v_before jsonb := '{}'::jsonb;
+  v_after jsonb := '{}'::jsonb;
+  v_changes jsonb := '{}'::jsonb;
+  v_affected jsonb := '{}'::jsonb;
+  v_result jsonb;
+begin
+  select * into a from public.perm_actor(p_studio);
+  if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
+  v_reason := nullif(btrim(coalesce(p_reason, '')), '');
+  begin
+    insert into public.studio_permission_policy (studio_id, basis, version) values (p_studio, 'existing_snapshot', 0) on conflict do nothing;
+    select spp.version into v_version from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
+    if p_expected_version is null and p_require_version then
+      raise exception using errcode = 'PM001', message = public.perm_fail('version_required', null, null, v_version)::text;
+    end if;
+    if p_expected_version is not null and p_expected_version <> v_version then
+      raise exception using errcode = 'PM001', message = public.perm_fail('stale_version', null, null, v_version)::text;
+    end if;
+    if p_commit and not public.perm_reason_ok(v_reason) then
+      raise exception using errcode = 'PM001', message = public.perm_fail('reason_required')::text;
+    end if;
+
+    if p_keys is null then
+      select coalesce(array_agg(r.key order by r.key), '{}') into v_keys from public.permission_key_release r
+       where not exists (select 1 from public.permission_key_activation k where k.studio_id = p_studio and k.key = r.key and k.release_tag = r.release_tag);
+    else
+      select coalesce(array_agg(distinct k order by k), '{}') into v_keys from unnest(p_keys) k;
+    end if;
+    foreach v_key in array v_keys loop
+      if not exists (select 1 from public.permission_catalog where key = v_key) then
+        raise exception using errcode = 'PM001', message = public.perm_fail('unknown_key', v_key)::text;
+      end if;
+      if not exists (select 1 from public.permission_key_release where key = v_key) then
+        raise exception using errcode = 'PM001', message = public.perm_fail('not_released', v_key)::text;
+      end if;
+    end loop;
+
+    foreach v_role in array array['practitioner', 'receptionist'] loop
+      v_before := v_before || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
+    end loop;
+    foreach v_key in array v_keys loop
+      select r.release_tag into v_tag from public.permission_key_release r where r.key = v_key;
+      insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version)
+      values (p_studio, v_key, v_tag, auth.uid(), coalesce(v_reason, 'preview'), v_version)
+      on conflict (studio_id, key, release_tag) do nothing;
+    end loop;
+    foreach v_role in array array['practitioner', 'receptionist'] loop
+      v_after := v_after || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
+      v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before -> v_role, v_after -> v_role));
+      v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
+      select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after -> v_role) e
+        join public.permission_catalog pc on pc.key = e.key
+       where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before -> v_role ->> e.key);
+    end loop;
+    v_result := jsonb_build_object('ok', true, 'version', v_version, 'keys', to_jsonb(v_keys), 'changes', v_changes, 'affected', v_affected, 'reason_required', true, 'sensitive_keys', v_sens, 'confirmation_required', jsonb_array_length(v_sens) > 0);
+
+    if not p_commit then
+      raise exception using errcode = 'PM002', message = 'preview';
+    end if;
+    if cardinality(v_keys) = 0 then
+      raise exception using errcode = 'PM001', message = public.perm_fail('nothing_changed', null, null, v_version)::text;
+    end if;
+    if jsonb_array_length(v_sens) > 0 and not coalesce(p_confirmed, false) then
+      raise exception using errcode = 'PM001', message = public.perm_fail('sensitive_unconfirmed')::text;
+    end if;
+
+    update public.studio_permission_policy set version = version + 1 where studio_id = p_studio returning version into v_new_version;
+    update public.permission_key_activation set policy_version = v_new_version
+     where studio_id = p_studio and key = any (v_keys) and policy_version = v_version and activated_by = auth.uid() and reason = v_reason;
+    foreach v_role in array array['practitioner', 'receptionist'] loop
+      insert into public.permission_audit (studio_id, actor_user_id, actor_membership_id, kind, role, before, after, reason, policy_version_before, policy_version_after)
+      values (p_studio, auth.uid(), a.membership_id, 'permissions_activated', v_role,
+              jsonb_build_object('keys', to_jsonb(v_keys), 'effective', v_before -> v_role),
+              jsonb_build_object('keys', to_jsonb(v_keys), 'effective', v_after -> v_role), v_reason, v_version, v_new_version);
+    end loop;
+    return v_result || jsonb_build_object('new_version', v_new_version);
+  exception
+    when sqlstate 'PM001' then
+      get stacked diagnostics v_msg = message_text;
+      return v_msg::jsonb;
+    when sqlstate 'PM002' then
+      return v_result;
+  end;
+end;
+$$;
+
+create or replace function public.preview_activation(p_studio uuid)
+returns jsonb language sql volatile security definer set search_path = ''
+as $$ select public.perm_run_activation(p_studio, null, null, null, false, false) $$;
+
+create or replace function public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean default false)
+returns jsonb language sql volatile security definer set search_path = ''
+as $$ select public.perm_run_activation(p_studio, p_keys, p_reason, p_expected_version, true, true, p_sensitive_confirmed) $$;
 
 -- ---------------------------------------------------------------------------
 -- 5) Reads (owner only). Names are resolved at read time; no email is ever returned.
@@ -815,7 +1032,8 @@ begin
     v_roles := v_roles || jsonb_build_object(v_role, (
       select coalesce(jsonb_object_agg(c.key, jsonb_build_object(
         'stored', (select s.scope from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_role and s.key = c.key),
-        'effective', public.perm_effective_scope(p_studio, v_role, c.key)
+        'effective', public.perm_effective_scope(p_studio, v_role, c.key),
+        'source', public.perm_scope_source(p_studio, v_role, c.key)
       )), '{}'::jsonb) from public.permission_catalog c));
   end loop;
   return jsonb_build_object(
@@ -895,7 +1113,7 @@ begin
     end if;
     v_rows := v_rows || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
       'key', c.key, 'scope', v_eff,
-      'source', case when v_role = 'owner' then 'owner' when v_stored is not null then 'stored' when v_basis = 'new_studio' then 'default' else 'snapshot' end,
+      'source', case when v_role = 'owner' then 'owner' else public.perm_scope_source(p_studio, v_role, c.key) end,
       'capped_by', v_capped)));
   end loop;
   return jsonb_build_object('ok', true, 'membership_id', p_membership, 'role', v_role, 'state', v_state, 'rows', v_rows);
@@ -1049,6 +1267,10 @@ $$;
 revoke all on function public.permission_audit_append_only() from public, anon, authenticated, service_role;
 revoke all on function public.studios_permission_policy_seed() from public, anon, authenticated, service_role;
 revoke all on function public.perm_rank(text) from public, anon, authenticated, service_role;
+revoke all on function public.perm_scope_source(uuid, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.perm_run_activation(uuid, text[], text, bigint, boolean, boolean, boolean) from public, anon, authenticated, service_role;
+revoke all on function public.preview_activation(uuid) from public, anon, authenticated, service_role;
+revoke all on function public.activate_released_permissions(uuid, text[], bigint, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.perm_reason_ok(text) from public, anon, authenticated, service_role;
 revoke all on function public.perm_actor(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.perm_base_scope(uuid, text, text) from public, anon, authenticated, service_role;
@@ -1058,14 +1280,14 @@ revoke all on function public.perm_diff(jsonb, jsonb) from public, anon, authent
 revoke all on function public.perm_affected_people(uuid, text) from public, anon, authenticated, service_role;
 revoke all on function public.perm_fail(text, text, text, bigint, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean) from public, anon, authenticated, service_role;
-revoke all on function public.perm_run_basis(uuid, text, text, text, bigint, boolean, boolean) from public, anon, authenticated, service_role;
+revoke all on function public.perm_run_basis(uuid, text, text, text, bigint, boolean, boolean, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.has_studio_permission(uuid, text, uuid, uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.preview_role_changes(uuid, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.save_role_permissions(uuid, bigint, jsonb, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.preview_reset(uuid, text) from public, anon, authenticated, service_role;
-revoke all on function public.reset_role_to_defaults(uuid, text, bigint, text) from public, anon, authenticated, service_role;
+revoke all on function public.reset_role_to_defaults(uuid, text, bigint, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.preview_adopt_new_defaults(uuid) from public, anon, authenticated, service_role;
-revoke all on function public.adopt_new_defaults(uuid, bigint, text) from public, anon, authenticated, service_role;
+revoke all on function public.adopt_new_defaults(uuid, bigint, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.get_role_permissions(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.effective_access(uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.list_permission_audit(uuid, integer, bigint) from public, anon, authenticated, service_role;
@@ -1075,10 +1297,12 @@ grant execute on function public.has_studio_permission(uuid, text, uuid, uuid, u
 grant execute on function public.preview_role_changes(uuid, jsonb) to authenticated;
 grant execute on function public.save_role_permissions(uuid, bigint, jsonb, text, boolean) to authenticated;
 grant execute on function public.preview_reset(uuid, text) to authenticated;
-grant execute on function public.reset_role_to_defaults(uuid, text, bigint, text) to authenticated;
+grant execute on function public.reset_role_to_defaults(uuid, text, bigint, text, boolean) to authenticated;
 grant execute on function public.preview_adopt_new_defaults(uuid) to authenticated;
-grant execute on function public.adopt_new_defaults(uuid, bigint, text) to authenticated;
+grant execute on function public.adopt_new_defaults(uuid, bigint, text, boolean) to authenticated;
 grant execute on function public.get_role_permissions(uuid) to authenticated;
+grant execute on function public.preview_activation(uuid) to authenticated;
+grant execute on function public.activate_released_permissions(uuid, text[], bigint, text, boolean) to authenticated;
 grant execute on function public.effective_access(uuid, uuid) to authenticated;
 grant execute on function public.list_permission_audit(uuid, integer, bigint) to authenticated;
 grant execute on function public.change_staff_role(uuid, uuid, text, text, text) to authenticated;

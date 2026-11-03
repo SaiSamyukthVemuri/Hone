@@ -53,7 +53,9 @@ export type ProfileReadOptions = {
   /** Owners only. Absent or false: no client pricing, session price or service price is fetched. */
   includePrices?: boolean;
   /** Absent or true: the client's sessions are read. false (the viewer lacks clin.view_records): no session or entry row is read at all. */
-  includeSessions?: boolean;
+  // A thunk is asked only AFTER the client has resolved for the studio (the Roles gate, clin.view_records): no gate and no session read happens
+  // for a client the viewer must not serve.
+  includeSessions?: boolean | (() => Promise<boolean>);
 };
 
 /** The services column list for a read: "*" unless the caller must not carry the price. */
