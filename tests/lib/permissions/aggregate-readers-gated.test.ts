@@ -13,6 +13,13 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     from: (...a: unknown[]) => {
       fromSpy(...a);
+      // Sterile items are operational records and stay readable (Insurance RP-1); every other table is treatment data.
+      if (a[0] === "record_keeping_sterile_items") {
+        const q: Record<string, unknown> = {};
+        for (const m of ["select", "eq", "ilike", "order"]) q[m] = () => q;
+        q.limit = async () => ({ data: [{ id: "item1", lot_number: "LOT123" }], error: null });
+        return q;
+      }
       throw new Error("a table was read while clin.view_records was off");
     },
     rpc: () => {
@@ -59,8 +66,12 @@ describe("without clin.view_records the aggregate readers read nothing and retur
     expect(await rk.getClientProcedureRecords("studio")).toEqual([]);
     expect(await rk.getLatestProbeLotByProbeKey("studio")).toEqual({});
     expect(await rk.getProbeLotSuggestions("studio")).toEqual({ byKey: {}, byLabel: {} });
-    expect(await rk.getLotTraceability("studio", "LOT123")).toMatchObject({ sterileItems: [], usages: [] });
-    expect(fromSpy).not.toHaveBeenCalled();
+    // RP-1: an empty usage list would read as "this lot was never used" in a recall lookup, so the result says it is NOT AVAILABLE,
+    // still returns the operational sterile-item records, and never reads session blocks.
+    const trace = await rk.getLotTraceability("studio", "LOT123");
+    expect(trace).toMatchObject({ usagesNotAvailable: true, usages: [] });
+    expect(trace?.sterileItems).toHaveLength(1);
+    expect(fromSpy.mock.calls.map((c) => c[0]).every((t) => t === "record_keeping_sterile_items")).toBe(true);
   });
   it("procedure action metrics", async () => {
     const { getProcedureActionMetrics } = await import("@/lib/dashboard/practice-metrics");
@@ -69,7 +80,7 @@ describe("without clin.view_records the aggregate readers read nothing and retur
   });
   it("personal charting", async () => {
     const { getPersonalChartedWithin24h } = await import("@/lib/dashboard/personal-charting");
-    expect(await getPersonalChartedWithin24h("studio", "p", NOW)).toEqual({ completedCount: 0, chartedWithin24hCount: 0 });
+    expect(await getPersonalChartedWithin24h("studio", "p", NOW)).toEqual({ completedCount: 0, chartedWithin24hCount: 0, notAvailable: true });
     expect(fromSpy).not.toHaveBeenCalled();
   });
   it("before-today previews", async () => {
@@ -113,6 +124,42 @@ describe("the readers that stay in the page are gated at their call sites", () =
     expect(s).toContain('"clin.view_intake"');
     expect(read("app/(app)/clients/[id]/intake/assist/page.tsx")).toContain('"clin.view_intake"');
     expect(read("app/(app)/calendar/[id]/page.tsx")).toContain('"clin.view_intake"');
+  });
+  it("RP-1: the lot trace page says usage is not available and tells the viewer to ask the owner", () => {
+    const s = read("app/(app)/records/page.tsx");
+    expect(s).toContain("Lot usage is not available to your role. Ask the owner for a recall trace.");
+    expect(s.indexOf("trace.usagesNotAvailable")).toBeLessThan(s.indexOf("No charted treatment areas have used this lot yet."));
+  });
+  it("Codex: client profile cards and the Today roster never present an unread history as a fact", () => {
+    const c = read("app/(app)/clients/[id]/page.tsx");
+    expect(c).toContain("historyNotAvailableToRole={!canViewRecords}");
+    expect(c).toContain("Last treatment is not available to your role.");
+    expect(c).toContain("Treatment history is not available to your role.");
+    const d = read("app/(app)/dashboard/page.tsx");
+    expect(d).toMatch(/appt\.status === "completed" && canViewRecords/);
+    expect(d).toContain("historyAsked={viewingToday && canViewRecords}");
+    expect(d).toContain("Treatment history and charting status are not available to your role.");
+  });
+  it("Codex (calendar page): plans, last treatment and consultation notes say not available instead of empty", () => {
+    const s = read("app/(app)/calendar/[id]/page.tsx");
+    expect(s).toMatch(/canViewRecords \? getTreatmentPlansForClient/);
+    expect(s).toContain("Treatment plans are not available to your role.");
+    expect(s).toContain("Last treatment is not available to your role.");
+    expect(s).toContain("Consultation notes are not available to your role.");
+    expect(s).toContain("notAvailableToRole={!canViewRecords}");
+  });
+  it("loader level: plans, imported memory, previous visit note and treatment time read nothing when the key is off", async () => {
+    const { getTreatmentPlansForClient, getTreatmentPlanWithCount, getActiveTreatmentPlansForClient } = await import("@/lib/treatment-plans/queries");
+    expect(await getTreatmentPlansForClient("s", "c")).toEqual([]);
+    expect(await getActiveTreatmentPlansForClient("s", "c")).toEqual([]);
+    expect(await getTreatmentPlanWithCount("s", "p")).toBeNull();
+    const { getImportedTreatmentMemoriesForClient } = await import("@/lib/imported-treatment-memory");
+    expect(await getImportedTreatmentMemoriesForClient("s", "c")).toMatchObject({ items: [], notAvailable: true });
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect(await loadPreviousVisitNote({ studioId: "s", clientId: "c", before: NOW })).toEqual({ note: null, unavailable: true });
+    const { getTotalTreatmentTime } = await import("@/lib/treatment-time/queries");
+    await getTotalTreatmentTime("s", "c");
+    expect(fromSpy).not.toHaveBeenCalled();
   });
   it("the procedure-record print says it is not available instead of printing an empty log", () => {
     const s = read("app/(app)/records/print/page.tsx");
