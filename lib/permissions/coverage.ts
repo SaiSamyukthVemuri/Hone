@@ -7,8 +7,9 @@
 //   base         a fixed baseline of the staff role, not a toggle
 //   not_staff    not a staff permission (anonymous, client token, portal, service, platform admin); governed by safeguards
 //   owner_only   owner-only this release (Sam, DN-4b), no key
+//   operator_only  the platform operator only, never the studio owner (DN-16)
 // `team: true` marks rows the audit left open or that Sam's groups 1 and 2 settled, mapped by the Team lane for reviewers to confirm.
-export type CoverageClass = "key" | "safeguard" | "fixed_owner" | "base" | "not_staff" | "owner_only";
+export type CoverageClass = "key" | "safeguard" | "fixed_owner" | "base" | "not_staff" | "owner_only" | "operator_only";
 export type CoverageRow = {
   readonly label: string; readonly cls: CoverageClass; readonly keys: readonly string[]; readonly dn?: readonly string[]; readonly team?: true;
   // Catalog keys the audit matrix recommends for this row. Keys must cover them unless `departs` gives the decided reason.
@@ -72,8 +73,8 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "CLI-12": { label: "Unarchive (restore) a client", cls: "fixed_owner", keys: [], dn: ["DN-25"], team: true, enforcement: "R4/R5: owner-only only at the enforcement release, with advance notice (DN-25)", fixed: ["restore_deleted_records"] },
   "CLI-13": { label: "Erase a client", cls: "fixed_owner", keys: [], dn: ["DN-18"], team: true, enforcement: "design only: request, review, confirmation by the owner; execution unavailable until retention is reviewed; no invented retention, no backup-erasure promise (DN-18)", fixed: ["erase_client_permanently"] },
   "CLI-14": { label: "Add or remove a client tag", cls: "key", keys: ["client.view_tags", "client.edit_tags"], dn: ["DN-5"], team: true, matrix: ["clin.edit_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
-  "CLI-15": { label: "Read or write budget context", cls: "key", keys: ["client.view_budget_goals", "client.edit_budget_goals"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
-  "CLI-16": { label: "Upsert treatment goal", cls: "key", keys: ["client.edit_budget_goals"], dn: ["DN-5"], team: true, matrix: ["clin.edit_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
+  "CLI-15": { label: "Read or write budget context", cls: "key", keys: ["client.view_budget", "client.edit_budget"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
+  "CLI-16": { label: "Upsert treatment goal", cls: "key", keys: ["clin.edit_records"], dn: ["DN-5"], team: true, matrix: ["clin.edit_records"] },
   "CLI-17": { label: "Read or write personal notes", cls: "key", keys: ["client.view_personal_notes", "client.edit_personal_notes"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
   "CLI-18": { label: "Read pinned cautions", cls: "key", keys: ["client.view_allergies_cautions"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
   "CLI-19": { label: "Add a pinned caution", cls: "key", keys: ["client.edit_allergies_cautions"], dn: ["DN-5"], team: true, matrix: ["clin.edit_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
@@ -125,7 +126,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "DATA-2": { label: "Full studio export (ZIP of CSVs)", cls: "fixed_owner", keys: [], dn: ["DN-19"], team: true, enforcement: "R5: owner export includes intake, photos, messages, legal identity, consent and notes; excludes credentials, payment secrets, other studios and platform security; short-lived owner-scoped links (DN-19)", fixed: ["full_studio_data_export"] },
   "DATA-3": { label: "Export completeness", cls: "fixed_owner", keys: [], dn: ["DN-19"], team: true, enforcement: "R5: the completeness rule for the owner export (DN-19)" },
   "SCH-1": { label: "View the studio calendar (all practitioners, client names, service)", cls: "key", keys: ["appt.view_calendar"], matrix: ["appt.view_calendar"] },
-  "SCH-2": { label: "Read appointment detail incl. email, phone, pronouns, allergies, Fitzpatrick type, skin notes", cls: "key", keys: ["clin.view_records", "client.view_health_fields"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"] },
+  "SCH-2": { label: "Read appointment detail incl. email, phone, pronouns, allergies, Fitzpatrick type, skin notes", cls: "key", keys: ["clin.view_records", "client.view_allergies_cautions", "client.view_directory", "client.view_health_fields"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"] },
   "SCH-3": { label: "Read the upcoming list with client email and phone", cls: "key", keys: ["client.view_directory"], matrix: ["client.view_directory"] },
   "SCH-4": { label: "Book an appointment (staff)", cls: "key", keys: ["appt.book"], matrix: ["appt.book"] },
   "SCH-5": { label: "Cancel a future confirmed appointment (client notified)", cls: "key", keys: ["appt.cancel"], matrix: ["appt.cancel"] },
@@ -135,7 +136,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "SCH-9": { label: "Mark no-show (after end)", cls: "key", keys: ["appt.mark_no_show"], matrix: ["appt.mark_no_show"] },
   "SCH-10": { label: "Send or resend postcare (aftercare) email", cls: "key", keys: ["appt.aftercare_send"], matrix: ["appt.aftercare_send"] },
   "SCH-11": { label: "Read outcome repair state", cls: "key", keys: ["appt.view_calendar"], matrix: ["appt.view_calendar"] },
-  "SCH-12": { label: "Revert a completed / no-show / cancelled outcome (72 h)", cls: "fixed_owner", keys: [], dn: ["DN-12"], team: true },
+  "SCH-12": { label: "Revert a completed / no-show / cancelled outcome", cls: "fixed_owner", keys: [], dn: ["DN-12"], team: true },
   "SCH-13": { label: "Edit appointment notes", cls: "key", keys: ["appt.edit_notes", "client.edit_health_fields"], dn: ["DN-5"], team: true, matrix: ["appt.edit_notes"] },
   "AV-1": { label: "Edit studio weekly hours, date overrides, blockouts", cls: "key", keys: ["avail.manage_studio_hours"], dn: ["DN-13"], team: true, matrix: ["avail.manage_others"], departs: "Sam's DN-13 decision: studio-wide opening hours are their own key, separate from colleagues' availability" },
   "AV-2": { label: "Per-practitioner hours, overrides, reset, customize week", cls: "key", keys: ["avail.manage_own"], matrix: ["avail.manage_own"] },
@@ -152,8 +153,8 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "PUB-8": { label: "Read reschedule page and slots; reschedule via token (new token)", cls: "safeguard", keys: [] },
   "PUB-9": { label: "Waitlist invitation: read offer, email-OTP proof, book, decline", cls: "safeguard", keys: [] },
   "PUB-10": { label: "Card-required public booking and recovery tokens", cls: "safeguard", keys: [] },
-  "PUB-11": { label: "Submit a demo request", cls: "safeguard", keys: [], dn: ["G7"], team: true, enforcement: "R5: validated server endpoint with rate and quantity limits; no direct anon table write (NARROWINGS anonymous_public_writes_closed)" },
-  "PUB-12": { label: "Submit an early-access waitlist email", cls: "safeguard", keys: [], dn: ["G7"], team: true, enforcement: "R5: validated server endpoint with rate and quantity limits; no direct anon table write (NARROWINGS anonymous_public_writes_closed)" },
+  "PUB-11": { label: "Submit a demo request", cls: "safeguard", keys: [], dn: ["G7"], team: true, enforcement: "R5: validated server endpoint; operator-configured limits (5 per visitor per hour, 3 per email per day, failures counted); no direct anon table write (NARROWINGS anonymous_public_writes_closed)" },
+  "PUB-12": { label: "Submit an early-access waitlist email", cls: "safeguard", keys: [], dn: ["G7"], team: true, enforcement: "R5: validated server endpoint; operator-configured limits (5 per visitor per hour, 3 per email per day, failures counted); no direct anon table write (NARROWINGS anonymous_public_writes_closed)" },
   "PUB-13": { label: "Read marketing pages (/, pricing, features, resources, privacy, terms)", cls: "safeguard", keys: [] },
   "PUB-14": { label: "Anon direct table / RPC surface (RLS on all 120 tables; 8 anon definers, all safe)", cls: "safeguard", keys: [] },
   "PORT-1": { label: "Staff send a portal magic link", cls: "key", keys: ["comm.send_portal_link"], dn: ["DN-30"], team: true, matrix: ["comm.send_routine"], departs: "Sam's DN-30 decision: portal links are separately configurable from routine messaging (which they require)" },
@@ -198,7 +199,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "GC-8": { label: "Studio destination: mode, scope upgrade, provision dedicated, select owned, designate self as st", cls: "owner_only", keys: [] },
   "GC-9": { label: "Push studio appointments to the studio calendar owner's Google", cls: "safeguard", keys: [], dn: ["G7"], team: true, enforcement: "R5: no new sync to a removed or deactivated owner; active authorised owner required; owner notified (NARROWINGS deactivated_calendar_owner)" },
   "GC-10": { label: "Read event-link state", cls: "base", keys: [] },
-  "GC-11": { label: "Turn on the Google studio flags", cls: "safeguard", keys: [], dn: ["DN-16"], team: true, enforcement: "R5: operator-only; a database guard on the Google studio flags; owners keep connect and disconnect (NARROWINGS google_flags_operator_only, DN-16)" },
+  "GC-11": { label: "Turn on the Google studio flags", cls: "operator_only", keys: [], dn: ["DN-16"], team: true, enforcement: "R5: operator-only; a database guard on the Google studio flags; owners keep connect and disconnect (NARROWINGS google_flags_operator_only, DN-16)" },
   "GC-12": { label: "Global worker switch; outbox, control, metric, OAuth-state tables", cls: "safeguard", keys: [] },
   "GC-13": { label: "Calendar sync and reconcile crons", cls: "safeguard", keys: [] },
   "MA-1": { label: "Register a studio machine", cls: "owner_only", keys: [] },
@@ -213,7 +214,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "PAY-2": { label: "Waive a fee or charge", cls: "key", keys: ["pay.correct_or_waive"], matrix: ["pay.correct_or_waive"] },
   "PAY-3": { label: "Supersede or correct a settlement (reason required)", cls: "key", keys: ["pay.correct_or_waive"], matrix: ["pay.correct_or_waive"] },
   "PAY-4": { label: "Prepare and execute a visit/session charge on a saved card", cls: "key", keys: ["pay.charge_saved_card"], matrix: ["pay.charge_saved_card"] },
-  "PAY-5": { label: "Prepare and charge a no-show or late-cancel fee; fee receipt", cls: "key", keys: ["pay.charge_saved_card"], matrix: ["pay.charge_saved_card"], enforcement: "R3: eligibility is decided on the server from the recorded cancel time, the appointment time and the booking's policy snapshot; needs pay.charge_saved_card; no automatic activation, no duplicate charge; DB part is held migration 0293 inside R3 (DN-23b)" },
+  "PAY-5": { label: "Prepare and charge a no-show or late-cancel fee; fee receipt", cls: "key", keys: ["pay.charge_saved_card"], matrix: ["pay.charge_saved_card"], enforcement: "R3: eligibility is decided on the server from the recorded cancel time, the appointment time and the booking's policy snapshot; the owner-set window is whole hours 1-168 and UNSET by default (unset = no late-cancel charging, Q1); needs pay.charge_saved_card; no automatic activation, no duplicate charge; DB part is held migration 0293 inside R3 (DN-23b)" },
   "PAY-6": { label: "Cancel a prepared fee attempt; retire a prepared session charge (void a pending charge)", cls: "key", keys: ["pay.void"], matrix: ["pay.void"] },
   "PAY-7": { label: "Refund a session or visit charge (full/partial)", cls: "key", keys: ["pay.refund"], matrix: ["pay.refund"] },
   "PAY-8": { label: "Refund a fee charge", cls: "key", keys: ["pay.refund"], matrix: ["pay.refund"] },

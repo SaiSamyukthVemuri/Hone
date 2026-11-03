@@ -48,6 +48,10 @@ export type Phase = (typeof PHASES)[number];
 // VALUE is not guessed. Every studio (new or existing) gets today's behaviour (the existing-studio snapshot) until the decision is
 // made, and the page marks it. `touchedByDecision` means a decision concerns what the key covers but does NOT decide its value.
 export type DecisionId = `DN-${number}`;
+// An open question OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c, plus Q-22..Q-24 raised from its section b).
+// A key flagged with one is built, but its value is not backed by a decision, so it is pinned like a pending DN.
+export type QuestionId = `Q-${number}`;
+export type DecisionRef = DecisionId | QuestionId;
 
 // How well the snapshot value is known. A reviewer should look hardest at anything that is not "verified".
 //   verified         proved at runtime on an isolated copy of the production chain
@@ -75,8 +79,8 @@ export type PermissionDef = {
   readonly affectsFutureStudioBusiness?: boolean; // studio-wide price/fee settings are labelled as such on the page
   readonly sensitive?: boolean; // newly enabling it is highlighted in the Reset-to-defaults preview (financial, clinical, identity, bulk)
   readonly shipGate?: Readonly<Partial<Record<Role, GateId>>>; // effectively OFF for that role until the gate is satisfied (see GATES)
-  readonly pendingDecision?: readonly DecisionId[]; // value pinned to the snapshot for every studio until decided
-  readonly touchedByDecision?: readonly DecisionId[]; // informational: a decision touches this key's coverage, not its value
+  readonly pendingDecision?: readonly DecisionRef[]; // value pinned to the snapshot for every studio until decided
+  readonly touchedByDecision?: readonly DecisionRef[]; // informational: a decision touches this key's coverage, not its value
   readonly note?: string;
 };
 
@@ -86,6 +90,10 @@ const BOOL = ["off", "studio"] as const;
 const SCOPED = ["off", "own", "studio"] as const;
 const BOTH = { practitioner: true, receptionist: true } as const;
 const ASSIGNED = "an appointment whose assigned practitioner is the actor";
+// Shown to owners next to the "own" scope of portal replies (Sam, 3 Nov, Q6). PROPOSED wording from the Team lane, for OPS and Sam to confirm
+// before the assigned-client scope can be enabled: "assigned client" must be defined precisely and that explanation shown to owners.
+export const ASSIGNED_CLIENT =
+  "an assigned client: a client who has at least one appointment, past or future and not cancelled, whose assigned practitioner is you. A client you only booked for a colleague, or whose appointments were all reassigned away or cancelled, is not assigned to you";
 
 const CALENDAR = "appt.view_calendar";
 const PAY_VIEW = "pay.view_appointment";
@@ -120,6 +128,7 @@ export const CATALOG = [
   },
   {
     key: "client.view_directory",
+    touchedByDecision: ["Q-22"],
     group: "clients_identity",
     label: "View and search the client list and contact details",
     description: "See and search clients and their contact details. A role without the legal-name key sees the preferred name, otherwise 'Name on file'.",
@@ -166,6 +175,7 @@ export const CATALOG = [
   },
   {
     key: "appt.reassign",
+    touchedByDecision: ["Q-17"],
     group: "appointments",
     label: "Reassign appointments",
     description: "Change which practitioner an appointment is assigned to. Own = hand one of your own appointments to a colleague.",
@@ -229,6 +239,7 @@ export const CATALOG = [
   },
   {
     key: "appt.complete",
+    pendingDecision: ["Q-16"],
     group: "appointments",
     label: "Complete treatments",
     description:
@@ -275,7 +286,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Studio is the shipped default for a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot is Off and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
+    note: "Settled (OPS, 3 Nov, DN-13): ON for practitioners in a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot stays Off (today's approved access) and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
   },
   {
     key: "avail.manage_others",
@@ -293,6 +304,7 @@ export const CATALOG = [
   },
   {
     key: "avail.manage_studio_hours",
+    touchedByDecision: ["Q-24"],
     group: "availability",
     label: "Manage the studio's opening hours",
     description: "Change the studio-wide weekly opening hours and overrides. Separate from managing a colleague's availability and from managing your own.",
@@ -305,7 +317,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     affectsFutureStudioBusiness: true,
-    note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate and is already ON for practitioners.",
+    note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
   },
 
   // ─────────────────────────── clients and identity ───────────────────────────
@@ -358,6 +370,7 @@ export const CATALOG = [
   },
   {
     key: "client.edit_legal_name",
+    touchedByDecision: ["Q-15"],
     group: "clients_identity",
     label: "Edit a client's legal name",
     description: "Change the legal name through the protected identity flow. Separate from viewing; enabling one never grants the other.",
@@ -423,6 +436,7 @@ export const CATALOG = [
   },
   {
     key: "clin.edit_records",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Edit clinical records",
     description: "Write and edit charts, with authorship recorded and earlier versions preserved. Separate from deleting, which stays owner-only.",
@@ -454,6 +468,7 @@ export const CATALOG = [
   },
   {
     key: "clin.upload_photos",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Upload treatment photos",
     description: "Add treatment photos. Deleting photos stays owner-only.",
@@ -500,6 +515,7 @@ export const CATALOG = [
   },
   {
     key: "clin.edit_intake",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Edit intake answers",
     description: "Change a client's intake answers on their behalf, with history.",
@@ -516,6 +532,7 @@ export const CATALOG = [
   },
   {
     key: "clin.review_intake",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Review intake",
     description: "Mark a client's intake reviewed and save review notes. Separate from changing the answers.",
@@ -532,6 +549,7 @@ export const CATALOG = [
   },
   {
     key: "clin.print_record",
+    pendingDecision: ["Q-16"],
     group: "clinical_records",
     label: "Print a client's clinical record",
     description: "Print the client's clinical notes view.",
@@ -572,13 +590,13 @@ export const CATALOG = [
     scopes: SCOPED,
     own: ASSIGNED,
     requires: [CALENDAR],
-    newStudioDefault: pair(["studio", "off"]),
+    newStudioDefault: pair(["studio", "studio"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. The shipped default for a NEW studio is held equal to that snapshot until Sam confirms his section 4 default for it. Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
+    note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. A NEW studio gets Sam's section C.4 default: ON for both staff roles (practitioner: whole studio, matching today's access so no studio gains or loses; receptionist: whole studio). Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
   },
   {
     key: "comm.send_intake_link",
@@ -614,8 +632,9 @@ export const CATALOG = [
     key: "comm.send_portal_reply",
     group: "communications",
     label: "Reply to a client in the portal",
-    description: "Send a staff message or reply in a client's portal thread, within the clients you may see.",
-    scopes: BOOL,
+    description: "Send a staff message or reply in a client's portal thread: for any client in the studio, or only for your assigned clients.",
+    scopes: SCOPED,
+    own: ASSIGNED_CLIENT,
     requires: ["comm.send_routine", "client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
@@ -623,7 +642,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (Sam, 3 Nov, DN-14): practitioner ON within their permitted client scope, receptionist OFF, both owner-configurable. The sender is recorded and the history preserved; staff can never rewrite a client's original reply (closes D-M).",
+    note: "Decided (Sam, 3 Nov, DN-14 / Q6): offered at whole-studio AND assigned-client (own) scope; existing studios keep their approved current access (practitioner whole studio, receptionist Off) and a new studio gets the same. The assigned-client scope can be enabled only once its definition is shown to owners. The sender is recorded and the history preserved; staff can never rewrite a client's original reply (closes D-M).",
   },
   {
     key: "comm.bulk_message",
@@ -776,6 +795,7 @@ export const CATALOG = [
   },
   {
     key: "price.view_client_prices",
+    touchedByDecision: ["Q-23"],
     group: "pricing",
     label: "See a client's special prices",
     description: "Read the per-client prices needed for authorized work (the client_pricing table). Closes M-4 together with the payment view.",
@@ -814,6 +834,7 @@ export const CATALOG = [
   },
   {
     key: "price.fee_amounts",
+    touchedByDecision: ["Q-14"],
     group: "pricing",
     label: "Change studio fee amounts",
     description: "Change the no-show and late-cancellation fee amounts.",
@@ -886,6 +907,7 @@ export const CATALOG = [
   },
   {
     key: "rep.bulk_export",
+    touchedByDecision: ["Q-19"],
     group: "reports",
     label: "Export or print bulk data",
     description: "Export client-list and schedule style outputs in bulk. Contains only fields and rows the actor's own keys would show on screen. NEVER the whole-studio data export or backup, which is fixed owner-only. Safeguarded: confirmation, row limits, audit.",
@@ -991,6 +1013,7 @@ export const CATALOG = [
   },
   {
     key: "wl.manage_queue",
+    touchedByDecision: ["Q-8"],
     group: "waitlist_operations",
     label: "Claim, release and requeue entries",
     description: "Claim, release, expire, requeue or close an unbooked entry, and claim the next few.",
@@ -1060,6 +1083,7 @@ export const CATALOG = [
   // ───────────────────────────── waitlist rules and automation ─────────────────────────────
   {
     key: "wlrules.invitation_rounds",
+    touchedByDecision: ["Q-24"],
     group: "waitlist_rules",
     label: "Start and close invitation rounds",
     description: "Open an invitation round with an allowance and close invitations.",
@@ -1076,6 +1100,7 @@ export const CATALOG = [
   },
   {
     key: "wlrules.policy_and_text",
+    touchedByDecision: ["Q-24"],
     group: "waitlist_rules",
     label: "Waitlist policy, preference grants and text",
     description: "Change the waitlist admission policy, preference grants, ordered-claim rules and the waitlist wording toggles.",
@@ -1093,6 +1118,8 @@ export const CATALOG = [
   // ───────────────────────────── accepting new clients ─────────────────────────────
   {
     key: "admit.change_policy",
+    touchedByDecision: ["Q-24"],
+    pendingDecision: ["Q-13"],
     group: "accepting_new_clients",
     label: "Change the new-client admission policy",
     description: "Permission to change the admission policy. The studio's current Open, Waitlist or Closed setting is a separate studio setting.",
@@ -1109,6 +1136,8 @@ export const CATALOG = [
   },
   {
     key: "admit.booking_rules",
+    touchedByDecision: ["Q-24"],
+    pendingDecision: ["Q-12"],
     group: "accepting_new_clients",
     label: "Booking window and new-client booking rules",
     description: "How far ahead clients may book and the rules for public new-client booking.",
@@ -1147,8 +1176,8 @@ export const CATALOG = [
   {
     key: "client.view_dob_address",
     group: "clients_identity",
-    label: "View date of birth and address",
-    description: "See date of birth and address on a client's record without the rest of the chart.",
+    label: "View date of birth, birthday and address",
+    description: "See date of birth, birthday and address on a client's record. A personal-details group, separate from the safety, clinical and contact groups.",
     scopes: BOOL,
     requires: [CALENDAR, "client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1163,8 +1192,8 @@ export const CATALOG = [
   {
     key: "client.edit_dob_address",
     group: "clients_identity",
-    label: "Edit date of birth and address",
-    description: "Change date of birth and address. Separate from viewing; enabling one never grants the other.",
+    label: "Edit date of birth, birthday and address",
+    description: "Change date of birth, birthday and address. Separate from viewing; enabling one never grants the other.",
     scopes: BOOL,
     requires: ["client.view_dob_address"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1179,8 +1208,8 @@ export const CATALOG = [
   {
     key: "client.view_allergies_cautions",
     group: "clients_identity",
-    label: "View allergies and pinned cautions",
-    description: "See allergies and pinned cautions on a client's record without the rest of the chart.",
+    label: "View allergies and pinned cautions (safety)",
+    description: "See allergies and pinned cautions together. The safety group is kept separate from the clinical record, so it can be granted without the chart.",
     scopes: BOOL,
     requires: [CALENDAR, "client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1195,8 +1224,8 @@ export const CATALOG = [
   {
     key: "client.edit_allergies_cautions",
     group: "clients_identity",
-    label: "Edit allergies and pinned cautions",
-    description: "Change allergies and pinned cautions. Separate from viewing; enabling one never grants the other.",
+    label: "Edit allergies and pinned cautions (safety)",
+    description: "Add or change allergies and pinned cautions. Separate from viewing; enabling one never grants the other.",
     scopes: BOOL,
     requires: ["client.view_allergies_cautions"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1209,10 +1238,10 @@ export const CATALOG = [
     note: "Not offered to receptionists (read-only grants only, DN-5).",
   },
   {
-    key: "client.view_budget_goals",
+    key: "client.view_budget",
     group: "clients_identity",
-    label: "View budget context and treatment goals",
-    description: "See budget context and treatment goals on a client's record without the rest of the chart.",
+    label: "View budget context",
+    description: "See a client's budget context. Its own group: never bundled with personal notes or another grant.",
     scopes: BOOL,
     requires: [CALENDAR, "client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1225,12 +1254,12 @@ export const CATALOG = [
     note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
-    key: "client.edit_budget_goals",
+    key: "client.edit_budget",
     group: "clients_identity",
-    label: "Edit budget context and treatment goals",
-    description: "Change budget context and treatment goals. Separate from viewing; enabling one never grants the other.",
+    label: "Edit budget context",
+    description: "Change a client's budget context. Separate from viewing; never bundled into another grant.",
     scopes: BOOL,
-    requires: ["client.view_budget_goals"],
+    requires: ["client.view_budget"],
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
@@ -1244,7 +1273,7 @@ export const CATALOG = [
     key: "client.view_personal_notes",
     group: "clients_identity",
     label: "View personal notes",
-    description: "See personal notes on a client's record without the rest of the chart.",
+    description: "See the personal notes on a client's record. Its own group: never bundled into another grant.",
     scopes: BOOL,
     requires: [CALENDAR, "client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1260,7 +1289,7 @@ export const CATALOG = [
     key: "client.edit_personal_notes",
     group: "clients_identity",
     label: "Edit personal notes",
-    description: "Change personal notes. Separate from viewing; enabling one never grants the other.",
+    description: "Change the personal notes on a client's record. Separate from viewing; never bundled into another grant.",
     scopes: BOOL,
     requires: ["client.view_personal_notes"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1307,8 +1336,8 @@ export const CATALOG = [
   {
     key: "client.view_health_fields",
     group: "clients_identity",
-    label: "View the health fields on an appointment",
-    description: "See the health fields on an appointment on a client's record without the rest of the chart.",
+    label: "View appointment health notes",
+    description: "See the health notes recorded on an appointment.",
     scopes: BOOL,
     requires: [CALENDAR, "client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1323,8 +1352,8 @@ export const CATALOG = [
   {
     key: "client.edit_health_fields",
     group: "clients_identity",
-    label: "Edit the health fields on an appointment",
-    description: "Change the health fields on an appointment. Separate from viewing; enabling one never grants the other.",
+    label: "Edit appointment health notes",
+    description: "Change the health notes recorded on an appointment. Separate from viewing; enabling one never grants the other.",
     scopes: BOOL,
     requires: ["client.view_health_fields"],
     newStudioDefault: pair(["studio", "off"]),
@@ -1339,6 +1368,7 @@ export const CATALOG = [
   // ───────────── sterilisation and disinfection logs (Sam, 2 Nov, DN-3) ─────────────
   {
     key: "records.view_sterilisation_disinfection",
+    pendingDecision: ["Q-10"],
     group: "safety_records",
     label: "View sterilisation and disinfection records",
     description: "See the sterile-item, disinfectant and probe-lot records.",
@@ -1354,6 +1384,7 @@ export const CATALOG = [
   },
   {
     key: "records.log_sterilisation_disinfection",
+    pendingDecision: ["Q-10"],
     group: "safety_records",
     label: "Log sterilisation and disinfection",
     description: "Add or update a sterile item or a disinfectant record.",
@@ -1405,10 +1436,10 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
   },
   {
     id: "revert_recorded_outcome",
-    label: "Undoing a recorded outcome (completed, no-show or cancelled) within the 72-hour window",
+    label: "Undoing a recorded outcome",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
+    note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. Whether a time window applies, and which outcomes can be undone, is open (Q-9); no window is stated here. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
   },
   {
     id: "require_card_to_book",
@@ -1430,6 +1461,13 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "none",
     note: "Decided (Sam, 3 Nov, DN-20): an owner-only studio setting, preserved ON for existing studios. OFF blocks existing portal links and sessions from further access, keeps all records, and explains which booking, intake and communication workflows are affected; those features stay independently controlled.",
+  },
+  {
+    id: "late_cancel_window",
+    label: "Setting the late-cancellation window",
+    source: "this_version",
+    existingEffect: "none",
+    note: "Decided (Sam, 3 Nov, Q1/Q2, DN-23b): an owner-set studio policy in whole hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable. Not a staff key. Charging it also needs pay.charge_saved_card.",
   },
   {
     id: "id_photos_portraits",
@@ -1583,6 +1621,18 @@ export const NARROWINGS: readonly Narrowing[] = [
   },
 ];
 
+// Platform settings only the OPERATOR changes (Sam, 3 Nov, Q3/DN-16/DN-29; OPS technical parameters for Q19b and Q21). They are NOT
+// catalog keys and NOT owner settings: an owner can neither see a toggle nor change a value. The numbers are provisional (Sam may override).
+export type OperatorSetting = { readonly id: string; readonly label: string; readonly value: string; readonly note: string };
+export const OPERATOR_CONFIG: readonly OperatorSetting[] = [
+  { id: "limiter_fallback_visitor", label: "Fallback limit per visitor when the rate limiter is down", value: "5 attempts per 10 minutes", note: "Attempts are counted whether they fail or not (Q3, DN-29)." },
+  { id: "limiter_fallback_studio", label: "Fallback limit per studio when the rate limiter is down", value: "30 attempts per hour", note: "If the shared fallback cannot enforce a bound, submissions are refused safely and the operator is alerted without client data (Q3)." },
+  { id: "anonymous_visitor_limit", label: "Anonymous waitlist and demo submissions per visitor", value: "5 attempts per hour", note: "Failures counted (Q21, OPS technical parameter)." },
+  { id: "anonymous_email_limit", label: "Anonymous waitlist and demo submissions per email", value: "3 attempts per day", note: "One active waitlist entry per email per studio; a repeat changes nothing and returns the same neutral response (Q21)." },
+  { id: "owner_export_link_lifetime", label: "Lifetime of an owner export download link", value: "15 minutes, one owner session, re-checked on download", note: "Expired links refuse (Q19b, OPS technical parameter)." },
+  { id: "google_studio_flags", label: "Google Calendar studio feature flags", value: "operator only, guarded in the database", note: "Owners keep their normal connect and disconnect (DN-16)." },
+];
+
 // Who may READ a fee amount (Insurance R-3). Changing one is price.fee_amounts; reading is separate and today every member can read every
 // studio column. Staff otherwise read only the studio name, timezone and booking preferences, through a column-limited read.
 export const FEE_AMOUNT_READ = {
@@ -1594,6 +1644,11 @@ export const FEE_AMOUNT_READ = {
 export const MANDATORY: readonly string[] = [
   "Studio isolation on every path (app, API, database function, export, link, search)",
   "Consent requirements",
+  "Decided (Sam, 3 Nov, Q4 / DN-5): the client-detail groups are safety (allergies and cautions together, separate from the clinical record), personal (date of birth, birthday, address), budget, personal notes, tags and appointment health notes; pronouns belong to display and contact identity (client.view_directory, client.edit_contact) and NEVER to legal-name access; skin type, skin notes and treatment goals are part of the clinical record (clin.view_records, clin.edit_records); receptionist access is never broadened silently, and budget and personal notes are never bundled into another grant",
+  "Decided (Sam, 3 Nov, Q1 / DN-23b): the late-cancellation window is a whole number of hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable; only the owner sets it and the policy is shown to the owner clearly before they enable it",
+  "Decided (Sam, 3 Nov, Q3 / DN-29): provisional OPERATOR-configurable fallback limits when the limiter is down are 5 attempts per visitor per 10 minutes and 30 per studio per hour; attempts are counted whether they fail or not; concurrent requests and multiple app instances are tested; if the shared fallback cannot enforce a bound, submissions are refused safely; the operator is alerted without client data. These are operator configuration, not catalog keys and not owner settings",
+  "Decided (OPS technical parameters, provisional, 3 Nov): anonymous waitlist and demo submissions are limited per visitor (5 per hour) and per email (3 per day) counting failures, with one active waitlist entry per email per studio (a repeat changes nothing and returns the same neutral response); operator-configurable, with the same concurrency, multi-instance and fail-closed tests",
+  "Decided (Sam, 3 Nov, Q7 / DN-11): setting a client-specific price is whole-studio only (Off or On), OFF for both staff roles, owner-configurable, and grants no other pricing or payment permission",
   "Decided (Sam, 3 Nov, DN-16): the Google Calendar studio feature flags are operator-only, enforced by a database guard; owners keep their normal connect and disconnect",
   "Decided (Sam, 3 Nov): a removed or deactivated calendar owner gets no new studio synchronisation; the destination must be an active, authorised owner, the current owner is notified to reconnect, other studios' connections are preserved, and the UI says events already copied into an external calendar may remain",
   "Decided (DN-29): when the rate limiter is down, token and link operations (intake, manage booking, invitation, portal sign-in) refuse safely with a retry message, public booking stays available only with bounded fallback protection (never unlimited), and the operator is alerted without client data or secret links",

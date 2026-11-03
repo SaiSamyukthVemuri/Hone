@@ -1,4 +1,4 @@
-import type { DecisionId } from "./catalog";
+import type { DecisionId, QuestionId } from "./catalog";
 
 // The audit's open decisions (DECISION-MATRIX E1, DN-1..DN-30) and where each stands. OPS is the single writer of Sam's answers
 // (01-ops/ROLES-DECISIONS-LOG.md); this file mirrors them so the catalog can be checked against them.
@@ -21,7 +21,7 @@ export const DECISIONS: Readonly<Record<DecisionId, DecisionEntry>> = {
   "DN-9": { status: "decided", keyed: true, title: "Which key covers requesting an intake update or resending the intake link" },
   "DN-10": { status: "decided", keyed: false, title: "Who may read card-authorization consent forms and signatures" },
   "DN-11": { status: "decided", keyed: true, title: "A key for writing per-client prices" },
-  "DN-12": { status: "decided", keyed: false, title: "Reverting an outcome within 72 hours" },
+  "DN-12": { status: "decided", keyed: false, title: "Undoing a recorded outcome (owner-only; any time window is open, Q-9)" },
   "DN-13": { status: "decided", keyed: true, title: "Studio-wide opening hours are a separate permission from colleagues' availability; both OFF" },
   "DN-14": { status: "decided", keyed: true, title: "Staff portal messages to clients" },
   "DN-15": { status: "decided", keyed: true, title: "Waitlist operations per action (receptionist ON, practitioner OFF); rules OFF; imports never imply consent" },
@@ -40,4 +40,34 @@ export const DECISIONS: Readonly<Record<DecisionId, DecisionEntry>> = {
   "DN-28": { status: "decided", keyed: false, title: "Getting Started shows only tasks the viewer may perform" },
   "DN-29": { status: "decided", keyed: false, title: "Public rate limits when the limiter is down" },
   "DN-30": { status: "decided", keyed: true, title: "Existing-studio snapshot for practitioner intake review and routine messages" },
+};
+
+// The 19 open questions OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c) plus three raised from its section b.
+// None is decided and none is defaulted. `surface` names where it lives: a catalog key, FEE_AMOUNT_READ, a NARROWINGS id or a
+// FIXED_OWNER_ONLY id. A key it flags is pinned to its existing-studio snapshot (or merely marked, when only coverage is in doubt).
+export type OpenQuestion = { readonly title: string; readonly surface: readonly string[]; readonly status?: "settled"; readonly settledIn?: string };
+export const OPEN_QUESTIONS: Readonly<Record<QuestionId, OpenQuestion>> = {
+  "Q-1": { title: "Late-cancel window: units and limits; may it stay unset (DN-23b)", surface: ["price.fee_amounts"], status: "settled", settledIn: "Batch 1: whole hours 1-168, unset by default" },
+  "Q-2": { title: "Who sets the late-cancel window (DN-23b)", surface: ["price.fee_amounts"], status: "settled", settledIn: "Batch 1: owner sets it" },
+  "Q-3": { title: "Bounded fallback for public booking during a limiter outage: the bound and who is alerted (DN-29)", surface: ["rate_limit_outage"], status: "settled", settledIn: "Batch 1: provisional operator-configurable limits, 5 per visitor per 10 min and 30 per studio per hour" },
+  "Q-4": { title: "Client-detail data-group boundaries (DN-5)", surface: ["client.view_dob_address", "client.edit_allergies_cautions"], status: "settled", settledIn: "Batch 1: safety, personal, identity (pronouns), clinical record, plus budget, personal notes, tags, health notes" },
+  "Q-6": { title: "Scope for portal replies: whole studio or own clients (DN-14)", surface: ["comm.send_portal_reply"], status: "settled", settledIn: "Batch 1: whole studio and assigned client; definition shown to owners first" },
+  "Q-7": { title: "Scopes for setting client prices (DN-11)", surface: ["price.edit_client_prices"], status: "settled", settledIn: "Batch 1: whole-studio only, OFF by default" },
+  "Q-8": { title: "Waitlist action grouping and whether view is a prerequisite (DN-15a)", surface: ["wl.manage_queue"] },
+  "Q-9": { title: "Undoing an outcome: any window, and which outcomes (DN-12)", surface: ["revert_recorded_outcome"] },
+  "Q-10": { title: "Safety records for receptionists: default Off or not offered; log without view (DN-3)", surface: ["records.view_sterilisation_disinfection", "records.log_sterilisation_disinfection"] },
+  "Q-12": { title: "What admit.booking_rules covers (DN-4a vs DN-4b)", surface: ["admit.booking_rules"] },
+  "Q-13": { title: "Where the Open / Waitlist / Closed setting is changed", surface: ["admit.change_policy"] },
+  "Q-14": { title: "Fee amounts readable through payment view at own scope (DN-27)", surface: ["FEE_AMOUNT_READ"] },
+  "Q-15": { title: "Show 'Not available yet' on practitioner legal-name edit too (DN-26)", surface: ["client.edit_legal_name"] },
+  "Q-16": { title: "Which receptionist clinical capabilities are supported (C.4, R0-Q2)", surface: ["clin.edit_records", "clin.upload_photos", "clin.print_record", "appt.complete"] },
+  "Q-17": { title: "May a practitioner hand one of their OWN appointments to a colleague (R0-Q3)", surface: ["appt.reassign"] },
+  "Q-18": { title: "Erasure workflow: who files, where recorded, what the confirm step shows (DN-18)", surface: ["erase_client_permanently"] },
+  "Q-19": { title: "Staff export content and owner-link lifetime (DN-19)", surface: ["rep.bulk_export"] },
+  "Q-20": { title: "Portal OFF: in-flight links and independently controlled features (DN-20)", surface: ["client_portal_setting"] },
+  "Q-21": { title: "Anonymous waitlist and demo limits (group 7)", surface: ["anonymous_public_writes_closed"] },
+  // Raised by the Team lane from the reconciliation's section b (a key or value no decision backs).
+  "Q-22": { title: "client.view_directory as a fixed baseline for both roles is implied, never stated", surface: ["client.view_directory"] },
+  "Q-23": { title: "price.view_client_prices 'own' scope definition is the catalog's, not Sam's", surface: ["price.view_client_prices"] },
+  "Q-24": { title: "affectsFutureStudioBusiness labels on opening hours, waitlist rules and admission keys go beyond section C.3", surface: ["admit.booking_rules", "avail.manage_studio_hours"] },
 };

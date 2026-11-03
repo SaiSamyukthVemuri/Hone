@@ -309,10 +309,8 @@ describe("Sam's spec, encoded", () => {
   });
 
   it("C.4: routine communications are ON within scope and both bulk and audit-log access are OFF for both roles", () => {
-    // comm.send_routine is pinned to today's behaviour (practitioner Studio, receptionist Off) until DN-30 is decided, so the receptionist
-    // value is checked by the pending-decision tests; the practitioner value is ON.
-    expect(d("comm.send_routine").newStudioDefault.practitioner).not.toBe("off");
-    for (const r of ROLES) { expect(d("comm.send_routine").newStudioDefault[r]).toBe(d("comm.send_routine").existingSnapshot[r]); expect(d("comm.bulk_message").newStudioDefault[r]).toBe("off"); expect(d("rep.audit_log_view").newStudioDefault[r]).toBe("off"); }
+    // Settled by OPS (3 Nov): ON for both staff roles in a NEW studio (C.4); an existing studio keeps today's access (practitioner Studio, receptionist Off).
+    for (const r of ROLES) { expect(d("comm.send_routine").newStudioDefault[r]).not.toBe("off"); expect(d("comm.bulk_message").newStudioDefault[r]).toBe("off"); expect(d("rep.audit_log_view").newStudioDefault[r]).toBe("off"); }
   });
 
   it("C.5 / F4: the fixed owner-only items have NO key, including staff management, ownership transfer and permission-system administration", () => {
@@ -357,7 +355,7 @@ describe("Sam's spec, encoded", () => {
     // DN-30 (decided 3 Nov): practitioners do these today, so the snapshot is Studio, preserved for every existing studio.
     expect(d("clin.edit_intake").existingSnapshot.practitioner).toBe("studio");
     expect(d("comm.send_routine").existingSnapshot.practitioner).toBe("studio");
-    expect(d("clin.edit_intake").pendingDecision).toBeUndefined();
+    expect(d("clin.edit_intake").pendingDecision ?? []).not.toContain("DN-30");
     expect(d("comm.send_routine").pendingDecision).toBeUndefined();
     // every remaining non-off snapshot resting on a source reading is listed here; adding one is a visible, reviewed change
     const unverified = DEFS.flatMap((x) => ROLES.filter((r) => x.snapshotBasis === "source" && x.existingSnapshot[r] !== "off").map((r) => `${x.key}:${r}`)).sort();
@@ -370,7 +368,7 @@ describe("Sam's spec, encoded", () => {
       // DN-9, DN-14 and DN-30 (decided 3 Nov): separately configurable, each preserved for existing practitioners.
       "clin.view_intake_status:practitioner", "clin.review_intake:practitioner", "comm.send_intake_link:practitioner", "comm.send_portal_link:practitioner", "comm.send_portal_reply:practitioner",
       // DN-3 and DN-5 (decided, 2 Nov): practitioners keep today's studio-wide access to these data groups and to the safety records.
-      ...["dob_address", "allergies_cautions", "budget_goals", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
+      ...["dob_address", "allergies_cautions", "budget", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
       "records.view_sterilisation_disinfection:practitioner", "records.log_sterilisation_disinfection:practitioner",
     ].sort());
   });
@@ -502,7 +500,7 @@ describe("Sam's group 5 (3 Nov): payment details", () => {
     expect(k.offeredTo).toEqual({ practitioner: true, receptionist: true });
     expect(k.ownerConfigurable).toBe(true);
     expect(k.requires).toContain("price.view_client_prices");
-    expect(k.pendingDecision).toBeUndefined();
+    expect(k.pendingDecision ?? []).not.toContain("DN-11");
   });
   it("DN-23a: requiring a card to book is owner-only and has no staff key", () => {
     expect(FIXED_OWNER_ONLY.map((f) => f.id)).toContain("require_card_to_book");
