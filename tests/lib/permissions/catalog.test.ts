@@ -451,7 +451,8 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
   it("R-4: every narrowing names a decided decision, a stage, an enforcement point and the notice text", () => {
     expect(NARROWINGS.map((n) => n.id)).toEqual(expect.arrayContaining(["performer_change", "exposure_incident_history", "colleague_private_fields", "getting_started_filter", "notification_read_state", "portal_reply_immutable", "studio_columns_read"]));
     for (const n of NARROWINGS) {
-      expect(DECISIONS[n.decision].status, n.id).toBe("decided");
+      if (n.decision.startsWith("DN-")) expect(DECISIONS[n.decision as keyof typeof DECISIONS].status, n.id).toBe("decided");
+      else expect(n.decision, n.id).toMatch(/^G7:/);
       expect(n.enforcedBy.length, n.id).toBeGreaterThan(0);
       expect(n.notice.length, n.id).toBeGreaterThan(20);
     }
@@ -513,5 +514,39 @@ describe("Sam's group 5 (3 Nov): payment details", () => {
   });
   it("DN-23b: a late-cancel fee charge is gated by the fee-charging key, and the coverage row names the held migration", () => {
     expect(catalogByKey.has("pay.charge_saved_card")).toBe(true);
+  });
+});
+
+describe("Sam's group 6 (3 Nov): deletion, data rights, rollout timing", () => {
+  it("DN-18, DN-20, DN-25: erasure, the portal setting, archive and restore are fixed owner-only items with no staff key", () => {
+    const ids = FIXED_OWNER_ONLY.map((f) => f.id);
+    for (const id of ["erase_client_permanently", "client_portal_setting", "archive_clients", "restore_deleted_records", "full_studio_data_export"]) expect(ids).toContain(id);
+    expect(FIXED_OWNER_ONLY.find((f) => f.id === "erase_client_permanently")?.note).toMatch(/EXECUTION stays unavailable/);
+    expect(FIXED_OWNER_ONLY.find((f) => f.id === "erase_client_permanently")?.note).toMatch(/No retention period is invented/);
+  });
+  it("DN-26: receptionist legal-name keys are unavailable behind a gate whose text says 'Not available yet' until privacy enforcement and logging are verified", () => {
+    expect(GATES.receptionist_legal_name).toMatch(/Not available yet/);
+    expect(GATES.receptionist_legal_name).toMatch(/access logging/);
+    const r = checkChange("receptionist", "client.view_legal_name", "studio", pol("new_studio", {}, {}));
+    expect(r.ok).toBe(false);
+    expect(d("client.view_legal_name").pendingDecision).toBeUndefined();
+  });
+  it("group 6 rules are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/no existing record is deleted by the rollout/, /no complete erasure from backups is promised/, /excludes credentials, payment secrets, other studios' data and platform security information/, /blocks existing portal links and sessions/, /Not available yet/]) expect(m).toMatch(re);
+  });
+});
+
+describe("Sam's group 7 (3 Nov): platform and operations", () => {
+  it("every decision DN-1..DN-30 is decided: the log is the single authority and nothing is left pending", () => {
+    expect(Object.entries(DECISIONS).filter(([, e]) => e.status !== "decided")).toEqual([]);
+  });
+  it("DN-16, DN-29 and the two unnumbered items are narrowings with a named stage and notice", () => {
+    const ids = NARROWINGS.map((n) => n.id);
+    for (const id of ["google_flags_operator_only", "deactivated_calendar_owner", "rate_limit_outage", "anonymous_public_writes_closed"]) expect(ids).toContain(id);
+  });
+  it("group 7 rules are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/Google Calendar studio feature flags are operator-only/, /deactivated calendar owner gets no new studio synchronisation/, /bounded fallback protection/, /no direct database writes/, /SMS STOP behaviour is unchanged/]) expect(m).toMatch(re);
   });
 });

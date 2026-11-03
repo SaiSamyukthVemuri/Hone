@@ -105,7 +105,7 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
   });
   it("a key marked pendingDecision ships with the existing-studio snapshot as its value for EVERY studio", () => {
     const pinned = DEFS.filter((d) => d.pendingDecision?.length);
-    expect(pinned.length).toBeGreaterThan(0);
+    // After Sam's group 6 no key is pending; the invariant stays so any key flagged later is pinned to today's value.
     for (const d of pinned) for (const r of ROLES) expect(d.newStudioDefault[r], `${d.key}:${r}`).toBe(d.existingSnapshot[r]);
   });
   it("catalog flags only cite known, still-pending decisions; a decided decision leaves no flag behind", () => {
