@@ -232,11 +232,15 @@ describe("0169 — the command surface is untouched", () => {
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
     // 0214 adds the jurisdiction lock; preserve every prior clinical guard.
-    expect(byTable.sessions).toBe(5);
+    // 0289 adds three more on sessions: the edit-key guard, the history writer and the attribution guard.
+    expect(byTable.sessions).toBe(8);
     const sessionTriggers = await adminQuery(
       "select tgname from pg_trigger where tgrelid='public.sessions'::regclass and not tgisinternal order by tgname",
     );
     expect(sessionTriggers.rows.map(x => x.tgname)).toEqual([
+      "chart_attribution_guard_sessions",
+      "chart_revision_write_trg",
+      "chart_write_guard_trg",
       "sessions_aftercare_audit",
       "sessions_guard_finalized",
       "sessions_guard_retired_finalization",

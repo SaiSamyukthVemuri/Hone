@@ -1079,6 +1079,22 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Which released permission keys a studio's owner has explicitly activated, with who, when, the reason given and the policy version (migration 0287, ROLES R1, activation rule). Studio-owned decision history, so PENDING under TRUTH-01B; field review first because it carries the activating user's auth id and a free-text reason.",
   },
+  chart_revisions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The append-only history of every insert, update and delete on the chart tables (sessions, blocks, areas, entries, plans, plan stages, clinical notes) with the full before and after image, who changed it and when (migration 0289, ROLES R4). It IS clinical record content, so no raw export until the field review has decided what an export may carry.",
+  },
+  session_performer_corrections: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Who corrected which session's performer, the previous and new performer, when and the reason given (migration 0289, ROLES R4). Studio-owned attribution history; field review first because it carries the correcting user's auth id and a free-text reason.",
+  },
   permission_ship_gates: {
     kind: "excluded",
     category: "platform",

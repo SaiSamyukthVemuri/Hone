@@ -25,11 +25,12 @@ describe("0289 edit-record protections: shape", () => {
     for (const f of ["chart_write_guard", "chart_revision_write", "chart_attribution_guard", "chart_scope", "chart_revisions_append_only", "correct_session_performer"])
       expect(down).toContain(f);
     expect(down).toContain("drop table if exists public.chart_revisions");
-    expect(down).toContain("grant execute on function public.set_session_performer");
+    expect(down).toContain("create or replace function public.set_session_performer(");
   });
 
   it("every function it creates is security definer with an empty search_path and revoked from public, anon, authenticated and service_role by name", () => {
-    const fns = [...code.matchAll(/create or replace function public\.(\w+)\(/g)].map((m) => m[1]);
+    // set_session_performer is an APPLIED command re-created with the same signature and grant (revoked by name, one statement per role, then granted)
+    const fns = [...code.matchAll(/create or replace function public\.(\w+)\(/g)].map((m) => m[1]).filter((f) => f !== "set_session_performer");
     expect(fns.length).toBeGreaterThanOrEqual(6);
     for (const f of fns) {
       const body = code.slice(code.indexOf(`function public.${f}(`));
@@ -52,5 +53,11 @@ describe("0289 edit-record protections: shape", () => {
     expect(code).toContain("has_studio_permission(v_studio, 'clin.edit_records', v_client)");
     expect(code).toContain("has_studio_permission(v_studio, 'clin.edit_records', p_client_id)");
     expect(readFileSync("lib/permissions/catalog.ts", "utf8")).not.toMatch(/clin\.edit_records[\s\S]{0,400}enforcement:\s*"enforced"/);
+  });
+
+  it("keeps set_session_performer's signature and authenticated-only grant (applied contract) and only allows the first attribution", () => {
+    expect(code).toMatch(/grant execute on function public\.set_session_performer\(uuid, uuid, uuid\) to authenticated;/);
+    expect(code).toContain("Use correct_session_performer to change an existing performer.");
+    expect(down).toContain("create or replace function public.set_session_performer(");
   });
 });

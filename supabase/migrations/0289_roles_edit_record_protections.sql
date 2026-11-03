@@ -24,8 +24,8 @@
 --      practitioner_id and client_clinical_notes.practitioner_id cannot be rewritten, except inside the performer correction command below
 --      or the existing trusted finalized-record correction (0120's transaction-local hone.correction_session_id), both of which leave a record.
 --   4. public.session_performer_corrections (append-only) and public.correct_session_performer(): replaces the overwrite. The original
---      attribution stays in history; the correction records who, when and why. The old public.set_session_performer is revoked from
---      authenticated (it would be refused by the attribution guard anyway).
+--      attribution stays in history; the correction records who, when and why. public.set_session_performer keeps its signature and grant but may only make the FIRST
+--      attribution; changing or clearing an existing performer is refused and points to the correction command.
 --
 -- WHAT IT DOES NOT DO: no source column is dropped; no existing command body is changed; no data is backfilled; nothing is granted to anon or
 -- service_role. A row whose studio cannot be resolved (a cascade from a parent being deleted) is not checked and not logged: documented limit.
@@ -106,7 +106,8 @@ begin
        and (to_jsonb(new) - 'price_paid_cents') = (to_jsonb(old) - 'price_paid_cents') then
       return new;
     end if;
-    v_row := case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end;
+    -- An update or delete is authorised against the row AS IT STANDS (a move into another studio is refused by the lineage triggers).
+    v_row := case when tg_op = 'INSERT' then to_jsonb(new) else to_jsonb(old) end;
     select c.studio_id, c.client_id into v_studio, v_client from public.chart_scope(tg_table_name, v_row) c;
     if v_studio is not null and not public.has_studio_permission(v_studio, 'clin.edit_records', v_client) then
       raise exception 'edit_records_required' using errcode = '42501';
@@ -143,8 +144,10 @@ declare
   v_changed boolean := false;
 begin
   if tg_table_name = 'sessions' then
+    -- FIRST attribution (performed_by NULL -> a practitioner) is not a rewrite; every later change is.
     v_changed := new.practitioner_id is distinct from old.practitioner_id
-              or new.performed_by_practitioner_id is distinct from old.performed_by_practitioner_id;
+              or (new.performed_by_practitioner_id is distinct from old.performed_by_practitioner_id
+                  and old.performed_by_practitioner_id is not null);
     if v_changed
        and coalesce(current_setting('hone.performer_correction', true), '') <> old.id::text
        and coalesce(current_setting('hone.correction_session_id', true), '') <> old.id::text then
@@ -249,7 +252,49 @@ revoke execute on function public.correct_session_performer(uuid, uuid, uuid, te
 revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from service_role;
 revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from authenticated;
 grant execute on function public.correct_session_performer(uuid, uuid, uuid, text) to authenticated;
--- The overwrite command is retired from end users: the attribution guard would refuse it, and the app moves to the correction command.
+-- The 0167 overwrite command keeps its signature and its authenticated-only grant (applied contract; its ACL tests stay true). Its body now
+-- allows only the FIRST attribution of a session; changing or clearing an existing performer is a CORRECTION and goes through
+-- correct_session_performer, which keeps the original and records who, when and why. The authorisation and refusal shapes are unchanged.
+create or replace function public.set_session_performer(
+  p_session_id   uuid,
+  p_client_id    uuid,
+  p_performer_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_studio_id uuid;
+  v_prev uuid;
+begin
+  v_studio_id := public.assert_session_writable(p_session_id, p_client_id);
+
+  if p_performer_id is not null then
+    perform 1 from public.practitioners p
+      where p.id = p_performer_id and p.studio_id = v_studio_id;
+    if not found then
+      raise exception 'Practitioner not found in this studio.' using errcode = 'check_violation';
+    end if;
+  end if;
+
+  select s.performed_by_practitioner_id into v_prev from public.sessions s where s.id = p_session_id and s.studio_id = v_studio_id;
+  if v_prev is not distinct from p_performer_id then return; end if;
+  if v_prev is not null then
+    raise exception 'Use correct_session_performer to change an existing performer.' using errcode = 'check_violation';
+  end if;
+
+  update public.sessions s
+     set performed_by_practitioner_id = p_performer_id
+   where s.id = p_session_id
+     and s.studio_id = v_studio_id;
+end;
+$$;
+revoke execute on function public.set_session_performer(uuid, uuid, uuid) from public;
+revoke execute on function public.set_session_performer(uuid, uuid, uuid) from anon;
+revoke execute on function public.set_session_performer(uuid, uuid, uuid) from service_role;
 revoke execute on function public.set_session_performer(uuid, uuid, uuid) from authenticated;
+grant execute on function public.set_session_performer(uuid, uuid, uuid) to authenticated;
 
 commit;

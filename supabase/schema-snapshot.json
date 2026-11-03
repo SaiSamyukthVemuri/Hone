@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0287_roles_permission_engine.sql",
-    "sha256": "8d8cbb85335a48bfd51c323773e60980a19276853fae990751514eb3d92c7684"
+    "count": 255,
+    "last": "0289_roles_edit_record_protections.sql",
+    "sha256": "705eaabb21290c8ba09613e55f42271c21618f432e9ad76707e512d7e274997d"
   },
   "public": {
     "tables": [
@@ -21,6 +21,7 @@
       "calendar_sync_control",
       "calendar_sync_metric_events",
       "calendar_sync_outbox",
+      "chart_revisions",
       "client_budget_context",
       "client_clinical_notes",
       "client_consent_signatures",
@@ -91,6 +92,7 @@
       "session_block_areas",
       "session_blocks",
       "session_copy_operations",
+      "session_performer_corrections",
       "sessions",
       "sms_outbound_messages",
       "stripe_account_provisioning_attempts",
@@ -199,6 +201,11 @@
       "cancel_appointment_core",
       "capture_treatment_reading_change",
       "change_staff_role",
+      "chart_attribution_guard",
+      "chart_revision_write",
+      "chart_revisions_append_only",
+      "chart_scope",
+      "chart_write_guard",
       "check_claimed_payment_method_cleanup_safety",
       "claim_calendar_sync_op",
       "claim_conversion_delivery",
@@ -240,6 +247,7 @@
       "consume_payment_recovery_tokens_for_charge_attempt",
       "copy_session_setup",
       "correct_finalized_session",
+      "correct_session_performer",
       "create_appointment_core",
       "create_block_with_entry",
       "create_block_with_initial_setup",

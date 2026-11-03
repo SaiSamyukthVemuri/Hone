@@ -1,10 +1,10 @@
 -- DOWN for 0289_roles_edit_record_protections (HELD, not applied anywhere). NOT a migration: supabase never runs this directory.
 -- Run by an operator, once, inside the maintenance window, and only with the app on a build that does not call correct_session_performer
--- (the previous build calls set_session_performer, which this file re-grants).
+-- (the previous build calls set_session_performer, whose overwrite body this file restores).
 --
 -- WHAT THIS DESTROYS: chart_revisions (the append-only edit history) and session_performer_corrections (who corrected a performer, when,
 -- why). The triggers refuse UPDATE, DELETE and TRUNCATE but a DROP is not one of them. EXPORT BOTH TABLES FIRST if the history must be kept.
--- WHAT IT RESTORES: direct performer overwrite via set_session_performer; no edit-key check at the database (the app check, if any, remains).
+-- WHAT IT RESTORES: the 0167 body of set_session_performer (direct performer overwrite); no edit-key check at the database (the app check, if any, remains).
 -- It touches no source column and no existing command body: 0289 changed none.
 begin;
 set local lock_timeout = '5s';
@@ -32,7 +32,35 @@ drop function if exists public.chart_write_guard();
 drop function if exists public.chart_scope(text, jsonb);
 drop function if exists public.chart_revisions_append_only();
 
--- 0167 granted this to authenticated only (revoked from public, anon, service_role by name); restore exactly that.
-grant execute on function public.set_session_performer(uuid, uuid, uuid) to authenticated;
+-- Restore the 0167 body of set_session_performer EXACTLY (the overwrite). Its signature and grant (authenticated only) were never changed.
+create or replace function public.set_session_performer(
+  p_session_id   uuid,
+  p_client_id    uuid,
+  p_performer_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_studio_id uuid;
+begin
+  v_studio_id := public.assert_session_writable(p_session_id, p_client_id);
+
+  if p_performer_id is not null then
+    perform 1 from public.practitioners p
+      where p.id = p_performer_id and p.studio_id = v_studio_id;
+    if not found then
+      raise exception 'Practitioner not found in this studio.' using errcode = 'check_violation';
+    end if;
+  end if;
+
+  update public.sessions s
+     set performed_by_practitioner_id = p_performer_id
+   where s.id = p_session_id
+     and s.studio_id = v_studio_id;
+end;
+$$;
 
 commit;

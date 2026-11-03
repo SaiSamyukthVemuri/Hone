@@ -99,8 +99,14 @@ describe("0289: performer correction replaces the overwrite", () => {
     const on = await setup("e89con", "studio", "studio");
     await expect(correct(on.m.userId, on.sessionId, on.s.clientId, on.m.practitionerId, "  n/a ")).rejects.toMatchObject({ code: "22023" });
     await expect(correct(on.m.userId, on.sessionId, on.s.clientId, on.s.practitionerId, "")).rejects.toMatchObject({ code: "22023" });
+    // The 0167 overwrite command now only makes the FIRST attribution: with edit ON it sets a NULL performer once...
+    await asUser(on.m.userId, (q) => q("select public.set_session_performer($1,$2,$3)", [on.sessionId, on.s.clientId, on.m.practitionerId]));
+    // ...and refuses any later change or clear, pointing at the correction command; with edit OFF it is refused by the edit-key guard.
     await expect(
-      asUser(on.m.userId, (q) => q("select public.set_session_performer($1,$2,$3)", [on.sessionId, on.s.clientId, on.m.practitionerId])),
+      asUser(on.m.userId, (q) => q("select public.set_session_performer($1,$2,$3)", [on.sessionId, on.s.clientId, on.s.practitionerId])),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      asUser(off.m.userId, (q) => q("select public.set_session_performer($1,$2,$3)", [off.sessionId, off.s.clientId, off.m.practitionerId])),
     ).rejects.toMatchObject({ code: "42501" });
     await expect(
       adminQuery("update public.sessions set performed_by_practitioner_id=$2 where id=$1", [on.sessionId, on.m.practitionerId]),
