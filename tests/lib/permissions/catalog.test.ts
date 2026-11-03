@@ -368,7 +368,7 @@ describe("Sam's spec, encoded", () => {
       // DN-9, DN-14 and DN-30 (decided 3 Nov): separately configurable, each preserved for existing practitioners.
       "clin.view_intake_status:practitioner", "clin.review_intake:practitioner", "comm.send_intake_link:practitioner", "comm.send_portal_link:practitioner", "comm.send_portal_reply:practitioner",
       // DN-3 and DN-5 (decided, 2 Nov): practitioners keep today's studio-wide access to these data groups and to the safety records.
-      ...["dob_address", "allergies_cautions", "budget_goals", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
+      ...["dob_address", "allergies_cautions", "budget", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
       "records.view_sterilisation_disinfection:practitioner", "records.log_sterilisation_disinfection:practitioner",
     ].sort());
   });

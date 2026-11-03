@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG, FIXED_OWNER_ONLY, MANDATORY, NARROWINGS, catalogByKey, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
+import { ASSIGNED_CLIENT, CATALOG, FIXED_OWNER_ONLY, MANDATORY, NARROWINGS, OPERATOR_CONFIG, catalogByKey, scopesFor, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
 import { COVERAGE, COVERAGE_ROW_COUNT } from "@/lib/permissions/coverage";
 import { DECISIONS, OPEN_QUESTIONS } from "@/lib/permissions/decisions";
 
@@ -41,7 +41,7 @@ describe("coverage map: every audit row is covered by a key or a fixed rule", ()
     expect(COVERAGE["REC-5"]!.cls).toBe("safeguard");
   });
   it("DN-5: receptionists are OFF by default, view keys are offered read-only, edit keys are not offered", () => {
-    for (const g of ["dob_address", "allergies_cautions", "budget_goals", "personal_notes", "tags", "health_fields"]) {
+    for (const g of ["dob_address", "allergies_cautions", "budget", "personal_notes", "tags", "health_fields"]) {
       const v = DEFS.find((d) => d.key === `client.view_${g}`)!;
       const e = DEFS.find((d) => d.key === `client.edit_${g}`)!;
       expect(v.newStudioDefault).toEqual({ practitioner: "studio", receptionist: "off" });
@@ -150,9 +150,10 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
 describe("open questions (OPS reconciliation, 3 Nov): flagged, never defaulted", () => {
   const NARROW = new Set(NARROWINGS.map((n) => n.id));
   const FIXED = new Set(FIXED_OWNER_ONLY.map((f) => f.id));
-  it("there are 19 open questions from the reconciliation plus the three Team raised from its section b", () => {
+  it("there are 19 questions from the reconciliation plus the three Team raised from its section b; batch 1 settled Q1 to Q4, Q6 and Q7", () => {
     const ids = Object.keys(OPEN_QUESTIONS).map((q) => Number(q.slice(2)));
     expect(ids.filter((n) => n <= 21)).toHaveLength(19);
+    expect(Object.entries(OPEN_QUESTIONS).filter(([, e]) => e.status === "settled").map(([q]) => q).sort()).toEqual(["Q-1", "Q-2", "Q-3", "Q-4", "Q-6", "Q-7"]);
     expect(ids.filter((n) => n > 21)).toEqual([22, 23, 24]);
   });
   it("every open question names a surface that exists: a key, FEE_AMOUNT_READ, a narrowing or a fixed owner-only item", () => {
@@ -161,8 +162,12 @@ describe("open questions (OPS reconciliation, 3 Nov): flagged, never defaulted",
       for (const sf of e.surface) expect(catalogByKey.has(sf) || sf === "FEE_AMOUNT_READ" || NARROW.has(sf) || FIXED.has(sf), `${q} -> ${sf}`).toBe(true);
     }
   });
-  it("every open question that names a key is flagged on that key", () => {
+  it("every OPEN question that names a key is flagged on that key; a settled question is flagged on none", () => {
     for (const [q, e] of Object.entries(OPEN_QUESTIONS)) {
+      if (e.status === "settled") {
+        for (const d of DEFS) expect([...(d.pendingDecision ?? []), ...(d.touchedByDecision ?? [])], `${d.key} still flagged by settled ${q}`).not.toContain(q);
+        continue;
+      }
       for (const sf of e.surface) {
         const def = catalogByKey.get(sf);
         if (def) expect([...(def.pendingDecision ?? []), ...(def.touchedByDecision ?? [])], `${sf} should carry ${q}`).toContain(q);
@@ -182,5 +187,46 @@ describe("open questions (OPS reconciliation, 3 Nov): flagged, never defaulted",
     expect(COVERAGE["GC-11"]!.cls).toBe("operator_only");
     expect(COVERAGE["SCH-12"]!.label).not.toMatch(/72/);
     expect(JSON.stringify(FIXED_OWNER_ONLY.find((f) => f.id === "revert_recorded_outcome"))).not.toMatch(/72/);
+  });
+});
+
+describe("Sam's batch 1 (3 Nov): Q1, Q3, Q4, Q6, Q7", () => {
+  it("Q4 / DN-5: pronouns ride with contact identity, skin and goals with the clinical record, and no budget or personal-notes key is bundled", () => {
+    expect(COVERAGE["CLI-16"]!.keys).toEqual(["clin.edit_records"]);
+    expect(COVERAGE["SCH-2"]!.keys).toEqual(expect.arrayContaining(["client.view_directory", "clin.view_records"]));
+    expect(catalogByKey.has("client.view_budget_goals")).toBe(false);
+    for (const k of ["client.view_budget", "client.view_personal_notes", "client.view_tags"]) expect(catalogByKey.get(k)!.requires).not.toContain("client.view_allergies_cautions");
+  });
+  it("Q6 / DN-14: portal replies are offered at whole-studio and assigned-client scope, with the definition on the own scope", () => {
+    const k = catalogByKey.get("comm.send_portal_reply")!;
+    expect(scopesFor(k, "practitioner")).toEqual(["off", "own", "studio"]);
+    expect(scopesFor(k, "receptionist")).toEqual(["off", "studio"]);
+    expect(k.own).toBe(ASSIGNED_CLIENT);
+    expect(ASSIGNED_CLIENT).toMatch(/at least one appointment/);
+    expect(k.existingSnapshot).toEqual({ practitioner: "studio", receptionist: "off" });
+    expect(k.pendingDecision).toBeUndefined();
+  });
+  it("Q7 / DN-11: setting a client price is Off or On (whole studio) only, OFF for both roles, with no pending flag", () => {
+    const k = catalogByKey.get("price.edit_client_prices")!;
+    expect(scopesFor(k, "practitioner")).toEqual(["off", "studio"]);
+    expect(k.newStudioDefault).toEqual({ practitioner: "off", receptionist: "off" });
+    expect(k.pendingDecision).toBeUndefined();
+    expect(MANDATORY.join("\n")).toMatch(/grants no other pricing or payment permission/);
+  });
+  it("Q1 / DN-23b: the late-cancel window is an owner policy in whole hours 1-168, unset by default, and not a staff key", () => {
+    const m = MANDATORY.join("\n");
+    expect(m).toMatch(/whole number of hours from 1 to 168, UNSET by default/);
+    expect(m).toMatch(/unset means late-cancellation charging is unavailable/);
+    expect(FIXED_OWNER_ONLY.map((f) => f.id)).toContain("late_cancel_window");
+    expect(DEFS.some((x) => /late_cancel/.test(x.key))).toBe(false);
+  });
+  it("Q3 and Q21: the limiter fallback and anonymous limits are OPERATOR configuration, not catalog keys, with the stated numbers", () => {
+    const byId = Object.fromEntries(OPERATOR_CONFIG.map((o) => [o.id, o]));
+    expect(byId.limiter_fallback_visitor!.value).toMatch(/5 attempts per 10 minutes/);
+    expect(byId.limiter_fallback_studio!.value).toMatch(/30 attempts per hour/);
+    expect(byId.anonymous_visitor_limit!.value).toMatch(/5 attempts per hour/);
+    expect(byId.anonymous_email_limit!.value).toMatch(/3 attempts per day/);
+    for (const o of OPERATOR_CONFIG) expect(catalogByKey.has(o.id), o.id).toBe(false);
+    expect(MANDATORY.join("\n")).toMatch(/if the shared fallback cannot enforce a bound, submissions are refused safely/);
   });
 });

@@ -45,14 +45,14 @@ export const DECISIONS: Readonly<Record<DecisionId, DecisionEntry>> = {
 // The 19 open questions OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c) plus three raised from its section b.
 // None is decided and none is defaulted. `surface` names where it lives: a catalog key, FEE_AMOUNT_READ, a NARROWINGS id or a
 // FIXED_OWNER_ONLY id. A key it flags is pinned to its existing-studio snapshot (or merely marked, when only coverage is in doubt).
-export type OpenQuestion = { readonly title: string; readonly surface: readonly string[] };
+export type OpenQuestion = { readonly title: string; readonly surface: readonly string[]; readonly status?: "settled"; readonly settledIn?: string };
 export const OPEN_QUESTIONS: Readonly<Record<QuestionId, OpenQuestion>> = {
-  "Q-1": { title: "Late-cancel window: units and limits; may it stay unset (DN-23b)", surface: ["price.fee_amounts"] },
-  "Q-2": { title: "Who sets the late-cancel window (DN-23b)", surface: ["price.fee_amounts"] },
-  "Q-3": { title: "Bounded fallback for public booking during a limiter outage: the bound and who is alerted (DN-29)", surface: ["rate_limit_outage"] },
-  "Q-4": { title: "Client-detail data-group boundaries (DN-5)", surface: ["client.view_dob_address", "client.edit_allergies_cautions"] },
-  "Q-6": { title: "Scope for portal replies: whole studio or own clients (DN-14)", surface: ["comm.send_portal_reply"] },
-  "Q-7": { title: "Scopes for setting client prices (DN-11)", surface: ["price.edit_client_prices"] },
+  "Q-1": { title: "Late-cancel window: units and limits; may it stay unset (DN-23b)", surface: ["price.fee_amounts"], status: "settled", settledIn: "Batch 1: whole hours 1-168, unset by default" },
+  "Q-2": { title: "Who sets the late-cancel window (DN-23b)", surface: ["price.fee_amounts"], status: "settled", settledIn: "Batch 1: owner sets it" },
+  "Q-3": { title: "Bounded fallback for public booking during a limiter outage: the bound and who is alerted (DN-29)", surface: ["rate_limit_outage"], status: "settled", settledIn: "Batch 1: provisional operator-configurable limits, 5 per visitor per 10 min and 30 per studio per hour" },
+  "Q-4": { title: "Client-detail data-group boundaries (DN-5)", surface: ["client.view_dob_address", "client.edit_allergies_cautions"], status: "settled", settledIn: "Batch 1: safety, personal, identity (pronouns), clinical record, plus budget, personal notes, tags, health notes" },
+  "Q-6": { title: "Scope for portal replies: whole studio or own clients (DN-14)", surface: ["comm.send_portal_reply"], status: "settled", settledIn: "Batch 1: whole studio and assigned client; definition shown to owners first" },
+  "Q-7": { title: "Scopes for setting client prices (DN-11)", surface: ["price.edit_client_prices"], status: "settled", settledIn: "Batch 1: whole-studio only, OFF by default" },
   "Q-8": { title: "Waitlist action grouping and whether view is a prerequisite (DN-15a)", surface: ["wl.manage_queue"] },
   "Q-9": { title: "Undoing an outcome: any window, and which outcomes (DN-12)", surface: ["revert_recorded_outcome"] },
   "Q-10": { title: "Safety records for receptionists: default Off or not offered; log without view (DN-3)", surface: ["records.view_sterilisation_disinfection", "records.log_sterilisation_disinfection"] },
