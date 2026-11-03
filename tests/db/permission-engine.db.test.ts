@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, type PermissionDef, type Role, type Scope, type StudioPolicy, GATES } from "@/lib/permissions/catalog";
+import { consequenceClass } from "@/lib/permissions/consequence";
 import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0287 (held): the permission engine, proved on the real migrated database. Synthetic values only.
@@ -72,6 +73,7 @@ describe("seed parity and resolver parity with lib/permissions/catalog.ts", () =
       expect([r.offered_practitioner, r.offered_receptionist], d.key).toEqual([d.offeredTo.practitioner, d.offeredTo.receptionist]);
       expect([r.gate_practitioner, r.gate_receptionist], d.key).toEqual([d.shipGate?.practitioner ?? null, d.shipGate?.receptionist ?? null]);
       expect(r.sensitive, d.key).toBe(!!d.sensitive);
+      expect(r.consequence, d.key).toBe(consequenceClass(d));
     }
   });
 
@@ -423,5 +425,26 @@ describe("change_staff_role", () => {
     await seedAppt(s, m.practitionerId, c);
     expect(await call(s.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ code: "has_upcoming_appointments", count: 1 });
     expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(true);
+  });
+});
+
+describe("the page can tell when a reason is needed: sensitive flag and consequence class on get_role_permissions and the preview (OPS, Photos gap)", () => {
+  it("get_role_permissions exposes sensitive and consequence for every catalogued key, equal to the catalog", async () => {
+    const s = await seedStudio("engine-consequence");
+    const r = await getp(s.userId, s.studioId);
+    expect(Object.keys(r.keys).sort()).toEqual(DEFS.map((d) => d.key).sort());
+    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d) });
+    expect(r.keys["pay.refund"].consequence).toBe("destructive");
+  });
+
+  it("the preview and a refused-or-saved diff carry the same two fields, and a preview still writes nothing", async () => {
+    const s = await seedStudio("engine-consequence-preview");
+    const sensKey = DEFS.find((d) => d.sensitive && d.ownerConfigurable !== false && d.offeredTo.receptionist && !d.shipGate?.receptionist && d.scopes.includes("studio") && d.requires.every((q) => ["client.view_directory", "appt.view_calendar"].includes(q)) && d.newStudioDefault.receptionist === "off")!;
+    const p = await call(s.userId, "select public.preview_role_changes($1,$2::jsonb) as r", [s.studioId, JSON.stringify({ receptionist: { [sensKey.key]: "studio" } })]);
+    const entry = JSON.stringify(p).includes(sensKey.key) ? p : null;
+    expect(entry).not.toBeNull();
+    const hit = (function find(o: any): any { if (o && typeof o === "object") { if (o.key === sensKey.key && "before" in o) return o; for (const v of Object.values(o)) { const f = find(v); if (f) return f; } } return null; })(p);
+    expect(hit).toMatchObject({ key: sensKey.key, sensitive: true, consequence: consequenceClass(sensKey) });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
   });
 });
