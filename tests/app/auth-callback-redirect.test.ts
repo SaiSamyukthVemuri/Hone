@@ -107,18 +107,18 @@ describe("successful auth callback redirect boundary", () => {
     });
     it("POSITIVE: Google asserting the same verified address proves the mailbox", async () => {
       const google = { ...user, identities: [{ provider: "google", identity_data: { email: user.email, email_verified: true } }] };
-      h.exchange.mockResolvedValue(sessionWith([{ method: "oauth", provider: "google", timestamp: 1 }], google));
+      h.exchange.mockResolvedValue(sessionWith([{ method: "oauth", timestamp: 1 }], google));
       await GET(request("/dashboard"));
       expect(h.reconcile).toHaveBeenCalledOnce();
     });
     it("NEGATIVE: Google for a DIFFERENT address does not prove this account's mailbox", async () => {
       const google = { ...user, identities: [{ provider: "google", identity_data: { email: "other@harness.local", email_verified: true } }] };
-      h.exchange.mockResolvedValue(sessionWith([{ method: "oauth", provider: "google", timestamp: 1 }], google));
+      h.exchange.mockResolvedValue(sessionWith([{ method: "oauth", timestamp: 1 }], google));
       await GET(request("/dashboard"));
       expect(h.reconcile).not.toHaveBeenCalled();
     });
     it("token_hash signup-confirmation links are verified with verifyOtp and carry the same proof rules", async () => {
-      h.verify.mockResolvedValue(sessionWith([{ method: "email/signup", timestamp: 1 }]));
+      h.verify.mockResolvedValue(sessionWith([{ method: "otp", timestamp: 1 }]));
       const url = new URL("/auth/callback", ORIGIN);
       url.searchParams.set("token_hash", "synthetic-hash");
       url.searchParams.set("type", "signup");

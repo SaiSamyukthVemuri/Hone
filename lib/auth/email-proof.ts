@@ -8,7 +8,7 @@
 //
 // PROOF is a property of the SESSION, read from the verified access-token claims' `amr` (authentication methods
 // references), never from the account row:
-//   * `otp` / `magiclink` / `email/signup` / `invite` / `recovery`: a one-time credential that was DELIVERED TO THE
+//   * `otp`: a one-time credential (any link or code type) that was DELIVERED TO THE
 //     ACCOUNT'S EMAIL was redeemed to create this session (GoTrue records the method that created the session).
 //   * `oauth` with provider google: the provider asserted email_verified for THE SAME ADDRESS as the account (checked on the
 //     Google identity, so a differently-addressed linked identity proves nothing about the account email).
@@ -21,7 +21,11 @@ export type ProofIdentity = { provider?: unknown; identity_data?: Record<string,
 export type ProofUser = { email?: string | null; identities?: ProofIdentity[] | null } | null | undefined;
 
 /** Methods whose credential is delivered to the account's own email address. */
-const MAILBOX_METHODS: ReadonlySet<string> = new Set(["otp", "magiclink", "email/signup", "invite", "recovery"]);
+// MEASURED on real GoTrue (isolated stack, Confirm email ON and OFF, 3 Nov): EVERY mailbox-delivered link or code produces amr
+// `otp`: magic link, email code, signup-confirmation link, invite link and recovery link alike. `email/signup`, `magiclink`,
+// `invite` and `recovery` were never observed as an amr method, and a password SIGN-UP (Confirm email OFF) returns a session whose
+// amr is `password`. So only `otp` counts: a method that no real flow produces must not be an accepted proof (Insurance S-1).
+const MAILBOX_METHODS: ReadonlySet<string> = new Set(["otp"]);
 /** OAuth providers whose `email_verified` assertion Hone accepts as mailbox proof. */
 const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["google"]);
 
@@ -42,11 +46,17 @@ export function mailboxProofMethod(claims: ProofClaims, user: ProofUser): ProofM
 
   if (amr.some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method))) return "email_link_or_otp";
 
-  const oauth = amr.filter((e) => e.method === "oauth" && OAUTH_PROVIDERS.has(norm(e.provider)));
-  for (const entry of oauth) {
-    const identity = (user?.identities ?? []).find((i) => norm(i.provider) === norm(entry.provider));
-    const data = identity?.identity_data ?? null;
-    if (data && data.email_verified === true && norm(data.email) === email) return "oauth_verified";
+  // GoTrue's amr entry for OAuth is `{method:"oauth", timestamp}`: it does NOT carry the provider (only SAML does; Codex P1,
+  // GoTrue v2.189.0 CalculateAALAndAMR). So the provider is read from the account's IDENTITIES: an oauth session counts only when
+  // the account holds a trusted-provider (google) identity that asserts email_verified === true for the account's own address.
+  // An entry that does name a provider must name a trusted one. Hosted providers are email + Google only, so an oauth amr is Google.
+  const oauth = amr.filter((e) => e.method === "oauth" && (e.provider === undefined || e.provider === null || OAUTH_PROVIDERS.has(norm(e.provider))));
+  if (oauth.length > 0) {
+    for (const identity of user?.identities ?? []) {
+      if (!OAUTH_PROVIDERS.has(norm(identity.provider))) continue;
+      const data = identity.identity_data ?? null;
+      if (data && data.email_verified === true && norm(data.email) === email) return "oauth_verified";
+    }
   }
   return null;
 }
