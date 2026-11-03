@@ -43,7 +43,7 @@ export const DECISIONS: Readonly<Record<DecisionId, DecisionEntry>> = {
 };
 
 // The open questions OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c, Q1 to Q25 plus Q14b) and three Team-raised items from its section b (B-1..B-3).
-// Every Q-n is now settled (batches 1-3 and the settled-from-text list); B-n are Team-raised and still open. `surface` names where it lives: a catalog key, FEE_AMOUNT_READ, a NARROWINGS id or a
+// Every Q-n is now settled (batches 1-3 and the settled-from-text list); B-n were Team-raised and are settled by batch 4. `surface` names where it lives: a catalog key, FEE_AMOUNT_READ, a NARROWINGS id or a
 // FIXED_OWNER_ONLY id. A key it flags is pinned to its existing-studio snapshot (or merely marked, when only coverage is in doubt).
 export type OpenQuestion = { readonly title: string; readonly surface: readonly string[]; readonly status?: "settled"; readonly settledIn?: string };
 export const OPEN_QUESTIONS: Readonly<Record<QuestionId, OpenQuestion>> = {
@@ -67,9 +67,9 @@ export const OPEN_QUESTIONS: Readonly<Record<QuestionId, OpenQuestion>> = {
   "Q-20": { title: "Portal OFF: in-flight links and independently controlled features (DN-20)", surface: ["client_portal_setting"], status: "settled", settledIn: "Batch 3: links and sessions blocked on next request; records preserved; intake and consent links must be verified not to bypass" },
   "Q-21": { title: "Anonymous waitlist and demo limits (group 7)", surface: ["anonymous_public_writes_closed"], status: "settled", settledIn: "OPS technical parameters: per-visitor 5/hour and per-email 3/day, one active entry per email per studio, operator-configurable" },
   // Raised by the Team lane from the reconciliation's section b (a key or value no decision backs). B-n, not Q-n: OPS numbers the Q series.
-  "B-1": { title: "client.view_directory as a fixed baseline for both roles is implied, never stated", surface: ["client.view_directory"] },
-  "B-2": { title: "price.view_client_prices 'own' scope definition is the catalog's, not Sam's", surface: ["price.view_client_prices"] },
-  "B-3": { title: "affectsFutureStudioBusiness labels on opening hours, waitlist rules and admission keys go beyond section C.3", surface: ["admit.booking_rules", "avail.manage_studio_hours"] },
+  "B-1": { title: "client.view_directory as a fixed baseline for both roles is implied, never stated", surface: ["client.view_directory"], status: "settled", settledIn: "Batch 4: fixed baseline for active practitioners and receptionists; preferred-name privacy kept; no legal, clinical, export or other-studio access" },
+  "B-2": { title: "price.view_client_prices 'own' scope definition is the catalog's, not Sam's", surface: ["price.view_client_prices"], status: "settled", settledIn: "Batch 4: assigned client = non-cancelled appointment currently assigned in this studio; shown beside the option" },
+  "B-3": { title: "affectsFutureStudioBusiness labels on opening hours, waitlist rules and admission keys go beyond section C.3", surface: ["admit.booking_rules", "avail.manage_studio_hours"], status: "settled", settledIn: "Batch 4: label on service prices, fees, studio hours, waitlist rules and admission rules, each with a specific effect line" },
   // Follow-ups and later questions in OPS's numbering (ROLES-RECONCILIATION section c, batch 2/3).
   "Q-14b": { title: "Which fee amounts staff may read (DN-27 follow-up)", surface: ["FEE_AMOUNT_READ"], status: "settled", settledIn: "Batch 3: staff read fee amounts clients see at booking; editing stays price.fee_amounts" },
   "Q-22": { title: "A deactivated calendar owner with no other active owner: pause all sync and notify owners, or pause and alert the operator", surface: ["deactivated_calendar_owner"], status: "settled", settledIn: "Batch 3: sync pauses, operator alerted without client data, resumes only on explicit owner reconnect" },

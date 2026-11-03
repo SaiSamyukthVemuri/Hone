@@ -78,6 +78,7 @@ export type PermissionDef = {
   readonly enforcedIn: Phase; // which program step switches enforcement on
   readonly killSwitch?: boolean; // the operator kill switch returns every non-owner check for this key to false (R1)
   readonly affectsFutureStudioBusiness?: boolean; // studio-wide price/fee settings are labelled as such on the page
+  readonly futureBusinessEffect?: string; // the SPECIFIC effect shown beside the label; required whenever affectsFutureStudioBusiness is true
   readonly sensitive?: boolean; // newly enabling it is highlighted in the Reset-to-defaults preview (financial, clinical, identity, bulk)
   readonly shipGate?: Readonly<Partial<Record<Role, GateId>>>; // effectively OFF for that role until the gate is satisfied (see GATES)
   readonly pendingDecision?: readonly DecisionRef[]; // value pinned to the snapshot for every studio until decided
@@ -91,10 +92,12 @@ const BOOL = ["off", "studio"] as const;
 const SCOPED = ["off", "own", "studio"] as const;
 const BOTH = { practitioner: true, receptionist: true } as const;
 const ASSIGNED = "an appointment whose assigned practitioner is the actor";
-// Shown to owners next to the "own" scope of portal replies (Sam, 3 Nov, Q6). PROPOSED wording from the Team lane, for OPS and Sam to confirm
-// before the assigned-client scope can be enabled: "assigned client" must be defined precisely and that explanation shown to owners.
+// Shown to owners beside the "own" scope of every client-based key (portal replies, client-price view). Decided (Sam, 3 Nov, batch 4 and its
+// clarification): a client with a NON-CANCELLED appointment assigned to the actor, past or upcoming, WITHIN THIS STUDIO. The CURRENT assignment is
+// evaluated on the server. After a reassignment the former practitioner is denied ONLY when no other qualifying appointment still makes the client
+// theirs AND no broader studio-wide permission applies. The relationship alone grants no additional clinical access.
 export const ASSIGNED_CLIENT =
-  "an assigned client: a client who has at least one appointment, past or future and not cancelled, whose assigned practitioner is you. A client you only booked for a colleague, or whose appointments were all reassigned away or cancelled, is not assigned to you";
+  "an assigned client: a client of this studio with at least one appointment, past or upcoming and not cancelled, that is CURRENTLY assigned to you. If your last such appointment is reassigned away or cancelled, access ends on your next request, unless you hold a studio-wide permission for the action. Being assigned grants no clinical access by itself";
 
 const CALENDAR = "appt.view_calendar";
 const PAY_VIEW = "pay.view_appointment";
@@ -129,7 +132,6 @@ export const CATALOG = [
   },
   {
     key: "client.view_directory",
-    touchedByDecision: ["B-1"],
     group: "clients_identity",
     label: "View and search the client list and contact details",
     description: "See and search clients and their contact details. A role without the legal-name key sees the preferred name, otherwise 'Name on file'.",
@@ -141,7 +143,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: false,
     enforcedIn: "R5",
-    note: "A fixed baseline, named so a later change to client reads cannot go ungated (D-8). Practitioners read contact details directly and the receptionist through definer functions today.",
+    note: "Decided (Sam, 3 Nov, batch 4): names and basic contact details are a FIXED BASELINE for ACTIVE practitioners and receptionists of that studio, not a toggle. Preferred-name / \"Name on file\" privacy is preserved. It grants no legal identity, clinical information, bulk export or access to another studio. A pending, removed or deactivated person has none of it.",
   },
   {
     key: "appt.book",
@@ -178,9 +180,8 @@ export const CATALOG = [
     key: "appt.reassign",
     group: "appointments",
     label: "Reassign appointments",
-    description: "Change which practitioner an appointment is assigned to. Own = hand one of your own appointments to a colleague.",
-    scopes: SCOPED,
-    own: ASSIGNED,
+    description: "Change which practitioner a colleague's appointment is assigned to. Handing away your own appointment is appt.handoff_own, not a scope of this key.",
+    scopes: BOOL,
     requires: ["appt.move"],
     newStudioDefault: pair(["off", "studio"]),
     existingSnapshot: pair(["off", "off"]),
@@ -188,7 +189,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (decided, Sam 3 Nov, Q17 / R0-Q3).",
+    note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (decided, Sam 3 Nov, Q17 / R0-Q3); the Own scope was removed from this key (OPS technical call, 3 Nov), so Off or Studio only.",
   },
   {
     key: "appt.handoff_own",
@@ -250,7 +251,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     shipGate: { receptionist: "receptionist_scheduling_notes" },
-    note: "R4 requirements (Privacy F6/F9): confirm scheduling and clinical notes are separate fields before a receptionist can read or write notes; decide whether edit implies read; colleagues' note edits by practitioners are an approved policy only once note versions (0283) ship, so R4 must not enforce the new-studio default for colleagues' notes before them.",
+    note: "R4 requirements (Privacy F6/F9): confirm scheduling and clinical notes are separate fields before a receptionist can read or write notes. Decided (OPS technical call, 3 Nov): an EDIT grant implies READ of the same scheduling notes, never clinical notes, and there is no separate read key; R4 enforces it; colleagues' note edits by practitioners are an approved policy only once note versions (0283) ship, so R4 must not enforce the new-studio default for colleagues' notes before them.",
   },
   {
     key: "appt.complete",
@@ -318,7 +319,6 @@ export const CATALOG = [
   },
   {
     key: "avail.manage_studio_hours",
-    touchedByDecision: ["B-3"],
     group: "availability",
     label: "Manage the studio's opening hours",
     description: "Change the studio-wide weekly opening hours and overrides. Separate from managing a colleague's availability and from managing your own.",
@@ -331,6 +331,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     affectsFutureStudioBusiness: true,
+    futureBusinessEffect: "Changes the hours the studio can be booked in. Appointments already booked are not moved or cancelled.",
     note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
   },
 
@@ -819,12 +820,11 @@ export const CATALOG = [
   },
   {
     key: "price.view_client_prices",
-    touchedByDecision: ["B-2"],
     group: "pricing",
     label: "See a client's special prices",
     description: "Read the per-client prices needed for authorized work (the client_pricing table). Closes M-4 together with the payment view.",
     scopes: SCOPED,
-    own: "the price belongs to a client with an appointment assigned to the actor",
+    own: ASSIGNED_CLIENT,
     requires: [PAY_VIEW],
     newStudioDefault: pair(["own", "studio"]),
     existingSnapshot: pair(["off", "off"]),
@@ -852,6 +852,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     affectsFutureStudioBusiness: true,
+    futureBusinessEffect: "Changes the price shown to clients and charged for future bookings of the service. Appointments already booked keep the price recorded on them.",
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
     note: "Owner-only in the app today but open to any practitioner at the database (H1); the snapshot is the approved owner-only policy. Studio-wide: labelled 'affects future studio business'.",
@@ -871,6 +872,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     affectsFutureStudioBusiness: true,
+    futureBusinessEffect: "Changes the no-show and late-cancellation fee amounts shown to clients at booking and applied to future outcomes. Fees already recorded are not changed.",
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
     note: "Decided (Sam, 2 Nov, DN-27): staff read only the studio name, timezone and booking preferences their work needs; fee amounts require this key or the relevant payment key.",
@@ -1121,7 +1123,6 @@ export const CATALOG = [
   // ───────────────────────────── waitlist rules and automation ─────────────────────────────
   {
     key: "wlrules.invitation_rounds",
-    touchedByDecision: ["B-3"],
     group: "waitlist_rules",
     label: "Start and close invitation rounds",
     description: "Open an invitation round with an allowance and close invitations.",
@@ -1134,11 +1135,11 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
-    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-15b). A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
+    futureBusinessEffect: "Changes how many prospects are invited to book and when invitations close, which decides who can book new-client time next.",
+    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-15b). Decided (Sam, 3 Nov, batch 4): changing these settings does NOT need queue-view access; any action that reads or changes individual entries still needs the relevant wl.* entry permissions. A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
   },
   {
     key: "wlrules.policy_and_text",
-    touchedByDecision: ["B-3"],
     group: "waitlist_rules",
     label: "Waitlist policy, preference grants and text",
     description: "Change the waitlist admission policy, preference grants, ordered-claim rules and the waitlist wording toggles.",
@@ -1151,12 +1152,12 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
-    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-15b). A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
+    futureBusinessEffect: "Changes the waitlist admission policy, who may claim a slot first and the wording prospects see. It applies to prospects who join or are invited after the change.",
+    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-15b). Decided (Sam, 3 Nov, batch 4): changing these settings does NOT need queue-view access; any action that reads or changes individual entries still needs the relevant wl.* entry permissions. A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
   },
   // ───────────────────────────── accepting new clients ─────────────────────────────
   {
     key: "admit.change_policy",
-    touchedByDecision: ["B-3"],
     group: "accepting_new_clients",
     label: "Change the new-client admission policy",
     description: "Permission to change the admission policy. The studio's current Open, Waitlist or Closed setting is a separate studio setting.",
@@ -1169,11 +1170,11 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
+    futureBusinessEffect: "Changes whether the studio is Open, Waitlist or Closed to new clients. Every new-client visitor to the public booking page sees the new mode at once.",
     note: "OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-4a). This is the PERMISSION to change the admission policy. The studio's actual Open / Waitlist / Closed setting is a studio setting, not a permission, and the page keeps the two visibly apart. The public enforcement of the mode stays a mandatory server rule. Settled (Q13, from group 2): the setting is separate from this key.",
   },
   {
     key: "admit.booking_rules",
-    touchedByDecision: ["B-3"],
     group: "accepting_new_clients",
     label: "Booking window and new-client booking rules",
     description: "How far ahead clients may book and the rules for public new-client booking.",
@@ -1186,6 +1187,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
+    futureBusinessEffect: "Changes how far ahead new clients may book and the rules for public new-client booking. It applies to bookings made after the change.",
     note: "Decided (Sam, 3 Nov, Q12 / DN-4a, DN-4b): covers booking windows and new-client booking rules ONLY. Studio identity (web address, timezone, address, intro) and service duration and buffers stay under their own separate controls. OFF for both staff roles, owner-configurable.",
   },
   // ───────────────────────────── single capabilities with an open decision ─────────────────────────────
@@ -1704,6 +1706,9 @@ export const MANDATORY: readonly string[] = [
   "Decided (Sam, 3 Nov, Q25): studio totals need no payment-view prerequisite and reports never reveal an individual payment, client or appointment detail",
   "Decided (Sam, 3 Nov, Q17 / R0-Q3): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be an active practitioner of the same studio configured for the service, and it is refused once the appointment has started or been treated",
   "Reading a fee amount clients see at booking is open to staff; any other fee field needs price.fee_amounts or pay.view_appointment at any scope, through a column-limited studios read, never the whole row (DN-27, Q14b)",
+  "Decided (Sam, 3 Nov, batch 4): waitlist rule and automation settings (wlrules.*) need no queue-view access; anything that reads or changes an individual entry still needs the relevant wl.* permission",
+  "Decided (Sam, 3 Nov, batch 4): an assigned client is a client of this studio with a non-cancelled appointment CURRENTLY assigned to the actor, past or upcoming; the current assignment is evaluated on the server, access ends only when no other qualifying appointment remains and no studio-wide permission applies, and the relationship alone grants no clinical access",
+  "Decided (Sam, 3 Nov, batch 4): names and basic contact details are a fixed baseline for active practitioners and receptionists of the studio, with preferred-name privacy kept and no legal identity, clinical information, bulk export or other-studio access",
   "Decided (Sam, 3 Nov, Q8 / DN-15a): every waitlist action (wl.*) requires queue-view access; expiring and closing unbooked entries is its own key; importing never creates consent or sends a message",
   "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
   "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",

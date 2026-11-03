@@ -60,7 +60,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `appt.view_calendar` (fixed) | Off / Studio | – | Studio / Studio | Studio / Studio | source | – | – |
 | `appt.book` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Own / Off | source | – | – |
 | `appt.move` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Own / Off | source | – | – |
-| `appt.reassign` | Off / Own / Studio | `appt.move` | Off / Studio | Off / Off | source | – | – |
+| `appt.reassign` | Off / Studio | `appt.move` | Off / Studio | Off / Off | source | – | – |
 | `appt.handoff_own` (receptionist not offered) | Off / Studio | `appt.view_calendar` | Off / Off | Off / Off | not_built | – | – |
 | `appt.cancel` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `appt.mark_no_show` | Off / Own / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
@@ -72,7 +72,7 @@ with a test, so there is never a second copy of a default. The table below is **
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `client.view_directory` (fixed) | Off / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | B-1 (coverage only) |
+| `client.view_directory` (fixed) | Off / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `client.create` | Off / Studio | – | Studio / Studio | Studio / Off | source | – | – |
 | `client.edit_contact` | Off / Studio | – | Studio / Studio | Studio / Off | source | – | – |
 | `client.view_legal_name` | Off / Studio | – | Studio / Off | Studio / Off | approved_policy | receptionist: privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows "Not available yet", not a switch | – |
@@ -134,7 +134,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
 | `price.appointment` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
-| `price.view_client_prices` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | B-2 (coverage only) |
+| `price.view_client_prices` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.service_list` | Off / Studio | – | Studio / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.fee_amounts` | Off / Studio | – | Studio / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.edit_client_prices` | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | – |
@@ -145,7 +145,7 @@ with a test, so there is never a second copy of a default. The table below is **
 |---|---|---|---|---|---|---|---|
 | `avail.manage_own` (receptionist not offered) | Off / Studio | – | Studio / Off | Off / Off | source | – | – |
 | `avail.manage_others` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
-| `avail.manage_studio_hours` | Off / Studio | – | Off / Off | Off / Off | source | – | B-3 (coverage only) |
+| `avail.manage_studio_hours` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
 
 ### Reports
 
@@ -175,15 +175,15 @@ with a test, so there is never a second copy of a default. The table below is **
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `wlrules.invitation_rounds` | Off / Studio | – | Off / Off | Off / Off | source | – | B-3 (coverage only) |
-| `wlrules.policy_and_text` | Off / Studio | – | Off / Off | Off / Off | source | – | B-3 (coverage only) |
+| `wlrules.invitation_rounds` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
+| `wlrules.policy_and_text` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
 
 ### Accepting new clients
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `admit.change_policy` | Off / Studio | – | Off / Off | Off / Off | source | – | B-3 (coverage only) |
-| `admit.booking_rules` | Off / Studio | – | Off / Off | Off / Off | source | – | B-3 (coverage only) |
+| `admit.change_policy` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
+| `admit.booking_rules` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
 
 ### Safety records
 
@@ -219,7 +219,8 @@ Groups 1 to 7 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in th
 - **Batch 1 (Sam, 3 Nov):** Q1 late-cancel window is whole hours 1-168, unset by default (unset = no late-cancel charging), set by the owner. Q3 limiter-outage fallback and the anonymous limits are OPERATOR configuration (`OPERATOR_CONFIG`), not catalog keys: 5 attempts per visitor per 10 minutes, 30 per studio per hour, failures counted, refuse safely if the shared fallback cannot enforce a bound. Q4 client-detail groups: safety (allergies + cautions), personal (date of birth, birthday, address), budget, personal notes, tags, appointment health notes; pronouns ride with contact identity, skin type, skin notes and treatment goals with the clinical record. Q6 portal replies are offered at whole-studio and assigned-client scope, existing studios keep today's access, and the assigned-client definition (proposed wording in `ASSIGNED_CLIENT`) must be shown to owners before that scope is enabled. Q7 client-price setting is Off/Studio only, OFF for both roles.
 - **Batch 2 (Sam, 3 Nov):** Q10 / DN-3 view and log sterilisation and disinfection are separate keys, receptionist Off / Off, logging requires viewing; exposure incidents stay owner and reporter only. Q16 / R0-Q2 receptionist clinical access is VIEW-ONLY keys (records, photos, intake answers) offered and Off by default; edit, print and complete are not offered to receptionists, and ID photos and legal-identity restrictions are unchanged. Q25 studio totals have no prerequisite on the payment view and the payment view none on them; reports never reveal an individual payment detail. Q9 / DN-12 undoing a recorded outcome is owner-only, has no window, needs a reason, covers completion, no-show and cancellation, and never reverses money, erases records or resends messages (settlement goes through refund or correction). Q17 / R0-Q3 `appt.handoff_own` is OFF by default and owner-configurable; the recipient must be an eligible practitioner of the same studio and it is refused once the appointment has started or been treated. Q14 / DN-27 practitioners may read published service prices needed for booking, with no private financial setting or client-specific price exposed outside its scope; fee-amount reads stay as today until Q14b.
 - **Batch 3 (Sam, 3 Nov):** Q8 expiring and closing unbooked waitlist entries is its own key `wl.expire_close`; claim, release, requeue and claim-next-N stay in `wl.manage_queue`; every `wl.*` key requires `wl.view_queue`; importing never creates consent or sends a message. Q12 `admit.booking_rules` covers booking windows and new-client rules only (studio identity and service duration and buffers stay under their own controls). Q14b staff may read the fee amounts clients see at booking; changing a fee stays `price.fee_amounts`. Q18 an erasure request is owner-only, tracked and audited; the UI says recording one deletes nothing and execution is unavailable (the tracked request needs a held table, number to be claimed). Q19 staff export needs `rep.bulk_export` (OFF by default) plus access to every included row and field, re-checked at generation and at download; credentials, payment secrets and other studios' data are always excluded. Q20 turning the portal off blocks existing links and sessions on their next request (messaging, rebooking and card saving too), keeps records, and intake and consent links must be verified not to bypass it. Q22 with no active owner left, calendar sync pauses, the operator is alerted without client data, and it resumes only when an active owner explicitly reconnects (enforcement stage R4). Q23 a removed reporter loses access to an exposure incident through that studio; the owner keeps it. A6 the recipient of `appt.handoff_own` is an active practitioner of the same studio configured for the service. Q13 and Q15 were settled from existing text (the Open/Waitlist/Closed setting is separate from the admission key; "Not available yet" is only on receptionist legal-name rows).
-- **Open (Team-raised, not backed by a decision):** B-1 `client.view_directory` as a fixed baseline for both roles, B-2 the `own` scope of `price.view_client_prices`, B-3 the `affectsFutureStudioBusiness` labels beyond section C.3. No Q question remains open. A key flagged `pendingDecision` ships with the existing-studio snapshot for every studio; `touchedByDecision` keeps its value and is only marked.
+- **Batch 4 (Sam, 3 Nov):** an assigned client (the `own` scope of portal replies and of the client-price view) is a client of this studio with a non-cancelled appointment CURRENTLY assigned to the actor, past or upcoming; the server evaluates the current assignment, so after a reassignment the former practitioner is denied only when no other qualifying appointment still links them to the client and no studio-wide permission applies, and the relationship alone grants no clinical access; the definition is shown to owners beside the option. Waitlist rules and automation (`wlrules.*`) need no queue-view access; anything that reads or changes an individual entry still needs its `wl.*` key. `client.view_directory` is a fixed baseline for ACTIVE practitioners and receptionists (names and basic contact details, preferred-name privacy kept; no legal identity, clinical information, bulk export or other-studio access). The label "Affects future studio business" sits on service prices, fees, studio hours, waitlist rules and admission rules, each with its own specific effect line (`futureBusinessEffect`; the wording is Team-proposed for OPS to confirm). `clin.view_aftercare` is separate from sending aftercare.
+- **Open:** no Q question and no Team-raised item (B-1 to B-3) remains open. A key flagged `pendingDecision` ships with the existing-studio snapshot for every studio; `touchedByDecision` keeps its value and is only marked.
 - **Coverage map:** `lib/permissions/coverage.ts` maps all 258 rows of the audit's current-access matrix to a key or a fixed rule (key, safeguard, fixed owner-only, fixed baseline, not a staff permission, owner-only this release). Tests fail if a row is unmapped, a named key does not exist, or a key is unreachable (the exceptions are the four capabilities the product does not have yet: `client.merge`, `comm.bulk_message`, `rep.bulk_export`, `clin.view_id_portrait`). Rows marked `team` were mapped by this lane where the audit left them open, for reviewers to confirm.
 
 
