@@ -165,10 +165,11 @@ for (const capacity of [false, true]) {
         const results = await Promise.all([mover(a, T(hh(4)))(), mover(b, T(hh(4)))()]);
         const tag = `round ${i}: ${JSON.stringify(results)}`;
         expect(results.filter((o) => o.kind === "error"), tag).toHaveLength(0);
-        // OFF: the studio is one resource, so exactly one move lands. ON: each practitioner has their own resource, so both may land.
+        // OFF: the studio is one resource, so exactly one move lands and the other is refused honestly. ON: each practitioner has their own
+        // resource, so the two independent moves (different practitioners) must BOTH land (Codex P2).
         const landed = results.filter((o) => o.kind === "moved").length;
-        expect(landed, tag).toBeGreaterThanOrEqual(1);
-        expect(landed, tag).toBeLessThanOrEqual(capacity ? 2 : 1);
+        expect(landed, tag).toBe(capacity ? 2 : 1);
+        if (!capacity) expect(results.filter((o) => o.kind === "refused"), tag).toHaveLength(1);
         expect(await confirmedAt(T(hh(4))), tag).toBe(landed);
         expect(await totalConfirmed(), tag).toBe((i + 1) * 2);
       }
@@ -176,8 +177,14 @@ for (const capacity of [false, true]) {
 
     it("a refused racer leaves no duplicate and no lost appointment", async () => {
       const appt = await existing(owner(), T("00:00"));
-      await Promise.all([mover(appt, T("06:00"))(), bookerDesk(owner, T("06:00"))(), bookerService(owner, owner, T("06:00"))()]);
-      expect(await confirmedAt(T("06:00"), owner())).toBe(1);
+      const results = await Promise.all([mover(appt, T("06:00"))(), bookerDesk(owner, T("06:00"))(), bookerService(owner, owner, T("06:00"))()]);
+      const tag = JSON.stringify(results);
+      // All three racers are asserted (Codex P2): no error, exactly one winner (the move or one booking), the other two refused honestly.
+      expect(results.filter((o) => o.kind === "error"), tag).toHaveLength(0);
+      expect(results.filter((o) => o.kind === "moved" || o.kind === "created"), tag).toHaveLength(1);
+      expect(results.filter((o) => o.kind === "refused"), tag).toHaveLength(2);
+      expect(await confirmedAt(T("06:00"), owner()), tag).toBe(1);
+      expect(results[0].kind === "moved" ? 1 : 2, tag).toBe(await totalConfirmed());
       const total = await totalConfirmed();
       // Either the move won (1 appointment in total) or a booking won (the original plus the winner).
       expect([1, 2]).toContain(total);
