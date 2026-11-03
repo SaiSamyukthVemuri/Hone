@@ -534,7 +534,11 @@ async function ProceduresPrint({
     const id = identities.byClient.get(r.clientId);
     return clinicalPacketName({ name: r.clientName, preferred_name: id?.preferred_name, legal_name: id?.legal_name });
   };
-  const photoCounts = filter.clientId
+  // Photo counts are photo existence: ask the photos key too, and print no count line without it.
+  const canViewPhotos = filter.clientId
+    ? (await requirePermission(await createClient(), studioId, "clin.view_photos", { client: filter.clientId })).allowed
+    : false;
+  const photoCounts = filter.clientId && canViewPhotos
     ? await loadLinkedPhotoCounts(
         studioId,
         filter.clientId,
