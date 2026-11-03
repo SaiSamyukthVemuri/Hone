@@ -47,7 +47,7 @@ as $$
 $$;
 
 comment on function public.session_proves_mailbox() is
-  '0291: true when the verified JWT amr shows a one-time mailbox credential (otp) or a verified-Google oauth session. Internal helper; no role may call it directly.';
+  '0291: true when the verified JWT amr shows a one-time mailbox credential (otp, magiclink or recovery amr) or a verified-Google oauth session. Internal helper; no role may call it directly.';
 
 revoke execute on function public.session_proves_mailbox() from public;
 revoke execute on function public.session_proves_mailbox() from anon;
