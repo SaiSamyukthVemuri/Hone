@@ -74,7 +74,6 @@ describe("seed parity and resolver parity with lib/permissions/catalog.ts", () =
       expect([r.gate_practitioner, r.gate_receptionist], d.key).toEqual([d.shipGate?.practitioner ?? null, d.shipGate?.receptionist ?? null]);
       expect(r.sensitive, d.key).toBe(!!d.sensitive);
       expect(r.consequence, d.key).toBe(consequenceClass(d));
-      expect(r.enforcement, d.key).toBe(d.enforcement ?? "not_yet");
     }
   });
 
@@ -397,6 +396,19 @@ describe("effective_access", () => {
     expect(g.rows.every((x: J) => x.scope === "off" && x.capped_by === "deactivated")).toBe(true);
     expect(await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, randomUUID()])).toMatchObject({ code: "not_found" });
   });
+
+  it("a DEACTIVATED OWNER shows no access: the active state is judged before the owner branch (Codex)", async () => {
+    const s = await seedStudio("engine-effective-owner");
+    const second = await seedMember(s, "o2");
+    await adminQuery("update public.practitioners set role='owner' where id=$1", [second.practitionerId]);
+    const live = await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, second.practitionerId]);
+    expect(live).toMatchObject({ ok: true, role: "owner", state: "active" });
+    expect(live.rows.every((x: J) => x.scope === "studio" && x.source === "owner")).toBe(true); // an active owner holds every key
+    await adminQuery("update public.practitioners set active=false where id=$1", [second.practitionerId]);
+    const g = await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, second.practitionerId]);
+    expect(g).toMatchObject({ ok: true, role: "owner", state: "deactivated" });
+    expect(g.rows.every((x: J) => x.scope === "off" && x.capped_by === "deactivated")).toBe(true);
+  });
 });
 
 const openStaffRoleGate = (studioId: string) =>
@@ -444,7 +456,7 @@ describe("the page can tell when a reason is needed: sensitive flag and conseque
     const s = await seedStudio("engine-consequence");
     const r = await getp(s.userId, s.studioId);
     expect(Object.keys(r.keys).sort()).toEqual(DEFS.map((d) => d.key).sort());
-    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d), enforcement: d.enforcement ?? "not_yet" });
+    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d) });
     expect(r.keys["pay.refund"].consequence).toBe("financial");
     expect(r.keys["appt.cancel"].consequence).toBeNull();
     expect(Object.values(r.keys).some((k: any) => k.consequence === "destructive")).toBe(false);
