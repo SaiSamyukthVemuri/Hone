@@ -493,6 +493,9 @@ async function softDeleteEntry(
   }
   // Verifies the session belongs to THIS studio + client (rejects cross-studio).
   await assertSessionVisible(studio.id, clientId, sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
 
   // L18 FINAL (migration 0169) revoked INSERT/UPDATE/DELETE from `authenticated`
   // on both pass tables; only SELECT remains. The soft-delete UPDATE therefore
@@ -647,6 +650,9 @@ export async function updateNextSessionNoteAction(
 
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("set_next_session_note", {
@@ -768,9 +774,12 @@ export async function editSessionStartedAtAction(
   // The studio is no longer needed here: the command derives it from the
   // session itself. The active check stays so the practitioner sees the exact
   // same message without a round trip.
-  const { practitioner } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot edit sessions." };
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
   }
 
   // L18 Phase 3: the read-validate-write-audit sequence is now ONE transaction
@@ -812,6 +821,9 @@ export async function softDeleteSessionAction(formData: FormData): Promise<void>
     throw new Error("Inactive practitioners cannot delete sessions.");
   }
   await assertSessionVisible(studio.id, clientId, sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
 
   const supabase = await createClient();
   // deleted_by is derived by the command from auth.uid(), never sent.

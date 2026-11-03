@@ -687,6 +687,9 @@ export async function recordReadingsAction(input: {
   // so a block id from another client's chart cannot be smuggled in by a
   // stale page or a crafted call.
   await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, code: "rejected", error: "Not available to your role." };
+  }
   if (input.readings.length === 0) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
@@ -904,6 +907,9 @@ export async function recordSetupSubmissionAction(input: {
     // been shown to be a non-write, and guessing in the unfreezing direction
     // is the direction that costs a duplicate clinical record.
     throw e;
+  }
+  if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, code: "rejected", error: "Not available to your role." };
   }
 
   const db = await machineDb();

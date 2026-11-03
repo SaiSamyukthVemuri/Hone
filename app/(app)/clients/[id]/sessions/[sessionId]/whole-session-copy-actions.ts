@@ -273,6 +273,9 @@ export async function commitWholeSessionCopyAction(input: {
     if (e instanceof SessionLineageError) return { ok: false, error: LINEAGE_ERROR };
     throw e;
   }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   if (!input.idempotencyKey || input.idempotencyKey.trim() === "") {
     return { ok: false, error: "Reload the preview and try again." };
