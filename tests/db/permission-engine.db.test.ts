@@ -603,7 +603,7 @@ describe("reason rule judges the EFFECTIVE widening (Privacy E1)", () => {
 
 describe("rollback: the 0287 down SQL removes the engine and touches nothing else", () => {
   it("drops every engine object inside a transaction and leaves studios, practitioners and appointments as they were", async () => {
-    const { readFileSync } = await import("node:fs");
+    const { readFileSync, existsSync } = await import("node:fs");
     const down = readFileSync("supabase/rollbacks/0287_roles_permission_engine.down.sql", "utf8");
     const s = await seedStudio("engine-down");
     const counts = async (q: (t: string, p?: unknown[]) => Promise<{ rows: any[] }>) => {
@@ -617,7 +617,11 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
     try {
       await adminTx(async (q) => {
         // the file opens its own begin/commit; run its body statements inside this test's transaction instead of committing
-        const body = down.replace(/^begin;\s*$/im, "").replace(/^commit;\s*$/im, "");
+        const strip = (t: string) => t.replace(/^begin;\s*$/im, "").replace(/^commit;\s*$/im, "");
+        // A stack that also carries a LATER migration (0289 depends on has_studio_permission) must unwind that first, newest first.
+        const later = "supabase/rollbacks/0289_roles_edit_record_protections.down.sql";
+        if (existsSync(later) && (await q("select to_regclass('public.chart_revisions') is not null as present")).rows[0].present) await q(strip(readFileSync(later, "utf8")));
+        const body = strip(down);
         await q(body);
         gone = (await q(
           `select to_regprocedure('public.has_studio_permission(uuid,text,uuid,uuid,uuid)') is null as fn,
