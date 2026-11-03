@@ -109,7 +109,7 @@ describe("0289: performer correction replaces the overwrite", () => {
       asUser(off.m.userId, (q) => q("select public.set_session_performer($1,$2,$3)", [off.sessionId, off.s.clientId, off.m.practitionerId])),
     ).rejects.toMatchObject({ code: "42501" });
     await expect(
-      adminQuery("update public.sessions set performed_by_practitioner_id=$2 where id=$1", [on.sessionId, on.m.practitionerId]),
+      adminQuery("update public.sessions set performed_by_practitioner_id=$2 where id=$1", [on.sessionId, on.s.practitionerId]),
     ).rejects.toMatchObject({ code: "55000" });
   });
 });
