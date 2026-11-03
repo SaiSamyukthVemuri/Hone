@@ -600,7 +600,7 @@ describe("Sam's group 7 (3 Nov): platform and operations", () => {
 describe("enforcement state (Privacy X3)", () => {
   it("names only catalogued keys, and defaults every other key to not_yet", async () => {
     const { ENFORCEMENT, enforcementOf, CATALOG } = await import("@/lib/permissions/catalog");
-    const keys = new Set(CATALOG.map((d) => d.key));
+    const keys = new Set<string>(CATALOG.map((d) => d.key));
     for (const k of Object.keys(ENFORCEMENT)) expect(keys.has(k), k).toBe(true);
     expect(enforcementOf("clin.edit_records")).toBe("not_yet");
     expect(enforcementOf("appt.complete")).toBe("observe");
