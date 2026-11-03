@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, type PermissionDef } from "@/lib/permissions/catalog";
-import { consequenceClass, DESTRUCTIVE_KEYS } from "@/lib/permissions/consequence";
+import { consequenceClass } from "@/lib/permissions/consequence";
 
 const DEFS = CATALOG as readonly PermissionDef[];
+const cls = (k: string) => consequenceClass(DEFS.find((d) => d.key === k)!);
 
 describe("consequence class", () => {
-  it("every reviewed destructive key exists in the catalog", () => {
-    for (const k of DESTRUCTIVE_KEYS) expect(DEFS.some((d) => d.key === k), k).toBe(true);
+  it("no delegable key is classed destructive: that label belongs to the fixed owner-only deletion, archive and restore controls", () => {
+    for (const d of DEFS) expect(consequenceClass(d), d.key).not.toBe("destructive");
   });
-  it("destructive outranks financial outranks sensitive, and a plain key has none", () => {
-    expect(consequenceClass({ key: "pay.void", group: "payments", sensitive: true })).toBe("destructive");
-    expect(consequenceClass({ key: "pay.view_totals", group: "payments", sensitive: true })).toBe("financial");
+  it("cancelling is ordinary; voiding and refunding are financial", () => {
+    expect(cls("appt.cancel")).toBeNull();
+    expect(cls("pay.void")).toBe("financial");
+    expect(cls("pay.refund")).toBe("financial");
+  });
+  it("financial outranks sensitive, and a plain key has none", () => {
+    expect(consequenceClass({ key: "x", group: "payments", sensitive: true })).toBe("financial");
     expect(consequenceClass({ key: "x", group: "clients_identity", sensitive: true })).toBe("sensitive");
     expect(consequenceClass({ key: "x", group: "clients_identity" })).toBeNull();
   });
