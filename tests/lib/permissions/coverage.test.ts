@@ -55,7 +55,7 @@ describe("coverage map: every audit row is covered by a key or a fixed rule", ()
     const del = FIXED_OWNER_ONLY.find((f) => f.id === "delete_treatment_records_and_photos");
     expect(del?.enforcedBy).not.toContain("public.soft_delete_session_area");
     expect(del?.enforcedBy).not.toContain("public.soft_delete_session_block");
-    expect(FIXED_OWNER_ONLY.map((f) => f.id)).toEqual(expect.arrayContaining(["revert_recorded_outcome", "id_photos_portraits"]));
+    expect(FIXED_OWNER_ONLY.map((f) => f.id)).toEqual(expect.arrayContaining(["revert_recorded_outcome", "id_portraits_owner_only"]));
   });
   it("fixed-owner rows do not name a staff key", () => {
     for (const [id, row] of Object.entries(COVERAGE)) if (row.cls === "fixed_owner") expect(row.keys, id).toEqual([]);

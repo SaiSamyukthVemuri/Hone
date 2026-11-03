@@ -208,7 +208,7 @@ Groups 1 to 7 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in th
 - **Changing a session's performer (DN-8):** the owner or the currently recorded performer, with a reason and audit; an eligible same-studio practitioner only; entries, signatures, attestations and payments are never rewritten; no permission bypass. No key.
 - **Undoing a recorded outcome (DN-12):** owner-only, with a reason and history; never refunds, charges, erases records or reverses a message. No key.
 - **Safety records (DN-3):** separate keys to view and to log sterilisation and disinfection (practitioner ON, receptionist OFF, owner-configurable). Exposure-incident history is for the owner and the reporter only.
-- **ID photos and portraits (DN-24):** owner-only and not delegable until the separate ID-photo review is complete.
+- **ID photos and portraits (DN-24):** owner-only and not delegable until the separate ID-photo review is complete. Recorded as the fixed owner-only item `id_portraits_owner_only`, a narrowing for the adopt preview. The portrait feature is off everywhere (`HONE_CLIENT_PORTRAIT_ENABLED` unset) and the signer is observe-only until the review.
 - **Messages and intake (group 4, 3 Nov):** requesting an intake update or resending the intake link is `comm.send_intake_link`, which needs the messaging permission plus the new `clin.view_intake_status` (never the answers or the chart). Portal replies are `comm.send_portal_reply` (practitioner ON, receptionist OFF, owner-configurable); the sender is recorded, history preserved and a client's original reply is immutable. Existing practitioners keep sending portal, intake and aftercare links and reviewing intake (`comm.send_portal_link`, `comm.send_intake_link`, `appt.aftercare_send`, `clin.review_intake`), each separately configurable. Notification read state is per person. All sending respects consent, opt-outs and channel activation.
 - **Narrowings with no key (`NARROWINGS`):** performer change, exposure-incident history, colleague private fields, studio column reads, Getting Started, notification read state and portal reply immutability each name a stage, an enforcement point (some still "to confirm") and the notice the owner's review banner must carry.
 - **Fee amounts:** staff may read the fee amounts clients see at booking; any other fee field needs `price.fee_amounts` or `pay.view_appointment` at any scope; otherwise staff read only studio name, timezone and booking preferences through a column-limited read (`FEE_AMOUNT_READ`).
@@ -310,3 +310,8 @@ Execution is **unavailable**. This is the owner-only workflow a later release bu
 5. **Statements the product must never make:** that data is erased from backups, or that erasure is complete, before that is true.
 
 Every step keeps a reason and history. Archiving (recoverable) remains the ordinary way to remove a client from view.
+
+
+## Enforcement state per key (Privacy X3)
+
+The `enforcement` field on each catalog key says which keys the code acts on in this release: `enforced`, `observe` (asked and logged, never blocks) or `not_yet` (default). The Roles page shows `not_yet` keys as "Not enforced yet" and not editable. The map is proved equal to the keys the app asks by the wiring test.
