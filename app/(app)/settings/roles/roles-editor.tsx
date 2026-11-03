@@ -220,6 +220,11 @@ export function RolesEditor(props: RolesEditorProps) {
                       If you turn this off, these switch off with it (their settings are kept): {row.alsoSwitchesOff.join(", ")}.
                     </p>
                   )}
+                  {row.gateNote && (
+                    <p data-testid="not-available-yet" className="break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                      Not available yet. {row.gateNote}.
+                    </p>
+                  )}
                   {row.snapshotBasis === "approved_policy" && (
                     <p data-testid="approved-policy-note" className="break-words text-xs text-amber-800 dark:text-amber-300">
                       Approved policy: not yet enforced everywhere. The setting shown is the approved one; the database may still allow more until the closing changes ship.

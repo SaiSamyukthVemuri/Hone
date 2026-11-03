@@ -87,6 +87,25 @@ describe("group labels", () => {
   });
 });
 
+describe("a ship-gated key reads 'Not available yet' until the operator gate is satisfied (Sam, group 6)", () => {
+  it("every shipGate key for the role carries a gate note and cannot be raised above its snapshot", () => {
+    for (const role of ROLES) {
+      for (const d of defs.filter((x) => x.shipGate?.[role])) {
+        const row = buildRoleModel(role, snapshot).flatMap((g) => g.rows).find((r) => r.key === d.key)!;
+        expect(row.gateNote, `${role} ${d.key}`).toBeTruthy();
+        const higher = row.options.filter((o) => ["off", "own", "studio"].indexOf(o.scope) > ["off", "own", "studio"].indexOf(d.existingSnapshot[role]));
+        for (const o of higher) expect(o.disabled, `${role} ${d.key} ${o.scope}`).toBe(true);
+      }
+    }
+  });
+  it("once the operator marks the gate satisfied the note goes away", () => {
+    const d = defs.find((x) => x.shipGate?.receptionist)!;
+    const gate = d.shipGate!.receptionist!;
+    const row = buildRoleModel("receptionist", { ...snapshot, gates: { [gate]: true } }).flatMap((g) => g.rows).find((r) => r.key === d.key)!;
+    expect(row.gateNote).toBeNull();
+  });
+});
+
 describe("truthfulness (Insurance P-1)", () => {
   it("every approved_policy row says so, so the page never claims it is today's database behaviour", () => {
     const rows = ROLES.flatMap((role) => buildRoleModel(role, snapshot).flatMap((g) => g.rows));
