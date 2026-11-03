@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
@@ -52,6 +52,10 @@ export type RolesEditorProps = {
   reviewed: boolean;
   writable: boolean;
   notWritableReason: string | null;
+  // The core's per-key enforcement. Only "enforced" keys are editable; a key it does not name is shown as not enforced yet.
+  enforcement: Record<string, string>;
+  // The operator ship gate for changing a person's role (change_staff_role). Off: the page says it is not available yet.
+  staffRoleChange: boolean;
   initialView?: "people" | "permissions" | "history";
   people: PersonView[];
   // The studio's IANA timezone, for the history timestamps.
@@ -93,17 +97,17 @@ export function RolesEditor(props: RolesEditorProps) {
   useUnsavedChangesGuard("roles-draft", dirty);
   const readOnly = !props.writable;
 
-  const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
+  const sections = useMemo(() => buildRoleSections(role, drafts[role], props.enforcement), [role, drafts, props.enforcement]);
   const savedRows = useMemo(
-    () => new Map(buildRoleSections(role, saved[role]).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
-    [role, saved],
+    () => new Map(buildRoleSections(role, saved[role], props.enforcement).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
+    [role, saved, props.enforcement],
   );
 
   const peopleWith = (r: Role) => props.people.filter((p) => p.role === r && p.state === "active");
   const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
 
   function choose(key: string, scope: Scope) {
-    const result = applyEdit(role, drafts[role], key, scope);
+    const result = applyEdit(role, drafts[role], key, scope, props.enforcement);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
       return;
@@ -277,7 +281,7 @@ export function RolesEditor(props: RolesEditorProps) {
         ))}
       </div>
 
-      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} />}
+      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} />}
 
       {view === "history" && <HistoryPanel load={props.loadHistory} timeZone={props.timezone} />}
 
@@ -308,6 +312,10 @@ export function RolesEditor(props: RolesEditorProps) {
               </button>
             ))}
           </div>
+
+          <p data-testid="enforcement-scope" className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+            {ENFORCEMENT_SCOPE_LINE}
+          </p>
 
           <p data-testid="role-holders" className="text-sm text-neutral-600 dark:text-neutral-400">
             {peopleWith(role).length === 0
@@ -422,7 +430,7 @@ function RowList({
         const unsaved = savedRows.get(row.key)?.chosen !== row.chosen;
         return (
           <li key={row.key} data-permission-row={row.key} data-chosen={row.chosen} data-effective={row.effective} data-unsaved={unsaved ? "true" : "false"} className="flex min-w-0 flex-col gap-2 px-4 py-3">
-            <fieldset disabled={readOnly || row.locked !== null} className="min-w-0">
+            <fieldset disabled={readOnly || row.locked !== null || row.enforcement !== "enforced"} className="min-w-0">
               <legend className="min-w-0 break-words text-sm font-medium">{row.label}</legend>
               <p className="mt-0.5 break-words text-xs text-neutral-500">{row.description}</p>
               {row.ownMeaning && <p className="mt-0.5 break-words text-xs text-neutral-500">Own assigned means: {row.ownMeaning}.</p>}
@@ -478,6 +486,11 @@ function RowList({
               </p>
             ))}
             {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
+            {row.enforcement !== "enforced" && (
+              <p data-testid="not-enforced-yet" data-enforcement={row.enforcement} className="break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                {NOT_ENFORCED_LINE}
+              </p>
+            )}
             {BASELINE_NOTES[row.key] && (
               <p data-testid="baseline-note" className="break-words text-xs text-neutral-600 dark:text-neutral-400">
                 {BASELINE_NOTES[row.key]}
@@ -610,7 +623,7 @@ function OwnerOnlySettingsNotes(): ReactNode {
   );
 }
 
-function PeoplePanel({ people, loadAccess }: { people: PersonView[]; loadAccess: RolesEditorProps["loadAccess"] }) {
+function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonView[]; loadAccess: RolesEditorProps["loadAccess"]; staffRoleChange: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
   const groups: { state: PersonView["state"]; label: string; empty: string }[] = [
     { state: "active", label: "Active", empty: "" },
@@ -656,6 +669,11 @@ function PeoplePanel({ people, loadAccess }: { people: PersonView[]; loadAccess:
                     >
                       {open === p.id ? "Hide access" : "View access"}
                     </button>
+                    {p.state === "active" && p.role !== "owner" && !staffRoleChange && (
+                      <p data-testid="change-role-unavailable" className="break-words text-xs text-neutral-500">
+                        Change role: not available yet.
+                      </p>
+                    )}
                     {open === p.id && <AccessSummary person={p} load={loadAccess} />}
                   </li>
                 ))}
