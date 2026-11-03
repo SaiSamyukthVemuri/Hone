@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG, FIXED_OWNER_ONLY, MANDATORY, catalogByKey, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
+import { CATALOG, FIXED_OWNER_ONLY, MANDATORY, NARROWINGS, catalogByKey, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
 import { COVERAGE, COVERAGE_ROW_COUNT } from "@/lib/permissions/coverage";
 import { DECISIONS } from "@/lib/permissions/decisions";
 
@@ -63,13 +63,49 @@ describe("coverage map: every audit row is covered by a key or a fixed rule", ()
   });
 });
 
+describe("coverage map agrees with the matrix and with the catalog (Insurance R-1, R-2; Codex)", () => {
+  it("a row's keys cover every key the matrix recommends for it, unless the row states the decided reason it departs", () => {
+    for (const [id, row] of Object.entries(COVERAGE)) {
+      const missing = (row.matrix ?? []).filter((k) => !row.keys.includes(k));
+      if (missing.length) expect(row.departs?.length ?? 0, `${id} drops ${missing.join(", ")} without a reason`).toBeGreaterThan(20);
+      else expect(row.departs, `${id} states a departure it does not need`).toBeUndefined();
+    }
+  });
+  it("R-1: staff intake requests and portal messages are keyed, not owner-only, so a follow-on PR does not silently narrow practitioners", () => {
+    for (const id of ["INT-3", "PORT-1", "PORT-8"]) expect(COVERAGE[id]!.cls, id).toBe("key");
+    expect(COVERAGE["INT-3"]!.keys).toEqual(["comm.send_intake_link", "clin.view_intake_status"]);
+    expect(COVERAGE["PORT-8"]!.keys).toEqual(["comm.send_portal_reply"]);
+  });
+  it("R-2: decided rules classed as a rule name where they are enforced, and are not owner-only or base", () => {
+    for (const id of ["NAV-9", "ST-9", "ST-8", "GC-2", "COM-10", "CLIN-15", "REC-4", "REC-5", "PORT-4", "SET-9"]) {
+      expect(COVERAGE[id]!.enforcement?.length ?? 0, id).toBeGreaterThan(20);
+      expect(["owner_only", "base"], id).not.toContain(COVERAGE[id]!.cls);
+    }
+    expect(COVERAGE["SET-9"]!.keys).toEqual(expect.arrayContaining(["price.fee_amounts", "pay.view_appointment"]));
+  });
+  it("group 5: the late-cancel fee row names the server rule and held migration 0293; card-authorisation reads stay read-only via the pay view", () => {
+    expect(COVERAGE["PAY-5"]!.enforcement).toMatch(/0293/);
+    expect(COVERAGE["PAY-5"]!.enforcement).toMatch(/policy snapshot/);
+    expect(COVERAGE["INT-10"]!.enforcement).toMatch(/read-only/);
+    expect(COVERAGE["PAY-20"]!.cls).toBe("fixed_owner");
+  });
+  it("Codex: a mixed photo row that also archives points at the fixed owner-only rule, which exists", () => {
+    expect(COVERAGE["PHO-3"]!.fixed).toEqual(["delete_treatment_records_and_photos"]);
+    for (const row of Object.values(COVERAGE)) for (const f of row.fixed ?? []) expect(FIXED_OWNER_ONLY.map((x) => x.id)).toContain(f);
+  });
+  it("every enforcement text that cites a narrowing cites one that exists", () => {
+    const ids = new Set(NARROWINGS.map((n) => n.id));
+    for (const [id, row] of Object.entries(COVERAGE)) for (const m of row.enforcement?.matchAll(/NARROWINGS (\w+)/g) ?? []) expect(ids.has(m[1]!), `${id} cites ${m[1]}`).toBe(true);
+  });
+});
+
 describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never drifts from today's behaviour", () => {
   it("has exactly DN-1..DN-30", () => {
     expect(Object.keys(DECISIONS).sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)))).toEqual(Array.from({ length: 30 }, (_, i) => `DN-${i + 1}`));
   });
   it("a key marked pendingDecision ships with the existing-studio snapshot as its value for EVERY studio", () => {
     const pinned = DEFS.filter((d) => d.pendingDecision?.length);
-    expect(pinned.length).toBeGreaterThan(0);
+    // After Sam's group 6 no key is pending; the invariant stays so any key flagged later is pinned to today's value.
     for (const d of pinned) for (const r of ROLES) expect(d.newStudioDefault[r], `${d.key}:${r}`).toBe(d.existingSnapshot[r]);
   });
   it("catalog flags only cite known, still-pending decisions; a decided decision leaves no flag behind", () => {

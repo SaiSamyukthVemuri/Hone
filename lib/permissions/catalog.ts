@@ -93,7 +93,7 @@ const PAY_VIEW = "pay.view_appointment";
 // an operator-controlled release flag that defaults to NOT satisfied, so an unreleased capability can never come on by default.
 export const GATES = {
   receptionist_finance: "Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed",
-  receptionist_legal_name: "0280/0290 receptionist name privacy and a legal-name read audit are in production (open point R0-Q4)",
+  receptionist_legal_name: "privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows \"Not available yet\", not a switch",
   receptionist_scheduling_notes: "R4 has confirmed from source that scheduling notes are a different field from clinical notes, or limited the receptionist view to a scheduling-only field (Privacy F6)",
   practitioner_legal_name_edit: "Stale-write protection and versions for legal-name edits (#1328 / M1) are in production",
   practitioner_completion: "#1315 and the 0277 apply (the assigned-only completion rule) are in production",
@@ -275,7 +275,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Today a practitioner cannot change working hours (own hours = #1318/0278, held). Receptionists have no hours of their own.",
+    note: "Studio is the shipped default for a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot is Off and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
   },
   {
     key: "avail.manage_others",
@@ -341,7 +341,6 @@ export const CATALOG = [
   },
   {
     key: "client.view_legal_name",
-    pendingDecision: ["DN-26"],
     group: "clients_identity",
     label: "View a client's legal name",
     description: "See the legal name. Without it staff see the preferred name, otherwise 'Name on file'. Never exposed in search, links, logs or errors to a role without it.",
@@ -359,7 +358,6 @@ export const CATALOG = [
   },
   {
     key: "client.edit_legal_name",
-    pendingDecision: ["DN-26"],
     group: "clients_identity",
     label: "Edit a client's legal name",
     description: "Change the legal name through the protected identity flow. Separate from viewing; enabling one never grants the other.",
@@ -472,10 +470,9 @@ export const CATALOG = [
   },
   {
     key: "clin.view_intake",
-    touchedByDecision: ["DN-9"],
     group: "clinical_records",
     label: "View intake answers",
-    description: "Read a client's intake answers. Needs client visibility only, not chart access: enabling one clinical capability never grants another.",
+    description: "Read a client's intake answers. Needs client visibility only, not chart access: enabling one clinical capability never grants another. Seeing only the intake STATUS is a separate key.",
     scopes: BOOL,
     requires: ["client.view_directory"],
     newStudioDefault: pair(["studio", "off"]),
@@ -487,6 +484,21 @@ export const CATALOG = [
     sensitive: true,
   },
   {
+    key: "clin.view_intake_status",
+    group: "clinical_records",
+    label: "See intake status",
+    description: "See whether a client's intake is complete, waiting or out of date. Never the answers and never the chart.",
+    scopes: BOOL,
+    requires: ["client.view_directory"],
+    newStudioDefault: pair(["studio", "off"]),
+    existingSnapshot: pair(["studio", "off"]),
+    snapshotBasis: "source",
+    offeredTo: BOTH,
+    ownerConfigurable: true,
+    enforcedIn: "R4",
+    note: "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission PLUS this status read. It neither requires nor grants the intake answers (clin.view_intake) or the chart.",
+  },
+  {
     key: "clin.edit_intake",
     group: "clinical_records",
     label: "Edit intake answers",
@@ -496,12 +508,27 @@ export const CATALOG = [
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
-    pendingDecision: ["DN-30"],
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (open point R0-Q2). DN-30: practitioners review and run assisted intake today (audit rows 2:C2-51, 2:C2-53), so the snapshot is Studio (today's behaviour), not the earlier narrower Off. Every studio gets that until Sam decides whether narrowing is intended.",
+    note: "Not offered to receptionists in this version (open point R0-Q2). Decided (Sam, 3 Nov, DN-30): practitioners run assisted intake today (audit row 2:C2-53), so today's access is preserved for every existing studio and stays separately configurable; nothing is removed silently at rollout.",
+  },
+  {
+    key: "clin.review_intake",
+    group: "clinical_records",
+    label: "Review intake",
+    description: "Mark a client's intake reviewed and save review notes. Separate from changing the answers.",
+    scopes: BOOL,
+    requires: ["clin.view_intake"],
+    newStudioDefault: pair(["studio", "off"]),
+    existingSnapshot: pair(["studio", "off"]),
+    snapshotBasis: "source",
+    offeredTo: { practitioner: true, receptionist: false },
+    ownerConfigurable: true,
+    enforcedIn: "R4",
+    sensitive: true,
+    note: "Decided (Sam, 3 Nov, DN-30): practitioners review intake today (audit row 2:C2-51); preserved for existing studios and separately configurable from editing answers.",
   },
   {
     key: "clin.print_record",
@@ -513,10 +540,11 @@ export const CATALOG = [
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
-    offeredTo: BOTH,
+    offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
+    note: "Not offered to receptionists in this version (open point R0-Q2).",
   },
   {
     key: "clin.edit_consent_templates",
@@ -547,11 +575,55 @@ export const CATALOG = [
     newStudioDefault: pair(["studio", "off"]),
     existingSnapshot: pair(["studio", "off"]),
     snapshotBasis: "source",
-    pendingDecision: ["DN-30", "DN-9", "DN-14"],
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "DN-30: practitioners send portal links, intake links and postcare today (audit rows 2:C2-74, 2:C2-52, 3:C-04), so the snapshot is Studio, not the earlier Off. Sam's section 4 shipped default for a new studio (Own / Studio) is NOT applied while this is pending: every studio gets today's behaviour (practitioner Studio, receptionist Off) until the decision is made. Includes sending intake and consent links (DN-9) and staff portal messages (DN-14).",
+    note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. The shipped default for a NEW studio is held equal to that snapshot until Sam confirms his section 4 default for it. Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
+  },
+  {
+    key: "comm.send_intake_link",
+    group: "communications",
+    label: "Request an intake update or resend the intake link",
+    description: "Ask a client to update their intake or resend the link by email.",
+    scopes: BOOL,
+    requires: ["comm.send_routine", "clin.view_intake_status"],
+    newStudioDefault: pair(["studio", "off"]),
+    existingSnapshot: pair(["studio", "off"]),
+    snapshotBasis: "source",
+    offeredTo: BOTH,
+    ownerConfigurable: true,
+    enforcedIn: "R5",
+    note: "Decided (DN-9): needs the messaging permission and the intake STATUS read, never the answers or chart. Practitioners send intake links today (audit row 2:C2-52); preserved and separately configurable (DN-30). Sending always respects consent, opt-outs and channel activation.",
+  },
+  {
+    key: "comm.send_portal_link",
+    group: "communications",
+    label: "Send a client portal link",
+    description: "Send a client their portal sign-in link.",
+    scopes: BOOL,
+    requires: ["comm.send_routine"],
+    newStudioDefault: pair(["studio", "off"]),
+    existingSnapshot: pair(["studio", "off"]),
+    snapshotBasis: "source",
+    offeredTo: BOTH,
+    ownerConfigurable: true,
+    enforcedIn: "R5",
+    note: "Decided (DN-30): practitioners send portal links today (audit row 2:C2-74); preserved and separately configurable. Sending always respects consent, opt-outs and channel activation.",
+  },
+  {
+    key: "comm.send_portal_reply",
+    group: "communications",
+    label: "Reply to a client in the portal",
+    description: "Send a staff message or reply in a client's portal thread, within the clients you may see.",
+    scopes: BOOL,
+    requires: ["comm.send_routine", "client.view_directory"],
+    newStudioDefault: pair(["studio", "off"]),
+    existingSnapshot: pair(["studio", "off"]),
+    snapshotBasis: "source",
+    offeredTo: BOTH,
+    ownerConfigurable: true,
+    enforcedIn: "R5",
+    note: "Decided (Sam, 3 Nov, DN-14): practitioner ON within their permitted client scope, receptionist OFF, both owner-configurable. The sender is recorded and the history preserved; staff can never rewrite a client's original reply (closes D-M).",
   },
   {
     key: "comm.bulk_message",
@@ -573,7 +645,6 @@ export const CATALOG = [
   // ─────────────────────────────── payments ───────────────────────────────
   {
     key: PAY_VIEW,
-    touchedByDecision: ["DN-10"],
     group: "payments",
     label: "See an appointment's payment details",
     description: "Payment status, amount, method, and card brand with last 4 digits. No processor identifiers, no treatment detail.",
@@ -815,7 +886,6 @@ export const CATALOG = [
   },
   {
     key: "rep.bulk_export",
-    touchedByDecision: ["DN-19"],
     group: "reports",
     label: "Export or print bulk data",
     description: "Export client-list and schedule style outputs in bulk. Contains only fields and rows the actor's own keys would show on screen. NEVER the whole-studio data export or backup, which is fixed owner-only. Safeguarded: confirmation, row limits, audit.",
@@ -828,7 +898,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "The full studio export is owner-only today.",
+    note: "Staff exports are separately permission-controlled and OFF by default (Sam, 3 Nov, DN-19). The owner export is a different, fixed owner-only item.",
   },
   {
     key: "rep.audit_log_view",
@@ -985,7 +1055,6 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_waitlist" },
-    touchedByDecision: ["DN-17"],
     note: "Separate because it records consent. Receptionist ON is Sam's decision (DN-15a) and is usable only when the screen and backend enforcement ship. STOP scope is undecided (DN-17) and today's phone-wide STOP stays. Audit rows WL-10.",
   },
   // ───────────────────────────── waitlist rules and automation ─────────────────────────────
@@ -1065,13 +1134,12 @@ export const CATALOG = [
     newStudioDefault: pair(["off", "off"]),
     existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "source",
-    offeredTo: { practitioner: false, receptionist: false },
+    offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R3",
     sensitive: true,
     killSwitch: true,
-    pendingDecision: ["DN-11"],
-    note: "Owner-only until Sam agrees this key (DN-11). Audit row PAY (per-client prices).",
+    note: "Decided (Sam, 3 Nov, DN-11): a separate permission to set or change a client's own price, OFF for both staff roles and owner-configurable. Reading follows price.view_client_prices and its scope. Every change is recorded. Appointments already booked keep their agreed price unless someone explicitly edits that appointment's price.",
   },
   // ───────────── client details, one view and one edit key per data group (Sam, 2 Nov, DN-5) ─────────────
   // Practitioners keep today's studio-wide access; receptionists are OFF and the owner may grant READ-ONLY per group (the edit keys are
@@ -1322,7 +1390,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
   { id: "staff_invite_remove_role_change", label: "Inviting, removing and changing the role of staff", source: "C.5", existingEffect: "none", note: "Part of 'managing roles'. R-1 (a receptionist created outside the desk) is a hole in exactly this item." },
   { id: "ownership_transfer", label: "Transferring ownership", source: "C.5", existingEffect: "none" },
   { id: "permission_system_administration", label: "Changing the permission catalog, overrides, operator kill switch or their audit tables", source: "C.5", existingEffect: "none", note: "Only through the owner-only writer functions; a role can never grant itself anything." },
-  { id: "full_studio_data_export", label: "The whole-studio data export and backup", source: "this_version", existingEffect: "none", note: "A complete egress of client data. rep.bulk_export never covers it." },
+  { id: "full_studio_data_export", label: "The whole-studio data export and backup", source: "this_version", existingEffect: "none", note: "A complete egress of client data. rep.bulk_export never covers it. Decided (Sam, 3 Nov, DN-19): the owner export includes every client-linked item the studio may export (intake, photos, messages, legal identity, consent, notes) and EXCLUDES credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped." },
   { id: "provider_credentials_bank_payouts", label: "Payment-provider credentials, bank accounts and payouts", source: "C.5", existingEffect: "none" },
   { id: "studio_account_deletion", label: "Studio or account deletion", source: "C.5", existingEffect: "none" },
   { id: "permanent_deletion_bulk_destructive", label: "Permanent deletion and bulk destructive actions", source: "C.5", existingEffect: "none" },
@@ -1343,6 +1411,27 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
   },
   {
+    id: "require_card_to_book",
+    label: "Requiring a card on file to book",
+    source: "this_version",
+    existingEffect: "none",
+    note: "Decided (Sam, 3 Nov, DN-23a): an owner-only studio setting on the payment settings page, separate from staff permissions. Not a key.",
+  },
+  {
+    id: "erase_client_permanently",
+    label: "Permanent client erasure (request, review, confirmation)",
+    source: "this_version",
+    existingEffect: "none",
+    note: "Decided (Sam, 3 Nov, DN-18): an owner-only request, review and confirmation workflow is DESIGNED now (see the design section of this document). EXECUTION stays unavailable until retention requirements and exceptions are reviewed. No retention period is invented and no promise is made that data is erased from backups.",
+  },
+  {
+    id: "client_portal_setting",
+    label: "Turning the client portal on or off for the studio",
+    source: "this_version",
+    existingEffect: "none",
+    note: "Decided (Sam, 3 Nov, DN-20): an owner-only studio setting, preserved ON for existing studios. OFF blocks existing portal links and sessions from further access, keeps all records, and explains which booking, intake and communication workflows are affected; those features stay independently controlled.",
+  },
+  {
     id: "id_photos_portraits",
     label: "ID photos and portraits",
     source: "this_version",
@@ -1355,7 +1444,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "narrows",
     enforcedBy: ["clients.archived_at write path (0050)", "public.record_client_archive_audit_governed"],
-    note: "Any practitioner can archive any client today. A NARROWING; notice required.",
+    note: "Any practitioner can archive any client today. A NARROWING; notice required. Decided (Sam, 3 Nov, DN-25): owner-only only when the enforcement release goes live, with advance notice to existing studios; history and recoverability are kept and no existing record is deleted by the rollout.",
   },
   {
     id: "restore_deleted_records",
@@ -1363,7 +1452,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "narrows",
     enforcedBy: ["client unarchive path (UnarchiveRowControl)", "session restore path: to confirm"],
-    note: "Whether practitioners can restore today is source-only; treated as a narrowing until verified.",
+    note: "Whether practitioners can restore today is source-only; treated as a narrowing until verified. Decided (Sam, 3 Nov, DN-25): owner-only at the enforcement release with advance notice; nothing is deleted by the rollout.",
   },
 ];
 
@@ -1377,10 +1466,153 @@ export const NOT_OFFERED_AS_TOGGLES: readonly string[] = [
   "Hone subscription and billing portal, tax and currency, receipt branding, business name",
 ];
 
+// Decided rules that take away something an existing practitioner or member can do today, or that only a mandatory rule enforces.
+// FIXED_OWNER_ONLY carries the same record for fixed items; these have no key, so they are listed here so each one gets a named
+// enforcement point and the notice in the owner's review banner (the "nothing changes until adopted" promise).
+export type Narrowing = {
+  readonly id: string;
+  // A DN number, or G7:<name> for a log item Sam decided without one (ROLES-DECISIONS-LOG group 7).
+  readonly decision: DecisionId | `G7:${string}`;
+  readonly label: string;
+  readonly stage: "R1" | "R4" | "R5";
+  // Database objects or app paths that must enforce it. "to confirm" = not yet located by the stage that owns it.
+  readonly enforcedBy: readonly string[];
+  readonly narrowsExisting: boolean;
+  readonly notice: string;
+};
+
+export const NARROWINGS: readonly Narrowing[] = [
+  {
+    id: "performer_change",
+    decision: "DN-8",
+    label: "Changing a session's performer: owner or the currently recorded performer only",
+    stage: "R4",
+    enforcedBy: ["to confirm: the session-performer update path (audit row CLIN-15)"],
+    narrowsExisting: true,
+    notice: "Any member can name any peer as a session's performer today. From adoption only the owner or the recorded performer can, with a reason.",
+  },
+  {
+    id: "exposure_incident_history",
+    decision: "DN-3",
+    label: "Exposure-incident history: owner and the reporter only",
+    stage: "R4",
+    enforcedBy: ["to confirm: exposure-incident read and update path (audit rows REC-4, REC-5)"],
+    narrowsExisting: true,
+    notice: "Other practitioners can read and update exposure incidents today. From adoption only the owner and the person who reported can.",
+  },
+  {
+    id: "colleague_private_fields",
+    decision: "DN-21",
+    label: "Colleague email, Google account email and calendar-feed hash: owner and that person only",
+    stage: "R1",
+    enforcedBy: ["to confirm: a column-limited staff roster read (audit rows ST-9, ST-8, GC-2)"],
+    narrowsExisting: true,
+    notice: "Practitioners can read colleagues' emails and feed-token hashes through the API today. From adoption they see names and colours only.",
+  },
+  {
+    id: "studio_columns_read",
+    decision: "DN-27",
+    label: "Staff read studio name, timezone and booking preferences; fee amounts need a pay or price key",
+    stage: "R1",
+    enforcedBy: ["to confirm: a column-limited studios read replacing the member read of every column (audit row SET-9)"],
+    narrowsExisting: true,
+    notice: "Members can read every studio column through the API today, including fee amounts.",
+  },
+  {
+    id: "getting_started_filter",
+    decision: "DN-28",
+    label: "Getting Started shows only the tasks the viewer may perform",
+    stage: "R5",
+    enforcedBy: ["app: the Getting Started task list (audit row NAV-9)"],
+    narrowsExisting: false,
+    notice: "Tasks the viewer cannot perform are no longer listed.",
+  },
+  {
+    id: "notification_read_state",
+    decision: "DN-22",
+    label: "Notification read state is per person; users read only notifications they may see and change only their own state",
+    stage: "R5",
+    enforcedBy: ["to confirm: the notifications read, mark-read and mark-all-read paths (audit rows COM-9, COM-10)"],
+    narrowsExisting: true,
+    notice: "Any member can edit any notification row and mark everyone's as read today. From adoption each person has their own read state.",
+  },
+  {
+    id: "google_flags_operator_only",
+    decision: "DN-16",
+    label: "Google Calendar studio feature flags are operator-only, enforced in the database; owners keep their normal connect and disconnect",
+    stage: "R5",
+    enforcedBy: ["to confirm: a database guard on the Google studio flag columns (audit row GC-11)"],
+    narrowsExisting: true,
+    notice: "A studio owner could turn the Google studio flags on in the app. From adoption only the operator can; connecting and disconnecting a calendar is unchanged.",
+  },
+  {
+    id: "deactivated_calendar_owner",
+    decision: "G7:calendar-owner",
+    label: "A removed or deactivated calendar owner stops receiving new studio sync; the destination must be an active, authorised owner",
+    stage: "R5",
+    enforcedBy: ["to confirm: the studio calendar sync destination and push path (audit row GC-9)"],
+    narrowsExisting: false,
+    notice: "The current owner is notified to reconnect. Other studios' connections are untouched. Events already copied into an external calendar may remain there.",
+  },
+  {
+    id: "rate_limit_outage",
+    decision: "DN-29",
+    label: "When the rate limiter is down, token and link operations refuse with a retry message and public booking uses a bounded fallback",
+    stage: "R5",
+    enforcedBy: ["to confirm: the public rate-limit wrapper for intake, manage-booking, invitation and portal sign-in paths"],
+    narrowsExisting: false,
+    notice: "Sensitive token and link operations ask the person to retry later during an outage. Public booking stays available with bounded protection, never unlimited submissions. The operator is alerted without client data or secret links.",
+  },
+  {
+    id: "anonymous_public_writes_closed",
+    decision: "G7:anon-writes",
+    label: "Anonymous waitlist and demo submissions go through validated server endpoints with rate and quantity limits; direct database writes are closed",
+    stage: "R5",
+    enforcedBy: ["to confirm: anon insert grants and policies on the early-access waitlist and demo request tables (audit rows PUB-11, PUB-12)"],
+    narrowsExisting: true,
+    notice: "Public sign-up must keep working through the server endpoint, and no privileged key may reach the browser.",
+  },
+  {
+    id: "portal_reply_immutable",
+    decision: "DN-14",
+    label: "Staff can never rewrite a client's original portal reply",
+    stage: "R5",
+    enforcedBy: ["to confirm: the portal message update path (audit rows PORT-4, PORT-8)"],
+    narrowsExisting: true,
+    notice: "Staff can edit message rows through the API today. From adoption a client's original reply is immutable and the sender of every staff message is recorded.",
+  },
+];
+
+// Who may READ a fee amount (Insurance R-3). Changing one is price.fee_amounts; reading is separate and today every member can read every
+// studio column. Staff otherwise read only the studio name, timezone and booking preferences, through a column-limited read.
+export const FEE_AMOUNT_READ = {
+  anyOf: ["price.fee_amounts", "pay.view_appointment"],
+  staffOtherwise: ["studio name", "timezone", "booking preferences"],
+} as const;
+
 // Always true whatever the owner configures (Sam C.5, C.7, brief section B).
 export const MANDATORY: readonly string[] = [
   "Studio isolation on every path (app, API, database function, export, link, search)",
   "Consent requirements",
+  "Decided (Sam, 3 Nov, DN-16): the Google Calendar studio feature flags are operator-only, enforced by a database guard; owners keep their normal connect and disconnect",
+  "Decided (Sam, 3 Nov): a removed or deactivated calendar owner gets no new studio synchronisation; the destination must be an active, authorised owner, the current owner is notified to reconnect, other studios' connections are preserved, and the UI says events already copied into an external calendar may remain",
+  "Decided (DN-29): when the rate limiter is down, token and link operations (intake, manage booking, invitation, portal sign-in) refuse safely with a retry message, public booking stays available only with bounded fallback protection (never unlimited), and the operator is alerted without client data or secret links",
+  "Decided (Sam, 3 Nov): anonymous waitlist and demo submissions have no direct database writes; they go through validated server endpoints with rate and quantity limits, and tests prove normal public sign-up works and no privileged key reaches the browser",
+  "Decided (DN-17): SMS STOP behaviour is unchanged and current opt-outs are retained; the provider configuration is investigated before any change is proposed; no activation or messages are authorized",
+  "Decided (Sam, 3 Nov, DN-25): archive, delete and restore become owner-only only when the enforcement release goes live, with advance notice to existing studios; ordinary deletion stays recoverable with its history and no existing record is deleted by the rollout",
+  "Decided (DN-18): permanent client erasure has a designed owner-only request, review and confirmation workflow but no execution until retention requirements and exceptions are reviewed; no retention period is invented and no complete erasure from backups is promised",
+  "Decided (DN-19): the owner export covers all client-linked information the studio may export (intake, photos, messages, legal identity, consent, notes) and excludes credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped; staff exports stay separately permission-controlled and OFF by default",
+  "Decided (DN-20): turning the client portal off blocks existing portal links and sessions from further access, preserves records, explains which workflows are affected, and leaves booking, intake and communication features independently controlled",
+  "Decided (DN-26): receptionist legal-name permissions show \"Not available yet\" (not an actionable switch) until privacy enforcement and access logging are deployed and verified; the preferred name / \"Name on file\" behaviour is preserved",
+  "Decided (Sam, 3 Nov, DN-10): card-authorisation consent is READ-ONLY, follows the payment-view permission and its scope (practitioners: own appointments; receptionists: studio-wide when enabled), shows only the authorisation relevant to THAT payment without granting intake or clinical access, and signed originals can never be edited or deleted",
+  "Decided (DN-11): appointments already booked keep their agreed prices unless someone explicitly edits that appointment, and every client-specific price change is recorded",
+  "Decided (DN-23b): a late-cancellation fee needs an explicit owner-configured window with NO invented default and is never activated automatically; the server decides eligibility from the recorded cancellation time, the appointment time and the policy snapshot taken at THAT booking; the fee-charging permission (pay.charge_saved_card) is also required; duplicate charges are prevented and the reason and history are kept",
+  "Reading a fee amount needs price.fee_amounts or pay.view_appointment at any scope; without either, staff read only the studio name, timezone and booking preferences, through a column-limited read, never the whole studios row (DN-27)",
+  "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
+  "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",
+  "Decided (DN-14): the sender of every staff portal message is recorded, history is preserved, and staff can never rewrite a client's original reply",
+  "Decided (DN-22): notification read state is per person; a user reads only notifications they may see and changes only their own read state",
+  "Decided (Sam, 3 Nov): all sending (messages, links, portal replies, aftercare) respects consent, opt-outs and existing channel-activation restrictions; no permission overrides them",
   "Decided (Sam, 2 Nov, DN-8): a session's performer is corrected only by the owner or the currently recorded performer, with a reason and audit history; the replacement must be an eligible practitioner of that studio; who actually entered each record is preserved; signatures, attestations and payment history are never rewritten; reassignment cannot be used to bypass a permission",
   "Decided (DN-3): exposure-incident history is visible to the owner and the person who reported it only",
   "Decided (DN-12): undoing a recorded outcome never automatically refunds, charges, erases treatment records or reverses messages already sent",

@@ -74,8 +74,8 @@ with a test, so there is never a second copy of a default. The table below is **
 | `client.view_directory` (fixed) | Off / Studio | `appt.view_calendar` | Studio / Studio | Studio / Off | source | – | – |
 | `client.create` | Off / Studio | – | Studio / Studio | Studio / Off | source | – | – |
 | `client.edit_contact` | Off / Studio | – | Studio / Studio | Studio / Off | source | – | – |
-| `client.view_legal_name` | Off / Studio | – | Studio / Off | Studio / Off | approved_policy | receptionist: 0280/0290 receptionist name privacy and a legal-name read audit are in production (open point R0-Q4) | DN-26 |
-| `client.edit_legal_name` | Off / Studio | `client.view_legal_name` | Studio / Off | Studio / Off | source | practitioner: Stale-write protection and versions for legal-name edits (#1328 / M1) are in production; receptionist: 0280/0290 receptionist name privacy and a legal-name read audit are in production (open point R0-Q4) | DN-26 |
+| `client.view_legal_name` | Off / Studio | – | Studio / Off | Studio / Off | approved_policy | receptionist: privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows "Not available yet", not a switch | – |
+| `client.edit_legal_name` | Off / Studio | `client.view_legal_name` | Studio / Off | Studio / Off | source | practitioner: Stale-write protection and versions for legal-name edits (#1328 / M1) are in production; receptionist: privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows "Not available yet", not a switch | – |
 | `client.merge` | Off / Studio | `client.edit_contact`, `client.view_legal_name` | Off / Off | Off / Off | not_built | – | – |
 | `client.import` | Off / Studio | `client.create` | Off / Off | Off / Off | source | – | – |
 | `client.view_dob_address` | Off / Studio | `appt.view_calendar`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
@@ -99,23 +99,28 @@ with a test, so there is never a second copy of a default. The table below is **
 | `clin.edit_records` (receptionist not offered) | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | – |
 | `clin.view_photos` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
 | `clin.upload_photos` (receptionist not offered) | Off / Studio | `clin.view_photos` | Studio / Off | Studio / Off | source | – | – |
-| `clin.view_intake` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | DN-9 (coverage only) |
-| `clin.edit_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | DN-30 |
-| `clin.print_record` | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | – |
+| `clin.view_intake` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
+| `clin.view_intake_status` | Off / Studio | `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
+| `clin.edit_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | – |
+| `clin.review_intake` (receptionist not offered) | Off / Studio | `clin.view_intake` | Studio / Off | Studio / Off | source | – | – |
+| `clin.print_record` (receptionist not offered) | Off / Studio | `clin.view_records` | Studio / Off | Studio / Off | source | – | – |
 | `clin.edit_consent_templates` | Off / Studio | – | Off / Off | Off / Off | approved_policy | – | – |
 
 ### Communications
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `comm.send_routine` | Off / Own / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | DN-30, DN-9, DN-14 |
+| `comm.send_routine` | Off / Own / Studio | `appt.view_calendar` | Studio / Off | Studio / Off | source | – | – |
+| `comm.send_intake_link` | Off / Studio | `comm.send_routine`, `clin.view_intake_status` | Studio / Off | Studio / Off | source | – | – |
+| `comm.send_portal_link` | Off / Studio | `comm.send_routine` | Studio / Off | Studio / Off | source | – | – |
+| `comm.send_portal_reply` | Off / Studio | `comm.send_routine`, `client.view_directory` | Studio / Off | Studio / Off | source | – | – |
 | `comm.bulk_message` | Off / Studio | `comm.send_routine`, `client.view_directory` | Off / Off | Off / Off | not_built | – | – |
 
 ### Payments
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `pay.view_appointment` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | DN-10 (coverage only) |
+| `pay.view_appointment` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `pay.record_external` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | verified | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `pay.charge_saved_card` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `pay.refund` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
@@ -130,7 +135,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `price.view_client_prices` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.service_list` | Off / Studio | – | Studio / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.fee_amounts` | Off / Studio | – | Studio / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
-| `price.edit_client_prices` (practitioner not offered, receptionist not offered) | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | DN-11 |
+| `price.edit_client_prices` | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | – |
 
 ### Availability
 
@@ -147,7 +152,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `rep.studio_totals` | Off / Studio | `pay.view_appointment` | Off / Off | Off / Off | source | – | – |
 | `rep.financial_reports` | Off / Studio | `pay.view_appointment` | Off / Off | Off / Off | source | – | – |
 | `rep.lifetime_spend` | Off / Studio | `pay.view_appointment` | Off / Off | Off / Off | approved_policy | – | – |
-| `rep.bulk_export` | Off / Studio | `client.view_directory` | Off / Off | Off / Off | source | – | DN-19 (coverage only) |
+| `rep.bulk_export` | Off / Studio | `client.view_directory` | Off / Off | Off / Off | source | – | – |
 | `rep.audit_log_view` | Off / Studio | – | Off / Off | Off / Off | source | – | – |
 
 ### Waitlist operations
@@ -161,7 +166,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `wl.manage_queue` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 | `wl.offer_booking` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 | `wl.set_availability` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
-| `wl.record_sms_consent` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | DN-17 (coverage only) |
+| `wl.record_sms_consent` | Off / Studio | `wl.view_queue` | Off / Studio | Off / Off | source | receptionist: The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a) | – |
 
 ### Waitlist rules and automation
 
@@ -187,7 +192,7 @@ with a test, so there is never a second copy of a default. The table below is **
 
 ## Decisions applied (Sam, 2 Nov) and the coverage map
 
-Groups 1, 2 and 3 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in the catalog and in the MANDATORY list; nothing activates.
+Groups 1 to 7 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in the catalog and in the MANDATORY list; nothing activates.
 
 - **Navigation (DN-1, DN-2, DN-28):** staff never see Business; reports a studio permits appear under a separate Reports entry; Getting Started lists only tasks the viewer may perform.
 - **Colleague data (DN-21, DN-27):** colleagues see display names and calendar colours only. Private email and account details, Google account emails, pending invitations and alerts are for the owner and that person; calendar-feed tokens and their hashes are secrets and never leave the server. Staff read the studio name, timezone and booking preferences; fee amounts need the relevant pay or price key.
@@ -201,7 +206,13 @@ Groups 1, 2 and 3 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are i
 - **Undoing a recorded outcome (DN-12):** owner-only, with a reason and history; never refunds, charges, erases records or reverses a message. No key.
 - **Safety records (DN-3):** separate keys to view and to log sterilisation and disinfection (practitioner ON, receptionist OFF, owner-configurable). Exposure-incident history is for the owner and the reporter only.
 - **ID photos and portraits (DN-24):** owner-only and not delegable until the separate ID-photo review is complete.
-- **Still pending:** DN-9 to 11, 14, 16 to 20, 22, 23, 25, 26, 29, 30. A key marked pending (`pendingDecision`) is built but shipped with today's existing-studio value for **every** studio, including new ones, until Sam answers; this temporarily replaces the section 4 new-studio default for `comm.send_routine` and `clin.edit_intake` (DN-30). `touchedByDecision` marks a key whose coverage a pending decision affects without deciding its value. The registry is `lib/permissions/decisions.ts`.
+- **Messages and intake (group 4, 3 Nov):** requesting an intake update or resending the intake link is `comm.send_intake_link`, which needs the messaging permission plus the new `clin.view_intake_status` (never the answers or the chart). Portal replies are `comm.send_portal_reply` (practitioner ON, receptionist OFF, owner-configurable); the sender is recorded, history preserved and a client's original reply is immutable. Existing practitioners keep sending portal, intake and aftercare links and reviewing intake (`comm.send_portal_link`, `comm.send_intake_link`, `appt.aftercare_send`, `clin.review_intake`), each separately configurable. Notification read state is per person. All sending respects consent, opt-outs and channel activation.
+- **Narrowings with no key (`NARROWINGS`):** performer change, exposure-incident history, colleague private fields, studio column reads, Getting Started, notification read state and portal reply immutability each name a stage, an enforcement point (some still "to confirm") and the notice the owner's review banner must carry.
+- **Fee amounts:** reading one needs `price.fee_amounts` or `pay.view_appointment` at any scope; otherwise staff read only studio name, timezone and booking preferences through a column-limited read (`FEE_AMOUNT_READ`).
+- **Payments (group 5, 3 Nov):** card-authorisation consent is read-only through `pay.view_appointment` and its scope, only for that payment, with no intake or clinical access (DN-10). `price.edit_client_prices` is OFF for both roles and owner-configurable; reads follow `price.view_client_prices`; booked appointments keep their price (DN-11). Requiring a card to book is an owner-only setting (DN-23a). A late-cancellation fee needs an owner-configured window with no invented default, is never auto-activated, is decided on the server from the policy snapshot at booking, and also needs `pay.charge_saved_card`; the database part is held migration 0293, inside R3 (DN-23b).
+- **Deletion, data rights, rollout (group 6, 3 Nov):** archive, delete and restore become owner-only only at the enforcement release, with advance notice, recoverable, nothing deleted by the rollout (DN-25). Permanent erasure: workflow designed below, execution unavailable (DN-18). Owner export is complete minus credentials, payment secrets, other studios' data and platform security, with short-lived owner-scoped links; staff exports stay OFF (DN-19). The portal is an owner-only setting, ON for existing studios; OFF blocks existing links and sessions and keeps records (DN-20). Receptionist legal-name keys show "Not available yet" until privacy enforcement and access logging are verified (DN-26).
+- **Platform and operations (group 7, 3 Nov):** Google studio flags are operator-only behind a database guard; a removed or deactivated calendar owner gets no new sync and the owner is told to reconnect; when the rate limiter is down token and link operations refuse with a retry message and public booking uses a bounded fallback; anonymous waitlist and demo writes go through validated, rate-limited server endpoints; SMS STOP is unchanged pending a provider investigation. All of these are in `NARROWINGS` or the mandatory list.
+- **Still pending:** none. `01-ops/ROLES-DECISIONS-LOG.md` is the single authoritative log; open ambiguities are listed in it and reported to OPS, never defaulted.
 - **Coverage map:** `lib/permissions/coverage.ts` maps all 258 rows of the audit's current-access matrix to a key or a fixed rule (key, safeguard, fixed owner-only, fixed baseline, not a staff permission, owner-only this release). Tests fail if a row is unmapped, a named key does not exist, or a key is unreachable (the exceptions are the four capabilities the product does not have yet: `client.merge`, `comm.bulk_message`, `rep.bulk_export`, `clin.view_id_portrait`). Rows marked `team` were mapped by this lane where the audit left them open, for reviewers to confirm.
 
 
@@ -279,3 +290,16 @@ requirement; it remains the preserved **existing-studio snapshot** until an owne
   narrowed to Off meanwhile.
 - **Q9 receptionist legal-name snapshot** is Off for every studio (approved policy). Counting any studio whose per-studio switch
   is ON is a separate read-only step; such a studio is listed in the owner's review banner, not carried forward.
+
+
+## Design: permanent client erasure (DN-18, design only)
+
+Execution is **unavailable**. This is the owner-only workflow a later release builds, so the shape is agreed before any deletion code exists.
+
+1. **Request.** Only the owner can open an erasure request for one client, with a stated reason and the basis (for example the client's own request). Opening a request changes nothing about the client's records.
+2. **Review.** The request lists, per area (chart, photos, intake and consent, messages, payments and settlement, audit), what exists, what a retention requirement or exception may oblige the studio to keep, and what would remain in backups. The review is recorded.
+3. **Confirmation.** A second, explicit owner confirmation naming the client and the scope, after the review is complete. Staff cannot request, review or confirm.
+4. **Execution.** Not built and not callable in this release. It stays unavailable until retention requirements and exceptions have been reviewed. **No retention period is invented here.**
+5. **Statements the product must never make:** that data is erased from backups, or that erasure is complete, before that is true.
+
+Every step keeps a reason and history. Archiving (recoverable) remains the ordinary way to remove a client from view.

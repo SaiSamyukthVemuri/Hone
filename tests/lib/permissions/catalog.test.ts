@@ -3,10 +3,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CATALOG,
+  FEE_AMOUNT_READ,
   FIXED_OWNER_ONLY,
   GATES,
   GROUPS,
   MANDATORY,
+  NARROWINGS,
   NOT_OFFERED_AS_TOGGLES,
   ROLES,
   SCOPES,
@@ -25,6 +27,7 @@ import {
   type Scope,
   type StudioPolicy,
 } from "@/lib/permissions/catalog";
+import { DECISIONS } from "@/lib/permissions/decisions";
 
 // R0 validity of the ONE permission catalog. Pure data: nothing imports it yet, so none of this changes behaviour.
 const DEFS = CATALOG as readonly PermissionDef[];
@@ -350,12 +353,12 @@ describe("Sam's spec, encoded", () => {
     expect(d("client.view_legal_name").note).toMatch(/review banner/);
   });
 
-  it("D-3: where today's behaviour is only a source reading that could widen, the snapshot takes the NARROWER value, and the rest is pinned for verification", () => {
-    // DN-30 (OPS verified from source): practitioners do both today, so the snapshot is Studio and the key is pinned pending Sam's decision.
+  it("D-3: every snapshot that rests only on OPS's source reading of today's behaviour is pinned by an exact list, so a new one is a visible, reviewed change (it is a reading, not a runtime proof)", () => {
+    // DN-30 (decided 3 Nov): practitioners do these today, so the snapshot is Studio, preserved for every existing studio.
     expect(d("clin.edit_intake").existingSnapshot.practitioner).toBe("studio");
     expect(d("comm.send_routine").existingSnapshot.practitioner).toBe("studio");
-    expect(d("clin.edit_intake").pendingDecision).toContain("DN-30");
-    expect(d("comm.send_routine").pendingDecision).toContain("DN-30");
+    expect(d("clin.edit_intake").pendingDecision).toBeUndefined();
+    expect(d("comm.send_routine").pendingDecision).toBeUndefined();
     // every remaining non-off snapshot resting on a source reading is listed here; adding one is a visible, reviewed change
     const unverified = DEFS.flatMap((x) => ROLES.filter((r) => x.snapshotBasis === "source" && x.existingSnapshot[r] !== "off").map((r) => `${x.key}:${r}`)).sort();
     expect(unverified).toEqual([
@@ -364,6 +367,8 @@ describe("Sam's spec, encoded", () => {
       "client.view_directory:practitioner", "clin.edit_records:practitioner", "clin.print_record:practitioner", "clin.upload_photos:practitioner", "clin.view_intake:practitioner",
       "clin.view_photos:practitioner", "clin.view_records:practitioner",
       "clin.edit_intake:practitioner", "comm.send_routine:practitioner",
+      // DN-9, DN-14 and DN-30 (decided 3 Nov): separately configurable, each preserved for existing practitioners.
+      "clin.view_intake_status:practitioner", "clin.review_intake:practitioner", "comm.send_intake_link:practitioner", "comm.send_portal_link:practitioner", "comm.send_portal_reply:practitioner",
       // DN-3 and DN-5 (decided, 2 Nov): practitioners keep today's studio-wide access to these data groups and to the safety records.
       ...["dob_address", "allergies_cautions", "budget_goals", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
       "records.view_sterilisation_disinfection:practitioner", "records.log_sterilisation_disinfection:practitioner",
@@ -431,5 +436,117 @@ describe("the doc embeds the generated table and states the new rules", () => {
     const m = DOC.match(/<!-- catalog:begin -->\n([\s\S]*?)\n<!-- catalog:end -->/);
     expect(m, "catalog markers missing").not.toBeNull();
     expect(m![1]).toBe(renderCatalogMarkdown());
+  });
+});
+
+describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", () => {
+  it("printing a clinical record is not offered to receptionists (R0-Q2), so a change for one is refused", () => {
+    expect(d("clin.print_record").offeredTo).toEqual({ practitioner: true, receptionist: false });
+    expect(checkChange("receptionist", "clin.print_record", "studio", pol("new_studio", { "clin.view_records": "studio" })).ok).toBe(false);
+  });
+  it("R-3: reading a fee amount needs a named key, and the rule is in the mandatory list", () => {
+    for (const k of FEE_AMOUNT_READ.anyOf) expect(catalogByKey.has(k), k).toBe(true);
+    expect(MANDATORY.join("\n")).toMatch(/Reading a fee amount needs price\.fee_amounts or pay\.view_appointment/);
+  });
+  it("R-4: every narrowing names a decided decision, a stage, an enforcement point and the notice text", () => {
+    expect(NARROWINGS.map((n) => n.id)).toEqual(expect.arrayContaining(["performer_change", "exposure_incident_history", "colleague_private_fields", "getting_started_filter", "notification_read_state", "portal_reply_immutable", "studio_columns_read"]));
+    for (const n of NARROWINGS) {
+      if (n.decision.startsWith("DN-")) expect(DECISIONS[n.decision as keyof typeof DECISIONS].status, n.id).toBe("decided");
+      else expect(n.decision, n.id).toMatch(/^G7:/);
+      expect(n.enforcedBy.length, n.id).toBeGreaterThan(0);
+      expect(n.notice.length, n.id).toBeGreaterThan(20);
+    }
+    expect(new Set(NARROWINGS.map((n) => n.id)).size).toBe(NARROWINGS.length);
+  });
+  it("R-6: every other waitlist operation requires wl.view_queue", () => {
+    for (const x of DEFS.filter((k) => k.group === "waitlist_operations" && k.key !== "wl.view_queue")) expect(x.requires, x.key).toContain("wl.view_queue");
+  });
+  it("G1 (Privacy F9): colleagues' note edits stay tied to 0283 in the key's note, and a receptionist stays behind the scheduling-notes gate", () => {
+    expect(d("appt.edit_notes").note).toMatch(/0283/);
+    expect(d("appt.edit_notes").shipGate?.receptionist).toBe("receptionist_scheduling_notes");
+  });
+  it("R-5: avail.manage_own is Studio for a NEW studio only; an existing studio's snapshot stays Off", () => {
+    expect(d("avail.manage_own").newStudioDefault.practitioner).toBe("studio");
+    expect(d("avail.manage_own").existingSnapshot.practitioner).toBe("off");
+  });
+  it("DN-9: an intake resend needs the messaging key and the intake STATUS read, never the answers or the chart", () => {
+    const k = d("comm.send_intake_link");
+    expect(k.requires).toEqual(expect.arrayContaining(["comm.send_routine", "clin.view_intake_status"]));
+    expect(k.requires).not.toContain("clin.view_intake");
+    expect(k.requires).not.toContain("clin.view_records");
+    expect(d("clin.view_intake_status").requires).not.toContain("clin.view_intake");
+  });
+  it("DN-14: portal replies are practitioner ON, receptionist OFF, owner-configurable for both", () => {
+    const k = d("comm.send_portal_reply");
+    expect(k.newStudioDefault).toEqual({ practitioner: "studio", receptionist: "off" });
+    expect(k.offeredTo).toEqual({ practitioner: true, receptionist: true });
+    expect(k.ownerConfigurable).toBe(true);
+  });
+  it("DN-30: sending intake links, sending portal links and reviewing intake are separate keys, each preserved for existing practitioners", () => {
+    for (const key of ["comm.send_intake_link", "comm.send_portal_link", "clin.review_intake", "clin.edit_intake"]) {
+      expect(d(key).existingSnapshot.practitioner, key).toBe("studio");
+      expect(d(key).existingSnapshot.receptionist, key).toBe("off");
+    }
+  });
+  it("group 4 rules are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/intake STATUS read/, /sender of every staff portal message is recorded/, /notification read state is per person/, /respects consent, opt-outs and existing channel-activation/]) expect(m).toMatch(re);
+  });
+});
+
+describe("Sam's group 5 (3 Nov): payment details", () => {
+  it("DN-11: client prices have a separate set key, OFF for both roles, owner-configurable; reads follow the view key", () => {
+    const k = d("price.edit_client_prices");
+    expect(k.newStudioDefault).toEqual({ practitioner: "off", receptionist: "off" });
+    expect(k.existingSnapshot).toEqual({ practitioner: "off", receptionist: "off" });
+    expect(k.offeredTo).toEqual({ practitioner: true, receptionist: true });
+    expect(k.ownerConfigurable).toBe(true);
+    expect(k.requires).toContain("price.view_client_prices");
+    expect(k.pendingDecision).toBeUndefined();
+  });
+  it("DN-23a: requiring a card to book is owner-only and has no staff key", () => {
+    expect(FIXED_OWNER_ONLY.map((f) => f.id)).toContain("require_card_to_book");
+    expect(DEFS.some((x) => /require_card|card_on_file/.test(x.key))).toBe(false);
+  });
+  it("DN-10 and DN-23b are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/card-authorisation consent is READ-ONLY/, /signed originals can never be edited or deleted/, /agreed prices unless someone explicitly edits/, /NO invented default and is never activated automatically/, /policy snapshot taken at THAT booking/, /duplicate charges are prevented/]) expect(m).toMatch(re);
+  });
+  it("DN-23b: a late-cancel fee charge is gated by the fee-charging key, and the coverage row names the held migration", () => {
+    expect(catalogByKey.has("pay.charge_saved_card")).toBe(true);
+  });
+});
+
+describe("Sam's group 6 (3 Nov): deletion, data rights, rollout timing", () => {
+  it("DN-18, DN-20, DN-25: erasure, the portal setting, archive and restore are fixed owner-only items with no staff key", () => {
+    const ids = FIXED_OWNER_ONLY.map((f) => f.id);
+    for (const id of ["erase_client_permanently", "client_portal_setting", "archive_clients", "restore_deleted_records", "full_studio_data_export"]) expect(ids).toContain(id);
+    expect(FIXED_OWNER_ONLY.find((f) => f.id === "erase_client_permanently")?.note).toMatch(/EXECUTION stays unavailable/);
+    expect(FIXED_OWNER_ONLY.find((f) => f.id === "erase_client_permanently")?.note).toMatch(/No retention period is invented/);
+  });
+  it("DN-26: receptionist legal-name keys are unavailable behind a gate whose text says 'Not available yet' until privacy enforcement and logging are verified", () => {
+    expect(GATES.receptionist_legal_name).toMatch(/Not available yet/);
+    expect(GATES.receptionist_legal_name).toMatch(/access logging/);
+    const r = checkChange("receptionist", "client.view_legal_name", "studio", pol("new_studio", {}, {}));
+    expect(r.ok).toBe(false);
+    expect(d("client.view_legal_name").pendingDecision).toBeUndefined();
+  });
+  it("group 6 rules are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/no existing record is deleted by the rollout/, /no complete erasure from backups is promised/, /excludes credentials, payment secrets, other studios' data and platform security information/, /blocks existing portal links and sessions/, /Not available yet/]) expect(m).toMatch(re);
+  });
+});
+
+describe("Sam's group 7 (3 Nov): platform and operations", () => {
+  it("every decision DN-1..DN-30 is decided: the log is the single authority and nothing is left pending", () => {
+    expect(Object.entries(DECISIONS).filter(([, e]) => e.status !== "decided")).toEqual([]);
+  });
+  it("DN-16, DN-29 and the two unnumbered items are narrowings with a named stage and notice", () => {
+    const ids = NARROWINGS.map((n) => n.id);
+    for (const id of ["google_flags_operator_only", "deactivated_calendar_owner", "rate_limit_outage", "anonymous_public_writes_closed"]) expect(ids).toContain(id);
+  });
+  it("group 7 rules are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/Google Calendar studio feature flags are operator-only/, /deactivated calendar owner gets no new studio synchronisation/, /bounded fallback protection/, /no direct database writes/, /SMS STOP behaviour is unchanged/]) expect(m).toMatch(re);
   });
 });
