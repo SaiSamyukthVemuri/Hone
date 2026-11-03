@@ -8,8 +8,8 @@ type J = Record<string, any>;
 const GOOD = "Reviewed the front desk duties with the team";
 const call = async (userId: string, sql: string, params: unknown[]): Promise<J> => asUser(userId, async (q) => (await q(sql, params)).rows[0].r as J);
 const preview = (u: string, s: string) => call(u, "select public.preview_activation($1) as r", [s]);
-const activate = (u: string, s: string, keys: string[] | null, v: number, reason: string | null = GOOD) =>
-  call(u, "select public.activate_released_permissions($1,$2::text[],$3,$4) as r", [s, keys, v, reason]);
+const activate = (u: string, s: string, keys: string[] | null, v: number, reason: string | null = GOOD, confirmed = true) =>
+  call(u, "select public.activate_released_permissions($1,$2::text[],$3,$4,$5) as r", [s, keys, v, reason, confirmed]);
 const getp = (u: string, s: string) => call(u, "select public.get_role_permissions($1) as r", [s]);
 const effMap = async (s: SeededStudio) =>
   (await adminQuery("select role, key, public.perm_effective_scope($1,role,key) as e from public.permission_catalog cross join (values ('practitioner'),('receptionist')) v(role) order by 1,2", [s.studioId])).rows;
@@ -62,6 +62,13 @@ describe("activation rule", () => {
     expect(previewed).toEqual(KEYS.map((k) => k.key).sort());
     expect(p.affected.practitioner.count).toBeGreaterThan(0);
 
+    // Insurance PY-1 applies to activation too: if the previewed result newly enables a sensitive key, an unconfirmed commit is refused.
+    const sensitiveKeys: string[] = p.sensitive_keys ?? [];
+    if (sensitiveKeys.includes(KEYS[0].key)) {
+      expect(p.confirmation_required).toBe(true);
+      expect(await activate(s.userId, s.studioId, [KEYS[0].key], p.version, GOOD, false)).toMatchObject({ ok: false, code: "sensitive_unconfirmed" });
+      expect(await effMap(s)).toEqual(before);
+    }
     const r = await activate(s.userId, s.studioId, [KEYS[0].key], p.version);
     expect(r.ok).toBe(true);
     const after = await effMap(s);

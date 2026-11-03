@@ -118,4 +118,10 @@ describe("0287 activation rule: source contract", () => {
     expect(code).toContain("v_basis_at >= v_rel.released_at");
     expect(code).toContain("'inactive_until_activated'");
   });
+
+  it("adopt, reset and activation require sensitive_confirmed when their result newly enables a sensitive key (Insurance PY-1)", () => {
+    for (const fn of ["reset_role_to_defaults", "adopt_new_defaults", "activate_released_permissions"])
+      expect(code, fn).toMatch(new RegExp(`function public\\.${fn}\\([^)]*p_sensitive_confirmed boolean default false\\)`));
+    expect(code.match(/message = public\.perm_fail\('sensitive_unconfirmed'\)/g)!.length).toBeGreaterThanOrEqual(3);
+  });
 });
