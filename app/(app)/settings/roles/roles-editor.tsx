@@ -2,72 +2,116 @@
 
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { ROLES, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleModel, ROLE_LABELS } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
+import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { defaultsPolicy, diffPolicies, releaseNarrowings, type RoleDiff } from "@/lib/settings/roles/diff";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import type { RolesActionResult } from "./actions";
 
-// The Roles page body (R2). One role at a time (one task per view), grouped permissions with Off / Own / Whole studio where the
-// catalog offers scope, prerequisites and consequences stated, and NEVER a silent change to another key: a control the catalog
-// refuses is disabled with the reason. Save shows "Saving…", success only after the server confirms, and keeps the typed
-// choices on failure. Reset and Adopt show a before/after preview first; newly enabled financial or sensitive access is
-// highlighted. When the studio cannot save yet (writable=false) the controls are a read-only review.
+// The Roles control center (R2, People-first). Three views: People (who holds what, from the saved policy), Permissions (the eight
+// sections, one draft across both roles, a review screen before anything is saved) and History. Scope controls appear only where
+// the catalog supports them; nothing is ever enabled as a side effect of another switch. Save is atomic and version-bound; Reset
+// is a separate, previewed operation. While the studio cannot save yet (writable=false) every control is a read-only review.
+
+export type PersonView = {
+  id: string;
+  name: string;
+  email: string;
+  role: "owner" | Role;
+  state: "active" | "invited" | "deactivated";
+};
 
 export type RolesEditorProps = {
   policies: Record<Role, StudioPolicy>;
   reviewed: boolean;
   writable: boolean;
   notWritableReason: string | null;
-  staff: Record<Role, ReactNode>;
   version: string | null;
-  save: (role: Role, values: Record<string, Scope>, expectedVersion: string | null) => Promise<RolesActionResult>;
+  people: PersonView[];
+  save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: string | null) => Promise<RolesActionResult>;
   reset: (role: Role, expectedVersion: string | null) => Promise<RolesActionResult>;
 };
 
+type View = "people" | "permissions" | "history";
 type Preview = { kind: "reset" | "adopt"; diff: RoleDiff };
 
+const scopeText = (s: Scope) => (s === "off" ? "Off" : s === "own" ? "Own assigned" : "Whole studio");
+
 export function RolesEditor(props: RolesEditorProps) {
+  const [view, setView] = useState<View>("people");
   const [role, setRole] = useState<Role>("practitioner");
   const [saved, setSaved] = useState<Record<Role, StudioPolicy>>(props.policies);
   const [drafts, setDrafts] = useState<Record<Role, StudioPolicy>>(props.policies);
   const [rowError, setRowError] = useState<{ key: string; message: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const [reviewed, setReviewed] = useState(props.reviewed);
   const feedback = useSaveFeedback();
   const baseId = useId();
 
-  const draft = drafts[role];
-  const dirty = JSON.stringify(draft.values) !== JSON.stringify(saved[role].values);
-  useUnsavedChangesGuard(`roles-${role}`, dirty);
-  const model = useMemo(() => buildRoleModel(role, draft), [role, draft]);
+  const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
+  const dirty = dirtyRoles.length > 0;
+  useUnsavedChangesGuard("roles-draft", dirty);
   const readOnly = !props.writable;
 
+  const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
+  const savedRows = useMemo(
+    () => new Map(buildRoleSections(role, saved[role]).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
+    [role, saved],
+  );
+
+  const peopleWith = (r: Role) => props.people.filter((p) => p.role === r && p.state === "active");
+  const reviewDiffs = dirtyRoles.map((r) => ({ role: r, diff: diffPolicies(r, saved[r], drafts[r]) }));
+  const sensitiveCount = reviewDiffs.reduce((n, d) => n + d.diff.newlyEnabledSensitive, 0);
+
   function choose(key: string, scope: Scope) {
-    const result = applyEdit(role, draft, key, scope);
+    const result = applyEdit(role, drafts[role], key, scope);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
       return;
     }
     setRowError(null);
     feedback.reset();
+    setReviewing(false);
     setDrafts((d) => ({ ...d, [role]: result.policy }));
+  }
+
+  function changedEdits() {
+    const edits: Partial<Record<Role, Record<string, Scope>>> = {};
+    for (const r of dirtyRoles) {
+      const e: Record<string, Scope> = {};
+      for (const [k, v] of Object.entries(drafts[r].values)) if (saved[r].values[k] !== v) e[k] = v;
+      edits[r] = e;
+    }
+    return edits;
   }
 
   async function onSave() {
     feedback.saving();
-    const result = await props.save(role, draft.values as Record<string, Scope>, props.version);
+    const result = await props.save(changedEdits(), props.version);
     if (result.ok) {
-      setSaved((s) => ({ ...s, [role]: draft }));
+      setSaved(drafts);
+      setReviewing(false);
+      setConfirmed(false);
       feedback.saved();
     } else {
-      // The choices stay as typed; only the message changes.
+      // Every choice stays as typed; only the message changes. Nothing was partly saved.
       feedback.failed(result.error);
     }
   }
 
+  function discard() {
+    setDrafts(saved);
+    setReviewing(false);
+    setConfirmed(false);
+    setRowError(null);
+    feedback.reset();
+  }
+
   function openPreview(kind: Preview["kind"]) {
-    setPreview({ kind, diff: diffPolicies(role, draft, defaultsPolicy(draft)) });
+    setPreview({ kind, diff: diffPolicies(role, saved[role], defaultsPolicy(saved[role])) });
   }
 
   async function confirmPreview() {
@@ -75,7 +119,7 @@ export function RolesEditor(props: RolesEditorProps) {
     feedback.saving();
     const result = await props.reset(role, props.version);
     if (result.ok) {
-      const next = defaultsPolicy(draft);
+      const next = defaultsPolicy(saved[role]);
       setSaved((s) => ({ ...s, [role]: next }));
       setDrafts((d) => ({ ...d, [role]: next }));
       setReviewed(true);
@@ -86,21 +130,27 @@ export function RolesEditor(props: RolesEditorProps) {
     }
   }
 
+  const tabs: { id: View; label: string }[] = [
+    { id: "people", label: "People" },
+    { id: "permissions", label: "Permissions" },
+    { id: "history", label: "History" },
+  ];
+
   return (
     <div className="flex flex-col gap-8" data-testid="roles-editor">
       {!reviewed && (
-        <section
-          data-testid="roles-review-banner"
-          className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
-        >
+        <section data-testid="roles-review-banner" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           <h3 className="font-medium">Your studio keeps its current access until you review it</h3>
           <p className="mt-1">
-            Nothing changes for your staff until you adopt the new defaults or save your own settings. Review what would change
-            for each role, then choose.
+            Nothing changes for your staff until you adopt the new defaults or save your own settings. Review what would change for
+            each role, then choose.
           </p>
           <button
             type="button"
-            onClick={() => openPreview("adopt")}
+            onClick={() => {
+              setView("permissions");
+              openPreview("adopt");
+            }}
             className="mt-3 min-h-[44px] rounded-md border border-amber-400 px-3 py-2 text-sm font-medium hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900"
           >
             Review changes for {ROLE_LABELS[role].toLowerCase()}s
@@ -109,10 +159,7 @@ export function RolesEditor(props: RolesEditorProps) {
       )}
 
       {!reviewed && (
-        <section
-          data-testid="release-narrowings-notice"
-          className="rounded-lg border border-neutral-300 p-4 text-sm dark:border-neutral-700"
-        >
+        <section data-testid="release-narrowings-notice" className="rounded-lg border border-neutral-300 p-4 text-sm dark:border-neutral-700">
           <h3 className="font-medium">Coming with the access update: these become owner-only</h3>
           <p className="mt-1 text-neutral-600 dark:text-neutral-400">
             When access is enforced, only you can do the following. Practitioners can do some of them today. Nothing is deleted, and
@@ -134,160 +181,392 @@ export function RolesEditor(props: RolesEditorProps) {
         </p>
       )}
 
-      <div role="tablist" aria-label="Roles" className="flex gap-2">
-        {ROLES.map((r) => (
+      <div role="tablist" aria-label="Roles views" className="flex flex-wrap gap-2">
+        {tabs.map((t) => (
           <button
-            key={r}
+            key={t.id}
             type="button"
             role="tab"
-            id={`${baseId}-tab-${r}`}
-            aria-selected={role === r}
-            aria-controls={`${baseId}-panel`}
-            data-role-tab={r}
-            data-state={role === r ? "selected" : "idle"}
-            onClick={() => {
-              setRole(r);
-              setPreview(null);
-              setRowError(null);
-              feedback.reset();
-            }}
+            aria-selected={view === t.id}
+            data-roles-view={t.id}
+            data-state={view === t.id ? "selected" : "idle"}
+            onClick={() => setView(t.id)}
             className={`min-h-[44px] rounded-md border px-4 py-2 text-sm font-medium ${
-              role === r
+              view === t.id
                 ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
                 : "border-neutral-300 text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
             }`}
           >
-            {ROLE_LABELS[r]}
+            {t.label}
+            {t.id === "permissions" && dirty ? " (unsaved)" : ""}
           </button>
         ))}
       </div>
 
-      <div id={`${baseId}-panel`} role="tabpanel" aria-labelledby={`${baseId}-tab-${role}`} className="flex min-w-0 flex-col gap-8">
-        {props.staff[role]}
+      {view === "people" && <PeoplePanel people={props.people} saved={saved} />}
 
-        {preview && (
-          <PreviewPanel
-            kind={preview.kind}
-            role={role}
-            diff={preview.diff}
-            canConfirm={props.writable}
-            blockedReason={props.notWritableReason}
-            onConfirm={confirmPreview}
-            onCancel={() => setPreview(null)}
-          />
-        )}
+      {view === "history" && (
+        <section data-testid="roles-history" className="flex flex-col gap-2">
+          <h3 className="text-base font-medium">Change history</h3>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            History starts when saving turns on. Each entry will show who changed a role or permission, when, the person or role
+            affected, and the before and after values. It cannot be edited or deleted by staff.
+          </p>
+        </section>
+      )}
 
-        {model.map((g) => (
-          <section key={g.group} aria-labelledby={`${baseId}-${g.group}`} data-permission-group={g.group} className="flex min-w-0 flex-col gap-3">
-            <h3 id={`${baseId}-${g.group}`} className="text-base font-medium">
-              {g.label}
-            </h3>
-            <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-              {g.rows.map((row) => (
-                <li
-                  key={row.key}
-                  data-permission-row={row.key}
-                  data-chosen={row.chosen}
-                  data-effective={row.effective}
-                  className="flex min-w-0 flex-col gap-2 px-4 py-3"
-                >
-                  <fieldset disabled={readOnly || row.locked !== null} className="min-w-0">
-                    <legend className="min-w-0 break-words text-sm font-medium">{row.label}</legend>
-                    <p className="mt-0.5 break-words text-xs text-neutral-500">{row.description}</p>
-                    {row.ownMeaning && <p className="mt-0.5 break-words text-xs text-neutral-500">Own assigned means: {row.ownMeaning}.</p>}
-                    {row.futureBusiness && (
-                      <p data-testid="affects-future-business" className="mt-0.5 text-xs font-medium text-neutral-700 dark:text-neutral-300">
-                        Affects future studio business
-                      </p>
-                    )}
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {row.options.map((o) => (
-                        <label
-                          key={o.scope}
-                          className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm ${
-                            o.selected
-                              ? "border-neutral-900 bg-neutral-100 font-medium dark:border-white dark:bg-neutral-800"
-                              : "border-neutral-300 dark:border-neutral-700"
-                          } ${o.disabled ? "cursor-not-allowed opacity-60" : ""}`}
-                        >
-                          <input
-                            type="radio"
-                            name={`${baseId}-${role}-${row.key}`}
-                            value={o.scope}
-                            checked={o.selected}
-                            disabled={o.disabled}
-                            aria-describedby={o.reason ? `${baseId}-${row.key}-${o.scope}-why` : undefined}
-                            onChange={() => choose(row.key, o.scope)}
-                          />
-                          {o.label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                  {row.options.filter((o) => o.disabled && o.reason).map((o) => (
-                    <p key={o.scope} id={`${baseId}-${row.key}-${o.scope}-why`} className="break-words text-xs text-neutral-500">
-                      {o.label} is unavailable. {o.reason}
-                    </p>
-                  ))}
-                  {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
-                  {row.inactiveBecause && (
-                    <p data-testid="inactive-because" className="break-words text-xs text-amber-800 dark:text-amber-300">
-                      Chosen but not in force. {row.inactiveBecause}
-                    </p>
-                  )}
-                  {row.alsoSwitchesOff.length > 0 && row.chosen !== "off" && (
-                    <p className="break-words text-xs text-neutral-500">
-                      If you turn this off, these switch off with it (their settings are kept): {row.alsoSwitchesOff.join(", ")}.
-                    </p>
-                  )}
-                  {row.gateNote && (
-                    <p data-testid="not-available-yet" className="break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
-                      Not available yet. {row.gateNote}.
-                    </p>
-                  )}
-                  {row.heldUntil && (
-                    <p data-testid="held-until" className="break-words text-xs text-neutral-500">
-                      Raising this is held until: {row.heldUntil}.
-                    </p>
-                  )}
-                  {row.snapshotBasis === "approved_policy" && (
-                    <p data-testid="approved-policy-note" className="break-words text-xs text-amber-800 dark:text-amber-300">
-                      Approved policy: not yet enforced everywhere. The setting shown is the approved one; the database may still allow more until the closing changes ship.
-                    </p>
-                  )}
-                  {row.pendingDecision && <p className="text-xs text-neutral-500">This default is still being decided; it keeps today&rsquo;s behaviour.</p>}
-                  {rowError?.key === row.key && (
-                    <p role="alert" className="break-words text-xs text-red-700 dark:text-red-400">
-                      {rowError.message}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+      {view === "permissions" && (
+        <div className="flex min-w-0 flex-col gap-8">
+          <div role="tablist" aria-label="Role" className="flex gap-2">
+            {ROLES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                role="tab"
+                aria-selected={role === r}
+                data-role-tab={r}
+                data-state={role === r ? "selected" : "idle"}
+                onClick={() => {
+                  setRole(r);
+                  setPreview(null);
+                  setRowError(null);
+                }}
+                className={`min-h-[44px] rounded-md border px-4 py-2 text-sm font-medium ${
+                  role === r
+                    ? "border-neutral-900 bg-neutral-100 dark:border-white dark:bg-neutral-800"
+                    : "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300"
+                }`}
+              >
+                {ROLE_LABELS[r]}
+                {dirtyRoles.includes(r) ? " (unsaved)" : ""}
+              </button>
+            ))}
+          </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!props.writable || !dirty || feedback.state.kind === "saving"}
-            className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-          >
-            Save {ROLE_LABELS[role].toLowerCase()} settings
-          </button>
-          <button
-            type="button"
-            onClick={() => openPreview("reset")}
-            className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Reset to defaults
-          </button>
-          <SaveStatus state={feedback.state} />
+          <p data-testid="role-holders" className="text-sm text-neutral-600 dark:text-neutral-400">
+            {peopleWith(role).length === 0
+              ? `No active ${ROLE_LABELS[role].toLowerCase()}s yet. Changes apply when someone holds this role.`
+              : `Editing this role changes access for every active ${ROLE_LABELS[role].toLowerCase()} in this studio: ${peopleWith(role).map((p) => p.name).join(", ")}.`}
+          </p>
+
+          {preview && (
+            <PreviewPanel
+              kind={preview.kind}
+              role={role}
+              diff={preview.diff}
+              holders={peopleWith(role).map((p) => p.name)}
+              canConfirm={props.writable}
+              blockedReason={props.notWritableReason}
+              onConfirm={confirmPreview}
+              onCancel={() => setPreview(null)}
+            />
+          )}
+
+          {sections.map((sec) => (
+            <section key={sec.id} aria-labelledby={`${baseId}-${sec.id}`} data-permission-section={sec.id} className="flex min-w-0 flex-col gap-3">
+              <h3 id={`${baseId}-${sec.id}`} className="text-base font-medium">
+                {sec.label}
+              </h3>
+              <RowList rows={sec.common} {...{ role, baseId, readOnly, rowError, choose, savedRows }} />
+              {sec.advanced.length > 0 && (
+                <details data-advanced={sec.id} className="rounded-lg border border-neutral-200 dark:border-neutral-800">
+                  <summary className="min-h-[44px] cursor-pointer px-4 py-3 text-sm font-medium">
+                    Advanced ({sec.advanced.length})
+                  </summary>
+                  <RowList rows={sec.advanced} {...{ role, baseId, readOnly, rowError, choose, savedRows }} />
+                </details>
+              )}
+            </section>
+          ))}
+
+          {reviewing && (
+            <ReviewPanel
+              diffs={reviewDiffs}
+              holders={(r) => peopleWith(r).map((p) => p.name)}
+              sensitiveCount={sensitiveCount}
+              confirmed={confirmed}
+              onConfirmed={setConfirmed}
+            />
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            {!reviewing ? (
+              <button
+                type="button"
+                onClick={() => setReviewing(true)}
+                disabled={!dirty}
+                className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              >
+                Review changes{dirty ? ` (${dirtyRoles.length === 1 ? "1 role" : "2 roles"})` : ""}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={!props.writable || feedback.state.kind === "saving" || (sensitiveCount > 0 && !confirmed)}
+                className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              >
+                Save changes
+              </button>
+            )}
+            <button type="button" onClick={discard} disabled={!dirty} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-neutral-700">
+              Discard changes
+            </button>
+            <button
+              type="button"
+              onClick={() => openPreview("reset")}
+              className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              Reset {ROLE_LABELS[role].toLowerCase()}s to defaults
+            </button>
+            <SaveStatus state={feedback.state} />
+          </div>
+          <p className="text-xs text-neutral-500">Changes apply to each person&rsquo;s next request, including people who are signed in now.</p>
         </div>
-        <p className="text-xs text-neutral-500">Changes apply to each person&rsquo;s next request, including people who are signed in now.</p>
-      </div>
+      )}
     </div>
+  );
+}
+
+function RowList({
+  rows,
+  role,
+  baseId,
+  readOnly,
+  rowError,
+  choose,
+  savedRows,
+}: {
+  rows: RoleRow[];
+  role: Role;
+  baseId: string;
+  readOnly: boolean;
+  rowError: { key: string; message: string } | null;
+  choose: (key: string, scope: Scope) => void;
+  savedRows: Map<string, RoleRow>;
+}): ReactNode {
+  return (
+    <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+      {rows.map((row) => {
+        const unsaved = savedRows.get(row.key)?.chosen !== row.chosen;
+        return (
+          <li key={row.key} data-permission-row={row.key} data-chosen={row.chosen} data-effective={row.effective} data-unsaved={unsaved ? "true" : "false"} className="flex min-w-0 flex-col gap-2 px-4 py-3">
+            <fieldset disabled={readOnly || row.locked !== null} className="min-w-0">
+              <legend className="min-w-0 break-words text-sm font-medium">{row.label}</legend>
+              <p className="mt-0.5 break-words text-xs text-neutral-500">{row.description}</p>
+              {row.ownMeaning && <p className="mt-0.5 break-words text-xs text-neutral-500">Own assigned means: {row.ownMeaning}.</p>}
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
+                <span data-testid="default-setting">New-studio default: {scopeText(row.defaultScope)}</span>
+                {unsaved && <span data-testid="unsaved-mark" className="font-medium text-neutral-800 dark:text-neutral-200">Unsaved change</span>}
+              </div>
+              {row.needs.length > 0 && (
+                <p data-testid="requires" className="mt-0.5 break-words text-xs text-neutral-500">
+                  Requires: {row.needs.join(", ")}
+                </p>
+              )}
+              {row.consequence && (
+                <p data-testid="consequence" data-consequence={row.consequence} className="mt-1 break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                  {CONSEQUENCE_LABEL[row.consequence]}
+                </p>
+              )}
+              {row.futureBusiness && (
+                <p data-testid="affects-future-business" className="mt-0.5 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                  Affects future studio business
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {row.options.map((o) => (
+                  <label
+                    key={o.scope}
+                    className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm ${
+                      o.selected ? "border-neutral-900 bg-neutral-100 font-medium dark:border-white dark:bg-neutral-800" : "border-neutral-300 dark:border-neutral-700"
+                    } ${o.disabled ? "cursor-not-allowed opacity-60" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name={`${baseId}-${role}-${row.key}`}
+                      value={o.scope}
+                      checked={o.selected}
+                      disabled={o.disabled}
+                      aria-describedby={o.reason ? `${baseId}-${row.key}-${o.scope}-why` : undefined}
+                      onChange={() => choose(row.key, o.scope)}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            {row.options.filter((o) => o.disabled && o.reason).map((o) => (
+              <p key={o.scope} id={`${baseId}-${row.key}-${o.scope}-why`} className="break-words text-xs text-neutral-500">
+                {o.label} is unavailable. {o.reason}
+              </p>
+            ))}
+            {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
+            {row.inactiveBecause && (
+              <p data-testid="inactive-because" className="break-words text-xs text-amber-800 dark:text-amber-300">
+                Chosen but not in force. {row.inactiveBecause}
+              </p>
+            )}
+            {row.alsoSwitchesOff.length > 0 && row.chosen !== "off" && (
+              <p className="break-words text-xs text-neutral-500">
+                If you turn this off, these switch off with it (their settings are kept): {row.alsoSwitchesOff.join(", ")}.
+              </p>
+            )}
+            {row.gateNote && (
+              <p data-testid="not-available-yet" className="break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                Not available yet. {row.gateNote}.
+              </p>
+            )}
+            {row.heldUntil && (
+              <p data-testid="held-until" className="break-words text-xs text-neutral-500">
+                Raising this is held until: {row.heldUntil}.
+              </p>
+            )}
+            {row.snapshotBasis === "approved_policy" && (
+              <p data-testid="approved-policy-note" className="break-words text-xs text-amber-800 dark:text-amber-300">
+                Approved policy: not yet enforced everywhere. The setting shown is the approved one; the database may still allow more until the closing changes ship.
+              </p>
+            )}
+            {row.pendingDecision && <p className="text-xs text-neutral-500">This default is still being decided; it keeps today&rsquo;s behaviour.</p>}
+            {rowError?.key === row.key && (
+              <p role="alert" className="break-words text-xs text-red-700 dark:text-red-400">
+                {rowError.message}
+              </p>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PeoplePanel({ people, saved }: { people: PersonView[]; saved: Record<Role, StudioPolicy> }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const groups: { state: PersonView["state"]; label: string; empty: string }[] = [
+    { state: "active", label: "Active", empty: "" },
+    { state: "invited", label: "Invitation pending", empty: "Nobody is waiting to join." },
+    { state: "deactivated", label: "Deactivated", empty: "Nobody has been deactivated." },
+  ];
+  return (
+    <div data-testid="roles-people" className="flex min-w-0 flex-col gap-8">
+      <p className="text-sm text-neutral-500">
+        Add, remove or invite people in{" "}
+        <a href="/settings/team" className="font-medium text-neutral-900 underline underline-offset-2 dark:text-neutral-100">
+          Team
+        </a>
+        . Ownership changes use their own protected steps.
+      </p>
+      {groups.map((g) => {
+        const list = people.filter((p) => p.state === g.state);
+        return (
+          <section key={g.state} data-people-state={g.state} className="flex min-w-0 flex-col gap-2">
+            <h3 className="text-base font-medium">
+              {g.label} ({list.length})
+            </h3>
+            {list.length === 0 ? (
+              g.empty ? <p className="text-sm text-neutral-500">{g.empty}</p> : null
+            ) : (
+              <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+                {list.map((p) => (
+                  <li key={`${p.state}-${p.id}`} data-person={p.id} className="min-w-0 px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="break-words font-medium">{p.name}</div>
+                        <div className="break-all text-xs text-neutral-500">{p.email}</div>
+                      </div>
+                      <span className="rounded-sm border border-neutral-300 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
+                        {p.role === "owner" ? "Owner" : ROLE_LABELS[p.role]}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      aria-expanded={open === p.id}
+                      onClick={() => setOpen(open === p.id ? null : p.id)}
+                      className="mt-2 min-h-[44px] text-sm font-medium underline underline-offset-2"
+                    >
+                      {open === p.id ? "Hide access" : "View access"}
+                    </button>
+                    {open === p.id && <AccessSummary person={p} saved={saved} />}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function AccessSummary({ person, saved }: { person: PersonView; saved: Record<Role, StudioPolicy> }) {
+  if (person.state === "invited") return <p data-testid="access-summary" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">An invitation has no access to the studio until it is accepted.</p>;
+  if (person.state === "deactivated") return <p data-testid="access-summary" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">This person is deactivated and has no access to the studio.</p>;
+  if (person.role === "owner")
+    return <p data-testid="access-summary" className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">Owners have every permission. Owner access is protected and cannot be changed here.</p>;
+  const sections = buildRoleSections(person.role, saved[person.role]);
+  return (
+    <div data-testid="access-summary" className="mt-2 flex flex-col gap-3 text-sm">
+      <p className="text-neutral-600 dark:text-neutral-400">
+        Saved access for a {ROLE_LABELS[person.role].toLowerCase()}, as it applies today. Unsaved edits are not shown here.
+      </p>
+      {sections.map((s) => (
+        <div key={s.id}>
+          <h4 className="font-medium">{s.label}</h4>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {[...s.common, ...s.advanced].map((r) => (
+              <li key={r.key} data-access-row={r.key} data-effective={r.effective} className="break-words text-xs">
+                {r.label}: <span className="font-medium">{r.effective === "off" ? "Off" : r.options.find((o) => o.scope === r.effective)?.label ?? scopeText(r.effective)}</span>
+                {r.inactiveBecause ? <span className="text-neutral-500"> ({r.inactiveBecause})</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReviewPanel({
+  diffs,
+  holders,
+  sensitiveCount,
+  confirmed,
+  onConfirmed,
+}: {
+  diffs: { role: Role; diff: RoleDiff }[];
+  holders: (r: Role) => string[];
+  sensitiveCount: number;
+  confirmed: boolean;
+  onConfirmed: (v: boolean) => void;
+}) {
+  return (
+    <section data-testid="roles-review" aria-label="Review changes" className="flex min-w-0 flex-col gap-4 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
+      <h3 className="text-base font-medium">Review changes</h3>
+      {diffs.map(({ role, diff }) => (
+        <div key={role} data-review-role={role} className="flex min-w-0 flex-col gap-2">
+          <h4 className="font-medium">{ROLE_LABELS[role]}s</h4>
+          <p className="break-words text-sm text-neutral-600 dark:text-neutral-400">
+            Affects {holders(role).length === 0 ? "nobody yet" : holders(role).join(", ")} ({holders(role).length}). {diff.widened} gain access, {diff.narrowed} lose access.
+          </p>
+          <ul className="flex flex-col gap-1">
+            {diff.changes.map((c) => (
+              <li key={c.key} data-review-change={c.key} data-direction={c.direction} className={`break-words rounded-md px-2 py-1 text-sm ${c.newlyEnabledSensitive ? "bg-red-50 font-medium dark:bg-red-950" : ""}`}>
+                <span className="text-neutral-500">{c.groupLabel}: </span>
+                {c.label}: {scopeText(c.from)} to {scopeText(c.to)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {sensitiveCount > 0 && (
+        <label className="flex items-start gap-2 text-sm font-medium">
+          <input type="checkbox" checked={confirmed} onChange={(e) => onConfirmed(e.target.checked)} className="mt-1" />
+          <span data-testid="review-sensitive">
+            I understand this newly enables {sensitiveCount} financial or sensitive {sensitiveCount === 1 ? "permission" : "permissions"}.
+          </span>
+        </label>
+      )}
+    </section>
   );
 }
 
@@ -295,6 +574,7 @@ function PreviewPanel({
   kind,
   role,
   diff,
+  holders,
   canConfirm,
   blockedReason,
   onConfirm,
@@ -303,20 +583,20 @@ function PreviewPanel({
   kind: "reset" | "adopt";
   role: Role;
   diff: RoleDiff;
+  holders: string[];
   canConfirm: boolean;
   blockedReason: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   return (
-    <section
-      data-testid="roles-preview"
-      aria-label={kind === "adopt" ? "Review new defaults" : "Reset to defaults"}
-      className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700"
-    >
+    <section data-testid="roles-preview" aria-label={kind === "adopt" ? "Review new defaults" : "Reset to defaults"} className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
       <h3 className="text-base font-medium">
         {kind === "adopt" ? "Adopt the new defaults" : "Reset to defaults"} for {ROLE_LABELS[role].toLowerCase()}s
       </h3>
+      <p className="break-words text-sm text-neutral-600 dark:text-neutral-400">
+        This changes access for {holders.length === 0 ? "nobody yet" : holders.join(", ")}.
+      </p>
       {diff.changes.length === 0 && diff.fixedNarrowings.length === 0 ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing would change. These settings already match the defaults.</p>
       ) : (
@@ -341,16 +621,9 @@ function PreviewPanel({
           )}
           <ul className="flex flex-col gap-1">
             {diff.changes.map((c) => (
-              <li
-                key={c.key}
-                data-preview-change={c.key}
-                data-direction={c.direction}
-                data-sensitive={c.newlyEnabledSensitive ? "true" : "false"}
-                className={`break-words rounded-md px-2 py-1 text-sm ${c.newlyEnabledSensitive ? "bg-red-50 font-medium dark:bg-red-950" : ""}`}
-              >
+              <li key={c.key} data-preview-change={c.key} data-direction={c.direction} data-sensitive={c.newlyEnabledSensitive ? "true" : "false"} className={`break-words rounded-md px-2 py-1 text-sm ${c.newlyEnabledSensitive ? "bg-red-50 font-medium dark:bg-red-950" : ""}`}>
                 <span className="text-neutral-500">{c.groupLabel}: </span>
-                {c.label}: {c.from === "off" ? "Off" : c.from === "own" ? "Own assigned" : "Whole studio"} to{" "}
-                {c.to === "off" ? "Off" : c.to === "own" ? "Own assigned" : "Whole studio"}
+                {c.label}: {scopeText(c.from)} to {scopeText(c.to)}
                 {c.futureBusiness ? " (affects future studio business)" : ""}
               </li>
             ))}
@@ -358,12 +631,7 @@ function PreviewPanel({
         </>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={!canConfirm}
-          className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
+        <button type="button" onClick={onConfirm} disabled={!canConfirm} className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
           {kind === "adopt" ? "Adopt these defaults" : "Confirm reset"}
         </button>
         <button type="button" onClick={onCancel} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-700">

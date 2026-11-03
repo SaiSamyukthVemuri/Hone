@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleModel, groupLabel } from "@/lib/settings/roles/model";
 import { defaultsPolicy, diffPolicies, releaseNarrowings } from "@/lib/settings/roles/diff";
-import { validateRoleSubmission } from "@/lib/settings/roles/validate";
+import { validateEdits } from "@/lib/settings/roles/validate";
+import { SECTIONS, sectionKeys, sectionOfGroup } from "@/lib/settings/roles/sections";
 
 const defs = CATALOG as readonly PermissionDef[];
 const snapshot: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
@@ -186,29 +187,77 @@ describe("Reset and adopt preview", () => {
   });
 });
 
-describe("a role submission is validated against the catalog, atomically", () => {
-  it("refuses an unknown role, key and scope", () => {
-    expect(validateRoleSubmission("owner", {}, snapshot).ok).toBe(false);
-    expect(validateRoleSubmission("practitioner", { "no.such_key": "studio" }, snapshot).ok).toBe(false);
-    expect(validateRoleSubmission("practitioner", { "appt.book": "everyone" }, snapshot).ok).toBe(false);
-    expect(validateRoleSubmission("practitioner", [], snapshot).ok).toBe(false);
-  });
+const both = { practitioner: snapshot, receptionist: snapshot };
 
-  it("refuses a dependent above its prerequisite, and one bad key refuses the whole submission", () => {
-    const r = validateRoleSubmission("practitioner", { "appt.move": "off", "appt.reassign": "studio", "appt.book": "own" }, snapshot);
+describe("a submission is validated against the catalog, atomically, across both roles", () => {
+  it("refuses an unknown role, key and scope, and an empty or malformed body", () => {
+    expect(validateEdits({ owner: { "appt.book": "studio" } }, both).ok).toBe(false);
+    expect(validateEdits({ practitioner: { "no.such_key": "studio" } }, both).ok).toBe(false);
+    expect(validateEdits({ practitioner: { "appt.book": "everyone" } }, both).ok).toBe(false);
+    expect(validateEdits([], both).ok).toBe(false);
+    expect(validateEdits({}, both).ok).toBe(false);
+  });
+  it("refuses a dependent above its prerequisite, and one bad key refuses the whole submission, in either role", () => {
+    const r = validateEdits({ practitioner: { "appt.book": "own" }, receptionist: { "appt.move": "off", "appt.reassign": "studio" } }, both);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.field).toBe("appt.reassign");
+    if (!r.ok) {
+      expect(r.role).toBe("receptionist");
+      expect(r.field).toBe("appt.reassign");
+    }
   });
-
-  it("accepts a prerequisite and its dependent together when consistent", () => {
-    expect(validateRoleSubmission("practitioner", { "appt.move": "studio", "appt.reassign": "own" }, snapshot).ok).toBe(true);
+  it("accepts a prerequisite and its dependent together when consistent, for two roles at once", () => {
+    const r = validateEdits({ practitioner: { "appt.move": "studio", "appt.reassign": "own" }, receptionist: { "appt.book": "studio" } }, both);
+    expect(r.ok).toBe(true);
   });
-
-  it("refuses a scope the role cannot hold", () => {
-    expect(validateRoleSubmission("receptionist", { "appt.book": "own" }, snapshot).ok).toBe(false);
+  it("refuses a scope the role cannot hold and a fixed baseline", () => {
+    expect(validateEdits({ receptionist: { "appt.book": "own" } }, both).ok).toBe(false);
+    expect(validateEdits({ practitioner: { "appt.view_calendar": "off" } }, both).ok).toBe(false);
   });
+  it("a key that is not submitted stays exactly as stored (an omitted key is never reset)", () => {
+    const stored = { ...both, practitioner: { ...snapshot, values: { "appt.cancel": "own" as const } } };
+    const r = validateEdits({ practitioner: { "appt.book": "own" } }, stored);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(Object.keys(r.edits.practitioner!)).toEqual(["appt.book"]);
+  });
+});
 
-  it("refuses to change a fixed baseline", () => {
-    expect(validateRoleSubmission("practitioner", { "appt.view_calendar": "off" }, snapshot).ok).toBe(false);
+describe("the eight sections (presentation only)", () => {
+  it("there are eight, and every catalog key is in exactly one", () => {
+    expect(SECTIONS.map((s) => s.id)).toEqual(["appointments", "availability", "clients", "clinical", "payments", "pricing_reports", "communications", "operations"]);
+    const all = Object.values(sectionKeys()).flat();
+    expect(all.sort()).toEqual(defs.map((d) => d.key).sort());
+    expect(new Set(all).size).toBe(all.length);
+  });
+  it("every catalog group is placed on purpose, none falls to the default", () => {
+    for (const g of new Set(defs.map((d) => d.group))) {
+      const placed = SECTIONS.some((s) => (s.groups as readonly string[]).includes(g));
+      expect(placed, g).toBe(true);
+    }
+    expect(sectionOfGroup("something_new")).toBe("operations");
+  });
+  it("a row is in Advanced only when it is a fixed baseline, gated, or awaiting a decision", () => {
+    for (const role of ROLES) {
+      for (const row of buildRoleModel(role, snapshot).flatMap((g) => g.rows)) {
+        const why = row.locked !== null && !row.locked.startsWith("Not offered") ? true : row.advanced;
+        expect(typeof why).toBe("boolean");
+        if (row.advanced) expect(Boolean(row.locked) || row.pendingDecision || row.gateNote || row.heldUntil, `${role} ${row.key}`).toBeTruthy();
+      }
+    }
+  });
+  it("receptionist rows that the catalog does not offer say so and have no live control", () => {
+    for (const row of buildRoleModel("receptionist", snapshot).flatMap((g) => g.rows)) {
+      const d = defs.find((x) => x.key === row.key)!;
+      if (!d.offeredTo.receptionist && d.ownerConfigurable) {
+        expect(row.locked, row.key).toMatch(/Not offered to receptionists/);
+        expect(row.options.every((o) => o.disabled), row.key).toBe(true);
+      }
+    }
+  });
+  it("consequence labels are specific: financial for money keys, sensitive for private data, never on an ordinary key", () => {
+    for (const row of buildRoleModel("practitioner", snapshot).flatMap((g) => g.rows)) {
+      const d = defs.find((x) => x.key === row.key)!;
+      if (!d.sensitive) expect(row.consequence, row.key).toBeNull();
+      else expect(row.consequence, row.key).toBe(d.group === "payments" || d.group === "pricing" ? "financial" : "sensitive");
+    }
   });
 });

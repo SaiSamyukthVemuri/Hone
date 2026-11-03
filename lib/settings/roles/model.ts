@@ -1,3 +1,4 @@
+import { consequenceOf, SECTIONS, sectionOfKey, type Consequence, type SectionId } from "./sections";
 import {
   CATALOG,
   GATES,
@@ -54,6 +55,7 @@ export type RoleRow = {
   label: string;
   description: string;
   ownMeaning: string | null;
+  defaultScope: Scope; // what a NEW studio ships with, shown beside the current value
   chosen: Scope; // what the owner has set (or the basis value)
   effective: Scope; // what is actually in force after prerequisites and gates
   inactiveBecause: string | null; // set when effective is lower than chosen
@@ -61,6 +63,10 @@ export type RoleRow = {
   locked: string | null; // why no control is offered at all
   futureBusiness: boolean;
   sensitive: boolean;
+  consequence: Consequence;
+  section: SectionId;
+  // Finer controls sit under Advanced: a fixed baseline, a key held by a ship gate, or one still awaiting a decision.
+  advanced: boolean;
   pendingDecision: boolean;
   // approved_policy: the value shown is the APPROVED narrower policy; the database may still allow more until the closing PRs ship (P-1).
   snapshotBasis: SnapshotBasis;
@@ -110,6 +116,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         label: d.label,
         description: d.description,
         ownMeaning: d.scopes.includes("own") && role === "practitioner" ? (d.own ?? null) : null,
+        defaultScope: d.newStudioDefault[role],
         chosen,
         effective,
         inactiveBecause:
@@ -122,6 +129,9 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         locked,
         futureBusiness: d.affectsFutureStudioBusiness === true,
         sensitive: d.sensitive === true,
+        consequence: consequenceOf(d),
+        section: sectionOfKey(d),
+        advanced: !d.ownerConfigurable || isPending(d) || (gate !== undefined && policy.gates?.[gate] !== true),
         pendingDecision: isPending(d),
         snapshotBasis: d.snapshotBasis,
         gateNote: gate === "receptionist_legal_name" && role === "receptionist" && policy.gates?.[gate] !== true ? GATES[gate] : null,
@@ -150,4 +160,15 @@ export function applyEdit(
   const check = checkChange(role, key, next, policy);
   if (!check.ok) return { ok: false, reason: check.reason };
   return { ok: true, policy: { ...policy, values: { ...policy.values, [key]: next } } };
+}
+
+export type RoleSectionModel = { id: SectionId; label: string; common: RoleRow[]; advanced: RoleRow[] };
+
+/** The eight sections for a role, common actions first and finer controls under Advanced. Presentation only: every row is one key. */
+export function buildRoleSections(role: Role, policy: StudioPolicy): RoleSectionModel[] {
+  const rows = buildRoleModel(role, policy).flatMap((g) => g.rows);
+  return SECTIONS.map((s) => {
+    const mine = rows.filter((r) => r.section === s.id);
+    return { id: s.id, label: s.label, common: mine.filter((r) => !r.advanced), advanced: mine.filter((r) => r.advanced) };
+  }).filter((s) => s.common.length + s.advanced.length > 0);
 }

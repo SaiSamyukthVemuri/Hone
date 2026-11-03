@@ -11,6 +11,7 @@ const store = readFileSync("lib/settings/roles/policy-store.ts", "utf8");
 describe("the Roles page shows only names and addresses, never tokens or hashes (DN-21)", () => {
   it("selects explicit columns, never *", () => {
     expect(page).not.toMatch(/\.select\(\s*["'`]\*/);
+    expect(page).toMatch(/\.select\("id, display_name, email, role, active"\)/);
     expect(page).toMatch(/\.select\("id, display_name, email, role"\)/);
   });
   it("never mentions a feed token, hash, or Google account field", () => {
@@ -31,8 +32,8 @@ describe("the Roles actions", () => {
   });
   it("bind a request to the policy version it was computed from (Insurance P-3)", () => {
     expect(actions).toMatch(/expectedVersion !== state\.version/);
-    expect(actions.indexOf("expectedVersion !== state.version")).toBeLessThan(actions.indexOf("validateRoleSubmission(role"));
-    expect(actions).toMatch(/saveRolePolicyAction\(role: unknown, values: unknown, expectedVersion: unknown\)/);
+    expect(actions.indexOf("expectedVersion !== state.version")).toBeLessThan(actions.indexOf("validateEdits("));
+    expect(actions).toMatch(/saveRolePolicyAction\(edits: unknown, expectedVersion: unknown\)/);
     expect(actions).toMatch(/resetRolePolicyAction\(role: unknown, expectedVersion: unknown\)/);
   });
   it("only export async functions plus types (a 'use server' module)", () => {
