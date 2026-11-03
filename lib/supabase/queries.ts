@@ -400,6 +400,8 @@ export type ClientCheatSheet = {
   // naming who recorded or performed a historical session. `practitioners`
   // stays active-only because it feeds pickers.
   attributionRoster: AttributionPractitioner[];
+  // The answer the sessions gate gave (clin.view_records on the Client Profile). True for every caller that passes no gate.
+  sessionsAllowed: boolean;
 };
 
 export type AttributionPractitioner = Pick<Practitioner, "id" | "display_name" | "email">;
@@ -482,6 +484,8 @@ export async function getClientById(
 ): Promise<ClientCheatSheet | null> {
   const includePrices = options.includePrices !== false;
   const supabase = await createClient();
+  // What the sessions gate answered (true when no gate was passed). Returned so the page needs no second await for the same decision.
+  let sessionsAllowed = true;
 
   const { data: client, error: clientErr } = await supabase
     .from("clients")
@@ -504,6 +508,7 @@ export async function getClientById(
       : Promise.resolve({ data: [] as ClientPricing[], error: null }),
     (async () => {
       const wanted = typeof options.includeSessions === "function" ? await options.includeSessions() : options.includeSessions !== false;
+      sessionsAllowed = wanted;
       if (!wanted) return { data: [] as unknown[], error: null };
       return supabase
         .from("sessions")
@@ -531,6 +536,7 @@ export async function getClientById(
     ),
     practitioners,
     attributionRoster,
+    sessionsAllowed,
   };
 }
 

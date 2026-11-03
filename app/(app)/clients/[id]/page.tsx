@@ -274,7 +274,11 @@ export default async function ClientCheatSheetPage({
   // Each gate is CONTAINED (a rejecting check is "not allowed", never a crashed page) and is asked only AFTER the client has resolved
   // for this studio: no gate runs, and no profile work happens, for a client this practitioner must not serve.
   const recordsGate = once(() =>
-    contained("clin.view_records", async () => (await requirePermission(await gateClient(), studio.id, "clin.view_records", { client: id })).allowed),
+    contained("clin.view_records", () =>
+      gateClient()
+        .then((db) => requirePermission(db, studio.id, "clin.view_records", { client: id }))
+        .then((d) => d.allowed),
+    ),
   );
   const priceReads = { includePrices: isOwner, includeSessions: recordsGate };
   const data = await getClientById(studio.id, id, priceReads);
@@ -284,13 +288,18 @@ export default async function ClientCheatSheetPage({
   }
   // clin.view_intake covers the intake ANSWERS and everything derived from them; clin.view_aftercare guards the postcare send times and attempts
   // on the Sessions tab. Started here, un-awaited, so neither adds a serial stage: each read below waits on its own promise.
-  const canViewIntakePromise = contained("clin.view_intake", async () =>
-    (await requirePermission(await gateClient(), studio.id, "clin.view_intake", { client: id })).allowed,
+  const canViewIntakePromise = contained("clin.view_intake", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
+      .then((d) => d.allowed),
   );
-  const canViewAftercarePromise = contained("clin.view_aftercare", async () =>
-    (await requirePermission(await gateClient(), studio.id, "clin.view_aftercare", { client: id })).allowed,
+  const canViewAftercarePromise = contained("clin.view_aftercare", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
+      .then((d) => d.allowed),
   );
-  const canViewRecords = await recordsGate();
+  // The decision the sessions gate already gave inside getClientById (no second await).
+  const canViewRecords = data.sessionsAllowed;
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
   // HON-58: ONE display identity for the whole profile (preferred name alone when set; else the stored name, labelled Name on file).
