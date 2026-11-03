@@ -4,7 +4,14 @@ import { OwnerOnlyNotice, SettingsViewHeading, STUDIO_WIDE_SCOPE } from "@/compo
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { loadStudioPolicyState } from "@/lib/settings/roles/policy-store";
 import type { Role } from "@/lib/permissions/catalog";
-import { resetRolePolicyAction, saveRolePolicyAction } from "./actions";
+import {
+  adoptNewDefaultsAction,
+  previewAdoptAction,
+  previewResetAction,
+  previewRoleChangesAction,
+  resetRolePolicyAction,
+  saveRolePolicyAction,
+} from "./actions";
 import { RolesEditor, type PersonView } from "./roles-editor";
 
 // Settings -> Roles (R2). Owner-only. The owner sees each role, who holds it, what the role may do, and changes it through the one
@@ -67,12 +74,15 @@ export default async function RolesSettingsPage() {
       <RolesEditor
         policies={{ practitioner: state.policy, receptionist: state.policy }}
         reviewed={state.reviewed}
-        version={state.version}
         writable={state.writable}
         notWritableReason={state.notWritableReason}
         people={people}
+        previewSave={previewRoleChangesAction}
+        previewReset={previewResetAction}
+        previewAdopt={previewAdoptAction}
         save={saveRolePolicyAction}
         reset={resetRolePolicyAction}
+        adopt={adoptNewDefaultsAction}
       />
     </div>
   );

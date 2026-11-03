@@ -14,7 +14,7 @@ const people = [
   { id: "i1", name: "Taylor Invitee", email: "taylor@example.test", role: "receptionist" as const, state: "invited" as const },
   { id: "d1", name: "Sam Former", email: "former@example.test", role: "practitioner" as const, state: "deactivated" as const },
 ];
-const noop = async () => ({ ok: false as const, error: "no" });
+const noop = async () => ({ ok: false as const, error: { code: "unavailable" as const } });
 const render = (over: Record<string, unknown> = {}) =>
   renderToStaticMarkup(
     createElement(RolesEditor, {
@@ -22,10 +22,13 @@ const render = (over: Record<string, unknown> = {}) =>
       reviewed: false,
       writable: false,
       notWritableReason: "Saving turns on with the permission core.",
-      version: null,
       people,
+      previewSave: noop,
+      previewReset: noop,
+      previewAdopt: noop,
       save: noop,
       reset: noop,
+      adopt: noop,
       ...over,
     }),
   );
@@ -74,5 +77,23 @@ describe("batch 3 owner-only copy", () => {
     expect(html).toContain("booking window and the public new-client booking rules only");
     expect(html).toContain('href="/settings/studio/details"');
     expect(html).toContain('href="/settings/services"');
+  });
+});
+
+describe("batch 4 page items", () => {
+  const html = render({ initialView: "permissions" });
+  it("explains the specific effect beside every studio-business setting the catalog labels so", async () => {
+    const { CATALOG } = await import("@/lib/permissions/catalog");
+    const { FUTURE_EFFECTS } = await import("@/lib/settings/roles/effects");
+    for (const d of (CATALOG as readonly { key: string; affectsFutureStudioBusiness?: boolean }[]).filter((x) => x.affectsFutureStudioBusiness)) expect(FUTURE_EFFECTS[d.key], d.key).toBeTruthy();
+    expect(html).toContain('data-testid="future-effect"');
+  });
+  it("shows the client directory as a fixed baseline, not a switch", () => {
+    expect(html).toContain('data-testid="baseline-note"');
+    expect(html).toContain("A fixed baseline, not a switch");
+  });
+  it("shows view-aftercare as its own row beside send", () => {
+    expect(html).toMatch(/data-permission-row="clin\.view_aftercare"/);
+    expect(html).toMatch(/data-permission-row="appt\.aftercare_send"/);
   });
 });

@@ -12,8 +12,8 @@ export type StudioPolicyState = {
   policy: StudioPolicy;
   // The owner has adopted new defaults or saved a custom configuration. False keeps the review banner up (C.6).
   reviewed: boolean;
-  // Opaque token the save sends back so a stale edit is refused instead of overwriting a newer one. Null until R1.
-  version: string | null;
+  // Policy version the save sends back so a stale edit is refused instead of overwriting a newer one. 0 before any row exists.
+  version: number;
   // Saving needs R1's audited writer. False renders the controls as a read-only review and the save actions refuse.
   writable: boolean;
   notWritableReason: string | null;
@@ -26,7 +26,7 @@ export async function loadStudioPolicyState(_studioId: string): Promise<StudioPo
   return {
     policy: { basis: "existing_snapshot", values: {}, gates: {} },
     reviewed: false,
-    version: null,
+    version: 0,
     writable: false,
     notWritableReason: NOT_WRITABLE_REASON,
   };

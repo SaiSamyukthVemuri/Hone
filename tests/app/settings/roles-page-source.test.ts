@@ -32,9 +32,10 @@ describe("the Roles actions", () => {
   });
   it("bind a request to the policy version it was computed from (Insurance P-3)", () => {
     expect(actions).toMatch(/expectedVersion !== state\.version/);
-    expect(actions.indexOf("expectedVersion !== state.version")).toBeLessThan(actions.indexOf("validateEdits("));
-    expect(actions).toMatch(/saveRolePolicyAction\(edits: unknown, expectedVersion: unknown\)/);
-    expect(actions).toMatch(/resetRolePolicyAction\(role: unknown, expectedVersion: unknown\)/);
+    expect(actions.indexOf("expectedVersion !== state.version")).toBeLessThan(actions.indexOf("validate?.(state)"));
+    expect(actions).toMatch(/saveRolePolicyAction\(\s*edits: unknown,\s*expectedVersion: unknown/);
+    expect(actions).toMatch(/resetRolePolicyAction\(role: unknown, expectedVersion: unknown/);
+    expect(actions).toMatch(/adoptNewDefaultsAction\(expectedVersion: unknown/);
   });
   it("only export async functions plus types (a 'use server' module)", () => {
     expect(actions.match(/^export (?!async function|type)/gm)).toBeNull();

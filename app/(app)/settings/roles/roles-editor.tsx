@@ -1,11 +1,24 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { ROLES, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ROLE_LABELS, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
-import { defaultsPolicy, diffPolicies, releaseNarrowings, type RoleDiff } from "@/lib/settings/roles/diff";
+import { releaseNarrowings } from "@/lib/settings/roles/diff";
+import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
+import {
+  isRowError,
+  reasonAcceptable,
+  reasonRequired,
+  roleErrorMessage,
+  type CommandResult,
+  type PreviewResult,
+  type RoleError,
+  type RolePreview,
+  type ServerPreview,
+} from "@/lib/settings/roles/api";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import {
@@ -15,7 +28,6 @@ import {
   ERASURE_NOTE,
   PORTAL_OFF_CONFIRMATION,
 } from "@/lib/settings/roles/studio-notes";
-import type { RolesActionResult } from "./actions";
 
 // The Roles control center (R2, People-first). Three views: People (who holds what, from the saved policy), Permissions (the eight
 // sections, one draft across both roles, a review screen before anything is saved) and History. Scope controls appear only where
@@ -35,15 +47,19 @@ export type RolesEditorProps = {
   reviewed: boolean;
   writable: boolean;
   notWritableReason: string | null;
-  version: string | null;
   initialView?: "people" | "permissions" | "history";
   people: PersonView[];
-  save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: string | null) => Promise<RolesActionResult>;
-  reset: (role: Role, expectedVersion: string | null) => Promise<RolesActionResult>;
+  // Every preview and every write is the permission core's. The page sends only changed keys and the version a preview returned.
+  previewSave: (edits: Partial<Record<Role, Record<string, Scope>>>) => Promise<PreviewResult>;
+  previewReset: (role: Role) => Promise<PreviewResult>;
+  previewAdopt: () => Promise<PreviewResult>;
+  save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string) => Promise<CommandResult>;
+  reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
+  adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
 };
 
 type View = "people" | "permissions" | "history";
-type Preview = { kind: "reset" | "adopt"; diff: RoleDiff };
+type Preview = { kind: "reset" | "adopt"; data: ServerPreview };
 
 const scopeText = (s: Scope) => (s === "off" ? "Off" : s === "own" ? "Own assigned" : "Whole studio");
 
@@ -55,6 +71,9 @@ export function RolesEditor(props: RolesEditorProps) {
   const [rowError, setRowError] = useState<{ key: string; message: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [reviewData, setReviewData] = useState<ServerPreview | null>(null);
+  const [reason, setReason] = useState("");
+  const router = useRouter();
   const [confirmed, setConfirmed] = useState(false);
   const [reviewed, setReviewed] = useState(props.reviewed);
   const feedback = useSaveFeedback();
@@ -72,8 +91,7 @@ export function RolesEditor(props: RolesEditorProps) {
   );
 
   const peopleWith = (r: Role) => props.people.filter((p) => p.role === r && p.state === "active");
-  const reviewDiffs = dirtyRoles.map((r) => ({ role: r, diff: diffPolicies(r, saved[r], drafts[r]) }));
-  const sensitiveCount = reviewDiffs.reduce((n, d) => n + d.diff.newlyEnabledSensitive, 0);
+  const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
 
   function choose(key: string, scope: Scope) {
     const result = applyEdit(role, drafts[role], key, scope);
@@ -84,6 +102,7 @@ export function RolesEditor(props: RolesEditorProps) {
     setRowError(null);
     feedback.reset();
     setReviewing(false);
+    setReviewData(null);
     setDrafts((d) => ({ ...d, [role]: result.policy }));
   }
 
@@ -97,45 +116,78 @@ export function RolesEditor(props: RolesEditorProps) {
     return edits;
   }
 
+  // A refusal never touches the draft. A per-key code opens that role and puts the message on the row; a stale version keeps every
+  // choice and asks for a fresh review against the version the core now holds.
+  function handleError(err: RoleError) {
+    if (isRowError(err)) {
+      if (err.role) setRole(err.role);
+      setView("permissions");
+      setRowError({ key: err.key, message: roleErrorMessage(err) });
+    }
+    if (err.code === "stale_version") {
+      setReviewData(null);
+      setPreview(null);
+    }
+    feedback.failed(roleErrorMessage(err));
+  }
+
+  async function onReview() {
+    setReviewing(true);
+    setReviewData(null);
+    setConfirmed(false);
+    const r = await props.previewSave(changedEdits());
+    if (r.ok) setReviewData(r.preview);
+    else handleError(r.error);
+  }
+
+  const needsReason = reviewing && reasonRequired("save", sensitiveCount > 0);
+  const reasonOk = reasonAcceptable("save", sensitiveCount > 0, reason);
+
   async function onSave() {
+    if (!reviewData) return;
     feedback.saving();
-    const result = await props.save(changedEdits(), props.version);
+    const result = await props.save(changedEdits(), reviewData.version, confirmed, reason.trim());
     if (result.ok) {
       setSaved(drafts);
       setReviewing(false);
+      setReviewData(null);
       setConfirmed(false);
+      setReason("");
       feedback.saved();
     } else {
-      // Every choice stays as typed; only the message changes. Nothing was partly saved.
-      feedback.failed(result.error);
+      handleError(result.error);
     }
   }
 
   function discard() {
     setDrafts(saved);
     setReviewing(false);
+    setReviewData(null);
     setConfirmed(false);
+    setReason("");
     setRowError(null);
     feedback.reset();
   }
 
-  function openPreview(kind: Preview["kind"]) {
-    setPreview({ kind, diff: diffPolicies(role, saved[role], defaultsPolicy(saved[role])) });
+  async function openPreview(kind: Preview["kind"]) {
+    setReason("");
+    const r = await (kind === "adopt" ? props.previewAdopt() : props.previewReset(role));
+    if (r.ok) setPreview({ kind, data: r.preview });
+    else handleError(r.error);
   }
 
   async function confirmPreview() {
     if (!preview) return;
     feedback.saving();
-    const result = await props.reset(role, props.version);
+    const result = preview.kind === "adopt" ? await props.adopt(preview.data.version, reason.trim()) : await props.reset(role, preview.data.version, reason.trim());
     if (result.ok) {
-      const next = defaultsPolicy(saved[role]);
-      setSaved((s) => ({ ...s, [role]: next }));
-      setDrafts((d) => ({ ...d, [role]: next }));
-      setReviewed(true);
+      // The core owns the resulting policy; reload to read it rather than guess it here.
       setPreview(null);
+      setReason("");
       feedback.saved();
+      router.refresh();
     } else {
-      feedback.failed(result.error);
+      handleError(result.error);
     }
   }
 
@@ -262,10 +314,11 @@ export function RolesEditor(props: RolesEditorProps) {
             <PreviewPanel
               kind={preview.kind}
               role={role}
-              diff={preview.diff}
-              holders={peopleWith(role).map((p) => p.name)}
-              canConfirm={props.writable}
-              blockedReason={props.notWritableReason}
+              data={preview.data}
+              canConfirm={props.writable && reasonAcceptable(preview.kind, false, reason)}
+              blockedReason={props.writable ? null : props.notWritableReason}
+              reason={reason}
+              onReason={setReason}
               onConfirm={confirmPreview}
               onCancel={() => setPreview(null)}
             />
@@ -292,11 +345,13 @@ export function RolesEditor(props: RolesEditorProps) {
 
           {reviewing && (
             <ReviewPanel
-              diffs={reviewDiffs}
-              holders={(r) => peopleWith(r).map((p) => p.name)}
+              data={reviewData}
               sensitiveCount={sensitiveCount}
               confirmed={confirmed}
               onConfirmed={setConfirmed}
+              needsReason={needsReason}
+              reason={reason}
+              onReason={setReason}
             />
           )}
 
@@ -304,7 +359,7 @@ export function RolesEditor(props: RolesEditorProps) {
             {!reviewing ? (
               <button
                 type="button"
-                onClick={() => setReviewing(true)}
+                onClick={onReview}
                 disabled={!dirty}
                 className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
@@ -314,7 +369,7 @@ export function RolesEditor(props: RolesEditorProps) {
               <button
                 type="button"
                 onClick={onSave}
-                disabled={!props.writable || feedback.state.kind === "saving" || (sensitiveCount > 0 && !confirmed)}
+                disabled={!props.writable || !reviewData || feedback.state.kind === "saving" || (sensitiveCount > 0 && !confirmed) || !reasonOk}
                 className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
                 Save changes
@@ -385,6 +440,11 @@ function RowList({
                   Affects future studio business
                 </p>
               )}
+              {row.futureBusiness && FUTURE_EFFECTS[row.key] && (
+                <p data-testid="future-effect" className="mt-0.5 break-words text-xs text-neutral-600 dark:text-neutral-400">
+                  {FUTURE_EFFECTS[row.key]}
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {row.options.map((o) => (
                   <label
@@ -413,6 +473,11 @@ function RowList({
               </p>
             ))}
             {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
+            {BASELINE_NOTES[row.key] && (
+              <p data-testid="baseline-note" className="break-words text-xs text-neutral-600 dark:text-neutral-400">
+                {BASELINE_NOTES[row.key]}
+              </p>
+            )}
             {row.inactiveBecause && (
               <p data-testid="inactive-because" className="break-words text-xs text-amber-800 dark:text-amber-300">
                 Chosen but not in force. {row.inactiveBecause}
@@ -575,39 +640,89 @@ function AccessSummary({ person, saved }: { person: PersonView; saved: Record<Ro
   );
 }
 
-function ReviewPanel({
-  diffs,
-  holders,
-  sensitiveCount,
-  confirmed,
-  onConfirmed,
-}: {
-  diffs: { role: Role; diff: RoleDiff }[];
-  holders: (r: Role) => string[];
-  sensitiveCount: number;
-  confirmed: boolean;
-  onConfirmed: (v: boolean) => void;
-}) {
+function DiffList({ item, testPrefix }: { item: RolePreview; testPrefix: "review" | "preview" }): ReactNode {
+  const { diff } = item;
   return (
-    <section data-testid="roles-review" aria-label="Review changes" className="flex min-w-0 flex-col gap-4 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
-      <h3 className="text-base font-medium">Review changes</h3>
-      {diffs.map(({ role, diff }) => (
-        <div key={role} data-review-role={role} className="flex min-w-0 flex-col gap-2">
-          <h4 className="font-medium">{ROLE_LABELS[role]}s</h4>
-          <p className="break-words text-sm text-neutral-600 dark:text-neutral-400">
-            Affects {holders(role).length === 0 ? "nobody yet" : holders(role).join(", ")} ({holders(role).length}). {diff.widened} gain access, {diff.narrowed} lose access.
-          </p>
-          <ul className="flex flex-col gap-1">
-            {diff.changes.map((c) => (
-              <li key={c.key} data-review-change={c.key} data-direction={c.direction} className={`break-words rounded-md px-2 py-1 text-sm ${c.newlyEnabledSensitive ? "bg-red-50 font-medium dark:bg-red-950" : ""}`}>
-                <span className="text-neutral-500">{c.groupLabel}: </span>
-                {c.label}: {scopeText(c.from)} to {scopeText(c.to)}
-              </li>
+    <>
+      <p className="break-words text-sm text-neutral-600 dark:text-neutral-400">
+        Affects {item.count === 0 ? "nobody yet" : item.people.map((p) => p.name).join(", ")} ({item.count}). {diff.widened} gain access, {diff.narrowed} lose access.
+      </p>
+      {diff.newlyEnabledSensitive > 0 && testPrefix === "preview" && (
+        <p data-testid="preview-sensitive" role="alert" className="rounded-md bg-red-50 p-2 text-sm font-medium text-red-900 dark:bg-red-950 dark:text-red-200">
+          {diff.newlyEnabledSensitive} newly enabled financial or sensitive {diff.newlyEnabledSensitive === 1 ? "permission" : "permissions"}. Check these before you confirm.
+        </p>
+      )}
+      {diff.fixedNarrowings.length > 0 && (
+        <div data-testid="preview-fixed-narrowings" className="rounded-md bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <p className="font-medium">These become owner-only, so practitioners lose the access they have today:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {diff.fixedNarrowings.map((f) => (
+              <li key={f.id} data-fixed-narrowing={f.id}>{f.label}</li>
             ))}
           </ul>
         </div>
+      )}
+      <ul className="flex flex-col gap-1">
+        {diff.changes.map((c) => (
+          <li key={c.key} data-review-change={testPrefix === "review" ? c.key : undefined} data-preview-change={testPrefix === "preview" ? c.key : undefined} data-direction={c.direction} data-sensitive={c.newlyEnabledSensitive ? "true" : "false"} className={`break-words rounded-md px-2 py-1 text-sm ${c.newlyEnabledSensitive ? "bg-red-50 font-medium dark:bg-red-950" : ""}`}>
+            <span className="text-neutral-500">{c.groupLabel}: </span>
+            {c.label}: {scopeText(c.from)} to {scopeText(c.to)}
+            {c.futureBusiness ? " (affects future studio business)" : ""}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function ReasonField({ id, value, onChange, required }: { id: string; value: string; onChange: (v: string) => void; required: boolean }): ReactNode {
+  return (
+    <label htmlFor={id} className="flex min-w-0 flex-col gap-1 text-sm">
+      <span className="font-medium">Why are you making this change?{required ? "" : " (optional)"}</span>
+      <input
+        id={id}
+        data-testid="reason-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700"
+        aria-describedby={`${id}-hint`}
+      />
+      <span id={`${id}-hint`} className="text-xs text-neutral-500">
+        {required ? "Required: say why in your own words. " : ""}The before and after are recorded automatically; your reason is kept with them in the change history.
+      </span>
+    </label>
+  );
+}
+
+function ReviewPanel({
+  data,
+  sensitiveCount,
+  confirmed,
+  onConfirmed,
+  needsReason,
+  reason,
+  onReason,
+}: {
+  data: ServerPreview | null;
+  sensitiveCount: number;
+  confirmed: boolean;
+  onConfirmed: (v: boolean) => void;
+  needsReason: boolean;
+  reason: string;
+  onReason: (v: string) => void;
+}) {
+  const id = useId();
+  return (
+    <section data-testid="roles-review" aria-label="Review changes" className="flex min-w-0 flex-col gap-4 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
+      <h3 className="text-base font-medium">Review changes</h3>
+      {!data && <p className="text-sm text-neutral-600 dark:text-neutral-400">Checking what these changes would do&hellip;</p>}
+      {data?.roles.map((item) => (
+        <div key={item.role} data-review-role={item.role} className="flex min-w-0 flex-col gap-2">
+          <h4 className="font-medium">{ROLE_LABELS[item.role]}s</h4>
+          <DiffList item={item} testPrefix="review" />
+        </div>
       ))}
-      {sensitiveCount > 0 && (
+      {data && sensitiveCount > 0 && (
         <label className="flex items-start gap-2 text-sm font-medium">
           <input type="checkbox" checked={confirmed} onChange={(e) => onConfirmed(e.target.checked)} className="mt-1" />
           <span data-testid="review-sensitive">
@@ -615,6 +730,7 @@ function ReviewPanel({
           </span>
         </label>
       )}
+      {data && <ReasonField id={`${id}-reason`} value={reason} onChange={onReason} required={needsReason} />}
     </section>
   );
 }
@@ -622,63 +738,42 @@ function ReviewPanel({
 function PreviewPanel({
   kind,
   role,
-  diff,
-  holders,
+  data,
   canConfirm,
   blockedReason,
+  reason,
+  onReason,
   onConfirm,
   onCancel,
 }: {
   kind: "reset" | "adopt";
   role: Role;
-  diff: RoleDiff;
-  holders: string[];
+  data: ServerPreview;
   canConfirm: boolean;
   blockedReason: string | null;
+  reason: string;
+  onReason: (v: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const id = useId();
+  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0);
   return (
     <section data-testid="roles-preview" aria-label={kind === "adopt" ? "Review new defaults" : "Reset to defaults"} className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
       <h3 className="text-base font-medium">
-        {kind === "adopt" ? "Adopt the new defaults" : "Reset to defaults"} for {ROLE_LABELS[role].toLowerCase()}s
+        {kind === "adopt" ? "Adopt the new defaults" : `Reset to defaults for ${ROLE_LABELS[role].toLowerCase()}s`}
       </h3>
-      <p className="break-words text-sm text-neutral-600 dark:text-neutral-400">
-        This changes access for {holders.length === 0 ? "nobody yet" : holders.join(", ")}.
-      </p>
-      {diff.changes.length === 0 && diff.fixedNarrowings.length === 0 ? (
+      {empty ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing would change. These settings already match the defaults.</p>
       ) : (
-        <>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            {diff.widened} would gain access and {diff.narrowed} would lose access.
-          </p>
-          {diff.newlyEnabledSensitive > 0 && (
-            <p data-testid="preview-sensitive" role="alert" className="rounded-md bg-red-50 p-2 text-sm font-medium text-red-900 dark:bg-red-950 dark:text-red-200">
-              {diff.newlyEnabledSensitive} newly enabled financial or sensitive {diff.newlyEnabledSensitive === 1 ? "permission" : "permissions"}. Check these before you confirm.
-            </p>
-          )}
-          {diff.fixedNarrowings.length > 0 && (
-            <div data-testid="preview-fixed-narrowings" className="rounded-md bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-              <p className="font-medium">These become owner-only, so practitioners lose the access they have today:</p>
-              <ul className="mt-1 list-disc pl-5">
-                {diff.fixedNarrowings.map((f) => (
-                  <li key={f.id} data-fixed-narrowing={f.id}>{f.label}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <ul className="flex flex-col gap-1">
-            {diff.changes.map((c) => (
-              <li key={c.key} data-preview-change={c.key} data-direction={c.direction} data-sensitive={c.newlyEnabledSensitive ? "true" : "false"} className={`break-words rounded-md px-2 py-1 text-sm ${c.newlyEnabledSensitive ? "bg-red-50 font-medium dark:bg-red-950" : ""}`}>
-                <span className="text-neutral-500">{c.groupLabel}: </span>
-                {c.label}: {scopeText(c.from)} to {scopeText(c.to)}
-                {c.futureBusiness ? " (affects future studio business)" : ""}
-              </li>
-            ))}
-          </ul>
-        </>
+        data.roles.map((item) => (
+          <div key={item.role} data-preview-role={item.role} className="flex min-w-0 flex-col gap-2">
+            {data.roles.length > 1 && <h4 className="font-medium">{ROLE_LABELS[item.role]}s</h4>}
+            <DiffList item={item} testPrefix="preview" />
+          </div>
+        ))
       )}
+      <ReasonField id={`${id}-reason`} value={reason} onChange={onReason} required={reasonRequired(kind, false)} />
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={onConfirm} disabled={!canConfirm} className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
           {kind === "adopt" ? "Adopt these defaults" : "Confirm reset"}
