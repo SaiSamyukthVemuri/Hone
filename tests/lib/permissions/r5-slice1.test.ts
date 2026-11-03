@@ -100,4 +100,25 @@ describe("R5 slice 1: wiring", () => {
     expect(catalogByKey.get("client.edit_contact")?.description).toMatch(/audited with masked/);
     expect(read("app/(app)/clients/[id]/actions.ts")).not.toContain('"client.edit_contact"');
   });
+
+  it("client.create is 'enforced', not 'deny_only': no role check stands in front of the key, so widening it takes effect", () => {
+    const src = read("app/(app)/clients/new/actions.ts");
+    const start = src.indexOf("export async function createClientAction(");
+    const body = src.slice(start, src.indexOf('"client.create"', start));
+    expect(body).not.toMatch(/\.role\b/); // no owner/practitioner floor before the key
+    const quick = read("app/(app)/calendar/actions.ts");
+    const qs = quick.indexOf("export async function createClientForCalendarBookingAction(");
+    expect(quick.slice(qs, quick.indexOf('"client.create"', qs))).not.toMatch(/\.role\b/);
+    // and the database does not close the path to a member either: the insert policy is studio-membership only
+    const policy = read("supabase/migrations/0087_clinical_rls_delete_hardening.sql");
+    expect(policy).toMatch(/create policy "clients: members insert"\s+on public\.clients for insert to authenticated\s+with check \(public\.is_studio_member\(studio_id\)\)/);
+  });
+
+  it("comm.send_routine has no legacy floor of its own: it sits behind each action's own key, and the cancel path is open to any role that holds appt.cancel", () => {
+    const src = read("app/(app)/calendar/actions.ts");
+    const start = src.indexOf("export async function cancelAppointmentAction(");
+    const body = src.slice(start, src.indexOf("\nexport async function ", start + 10));
+    expect(body).not.toMatch(/practitioner\.role !== "owner"/); // cancel is not owner-only, so the message key is reachable
+    expect(enforcementOf("appt.cancel")).toBe("enforced");
+  });
 });
