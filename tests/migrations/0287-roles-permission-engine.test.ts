@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0287 (held): the permission engine. Source contract only; behaviour is proved by tests/db/permission-engine.db.test.ts
@@ -37,13 +37,13 @@ describe("0287 permission engine: shape", () => {
     const created = [...code.matchAll(/create or replace function public\.(\w+)\(/g)].map((m) => m[1]!);
     for (const n of new Set(created)) expect(code, n).toMatch(new RegExp(`revoke all on function public\\.${n}\\([^)]*\\) from public, anon, authenticated, service_role;`));
     const granted = [...code.matchAll(/grant execute on function public\.(\w+)\(/g)].map((m) => m[1]!).sort();
-    expect(granted).toEqual(["adopt_new_defaults", "change_staff_role", "effective_access", "get_role_permissions", "has_studio_permission", "list_permission_audit", "preview_adopt_new_defaults", "preview_reset", "preview_role_changes", "reset_role_to_defaults", "save_role_permissions"]);
+    expect(granted).toEqual(["activate_released_permissions", "adopt_new_defaults", "change_staff_role", "effective_access", "get_role_permissions", "has_studio_permission", "list_permission_audit", "preview_activation", "preview_adopt_new_defaults", "preview_reset", "preview_role_changes", "reset_role_to_defaults", "save_role_permissions"]);
     expect(code).not.toMatch(/grant execute[^;]*\bto\b[^;]*\b(anon|service_role|public)\b/i);
   });
 
   it("every table has row level security on and every API role privilege revoked", () => {
     const tables = [...code.matchAll(/create table public\.(\w+)/g)].map((m) => m[1]!);
-    expect(tables.sort()).toEqual(["permission_audit", "permission_catalog", "permission_narrowings", "permission_ship_gates", "studio_permission_policy", "studio_role_permissions"]);
+    expect(tables.sort()).toEqual(["permission_audit", "permission_catalog", "permission_key_activation", "permission_key_release", "permission_narrowings", "permission_ship_gates", "studio_permission_policy", "studio_role_permissions"]);
     for (const t of tables) {
       expect(code, t).toMatch(new RegExp(`alter table public\\.${t} enable row level security;`));
       expect(code, t).toMatch(new RegExp(`revoke all on public\\.${t} from public, anon, authenticated, service_role;`));
@@ -70,5 +70,51 @@ describe("0287 permission engine: shape", () => {
     const fn = code.slice(code.indexOf("create or replace function public.perm_reason_ok"), code.indexOf("create or replace function public.perm_actor"));
     expect(fn).not.toMatch(/length\(|char_length\(/);
     expect(fn).toMatch(/count\(distinct ch\)/);
+  });
+});
+
+// Activation rule (Sam, 3 Nov). Source contract; behaviour is proved by tests/db/permission-activation.db.test.ts (NOT RUN until the slot).
+const fnBodies = () => code.split(/(?=create or replace function public\.)/).map((b) => [b.split("\n$$;")[0], b.match(/^create or replace function public\.(\w+)/)?.[1]] as const).filter(([, n]) => n).map(([b, n]) => Object.assign([b, n] as string[], {}));
+
+describe("0287 activation rule: source contract", () => {
+  it("every key the catalog marks enforced is in the release seed", async () => {
+    const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
+    const seeded = [...(code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0]).matchAll(/\('([a-z_.]+)', now\(\)/g)].map((m) => m[1]).sort();
+    const enforced = (CATALOG as readonly { key: string }[]).filter((d) => enforcementOf(d.key) === "enforced").map((d) => d.key).sort();
+    // Every enforced key MUST be released, or its owner-stored values would be inert forever. (Released but not yet enforced is harmless.)
+    expect(enforced.filter((k) => !seeded.includes(k))).toEqual([]);
+  });
+
+  it("only the owner commands write studio_role_permissions, the activation table and the release table (no other writer exists)", () => {
+    const writes = (table: string) => [...code.matchAll(new RegExp(`(insert into|update|delete from)\\s+public\\.${table}\\b`, "g"))].length;
+    // role permissions: save (upsert), reset (delete) only
+    const rolePermWriters = fnBodies()
+      .filter((m) => /(insert into|update|delete from)\s+public\.studio_role_permissions\b/.test(m[0]))
+      .map((m) => m[1]).sort();
+    expect(rolePermWriters).toEqual(["perm_run_basis", "perm_run_changes"]);
+    const activationWriters = fnBodies()
+      .filter((m) => /(insert into|update|delete from)\s+public\.permission_key_activation\b/.test(m[0]))
+      .map((m) => m[1]);
+    expect(activationWriters).toEqual(["perm_run_activation"]);
+    const releaseWriters = fnBodies()
+      .filter((m) => /(insert into|update|delete from)\s+public\.permission_key_release\b/.test(m[0]));
+    expect(releaseWriters).toEqual([]);
+    expect(writes("permission_key_release")).toBe(1); // the migration seed only
+  });
+
+  it("no application code and no other migration writes these tables", () => {
+    const files: string[] = [];
+    const walk = (d: string) => { for (const n of readdirSync(d)) { const f = `${d}/${n}`; if (n === "node_modules" || n === ".next" || n === ".git") continue; statSync(f).isDirectory() ? walk(f) : /\.(ts|tsx|sql|mjs)$/.test(n) && files.push(f); } };
+    for (const d of ["app", "lib", "components", "scripts", "supabase/migrations"]) walk(d);
+    const re = /(insert\s+into|update|delete\s+from)\s+(public\.)?(studio_role_permissions|permission_key_activation|permission_key_release)\b|\.from\(\s*["'](studio_role_permissions|permission_key_activation|permission_key_release)["']\s*\)/;
+    const hits = files.filter((f) => !f.endsWith(FILE) && re.test(readFileSync(f, "utf8")));
+    expect(hits).toEqual([]);
+  });
+
+  it("the resolver treats a missing release row as today's snapshot (fail closed) and a studio basis_at / stored set_at gate the intended values", () => {
+    expect(code).toMatch(/if not found then return v_snap; end if;/);
+    expect(code).toContain("v_stored_at >= v_rel.released_at");
+    expect(code).toContain("v_basis_at >= v_rel.released_at");
+    expect(code).toContain("'inactive_until_activated'");
   });
 });
