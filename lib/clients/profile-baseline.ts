@@ -172,6 +172,41 @@ export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline)
   return { ok: true, patch, conditions };
 }
 
+/**
+ * PostgREST carries every `.eq` condition in the URL, and the API gateway refuses a long URL (measured on the local
+ * stack: a filter value of 8,000 characters is accepted, 12,000 is refused with 414). A client whose stored allergies
+ * or address text is long could therefore never be edited in that field: the save failed at transport and was
+ * reported as not saved. So only SHORT conditions travel in the URL. A condition on a long value is checked by reading
+ * the current value first and comparing it exactly (the same null-safe comparison), and a mismatch is the same
+ * conflict review as a zero-row write. The short conditions stay inside the one conditional UPDATE.
+ *
+ * KNOWN RESIDUAL: for a deferred (long) field the check and the write are two statements, so a change made by someone
+ * else in the few milliseconds between them is not detected for THAT field. Closing it atomically needs the database
+ * (a JSON-body function; held, not part of this change).
+ */
+export const URL_CONDITION_BUDGET_CHARS = 3_000;
+
+const encodedLength = (value: BaselineValue): number => encodeURIComponent(value === null ? "null" : String(value)).length;
+
+export function splitConditions<T extends { key: ProfileKey; value: BaselineValue }>(
+  conditions: ReadonlyArray<T>,
+): { inUrl: T[]; deferred: T[] } {
+  const bySize = conditions
+    .map((c, index) => ({ c, index, size: encodedLength(c.value) }))
+    .sort((a, b) => a.size - b.size);
+  const keep = new Set<number>();
+  let used = 0;
+  for (const item of bySize) {
+    if (used + item.size > URL_CONDITION_BUDGET_CHARS) continue;
+    used += item.size;
+    keep.add(item.index);
+  }
+  return {
+    inUrl: conditions.filter((_, i) => keep.has(i)),
+    deferred: conditions.filter((_, i) => !keep.has(i)),
+  };
+}
+
 export type ProfileConflict = {
   key: ProfileKey;
   label: string;
