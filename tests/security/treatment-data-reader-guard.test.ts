@@ -287,6 +287,130 @@ describe("treatment-data reader guard (a tripwire, not a proof)", () => {
   });
 });
 
+// Server actions (OPS, 3 Nov, Codex at 48133681f): a "use server" export is callable from an already-open tab after a key is revoked, so
+// a file-level "write-path" class does NOT excuse an action that RETURNS treatment data. Every exported action whose body touches a
+// protected class (directly, by RPC, or through a tainted loader) must make the key call INSIDE that function, or be listed here by name
+// as returning no table data.
+const isUseServer = (src: string) => /^\s*["']use server["']/.test(src);
+function actionClasses(f: string, body: string): Map<DataClass, string> {
+  const out = new Map<DataClass, string>();
+  for (const t of tablesIn(body)) out.set(CLASS_OF[t]!, `reads ${t}`);
+  for (const c of rpcClasses(body)) if (!out.has(c)) out.set(c, "calls an rpc over it");
+  for (const imp of IMPORTS.get(f) ?? []) {
+    for (const [n, cs] of TAINT.get(imp.file) ?? []) {
+      if (!(imp.names.includes(n) || imp.names.includes("*")) || !new RegExp(`\\b${n}\\b`).test(body)) continue;
+      for (const c of cs) if (!out.has(c)) out.set(c, `uses ${n}`);
+    }
+  }
+  return out;
+}
+// Files with no practitioner viewer in the loop: token links and the client's own portal, owner-only and operator-only pages, payment owner paths.
+const EXEMPT_ACTION_CLASSES = new Set(["system-side", "owner-only", "operator-only", "billing-owner"]);
+const ACTIONS_NO_DATA: Record<string, string> = {
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts::removeSessionAreaAction": "chart edit gated on clin.view_records; the photos class is only the count of block-scoped images it voids (entriesRemoved/imagesRemoved), no image or path is returned",
+  "app/(app)/calendar/actions.ts::bookAppointmentForClientAction": "returns the new appointment id; ensureIntakeForClient only creates the intake request row and link, no answers are read or returned",
+  "app/(app)/calendar/actions.ts::fetchLastServiceForClientAction": "returns the last service name from appointments, not chart data; the intake name matched belongs to a helper after it",
+  // "<file>::<exportName>": reason it returns no table data
+  "app/(app)/calendar/appointment-repair-actions.ts::loadAppointmentRepairStateAction": "returns repairable true/false and a fixed reason, no chart content",
+  "app/(app)/clients/[id]/images/actions.ts::uploadTreatmentImageAction": "returns only ok/error; the photo signing path asks clin.view_photos",
+  "app/(app)/clients/[id]/images/actions.ts::updateTreatmentImageNoteAction": "returns only ok/error; the photo signing path asks clin.view_photos",
+  "app/(app)/clients/[id]/images/actions.ts::archiveTreatmentImageAction": "returns only ok/error; the photo signing path asks clin.view_photos",
+  "app/(app)/clients/[id]/intake/actions.ts::markIntakeReviewedAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::saveIntakeNotesAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::requestIntakeUpdateAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/intake/actions.ts::resendIntakeEmailAction": "returns only ok/error or a link state; writes status or sends the link, returns no answers",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPriceAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts::updateSessionPerformerAction": "write action; returns only ok/error or a flag, no chart content",
+  "app/(app)/clients/[id]/sessions/new/actions.ts::startSessionAction": "redirects to the new chart; returns no data",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::createTreatmentPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::closeTreatmentPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::attachChartEntryToPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::detachChartEntryFromPlanAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::updateTreatmentPlanNotesAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::createTreatmentPlanStageAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::updateTreatmentPlanStageAction": "write action; returns only ok/error",
+  "app/(app)/clients/[id]/treatment-plans-actions.ts::deleteTreatmentPlanStageAction": "write action; returns only ok/error",
+  "app/(app)/records/actions.ts::markAftercareExplainedAction": "write action; returns only ok/error",
+};
+const RAW_SRC = new Map(FILES.map((f) => [f, readFileSync(f, "utf8")]));
+// RU-1 (Insurance): an action that calls a same-file helper which reads a protected table reads it too. Functions are cut at every
+// top-level function/const-arrow marker (exported or not), and an action's scan includes the bodies of same-file functions it calls,
+// followed transitively within the file. Cross-file helpers are covered by the import-graph taint above.
+type Fn = { name: string; exported: boolean; body: string };
+function functionsOf(src: string): Fn[] {
+  const marks = [...src.matchAll(/^(export\s+)?(?:async\s+)?function\s+(\w+)|^(export\s+)?const\s+(\w+)\s*(?::[^=]+)?=\s*(?:async\s*)?\(/gm)];
+  return marks.map((m, i) => ({
+    name: (m[2] ?? m[4])!,
+    exported: Boolean(m[1] || m[3]),
+    body: src.slice(m.index!, marks[i + 1]?.index ?? src.length),
+  }));
+}
+function withLocalHelpers(fns: Fn[], fn: Fn): string {
+  const seen = new Set([fn.name]);
+  let text = fn.body;
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const h of fns) {
+      if (h.exported || seen.has(h.name)) continue;
+      if (new RegExp(`\\b${h.name}\\s*[(<]`).test(text)) {
+        seen.add(h.name);
+        text += "\n" + h.body;
+        grew = true;
+      }
+    }
+  }
+  return text;
+}
+const ACTION_FINDINGS: string[] = [];
+for (const [f, raw] of RAW_SRC) {
+  if (!isUseServer(raw)) continue;
+  if (EXEMPT_ACTION_CLASSES.has(ALLOW[f]?.cls ?? "")) continue;
+  const fns = functionsOf(SRC.get(f)!);
+  for (const fn of fns) {
+    if (!fn.exported || !/^export\s+async\s+function/.test(fn.body)) continue;
+    const scope = withLocalHelpers(fns, fn);
+    for (const [c, why] of actionClasses(f, scope)) {
+      // the key call must be in the action itself or in a same-file helper it calls
+      if (hasCall(scope, KEY[c])) continue;
+      if (ACTIONS_NO_DATA[`${f}::${fn.name}`]) continue;
+      ACTION_FINDINGS.push(`${f}::${fn.name} ${why} (${c}) without a ${KEY[c]} call inside the action`);
+    }
+  }
+}
+
+describe("server actions that touch treatment data ask the key themselves (open-tab replay)", () => {
+  it("every exported server action touching a protected class makes the key call inside itself or is listed as returning no table data", () => {
+    expect(ACTION_FINDINGS, ACTION_FINDINGS.join("\n")).toEqual([]);
+  });
+  it("each no-data listing names a real action with a reason", () => {
+    for (const [k, why] of Object.entries(ACTIONS_NO_DATA)) {
+      const [f, n] = k.split("::");
+      expect(RAW_SRC.get(f!)?.includes(`export async function ${n}`), `${k} does not exist`).toBe(true);
+      expect(why.length, k).toBeGreaterThan(15);
+    }
+  });
+  it("the scan sees the known reader: getWholeSessionCopySourceAction counts as a reader", () => {
+    const f = "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts";
+    const fns = functionsOf(strip(readFileSync(f, "utf8")).replace(/requirePermission\s*\([^;]*;/g, ""));
+    const fn = fns.find((e) => e.name === "getWholeSessionCopySourceAction")!;
+    expect(actionClasses(f, withLocalHelpers(fns, fn)).has("records")).toBe(true);
+  });
+
+  it("a same-file helper that reads a protected table makes its caller a reader (RU-1)", () => {
+    const src = strip(`"use server";
+export async function act() { return load(); }
+async function load() { return db.from("client_intake_forms").select("*"); }`);
+    const fns = functionsOf(src);
+    const scope = withLocalHelpers(fns, fns.find((x) => x.name === "act")!);
+    expect(actionClasses("lib/none.ts", scope).get("intake")).toMatch(/reads/);
+    // control: no helper call, no finding
+    const lone = functionsOf(strip(`"use server";
+export async function act() { return 1; }
+async function load() { return db.from("client_intake_forms").select("*"); }`));
+    expect(actionClasses("lib/none.ts", withLocalHelpers(lone, lone.find((x) => x.name === "act")!)).size).toBe(0);
+  });
+});
+
 // Z4. STATED LIMITS: what this guard does NOT see. It is a tripwire for the common shapes of a new reader, not proof that no path reads
 // treatment data without a check.
 export const STATED_LIMITS = [
@@ -294,6 +418,7 @@ export const STATED_LIMITS = [
   "Names of tables built at runtime from user input, config or concatenation are not seen; only quoted literals, embedded select strings, and template/constant names in a file that also has a non-literal .from(x) are.",
   "Views and functions that are not in supabase/migrations (hosted-only objects) are unknown; no view over a protected table exists in the migrations today. RPC bodies are matched by table name, so a function that reaches the data through another function or a view is not seen.",
   "Import resolution handles static import/export-from of project paths (@/ and relative); dynamic import(), require() and re-export barrels with renamed bindings are not followed.",
+  "Same-file helper following is by name and transitive within one file; a helper reached through an object, a callback or a variable alias is not followed, and a key call in a helper counts for every action that calls that helper.",
   "Taint is by exported name and by identifier match inside an exported function body; reads reached through a callback, a class method or a value passed as an argument are not followed.",
   "Reads outside app/, lib/ and components/ (scripts, edge functions, supabase/functions, cron outside app/api) are not scanned.",
   "Storage objects and signed URLs for treatment images are covered only through the treatment_images table and the signing-site test in tests/lib/permissions/enforcement-wiring.test.ts.",
