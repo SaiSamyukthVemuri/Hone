@@ -7,8 +7,9 @@ import {
   MAX_BASELINE_CHARS,
   parseBaseline,
   planProfileUpdate,
-  previewConflictValue,
-  CONFLICT_PREVIEW_CHARS,
+  conflictPreview,
+  CONFLICT_FULL_CHARS,
+  CONFLICT_CONTEXT_CHARS,
   splitConditions,
   URL_CONDITION_MAX_VALUE_CHARS,
   URL_CONDITION_TOTAL_CHARS,
@@ -243,15 +244,59 @@ describe("a long field changed underneath is a conflict, not a silent overwrite 
   });
 });
 
-describe("the conflict panel stays usable with a very long value (Insurance M-4)", () => {
-  it("short values are shown as they are, empty as (empty)", () => {
-    expect(previewConflictValue("latex")).toBe("latex");
-    expect(previewConflictValue("")).toBe("(empty)");
+describe("the conflict panel shows the DIFFERING region of a long value (Insurance M-4, M-6)", () => {
+  const base = "x".repeat(10_000);
+  it("short pairs are shown whole, empty as (empty)", () => {
+    const p = conflictPreview("latex", "");
+    expect(p.current).toEqual({ text: "latex", clipped: false, full: "latex" });
+    expect(p.yours.text).toBe("(empty)");
   });
-  it("a 25,000-character value is clipped to the preview length plus its true size", () => {
-    const out = previewConflictValue("a".repeat(25_000));
-    expect(out.startsWith("a".repeat(CONFLICT_PREVIEW_CHARS) + "…")).toBe(true);
-    expect(out).toContain("25,000 characters in all");
-    expect(out.length).toBeLessThan(CONFLICT_PREVIEW_CHARS + 60);
+  it("an allergy appended at the END is visible on the side that has it (the head-only clip hid it)", () => {
+    const p = conflictPreview(base + " | penicillin", base);
+    expect(p.current.clipped).toBe(true);
+    expect(p.current.text).toContain("penicillin");
+    expect(p.current.text.startsWith("…")).toBe(true);
+    expect(p.current.full).toBe(base + " | penicillin");
+    expect(p.current.text.length).toBeLessThan(CONFLICT_CONTEXT_CHARS * 2 + 100);
+    expect(p.yours.text).not.toContain("penicillin");
+  });
+  it("the same append on the draft side shows it under 'your change'", () => {
+    const p = conflictPreview(base, base + " | my note");
+    expect(p.yours.text).toContain("my note");
+    expect(p.current.text).not.toContain("my note");
+  });
+  it("an insert in the MIDDLE shows the inserted text with context on both sides", () => {
+    const a = "L".repeat(5_000) + "R".repeat(5_000);
+    const b = "L".repeat(5_000) + " | latex | " + "R".repeat(5_000);
+    const p = conflictPreview(a, b);
+    expect(p.yours.text).toContain("latex");
+    expect(p.yours.text.startsWith("…")).toBe(true);
+    expect(p.yours.text.endsWith("…")).toBe(true);
+    expect(p.current.text.length).toBeLessThan(CONFLICT_CONTEXT_CHARS * 2 + 40);
+  });
+  it("a DELETION shows the removed text on the side that still has it", () => {
+    const a = "A".repeat(5_000) + " | nuts | " + "B".repeat(5_000);
+    const b = "A".repeat(5_000) + "B".repeat(5_000);
+    const p = conflictPreview(a, b);
+    expect(p.current.text).toContain("nuts");
+    expect(p.yours.text).not.toContain("nuts");
+  });
+  it("identical-prefix values that differ only in the last characters are told apart", () => {
+    const p = conflictPreview(base + "ab", base + "ac");
+    expect(p.current.text.endsWith("ab")).toBe(true);
+    expect(p.yours.text.endsWith("ac")).toBe(true);
+    expect(p.current.text).not.toBe(p.yours.text);
+  });
+  it("values that differ everywhere are capped but the full text stays available", () => {
+    const p = conflictPreview("a".repeat(25_000), "b".repeat(25_000));
+    expect(p.current.text.length).toBeLessThanOrEqual(CONFLICT_CONTEXT_CHARS + 700);
+    expect(p.current.full.length).toBe(25_000);
+    expect(p.yours.full.length).toBe(25_000);
+  });
+  it("a pair one of which is short and one long still clips only the long side", () => {
+    const p = conflictPreview("latex", base);
+    expect(p.current.clipped).toBe(false);
+    expect(p.yours.clipped).toBe(true);
+    expect(CONFLICT_FULL_CHARS).toBeLessThan(base.length);
   });
 });

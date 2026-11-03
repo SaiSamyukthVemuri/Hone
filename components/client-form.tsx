@@ -15,7 +15,7 @@ import {
 } from "@/lib/clients/client-form-submit";
 import {
   adoptCurrent,
-  previewConflictValue,
+  conflictPreview,
   type ProfileBaseline,
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
@@ -104,6 +104,40 @@ function blockEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>) {
   }
 }
 
+function ConflictSideText({ label, side }: { label: string; side: { text: string; clipped: boolean; full: string } }) {
+  return (
+    <span className="inline-flex flex-col">
+      <span className="font-medium whitespace-pre-wrap [overflow-wrap:anywhere]">{side.text}</span>
+      {side.clipped && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs underline">Show full text ({label})</summary>
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-amber-300 bg-white p-2 text-xs [overflow-wrap:anywhere] dark:border-amber-800 dark:bg-neutral-950">
+            {side.full}
+          </pre>
+        </details>
+      )}
+    </span>
+  );
+}
+
+function ConflictRow({ conflict }: { conflict: ProfileConflict }) {
+  const preview = conflictPreview(conflict.current, conflict.yours);
+  return (
+    <li className="flex flex-col gap-1 [overflow-wrap:anywhere]">
+      <span>
+        <span className="font-medium">{conflict.label}:</span>
+        {preview.current.clipped || preview.yours.clipped ? " only the part that differs is shown." : ""}
+      </span>
+      <span>
+        Now: <ConflictSideText label="now" side={preview.current} />
+      </span>
+      <span>
+        Your change: <ConflictSideText label="your change" side={preview.yours} />
+      </span>
+    </li>
+  );
+}
+
 export function ClientForm({
   initialValues = EMPTY_CLIENT_FORM,
   submitLabel,
@@ -116,6 +150,8 @@ export function ClientForm({
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
+  // "Apply my change" stays a deliberate click and is only offered once the review panel has actually rendered.
+  const [panelRendered, setPanelRendered] = useState(false);
   const [possibleDuplicates, setPossibleDuplicates] =
     useState<ClientFormActionResult["possibleDuplicates"]>(undefined);
   const [pending, startTransition] = useTransition();
@@ -190,6 +226,10 @@ export function ClientForm({
   }
 
   // Review of a conflict: keep what is stored now for the conflicting fields, or apply my change on top of it.
+  useEffect(() => {
+    setPanelRendered(Boolean(conflicts && conflicts.length > 0));
+  }, [conflicts]);
+
   function keepCurrent() {
     if (!conflicts || !baseline) return;
     setValues((v) => {
@@ -202,7 +242,7 @@ export function ClientForm({
     setError(null);
   }
   function applyMine() {
-    if (!conflicts || !baseline) return;
+    if (!conflicts || !baseline || !panelRendered) return;
     const next = adoptCurrent(baseline, conflicts);
     setBaseline(next);
     const guards = conflicts.filter((c) => c.guard);
@@ -397,11 +437,7 @@ export function ClientForm({
           <p>{error}</p>
           <ul className="flex flex-col gap-1">
             {conflicts.map((c) => (
-              <li key={c.key} className="[overflow-wrap:anywhere]">
-                <span className="font-medium">{c.label}:</span> now{" "}
-                <span className="font-medium">{previewConflictValue(c.current)}</span>, your change{" "}
-                <span className="font-medium">{previewConflictValue(c.yours)}</span>
-              </li>
+              <ConflictRow key={c.key} conflict={c} />
             ))}
           </ul>
           <div className="flex flex-wrap items-center gap-3">
@@ -415,7 +451,7 @@ export function ClientForm({
             </button>
             <button
               type="button"
-              disabled={pending}
+              disabled={pending || !panelRendered}
               onClick={applyMine}
               className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
             >

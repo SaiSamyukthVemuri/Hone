@@ -248,14 +248,46 @@ export function describeConflicts(
   return conflicts;
 }
 
-/** Max characters of a conflicting value the review panel prints. The full value is kept in state; only the display is clipped. */
-export const CONFLICT_PREVIEW_CHARS = 300;
+/** A conflicting pair is shown in full up to this many characters each; beyond it the DIFFERING REGION is shown. */
+export const CONFLICT_FULL_CHARS = 300;
+/** Characters of unchanged context kept on each side of the differing region. */
+export const CONFLICT_CONTEXT_CHARS = 80;
+/** A differing region itself is capped here (values that differ everywhere); the full text stays one click away. */
+export const CONFLICT_REGION_MAX_CHARS = 600;
 
-/** A conflicting value as shown in the review panel: clipped, with its true length, so a very long field cannot bury the buttons. */
-export function previewConflictValue(value: string): string {
-  if (value === "") return "(empty)";
-  if (value.length <= CONFLICT_PREVIEW_CHARS) return value;
-  return `${value.slice(0, CONFLICT_PREVIEW_CHARS)}… (${value.length.toLocaleString("en-US")} characters in all)`;
+export type ConflictSide = { text: string; clipped: boolean; full: string };
+
+function clipRegion(value: string, prefix: number, suffix: number): ConflictSide {
+  const start = Math.max(0, prefix - CONFLICT_CONTEXT_CHARS);
+  const end = Math.min(value.length, value.length - suffix + CONFLICT_CONTEXT_CHARS);
+  let body = value.slice(start, end);
+  let tail = end < value.length;
+  if (body.length > CONFLICT_REGION_MAX_CHARS) {
+    body = body.slice(0, CONFLICT_REGION_MAX_CHARS);
+    tail = true;
+  }
+  const text = `${start > 0 ? "…" : ""}${body}${tail ? "…" : ""}`;
+  return { text, clipped: true, full: value };
+}
+
+/**
+ * How the review panel shows "now" and "your change". Short pairs are shown whole. For a long field a head-only preview
+ * would hide an allergy appended at the end, so the common prefix and suffix are trimmed and the region where the two
+ * values DIFFER is shown for both, with a little context and an ellipsis. The full text is always available.
+ */
+export function conflictPreview(current: string, yours: string): { current: ConflictSide; yours: ConflictSide } {
+  const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, full: v });
+  if (current.length <= CONFLICT_FULL_CHARS && yours.length <= CONFLICT_FULL_CHARS) {
+    return { current: whole(current), yours: whole(yours) };
+  }
+  const max = Math.min(current.length, yours.length);
+  let prefix = 0;
+  while (prefix < max && current[prefix] === yours[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < max - prefix && current[current.length - 1 - suffix] === yours[yours.length - 1 - suffix]) suffix += 1;
+  const side = (v: string): ConflictSide =>
+    v === "" ? whole(v) : v.length <= CONFLICT_FULL_CHARS ? whole(v) : clipRegion(v, prefix, suffix);
+  return { current: side(current), yours: side(yours) };
 }
 
 /** Baseline for the form after the staff member reviewed a conflict: adopt the current stored value. */
