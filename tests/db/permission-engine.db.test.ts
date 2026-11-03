@@ -397,6 +397,19 @@ describe("effective_access", () => {
     expect(g.rows.every((x: J) => x.scope === "off" && x.capped_by === "deactivated")).toBe(true);
     expect(await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, randomUUID()])).toMatchObject({ code: "not_found" });
   });
+
+  it("a DEACTIVATED OWNER shows no access: the active state is judged before the owner branch (Codex)", async () => {
+    const s = await seedStudio("engine-effective-owner");
+    const second = await seedMember(s, "o2");
+    await adminQuery("update public.practitioners set role='owner' where id=$1", [second.practitionerId]);
+    const live = await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, second.practitionerId]);
+    expect(live).toMatchObject({ ok: true, role: "owner", state: "active" });
+    expect(live.rows.every((x: J) => x.scope === "studio" && x.source === "owner")).toBe(true); // an active owner holds every key
+    await adminQuery("update public.practitioners set active=false where id=$1", [second.practitionerId]);
+    const g = await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, second.practitionerId]);
+    expect(g).toMatchObject({ ok: true, role: "owner", state: "deactivated" });
+    expect(g.rows.every((x: J) => x.scope === "off" && x.capped_by === "deactivated")).toBe(true);
+  });
 });
 
 const openStaffRoleGate = (studioId: string) =>
