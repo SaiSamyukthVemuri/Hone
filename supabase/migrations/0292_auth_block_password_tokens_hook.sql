@@ -57,8 +57,11 @@ begin
     return jsonb_build_object('claims', event -> 'claims');
   end if;
 
-  -- 'password', 'email/signup' (a PKCE password sign-up confirmation, which Hone never uses), 'invite' (measured as otp, never as
-  -- invite) and every unknown method: refused. The list equals the app's proof set plus oauth (tests/migrations parity guard).
+  -- 'password', 'email/signup' and 'invite' and every unknown method: refused. MEASURED (machines/AUTH-HOOK-W1-evidence.json): an invitation
+  -- redeemed through the implicit link arrives as 'otp', never 'invite'. 'email/signup' IS something Hone's flows can produce: with
+  -- Confirm email ON, an invited person's FIRST magic-link sign-in to a brand-new address arrives as 'email/signup' (with Confirm
+  -- email OFF it arrives as 'password'), so this hook REFUSES that first login. That is open finding W1 (NQ-5): do not enable this hook
+  -- until it is decided. The list equals the app's proof set plus oauth (tests/migrations/0292-hook-proof-set-parity.test.ts).
   return jsonb_build_object('error', jsonb_build_object(
     'http_code', 403,
     'message', 'Password sign-in is not available. Sign in with an email link or Google.'));

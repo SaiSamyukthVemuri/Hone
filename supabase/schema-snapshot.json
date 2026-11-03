@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0292_auth_block_password_tokens_hook.sql",
-    "sha256": "6487984fe137abd9414d683976734aa17781eb7d0edebe74b91f1ff9d3312b4f"
+    "sha256": "fe2be01ae453113a406898132c8ba3a5522262f564ad95893f8540e31caf0dde"
   },
   "public": {
     "tables": [
