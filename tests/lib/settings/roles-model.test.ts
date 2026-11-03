@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleModel, buildRoleSections, groupLabel, WIDENING_LATER_LINE } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleModel, buildRoleSections, groupLabel, inactiveNeeds, WIDENING_LATER_LINE } from "@/lib/settings/roles/model";
 import { COMMON_KEYS } from "@/lib/settings/roles/sections";
 import { defaultsPolicy, diffPolicies, releaseNarrowings } from "@/lib/settings/roles/diff";
 import { SECTIONS, sectionKeys, sectionOfGroup } from "@/lib/settings/roles/sections";
@@ -293,5 +293,42 @@ describe("deny_only: set at or below the baseline, never above it (truth test bo
   it("an enforced key may be widened as before", () => {
     const widen = edit({ ...snapshot, values: { "appt.move": "off" } }, "studio", { "appt.move": "enforced" });
     expect(widen.ok).toBe(true);
+  });
+});
+
+describe("NQ-10: editing records requires viewing records; a saved edit stays stored but inactive", () => {
+  const snapshot: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
+  const rowOf = (policy: StudioPolicy, key: string) => buildRoleModel("practitioner", policy).flatMap((g) => g.rows).find((r) => r.key === key)!;
+  const viewLabel = (CATALOG as readonly PermissionDef[]).find((d) => d.key === "clin.view_records")!.label;
+  const both = (over: Record<string, string>): StudioPolicy => ({ ...snapshot, values: { "clin.view_records": "studio", "clin.edit_records": "studio", ...over } });
+
+  it("with viewing off, a saved edit value is kept, resolves to off, and the row says what it needs", () => {
+    const policy = both({ "clin.view_records": "off" });
+    const edit = rowOf(policy, "clin.edit_records");
+    expect(edit.chosen).toBe("studio"); // kept, never deleted
+    expect(edit.effective).toBe("off"); // the engine caps it
+    expect(edit.inactiveBecause).toBe(inactiveNeeds([viewLabel]));
+    expect(edit.inactiveBecause).toMatch(/^Inactive: needs /);
+    expect(policy.values["clin.edit_records"]).toBe("studio");
+  });
+  it("is in force again, with no message, once viewing is back on (nothing was re-enabled for the owner)", () => {
+    const edit = rowOf(both({}), "clin.edit_records");
+    expect(edit.effective).toBe("studio");
+    expect(edit.inactiveBecause).toBeNull();
+  });
+  it("turning edit ON while viewing is off is refused with the prerequisite named, and viewing is NOT turned on", () => {
+    const policy: StudioPolicy = { ...snapshot, values: { "clin.view_records": "off", "clin.edit_records": "off" } };
+    const r = withEnforcement({ "clin.edit_records": "enforced", "clin.view_records": "enforced" }, () => applyEdit("practitioner", policy, "clin.edit_records", "studio"));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain(viewLabel);
+    expect(policy.values["clin.view_records"]).toBe("off");
+    const row = withEnforcement({ "clin.edit_records": "enforced", "clin.view_records": "enforced" }, () => rowOf(policy, "clin.edit_records"));
+    const raise = row.options.find((o) => o.scope === "studio")!;
+    expect(raise.disabled).toBe(true);
+    expect(raise.reason).toContain(viewLabel);
+  });
+  it("turning viewing off warns that the edit setting becomes inactive and is kept", () => {
+    const row = rowOf(both({}), "clin.view_records");
+    expect(row.alsoSwitchesOff).toContain((CATALOG as readonly PermissionDef[]).find((d) => d.key === "clin.edit_records")!.label);
   });
 });

@@ -106,6 +106,11 @@ const dependentsOf = (key: string, role: Role): PermissionDef[] =>
 /** The scope a deny_only key may not be raised above: the studio's current baseline (new-studio default or existing snapshot). */
 const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scope => (policy.basis === "new_studio" ? d.newStudioDefault[role] : d.existingSnapshot[role]);
 
+// NQ-10 (Sam, 3 Nov): a saved choice whose prerequisite is off is PRESERVED but INACTIVE. It is never deleted, and turning it on never
+// turns the prerequisite on for the owner: the row says what it needs and the owner decides.
+export const inactiveNeeds = (labels: string[]): string =>
+  `Inactive: needs ${labels.join(", ")}. Your choice is kept and applies again when ${labels.length > 1 ? "those are" : "that is"} on.`;
+
 export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel[] {
   const defs = CATALOG as readonly PermissionDef[];
   const order = [...GROUPS, ...Array.from(new Set(defs.map((d) => d.group))).filter((g) => !(GROUPS as readonly string[]).includes(g))];
@@ -145,8 +150,8 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         inactiveBecause:
           scopeRank(effective) < scopeRank(chosen)
             ? gate && policy.gates?.[gate] !== true && scopeRank(chosen) > scopeRank(d.existingSnapshot[role])
-              ? `Not yet available: ${GATES[gate]}.`
-              : `Needs ${d.requires.map((r) => catalogByKey.get(r)?.label ?? r).join(", ")} turned on first.`
+              ? `Inactive: not yet available: ${GATES[gate]}.`
+              : inactiveNeeds(d.requires.map((r) => catalogByKey.get(r)?.label ?? r))
             : null,
         options,
         locked,

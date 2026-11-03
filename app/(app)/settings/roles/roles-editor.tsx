@@ -523,12 +523,12 @@ function RowList({
             )}
             {row.inactiveBecause && (
               <p data-testid="inactive-because" className="break-words text-xs text-amber-800 dark:text-amber-300">
-                Chosen but not in force. {row.inactiveBecause}
+                {row.inactiveBecause}
               </p>
             )}
             {row.alsoSwitchesOff.length > 0 && row.chosen !== "off" && (
               <p className="break-words text-xs text-neutral-500">
-                If you turn this off, these switch off with it (their settings are kept): {row.alsoSwitchesOff.join(", ")}.
+                If you turn this off, these become inactive (their settings are kept and apply again when this is back on): {row.alsoSwitchesOff.join(", ")}.
               </p>
             )}
             {row.gateNote && (

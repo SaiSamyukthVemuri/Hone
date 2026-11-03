@@ -172,3 +172,18 @@ describe("deny_only keys can be turned down now and not widened", () => {
     expect(row(html, "appt.move")).not.toContain("deny-only-note");
   });
 });
+
+describe("NQ-10: an inactive-by-prerequisite row says so on the page", () => {
+  const row = (html: string, key: string) => html.split(`data-permission-row="${key}"`)[1]?.split("data-permission-row=")[0] ?? "";
+  it("shows 'Inactive: needs ...' on the edit row and keeps the chosen scope selected", () => {
+    const off: StudioPolicy = { basis: "existing_snapshot", values: { "clin.view_records": "off", "clin.edit_records": "studio" }, gates: {} };
+    const html = withEnforcement({ "clin.edit_records": "enforced", "clin.view_records": "enforced" }, () =>
+      render({ initialView: "permissions", writable: true, notWritableReason: null, policies: { practitioner: off, receptionist: off } }),
+    );
+    const r = row(html, "clin.edit_records");
+    expect(r).toContain('data-testid="inactive-because"');
+    expect(r).toContain("Inactive: needs View clinical records.");
+    expect(r).toContain("Your choice is kept");
+    expect(r).not.toContain("Chosen but not in force");
+  });
+});
