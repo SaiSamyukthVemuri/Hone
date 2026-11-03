@@ -22,6 +22,8 @@ const render = (over: Record<string, unknown> = {}) =>
       reviewed: false,
       writable: false,
       notWritableReason: "Saving turns on with the permission core.",
+      enforcement: {},
+      staffRoleChange: false,
       people,
       timezone: "America/Toronto",
       previewSave: noop,
@@ -98,5 +100,44 @@ describe("batch 4 page items", () => {
   it("shows view-aftercare as its own row beside send", () => {
     expect(html).toMatch(/data-permission-row="clin\.view_aftercare"/);
     expect(html).toMatch(/data-permission-row="appt\.aftercare_send"/);
+  });
+});
+
+describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
+  const row = (html: string, key: string) => html.split(`data-permission-row="${key}"`)[1]?.split("data-permission-row=")[0] ?? "";
+  it("says at the top of Permissions what this release enforces", () => {
+    const html = render({ initialView: "permissions" });
+    expect(html).toContain('data-testid="enforcement-scope"');
+    expect(html).toContain("This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.");
+  });
+  it("fails SAFE: with no enforcement from the core every key reads Not enforced yet", () => {
+    const r = row(render({ initialView: "permissions" }), "appt.move");
+    expect(r).toContain("Not enforced yet. This switch will apply when that area is wired.");
+    expect(r).toMatch(/<fieldset[^>]*disabled/);
+  });
+  it("an enforced key has no such line and its fieldset is not disabled by it; observe and not_yet say Not enforced yet", () => {
+    const html = render({ initialView: "permissions", writable: true, notWritableReason: null, enforcement: { "appt.move": "enforced", "appt.book": "observe", "appt.cancel": "not_yet" } });
+    expect(row(html, "appt.move")).not.toContain("Not enforced yet");
+    expect(row(html, "appt.move")).not.toMatch(/<fieldset[^>]*disabled/);
+    for (const k of ["appt.book", "appt.cancel"]) {
+      expect(row(html, k)).toContain("Not enforced yet");
+      expect(row(html, k)).toMatch(/<fieldset[^>]*disabled/);
+    }
+  });
+  it("an unrecognised value is treated as not enforced", () => {
+    const html = render({ initialView: "permissions", writable: true, notWritableReason: null, enforcement: { "appt.move": "yes" } });
+    expect(row(html, "appt.move")).toContain("Not enforced yet");
+  });
+});
+
+describe("change_staff_role stays unavailable while its gate is off", () => {
+  it("shows 'Change role: not available yet' on active non-owner people, with no control", () => {
+    const html = render();
+    expect(html).toContain("Change role: not available yet.");
+    expect(html).toContain('data-testid="change-role-unavailable"');
+    expect(html.split('data-person="p1"')[1].split("data-person=")[0]).not.toContain("change-role-unavailable");
+  });
+  it("hides the line once the gate is satisfied", () => {
+    expect(render({ staffRoleChange: true })).not.toContain("change-role-unavailable");
   });
 });

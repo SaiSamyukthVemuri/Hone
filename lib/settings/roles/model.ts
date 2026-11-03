@@ -48,6 +48,20 @@ export const SCOPE_LABELS: Record<Scope, string> = { off: "Off", own: "Own assig
 export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
   d.scopes.length === 2 ? (scope === "off" ? "Off" : "On") : SCOPE_LABELS[scope];
 
+// Whether the database/app yet enforces a key. The permission core reports it per key (get_role_permissions keys{key:{enforcement}});
+// the catalog entry carries the same value. ONLY "enforced" makes a key editable. Absent or unrecognised reads as "not_yet": a late or
+// missing flag makes the page more read-only, never more open (OPS decision, 3 Nov).
+export type Enforcement = "enforced" | "observe" | "not_yet";
+export type EnforcementMap = Readonly<Record<string, string>>;
+export const NOT_ENFORCED_LINE = "Not enforced yet. This switch will apply when that area is wired.";
+export const ENFORCEMENT_SCOPE_LINE = "This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
+export function enforcementOf(key: string, map: EnforcementMap | undefined, catalogValue?: unknown): Enforcement {
+  // The core's report is the authority whenever the page has one (even an empty one: a key it does not name is not enforced). The
+  // catalog value is used only where no report is passed at all (the model's own unit tests).
+  const v = map ? map[key] : catalogValue;
+  return v === "enforced" || v === "observe" ? v : "not_yet";
+}
+
 export type OptionState = { scope: Scope; label: string; selected: boolean; disabled: boolean; reason: string | null };
 
 export type RoleRow = {
@@ -61,6 +75,7 @@ export type RoleRow = {
   inactiveBecause: string | null; // set when effective is lower than chosen
   options: OptionState[];
   locked: string | null; // why no control is offered at all
+  enforcement: Enforcement; // only "enforced" keys can be changed; "observe" and "not_yet" are shown for planning
   futureBusiness: boolean;
   sensitive: boolean;
   consequence: Consequence;
@@ -85,7 +100,7 @@ const isPending = (d: PermissionDef): boolean => (d.pendingDecision?.length ?? 0
 const dependentsOf = (key: string, role: Role): PermissionDef[] =>
   (CATALOG as readonly PermissionDef[]).filter((d) => d.requires.includes(key) && d.offeredTo[role]);
 
-export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel[] {
+export function buildRoleModel(role: Role, policy: StudioPolicy, enforcementMap?: EnforcementMap): RoleGroupModel[] {
   const defs = CATALOG as readonly PermissionDef[];
   const order = [...GROUPS, ...Array.from(new Set(defs.map((d) => d.group))).filter((g) => !(GROUPS as readonly string[]).includes(g))];
   const out: RoleGroupModel[] = [];
@@ -99,13 +114,14 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         : !d.offeredTo[role]
           ? `Not offered to ${ROLE_LABELS[role].toLowerCase()}s in this version.`
           : null;
+      const enforcement = enforcementOf(d.key, enforcementMap, (d as { enforcement?: unknown }).enforcement);
       const options: OptionState[] = scopesFor(d, role).map((scope) => {
         const check = scope === chosen || locked ? ({ ok: true } as const) : checkChange(role, d.key, scope, policy);
         return {
           scope,
           label: scopeLabel(d, scope),
           selected: scope === chosen,
-          disabled: locked !== null || !check.ok,
+          disabled: locked !== null || enforcement !== "enforced" || !check.ok,
           reason: check.ok ? null : check.reason,
         };
       });
@@ -127,6 +143,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
             : null,
         options,
         locked,
+        enforcement,
         futureBusiness: d.affectsFutureStudioBusiness === true,
         sensitive: d.sensitive === true,
         consequence: consequenceOf(d),
@@ -151,7 +168,11 @@ export function applyEdit(
   policy: StudioPolicy,
   key: string,
   next: Scope,
+  enforcementMap?: EnforcementMap,
 ): { ok: true; policy: StudioPolicy } | { ok: false; reason: string } {
+  if (enforcementMap && enforcementOf(key, enforcementMap, (catalogByKey.get(key) as { enforcement?: unknown } | undefined)?.enforcement) !== "enforced") {
+    return { ok: false, reason: NOT_ENFORCED_LINE };
+  }
   const current = policy.values[key];
   if (current === next) return { ok: true, policy };
   const def = catalogByKey.get(key);
@@ -165,8 +186,8 @@ export function applyEdit(
 export type RoleSectionModel = { id: SectionId; label: string; common: RoleRow[]; advanced: RoleRow[] };
 
 /** The eight sections for a role, common actions first and finer controls under Advanced. Presentation only: every row is one key. */
-export function buildRoleSections(role: Role, policy: StudioPolicy): RoleSectionModel[] {
-  const rows = buildRoleModel(role, policy).flatMap((g) => g.rows);
+export function buildRoleSections(role: Role, policy: StudioPolicy, enforcementMap?: EnforcementMap): RoleSectionModel[] {
+  const rows = buildRoleModel(role, policy, enforcementMap).flatMap((g) => g.rows);
   return SECTIONS.map((s) => {
     const mine = rows.filter((r) => r.section === s.id);
     return { id: s.id, label: s.label, common: mine.filter((r) => !r.advanced), advanced: mine.filter((r) => r.advanced) };
