@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE, type Questionnaire } from "@/lib/intake/questionnaire";
 import { isDeepStrictEqual } from "node:util";
 
@@ -533,6 +534,9 @@ export async function getIntakeLinkAction(
 
   const auth = await loadAuthorisedClient(clientId);
   if (!auth.ok) return auth;
+  if (!(await requirePermission(await createClient(), auth.studioId, "clin.view_intake", { client: auth.client.id })).allowed) {
+    return { ok: false, error: INTAKE_NOT_AVAILABLE };
+  }
 
   // RLS-scoped fetch confirms this intake belongs to the practitioner's
   // studio AND the specified client AND is still in_progress.
