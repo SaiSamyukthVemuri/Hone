@@ -55,8 +55,11 @@ async function dbGate(token: string): Promise<Json> {
 }
 const appGate = (token: string, user: Json) => mailboxProofMethod(claimsFromAccessToken(token), user as never);
 
+// Y-4 (Insurance): the app rule reads email_change_sent_at and the email identity's updated_at from getUser(). If a Supabase CLI or
+// GoTrue bump stopped returning them, the rule would silently fail OPEN for an email-changed account. This file is under tests/db, so
+// `npm run test:db` (the CI DB lane, which starts a real GoTrue) runs it: the first case below goes red the day the fields vanish.
 describe("S-2b through both gates on a real stack", () => {
-  it("getUser carries the two timestamps once set; the attacker's old session is refused by the app rule AND 0291; a fresh victim sign-in is accepted by both", async () => {
+  it("Y-4 GUARD: getUser carries the two timestamps once set; the attacker's old session is refused by the app rule AND 0291; a fresh victim sign-in is accepted by both", async () => {
     const studio = await seedStudio("s2b");
     const attacker = await newConfirmedUser("atk");
     const victim = addr("vic");
