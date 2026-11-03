@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0287_roles_permission_engine.sql",
-    "sha256": "caf9673e1f65d589029654651594fb371190e4f09a1b53fad11364772753b0c1"
+    "sha256": "8d8cbb85335a48bfd51c323773e60980a19276853fae990751514eb3d92c7684"
   },
   "public": {
     "tables": [
@@ -72,6 +72,8 @@
       "pending_invitations",
       "permission_audit",
       "permission_catalog",
+      "permission_key_activation",
+      "permission_key_release",
       "permission_narrowings",
       "permission_ship_gates",
       "photos",
@@ -148,6 +150,7 @@
       "_whole_session_copy_fingerprint",
       "_whole_session_copy_source_id",
       "acquire_studio_capacity_lock",
+      "activate_released_permissions",
       "add_electrolysis_pass",
       "add_studio_receptionist",
       "admin_accept_pending_invitation",
@@ -385,13 +388,16 @@
       "perm_fail",
       "perm_rank",
       "perm_reason_ok",
+      "perm_run_activation",
       "perm_run_basis",
       "perm_run_changes",
+      "perm_scope_source",
       "permission_audit_append_only",
       "platform_lead_alerts_guard",
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "preview_activation",
       "preview_adopt_new_defaults",
       "preview_reset",
       "preview_role_changes",
