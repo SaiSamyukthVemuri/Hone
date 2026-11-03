@@ -109,7 +109,18 @@ describe("prerequisites", () => {
 
   it("every payment, per-appointment pricing, client-price and report key requires seeing the payment", () => {
     for (const x of DEFS.filter((y) => y.group === "payments" && y.key !== "pay.view_appointment")) expect(x.requires).toContain("pay.view_appointment");
-    for (const k of ["price.appointment", "price.view_client_prices", "rep.studio_totals", "rep.financial_reports", "rep.lifetime_spend"]) expect(d(k).requires, k).toContain("pay.view_appointment");
+    for (const k of ["price.appointment", "price.view_client_prices", "rep.financial_reports", "rep.lifetime_spend"]) expect(d(k).requires, k).toContain("pay.view_appointment");
+  });
+
+  it("Q25 (Sam, 3 Nov): studio totals have NO prerequisite on the payment view, and the payment view needs nothing from them", () => {
+    expect(d("rep.studio_totals").requires).toEqual([]);
+    expect(d("pay.view_appointment").requires).not.toContain("rep.studio_totals");
+    const p = pol("new_studio", { "rep.studio_totals": "studio" });
+    expect(checkChange("practitioner", "rep.studio_totals", "studio", pol("new_studio", {})).ok).toBe(true);
+    expect(effectiveScope("practitioner", "rep.studio_totals", p)).toBe("studio");
+    expect(effectiveScope("practitioner", "pay.view_appointment", p)).toBe(effectiveScope("practitioner", "pay.view_appointment", pol("new_studio", {})));
+    // totals stay available when the payment view is turned all the way off
+    expect(effectiveScope("practitioner", "rep.studio_totals", pol("new_studio", { "rep.studio_totals": "studio", "pay.view_appointment": "off" }))).toBe("studio");
   });
 
   it("F10: enabling one clinical capability never grants another: photos and intake do NOT require chart access", () => {
@@ -163,14 +174,14 @@ describe("D-1: a missing stored value resolves to the studio's policy BASIS, nev
 
 describe("D-2 / F1: a capped result the key does not allow becomes Off (a boolean key can never come out as 'own')", () => {
   it("lowering the payment view to own turns each studio-wide money report Off, with the stored value kept", () => {
-    const stored = { "pay.view_appointment": "own" as Scope, "rep.studio_totals": "studio" as Scope, "rep.financial_reports": "studio" as Scope, "rep.lifetime_spend": "studio" as Scope };
+    const stored = { "pay.view_appointment": "own" as Scope, "rep.financial_reports": "studio" as Scope, "rep.lifetime_spend": "studio" as Scope };
     const p = pol("new_studio", stored);
-    for (const k of ["rep.studio_totals", "rep.financial_reports", "rep.lifetime_spend"]) {
+    for (const k of ["rep.financial_reports", "rep.lifetime_spend"]) {
       expect(effectiveScope("practitioner", k, p), k).toBe("off");
       expect(p.values[k]).toBe("studio");
     }
     const up = pol("new_studio", { ...stored, "pay.view_appointment": "studio" });
-    for (const k of ["rep.studio_totals", "rep.financial_reports", "rep.lifetime_spend"]) expect(effectiveScope("practitioner", k, up), k).toBe("studio");
+    for (const k of ["rep.financial_reports", "rep.lifetime_spend"]) expect(effectiveScope("practitioner", k, up), k).toBe("studio");
   });
 
   it("every effective value is a scope its key allows, and never exceeds any prerequisite, under random stored values and gates (property test)", () => {
@@ -409,9 +420,9 @@ describe("prerequisite behaviour (the page, server and database must all do exac
   });
 
   it("a studio-wide boolean report key cannot be set while the payment view is only Own, and the refusal says why", () => {
-    const res = checkChange("practitioner", "rep.studio_totals", "studio", base());
+    const res = checkChange("practitioner", "rep.financial_reports", "studio", base());
     expect(res).toMatchObject({ ok: false, blockedBy: "pay.view_appointment" });
-    expect(checkChange("practitioner", "rep.studio_totals", "studio", base({ "pay.view_appointment": "studio" })).ok).toBe(true);
+    expect(checkChange("practitioner", "rep.financial_reports", "studio", base({ "pay.view_appointment": "studio" })).ok).toBe(true);
   });
 
   it("lowering a prerequisite is always allowed; unknown, unoffered, fixed and out-of-range requests are refused", () => {

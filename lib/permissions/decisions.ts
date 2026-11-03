@@ -21,7 +21,7 @@ export const DECISIONS: Readonly<Record<DecisionId, DecisionEntry>> = {
   "DN-9": { status: "decided", keyed: true, title: "Which key covers requesting an intake update or resending the intake link" },
   "DN-10": { status: "decided", keyed: false, title: "Who may read card-authorization consent forms and signatures" },
   "DN-11": { status: "decided", keyed: true, title: "A key for writing per-client prices" },
-  "DN-12": { status: "decided", keyed: false, title: "Undoing a recorded outcome (owner-only; any time window is open, Q-9)" },
+  "DN-12": { status: "decided", keyed: false, title: "Undoing a recorded outcome (owner-only, no window, reason required, completion / no-show / cancellation)" },
   "DN-13": { status: "decided", keyed: true, title: "Studio-wide opening hours are a separate permission from colleagues' availability; both OFF" },
   "DN-14": { status: "decided", keyed: true, title: "Staff portal messages to clients" },
   "DN-15": { status: "decided", keyed: true, title: "Waitlist operations per action (receptionist ON, practitioner OFF); rules OFF; imports never imply consent" },
@@ -42,7 +42,7 @@ export const DECISIONS: Readonly<Record<DecisionId, DecisionEntry>> = {
   "DN-30": { status: "decided", keyed: true, title: "Existing-studio snapshot for practitioner intake review and routine messages" },
 };
 
-// The 19 open questions OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c) plus three raised from its section b.
+// The open questions OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c, Q1 to Q25 plus Q14b) and three Team-raised items from its section b (B-1..B-3).
 // None is decided and none is defaulted. `surface` names where it lives: a catalog key, FEE_AMOUNT_READ, a NARROWINGS id or a
 // FIXED_OWNER_ONLY id. A key it flags is pinned to its existing-studio snapshot (or merely marked, when only coverage is in doubt).
 export type OpenQuestion = { readonly title: string; readonly surface: readonly string[]; readonly status?: "settled"; readonly settledIn?: string };
@@ -54,20 +54,26 @@ export const OPEN_QUESTIONS: Readonly<Record<QuestionId, OpenQuestion>> = {
   "Q-6": { title: "Scope for portal replies: whole studio or own clients (DN-14)", surface: ["comm.send_portal_reply"], status: "settled", settledIn: "Batch 1: whole studio and assigned client; definition shown to owners first" },
   "Q-7": { title: "Scopes for setting client prices (DN-11)", surface: ["price.edit_client_prices"], status: "settled", settledIn: "Batch 1: whole-studio only, OFF by default" },
   "Q-8": { title: "Waitlist action grouping and whether view is a prerequisite (DN-15a)", surface: ["wl.manage_queue"] },
-  "Q-9": { title: "Undoing an outcome: any window, and which outcomes (DN-12)", surface: ["revert_recorded_outcome"] },
-  "Q-10": { title: "Safety records for receptionists: default Off or not offered; log without view (DN-3)", surface: ["records.view_sterilisation_disinfection", "records.log_sterilisation_disinfection"] },
+  "Q-9": { title: "Undoing an outcome: any window, and which outcomes (DN-12)", surface: ["revert_recorded_outcome"], status: "settled", settledIn: "Batch 2: owner-only, no window, reason required; completion, no-show and cancellation; never reverses money, records or messages" },
+  "Q-10": { title: "Safety records for receptionists: default Off or not offered; log without view (DN-3)", surface: ["records.view_sterilisation_disinfection", "records.log_sterilisation_disinfection"], status: "settled", settledIn: "Batch 2: separate view and log keys, receptionist Off/Off, log requires view; exposure incidents owner and reporter only" },
   "Q-12": { title: "What admit.booking_rules covers (DN-4a vs DN-4b)", surface: ["admit.booking_rules"] },
   "Q-13": { title: "Where the Open / Waitlist / Closed setting is changed", surface: ["admit.change_policy"] },
-  "Q-14": { title: "Fee amounts readable through payment view at own scope (DN-27)", surface: ["FEE_AMOUNT_READ"] },
+  "Q-14": { title: "Fee amounts readable through payment view at own scope (DN-27)", surface: ["FEE_AMOUNT_READ"], status: "settled", settledIn: "Batch 2: published service prices readable for booking; private settings and client-specific prices not exposed; fee-amount reads unchanged until Q14b" },
   "Q-15": { title: "Show 'Not available yet' on practitioner legal-name edit too (DN-26)", surface: ["client.edit_legal_name"] },
-  "Q-16": { title: "Which receptionist clinical capabilities are supported (C.4, R0-Q2)", surface: ["clin.edit_records", "clin.upload_photos", "clin.print_record", "appt.complete"] },
-  "Q-17": { title: "May a practitioner hand one of their OWN appointments to a colleague (R0-Q3)", surface: ["appt.reassign"] },
+  "Q-16": { title: "Which receptionist clinical capabilities are supported (C.4, R0-Q2)", surface: ["clin.edit_records", "clin.upload_photos", "clin.print_record", "appt.complete"], status: "settled", settledIn: "Batch 2: receptionist clinical access is view-only keys offered Off by default; edit, print and complete not offered" },
+  "Q-17": { title: "May a practitioner hand one of their OWN appointments to a colleague (R0-Q3)", surface: ["appt.reassign"], status: "settled", settledIn: "Batch 2: appt.handoff_own, Off by default, owner-configurable; eligible same-studio recipient; not after start or treatment" },
   "Q-18": { title: "Erasure workflow: who files, where recorded, what the confirm step shows (DN-18)", surface: ["erase_client_permanently"] },
   "Q-19": { title: "Staff export content and owner-link lifetime (DN-19)", surface: ["rep.bulk_export"] },
   "Q-20": { title: "Portal OFF: in-flight links and independently controlled features (DN-20)", surface: ["client_portal_setting"] },
   "Q-21": { title: "Anonymous waitlist and demo limits (group 7)", surface: ["anonymous_public_writes_closed"] },
-  // Raised by the Team lane from the reconciliation's section b (a key or value no decision backs).
-  "Q-22": { title: "client.view_directory as a fixed baseline for both roles is implied, never stated", surface: ["client.view_directory"] },
-  "Q-23": { title: "price.view_client_prices 'own' scope definition is the catalog's, not Sam's", surface: ["price.view_client_prices"] },
-  "Q-24": { title: "affectsFutureStudioBusiness labels on opening hours, waitlist rules and admission keys go beyond section C.3", surface: ["admit.booking_rules", "avail.manage_studio_hours"] },
+  // Raised by the Team lane from the reconciliation's section b (a key or value no decision backs). B-n, not Q-n: OPS numbers the Q series.
+  "B-1": { title: "client.view_directory as a fixed baseline for both roles is implied, never stated", surface: ["client.view_directory"] },
+  "B-2": { title: "price.view_client_prices 'own' scope definition is the catalog's, not Sam's", surface: ["price.view_client_prices"] },
+  "B-3": { title: "affectsFutureStudioBusiness labels on opening hours, waitlist rules and admission keys go beyond section C.3", surface: ["admit.booking_rules", "avail.manage_studio_hours"] },
+  // Follow-ups and later questions in OPS's numbering (ROLES-RECONCILIATION section c, batch 2/3).
+  "Q-14b": { title: "Who may read fee AMOUNTS at which scope (DN-27 follow-up)", surface: ["FEE_AMOUNT_READ"] },
+  "Q-22": { title: "A deactivated calendar owner with no other active owner: pause all sync and notify owners, or pause and alert the operator", surface: ["deactivated_calendar_owner"] },
+  "Q-23": { title: "An exposure incident whose reporter was removed: who may read it", surface: ["exposure_incident_history"] },
+  "Q-24": { title: "Timing of the advance notice before archive, delete and restore become owner-only (DN-25)", surface: ["archive_clients", "restore_deleted_records"] },
+  "Q-25": { title: "Does the studio-totals report need the payment view (and the reverse)", surface: ["rep.studio_totals"], status: "settled", settledIn: "Batch 2: no prerequisite either way; reports never leak an individual payment detail" },
 };
