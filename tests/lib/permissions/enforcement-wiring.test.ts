@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { catalogByKey } from "@/lib/permissions/catalog";
+import { CATALOG, catalogByKey, enforcementOf } from "@/lib/permissions/catalog";
 
 const read = (p: string) => readFileSync(p, "utf8");
 const body = (src: string, fn: string) => {
@@ -81,5 +82,67 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     expect(src).toContain('"avail.manage_others"');
     expect(src).toMatch(/practitioner\.role !== "owner"/); // the floor is unchanged
     for (const k of ["avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"]) expect(catalogByKey.has(k), k).toBe(true);
+  });
+
+  it("RC-4: with clin.view_photos off the photos page lists nothing (no rows, dates, counts) and shows one neutral line", () => {
+    const s = read("app/(app)/clients/[id]/images/page.tsx");
+    const ask = s.indexOf('"clin.view_photos"');
+    const neutral = s.indexOf("Photos are not available to your role.");
+    expect(ask).toBeGreaterThan(-1);
+    expect(neutral).toBeGreaterThan(ask);
+    // the key is asked, and the neutral page returned, BEFORE the photo rows are read
+    expect(s.indexOf('.from("treatment_images")')).toBeGreaterThan(neutral);
+    expect(s.slice(ask, neutral)).toMatch(/if \(!canViewPhotos\) \{\s*return \(/);
+  });
+
+  describe("repository-wide: every treatment-images signing site is behind a permission check (Privacy X2)", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((n) => {
+        const p = join(dir, n);
+        if (n === "node_modules" || n === ".next") return [];
+        return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(n) ? [p] : [];
+      });
+    const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const sites = [...walk("app"), ...walk("lib")].filter((f) => /createSignedUrl\(/.test(code(read(f))));
+
+    it("finds exactly the known signing sites, so a new one cannot be added without this test noticing", () => {
+      expect(sites.sort()).toEqual([
+        "app/(app)/clients/[id]/images/page.tsx",
+        "app/(app)/clients/[id]/images/sign-treatment-image.ts",
+        "app/(app)/clients/[id]/sessions/[sessionId]/session-photos.ts",
+        "lib/images/client-portrait.ts",
+      ]);
+    });
+
+    it("each asks clin.view_photos, or (ID portraits, DN-24) observes owner-only, before it signs", () => {
+      for (const f of sites) {
+        const s = code(read(f));
+        const sign = s.search(/createSignedUrl\(/);
+        const guard = f === "lib/images/client-portrait.ts" ? s.indexOf("observePortraitOwnerOnly(input.studioId)") : s.indexOf('"clin.view_photos"');
+        expect(guard, f).toBeGreaterThan(-1);
+        expect(guard, f).toBeLessThan(sign);
+      }
+    });
+  });
+
+  it("the catalog's enforcement flag equals the keys the app really asks (Privacy X3): no key is marked enforced that nothing asks, none asked that is not marked", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((n) => {
+        const p = join(dir, n);
+        if (n === "node_modules" || n === ".next") return [];
+        return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(n) ? [p] : [];
+      });
+    const asked = new Set<string>();
+    for (const f of [...walk("app"), ...walk("lib")]) {
+      if (f.startsWith("lib/permissions/")) continue;
+      const s = read(f);
+      for (const m of s.matchAll(/requirePermission\(\s*[^,]+,\s*[^,]+,\s*"([a-z_]+\.[a-z_]+)"/g)) asked.add(m[1]!);
+    }
+    // availability actions pick one of three keys through assertAvailabilityKey
+    for (const m of read("app/(app)/settings/availability/actions.ts").matchAll(/"(avail\.manage_[a-z_]+)"/g)) asked.add(m[1]!);
+    const marked = new Set(CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key));
+    expect([...asked].sort()).toEqual([...marked].sort());
+    for (const k of asked) expect(["enforced", "observe"]).toContain(enforcementOf(k));
+    expect(enforcementOf("appt.complete")).toBe("observe"); // asked, logged, never blocks
   });
 });
