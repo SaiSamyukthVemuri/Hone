@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/rate-limit/outage.ts",
+    purpose: "DN-29: the shared Postgres fixed-window counter the public limiters use when Upstash is down (held 0294).",
+    why: "The counter table is RLS-locked with every browser role revoked and the function is service_role-only; an unauthenticated visitor cannot be a database user. The caller passes only already-hashed keys and a fixed scope; it reads nothing and returns only allowed/count/retry.",
+    scopeGuard: "rate_limit_fallback_hit",
+  },
+  {
     path: "lib/audit/governed-writes.ts",
     purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
     why: "Internal server-only existing archive/unarchive and owner-export writers. Session getUser and exact active actor/user/studio checks precede service-client construction; archive additionally checks exact client via RLS and export requires owner plus bounded registry metadata. Final membership FOR UPDATE and hardcoded audit insertion are in two explicit narrow service-only 0242 commands under their same existing trusted non-runtime owner. Owner/context/ACL and runtime MEMBER/SET assumptions are checked fail-closed;0178 keeps service_role SELECT-only on practitioner identity, with no new UPDATE grant. There is no separate app-read/direct-INSERT authority decision. Missing/refused/malformed commands fail closed, no old API/table fallback. New command EXECUTE capability needs explicit source/ACL approval; no user/table grants. No generic caller-supplied action/entity/actor metadata. Export refuses bytes on failure; archive failures, including thrown audit reads/transport, return the curated best-effort refusal so committed state/revalidation/redirect survive.",

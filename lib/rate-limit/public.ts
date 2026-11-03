@@ -6,6 +6,7 @@ import {
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
 import { thrownErrorClass } from "@/lib/logging/error-class";
+import { onLimiterUnavailable } from "@/lib/rate-limit/outage";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
 //   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
@@ -14,10 +15,12 @@ import { thrownErrorClass } from "@/lib/logging/error-class";
 //     (see limitTokenRoute below)
 //
 // Design contract:
-//   * FAIL OPEN. If Upstash is not configured (env vars missing) or the
-//     backend errors, requests are ALLOWED. A limiter outage must never
-//     block a real booking, cancel, reschedule, or intake. The limiter is a
-//     cost/abuse dampener, not an authorization control.
+//   * OUTAGE BEHAVIOUR (DN-29, Sam, 3 Nov 2026; lib/rate-limit/outage.ts). If Upstash is not configured or the backend
+//     errors, each route follows its class: sensitive token/link operations REFUSE with the retry message; public booking
+//     and slot search use a BOUNDED shared fallback counter (Postgres, 0294); the anonymous marketing forms use their own
+//     bounded fallback; authenticated staff limiters (class D) still fail OPEN. If the fallback counter itself cannot be
+//     reached the request is refused. A process that is not hosted on Vercel and has not asked to enforce keeps the old
+//     open behaviour (local development and CI have no Upstash); hosted deployments always enforce.
 //   * Identifiers (IP, email, token) are SHA-256 hashed before they touch a
 //     Redis key or a log line. Raw IPs/emails/tokens/secrets are never
 //     stored or logged. The studio slug is public and used in the clear.
@@ -211,8 +214,9 @@ export async function limitPublicSlots(args: {
   slug: string;
 }): Promise<RateLimitResult> {
   const limiter = slotsLimiter();
-  if (!limiter) return { allowed: true }; // disabled when env unset
   const ip = clientIpFromHeaders(args.headers);
+  const outage = { kind: "slots", routeClass: "public_slots", keys: { scope: "slots", visitor: `${hashId(ip)}:${args.slug}` } } as const;
+  if (!limiter) return onLimiterUnavailable({ ...outage, reason: "disabled" });
   try {
     const { success, reset } = await limiter.limit(`${hashId(ip)}:${args.slug}`);
     if (success) return { allowed: true };
@@ -221,7 +225,7 @@ export async function limitPublicSlots(args: {
     return { allowed: false, retryAfterSeconds: retry };
   } catch (err) {
     logBackendUnavailable("public_slots", err);
-    return { allowed: true }; // fail open
+    return onLimiterUnavailable({ ...outage, reason: "error", err });
   }
 }
 
@@ -237,8 +241,9 @@ export async function limitPublicBooking(args: {
 }): Promise<RateLimitResult> {
   const ipLimiter = bookIpLimiter();
   const emailLimiter = bookEmailLimiter();
-  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
   const ip = clientIpFromHeaders(args.headers);
+  const outage = { kind: "book", routeClass: "public_book", keys: { scope: "book", visitor: `${hashId(ip)}:${args.slug}`, studio: args.slug } } as const;
+  if (!ipLimiter || !emailLimiter) return onLimiterUnavailable({ ...outage, reason: "disabled" });
   try {
     const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.slug}`);
     if (!ipRes.success) {
@@ -259,7 +264,7 @@ export async function limitPublicBooking(args: {
     return { allowed: true };
   } catch (err) {
     logBackendUnavailable("public_book", err);
-    return { allowed: true }; // fail open
+    return onLimiterUnavailable({ ...outage, reason: "error", err });
   }
 }
 
@@ -313,8 +318,8 @@ export async function limitTokenRoute(args: {
   headers: Headers;
 }): Promise<RateLimitResult> {
   const limiter = tokenLimiter(args.routeClass);
-  if (!limiter) return { allowed: true }; // disabled when env unset
   const ip = clientIpFromHeaders(args.headers);
+  if (!limiter) return onLimiterUnavailable({ kind: "refuse", routeClass: args.routeClass, reason: "disabled" });
   try {
     const { success, reset } = await limiter.limit(
       `${hashId(args.token)}:${hashId(ip)}`,
@@ -325,7 +330,7 @@ export async function limitTokenRoute(args: {
     return { allowed: false, retryAfterSeconds: retry };
   } catch (err) {
     logBackendUnavailable(args.routeClass, err);
-    return { allowed: true }; // fail open
+    return onLimiterUnavailable({ kind: "refuse", routeClass: args.routeClass, reason: "error", err });
   }
 }
 
@@ -386,7 +391,7 @@ function portalEmailLimiter(): Ratelimit | null {
 // per-email budget is much tighter than booking's):
 //
 //   * 5 / 1 hour per IP
-//   * 2 / 1 day  per email (callers pass the already-normalized email)
+//   * 3 / 1 day  per email (callers pass the already-normalized email; Q21, 3 Nov: 3 per day)
 //
 // IP is checked first; if it's over the limit the email budget is not
 // consumed. Both keys are hashed. Prefixes are namespaced per form so
@@ -398,7 +403,7 @@ function portalEmailLimiter(): Ratelimit | null {
 
 const MARKETING_FORM_LIMITS = {
   ip: { limit: 5, window: "1 h" },
-  email: { limit: 2, window: "1 d" },
+  email: { limit: 3, window: "1 d" },
 } as const;
 
 type MarketingForm = "waitlist" | "demo";
@@ -431,8 +436,9 @@ async function limitMarketingForm(
 ): Promise<RateLimitResult> {
   const ipLimiter = marketingLimiter(form, "ip");
   const emailLimiter = marketingLimiter(form, "email");
-  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
   const ip = clientIpFromHeaders(args.headers);
+  const outage = { kind: "marketing", routeClass: form, keys: { scope: form, visitor: hashId(ip), email: hashId(args.email) } } as const;
+  if (!ipLimiter || !emailLimiter) return onLimiterUnavailable({ ...outage, reason: "disabled" });
   try {
     const ipRes = await ipLimiter.limit(hashId(ip));
     if (!ipRes.success) {
@@ -449,7 +455,7 @@ async function limitMarketingForm(
     return { allowed: true };
   } catch (err) {
     logBackendUnavailable(form, err);
-    return { allowed: true }; // fail open
+    return onLimiterUnavailable({ ...outage, reason: "error", err });
   }
 }
 
@@ -476,13 +482,10 @@ export async function limitWaitlistSubmit(args: {
 // release exists to capture. So the booking waitlist gets its own Redis
 // prefixes and its own key space, scoped by the SERVER-RESOLVED studio id.
 //
-// FAIL-OPEN, DELIBERATELY CLASSIFIED (not inherited by habit). A limiter outage
-// here means either (a) fail closed and drop genuine leads during the exact
-// window the studio is trying to capture them, or (b) fail open and risk extra
-// operational emails in the studio inbox. (a) destroys the release's purpose
-// and is unrecoverable — the lead is simply gone. (b) is noisy, visible and
-// recoverable: the operator can clear the feature flag. Fail open, matching
-// every other public limiter in this file.
+// OUTAGE CLASS (DN-29, 3 Nov 2026; supersedes the earlier fail-open classification). This is the public booking page's
+// waitlist, so it follows public booking: during a limiter outage it is bounded by the shared fallback counter (5 per
+// visitor per 10 minutes and 30 per studio per hour, scoped by the studio id), not left open and not shut. If the counter is
+// unreachable it refuses, with the calm retry message. See lib/rate-limit/outage.ts.
 //
 // Raw IP and raw email never enter a Redis key or a log line: both are hashed
 // first. The studio id is an internal UUID, not personal data.
@@ -523,8 +526,9 @@ export async function limitNewClientBookingWaitlist(args: {
 }): Promise<RateLimitResult> {
   const ipLimiter = newClientWaitlistLimiter("ip");
   const emailLimiter = newClientWaitlistLimiter("email");
-  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
   const ip = clientIpFromHeaders(args.headers);
+  const outage = { kind: "book", routeClass: "new_client_waitlist", keys: { scope: "ncw", visitor: `${hashId(ip)}:${args.studioId}`, studio: args.studioId } } as const;
+  if (!ipLimiter || !emailLimiter) return onLimiterUnavailable({ ...outage, reason: "disabled" });
   try {
     // Identifier hashed FIRST, then scoped by studio, so one studio's traffic
     // can never consume another's budget.
@@ -543,7 +547,7 @@ export async function limitNewClientBookingWaitlist(args: {
     return { allowed: true };
   } catch (err) {
     logBackendUnavailable("new_client_waitlist", err);
-    return { allowed: true }; // fail open — see the classification above
+    return onLimiterUnavailable({ ...outage, reason: "error", err });
   }
 }
 
@@ -560,8 +564,8 @@ export async function limitPortalMagicLink(args: {
 }): Promise<RateLimitResult> {
   const ipLimiter = portalIpLimiter();
   const emailLimiter = portalEmailLimiter();
-  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
   const ip = clientIpFromHeaders(args.headers);
+  if (!ipLimiter || !emailLimiter) return onLimiterUnavailable({ kind: "refuse", routeClass: "portal_login", reason: "disabled" });
   try {
     const ipRes = await ipLimiter.limit(hashId(ip));
     if (!ipRes.success) {
@@ -578,7 +582,7 @@ export async function limitPortalMagicLink(args: {
     return { allowed: true };
   } catch (err) {
     logBackendUnavailable("portal_login", err);
-    return { allowed: true }; // fail open
+    return onLimiterUnavailable({ kind: "refuse", routeClass: "portal_login", reason: "error", err });
   }
 }
 
@@ -701,7 +705,7 @@ export async function limitWaitlistProofRequest(args: {
 }): Promise<RateLimitResult> {
   const invitationLimiter = waitlistProofLimiter("invitation");
   const ipLimiter = waitlistProofLimiter("ip");
-  if (!invitationLimiter || !ipLimiter) return { allowed: true }; // disabled
+  if (!invitationLimiter || !ipLimiter) return onLimiterUnavailable({ kind: "refuse", routeClass: "waitlist_proof", reason: "disabled" });
   const ip = clientIpFromHeaders(args.headers);
   try {
     // Per-invitation first: it is the control that protects a person, and
@@ -724,7 +728,7 @@ export async function limitWaitlistProofRequest(args: {
     return { allowed: true };
   } catch (err) {
     logBackendUnavailable("waitlist_proof", err);
-    return { allowed: true }; // fail open — see the classification above
+    return onLimiterUnavailable({ kind: "refuse", routeClass: "waitlist_proof", reason: "error", err });
   }
 }
 

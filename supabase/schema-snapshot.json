@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
+    "count": 254,
+    "last": "0294_rate_limit_fallback_counter.sql",
+    "sha256": "a57f42c5de92684717e97568cdf5e0925dbe340de064738bce39ce3dd5a8b2cf"
   },
   "public": {
     "tables": [
@@ -75,6 +75,7 @@
       "practitioner_notifications",
       "practitioners",
       "probe_lots",
+      "rate_limit_fallback_counters",
       "record_keeping_audit_events",
       "record_keeping_disinfectants",
       "record_keeping_exposure_incidents",
@@ -376,6 +377,7 @@
       "public_booking_tz_offset_minutes",
       "public_cancel_appointment_with_token",
       "public_reschedule_slot_candidates",
+      "rate_limit_fallback_hit",
       "read_waitlist_admission_round_consumed",
       "rebuild_blockout_reservations_for_studio_tz",
       "rebuild_recurring_break_occurrences_for_studio_tz",

@@ -121,12 +121,12 @@ describe("demo request action: rate-limited via shared infrastructure", () => {
 });
 
 describe("limiter module: marketing form buckets", () => {
-  it("declares the marketing windows: 5/1h per IP, 2/1d per email", () => {
+  it("declares the marketing windows: 5/1h per IP, 3/1d per email (Q21)", () => {
     expect(LIMITER_CODE).toMatch(
       /ip: \{ limit: 5, window: "1 h" \}/,
     );
     expect(LIMITER_CODE).toMatch(
-      /email: \{ limit: 2, window: "1 d" \}/,
+      /email: \{ limit: 3, window: "1 d" \}/,
     );
   });
 
@@ -146,13 +146,15 @@ describe("limiter module: marketing form buckets", () => {
     expect(block).toMatch(/emailLimiter\.limit\(hashId\(args\.email\)\)/);
   });
 
-  it("fails open on backend errors, matching the file's design contract", () => {
+  it("on a backend error or missing Upstash it uses the DN-29 marketing fallback (bounded, counter-down refuses), no longer fail open", () => {
     const block = LIMITER_CODE.slice(
       LIMITER_CODE.indexOf("async function limitMarketingForm"),
       LIMITER_CODE.indexOf("export async function limitWaitlistSubmit"),
     );
     expect(block).toMatch(/logBackendUnavailable\(form, err\)/);
-    expect(block).toMatch(/return \{ allowed: true \};\s*\/\/ fail open/);
+    expect(block).toMatch(/onLimiterUnavailable\(\{ \.\.\.outage, reason: "error", err \}\)/);
+    expect(block).toMatch(/kind: "marketing"/);
+    expect(block).not.toMatch(/return \{ allowed: true \};\s*\/\/ fail open/);
   });
 
   it("the shared generic refusal copy is unchanged", () => {
