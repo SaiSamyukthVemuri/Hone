@@ -12,6 +12,7 @@ import {
   conflictPreview,
   CONFLICT_WHITESPACE_ONLY_NOTE,
   CONFLICT_SCROLL_PAD_PX,
+  CONFLICT_RESYNC_WINDOW_POINTS,
   scrollTopForMark,
   previewFor,
   sidesToOpen,
@@ -446,5 +447,31 @@ describe("scroll arithmetic and the first differing run (W-1/N5-1, W-2)", () => 
     const base = "x".repeat(2_000);
     expect(conflictPreview(base + "AAA" + "y".repeat(2_000), base + "BBB" + "y".repeat(2_000)).moreChanges).toBe(false);
     expect(conflictPreview("x".repeat(400), "x".repeat(400) + "!").moreChanges).toBe(false);
+  });
+});
+
+describe("bounded re-sync search (P-1/R6-1)", () => {
+  it("30,000-character values with edits at both ends finish well inside a time budget", () => {
+    const mid = "m".repeat(29_900);
+    const a = "FIRST" + mid + "tail-A";
+    const b = "first" + mid + "tail-B";
+    const t0 = performance.now();
+    const p = conflictPreview(a, b);
+    const ms = performance.now() - t0;
+    expect(ms).toBeLessThan(50);
+    expect(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).toBe("FIRST");
+    expect(p.moreChanges).toBe(true);
+  });
+  it("completely different 30,000-character values stay bounded and say more changes follow", () => {
+    const t0 = performance.now();
+    const p = conflictPreview("a".repeat(30_000), "b".repeat(30_000));
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(p.moreChanges).toBe(true);
+    expect(Array.from(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).length).toBe(CONFLICT_RESYNC_WINDOW_POINTS);
+  });
+  it("a re-sync beyond the window is not found: highlight to the window end and report more changes", () => {
+    const far = "m".repeat(CONFLICT_RESYNC_WINDOW_POINTS + 500);
+    const p = conflictPreview("X" + far + "tail-end-of-text-here", "Y" + far + "tail-end-of-text-here" + "Z".repeat(10));
+    expect(p.moreChanges).toBe(true);
   });
 });

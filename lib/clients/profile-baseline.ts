@@ -286,23 +286,31 @@ export function scrollTopForMark(markOffsetTop: number): number {
 
 const ANCHOR_POINTS = 32;
 
+/** How far past the first divergence (code points, each side) a re-sync is searched for. Bounds the work on huge values. */
+export const CONFLICT_RESYNC_WINDOW_POINTS = 4_000;
+
 /**
  * End (in code points, per side) of the FIRST differing run: from the common prefix, the first place where a
- * 32-character stretch of "now" reappears in "yours" re-synchronises the two. No re-sync means one run to the end.
+ * 32-character stretch of "now" reappears in "yours" re-synchronises the two. The search is bounded to a window after
+ * the first divergence on both sides (indexOf on the anchor, no index of every window); with no anchor in it the run
+ * is highlighted to the end of the window and `more` is set. Repetitive text can re-sync early: a cosmetic limit.
  */
 function firstRunEnd(a: string[], b: string[], prefix: number, suffix: number): { a: number; b: number; more: boolean } {
   const aEnd = a.length - suffix;
   const bEnd = b.length - suffix;
-  const index = new Map<string, number>();
-  for (let j = prefix; j + ANCHOR_POINTS <= b.length; j += 1) {
-    const k = b.slice(j, j + ANCHOR_POINTS).join("");
-    if (!index.has(k)) index.set(k, j);
+  const aLimit = Math.min(a.length, prefix + CONFLICT_RESYNC_WINDOW_POINTS + ANCHOR_POINTS);
+  const bLimit = Math.min(b.length, prefix + CONFLICT_RESYNC_WINDOW_POINTS + ANCHOR_POINTS);
+  const bWindow = b.slice(prefix, bLimit).join("");
+  for (let i = prefix; i + ANCHOR_POINTS <= aLimit; i += 1) {
+    const at = bWindow.indexOf(a.slice(i, i + ANCHOR_POINTS).join(""));
+    if (at >= 0) {
+      const j = prefix + Array.from(bWindow.slice(0, at)).length;
+      return { a: i, b: j, more: a.slice(i).join("") !== b.slice(j).join("") };
+    }
   }
-  for (let i = prefix; i + ANCHOR_POINTS <= a.length; i += 1) {
-    const j = index.get(a.slice(i, i + ANCHOR_POINTS).join(""));
-    if (j !== undefined) return { a: i, b: j, more: a.slice(i).join("") !== b.slice(j).join("") };
-  }
-  return { a: aEnd, b: bEnd, more: false };
+  const windowEnd = prefix + CONFLICT_RESYNC_WINDOW_POINTS;
+  if (aEnd <= windowEnd && bEnd <= windowEnd) return { a: aEnd, b: bEnd, more: false };
+  return { a: Math.min(aEnd, windowEnd), b: Math.min(bEnd, windowEnd), more: true };
 }
 
 export const CONFLICT_WHITESPACE_ONLY_NOTE = "These differ only in spaces or line breaks.";
