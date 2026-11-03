@@ -7,7 +7,7 @@ import {
   type StudioPolicy,
 } from "@/lib/permissions/catalog";
 import { groupLabel } from "./model";
-import type { RoleChange, RoleDiff } from "./diff";
+import { narrowingKind, type RoleChange, type RoleDiff } from "./diff";
 import {
   ROLE_ERROR_CODES,
   type AccessResult,
@@ -99,7 +99,7 @@ export function parsePreview(raw: unknown): PreviewResult {
   const sensitive = Array.isArray(raw.sensitive_keys) ? new Set(raw.sensitive_keys.filter((k): k is string => typeof k === "string")) : null;
   // Adopt names the fixed owner-only items that take today's access away from existing practitioners; they belong to that role.
   const narrowings = Array.isArray(raw.fixed_narrowings)
-    ? raw.fixed_narrowings.filter(isObj).map((n) => ({ id: str(n.id) ?? "", label: str(n.label) ?? "", note: str(n.notice) }))
+    ? raw.fixed_narrowings.filter(isObj).map((n) => ({ id: str(n.id) ?? "", label: str(n.label) ?? "", note: str(n.notice), kind: narrowingKind(str(n.id) ?? "", n.practitioner_access) }))
     : [];
   const affected = isObj(raw.affected) ? raw.affected : {};
   const roles: RolePreview[] = [];

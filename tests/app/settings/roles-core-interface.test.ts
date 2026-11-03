@@ -165,6 +165,36 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
     expect(r.preview.roles.find((x) => x.role === "practitioner")!.diff.fixedNarrowings.map((n) => n.id)).toEqual(["archive_client"]);
     expect(r.preview.roles.find((x) => x.role === "receptionist")!.diff.fixedNarrowings).toEqual([]);
   });
+  it("separates true practitioner losses from safeguards: the core's practitioner_access wins, a known-loss fallback covers its absence", () => {
+    const r = parsePreview({
+      ok: true,
+      version: 0,
+      changes: { practitioner: [] },
+      affected: {},
+      fixed_narrowings: [
+        { id: "performer_change", label: "p", notice: "n" },
+        { id: "exposure_incident_history", label: "e", notice: "n" },
+        { id: "anonymous_public_writes_closed", label: "a", notice: "n" },
+        { id: "notification_read_state", label: "r", notice: "n" },
+        { id: "google_flags_operator_only", label: "g", notice: "n" },
+        { id: "studio_columns_read", label: "s", notice: "n" },
+        { id: "future_thing", label: "f", notice: "n", practitioner_access: "narrows" },
+        { id: "performer_change_x", label: "x", notice: "n", practitioner_access: "safeguard" },
+      ],
+    });
+    if (!r.ok) throw new Error("expected ok");
+    const kinds = Object.fromEntries(r.preview.roles[0].diff.fixedNarrowings.map((n) => [n.id, n.kind]));
+    expect(kinds).toMatchObject({
+      performer_change: "narrows",
+      exposure_incident_history: "narrows",
+      anonymous_public_writes_closed: "safeguard",
+      notification_read_state: "safeguard",
+      google_flags_operator_only: "safeguard",
+      studio_columns_read: "safeguard",
+      future_thing: "narrows",
+      performer_change_x: "safeguard",
+    });
+  });
   it("answers a malformed preview with unexpected, never with a guess", () => {
     expect(parsePreview({ ok: true })).toEqual({ ok: false, error: { code: "unexpected" } });
   });
