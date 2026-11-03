@@ -145,7 +145,7 @@ describe("basis, ownership and privileges", () => {
         expect(r.rows[0].p, `${role}.${t}`).toBe(false);
       }
     }
-    const fns = (await adminQuery("select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'perm\\_%' or p.proname in ('has_studio_permission','preview_role_changes','save_role_permissions','preview_reset','reset_role_to_defaults','preview_adopt_new_defaults','adopt_new_defaults','preview_activation','activate_released_permissions','get_role_permissions','effective_access','list_permission_audit','change_staff_role','studios_permission_policy_seed','permission_audit_append_only'))")).rows;
+    const fns = (await adminQuery("select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'perm\\_%' or p.proname in ('has_studio_permission','preview_role_changes','save_role_permissions','preview_reset','reset_role_to_defaults','preview_adopt_new_defaults','adopt_new_defaults','preview_activation','activate_released_permissions','mark_permissions_released','get_role_permissions','effective_access','list_permission_audit','change_staff_role','studios_permission_policy_seed','permission_audit_append_only'))")).rows;
     const api = new Set(["has_studio_permission", "preview_role_changes", "save_role_permissions", "preview_reset", "reset_role_to_defaults", "preview_adopt_new_defaults", "adopt_new_defaults", "preview_activation", "activate_released_permissions", "get_role_permissions", "effective_access", "list_permission_audit", "change_staff_role"]);
     expect(fns.length).toBeGreaterThan(20);
     for (const f of fns) {
