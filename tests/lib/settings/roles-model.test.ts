@@ -8,6 +8,22 @@ import { SECTIONS, sectionKeys, sectionOfGroup } from "@/lib/settings/roles/sect
 const defs = CATALOG as readonly PermissionDef[];
 const snapshot: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
 
+// Enforcement is catalog truth (#1341's TypeScript catalog), so these tests set it on the entry for the duration of one render and put it back.
+const withEnforcement = <T,>(map: Record<string, unknown>, fn: () => T): T => {
+  const saved = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(map)) {
+    const d = CATALOG.find((x) => x.key === k) as { enforcement?: unknown } | undefined;
+    if (!d) throw new Error(`no catalog key ${k}`);
+    saved.set(k, d.enforcement);
+    d.enforcement = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of saved) (CATALOG.find((x) => x.key === k) as { enforcement?: unknown }).enforcement = v;
+  }
+};
+
 describe("Roles page model reads the one catalog", () => {
   it("every offered catalog key appears exactly once per role, in a group", () => {
     for (const role of ROLES) {
@@ -57,25 +73,29 @@ describe("Roles page model reads the one catalog", () => {
   });
 
   it("an allowed edit changes exactly that key and no other", () => {
-    const withMove = applyEdit("practitioner", snapshot, "appt.move", "studio");
-    if (!withMove.ok) throw new Error(withMove.reason);
-    const edit = applyEdit("practitioner", withMove.policy, "appt.reassign", "studio");
-    if (!edit.ok) throw new Error(edit.reason);
-    expect(Object.keys(edit.policy.values).sort()).toEqual(["appt.move", "appt.reassign"]);
-    expect(withMove.policy.values).toEqual({ "appt.move": "studio" }); // the move edit changed only that key
+    withEnforcement({ "appt.move": "enforced", "appt.reassign": "enforced" }, () => {
+      const withMove = applyEdit("practitioner", snapshot, "appt.move", "studio");
+      if (!withMove.ok) throw new Error(withMove.reason);
+      const edit = applyEdit("practitioner", withMove.policy, "appt.reassign", "studio");
+      if (!edit.ok) throw new Error(edit.reason);
+      expect(Object.keys(edit.policy.values).sort()).toEqual(["appt.move", "appt.reassign"]);
+      expect(withMove.policy.values).toEqual({ "appt.move": "studio" }); // the move edit changed only that key
+    });
   });
 
   it("turning a prerequisite Off keeps dependents' stored values but they stop being in force, and the page says so", () => {
-    const withMove = applyEdit("practitioner", snapshot, "appt.move", "studio");
-    if (!withMove.ok) throw new Error(withMove.reason);
-    const withReassign = applyEdit("practitioner", withMove.policy, "appt.reassign", "studio");
-    if (!withReassign.ok) throw new Error(withReassign.reason);
-    const lowered = applyEdit("practitioner", withReassign.policy, "appt.move", "off");
-    if (!lowered.ok) throw new Error(lowered.reason);
-    const row = buildRoleModel("practitioner", lowered.policy).flatMap((g) => g.rows).find((r) => r.key === "appt.reassign")!;
-    expect(row.chosen).toBe("studio");
-    expect(row.effective).toBe("off");
-    expect(row.inactiveBecause).toMatch(/Move appointments/);
+    withEnforcement({ "appt.move": "enforced", "appt.reassign": "enforced" }, () => {
+      const withMove = applyEdit("practitioner", snapshot, "appt.move", "studio");
+      if (!withMove.ok) throw new Error(withMove.reason);
+      const withReassign = applyEdit("practitioner", withMove.policy, "appt.reassign", "studio");
+      if (!withReassign.ok) throw new Error(withReassign.reason);
+      const lowered = applyEdit("practitioner", withReassign.policy, "appt.move", "off");
+      if (!lowered.ok) throw new Error(lowered.reason);
+      const row = buildRoleModel("practitioner", lowered.policy).flatMap((g) => g.rows).find((r) => r.key === "appt.reassign")!;
+      expect(row.chosen).toBe("studio");
+      expect(row.effective).toBe("off");
+      expect(row.inactiveBecause).toMatch(/Move appointments/);
+    });
   });
 
   it("studio-wide price and fee keys are labelled as affecting future studio business", () => {
@@ -249,9 +269,10 @@ describe("deny_only: set at or below the baseline, never above it (truth test bo
   const snapshot: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
   const def = (CATALOG as readonly PermissionDef[]).find((d) => d.key === "appt.move")!;
   const map = { "appt.move": "deny_only" };
-  const rowOf = (policy: StudioPolicy) => buildRoleModel("practitioner", policy, map).flatMap((g) => g.rows).find((r) => r.key === "appt.move")!;
+  const rowOf = (policy: StudioPolicy) => withEnforcement(map, () => buildRoleModel("practitioner", policy)).flatMap((g) => g.rows).find((r) => r.key === "appt.move")!;
+  const edit = (policy: StudioPolicy, scope: string, m: Record<string, unknown> = map) => withEnforcement(m, () => applyEdit("practitioner", policy, "appt.move", scope as never));
   it("narrowing below the baseline is allowed", () => {
-    const r = applyEdit("practitioner", snapshot, "appt.move", "off", map);
+    const r = edit(snapshot, "off");
     expect(r.ok).toBe(true);
   });
   it("every option wider than the baseline is disabled with the later-release line; the baseline itself is not", () => {
@@ -263,14 +284,14 @@ describe("deny_only: set at or below the baseline, never above it (truth test bo
       if (rank(o.scope) > rank(base)) {
         expect(o.disabled, o.scope).toBe(true);
         expect(o.reason).toBe(WIDENING_LATER_LINE);
-        expect(applyEdit("practitioner", snapshot, "appt.move", o.scope as never, map)).toEqual({ ok: false, reason: WIDENING_LATER_LINE });
+        expect(edit(snapshot, o.scope)).toEqual({ ok: false, reason: WIDENING_LATER_LINE });
       } else {
         expect(o.reason, o.scope).not.toBe(WIDENING_LATER_LINE);
       }
     }
   });
   it("an enforced key may be widened as before", () => {
-    const widen = applyEdit("practitioner", { ...snapshot, values: { "appt.move": "off" } }, "appt.move", "studio", { "appt.move": "enforced" });
+    const widen = edit({ ...snapshot, values: { "appt.move": "off" } }, "studio", { "appt.move": "enforced" });
     expect(widen.ok).toBe(true);
   });
 });

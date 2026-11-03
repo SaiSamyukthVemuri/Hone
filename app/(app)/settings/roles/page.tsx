@@ -91,7 +91,6 @@ export default async function RolesSettingsPage() {
         policies={state.policies}
         reviewed={state.reviewed}
         writable={state.writable}
-        enforcement={state.enforcement}
         staffRoleChange={state.staffRoleChange}
         notWritableReason={state.notWritableReason}
         people={people}

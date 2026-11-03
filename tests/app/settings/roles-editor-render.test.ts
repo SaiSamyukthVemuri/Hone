@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { StudioPolicy } from "@/lib/permissions/catalog";
+import { CATALOG, type StudioPolicy } from "@/lib/permissions/catalog";
 
 vi.mock("next/navigation", async (orig) => ({ ...(await orig<Record<string, unknown>>()), useRouter: () => ({ push: vi.fn() }) }));
 
@@ -14,6 +14,21 @@ const people = [
   { id: "i1", name: "Taylor Invitee", email: "taylor@example.test", role: "receptionist" as const, state: "invited" as const },
   { id: "d1", name: "Sam Former", email: "former@example.test", role: "practitioner" as const, state: "deactivated" as const },
 ];
+// Enforcement is catalog truth (#1341's TypeScript catalog), so these tests set it on the entry for the duration of one render and put it back.
+const withEnforcement = <T,>(map: Record<string, unknown>, fn: () => T): T => {
+  const saved = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(map)) {
+    const d = CATALOG.find((x) => x.key === k) as { enforcement?: unknown } | undefined;
+    if (!d) throw new Error(`no catalog key ${k}`);
+    saved.set(k, d.enforcement);
+    d.enforcement = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of saved) (CATALOG.find((x) => x.key === k) as { enforcement?: unknown }).enforcement = v;
+  }
+};
 const noop = async () => ({ ok: false as const, error: { code: "unavailable" as const } });
 const render = (over: Record<string, unknown> = {}) =>
   renderToStaticMarkup(
@@ -22,7 +37,6 @@ const render = (over: Record<string, unknown> = {}) =>
       reviewed: false,
       writable: false,
       notWritableReason: "Saving turns on with the permission core.",
-      enforcement: {},
       staffRoleChange: false,
       people,
       timezone: "America/Toronto",
@@ -111,13 +125,15 @@ describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
     expect(html).toContain('data-testid="enforcement-scope"');
     expect(html).toContain("This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.");
   });
-  it("fails SAFE: with no enforcement from the core every key reads Not enforced yet", () => {
-    const r = row(render({ initialView: "permissions" }), "appt.move");
+  it("fails SAFE: a key with no enforcement in the catalog reads Not enforced yet", () => {
+    const r = row(withEnforcement({ "appt.move": undefined }, () => render({ initialView: "permissions" })), "appt.move");
     expect(r).toContain("Not enforced yet. This switch will apply when that area is wired.");
     expect(r).toMatch(/<fieldset[^>]*disabled/);
   });
   it("an enforced key has no such line and its fieldset is not disabled by it; observe and not_yet say Not enforced yet", () => {
-    const html = render({ initialView: "permissions", writable: true, notWritableReason: null, enforcement: { "appt.move": "enforced", "appt.book": "observe", "appt.cancel": "not_yet" } });
+    const html = withEnforcement({ "appt.move": "enforced", "appt.book": "observe", "appt.cancel": "not_yet" }, () =>
+      render({ initialView: "permissions", writable: true, notWritableReason: null }),
+    );
     expect(row(html, "appt.move")).not.toContain("Not enforced yet");
     expect(row(html, "appt.move")).not.toMatch(/<fieldset[^>]*disabled/);
     for (const k of ["appt.book", "appt.cancel"]) {
@@ -126,7 +142,7 @@ describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
     }
   });
   it("an unrecognised value is treated as not enforced", () => {
-    const html = render({ initialView: "permissions", writable: true, notWritableReason: null, enforcement: { "appt.move": "yes" } });
+    const html = withEnforcement({ "appt.move": "yes" }, () => render({ initialView: "permissions", writable: true, notWritableReason: null }));
     expect(row(html, "appt.move")).toContain("Not enforced yet");
   });
 });
@@ -145,7 +161,7 @@ describe("change_staff_role stays unavailable while its gate is off", () => {
 
 describe("deny_only keys can be turned down now and not widened", () => {
   const row = (html: string, key: string) => html.split(`data-permission-row="${key}"`)[1]?.split("data-permission-row=")[0] ?? "";
-  const html = render({ initialView: "permissions", writable: true, notWritableReason: null, enforcement: { "appt.book": "deny_only", "appt.move": "enforced" } });
+  const html = withEnforcement({ "appt.book": "deny_only", "appt.move": "enforced" }, () => render({ initialView: "permissions", writable: true, notWritableReason: null }));
   it("keeps the fieldset live, says widening is later, and disables only the options above the baseline", () => {
     const r = row(html, "appt.book");
     expect(r).not.toMatch(/<fieldset[^>]*disabled/);

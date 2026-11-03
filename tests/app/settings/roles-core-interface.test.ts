@@ -195,7 +195,7 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
       performer_change_x: "safeguard",
     });
   });
-  it("reads each key's enforcement and the staff_role_change gate from get_role_permissions", () => {
+  it("reads the staff_role_change gate from get_role_permissions; enforcement is not the core's to report", () => {
     const st = parseState({
       ok: true,
       version: 1,
@@ -204,10 +204,8 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
       roles: { practitioner: {}, receptionist: {} },
       keys: { "appt.move": { sensitive: false, consequence: "x", enforcement: "enforced" }, "appt.book": { enforcement: "observe" }, bad: { enforcement: 3 } },
     });
-    expect(st?.enforcement).toEqual({ "appt.move": "enforced", "appt.book": "observe" });
     expect(st?.staffRoleChange).toBe(false);
     expect(parseState({ ok: true, version: 1, gates: { staff_role_change: true }, roles: { practitioner: {}, receptionist: {} } })?.staffRoleChange).toBe(true);
-    expect(parseState({ ok: true, version: 1, roles: { practitioner: {}, receptionist: {} } })?.enforcement).toEqual({});
   });
   it("answers a malformed preview with unexpected, never with a guess", () => {
     expect(parsePreview({ ok: true })).toEqual({ ok: false, error: { code: "unexpected" } });

@@ -190,8 +190,6 @@ export type CoreState = {
   basis: "existing_snapshot" | "new_studio";
   policies: Record<Role, StudioPolicy>;
   reviewed: boolean;
-  // Per-key enforcement as the core reports it (keys{key:{enforcement}}). A key missing here is NOT editable on the page.
-  enforcement: Record<string, string>;
   // gates.staff_role_change: the operator ship gate for change_staff_role. False = the page says "not available yet".
   staffRoleChange: boolean;
 };
@@ -217,7 +215,5 @@ export function parseState(raw: unknown): CoreState | null {
     }
     policies[role] = { basis, values, gates } as StudioPolicy;
   }
-  const enforcement: Record<string, string> = {};
-  if (isObj(raw.keys)) for (const [k, v] of Object.entries(raw.keys)) if (isObj(v) && typeof v.enforcement === "string") enforcement[k] = v.enforcement;
-  return { version, basis, policies, reviewed: basis === "new_studio" || customised, enforcement, staffRoleChange: gates.staff_role_change === true };
+  return { version, basis, policies, reviewed: basis === "new_studio" || customised, staffRoleChange: gates.staff_role_change === true };
 }

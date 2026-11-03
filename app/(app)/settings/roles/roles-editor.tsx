@@ -53,8 +53,6 @@ export type RolesEditorProps = {
   reviewed: boolean;
   writable: boolean;
   notWritableReason: string | null;
-  // The core's per-key enforcement. Only "enforced" keys are editable; a key it does not name is shown as not enforced yet.
-  enforcement: Record<string, string>;
   // The operator ship gate for changing a person's role (change_staff_role). Off: the page says it is not available yet.
   staffRoleChange: boolean;
   initialView?: "people" | "permissions" | "history";
@@ -97,24 +95,23 @@ export function RolesEditor(props: RolesEditorProps) {
   const baseId = useId();
   // Bumped whenever a pending preview stops being wanted (tab switch, cancel), so a late response is ignored.
   const previewSeq = useRef(0);
-  const [enforcement, setEnforcement] = useState(props.enforcement);
 
   const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
   const dirty = dirtyRoles.length > 0;
   useUnsavedChangesGuard("roles-draft", dirty);
   const readOnly = !props.writable;
 
-  const sections = useMemo(() => buildRoleSections(role, drafts[role], enforcement), [role, drafts, enforcement]);
+  const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
   const savedRows = useMemo(
-    () => new Map(buildRoleSections(role, saved[role], enforcement).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
-    [role, saved, enforcement],
+    () => new Map(buildRoleSections(role, saved[role]).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
+    [role, saved],
   );
 
   const peopleWith = (r: Role) => props.people.filter((p) => p.role === r && p.state === "active");
   const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
 
   function choose(key: string, scope: Scope) {
-    const result = applyEdit(role, drafts[role], key, scope, enforcement);
+    const result = applyEdit(role, drafts[role], key, scope);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
       return;
@@ -176,7 +173,6 @@ export function RolesEditor(props: RolesEditorProps) {
       if (fresh.ok) {
         setSaved(fresh.state.policies);
         setDrafts(fresh.state.policies);
-        setEnforcement(fresh.state.enforcement);
         setReviewed(fresh.state.reviewed);
       } else {
         // Could not read it back: do not claim a state we have not seen. Refresh the page from the server.
