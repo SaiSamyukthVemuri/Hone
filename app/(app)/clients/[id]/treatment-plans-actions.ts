@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/permissions/require-permission";
+import { gateClient } from "@/lib/permissions/ask-permission";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type {
@@ -139,7 +140,9 @@ async function recordsRefusal(formData: FormData): Promise<ActionResult | null> 
   const { studio } = await getCurrentPractitionerWithStudio();
   // The client is the scope target: a practitioner on the OWN (assigned) scope is allowed on their own clients only (Insurance RW-1).
   const client = trimmed(formData.get("client_id")) || undefined;
-  const ok = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client })).allowed;
+  // The gate's client comes from gateClient (not createClient in this file): the close-authority interleave seam counts createClient calls made
+  // from THIS file to find the gap between the plan check and the mutation, and the gate must not shift that count.
+  const ok = (await requirePermission(await gateClient(), studio.id, "clin.view_records", { client })).allowed;
   return ok ? null : { ok: false, error: "Not available to your role." };
 }
 
