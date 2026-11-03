@@ -67,4 +67,19 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     for (const [, , key] of ACTIONS) expect(catalogByKey.has(key), key).toBe(true);
     for (const k of ["appt.reassign", "clin.view_photos", "clin.view_records", "clin.view_intake", "clin.view_aftercare"]) expect(catalogByKey.has(k), k).toBe(true);
   });
+
+  it("every availability action asks an avail.* key (owner floor stays), and the key follows the target scope", () => {
+    const src = read("app/(app)/settings/availability/actions.ts");
+    const names = [...src.matchAll(/export async function (\w+Action)\(/g)].map((m) => m[1]);
+    expect(names.length).toBeGreaterThan(15);
+    for (const n of names) {
+      const b = body(src, n);
+      expect(/assertAvailabilityKey\(|assertOwner\(\)/.test(b), `${n} must reach an avail.* check`).toBe(true);
+    }
+    expect(src).toContain('"avail.manage_studio_hours"');
+    expect(src).toContain('"avail.manage_own"');
+    expect(src).toContain('"avail.manage_others"');
+    expect(src).toMatch(/practitioner\.role !== "owner"/); // the floor is unchanged
+    for (const k of ["avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"]) expect(catalogByKey.has(k), k).toBe(true);
+  });
 });
