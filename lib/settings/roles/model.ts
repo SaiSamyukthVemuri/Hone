@@ -64,14 +64,17 @@ export type RoleRow = {
   pendingDecision: boolean;
   // approved_policy: the value shown is the APPROVED narrower policy; the database may still allow more until the closing PRs ship (P-1).
   snapshotBasis: SnapshotBasis;
+  // 'Not available yet' is ONLY for the receptionist legal-name keys (Sam, group 6). It never describes a practitioner's current access.
   gateNote: string | null;
+  // Any other ship gate: raising the key is held until the condition is met. Plain information, not a refusal of current access.
+  heldUntil: string | null;
   needs: string[]; // labels of prerequisites
   alsoSwitchesOff: string[]; // labels of dependents that follow this key down (their stored values are kept)
 };
 
 export type RoleGroupModel = { group: string; label: string; rows: RoleRow[] };
 
-const isPending = (d: PermissionDef): boolean => (d as { pendingDecision?: boolean }).pendingDecision === true;
+const isPending = (d: PermissionDef): boolean => (d.pendingDecision?.length ?? 0) > 0;
 
 const dependentsOf = (key: string, role: Role): PermissionDef[] =>
   (CATALOG as readonly PermissionDef[]).filter((d) => d.requires.includes(key) && d.offeredTo[role]);
@@ -121,7 +124,8 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         sensitive: d.sensitive === true,
         pendingDecision: isPending(d),
         snapshotBasis: d.snapshotBasis,
-        gateNote: gate && policy.gates?.[gate] !== true ? GATES[gate] : null,
+        gateNote: gate === "receptionist_legal_name" && role === "receptionist" && policy.gates?.[gate] !== true ? GATES[gate] : null,
+        heldUntil: gate && gate !== "receptionist_legal_name" && policy.gates?.[gate] !== true ? GATES[gate] : null,
         needs: d.requires.map((r) => catalogByKey.get(r)?.label ?? r),
         alsoSwitchesOff: dependents.map((x) => x.label),
       });

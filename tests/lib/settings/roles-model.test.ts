@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleModel, groupLabel } from "@/lib/settings/roles/model";
-import { defaultsPolicy, diffPolicies } from "@/lib/settings/roles/diff";
+import { defaultsPolicy, diffPolicies, releaseNarrowings } from "@/lib/settings/roles/diff";
 import { validateRoleSubmission } from "@/lib/settings/roles/validate";
 
 const defs = CATALOG as readonly PermissionDef[];
@@ -87,22 +87,41 @@ describe("group labels", () => {
   });
 });
 
-describe("a ship-gated key reads 'Not available yet' until the operator gate is satisfied (Sam, group 6)", () => {
-  it("every shipGate key for the role carries a gate note and cannot be raised above its snapshot", () => {
-    for (const role of ROLES) {
-      for (const d of defs.filter((x) => x.shipGate?.[role])) {
-        const row = buildRoleModel(role, snapshot).flatMap((g) => g.rows).find((r) => r.key === d.key)!;
-        expect(row.gateNote, `${role} ${d.key}`).toBeTruthy();
-        const higher = row.options.filter((o) => ["off", "own", "studio"].indexOf(o.scope) > ["off", "own", "studio"].indexOf(d.existingSnapshot[role]));
-        for (const o of higher) expect(o.disabled, `${role} ${d.key} ${o.scope}`).toBe(true);
-      }
+describe("'Not available yet' is only for the receptionist legal-name keys (Sam, group 6)", () => {
+  const rowsFor = (role: "practitioner" | "receptionist") => buildRoleModel(role, snapshot).flatMap((g) => g.rows);
+  it("a receptionist legal-name key carries the note and cannot be raised", () => {
+    const withGate = defs.filter((d) => d.shipGate?.receptionist === "receptionist_legal_name");
+    expect(withGate.length).toBeGreaterThan(0);
+    for (const d of withGate) {
+      const row = rowsFor("receptionist").find((r) => r.key === d.key)!;
+      expect(row.gateNote, d.key).toBeTruthy();
+      expect(row.options.filter((o) => !o.selected).every((o) => o.disabled), d.key).toBe(true);
+    }
+  });
+  it("no practitioner row ever says 'Not available yet', including the legal-name edit they have today", () => {
+    for (const r of rowsFor("practitioner")) expect(r.gateNote, r.key).toBeNull();
+    const edit = rowsFor("practitioner").find((r) => defs.find((d) => d.key === r.key)?.shipGate?.practitioner === "practitioner_legal_name_edit");
+    expect(edit?.heldUntil).toBeTruthy();
+    expect(edit?.chosen).not.toBe("off");
+  });
+  it("other gated keys are plain 'held until' information", () => {
+    for (const d of defs.filter((x) => x.shipGate?.receptionist && x.shipGate.receptionist !== "receptionist_legal_name")) {
+      const row = rowsFor("receptionist").find((r) => r.key === d.key)!;
+      expect(row.gateNote, d.key).toBeNull();
+      expect(row.heldUntil, d.key).toBeTruthy();
     }
   });
   it("once the operator marks the gate satisfied the note goes away", () => {
-    const d = defs.find((x) => x.shipGate?.receptionist)!;
-    const gate = d.shipGate!.receptionist!;
-    const row = buildRoleModel("receptionist", { ...snapshot, gates: { [gate]: true } }).flatMap((g) => g.rows).find((r) => r.key === d.key)!;
+    const d = defs.find((x) => x.shipGate?.receptionist === "receptionist_legal_name")!;
+    const row = buildRoleModel("receptionist", { ...snapshot, gates: { receptionist_legal_name: true } }).flatMap((g) => g.rows).find((r) => r.key === d.key)!;
     expect(row.gateNote).toBeNull();
+  });
+  it("a pending-decision marker shows (pendingDecision is a list, not a boolean)", () => {
+    const pend = defs.filter((d) => (d.pendingDecision?.length ?? 0) > 0);
+    for (const role of ROLES) {
+      const rows = buildRoleModel(role, snapshot).flatMap((g) => g.rows);
+      for (const d of pend) expect(rows.find((r) => r.key === d.key)!.pendingDecision, d.key).toBe(true);
+    }
   });
 });
 
@@ -112,6 +131,14 @@ describe("truthfulness (Insurance P-1)", () => {
     const approved = rows.filter((r) => r.snapshotBasis === "approved_policy");
     expect(approved.length).toBeGreaterThan(0);
     for (const r of rows) expect(r.snapshotBasis, r.key).toBe(defs.find((d) => d.key === r.key)!.snapshotBasis);
+  });
+});
+
+describe("the release-time owner-only change is a standing notice (DN-25)", () => {
+  it("lists every fixed owner-only item that narrows access, the same list the adoption preview uses", () => {
+    const ids = releaseNarrowings().map((f) => f.id).sort();
+    expect(ids).toEqual(FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => f.id).sort());
+    expect(diffPolicies("practitioner", snapshot, defaultsPolicy(snapshot)).fixedNarrowings.map((f) => f.id).sort()).toEqual(ids);
   });
 });
 

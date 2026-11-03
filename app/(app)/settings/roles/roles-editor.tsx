@@ -3,7 +3,7 @@
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { ROLES, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleModel, ROLE_LABELS } from "@/lib/settings/roles/model";
-import { defaultsPolicy, diffPolicies, type RoleDiff } from "@/lib/settings/roles/diff";
+import { defaultsPolicy, diffPolicies, releaseNarrowings, type RoleDiff } from "@/lib/settings/roles/diff";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import type { RolesActionResult } from "./actions";
@@ -105,6 +105,26 @@ export function RolesEditor(props: RolesEditorProps) {
           >
             Review changes for {ROLE_LABELS[role].toLowerCase()}s
           </button>
+        </section>
+      )}
+
+      {!reviewed && (
+        <section
+          data-testid="release-narrowings-notice"
+          className="rounded-lg border border-neutral-300 p-4 text-sm dark:border-neutral-700"
+        >
+          <h3 className="font-medium">Coming with the access update: these become owner-only</h3>
+          <p className="mt-1 text-neutral-600 dark:text-neutral-400">
+            When access is enforced, only you can do the following. Practitioners can do some of them today. Nothing is deleted, and
+            history stays recoverable. You will see this before it takes effect.
+          </p>
+          <ul className="mt-2 list-disc pl-5">
+            {releaseNarrowings().map((f) => (
+              <li key={f.id} data-release-narrowing={f.id} className="break-words">
+                {f.label}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
@@ -223,6 +243,11 @@ export function RolesEditor(props: RolesEditorProps) {
                   {row.gateNote && (
                     <p data-testid="not-available-yet" className="break-words text-xs font-medium text-neutral-700 dark:text-neutral-300">
                       Not available yet. {row.gateNote}.
+                    </p>
+                  )}
+                  {row.heldUntil && (
+                    <p data-testid="held-until" className="break-words text-xs text-neutral-500">
+                      Raising this is held until: {row.heldUntil}.
                     </p>
                   )}
                   {row.snapshotBasis === "approved_policy" && (
