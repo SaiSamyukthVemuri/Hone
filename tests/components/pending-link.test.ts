@@ -422,15 +422,17 @@ describe("UI-01C: the row body and the calendar toolbar are wired to it", () => 
   });
 
   it("every calendar toolbar control that navigates is a PendingLink", () => {
-    // Six real client navigations: Week and Month (the toggle), then Today,
-    // Previous, Next and Upcoming. The toggle renders one element per tab.
-    expect(toolbar.match(/<PendingLink\b/g) ?? []).toHaveLength(4);
+    // Real client navigations: Week and Month (the toggle), then Today,
+    // Previous, Next and Upcoming, plus the owner-only "Review practitioner
+    // assignments" link (HON-44). The toggle renders one element per tab.
+    expect(toolbar.match(/<PendingLink\b/g) ?? []).toHaveLength(5);
     expect(toggle.match(/<PendingLink\b/g) ?? []).toHaveLength(1);
     for (const testid of [
       "calendar-today",
       "calendar-prev",
       "calendar-next",
       "calendar-upcoming",
+      "calendar-review-assignments",
     ]) {
       expect(toolbarSrc).toMatch(
         new RegExp(`<PendingLink[\\s\\S]{0,400}${testid}`),
