@@ -142,7 +142,43 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     for (const m of read("app/(app)/settings/availability/actions.ts").matchAll(/"(avail\.manage_[a-z_]+)"/g)) asked.add(m[1]!);
     const marked = new Set(CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key));
     expect([...asked].sort()).toEqual([...marked].sort());
-    for (const k of asked) expect(["enforced", "observe"]).toContain(enforcementOf(k));
+    for (const k of asked) expect(["enforced", "deny_only", "observe"]).toContain(enforcementOf(k));
     expect(enforcementOf("appt.complete")).toBe("observe"); // asked, logged, never blocks
+  });
+
+  describe("enforced means BOTH directions take effect; deny_only means a legacy check still stands in front (OPS delta review RE-1/RG-2/F1)", () => {
+    // Each deny_only key, and the legacy check in the source that makes widening it inert today.
+    const LEGACY: Record<string, { file: string; fn?: string; marker: RegExp; why: string }> = {
+      "appt.book": { file: "app/(app)/calendar/actions.ts", fn: "bookAppointmentForClientAction", marker: /getCurrentPractitionerWithStudio/, why: "practitioner-only action path" },
+      "appt.move": { file: "app/(app)/calendar/move-appointment-actions.ts", fn: "moveAppointmentAction", marker: /getCurrentPractitionerWithStudio/, why: "practitioner-only action path" },
+      "appt.reassign": { file: "app/(app)/calendar/move-appointment-actions.ts", fn: "moveAppointmentAction", marker: /practitioner\.role === "owner" &&/, why: "owner-only reassign" },
+      "avail.manage_own": { file: "app/(app)/settings/availability/actions.ts", marker: /Only studio owners can change availability\./, why: "owner-only availability floor" },
+      "avail.manage_others": { file: "app/(app)/settings/availability/actions.ts", marker: /Only studio owners can change availability\./, why: "owner-only availability floor" },
+      "avail.manage_studio_hours": { file: "app/(app)/settings/availability/actions.ts", marker: /Only studio owners can change availability\./, why: "owner-only availability floor" },
+    };
+
+    it("the catalog's deny_only keys are exactly the keys with a legacy check in front, and no enforced key is one of them", () => {
+      const denyOnly = CATALOG.filter((d) => enforcementOf(d.key) === "deny_only").map((d) => d.key).sort();
+      expect(denyOnly).toEqual(Object.keys(LEGACY).sort());
+      for (const d of CATALOG.filter((x) => enforcementOf(x.key) === "enforced")) expect(LEGACY[d.key], `${d.key} is enforced but has a legacy floor`).toBeUndefined();
+    });
+
+    it("the legacy check really is in the source ahead of the key (so deny_only is true, not a guess)", () => {
+      for (const [key, { file, fn, marker }] of Object.entries(LEGACY)) {
+        const src = fn ? body(read(file), fn) : read(file);
+        const ask = src.indexOf(`"${key}"`);
+        expect(ask, key).toBeGreaterThan(-1);
+        if (fn) expect(src.slice(0, ask), `${key}: legacy check precedes the key`).toMatch(marker);
+        else expect(src, key).toMatch(marker);
+      }
+    });
+
+    it("every enforced key's snapshot is already the widest the key can be given, or its widening reaches a real path", () => {
+      // The other direction: an enforced key must not be one whose action path is closed to the roles a widening would add.
+      for (const k of ["appt.cancel", "appt.mark_no_show", "appt.edit_notes", "clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare"]) {
+        expect(enforcementOf(k), k).toBe("enforced");
+        expect(LEGACY[k], k).toBeUndefined();
+      }
+    });
   });
 });
