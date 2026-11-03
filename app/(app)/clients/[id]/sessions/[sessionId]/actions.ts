@@ -679,6 +679,9 @@ export async function updateSessionPerformerAction(
 
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
+    throw new Error("Not available to your role.");
+  }
 
   // Confirm the chosen practitioner belongs to this studio (RLS already
   // restricts visibility, but a second check guards against tampering).

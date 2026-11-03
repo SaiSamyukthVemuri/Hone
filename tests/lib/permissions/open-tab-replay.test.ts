@@ -128,3 +128,39 @@ describe("open-tab replay after clin.view_intake is revoked", () => {
     expect(body.slice(gate, gate + 250)).toContain(`return { ok: false, error: ${err} }`);
   });
 });
+
+describe("NQ-10 (Insurance RV-1, Privacy AC1): editing requires viewing, whatever the action returns", () => {
+  it("every treatment-plan write refuses without clin.view_records and touches nothing", async () => {
+    const m = await import("@/app/(app)/clients/[id]/treatment-plans-actions");
+    const fd = new FormData();
+    fd.set("client_id", "c1");
+    fd.set("plan_id", "p1");
+    const names = ["createTreatmentPlanAction", "closeTreatmentPlanAction", "attachChartEntryToPlanAction", "detachChartEntryFromPlanAction", "updateTreatmentPlanNotesAction", "createTreatmentPlanStageAction", "updateTreatmentPlanStageAction", "deleteTreatmentPlanStageAction"] as const;
+    for (const n of names) {
+      const r = await (m[n] as (f: FormData) => Promise<{ ok: boolean }>)(fd);
+      expect(r.ok, n).toBe(false);
+    }
+    expect(asked).toHaveBeenCalledWith("clin.view_records");
+    expect(touched).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["app/(app)/clients/[id]/intake/actions.ts", "markIntakeReviewedAction", "clin.view_intake", 'from("client_intake_forms")'],
+    ["app/(app)/clients/[id]/intake/actions.ts", "saveIntakeNotesAction", "clin.view_intake", 'from("client_intake_forms")'],
+    ["app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", "updateSessionPerformerAction", "clin.view_records", 'rpc("set_session_performer"'],
+  ])("%s %s asks %s before it reads or writes", (file, name, key, firstUse) => {
+    const src = readFileSync(file, "utf8");
+    const start = src.indexOf(`export async function ${name}`);
+    const body = src.slice(start, src.indexOf("\nexport ", start + 10));
+    const gate = body.search(new RegExp(`requirePermission\\([\\s\\S]{0,120}?"${key.replace(".", "\\.")}"`));
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(body.indexOf(firstUse));
+  });
+
+  it("updateSessionPriceAction is the documented residual: a pricing action, not gated on the records key", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", "utf8");
+    const start = src.indexOf("export async function updateSessionPriceAction");
+    const body = src.slice(start, src.indexOf("\nexport ", start + 10));
+    expect(body).not.toMatch(/clin\.view_records/);
+  });
+});
