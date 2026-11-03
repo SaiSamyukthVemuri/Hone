@@ -12,6 +12,7 @@ import {
 } from "@/lib/booking/slots";
 import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { routineMessageAllowed } from "@/lib/permissions/routine-message";
 import { notifyAppointmentMoved, type MoveNotificationStatus } from "@/lib/email/notify-appointment-moved";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
@@ -501,12 +502,15 @@ export async function moveAppointmentAction(input: {
   // Notify the client AFTER commit (best-effort, fail-open). A notification
   // failure NEVER reports the move as failed. The helper reads the post-commit
   // row (new time + new practitioner) and builds truthful copy for resultKind.
-  const notificationStatus = await notifyAppointmentMoved(admin, {
-    appointmentId,
-    studioId: studio.id,
-    appOrigin,
-    resultKind,
-  });
+  // Roles engine (R5): without comm.send_routine the move stands and the client message is withheld (reported as "skipped").
+  const notificationStatus: MoveNotificationStatus = (await routineMessageAllowed(userDb, studio.id, { appointment: appointmentId }))
+    ? await notifyAppointmentMoved(admin, {
+        appointmentId,
+        studioId: studio.id,
+        appOrigin,
+        resultKind,
+      })
+    : "skipped";
 
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");

@@ -11,6 +11,7 @@ import {
   type PossibleDuplicate,
 } from "@/lib/clients/possible-duplicate";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { requirePermission } from "@/lib/permissions/require-permission";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -78,6 +79,10 @@ export async function createClientAction(
   formData: FormData,
 ): Promise<ClientSaveResult | void> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+
+  // Roles engine (0287, R5). Existing-snapshot basis: every active practitioner, so nothing changes until an owner adopts new defaults.
+  const createPermission = await requirePermission(await createClient(), studio.id, "client.create");
+  if (!createPermission.allowed) return { ok: false, error: "You don't have permission to add clients." };
 
   const name = nullableString(formData.get("name"));
   if (!name) {

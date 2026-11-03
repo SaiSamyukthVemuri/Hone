@@ -137,6 +137,8 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
       if (f.startsWith("lib/permissions/")) continue;
       const s = read(f);
       for (const m of s.matchAll(/requirePermission\(\s*[^,]+,\s*[^,]+,\s*"([a-z_]+\.[a-z_]+)"/g)) asked.add(m[1]!);
+      // comm.send_routine is asked through its helper (lib/permissions/routine-message.ts), which fixes the key
+      if (/routineMessageAllowed\(/.test(s)) asked.add("comm.send_routine");
     }
     // availability actions pick one of three keys through assertAvailabilityKey
     for (const m of read("app/(app)/settings/availability/actions.ts").matchAll(/"(avail\.manage_[a-z_]+)"/g)) asked.add(m[1]!);

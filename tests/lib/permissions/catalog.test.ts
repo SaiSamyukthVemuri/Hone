@@ -601,7 +601,7 @@ describe("enforcement state (Privacy X3)", () => {
   it("is set on exactly the keys the app asks; every other key resolves to not_yet", async () => {
     const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
     const marked = CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key).sort();
-    expect(marked).toHaveLength(14);
+    expect(marked).toHaveLength(16);
     expect(enforcementOf("clin.edit_records")).toBe("not_yet");
     expect(enforcementOf("appt.complete")).toBe("observe");
     expect(enforcementOf("appt.cancel")).toBe("enforced");
