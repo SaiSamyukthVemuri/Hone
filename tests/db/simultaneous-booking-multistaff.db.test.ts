@@ -148,7 +148,8 @@ afterAll(async () => {
 });
 
 const ROUNDS = 6;
-const HOURS = ["08", "09", "10", "11", "12", "13", "14", "15", "16", "17"];
+// Rounds are 3 hours apart: a 60-minute visit plus the 30-minute soft buffer must not touch the next round's contested times.
+const HOURS = ["00", "03", "06", "09", "12", "15"];
 
 for (const capacity of [false, true]) {
   const mode = capacity ? "capacity ON (one resource per practitioner)" : "capacity OFF (the studio is one resource)";
