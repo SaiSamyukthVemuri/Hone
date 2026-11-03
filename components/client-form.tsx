@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   COMMON_ALLERGIES,
   FITZPATRICK_TYPES,
@@ -17,8 +17,11 @@ import {
   adoptCurrent,
   applyMineAllowed,
   CONFLICT_REGION_TRUNCATED_NOTE,
-  conflictPreview,
+  CONFLICT_WHITESPACE_ONLY_NOTE,
+  conflictOpenedKey,
+  previewFor,
   type ConflictSide,
+  type ConflictSideName,
   type ProfileBaseline,
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
@@ -110,25 +113,48 @@ function blockEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>) {
 function ConflictSideText({
   label,
   side,
+  showToggle,
   onOpened,
 }: {
   label: string;
   side: ConflictSide;
+  showToggle: boolean;
   onOpened?: () => void;
 }) {
+  const boxRef = useRef<HTMLPreElement>(null);
+  const markRef = useRef<HTMLElement>(null);
+  const marked = side.clipped && side.diffEnd > side.diffStart;
   return (
     <span className="inline-flex flex-col">
       <span className="font-medium whitespace-pre-wrap [overflow-wrap:anywhere]">{side.text}</span>
-      {side.clipped && (
+      {showToggle && (
         <details
           className="mt-1"
           onToggle={(e) => {
-            if ((e.currentTarget as HTMLDetailsElement).open) onOpened?.();
+            if (!(e.currentTarget as HTMLDetailsElement).open) return;
+            onOpened?.();
+            // Bring the differing region into view inside the box (the box itself scrolls; the page does not).
+            const box = boxRef.current;
+            const mark = markRef.current;
+            if (box && mark) box.scrollTop = Math.max(0, mark.offsetTop - box.offsetTop - 24);
           }}
         >
           <summary className="cursor-pointer text-xs underline">Show full text ({label})</summary>
-          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-amber-300 bg-white p-2 text-xs [overflow-wrap:anywhere] dark:border-amber-800 dark:bg-neutral-950">
-            {side.full}
+          <pre
+            ref={boxRef}
+            className="relative mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-amber-300 bg-white p-2 text-xs [overflow-wrap:anywhere] dark:border-amber-800 dark:bg-neutral-950"
+          >
+            {marked ? (
+              <>
+                {side.full.slice(0, side.diffStart)}
+                <mark ref={markRef} className="bg-amber-200 dark:bg-amber-800">
+                  {side.full.slice(side.diffStart, side.diffEnd)}
+                </mark>
+                {side.full.slice(side.diffEnd)}
+              </>
+            ) : (
+              side.full
+            )}
           </pre>
         </details>
       )}
@@ -136,25 +162,32 @@ function ConflictSideText({
   );
 }
 
-function ConflictRow({ conflict, onOpenedCurrent }: { conflict: ProfileConflict; onOpenedCurrent: (key: string) => void }) {
-  const preview = conflictPreview(conflict.current, conflict.yours);
+function ConflictRow({ conflict, onOpened }: { conflict: ProfileConflict; onOpened: (key: string, side: ConflictSideName) => void }) {
+  const preview = previewFor(conflict);
   const truncated = preview.current.regionTruncated || preview.yours.regionTruncated;
+  // Both sides get a toggle whenever either is clipped, so neither is a dead end.
+  const anyClipped = preview.current.clipped || preview.yours.clipped;
   return (
     <li className="flex flex-col gap-1 [overflow-wrap:anywhere]">
       <span>
         <span className="font-medium">{conflict.label}:</span>
-        {preview.current.clipped || preview.yours.clipped ? " only the part that differs is shown." : ""}
+        {anyClipped ? " only the part that differs is shown." : ""}
       </span>
+      {preview.whitespaceOnly && (
+        <span role="status" data-testid="conflict-whitespace-only" className="font-medium">
+          {CONFLICT_WHITESPACE_ONLY_NOTE}
+        </span>
+      )}
       {truncated && (
         <span role="status" data-testid="conflict-region-truncated" className="font-medium">
           {CONFLICT_REGION_TRUNCATED_NOTE}
         </span>
       )}
       <span>
-        Now: <ConflictSideText label="now" side={preview.current} onOpened={() => onOpenedCurrent(conflict.key)} />
+        Now: <ConflictSideText label="now" side={preview.current} showToggle={anyClipped} onOpened={() => onOpened(conflict.key, "current")} />
       </span>
       <span>
-        Your change: <ConflictSideText label="your change" side={preview.yours} />
+        Your change: <ConflictSideText label="your change" side={preview.yours} showToggle={anyClipped} onOpened={() => onOpened(conflict.key, "yours")} />
       </span>
     </li>
   );
@@ -465,7 +498,12 @@ export function ClientForm({
               <ConflictRow
                 key={c.key}
                 conflict={c}
-                onOpenedCurrent={(key) => setOpenedFull((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))}
+                onOpened={(key, side) =>
+                  setOpenedFull((prev) => {
+                    const k = conflictOpenedKey(key, side);
+                    return prev.has(k) ? prev : new Set(prev).add(k);
+                  })
+                }
               />
             ))}
           </ul>

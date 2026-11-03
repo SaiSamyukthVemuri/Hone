@@ -261,13 +261,24 @@ export type ConflictSide = {
   /** True when even the differing region was cut at CONFLICT_REGION_MAX_CHARS: edits further apart than the cap cannot all be shown. */
   regionTruncated: boolean;
   full: string;
+  /** UTF-16 offsets into `full` of the differing region, so the expanded text can be scrolled to it. Equal when nothing is marked. */
+  diffStart: number;
+  diffEnd: number;
 };
+
+export type ConflictSideName = "current" | "yours";
+
+export type ConflictPreview = { current: ConflictSide; yours: ConflictSide; whitespaceOnly: boolean };
+
+export const CONFLICT_WHITESPACE_ONLY_NOTE = "These differ only in spaces or line breaks.";
 
 export const CONFLICT_REGION_TRUNCATED_NOTE =
   "The changes are longer than this preview. Open the full text before choosing.";
 
 // All slicing is on CODE POINTS, never UTF-16 units, so an emoji or other astral character is never cut in half.
 function clipRegion(points: string[], full: string, prefix: number, suffix: number): ConflictSide {
+  const diffStart = points.slice(0, prefix).join("").length;
+  const diffEnd = points.slice(0, points.length - suffix).join("").length;
   const start = Math.max(0, prefix - CONFLICT_CONTEXT_CHARS);
   const end = Math.min(points.length, points.length - suffix + CONFLICT_CONTEXT_CHARS);
   let body = points.slice(start, end);
@@ -278,7 +289,7 @@ function clipRegion(points: string[], full: string, prefix: number, suffix: numb
     tail = true;
     regionTruncated = true;
   }
-  return { text: `${start > 0 ? "…" : ""}${body.join("")}${tail ? "…" : ""}`, clipped: true, regionTruncated, full };
+  return { text: `${start > 0 ? "…" : ""}${body.join("")}${tail ? "…" : ""}`, clipped: true, regionTruncated, full, diffStart, diffEnd };
 }
 
 /**
@@ -287,11 +298,12 @@ function clipRegion(points: string[], full: string, prefix: number, suffix: numb
  * values DIFFER is shown for both, with a little context and an ellipsis. Two edits far apart make that region longer
  * than the cap; then `regionTruncated` is set and the caller must make the person open the full text before choosing.
  */
-export function conflictPreview(current: string, yours: string): { current: ConflictSide; yours: ConflictSide } {
-  const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, regionTruncated: false, full: v });
+export function conflictPreview(current: string, yours: string): ConflictPreview {
+  const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, regionTruncated: false, full: v, diffStart: 0, diffEnd: 0 });
+  const whitespaceOnly = current !== yours && current.replace(/\s+/g, "") === yours.replace(/\s+/g, "");
   const a = Array.from(current);
   const b = Array.from(yours);
-  if (a.length <= CONFLICT_FULL_CHARS && b.length <= CONFLICT_FULL_CHARS) return { current: whole(current), yours: whole(yours) };
+  if (a.length <= CONFLICT_FULL_CHARS && b.length <= CONFLICT_FULL_CHARS) return { current: whole(current), yours: whole(yours), whitespaceOnly };
   const max = Math.min(a.length, b.length);
   let prefix = 0;
   while (prefix < max && a[prefix] === b[prefix]) prefix += 1;
@@ -299,21 +311,45 @@ export function conflictPreview(current: string, yours: string): { current: Conf
   while (suffix < max - prefix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix += 1;
   const side = (points: string[], full: string): ConflictSide =>
     full === "" || points.length <= CONFLICT_FULL_CHARS ? whole(full) : clipRegion(points, full, prefix, suffix);
-  return { current: side(a, current), yours: side(b, yours) };
+  return { current: side(a, current), yours: side(b, yours), whitespaceOnly };
 }
 
-/** True when the person must open the full text of this conflict before "Apply my change" is offered. */
+const previewCache = new WeakMap<object, { current: string; yours: string; preview: ConflictPreview }>();
+
+/** conflictPreview memoised per conflict object: the panel, the gate and every re-render share one computation. */
+export function previewFor(conflict: Pick<ProfileConflict, "current" | "yours">): ConflictPreview {
+  const hit = previewCache.get(conflict);
+  if (hit && hit.current === conflict.current && hit.yours === conflict.yours) return hit.preview;
+  const preview = conflictPreview(conflict.current, conflict.yours);
+  previewCache.set(conflict, { current: conflict.current, yours: conflict.yours, preview });
+  return preview;
+}
+
+/**
+ * Which sides the person must expand before "Apply my change" is offered. Only when the differing region itself was cut
+ * (`regionTruncated`); then every side that is clipped must be opened. A side shown whole counts as already seen.
+ */
+export function sidesToOpen(conflict: Pick<ProfileConflict, "current" | "yours">): ConflictSideName[] {
+  const p = previewFor(conflict);
+  if (!p.current.regionTruncated && !p.yours.regionTruncated) return [];
+  const out: ConflictSideName[] = [];
+  if (p.current.clipped) out.push("current");
+  if (p.yours.clipped) out.push("yours");
+  return out;
+}
+
 export function needsFullTextOpen(conflict: Pick<ProfileConflict, "current" | "yours">): boolean {
-  const p = conflictPreview(conflict.current, conflict.yours);
-  return p.current.regionTruncated || p.yours.regionTruncated;
+  return sidesToOpen(conflict).length > 0;
 }
 
-/** "Apply my change" is allowed only when every conflict that needs it has had its full current text actually expanded. */
+export const conflictOpenedKey = (key: string, side: ConflictSideName) => `${key}:${side}`;
+
+/** "Apply my change" is allowed only when every clipped side of every truncated conflict has actually been expanded. */
 export function applyMineAllowed(
   conflicts: ReadonlyArray<Pick<ProfileConflict, "key" | "current" | "yours">>,
   opened: ReadonlySet<string>,
 ): boolean {
-  return conflicts.every((c) => !needsFullTextOpen(c) || opened.has(c.key));
+  return conflicts.every((c) => sidesToOpen(c).every((side) => opened.has(conflictOpenedKey(c.key, side))));
 }
 
 /** Baseline for the form after the staff member reviewed a conflict: adopt the current stored value. */

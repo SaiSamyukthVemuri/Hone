@@ -8,7 +8,11 @@ import {
   parseBaseline,
   planProfileUpdate,
   applyMineAllowed,
+  conflictOpenedKey,
   conflictPreview,
+  CONFLICT_WHITESPACE_ONLY_NOTE,
+  previewFor,
+  sidesToOpen,
   needsFullTextOpen,
   CONFLICT_FULL_CHARS,
   CONFLICT_REGION_MAX_CHARS,
@@ -251,7 +255,7 @@ describe("the conflict panel shows the DIFFERING region of a long value (Insuran
   const base = "x".repeat(10_000);
   it("short pairs are shown whole, empty as (empty)", () => {
     const p = conflictPreview("latex", "");
-    expect(p.current).toEqual({ text: "latex", clipped: false, regionTruncated: false, full: "latex" });
+    expect(p.current).toEqual({ text: "latex", clipped: false, regionTruncated: false, full: "latex", diffStart: 0, diffEnd: 0 });
     expect(p.yours.text).toBe("(empty)");
   });
   it("an allergy appended at the END is visible on the side that has it (the head-only clip hid it)", () => {
@@ -326,16 +330,22 @@ describe("two distant edits cannot hide the second one (Insurance M-8, M-9, M-10
     expect(p.current.regionTruncated).toBe(false);
     expect(needsFullTextOpen({ current: base + " | penicillin", yours: base })).toBe(false);
   });
-  it("Apply is gated until the full current text of that conflict has been opened, then it releases", () => {
+  it("Apply is gated until EVERY clipped side of that conflict has been opened, then it releases", () => {
+    const cur = conflictOpenedKey("allergies", "current");
+    const yrs = conflictOpenedKey("allergies", "yours");
+    expect(sidesToOpen(conflict)).toEqual(["current", "yours"]);
     expect(applyMineAllowed([conflict], new Set())).toBe(false);
-    expect(applyMineAllowed([conflict], new Set(["pronouns"]))).toBe(false); // another field's expand does not release it
-    expect(applyMineAllowed([conflict], new Set(["allergies"]))).toBe(true);
+    expect(applyMineAllowed([conflict], new Set([conflictOpenedKey("pronouns", "current")]))).toBe(false); // another field's expand does not release it
+    expect(applyMineAllowed([conflict], new Set([cur]))).toBe(false);
+    expect(applyMineAllowed([conflict], new Set([yrs]))).toBe(false);
+    expect(applyMineAllowed([conflict], new Set([cur, yrs]))).toBe(true);
   });
   it("an unclipped conflict never needs the gate, and a mixed set needs every truncated one opened", () => {
     const small = { key: "pronouns" as const, current: "she/her", yours: "they/them" };
+    const both = new Set([conflictOpenedKey("allergies", "current"), conflictOpenedKey("allergies", "yours")]);
     expect(applyMineAllowed([small], new Set())).toBe(true);
     expect(applyMineAllowed([small, conflict], new Set())).toBe(false);
-    expect(applyMineAllowed([small, conflict], new Set(["allergies"]))).toBe(true);
+    expect(applyMineAllowed([small, conflict], both)).toBe(true);
   });
   it("clips on code points: an emoji at the cut is never split into a lone surrogate", () => {
     const emoji = "😀";
@@ -358,5 +368,59 @@ describe("two distant edits cannot hide the second one (Insurance M-8, M-9, M-10
     expect(p.current.regionTruncated).toBe(true);
     expect(p.current.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
     expect(p.current.text).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+});
+
+describe("asymmetric conflicts are never a dead end (Insurance N-1, Privacy Z1)", () => {
+  // "now" is short and shown whole; "your change" is long, far-apart, and clipped. A side shown whole counts as seen.
+  const yours = "FIRST" + "m".repeat(3_000) + "LAST";
+  const conflict = { key: "allergies" as const, current: "latex", yours };
+
+  it("only the clipped side must be opened; the whole side is already seen", () => {
+    const p = previewFor(conflict);
+    expect(p.current.clipped).toBe(false);
+    expect(p.yours.clipped && p.yours.regionTruncated).toBe(true);
+    expect(sidesToOpen(conflict)).toEqual(["yours"]);
+  });
+  it("Apply stays disabled until the clipped side is opened, then enables", () => {
+    expect(applyMineAllowed([conflict], new Set())).toBe(false);
+    expect(applyMineAllowed([conflict], new Set([conflictOpenedKey("allergies", "current")]))).toBe(false);
+    expect(applyMineAllowed([conflict], new Set([conflictOpenedKey("allergies", "yours")]))).toBe(true);
+  });
+  it("the mirror case (long clipped now, short yours) needs the current side", () => {
+    const mirror = { key: "allergies" as const, current: yours, yours: "latex" };
+    expect(sidesToOpen(mirror)).toEqual(["current"]);
+    expect(applyMineAllowed([mirror], new Set([conflictOpenedKey("allergies", "current")]))).toBe(true);
+  });
+  it("records where the differing region sits in the full text so the expanded box can scroll to it", () => {
+    const base = "x".repeat(2_000);
+    const p = conflictPreview(base + "AAA" + "y".repeat(2_000), base + "BBB" + "y".repeat(2_000));
+    expect(p.current.full.slice(p.current.diffStart, p.current.diffEnd)).toBe("AAA");
+    expect(p.yours.full.slice(p.yours.diffStart, p.yours.diffEnd)).toBe("BBB");
+  });
+});
+
+describe("whitespace-only conflicts are labelled (Insurance N-3)", () => {
+  it("flags a pair that differs only in spaces or line breaks, short or long", () => {
+    expect(conflictPreview("a b", "a  b").whitespaceOnly).toBe(true);
+    expect(conflictPreview("a\nb", "a b").whitespaceOnly).toBe(true);
+    const long = "word ".repeat(200);
+    expect(conflictPreview(long, long.replace(/ /g, "\n")).whitespaceOnly).toBe(true);
+    expect(CONFLICT_WHITESPACE_ONLY_NOTE).toMatch(/spaces or line breaks/);
+  });
+  it("does not flag a real difference or an identical pair", () => {
+    expect(conflictPreview("a b", "a c").whitespaceOnly).toBe(false);
+    expect(conflictPreview("a b", "a b").whitespaceOnly).toBe(false);
+    expect(conflictPreview("latex", "").whitespaceOnly).toBe(false);
+  });
+});
+
+describe("preview memoisation (N-4/Z2)", () => {
+  it("returns the same object for the same conflict and recomputes if its text changes", () => {
+    const c = { key: "allergies" as const, current: "x".repeat(400), yours: "y".repeat(400) };
+    expect(previewFor(c)).toBe(previewFor(c));
+    const first = previewFor(c);
+    const changed = { ...c, yours: "z".repeat(400) };
+    expect(previewFor(changed)).not.toBe(first);
   });
 });
