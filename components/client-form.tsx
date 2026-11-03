@@ -15,7 +15,10 @@ import {
 } from "@/lib/clients/client-form-submit";
 import {
   adoptCurrent,
+  applyMineAllowed,
+  CONFLICT_REGION_TRUNCATED_NOTE,
   conflictPreview,
+  type ConflictSide,
   type ProfileBaseline,
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
@@ -104,12 +107,25 @@ function blockEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>) {
   }
 }
 
-function ConflictSideText({ label, side }: { label: string; side: { text: string; clipped: boolean; full: string } }) {
+function ConflictSideText({
+  label,
+  side,
+  onOpened,
+}: {
+  label: string;
+  side: ConflictSide;
+  onOpened?: () => void;
+}) {
   return (
     <span className="inline-flex flex-col">
       <span className="font-medium whitespace-pre-wrap [overflow-wrap:anywhere]">{side.text}</span>
       {side.clipped && (
-        <details className="mt-1">
+        <details
+          className="mt-1"
+          onToggle={(e) => {
+            if ((e.currentTarget as HTMLDetailsElement).open) onOpened?.();
+          }}
+        >
           <summary className="cursor-pointer text-xs underline">Show full text ({label})</summary>
           <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-amber-300 bg-white p-2 text-xs [overflow-wrap:anywhere] dark:border-amber-800 dark:bg-neutral-950">
             {side.full}
@@ -120,16 +136,22 @@ function ConflictSideText({ label, side }: { label: string; side: { text: string
   );
 }
 
-function ConflictRow({ conflict }: { conflict: ProfileConflict }) {
+function ConflictRow({ conflict, onOpenedCurrent }: { conflict: ProfileConflict; onOpenedCurrent: (key: string) => void }) {
   const preview = conflictPreview(conflict.current, conflict.yours);
+  const truncated = preview.current.regionTruncated || preview.yours.regionTruncated;
   return (
     <li className="flex flex-col gap-1 [overflow-wrap:anywhere]">
       <span>
         <span className="font-medium">{conflict.label}:</span>
         {preview.current.clipped || preview.yours.clipped ? " only the part that differs is shown." : ""}
       </span>
+      {truncated && (
+        <span role="status" data-testid="conflict-region-truncated" className="font-medium">
+          {CONFLICT_REGION_TRUNCATED_NOTE}
+        </span>
+      )}
       <span>
-        Now: <ConflictSideText label="now" side={preview.current} />
+        Now: <ConflictSideText label="now" side={preview.current} onOpened={() => onOpenedCurrent(conflict.key)} />
       </span>
       <span>
         Your change: <ConflictSideText label="your change" side={preview.yours} />
@@ -152,6 +174,8 @@ export function ClientForm({
   const [error, setError] = useState<string | null>(null);
   // "Apply my change" stays a deliberate click and is only offered once the review panel has actually rendered.
   const [panelRendered, setPanelRendered] = useState(false);
+  // Conflicts whose FULL current text the person has actually expanded (the details toggle opened).
+  const [openedFull, setOpenedFull] = useState<ReadonlySet<string>>(new Set());
   const [possibleDuplicates, setPossibleDuplicates] =
     useState<ClientFormActionResult["possibleDuplicates"]>(undefined);
   const [pending, startTransition] = useTransition();
@@ -228,6 +252,7 @@ export function ClientForm({
   // Review of a conflict: keep what is stored now for the conflicting fields, or apply my change on top of it.
   useEffect(() => {
     setPanelRendered(Boolean(conflicts && conflicts.length > 0));
+    setOpenedFull(new Set());
   }, [conflicts]);
 
   function keepCurrent() {
@@ -242,7 +267,7 @@ export function ClientForm({
     setError(null);
   }
   function applyMine() {
-    if (!conflicts || !baseline || !panelRendered) return;
+    if (!conflicts || !baseline || !panelRendered || !applyMineAllowed(conflicts, openedFull)) return;
     const next = adoptCurrent(baseline, conflicts);
     setBaseline(next);
     const guards = conflicts.filter((c) => c.guard);
@@ -437,7 +462,11 @@ export function ClientForm({
           <p>{error}</p>
           <ul className="flex flex-col gap-1">
             {conflicts.map((c) => (
-              <ConflictRow key={c.key} conflict={c} />
+              <ConflictRow
+                key={c.key}
+                conflict={c}
+                onOpenedCurrent={(key) => setOpenedFull((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))}
+              />
             ))}
           </ul>
           <div className="flex flex-wrap items-center gap-3">
@@ -451,7 +480,7 @@ export function ClientForm({
             </button>
             <button
               type="button"
-              disabled={pending || !panelRendered}
+              disabled={pending || !panelRendered || !applyMineAllowed(conflicts, openedFull)}
               onClick={applyMine}
               className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
             >

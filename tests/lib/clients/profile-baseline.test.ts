@@ -7,8 +7,11 @@ import {
   MAX_BASELINE_CHARS,
   parseBaseline,
   planProfileUpdate,
+  applyMineAllowed,
   conflictPreview,
+  needsFullTextOpen,
   CONFLICT_FULL_CHARS,
+  CONFLICT_REGION_MAX_CHARS,
   CONFLICT_CONTEXT_CHARS,
   splitConditions,
   URL_CONDITION_MAX_VALUE_CHARS,
@@ -248,7 +251,7 @@ describe("the conflict panel shows the DIFFERING region of a long value (Insuran
   const base = "x".repeat(10_000);
   it("short pairs are shown whole, empty as (empty)", () => {
     const p = conflictPreview("latex", "");
-    expect(p.current).toEqual({ text: "latex", clipped: false, full: "latex" });
+    expect(p.current).toEqual({ text: "latex", clipped: false, regionTruncated: false, full: "latex" });
     expect(p.yours.text).toBe("(empty)");
   });
   it("an allergy appended at the END is visible on the side that has it (the head-only clip hid it)", () => {
@@ -298,5 +301,62 @@ describe("the conflict panel shows the DIFFERING region of a long value (Insuran
     expect(p.current.clipped).toBe(false);
     expect(p.yours.clipped).toBe(true);
     expect(CONFLICT_FULL_CHARS).toBeLessThan(base.length);
+  });
+});
+
+describe("two distant edits cannot hide the second one (Insurance M-8, M-9, M-10, M-11)", () => {
+  const mid = "m".repeat(3_000);
+  const now = "FIRST-EDIT" + mid + "tail";
+  const yours = "first" + mid + "tail-SECOND-EDIT";
+  const conflict = { key: "allergies" as const, current: now, yours };
+
+  it("edits further apart than the cap produce a clipped, truncated region on both sides", () => {
+    const p = conflictPreview(now, yours);
+    expect(p.current.clipped && p.yours.clipped).toBe(true);
+    expect(p.current.regionTruncated).toBe(true);
+    expect(p.yours.regionTruncated).toBe(true);
+    // the second edit is NOT in the preview: that is exactly why the person must open the full text
+    expect(p.yours.text).not.toContain("SECOND-EDIT");
+    expect(p.yours.full).toContain("SECOND-EDIT");
+    expect(needsFullTextOpen(conflict)).toBe(true);
+  });
+  it("an append at the end (region inside the cap) is not truncated and needs no gate", () => {
+    const base = "x".repeat(10_000);
+    const p = conflictPreview(base + " | penicillin", base);
+    expect(p.current.regionTruncated).toBe(false);
+    expect(needsFullTextOpen({ current: base + " | penicillin", yours: base })).toBe(false);
+  });
+  it("Apply is gated until the full current text of that conflict has been opened, then it releases", () => {
+    expect(applyMineAllowed([conflict], new Set())).toBe(false);
+    expect(applyMineAllowed([conflict], new Set(["pronouns"]))).toBe(false); // another field's expand does not release it
+    expect(applyMineAllowed([conflict], new Set(["allergies"]))).toBe(true);
+  });
+  it("an unclipped conflict never needs the gate, and a mixed set needs every truncated one opened", () => {
+    const small = { key: "pronouns" as const, current: "she/her", yours: "they/them" };
+    expect(applyMineAllowed([small], new Set())).toBe(true);
+    expect(applyMineAllowed([small, conflict], new Set())).toBe(false);
+    expect(applyMineAllowed([small, conflict], new Set(["allergies"]))).toBe(true);
+  });
+  it("clips on code points: an emoji at the cut is never split into a lone surrogate", () => {
+    const emoji = "😀";
+    // put astral characters across the region boundaries
+    const a = emoji.repeat(2_000) + "A" + emoji.repeat(2_000);
+    const b = emoji.repeat(2_000) + "B" + emoji.repeat(2_000);
+    const p = conflictPreview(a, b);
+    for (const side of [p.current, p.yours]) {
+      expect(side.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/); // no lone high surrogate
+      expect(side.text).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/); // no lone low surrogate
+    }
+    expect(p.current.text).toContain("A");
+    expect(p.yours.text).toContain("B");
+  });
+  it("a region cut at the cap with astral characters is still whole code points", () => {
+    const emoji = "😀";
+    const a = "S" + emoji.repeat(CONFLICT_REGION_MAX_CHARS + 500) + "E";
+    const b = "T" + emoji.repeat(CONFLICT_REGION_MAX_CHARS + 500) + "F";
+    const p = conflictPreview(a, b);
+    expect(p.current.regionTruncated).toBe(true);
+    expect(p.current.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(p.current.text).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
   });
 });

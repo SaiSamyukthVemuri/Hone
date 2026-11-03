@@ -255,39 +255,65 @@ export const CONFLICT_CONTEXT_CHARS = 80;
 /** A differing region itself is capped here (values that differ everywhere); the full text stays one click away. */
 export const CONFLICT_REGION_MAX_CHARS = 600;
 
-export type ConflictSide = { text: string; clipped: boolean; full: string };
+export type ConflictSide = {
+  text: string;
+  clipped: boolean;
+  /** True when even the differing region was cut at CONFLICT_REGION_MAX_CHARS: edits further apart than the cap cannot all be shown. */
+  regionTruncated: boolean;
+  full: string;
+};
 
-function clipRegion(value: string, prefix: number, suffix: number): ConflictSide {
+export const CONFLICT_REGION_TRUNCATED_NOTE =
+  "The changes are longer than this preview. Open the full text before choosing.";
+
+// All slicing is on CODE POINTS, never UTF-16 units, so an emoji or other astral character is never cut in half.
+function clipRegion(points: string[], full: string, prefix: number, suffix: number): ConflictSide {
   const start = Math.max(0, prefix - CONFLICT_CONTEXT_CHARS);
-  const end = Math.min(value.length, value.length - suffix + CONFLICT_CONTEXT_CHARS);
-  let body = value.slice(start, end);
-  let tail = end < value.length;
+  const end = Math.min(points.length, points.length - suffix + CONFLICT_CONTEXT_CHARS);
+  let body = points.slice(start, end);
+  let tail = end < points.length;
+  let regionTruncated = false;
   if (body.length > CONFLICT_REGION_MAX_CHARS) {
     body = body.slice(0, CONFLICT_REGION_MAX_CHARS);
     tail = true;
+    regionTruncated = true;
   }
-  const text = `${start > 0 ? "…" : ""}${body}${tail ? "…" : ""}`;
-  return { text, clipped: true, full: value };
+  return { text: `${start > 0 ? "…" : ""}${body.join("")}${tail ? "…" : ""}`, clipped: true, regionTruncated, full };
 }
 
 /**
  * How the review panel shows "now" and "your change". Short pairs are shown whole. For a long field a head-only preview
  * would hide an allergy appended at the end, so the common prefix and suffix are trimmed and the region where the two
- * values DIFFER is shown for both, with a little context and an ellipsis. The full text is always available.
+ * values DIFFER is shown for both, with a little context and an ellipsis. Two edits far apart make that region longer
+ * than the cap; then `regionTruncated` is set and the caller must make the person open the full text before choosing.
  */
 export function conflictPreview(current: string, yours: string): { current: ConflictSide; yours: ConflictSide } {
-  const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, full: v });
-  if (current.length <= CONFLICT_FULL_CHARS && yours.length <= CONFLICT_FULL_CHARS) {
-    return { current: whole(current), yours: whole(yours) };
-  }
-  const max = Math.min(current.length, yours.length);
+  const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, regionTruncated: false, full: v });
+  const a = Array.from(current);
+  const b = Array.from(yours);
+  if (a.length <= CONFLICT_FULL_CHARS && b.length <= CONFLICT_FULL_CHARS) return { current: whole(current), yours: whole(yours) };
+  const max = Math.min(a.length, b.length);
   let prefix = 0;
-  while (prefix < max && current[prefix] === yours[prefix]) prefix += 1;
+  while (prefix < max && a[prefix] === b[prefix]) prefix += 1;
   let suffix = 0;
-  while (suffix < max - prefix && current[current.length - 1 - suffix] === yours[yours.length - 1 - suffix]) suffix += 1;
-  const side = (v: string): ConflictSide =>
-    v === "" ? whole(v) : v.length <= CONFLICT_FULL_CHARS ? whole(v) : clipRegion(v, prefix, suffix);
-  return { current: side(current), yours: side(yours) };
+  while (suffix < max - prefix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix += 1;
+  const side = (points: string[], full: string): ConflictSide =>
+    full === "" || points.length <= CONFLICT_FULL_CHARS ? whole(full) : clipRegion(points, full, prefix, suffix);
+  return { current: side(a, current), yours: side(b, yours) };
+}
+
+/** True when the person must open the full text of this conflict before "Apply my change" is offered. */
+export function needsFullTextOpen(conflict: Pick<ProfileConflict, "current" | "yours">): boolean {
+  const p = conflictPreview(conflict.current, conflict.yours);
+  return p.current.regionTruncated || p.yours.regionTruncated;
+}
+
+/** "Apply my change" is allowed only when every conflict that needs it has had its full current text actually expanded. */
+export function applyMineAllowed(
+  conflicts: ReadonlyArray<Pick<ProfileConflict, "key" | "current" | "yours">>,
+  opened: ReadonlySet<string>,
+): boolean {
+  return conflicts.every((c) => !needsFullTextOpen(c) || opened.has(c.key));
 }
 
 /** Baseline for the form after the staff member reviewed a conflict: adopt the current stored value. */
