@@ -8,7 +8,8 @@ import {
   parseBaseline,
   planProfileUpdate,
   splitConditions,
-  URL_CONDITION_BUDGET_CHARS,
+  URL_CONDITION_MAX_VALUE_CHARS,
+  URL_CONDITION_TOTAL_CHARS,
   type ProfileBaseline,
 } from "@/lib/clients/profile-baseline";
 
@@ -170,45 +171,50 @@ describe("a large stored profile stays editable (Codex P2: the old 20,000-charac
   });
 });
 
-describe("only short conditions travel in the URL (Insurance K-1)", () => {
-  it("a small edit keeps every condition in the URL and defers nothing", () => {
+describe("only URL-safe conditions travel in the URL (Insurance K-1, option E)", () => {
+  const size = (v: unknown) => encodeURIComponent(String(v ?? "null")).length;
+  it("a small edit keeps every condition in the URL", () => {
     const plan = planProfileUpdate(fd({ phone: "604-555-0199" }), LOADED);
     if (!plan.ok) throw new Error("plan");
-    const { inUrl, deferred } = splitConditions(plan.conditions);
-    expect(deferred).toEqual([]);
+    const { inUrl, unconditioned } = splitConditions(plan.conditions);
+    expect(unconditioned).toEqual([]);
     expect(inUrl).toEqual(plan.conditions);
   });
-  it("editing a 25k allergies field defers that condition and keeps the short guards in the URL", () => {
+  it("a changed 25k allergies field is written without its own condition; the short guards keep theirs", () => {
     const big = { ...LOADED, allergies: "a".repeat(25_000), address: "b".repeat(30_000) };
     const plan = planProfileUpdate(fd({ allergies: big.allergies + "Y", name: "Dana R. Reyes" }), big);
     if (!plan.ok) throw new Error("plan");
-    const { inUrl, deferred } = splitConditions(plan.conditions);
-    expect(deferred.map((c) => c.key)).toEqual(["allergies"]);
+    const { inUrl, unconditioned } = splitConditions(plan.conditions);
+    expect(unconditioned.map((c) => c.key)).toEqual(["allergies"]);
     expect(inUrl.map((c) => c.key).sort()).toEqual(["date_of_birth", "name", "phone"]);
-    const urlChars = inUrl.reduce((n, c) => n + encodeURIComponent(String(c.value ?? "null")).length, 0);
-    expect(urlChars).toBeLessThanOrEqual(URL_CONDITION_BUDGET_CHARS);
+    expect(plan.patch.allergies).toBe(big.allergies + "Y"); // the new value is still written
   });
-  it("editing both large fields defers both", () => {
+  it("both large fields changed: neither has a condition, the small stale guard still applies", () => {
     const big = { ...LOADED, allergies: "a".repeat(25_000), address: "b".repeat(30_000) };
-    const plan = planProfileUpdate(fd({ allergies: big.allergies + "Y", address: big.address + "X" }), big);
+    const plan = planProfileUpdate(fd({ allergies: big.allergies + "Y", address: big.address + "X", pronouns: "they/them" }), big);
     if (!plan.ok) throw new Error("plan");
-    expect(splitConditions(plan.conditions).deferred.map((c) => c.key).sort()).toEqual(["address", "allergies"]);
+    const { inUrl, unconditioned } = splitConditions(plan.conditions);
+    expect(unconditioned.map((c) => c.key).sort()).toEqual(["address", "allergies"]);
+    expect(inUrl).toEqual([{ key: "pronouns", value: "she/her" }]);
   });
-  it("many medium values stay under the total URL budget, never silently dropped", () => {
-    const conds = (["name", "pronouns", "email", "address", "allergies"] as const).map((key) => ({ key, value: "m".repeat(1_200) }));
-    const { inUrl, deferred } = splitConditions(conds);
-    expect(inUrl.length + deferred.length).toBe(conds.length);
-    expect(inUrl.reduce((n, c) => n + c.value.length, 0)).toBeLessThanOrEqual(URL_CONDITION_BUDGET_CHARS);
-    expect(deferred.length).toBeGreaterThan(0);
+  it("the per-value threshold is on the ENCODED length", () => {
+    const justUnder = "a".repeat(URL_CONDITION_MAX_VALUE_CHARS);
+    const encodedOver = "é".repeat(URL_CONDITION_MAX_VALUE_CHARS / 2 + 1); // 2 bytes each, 6 chars encoded in total over the cap
+    expect(splitConditions([{ key: "address" as const, value: justUnder }]).inUrl).toHaveLength(1);
+    expect(size(encodedOver)).toBeGreaterThan(URL_CONDITION_MAX_VALUE_CHARS);
+    expect(splitConditions([{ key: "address" as const, value: encodedOver }]).unconditioned).toHaveLength(1);
   });
-  it("a deferred condition still reports a conflict when the stored value moved", () => {
-    const big = { ...LOADED, allergies: "a".repeat(25_000) };
-    const plan = planProfileUpdate(fd({ allergies: big.allergies + "Y" }), big);
-    if (!plan.ok) throw new Error("plan");
-    const { deferred } = splitConditions(plan.conditions);
-    const moved = describeConflicts({ ...plan, conditions: deferred }, { allergies: "someone else wrote this" });
-    expect(moved).toHaveLength(1);
-    expect(moved[0].key).toBe("allergies");
-    expect(describeConflicts({ ...plan, conditions: deferred }, { allergies: big.allergies })).toEqual([]);
+  it("the TOTAL cap drops the largest remaining conditions, never a small one first, and never exceeds the cap", () => {
+    const value = "m".repeat(1_500);
+    const conds = (["name", "pronouns", "email", "address", "allergies"] as const).map((key) => ({ key, value }));
+    const { inUrl, unconditioned } = splitConditions(conds);
+    expect(inUrl.length + unconditioned.length).toBe(conds.length);
+    expect(inUrl.reduce((n, c) => n + size(c.value), 0)).toBeLessThanOrEqual(URL_CONDITION_TOTAL_CHARS);
+    expect(unconditioned.length).toBeGreaterThan(0);
+    const mixed = [{ key: "address" as const, value }, { key: "pronouns" as const, value: "she/her" }, { key: "email" as const, value }, { key: "allergies" as const, value }, { key: "name" as const, value }];
+    expect(splitConditions(mixed).inUrl.map((c) => c.key)).toContain("pronouns");
+  });
+  it("a null baseline costs almost nothing and is always kept", () => {
+    expect(splitConditions([{ key: "allergies" as const, value: null }]).inUrl).toHaveLength(1);
   });
 });

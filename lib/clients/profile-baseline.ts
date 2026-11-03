@@ -176,34 +176,36 @@ export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline)
  * PostgREST carries every `.eq` condition in the URL, and the API gateway refuses a long URL (measured on the local
  * stack: a filter value of 8,000 characters is accepted, 12,000 is refused with 414). A client whose stored allergies
  * or address text is long could therefore never be edited in that field: the save failed at transport and was
- * reported as not saved. So only SHORT conditions travel in the URL. A condition on a long value is checked by reading
- * the current value first and comparing it exactly (the same null-safe comparison), and a mismatch is the same
- * conflict review as a zero-row write. The short conditions stay inside the one conditional UPDATE.
+ * reported as not saved.
  *
- * KNOWN RESIDUAL: for a deferred (long) field the check and the write are two statements, so a change made by someone
- * else in the few milliseconds between them is not detected for THAT field. Closing it atomically needs the database
- * (a JSON-body function; held, not part of this change).
+ * So a condition travels in the URL only while its ENCODED value is at most URL_CONDITION_MAX_VALUE_CHARS and the
+ * encoded conditions together stay within URL_CONDITION_TOTAL_CHARS. A changed field whose baseline is over the
+ * threshold is written WITHOUT its own equality condition: for that field the guarantee is exactly what production
+ * had before this change (last write wins). Every short changed field and the identity guards keep their conditions.
+ * The atomic fix for a long field is a JSON-body database function (held, with M1); it is not part of this change.
  */
-export const URL_CONDITION_BUDGET_CHARS = 3_000;
+export const URL_CONDITION_MAX_VALUE_CHARS = 2_000;
+export const URL_CONDITION_TOTAL_CHARS = 6_000;
 
 const encodedLength = (value: BaselineValue): number => encodeURIComponent(value === null ? "null" : String(value)).length;
 
 export function splitConditions<T extends { key: ProfileKey; value: BaselineValue }>(
   conditions: ReadonlyArray<T>,
-): { inUrl: T[]; deferred: T[] } {
+): { inUrl: T[]; unconditioned: T[] } {
   const bySize = conditions
-    .map((c, index) => ({ c, index, size: encodedLength(c.value) }))
+    .map((c, index) => ({ index, size: encodedLength(c.value) }))
     .sort((a, b) => a.size - b.size);
   const keep = new Set<number>();
   let used = 0;
   for (const item of bySize) {
-    if (used + item.size > URL_CONDITION_BUDGET_CHARS) continue;
+    if (item.size > URL_CONDITION_MAX_VALUE_CHARS) continue;
+    if (used + item.size > URL_CONDITION_TOTAL_CHARS) continue;
     used += item.size;
     keep.add(item.index);
   }
   return {
     inUrl: conditions.filter((_, i) => keep.has(i)),
-    deferred: conditions.filter((_, i) => !keep.has(i)),
+    unconditioned: conditions.filter((_, i) => !keep.has(i)),
   };
 }
 

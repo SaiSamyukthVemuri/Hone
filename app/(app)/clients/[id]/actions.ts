@@ -313,21 +313,9 @@ export async function updateClientAction(
     })
     .eq("id", clientId)
     .eq("studio_id", studio.id);
-  // Only short conditions go in the URL (see splitConditions). A long field's baseline is compared here, by reading
-  // the current value, and a difference is the same "changed by someone else" review as a zero-row write.
-  const { inUrl, deferred } = splitConditions(plan.conditions);
-  if (deferred.length > 0) {
-    const { data: current, error: currentError } = await supabase
-      .from("clients")
-      .select(deferred.map((c) => c.key).join(","))
-      .eq("id", clientId)
-      .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (currentError) return { ok: false, error: NOT_SAVED_ERROR };
-    if (!current) return { ok: false, error: "Client not found." };
-    const moved = describeConflicts({ ...plan, conditions: deferred }, current as unknown as Record<string, unknown>);
-    if (moved.length > 0) return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts: moved };
-  }
+  // Only short conditions go in the URL (see splitConditions). A changed field whose baseline is too long for a URL
+  // is written without its own equality condition, which is the guarantee production had before this change.
+  const { inUrl } = splitConditions(plan.conditions);
   for (const { key, value } of inUrl) {
     update = value === null ? update.is(key, null) : update.eq(key, value);
   }
