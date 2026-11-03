@@ -1506,11 +1506,12 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     note: "Decided (Sam, 3 Nov, Q1/Q2, DN-23b): an owner-set studio policy in whole hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable. Not a staff key. Charging it also needs pay.charge_saved_card.",
   },
   {
-    id: "id_photos_portraits",
+    id: "id_portraits_owner_only",
     label: "ID photos and portraits",
     source: "this_version",
-    existingEffect: "none",
-    note: "Decided (Sam, 2 Nov, DN-24): owner-only and not delegable until the separate ID-photo review (#1296 / 0275) is complete.",
+    existingEffect: "narrows",
+    enforcedBy: ["lib/images/client-portrait.ts (observe-only until the ID-photo review; logs a would-deny for non-owners and refuses nobody)"],
+    note: "Decided (Sam, 2 Nov, DN-24): owner-only and not delegable until the separate ID-photo review (#1296 / 0275) is complete. The portrait feature is OFF everywhere today (HONE_CLIENT_PORTRAIT_ENABLED is unset, and no page calls the signer), so nobody loses anything on the release; the entry exists so the adopt preview and the release notice name it before it can be turned on. Privacy C1.",
   },
   {
     id: "archive_clients",
@@ -1744,6 +1745,31 @@ export const MANDATORY: readonly string[] = [
 ];
 
 // ───────────────────────── pure helpers ─────────────────────────
+
+// Is a key's setting acted on by the code in this release? The Roles page shows `not_yet` keys as "Not enforced yet" and not editable
+// (Privacy X3/H3): saving a switch that nothing reads would otherwise look like control.
+//   enforced  a server action, page or signer asks the key and a denial refuses (R4, #1341).
+//   observe   asked, but only logged: the snapshot is an approved policy the database does not enforce yet (appt.complete).
+//   not_yet   nothing asks it in this release.
+// tests/lib/permissions/enforcement-wiring.test.ts proves this map equals the keys the app actually asks.
+export type EnforcementState = "enforced" | "observe" | "not_yet";
+export const ENFORCEMENT: Readonly<Record<string, Exclude<EnforcementState, "not_yet">>> = {
+  "appt.book": "enforced",
+  "appt.move": "enforced",
+  "appt.reassign": "enforced",
+  "appt.cancel": "enforced",
+  "appt.mark_no_show": "enforced",
+  "appt.edit_notes": "enforced",
+  "appt.complete": "observe",
+  "clin.view_records": "enforced",
+  "clin.view_photos": "enforced",
+  "clin.view_intake": "enforced",
+  "clin.view_aftercare": "enforced",
+  "avail.manage_own": "enforced",
+  "avail.manage_others": "enforced",
+  "avail.manage_studio_hours": "enforced",
+};
+export const enforcementOf = (key: string): EnforcementState => ENFORCEMENT[key] ?? "not_yet";
 
 export const catalogByKey: ReadonlyMap<string, PermissionDef> = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
 
