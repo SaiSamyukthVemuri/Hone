@@ -647,7 +647,6 @@ export const CATALOG = [
   // ─────────────────────────────── payments ───────────────────────────────
   {
     key: PAY_VIEW,
-    touchedByDecision: ["DN-10"],
     group: "payments",
     label: "See an appointment's payment details",
     description: "Payment status, amount, method, and card brand with last 4 digits. No processor identifiers, no treatment detail.",
@@ -1139,13 +1138,12 @@ export const CATALOG = [
     newStudioDefault: pair(["off", "off"]),
     existingSnapshot: pair(["off", "off"]),
     snapshotBasis: "source",
-    offeredTo: { practitioner: false, receptionist: false },
+    offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R3",
     sensitive: true,
     killSwitch: true,
-    pendingDecision: ["DN-11"],
-    note: "Owner-only until Sam agrees this key (DN-11). Audit row PAY (per-client prices).",
+    note: "Decided (Sam, 3 Nov, DN-11): a separate permission to set or change a client's own price, OFF for both staff roles and owner-configurable. Reading follows price.view_client_prices and its scope. Every change is recorded. Appointments already booked keep their agreed price unless someone explicitly edits that appointment's price.",
   },
   // ───────────── client details, one view and one edit key per data group (Sam, 2 Nov, DN-5) ─────────────
   // Practitioners keep today's studio-wide access; receptionists are OFF and the owner may grant READ-ONLY per group (the edit keys are
@@ -1417,6 +1415,13 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     note: "Decided (Sam, 2 Nov, DN-12): owner-only, with a reason and history. It never automatically refunds, charges, erases treatment records or reverses a message already sent.",
   },
   {
+    id: "require_card_to_book",
+    label: "Requiring a card on file to book",
+    source: "this_version",
+    existingEffect: "none",
+    note: "Decided (Sam, 3 Nov, DN-23a): an owner-only studio setting on the payment settings page, separate from staff permissions. Not a key.",
+  },
+  {
     id: "id_photos_portraits",
     label: "ID photos and portraits",
     source: "this_version",
@@ -1542,6 +1547,9 @@ export const FEE_AMOUNT_READ = {
 export const MANDATORY: readonly string[] = [
   "Studio isolation on every path (app, API, database function, export, link, search)",
   "Consent requirements",
+  "Decided (Sam, 3 Nov, DN-10): card-authorisation consent is READ-ONLY, follows the payment-view permission and its scope (practitioners: own appointments; receptionists: studio-wide when enabled), shows only the authorisation relevant to THAT payment without granting intake or clinical access, and signed originals can never be edited or deleted",
+  "Decided (DN-11): appointments already booked keep their agreed prices unless someone explicitly edits that appointment, and every client-specific price change is recorded",
+  "Decided (DN-23b): a late-cancellation fee needs an explicit owner-configured window with NO invented default and is never activated automatically; the server decides eligibility from the recorded cancellation time, the appointment time and the policy snapshot taken at THAT booking; the fee-charging permission (pay.charge_saved_card) is also required; duplicate charges are prevented and the reason and history are kept",
   "Reading a fee amount needs price.fee_amounts or pay.view_appointment at any scope; without either, staff read only the studio name, timezone and booking preferences, through a column-limited read, never the whole studios row (DN-27)",
   "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
   "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",

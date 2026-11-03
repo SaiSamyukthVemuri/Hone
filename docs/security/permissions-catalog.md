@@ -120,7 +120,7 @@ with a test, so there is never a second copy of a default. The table below is **
 
 | Key | Scopes | Requires | New: Prac / Recep | Existing studio: Prac / Recep | Basis | Gate | Decision pending |
 |---|---|---|---|---|---|---|---|
-| `pay.view_appointment` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | DN-10 (coverage only) |
+| `pay.view_appointment` | Off / Own / Studio | `appt.view_calendar` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `pay.record_external` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | verified | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `pay.charge_saved_card` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `pay.refund` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
@@ -135,7 +135,7 @@ with a test, so there is never a second copy of a default. The table below is **
 | `price.view_client_prices` | Off / Own / Studio | `pay.view_appointment` | Own / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.service_list` | Off / Studio | – | Studio / Studio | Off / Off | approved_policy | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
 | `price.fee_amounts` | Off / Studio | – | Studio / Studio | Off / Off | source | receptionist: Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed | – |
-| `price.edit_client_prices` (practitioner not offered, receptionist not offered) | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | DN-11 |
+| `price.edit_client_prices` | Off / Studio | `price.view_client_prices` | Off / Off | Off / Off | source | – | – |
 
 ### Availability
 
@@ -192,7 +192,7 @@ with a test, so there is never a second copy of a default. The table below is **
 
 ## Decisions applied (Sam, 2 Nov) and the coverage map
 
-Groups 1, 2, 3 and 4 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in the catalog and in the MANDATORY list; nothing activates.
+Groups 1 to 5 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in the catalog and in the MANDATORY list; nothing activates.
 
 - **Navigation (DN-1, DN-2, DN-28):** staff never see Business; reports a studio permits appear under a separate Reports entry; Getting Started lists only tasks the viewer may perform.
 - **Colleague data (DN-21, DN-27):** colleagues see display names and calendar colours only. Private email and account details, Google account emails, pending invitations and alerts are for the owner and that person; calendar-feed tokens and their hashes are secrets and never leave the server. Staff read the studio name, timezone and booking preferences; fee amounts need the relevant pay or price key.
@@ -209,7 +209,8 @@ Groups 1, 2, 3 and 4 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) ar
 - **Messages and intake (group 4, 3 Nov):** requesting an intake update or resending the intake link is `comm.send_intake_link`, which needs the messaging permission plus the new `clin.view_intake_status` (never the answers or the chart). Portal replies are `comm.send_portal_reply` (practitioner ON, receptionist OFF, owner-configurable); the sender is recorded, history preserved and a client's original reply is immutable. Existing practitioners keep sending portal, intake and aftercare links and reviewing intake (`comm.send_portal_link`, `comm.send_intake_link`, `appt.aftercare_send`, `clin.review_intake`), each separately configurable. Notification read state is per person. All sending respects consent, opt-outs and channel activation.
 - **Narrowings with no key (`NARROWINGS`):** performer change, exposure-incident history, colleague private fields, studio column reads, Getting Started, notification read state and portal reply immutability each name a stage, an enforcement point (some still "to confirm") and the notice the owner's review banner must carry.
 - **Fee amounts:** reading one needs `price.fee_amounts` or `pay.view_appointment` at any scope; otherwise staff read only studio name, timezone and booking preferences through a column-limited read (`FEE_AMOUNT_READ`).
-- **Still pending:** DN-10, 11, 16 to 20, 23, 25, 26, 29. A key marked pending (`pendingDecision`) is built but shipped with today's existing-studio value for **every** studio, including new ones, until Sam answers; this temporarily replaces the section 4 new-studio default for `comm.send_routine` and `clin.edit_intake` (DN-30). `touchedByDecision` marks a key whose coverage a pending decision affects without deciding its value. The registry is `lib/permissions/decisions.ts`.
+- **Payments (group 5, 3 Nov):** card-authorisation consent is read-only through `pay.view_appointment` and its scope, only for that payment, with no intake or clinical access (DN-10). `price.edit_client_prices` is OFF for both roles and owner-configurable; reads follow `price.view_client_prices`; booked appointments keep their price (DN-11). Requiring a card to book is an owner-only setting (DN-23a). A late-cancellation fee needs an owner-configured window with no invented default, is never auto-activated, is decided on the server from the policy snapshot at booking, and also needs `pay.charge_saved_card`; the database part is held migration 0293, inside R3 (DN-23b).
+- **Still pending:** DN-16 to 20, 25, 26, 29.
 - **Coverage map:** `lib/permissions/coverage.ts` maps all 258 rows of the audit's current-access matrix to a key or a fixed rule (key, safeguard, fixed owner-only, fixed baseline, not a staff permission, owner-only this release). Tests fail if a row is unmapped, a named key does not exist, or a key is unreachable (the exceptions are the four capabilities the product does not have yet: `client.merge`, `comm.bulk_message`, `rep.bulk_export`, `clin.view_id_portrait`). Rows marked `team` were mapped by this lane where the audit left them open, for reviewers to confirm.
 
 

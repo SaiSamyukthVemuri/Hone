@@ -492,3 +492,26 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
     for (const re of [/intake STATUS read/, /sender of every staff portal message is recorded/, /notification read state is per person/, /respects consent, opt-outs and existing channel-activation/]) expect(m).toMatch(re);
   });
 });
+
+describe("Sam's group 5 (3 Nov): payment details", () => {
+  it("DN-11: client prices have a separate set key, OFF for both roles, owner-configurable; reads follow the view key", () => {
+    const k = d("price.edit_client_prices");
+    expect(k.newStudioDefault).toEqual({ practitioner: "off", receptionist: "off" });
+    expect(k.existingSnapshot).toEqual({ practitioner: "off", receptionist: "off" });
+    expect(k.offeredTo).toEqual({ practitioner: true, receptionist: true });
+    expect(k.ownerConfigurable).toBe(true);
+    expect(k.requires).toContain("price.view_client_prices");
+    expect(k.pendingDecision).toBeUndefined();
+  });
+  it("DN-23a: requiring a card to book is owner-only and has no staff key", () => {
+    expect(FIXED_OWNER_ONLY.map((f) => f.id)).toContain("require_card_to_book");
+    expect(DEFS.some((x) => /require_card|card_on_file/.test(x.key))).toBe(false);
+  });
+  it("DN-10 and DN-23b are carried as build requirements", () => {
+    const m = MANDATORY.join("\n");
+    for (const re of [/card-authorisation consent is READ-ONLY/, /signed originals can never be edited or deleted/, /agreed prices unless someone explicitly edits/, /NO invented default and is never activated automatically/, /policy snapshot taken at THAT booking/, /duplicate charges are prevented/]) expect(m).toMatch(re);
+  });
+  it("DN-23b: a late-cancel fee charge is gated by the fee-charging key, and the coverage row names the held migration", () => {
+    expect(catalogByKey.has("pay.charge_saved_card")).toBe(true);
+  });
+});

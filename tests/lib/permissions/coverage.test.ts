@@ -83,6 +83,12 @@ describe("coverage map agrees with the matrix and with the catalog (Insurance R-
     }
     expect(COVERAGE["SET-9"]!.keys).toEqual(expect.arrayContaining(["price.fee_amounts", "pay.view_appointment"]));
   });
+  it("group 5: the late-cancel fee row names the server rule and held migration 0293; card-authorisation reads stay read-only via the pay view", () => {
+    expect(COVERAGE["PAY-5"]!.enforcement).toMatch(/0293/);
+    expect(COVERAGE["PAY-5"]!.enforcement).toMatch(/policy snapshot/);
+    expect(COVERAGE["INT-10"]!.enforcement).toMatch(/read-only/);
+    expect(COVERAGE["PAY-20"]!.cls).toBe("fixed_owner");
+  });
   it("Codex: a mixed photo row that also archives points at the fixed owner-only rule, which exists", () => {
     expect(COVERAGE["PHO-3"]!.fixed).toEqual(["delete_treatment_records_and_photos"]);
     for (const row of Object.values(COVERAGE)) for (const f of row.fixed ?? []) expect(FIXED_OWNER_ONLY.map((x) => x.id)).toContain(f);
