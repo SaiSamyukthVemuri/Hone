@@ -115,12 +115,10 @@ describe("independent reads run in one parallel wave", () => {
     // Keep this ceiling equal to the measured count, never slack: a ceiling
     // with headroom stops catching the drift it exists to catch.
     //
-    // Roles R4: 9 -> 10. The clin.view_records check must resolve BEFORE
-    // getClientById, because a viewer without it must not have the sessions
-    // read issued at all (not read-then-hide), so it is one genuinely serial
-    // stage in front of the read.
+    // Roles R4: stays 9. The clin.view_records check is asked INSIDE getClientById (after the client resolves, in the same parallel wave as
+    // pricing and rosters, before the sessions read), and its answer comes back on the result, so it adds no serial stage in the page.
     const waves = serialWaves();
-    expect(waves.length).toBeLessThanOrEqual(10);
+    expect(waves.length).toBeLessThanOrEqual(9);
   });
 
   // PERF-02A. The invariant the ceiling above cannot express, and the one this
