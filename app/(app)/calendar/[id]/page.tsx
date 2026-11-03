@@ -114,6 +114,8 @@ export default async function AppointmentDetailPage({
   const canViewAftercare = (await requirePermission(supabase, studio.id, "clin.view_aftercare", { appointment: id })).allowed;
   // The prior treatment, the linked session and the clinical-notes summary are treatment RECORDS: without clin.view_records they are not read at all.
   const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records", { appointment: id })).allowed;
+  // The briefing shows intake STATUS only; without clin.view_intake the row is carried without its answers.
+  const canViewIntake = (await requirePermission(supabase, studio.id, "clin.view_intake", { appointment: id })).allowed;
 
   const { data, error } = await supabase
     .from("appointments")
@@ -373,7 +375,7 @@ export default async function AppointmentDetailPage({
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;
-    intake = intakeRes;
+    intake = canViewIntake || !intakeRes ? intakeRes : { ...intakeRes, responses: {} };
     treatmentPlans = plansRes;
     if (linkedSessionRes?.error) {
       throw new Error(

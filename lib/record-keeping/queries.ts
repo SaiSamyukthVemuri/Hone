@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { isRecordUuid } from "@/lib/record-keeping/disinfectant-focus";
 import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
@@ -202,6 +203,8 @@ export async function getLatestProbeLotByProbeKey(
   studioId: string,
 ): Promise<Record<string, string>> {
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return {};
   const { data } = await supabase
     .from("session_blocks")
     .select("probe_key, probe_lot_number, probe_lot_confirmed, created_at")
@@ -238,6 +241,8 @@ export async function getProbeLotSuggestions(
   studioId: string,
 ): Promise<ProbeLotSuggestions> {
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { byKey: {}, byLabel: {} };
   const { data } = await supabase
     .from("session_blocks")
     .select(
@@ -586,6 +591,8 @@ export async function getClientProcedureRecords(
       ? FILTERED_PROCEDURE_RECORD_LIMIT
       : UNFILTERED_PROCEDURE_RECORD_LIMIT);
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return [];
   let query = supabase
     .from("sessions")
     .select(
@@ -974,6 +981,8 @@ export async function getLotTraceability(
   const pattern = escapeIlikeExact(lot);
 
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { lot, sterileItems: [], usages: [] };
   const [
     { data: items, error: itemsError },
     { data: blockRows, error: blockRowsError },

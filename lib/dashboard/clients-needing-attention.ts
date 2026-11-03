@@ -95,6 +95,8 @@ export type ClientsNeedingAttention = {
   // True when the underlying scan hit its cap; counts are then "of
   // the most recent scanned sessions", documented in the UI helper.
   scanCapped: boolean;
+  // True when the viewer lacks clin.view_records: nothing was read, so this is NOT an all-clear and the UI must say so.
+  notAvailable?: true;
 };
 
 // Pure: fold the batched rows into the per-client attention list.
@@ -286,7 +288,7 @@ export async function getClientsNeedingAttention(
 ): Promise<ClientsNeedingAttention> {
   const supabase = await createClient();
   // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
-  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return buildClientsNeedingAttention([], []);
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { ...buildClientsNeedingAttention([], []), notAvailable: true };
   // HON-58: staff see the display name; the read still works before 0258 exists.
   const { data: sessionRows, error: sessionsError } = await readWithPreferredName((withPreferred) =>
     supabase

@@ -518,6 +518,7 @@ export async function NeedsAttentionSection({
         assistant: followUpAssistant,
         intakesAwaitingReview,
         todo: dashboardTodo,
+        notAvailableToRole: followUpAssistant.notAvailable === true || clientsNeedingAttention.notAvailable === true,
         unavailableChecks: [
           ...(intakesUnavailable ? ["intake review"] : []),
           ...(paymentUnavailable ? ["payment setup"] : []),
