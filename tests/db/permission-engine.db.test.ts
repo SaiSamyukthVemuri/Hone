@@ -434,7 +434,9 @@ describe("the page can tell when a reason is needed: sensitive flag and conseque
     const r = await getp(s.userId, s.studioId);
     expect(Object.keys(r.keys).sort()).toEqual(DEFS.map((d) => d.key).sort());
     for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d) });
-    expect(r.keys["pay.refund"].consequence).toBe("destructive");
+    expect(r.keys["pay.refund"].consequence).toBe("financial");
+    expect(r.keys["appt.cancel"].consequence).toBeNull();
+    expect(Object.values(r.keys).some((k: any) => k.consequence === "destructive")).toBe(false);
   });
 
   it("the preview and a refused-or-saved diff carry the same two fields, and a preview still writes nothing", async () => {
