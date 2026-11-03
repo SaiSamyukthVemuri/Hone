@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, FIXED_OWNER_ONLY, ROLES, type PermissionDef, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleModel, groupLabel } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleModel, buildRoleSections, groupLabel } from "@/lib/settings/roles/model";
+import { COMMON_KEYS } from "@/lib/settings/roles/sections";
 import { defaultsPolicy, diffPolicies, releaseNarrowings } from "@/lib/settings/roles/diff";
 import { SECTIONS, sectionKeys, sectionOfGroup } from "@/lib/settings/roles/sections";
 
@@ -207,14 +208,24 @@ describe("the eight sections (presentation only)", () => {
     }
     expect(sectionOfGroup("something_new")).toBe("operations");
   });
-  it("a row is in Advanced only when it is a fixed baseline, gated, or awaiting a decision", () => {
+  it("a row is common only when it is a listed headline capability and not fixed, gated or awaiting a decision", () => {
     for (const role of ROLES) {
       for (const row of buildRoleModel(role, snapshot).flatMap((g) => g.rows)) {
-        const why = row.locked !== null && !row.locked.startsWith("Not offered") ? true : row.advanced;
-        expect(typeof why).toBe("boolean");
-        if (row.advanced) expect(Boolean(row.locked) || row.pendingDecision || row.gateNote || row.heldUntil, `${role} ${row.key}`).toBeTruthy();
+        const held = row.locked !== null || row.pendingDecision || Boolean(row.gateNote) || Boolean(row.heldUntil);
+        if (!row.advanced) {
+          expect(COMMON_KEYS.has(row.key), `${role} ${row.key} is common only if listed`).toBe(true);
+          expect(held, `${role} ${row.key} is held, so it belongs under Advanced`).toBe(false);
+        }
+        if (row.advanced) expect(!COMMON_KEYS.has(row.key) || held, `${role} ${row.key}`).toBe(true);
       }
     }
+  });
+  it("every listed common key exists in the catalog, and each section keeps at least one common row, with the page well under a wall of controls", () => {
+    for (const k of COMMON_KEYS) expect(defs.some((d) => d.key === k), k).toBe(true);
+    const sections = buildRoleSections("practitioner", snapshot);
+    for (const sec of sections) expect(sec.common.length, sec.id).toBeGreaterThan(0);
+    const common = sections.reduce((n, sec) => n + sec.common.length, 0);
+    expect(common).toBeLessThanOrEqual(40);
   });
   it("receptionist rows that the catalog does not offer say so and have no live control", () => {
     for (const row of buildRoleModel("receptionist", snapshot).flatMap((g) => g.rows)) {

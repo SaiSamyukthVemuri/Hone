@@ -23,6 +23,7 @@ const render = (over: Record<string, unknown> = {}) =>
       writable: false,
       notWritableReason: "Saving turns on with the permission core.",
       people,
+      timezone: "America/Toronto",
       previewSave: noop,
       previewReset: noop,
       previewAdopt: noop,

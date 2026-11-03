@@ -1,4 +1,4 @@
-import { consequenceOf, SECTIONS, sectionOfKey, type Consequence, type SectionId } from "./sections";
+import { COMMON_KEYS, consequenceOf, SECTIONS, sectionOfKey, type Consequence, type SectionId } from "./sections";
 import {
   CATALOG,
   GATES,
@@ -131,7 +131,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         sensitive: d.sensitive === true,
         consequence: consequenceOf(d),
         section: sectionOfKey(d),
-        advanced: !d.ownerConfigurable || isPending(d) || (gate !== undefined && policy.gates?.[gate] !== true),
+        advanced: !COMMON_KEYS.has(d.key) || locked !== null || isPending(d) || (gate !== undefined && policy.gates?.[gate] !== true),
         pendingDecision: isPending(d),
         snapshotBasis: d.snapshotBasis,
         gateNote: gate === "receptionist_legal_name" && role === "receptionist" && policy.gates?.[gate] !== true ? GATES[gate] : null,

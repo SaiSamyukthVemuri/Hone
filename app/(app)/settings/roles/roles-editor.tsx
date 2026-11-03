@@ -23,6 +23,7 @@ import {
   type RolePreview,
   type ServerPreview,
 } from "@/lib/settings/roles/api";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import {
@@ -53,6 +54,8 @@ export type RolesEditorProps = {
   notWritableReason: string | null;
   initialView?: "people" | "permissions" | "history";
   people: PersonView[];
+  // The studio's IANA timezone, for the history timestamps.
+  timezone: string;
   // Every preview and every write is the permission core's. The page sends only changed keys and the version a preview returned.
   previewSave: (edits: Partial<Record<Role, Record<string, Scope>>>) => Promise<PreviewResult>;
   previewReset: (role: Role) => Promise<PreviewResult>;
@@ -276,7 +279,7 @@ export function RolesEditor(props: RolesEditorProps) {
 
       {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} />}
 
-      {view === "history" && <HistoryPanel load={props.loadHistory} />}
+      {view === "history" && <HistoryPanel load={props.loadHistory} timeZone={props.timezone} />}
 
       {view === "permissions" && (
         <div className="flex min-w-0 flex-col gap-8">
@@ -532,7 +535,7 @@ function RowList({
   );
 }
 
-function HistoryPanel({ load }: { load: (before: string | null) => Promise<HistoryResult> }): ReactNode {
+function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Promise<HistoryResult>; timeZone: string }): ReactNode {
   const [state, setState] = useState<{ kind: "loading" } | { kind: "error"; message: string } | { kind: "rows"; rows: AuditRow[]; next: string | null }>({ kind: "loading" });
   useEffect(() => {
     let live = true;
@@ -563,7 +566,7 @@ function HistoryPanel({ load }: { load: (before: string | null) => Promise<Histo
             <li key={r.id} data-audit-kind={r.kind} className="min-w-0 break-words rounded-lg border border-neutral-200 p-3 text-sm dark:border-neutral-800">
               <p className="font-medium">{AUDIT_KIND_LABEL[r.kind]}</p>
               <p className="text-neutral-600 dark:text-neutral-400">
-                {r.actorName} on <time dateTime={r.at}>{r.at}</time>
+                {r.actorName} on <FormattedDateTime iso={r.at} timeZone={timeZone} />
                 {r.role ? `, ${ROLE_LABELS[r.role].toLowerCase()}s` : ""}
                 {r.personName ? `, ${r.personName}${r.personState === "deactivated" ? " (no longer active)" : ""}` : r.kind === "staff_role_changed" ? ", former member" : ""}
               </p>
