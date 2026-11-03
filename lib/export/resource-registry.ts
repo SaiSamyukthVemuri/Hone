@@ -1053,6 +1053,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Inbound Hone sales enquiries. Hone's records, not any studio's, and the table carries no studio_id.",
   },
+  rate_limit_fallback_counters: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Fixed-window attempt counters the public limiters use when Upstash is down (migration 0294, DN-29). Hone's own abuse-control state: keys are HMAC-SHA-256 hashes under a server secret, there is no studio_id and no studio content, and rows are deleted when their window ends.",
+  },
   waitlist: {
     kind: "excluded",
     category: "platform",

@@ -915,7 +915,8 @@ describe("what is excluded, and on what grounds", () => {
       // LEAD-ALERT-01, no studio_id) and delivery_sweep_heartbeat (0215,
       // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
       // derived from the two ledgers.
-      platform: 7,
+      // 7 -> 8 platform: rate_limit_fallback_counters (0294, DN-29), Hone's own limiter state with hashed keys and no studio content.
+      platform: 8,
       derived: 7,
       deliberate_privacy: 2,
     });

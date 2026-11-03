@@ -16,16 +16,22 @@ const email = () => `qf-${randomUUID().slice(0, 8)}@harness.local`;
 describe("Q-F: no browser role can write the marketing tables", () => {
   it("POSITIVE CONTROL: the 0213 commands (the app's path, service_role) write both tables and raise the lead alert", async () => {
     const e = email();
-    const w = await asRole("service_role", (q) => q(`select * from public.record_platform_early_access_signup($1)`, [e]));
-    expect(w.rows[0].result).toBe("recorded");
-    expect(w.rows[0].alert_id).not.toBeNull();
-    const d = await asRole("service_role", (q) => q(`select * from public.record_platform_demo_request('Qf Test', $1, null, null, null, null, null, null)`, [e]));
-    expect(d.rows[0].result).toBe("recorded");
-    expect(d.rows[0].alert_id).not.toBeNull();
-    expect((await adminQuery(`select 1 from public.waitlist where email = $1`, [e])).rowCount).toBe(1);
-    expect((await adminQuery(`select 1 from public.demo_requests where email = $1`, [e])).rowCount).toBe(1);
-    const dup = await asRole("service_role", (q) => q(`select * from public.record_platform_early_access_signup($1)`, [e]));
-    expect(dup.rows[0].result).toBe("duplicate");
+    // asRole rolls back, so everything is checked INSIDE the one transaction (reset role to read as the owner), and nothing persists.
+    await asRole("service_role", async (q) => {
+      const w = await q(`select * from public.record_platform_early_access_signup($1)`, [e]);
+      expect(w.rows[0].result).toBe("recorded");
+      expect(w.rows[0].alert_id).not.toBeNull();
+      const d = await q(`select * from public.record_platform_demo_request('Qf Test', $1, null, null, null, null, null, null)`, [e]);
+      expect(d.rows[0].result).toBe("recorded");
+      expect(d.rows[0].alert_id).not.toBeNull();
+      const dup = await q(`select * from public.record_platform_early_access_signup($1)`, [e]);
+      expect(dup.rows[0].result).toBe("duplicate");
+      await q("reset role");
+      expect((await q(`select 1 from public.waitlist where email = $1`, [e])).rowCount).toBe(1);
+      expect((await q(`select 1 from public.demo_requests where email = $1`, [e])).rowCount).toBe(1);
+      expect((await q(`select 1 from public.platform_lead_alerts where id = any($1::uuid[])`, [[w.rows[0].alert_id, d.rows[0].alert_id]])).rowCount).toBe(2);
+    });
+    expect((await adminQuery(`select 1 from public.waitlist where email = $1`, [e])).rowCount).toBe(0); // rolled back
   });
 
   it("service_role has NO direct INSERT (it would bypass the lead alert) but keeps what /admin needs", async () => {
