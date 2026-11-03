@@ -106,7 +106,7 @@ describe("invitation acceptance requires mailbox proof in THIS session (email-tr
     expect(ctx.rpc).toHaveBeenCalledOnce();
   });
   it("POSITIVE: verified Google for the same address accepts", async () => {
-    ctx.amr = [{ method: "oauth", provider: "google" }];
+    ctx.amr = [{ method: "oauth", timestamp: 1 }];
     (ctx.user as unknown as Record<string, unknown>).identities = [{ provider: "google", identity_data: { email: "invitee@harness.local", email_verified: true } }];
     ctx.result = { status: "linked", choose_studio: false };
     await expect(acceptInvitationAction(null, consented())).rejects.toThrow("REDIRECT:/dashboard");

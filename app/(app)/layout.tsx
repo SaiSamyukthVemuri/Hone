@@ -13,6 +13,7 @@ import {
   listActiveStudioMemberships,
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
+import { isAdmin } from "@/lib/admin";
 import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import { todayInTz } from "@/lib/booking/tz";
 import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
@@ -39,7 +40,9 @@ export default async function AppLayout({
   const { practitioner, studio } = await timed("shell.identity", () =>
     requirePractitionerWithStudio(),
   );
-  const admin = await isProvenPlatformAdmin(await createClient());
+  // The in-memory allowlist test on the row already loaded runs FIRST, so a non-operator (nearly every render) pays no auth round
+  // trip; only a possible operator is then proven against the verified session (Insurance S-5).
+  const admin = isAdmin(practitioner.email) && (await isProvenPlatformAdmin(await createClient()));
 
   // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role
   // only). Moved off the browser: the authenticated app sends no browser

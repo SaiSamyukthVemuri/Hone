@@ -6,8 +6,11 @@ const U = { email: "Member@Harness.local", identities: [] as never[] };
 const google = (email: string, verified: unknown) => ({ ...U, identities: [{ provider: "google", identity_data: { email, email_verified: verified } }] });
 
 describe("mailboxProofMethod (email-trust)", () => {
-  it.each(["otp", "magiclink", "email/signup", "invite", "recovery"])("%s proves the mailbox", (method) => {
-    expect(mailboxProofMethod({ amr: [{ method }] }, U)).toBe("email_link_or_otp");
+  it("otp proves the mailbox (every real mailbox link/code type produces it: measured)", () => {
+    expect(mailboxProofMethod({ amr: [{ method: "otp" }] }, U)).toBe("email_link_or_otp");
+  });
+  it.each(["magiclink", "email/signup", "invite", "recovery", "sso/saml", "anonymous"])("NEGATIVE: %s is never produced by a real mailbox flow and proves nothing (Insurance S-1)", (method) => {
+    expect(mailboxProofMethod({ amr: [{ method }] }, U)).toBeNull();
   });
   it("NEGATIVE: a password session proves nothing, even next to nothing else", () => {
     expect(mailboxProofMethod({ amr: [{ method: "password" }] }, U)).toBeNull();
@@ -27,6 +30,18 @@ describe("mailboxProofMethod (email-trust)", () => {
   it("NEGATIVE: google for a different address, or another provider, is not proof", () => {
     expect(mailboxProofMethod({ amr: [{ method: "oauth", provider: "google" }] }, google("x@harness.local", true))).toBeNull();
     expect(mailboxProofMethod({ amr: [{ method: "oauth", provider: "github" }] }, { ...U, identities: [{ provider: "github", identity_data: { email: "member@harness.local", email_verified: true } }] })).toBeNull();
+  });
+  it("POSITIVE: GoTrue's REAL oauth amr entry carries no provider ({method, timestamp}); Google is read from the identity (Codex P1)", () => {
+    expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, google("member@harness.local", true))).toBe("oauth_verified");
+  });
+  it("NEGATIVE: a provider-less oauth amr with a google identity for ANOTHER address, or unverified, is not proof", () => {
+    expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, google("x@harness.local", true))).toBeNull();
+    expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, google("member@harness.local", false))).toBeNull();
+  });
+  it("NEGATIVE: an oauth amr naming an untrusted provider, or with only a non-google identity, is not proof", () => {
+    const gh = { ...U, identities: [{ provider: "github", identity_data: { email: "member@harness.local", email_verified: true } }] };
+    expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: 1 }] }, gh as never)).toBeNull();
+    expect(mailboxProofMethod({ amr: [{ method: "oauth", provider: "github" }] }, google("member@harness.local", true))).toBeNull();
   });
   it("NEGATIVE: an oauth amr without a matching google identity is not proof", () => {
     expect(mailboxProofMethod({ amr: [{ method: "oauth", provider: "google" }] }, U)).toBeNull();

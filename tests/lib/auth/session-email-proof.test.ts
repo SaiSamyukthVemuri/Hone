@@ -21,7 +21,7 @@ describe("isProvenPlatformAdmin", () => {
   });
   it("POSITIVE: allowlisted address via verified Google is an admin", async () => {
     const u = { ...ops, identities: [{ provider: "google", identity_data: { email: ops.email, email_verified: true } }] };
-    expect(await isProvenPlatformAdmin(client(u, { amr: [{ method: "oauth", provider: "google" }] }))).toBe(true);
+    expect(await isProvenPlatformAdmin(client(u, { amr: [{ method: "oauth", timestamp: 1 }] }))).toBe(true);
   });
   it("NEGATIVE: a non-allowlisted address is refused WITHOUT an auth-server claims round trip", async () => {
     const c = client({ id: "x", email: "someone@harness.local" }, { amr: [{ method: "otp" }] });
@@ -43,7 +43,7 @@ describe("isProvenPlatformAdmin", () => {
 
 describe("sessionMailboxProof", () => {
   it("returns the method and the user", async () => {
-    const r = await sessionMailboxProof(client(ops, { amr: [{ method: "magiclink" }] }));
+    const r = await sessionMailboxProof(client(ops, { amr: [{ method: "otp" }] }));
     expect(r.method).toBe("email_link_or_otp");
     expect(r.user?.email).toBe(ops.email);
   });
