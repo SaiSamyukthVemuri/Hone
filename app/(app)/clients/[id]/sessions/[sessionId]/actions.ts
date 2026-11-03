@@ -683,22 +683,46 @@ export async function updateSessionPerformerAction(
     throw new Error("Not available to your role.");
   }
 
-  // Confirm the chosen practitioner belongs to this studio (RLS already
-  // restricts visibility, but a second check guards against tampering).
   const newPerformerId = typeof performerId === "string" && performerId
     ? performerId
     : null;
 
-  // The same-studio check on the chosen practitioner now happens INSIDE the
-  // command, in the same transaction as the write, so a practitioner cannot be
-  // moved out of the studio between the check and the update.
+  // The same-studio check on the chosen practitioner happens INSIDE the commands, in the same transaction as the write.
+  // 0289: the FIRST attribution of a session still goes through set_session_performer; CHANGING or clearing an existing performer is a
+  // CORRECTION (original attribution kept in history; who, when and why recorded) and needs a real reason. The current performer is read
+  // here, never taken from the form, so a tampered request cannot pick the weaker path (the database refuses it either way).
   const supabase = await createClient();
-  const { error } = await supabase.rpc("set_session_performer", {
-    p_session_id: sessionId,
-    p_client_id: clientId,
-    p_performer_id: newPerformerId,
-  });
-  if (error) throw new Error(`Failed to update performer: ${mapSessionCommandError(error)}`);
+  const { data: current, error: readError } = await supabase
+    .from("sessions")
+    .select("performed_by_practitioner_id")
+    .eq("id", sessionId)
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (readError || !current) throw new Error("Failed to update performer: session not found.");
+
+  if (current.performed_by_practitioner_id === null) {
+    const { error } = await supabase.rpc("set_session_performer", {
+      p_session_id: sessionId,
+      p_client_id: clientId,
+      p_performer_id: newPerformerId,
+    });
+    if (error) throw new Error(`Failed to update performer: ${mapSessionCommandError(error)}`);
+  } else {
+    const reasonRaw = formData.get("reason");
+    const reason = typeof reasonRaw === "string" ? reasonRaw.trim() : "";
+    if (!reason) throw new Error("Failed to update performer: give a reason for the correction.");
+    const { error } = await supabase.rpc("correct_session_performer", {
+      p_session_id: sessionId,
+      p_client_id: clientId,
+      p_performer_id: newPerformerId,
+      p_reason: reason,
+    });
+    if (error) {
+      if (error.message?.includes("reason_required")) throw new Error("Failed to update performer: give a reason for the correction.");
+      if (error.message?.includes("edit_records_required")) throw new Error("Not available to your role.");
+      throw new Error(`Failed to update performer: ${mapSessionCommandError(error)}`);
+    }
+  }
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }

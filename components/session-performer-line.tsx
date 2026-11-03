@@ -21,7 +21,7 @@ type Props = {
 // "Performed by" card with a dropdown. This inline line is now the
 // single performer surface. It reads as plain text with a small Edit
 // affordance; Edit swaps in the same practitioner select, saving
-// through the unchanged updateSessionPerformerAction.
+// through updateSessionPerformerAction. Changing an existing performer is a CORRECTION: it asks for a reason and the original stays in history.
 export function SessionPerformerLine({
   sessionId,
   clientId,
@@ -37,6 +37,9 @@ export function SessionPerformerLine({
     "idle",
   );
   const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  // An existing performer can only be corrected (with a reason); the first attribution saves on selection as before.
+  const needsReason = Boolean(initialPerformerId);
   const [, startTransition] = useTransition();
 
   const current = practitioners.find((p) => p.id === performerId);
@@ -48,6 +51,16 @@ export function SessionPerformerLine({
 
   function handlePerformerChange(next: string) {
     setPerformerId(next);
+    if (needsReason) return;
+    submit(next);
+  }
+
+  function submit(next: string) {
+    if (needsReason && !reason.trim()) {
+      setState("error");
+      setError("Give a reason for the correction.");
+      return;
+    }
     setState("saving");
     setError(null);
 
@@ -55,6 +68,7 @@ export function SessionPerformerLine({
     fd.set("session_id", sessionId);
     fd.set("client_id", clientId);
     fd.set("performer_id", next);
+    if (needsReason) fd.set("reason", reason.trim());
 
     startTransition(async () => {
       try {
@@ -114,6 +128,27 @@ export function SessionPerformerLine({
           </option>
         ))}
       </select>
+      {needsReason && (
+        <>
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason for the correction"
+            aria-label="Reason for the correction"
+            maxLength={500}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          />
+          <button
+            type="button"
+            onClick={() => submit(performerId)}
+            disabled={state === "saving" || performerId === (initialPerformerId ?? "")}
+            className="rounded-md border border-neutral-300 px-3 py-2 text-xs disabled:opacity-50 dark:border-neutral-700"
+          >
+            Save correction
+          </button>
+        </>
+      )}
       <button
         type="button"
         onClick={() => setEditing(false)}
