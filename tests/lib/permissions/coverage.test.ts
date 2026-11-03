@@ -129,7 +129,7 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
   });
   it("waitlist operations are separate per-action keys: receptionist ON but gated, practitioner OFF; rules OFF for both; admission OFF for both", () => {
     const ops = DEFS.filter((d) => d.group === "waitlist_operations");
-    expect(ops.map((d) => d.key).sort()).toEqual(["wl.add_entry", "wl.import_entry", "wl.manage_queue", "wl.offer_booking", "wl.record_sms_consent", "wl.set_availability", "wl.view_queue", "wl.withdraw_entry"]);
+    expect(ops.map((d) => d.key).sort()).toEqual(["wl.add_entry", "wl.expire_close", "wl.import_entry", "wl.manage_queue", "wl.offer_booking", "wl.record_sms_consent", "wl.set_availability", "wl.view_queue", "wl.withdraw_entry"]);
     for (const d of ops) {
       expect(d.newStudioDefault).toEqual({ practitioner: "off", receptionist: "studio" });
       expect(d.existingSnapshot).toEqual({ practitioner: "off", receptionist: "off" });
@@ -150,13 +150,13 @@ describe("decisions: DN-1..DN-30 are all accounted for, and a pending key never 
 describe("open questions (OPS reconciliation, 3 Nov): flagged, never defaulted", () => {
   const NARROW = new Set(NARROWINGS.map((n) => n.id));
   const FIXED = new Set(FIXED_OWNER_ONLY.map((f) => f.id));
-  it("OPS's Q1 to Q25 (plus the Q14b follow-up) and Team's three B-n items are registered; batches 1 and 2 settled the rest named here", () => {
+  it("OPS's Q1 to Q25 (plus the Q14b follow-up) and Team's three B-n items are registered; after batch 3 every Q is settled and only Team's B-n items remain open", () => {
     const keys = Object.keys(OPEN_QUESTIONS);
     const q = keys.filter((k) => k.startsWith("Q-")).map((k) => Number.parseInt(k.slice(2), 10));
     for (let n = 1; n <= 25; n += 1) if (n !== 5 && n !== 11) expect(q, `Q-${n}`).toContain(n);
     expect(keys.filter((k) => k.startsWith("B-")).sort()).toEqual(["B-1", "B-2", "B-3"]);
     expect(Object.entries(OPEN_QUESTIONS).filter(([, e]) => e.status === "settled").map(([k]) => k).sort())
-      .toEqual(["Q-1", "Q-10", "Q-14", "Q-16", "Q-17", "Q-2", "Q-25", "Q-3", "Q-4", "Q-6", "Q-7", "Q-9"]);
+      .toEqual(keys.filter((k) => k.startsWith("Q-")).sort());
     expect(keys).toContain("Q-14b");
   });
   it("every open question names a surface that exists: a key, FEE_AMOUNT_READ, a narrowing or a fixed owner-only item", () => {

@@ -455,7 +455,17 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
   });
   it("R-3: reading a fee amount needs a named key, and the rule is in the mandatory list", () => {
     for (const k of FEE_AMOUNT_READ.anyOf) expect(catalogByKey.has(k), k).toBe(true);
-    expect(MANDATORY.join("\n")).toMatch(/Reading a fee amount needs price\.fee_amounts or pay\.view_appointment/);
+    expect(FEE_AMOUNT_READ.shownToClientsAtBooking).toBe("readable by staff");
+    expect(MANDATORY.join("\n")).toMatch(/fee amount clients see at booking is open to staff; any other fee field needs price\.fee_amounts or pay\.view_appointment/);
+  });
+  it("batch 3 (Sam, 3 Nov): calendar pause is R4, staff reading is unchanged for editing, and A6 recipient wording is carried", () => {
+    expect(NARROWINGS.find((n) => n.id === "deactivated_calendar_owner")!.stage).toBe("R4");
+    expect(d("price.fee_amounts").requires).toEqual([]);
+    expect(d("wl.expire_close").requires).toEqual(["wl.view_queue"]);
+    expect(d("wl.manage_queue").label).not.toMatch(/expire|close/i);
+    expect(d("wl.manage_queue").description).toMatch(/wl\.expire_close/);
+    expect(d("appt.handoff_own").note).toMatch(/ACTIVE practitioner of the SAME studio who is configured for the service/);
+    for (const x of DEFS.filter((k) => k.key.startsWith("wl.") && k.key !== "wl.view_queue")) expect(x.requires, x.key).toContain("wl.view_queue");
   });
   it("R-4: every narrowing names a decided decision, a stage, an enforcement point and the notice text", () => {
     expect(NARROWINGS.map((n) => n.id)).toEqual(expect.arrayContaining(["performer_change", "exposure_incident_history", "colleague_private_fields", "getting_started_filter", "notification_read_state", "portal_reply_immutable", "studio_columns_read"]));
@@ -556,6 +566,6 @@ describe("Sam's group 7 (3 Nov): platform and operations", () => {
   });
   it("group 7 rules are carried as build requirements", () => {
     const m = MANDATORY.join("\n");
-    for (const re of [/Google Calendar studio feature flags are operator-only/, /deactivated calendar owner gets no new studio synchronisation/, /bounded fallback protection/, /no direct database writes/, /SMS STOP behaviour is unchanged/]) expect(m).toMatch(re);
+    for (const re of [/Google Calendar studio feature flags are operator-only/, /no active owner remains, studio calendar sync pauses and the operator is alerted without client data; it resumes only after an active owner explicitly reconnects/, /bounded fallback protection/, /no direct database writes/, /SMS STOP behaviour is unchanged/]) expect(m).toMatch(re);
   });
 });
