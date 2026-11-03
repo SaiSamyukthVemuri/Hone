@@ -180,8 +180,9 @@ export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline)
  *
  * So a condition travels in the URL only while its ENCODED value is at most URL_CONDITION_MAX_VALUE_CHARS and the
  * encoded conditions together stay within URL_CONDITION_TOTAL_CHARS. A changed field whose baseline is over the
- * threshold is written WITHOUT its own equality condition: for that field the guarantee is exactly what production
- * had before this change (last write wins). Every short changed field and the identity guards keep their conditions.
+ * threshold has NO equality condition on the write. The caller reads that field's current value just before the write
+ * and refuses with a conflict if it differs from the baseline, so the residual is only the gap between that read and the
+ * write. Every short changed field and the identity guards keep their conditions in the URL.
  * The atomic fix for a long field is a JSON-body database function (held, with M1); it is not part of this change.
  */
 export const URL_CONDITION_MAX_VALUE_CHARS = 2_000;

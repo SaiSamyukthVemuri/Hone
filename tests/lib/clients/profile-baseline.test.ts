@@ -218,3 +218,25 @@ describe("only URL-safe conditions travel in the URL (Insurance K-1, option E)",
     expect(splitConditions([{ key: "allergies" as const, value: null }]).inUrl).toHaveLength(1);
   });
 });
+
+describe("a long field changed underneath is a conflict, not a silent overwrite (Privacy R1)", () => {
+  const big = { ...LOADED, allergies: "a".repeat(25_000) };
+  const plan = (() => {
+    const p = planProfileUpdate(fd({ allergies: big.allergies + "Y", pronouns: "they/them" }), big);
+    if (!p.ok) throw new Error("plan");
+    return p;
+  })();
+  const { unconditioned } = splitConditions(plan.conditions);
+  const check = (stored: Record<string, unknown>) => describeConflicts({ ...plan, conditions: unconditioned }, stored);
+  it("only the long field is checked by reading; the short field keeps its URL condition", () => {
+    expect(unconditioned.map((c) => c.key)).toEqual(["allergies"]);
+  });
+  it("a colleague's change to the long field is reported with their current text and the draft value", () => {
+    const c = check({ allergies: "latex (added by a colleague)" });
+    expect(c).toEqual([{ key: "allergies", label: "Allergies", current: "latex (added by a colleague)", yours: big.allergies + "Y" }]);
+  });
+  it("the same stored value is no conflict, and a cleared field is a conflict", () => {
+    expect(check({ allergies: big.allergies })).toEqual([]);
+    expect(check({ allergies: null })).toHaveLength(1);
+  });
+});
