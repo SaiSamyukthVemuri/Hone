@@ -244,6 +244,10 @@ revoke all on function public.chart_write_guard() from public, anon, authenticat
 revoke all on function public.chart_revision_write() from public, anon, authenticated, service_role;
 revoke all on function public.chart_attribution_guard() from public, anon, authenticated, service_role;
 revoke all on function public.correct_session_performer(uuid, uuid, uuid, text) from public, anon, authenticated, service_role;
+revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from public;
+revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from anon;
+revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from service_role;
+revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from authenticated;
 grant execute on function public.correct_session_performer(uuid, uuid, uuid, text) to authenticated;
 -- The overwrite command is retired from end users: the attribution guard would refuse it, and the app moves to the correction command.
 revoke execute on function public.set_session_performer(uuid, uuid, uuid) from authenticated;
