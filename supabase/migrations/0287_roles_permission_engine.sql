@@ -38,7 +38,9 @@ create table public.permission_catalog (
   snapshot_receptionist text not null check (snapshot_receptionist in ('off', 'own', 'studio')),
   gate_practitioner     text,
   gate_receptionist     text,
-  sensitive             boolean not null default false
+  sensitive             boolean not null default false,
+  -- Informational, for the Roles page: what kind of consequence the key carries. The reason RULE keys off `sensitive` only.
+  consequence           text check (consequence in ('financial', 'sensitive', 'destructive'))
 );
 
 create table public.permission_narrowings (
@@ -129,87 +131,87 @@ revoke all on public.permission_audit from public, anon, authenticated, service_
 -- 2) Catalog seed (generated from lib/permissions/catalog.ts; a test compares the two).
 -- ---------------------------------------------------------------------------
 insert into public.permission_catalog
-  (key, scopes, own_kind, offered_practitioner, offered_receptionist, owner_configurable, requires, new_practitioner, new_receptionist, snapshot_practitioner, snapshot_receptionist, gate_practitioner, gate_receptionist, sensitive)
+  (key, scopes, own_kind, offered_practitioner, offered_receptionist, owner_configurable, requires, new_practitioner, new_receptionist, snapshot_practitioner, snapshot_receptionist, gate_practitioner, gate_receptionist, sensitive, consequence)
 values
-  ('appt.view_calendar', array['off', 'studio']::text[], null, true, true, false, '{}'::text[], 'studio', 'studio', 'studio', 'studio', null, null, false),
-  ('client.view_directory', array['off', 'studio']::text[], null, true, true, false, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false),
-  ('appt.book', array['off', 'own', 'studio']::text[], 'practitioner', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false),
-  ('appt.move', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false),
-  ('appt.reassign', array['off', 'studio']::text[], null, true, true, true, array['appt.move']::text[], 'off', 'studio', 'off', 'off', null, null, false),
-  ('appt.handoff_own', array['off', 'studio']::text[], null, true, false, true, array['appt.view_calendar']::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('appt.cancel', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false),
-  ('appt.mark_no_show', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false),
-  ('appt.edit_notes', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, 'receptionist_scheduling_notes', false),
-  ('appt.complete', array['off', 'own', 'studio']::text[], 'appointment', true, false, true, array['appt.view_calendar', 'clin.view_records']::text[], 'own', 'off', 'own', 'off', 'practitioner_completion', null, false),
-  ('appt.aftercare_send', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false),
-  ('avail.manage_own', array['off', 'studio']::text[], null, true, false, true, '{}'::text[], 'studio', 'off', 'off', 'off', null, null, false),
-  ('avail.manage_others', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('avail.manage_studio_hours', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('client.create', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, false),
-  ('client.edit_contact', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, true),
-  ('client.view_legal_name', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'off', 'studio', 'off', null, 'receptionist_legal_name', true),
-  ('client.edit_legal_name', array['off', 'studio']::text[], null, true, true, true, array['client.view_legal_name']::text[], 'studio', 'off', 'studio', 'off', 'practitioner_legal_name_edit', 'receptionist_legal_name', true),
-  ('client.merge', array['off', 'studio']::text[], null, true, true, true, array['client.edit_contact', 'client.view_legal_name']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('client.import', array['off', 'studio']::text[], null, true, true, true, array['client.create']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('clin.view_records', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.edit_records', array['off', 'studio']::text[], null, true, false, true, array['clin.view_records']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.view_photos', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.upload_photos', array['off', 'studio']::text[], null, true, false, true, array['clin.view_photos']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.view_intake', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.view_aftercare', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.view_intake_status', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, false),
-  ('clin.edit_intake', array['off', 'studio']::text[], null, true, false, true, array['clin.view_intake']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.review_intake', array['off', 'studio']::text[], null, true, false, true, array['clin.view_intake']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.print_record', array['off', 'studio']::text[], null, true, false, true, array['clin.view_records']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('clin.edit_consent_templates', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('comm.send_routine', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false),
-  ('comm.send_intake_link', array['off', 'studio']::text[], null, true, true, true, array['comm.send_routine', 'clin.view_intake_status']::text[], 'studio', 'off', 'studio', 'off', null, null, false),
-  ('comm.send_portal_link', array['off', 'studio']::text[], null, true, true, true, array['comm.send_routine']::text[], 'studio', 'off', 'studio', 'off', null, null, false),
-  ('comm.send_portal_reply', array['off', 'own', 'studio']::text[], 'client', true, true, true, array['comm.send_routine', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, false),
-  ('comm.bulk_message', array['off', 'studio']::text[], null, true, true, true, array['comm.send_routine', 'client.view_directory']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('pay.view_appointment', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('pay.record_external', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('pay.charge_saved_card', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('pay.refund', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('pay.void', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('pay.correct_or_waive', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('price.appointment', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('price.view_client_prices', array['off', 'own', 'studio']::text[], 'client', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('price.service_list', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('price.fee_amounts', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'off', 'off', null, 'receptionist_finance', true),
-  ('rep.studio_totals', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('rep.financial_reports', array['off', 'studio']::text[], null, true, true, true, array['pay.view_appointment']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('rep.lifetime_spend', array['off', 'studio']::text[], null, true, true, true, array['pay.view_appointment']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('rep.bulk_export', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('rep.audit_log_view', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('wl.view_queue', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.add_entry', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.import_entry', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.withdraw_entry', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.manage_queue', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.expire_close', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.offer_booking', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.set_availability', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wl.record_sms_consent', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true),
-  ('wlrules.invitation_rounds', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('wlrules.policy_and_text', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('admit.change_policy', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('admit.booking_rules', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false),
-  ('price.edit_client_prices', array['off', 'studio']::text[], null, true, true, true, array['price.view_client_prices']::text[], 'off', 'off', 'off', 'off', null, null, true),
-  ('client.view_dob_address', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.edit_dob_address', array['off', 'studio']::text[], null, true, false, true, array['client.view_dob_address']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.view_allergies_cautions', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.edit_allergies_cautions', array['off', 'studio']::text[], null, true, false, true, array['client.view_allergies_cautions']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.view_budget', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.edit_budget', array['off', 'studio']::text[], null, true, false, true, array['client.view_budget']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.view_personal_notes', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.edit_personal_notes', array['off', 'studio']::text[], null, true, false, true, array['client.view_personal_notes']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.view_tags', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.edit_tags', array['off', 'studio']::text[], null, true, false, true, array['client.view_tags']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.view_health_fields', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('client.edit_health_fields', array['off', 'studio']::text[], null, true, false, true, array['client.view_health_fields']::text[], 'studio', 'off', 'studio', 'off', null, null, true),
-  ('records.view_sterilisation_disinfection', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false),
-  ('records.log_sterilisation_disinfection', array['off', 'studio']::text[], null, true, true, true, array['records.view_sterilisation_disinfection']::text[], 'studio', 'off', 'studio', 'off', null, null, false);
+  ('appt.view_calendar', array['off', 'studio']::text[], null, true, true, false, '{}'::text[], 'studio', 'studio', 'studio', 'studio', null, null, false, null),
+  ('client.view_directory', array['off', 'studio']::text[], null, true, true, false, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null),
+  ('appt.book', array['off', 'own', 'studio']::text[], 'practitioner', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null),
+  ('appt.move', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'own', 'off', null, null, false, null),
+  ('appt.reassign', array['off', 'studio']::text[], null, true, true, true, array['appt.move']::text[], 'off', 'studio', 'off', 'off', null, null, false, null),
+  ('appt.handoff_own', array['off', 'studio']::text[], null, true, false, true, array['appt.view_calendar']::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('appt.cancel', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null),
+  ('appt.mark_no_show', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null),
+  ('appt.edit_notes', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, 'receptionist_scheduling_notes', false, null),
+  ('appt.complete', array['off', 'own', 'studio']::text[], 'appointment', true, false, true, array['appt.view_calendar', 'clin.view_records']::text[], 'own', 'off', 'own', 'off', 'practitioner_completion', null, false, null),
+  ('appt.aftercare_send', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
+  ('avail.manage_own', array['off', 'studio']::text[], null, true, false, true, '{}'::text[], 'studio', 'off', 'off', 'off', null, null, false, null),
+  ('avail.manage_others', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('avail.manage_studio_hours', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('client.create', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null),
+  ('client.edit_contact', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.view_legal_name', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'off', 'studio', 'off', null, 'receptionist_legal_name', true, 'sensitive'),
+  ('client.edit_legal_name', array['off', 'studio']::text[], null, true, true, true, array['client.view_legal_name']::text[], 'studio', 'off', 'studio', 'off', 'practitioner_legal_name_edit', 'receptionist_legal_name', true, 'sensitive'),
+  ('client.merge', array['off', 'studio']::text[], null, true, true, true, array['client.edit_contact', 'client.view_legal_name']::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('client.import', array['off', 'studio']::text[], null, true, true, true, array['client.create']::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('clin.view_records', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.edit_records', array['off', 'studio']::text[], null, true, false, true, array['clin.view_records']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.view_photos', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.upload_photos', array['off', 'studio']::text[], null, true, false, true, array['clin.view_photos']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.view_intake', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.view_aftercare', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.view_intake_status', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
+  ('clin.edit_intake', array['off', 'studio']::text[], null, true, false, true, array['clin.view_intake']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.review_intake', array['off', 'studio']::text[], null, true, false, true, array['clin.view_intake']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.print_record', array['off', 'studio']::text[], null, true, false, true, array['clin.view_records']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('clin.edit_consent_templates', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('comm.send_routine', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'studio', 'studio', 'studio', 'off', null, null, false, null),
+  ('comm.send_intake_link', array['off', 'studio']::text[], null, true, true, true, array['comm.send_routine', 'clin.view_intake_status']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
+  ('comm.send_portal_link', array['off', 'studio']::text[], null, true, true, true, array['comm.send_routine']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
+  ('comm.send_portal_reply', array['off', 'own', 'studio']::text[], 'client', true, true, true, array['comm.send_routine', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
+  ('comm.bulk_message', array['off', 'studio']::text[], null, true, true, true, array['comm.send_routine', 'client.view_directory']::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('pay.view_appointment', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['appt.view_calendar']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('pay.record_external', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('pay.charge_saved_card', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('pay.refund', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('pay.void', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('pay.correct_or_waive', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('price.appointment', array['off', 'own', 'studio']::text[], 'appointment', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('price.view_client_prices', array['off', 'own', 'studio']::text[], 'client', true, true, true, array['pay.view_appointment']::text[], 'own', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('price.service_list', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('price.fee_amounts', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'studio', 'studio', 'off', 'off', null, 'receptionist_finance', true, 'financial'),
+  ('rep.studio_totals', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('rep.financial_reports', array['off', 'studio']::text[], null, true, true, true, array['pay.view_appointment']::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('rep.lifetime_spend', array['off', 'studio']::text[], null, true, true, true, array['pay.view_appointment']::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('rep.bulk_export', array['off', 'studio']::text[], null, true, true, true, array['client.view_directory']::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('rep.audit_log_view', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, true, 'sensitive'),
+  ('wl.view_queue', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.add_entry', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.import_entry', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.withdraw_entry', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.manage_queue', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.expire_close', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.offer_booking', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.set_availability', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wl.record_sms_consent', array['off', 'studio']::text[], null, true, true, true, array['wl.view_queue']::text[], 'off', 'studio', 'off', 'off', null, 'receptionist_waitlist', true, 'sensitive'),
+  ('wlrules.invitation_rounds', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('wlrules.policy_and_text', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('admit.change_policy', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('admit.booking_rules', array['off', 'studio']::text[], null, true, true, true, '{}'::text[], 'off', 'off', 'off', 'off', null, null, false, null),
+  ('price.edit_client_prices', array['off', 'studio']::text[], null, true, true, true, array['price.view_client_prices']::text[], 'off', 'off', 'off', 'off', null, null, true, 'financial'),
+  ('client.view_dob_address', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.edit_dob_address', array['off', 'studio']::text[], null, true, false, true, array['client.view_dob_address']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.view_allergies_cautions', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.edit_allergies_cautions', array['off', 'studio']::text[], null, true, false, true, array['client.view_allergies_cautions']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.view_budget', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.edit_budget', array['off', 'studio']::text[], null, true, false, true, array['client.view_budget']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.view_personal_notes', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.edit_personal_notes', array['off', 'studio']::text[], null, true, false, true, array['client.view_personal_notes']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.view_tags', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.edit_tags', array['off', 'studio']::text[], null, true, false, true, array['client.view_tags']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.view_health_fields', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar', 'client.view_directory']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('client.edit_health_fields', array['off', 'studio']::text[], null, true, false, true, array['client.view_health_fields']::text[], 'studio', 'off', 'studio', 'off', null, null, true, 'sensitive'),
+  ('records.view_sterilisation_disinfection', array['off', 'studio']::text[], null, true, true, true, array['appt.view_calendar']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null),
+  ('records.log_sterilisation_disinfection', array['off', 'studio']::text[], null, true, true, true, array['records.view_sterilisation_disinfection']::text[], 'studio', 'off', 'studio', 'off', null, null, false, null);
 
 insert into public.permission_narrowings (id, decision, label, stage, narrows_existing, notice)
 values
@@ -375,11 +377,14 @@ $$;
 create or replace function public.perm_diff(p_before jsonb, p_after jsonb)
 returns jsonb
 language sql
-immutable
+stable
+security definer
 set search_path = ''
 as $$
-  select coalesce(jsonb_agg(jsonb_build_object('key', a.key, 'before', p_before ->> a.key, 'after', a.value #>> '{}') order by a.key), '[]'::jsonb)
+  select coalesce(jsonb_agg(jsonb_build_object('key', a.key, 'before', p_before ->> a.key, 'after', a.value #>> '{}',
+                                               'sensitive', coalesce(c.sensitive, false), 'consequence', c.consequence) order by a.key), '[]'::jsonb)
     from jsonb_each(p_after) a
+    left join public.permission_catalog c on c.key = a.key
    where (p_before ->> a.key) is distinct from (a.value #>> '{}')
 $$;
 
@@ -804,6 +809,7 @@ begin
   end loop;
   return jsonb_build_object(
     'ok', true, 'version', v_version, 'basis', v_basis, 'roles', v_roles,
+    'keys', (select coalesce(jsonb_object_agg(c.key, jsonb_build_object('sensitive', c.sensitive, 'consequence', c.consequence)), '{}'::jsonb) from public.permission_catalog c),
     'gates', (select coalesce(jsonb_object_agg(g.gate, g.met), '{}'::jsonb) from public.permission_ship_gates g where g.studio_id = p_studio)
   );
 end;
