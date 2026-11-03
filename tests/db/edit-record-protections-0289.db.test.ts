@@ -1,9 +1,11 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseAllKeys } from "./helpers/permission-release";
 import { adminQuery, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0289 (HELD, NQ-11/12): edit-key choke point, append-only chart history, attribution immutability, performer correction.
 // Synthetic values only. NOT RUN until the heavy slot is granted and 0287 + 0289 are applied to an owned isolated stack.
 
+beforeAll(async () => releaseAllKeys());
 afterAll(async () => closePool());
 
 const store = (s: SeededStudio, key: string, scope: string) =>
