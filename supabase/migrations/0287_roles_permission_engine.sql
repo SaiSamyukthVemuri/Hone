@@ -575,26 +575,11 @@ begin
         if v_scope <> v_base then
           v_changed := true;
           v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', v_base));
-          if c.sensitive and public.perm_rank(v_scope) > public.perm_rank(v_before_eff -> v_role ->> v_key) then
-            v_widen := true;
-            v_sens := v_sens || to_jsonb(v_key);
-          end if;
         end if;
       end loop;
     end loop;
     if not v_changed then
       raise exception using errcode = 'PM001', message = public.perm_fail('nothing_changed')::text;
-    end if;
-
-    if v_widen and p_commit then
-      if not coalesce(p_confirmed, false) then
-        raise exception using errcode = 'PM001', message = public.perm_fail('sensitive_unconfirmed')::text;
-      end if;
-      if not public.perm_reason_ok(v_reason) then
-        raise exception using errcode = 'PM001', message = public.perm_fail('reason_required')::text;
-      end if;
-    elsif v_reason is not null and not public.perm_reason_ok(v_reason) then
-      raise exception using errcode = 'PM001', message = public.perm_fail('reason_invalid')::text;
     end if;
 
     for v_item in select * from jsonb_array_elements(v_apply) loop
@@ -619,7 +604,25 @@ begin
       v_after_eff := v_after_eff || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
       v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before_eff -> v_role, v_after_eff -> v_role));
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
+      -- A reason and a confirmation are required when a SENSITIVE key's EFFECTIVE scope rises for any affected role, whether the owner
+      -- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.
+      select v_sens || coalesce(jsonb_agg(a.key order by a.key), '[]'::jsonb) into v_sens
+        from jsonb_each_text(v_after_eff -> v_role) a
+        join public.permission_catalog c on c.key = a.key
+       where c.sensitive and public.perm_rank(a.value) > public.perm_rank(v_before_eff -> v_role ->> a.key);
     end loop;
+    v_widen := jsonb_array_length(v_sens) > 0;
+
+    if v_widen and p_commit then
+      if not coalesce(p_confirmed, false) then
+        raise exception using errcode = 'PM001', message = public.perm_fail('sensitive_unconfirmed')::text;
+      end if;
+      if not public.perm_reason_ok(v_reason) then
+        raise exception using errcode = 'PM001', message = public.perm_fail('reason_required')::text;
+      end if;
+    elsif v_reason is not null and not public.perm_reason_ok(v_reason) then
+      raise exception using errcode = 'PM001', message = public.perm_fail('reason_invalid')::text;
+    end if;
 
     v_result := jsonb_build_object(
       'ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected,
@@ -821,6 +824,7 @@ begin
     'ok', true, 'version', v_version, 'basis', v_basis, 'roles', v_roles,
     'keys', (select coalesce(jsonb_object_agg(c.key, jsonb_build_object('sensitive', c.sensitive, 'consequence', c.consequence, 'enforcement', c.enforcement)), '{}'::jsonb) from public.permission_catalog c),
     'gates', (select coalesce(jsonb_object_agg(g.gate, g.met), '{}'::jsonb) from public.permission_ship_gates g where g.studio_id = p_studio)
+             || jsonb_build_object('staff_role_change', coalesce((select g.met from public.permission_ship_gates g where g.studio_id = p_studio and g.gate = 'staff_role_change'), false))
   );
 end;
 $$;
@@ -960,12 +964,22 @@ declare
 begin
   select * into a from public.perm_actor(p_studio);
   if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
+  -- OPERATOR SHIP GATE (Privacy E2, P1). This command creates or re-activates receptionist memberships and deactivates practitioners,
+  -- which is the receptionist provisioning that stays held until the separate S4 approval. It is refused unless the operator has
+  -- set the 'staff_role_change' gate for this studio; no gate row means off, and owners cannot write the gate.
+  if not coalesce((select g.met from public.permission_ship_gates g where g.studio_id = p_studio and g.gate = 'staff_role_change'), false) then
+    return public.perm_fail('gate_unmet', null, null, null, jsonb_build_object('gate', 'staff_role_change'));
+  end if;
   if p_new_role not in ('practitioner', 'receptionist') or p_expected_current_role not in ('practitioner', 'receptionist') then
     return public.perm_fail('owner_role_fixed');
   end if;
   if p_new_role = p_expected_current_role then return public.perm_fail('nothing_changed'); end if;
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
   if v_reason is not null and not public.perm_reason_ok(v_reason) then return public.perm_fail('reason_invalid'); end if;
+  -- Moving a receptionist to practitioner widens clinical access, so a meaningful reason is required (Insurance RB-3).
+  if p_expected_current_role = 'receptionist' and p_new_role = 'practitioner' and v_reason is null then
+    return public.perm_fail('reason_required');
+  end if;
 
   if p_expected_current_role = 'practitioner' then
     select pr.user_id, pr.display_name, pr.email, pr.active into v_user, v_name, v_email, v_active
@@ -985,8 +999,13 @@ begin
   if not v_active then return public.perm_fail('not_active'); end if;
 
   if p_expected_current_role = 'practitioner' then
-    select count(*) into v_upcoming from public.appointments ap
-     where ap.studio_id = p_studio and ap.practitioner_id = p_membership and ap.status = 'confirmed' and ap.starts_at > now();
+    -- Lock the practitioner's future appointments, then count EVERY one that is not cancelled (confirmed, completed, no_show), so a
+    -- concurrent change to one of them cannot slip past the check (Insurance RB-5).
+    select count(*) into v_upcoming from (
+      select ap.id from public.appointments ap
+       where ap.studio_id = p_studio and ap.practitioner_id = p_membership and ap.status <> 'cancelled' and ap.starts_at > now()
+       for update
+    ) locked_upcoming;
     if v_upcoming > 0 then
       return public.perm_fail('has_upcoming_appointments', null, null, null, jsonb_build_object('count', v_upcoming));
     end if;

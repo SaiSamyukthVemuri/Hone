@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, type PermissionDef, type Role, type Scope, type StudioPolicy, GATES } from "@/lib/permissions/catalog";
 import { consequenceClass } from "@/lib/permissions/consequence";
-import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0287 (held): the permission engine, proved on the real migrated database. Synthetic values only.
 // NOT RUN until the heavy slot is granted and 0287 has been applied to an owned isolated stack.
@@ -399,9 +399,13 @@ describe("effective_access", () => {
   });
 });
 
+const openStaffRoleGate = (studioId: string) =>
+  adminQuery("insert into public.permission_ship_gates(studio_id,gate,met) values ($1,'staff_role_change',true) on conflict (studio_id,gate) do update set met=true", [studioId]);
+
 describe("change_staff_role", () => {
   it("moves a practitioner to receptionist in one transaction (deactivate, never delete), audits it, and leaves other studios alone", async () => {
     const s = await seedStudio("engine-role");
+    await openStaffRoleGate(s.studioId);
     const m = await seedMember(s, "mv");
     const other = await seedStudio("engine-role-other");
     const before = await rowCount("select count(*) n from public.practitioners where studio_id=$1", [other.studioId]);
@@ -414,13 +418,14 @@ describe("change_staff_role", () => {
     expect(aud).toHaveLength(1);
     expect(aud[0].before).toMatchObject({ role: "practitioner" });
     expect(aud[0].after).toMatchObject({ role: "receptionist" });
-    const back = await call(s.userId, "select public.change_staff_role($1,$2,'practitioner','receptionist',null) as r", [s.studioId, r.membership_id]);
+    const back = await call(s.userId, "select public.change_staff_role($1,$2,'practitioner','receptionist',$3) as r", [s.studioId, r.membership_id, GOOD_REASON]);
     expect(back).toMatchObject({ ok: true, role: "practitioner", membership_id: m.practitionerId });
     expect(await rowCount("select count(*) n from public.studio_receptionists where studio_id=$1", [s.studioId])).toBe(1);
   });
 
   it("refuses self, an owner as source or target, a stale expected role, upcoming appointments, and a non-owner", async () => {
     const s = await seedStudio("engine-role2");
+    await openStaffRoleGate(s.studioId);
     const m = await seedMember(s, "r2");
     expect(await call(s.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, s.practitionerId])).toMatchObject({ code: "owner_role_fixed" });
     expect(await call(s.userId, "select public.change_staff_role($1,$2,'owner','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ code: "owner_role_fixed" });
@@ -512,5 +517,144 @@ describe("avail.* keys: existing snapshot is unchanged, ON and OFF are independe
       expect(await can(other.userId, s.studioId, k), `foreign owner ${k}`).toBe(false);
       expect(await can(op.userId, s.studioId, k), `foreign practitioner ${k}`).toBe(false);
     }
+
+describe("change_staff_role is behind the operator gate, needs a reason to widen, and locks upcoming appointments (Privacy E2, Insurance RB-3, RB-5)", () => {
+  const callRole = (u: string, s: string, m: string, to: string, from: string, reason: string | null) =>
+    call(u, "select public.change_staff_role($1,$2,$3,$4,$5) as r", [s, m, to, from, reason]);
+
+  it("is refused while the staff_role_change gate is off (no row = off), changes nothing, and the page can see the gate is false", async () => {
+    const s = await seedStudio("role-gate");
+    const m = await seedMember(s, "g1");
+    expect(await callRole(s.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", GOOD_REASON)).toMatchObject({ ok: false, code: "gate_unmet", gate: "staff_role_change" });
+    expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(true);
+    expect(await rowCount("select count(*) n from public.studio_receptionists where studio_id=$1", [s.studioId])).toBe(0);
+    expect((await getp(s.userId, s.studioId)).gates).toMatchObject({ staff_role_change: false });
+    await adminQuery("insert into public.permission_ship_gates(studio_id,gate,met) values ($1,'staff_role_change',false) on conflict (studio_id,gate) do update set met=false", [s.studioId]);
+    expect(await callRole(s.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", GOOD_REASON)).toMatchObject({ code: "gate_unmet" });
+    // a non-owner still gets the generic refusal, not a hint about the gate
+    expect(await callRole(m.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", GOOD_REASON)).toEqual({ ok: false, code: "refused" });
+    await openStaffRoleGate(s.studioId);
+    expect((await getp(s.userId, s.studioId)).gates).toMatchObject({ staff_role_change: true });
+    expect(await callRole(s.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", GOOD_REASON)).toMatchObject({ ok: true });
+  });
+
+  it("RB-3: receptionist to practitioner needs a meaningful reason; practitioner to receptionist does not", async () => {
+    const s = await seedStudio("role-reason");
+    await openStaffRoleGate(s.studioId);
+    const m = await seedMember(s, "r3");
+    const down = await callRole(s.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", null);
+    expect(down).toMatchObject({ ok: true });
+    expect(await callRole(s.userId, s.studioId, down.membership_id, "practitioner", "receptionist", null)).toMatchObject({ ok: false, code: "reason_required" });
+    expect(await callRole(s.userId, s.studioId, down.membership_id, "practitioner", "receptionist", "n/a")).toMatchObject({ ok: false, code: "reason_invalid" });
+    expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(false);
+    expect(await callRole(s.userId, s.studioId, down.membership_id, "practitioner", "receptionist", GOOD_REASON)).toMatchObject({ ok: true, role: "practitioner" });
+  });
+
+  it("RB-5: every non-cancelled future status blocks the move (confirmed, completed, no_show); a cancelled one does not", async () => {
+    const s = await seedStudio("role-status");
+    await openStaffRoleGate(s.studioId);
+    const m = await seedMember(s, "r5");
+    const c = await seedClient(s, "r5");
+    await seedAppt(s, m.practitionerId, c, { status: "cancelled" });
+    expect(await callRole(s.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", GOOD_REASON)).toMatchObject({ ok: true });
+    for (const st of ["completed", "no_show"]) {
+      const s2 = await seedStudio(`role-status-${st}`);
+      await openStaffRoleGate(s2.studioId);
+      const m2 = await seedMember(s2, "x");
+      const c2 = await seedClient(s2, "x");
+      await seedAppt(s2, m2.practitionerId, c2, { status: st });
+      expect(await callRole(s2.userId, s2.studioId, m2.practitionerId, "receptionist", "practitioner", GOOD_REASON), st).toMatchObject({ code: "has_upcoming_appointments", count: 1 });
+    }
+  });
+
+  it("RB-5 race: the move waits for a concurrent change to an upcoming appointment, then counts the committed state", async () => {
+    const s = await seedStudio("role-race");
+    await openStaffRoleGate(s.studioId);
+    const m = await seedMember(s, "rr");
+    const c = await seedClient(s, "rr");
+    const appt = await seedAppt(s, m.practitionerId, c);
+    let racing: Promise<J> | null = null;
+    await adminTx(async (q) => {
+      await q("select id from public.appointments where id=$1 for update", [appt]);
+      racing = callRole(s.userId, s.studioId, m.practitionerId, "receptionist", "practitioner", GOOD_REASON);
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting; i += 1) {
+        waiting = Number((await adminQuery("select count(*) n from pg_stat_activity where wait_event_type='Lock' and query ilike '%change_staff_role%'")).rows[0].n) > 0;
+        if (!waiting) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(waiting, "the move must wait on the appointment lock, not read around it").toBe(true);
+      await q("update public.appointments set status='cancelled' where id=$1", [appt]);
+    });
+    // the holder committed the cancellation; the move now sees no upcoming appointment and proceeds on the committed state
+    expect(await racing).toMatchObject({ ok: true, role: "receptionist" });
+  });
+});
+
+describe("reason rule judges the EFFECTIVE widening (Privacy E1)", () => {
+  const pair = DEFS.map((k) => ({ k, p: k.requires.length === 1 ? DEFS.find((d) => d.key === k.requires[0]) : undefined })).find(
+    ({ k, p }) =>
+      !!p && k.sensitive && !p.sensitive && k.ownerConfigurable !== false && p.ownerConfigurable !== false &&
+      k.offeredTo.practitioner && p.offeredTo.practitioner && !k.shipGate?.practitioner && !p.shipGate?.practitioner &&
+      k.scopes.includes("studio") && p.scopes.includes("studio") && p.requires.every((r) => DEFS.find((d) => d.key === r)?.existingSnapshot.practitioner === "studio"),
+  );
+
+  it("raising only a prerequisite that was capping a stored sensitive key needs the confirmation and a reason", async () => {
+    expect(pair, "catalog has a sensitive key with one non-sensitive prerequisite").toBeDefined();
+    const { k, p } = pair!;
+    const s = await seedStudio("engine-widen");
+    const store = (key: string, scope: string) =>
+      adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,'practitioner',$2,$3) on conflict (studio_id,role,key) do update set scope=excluded.scope", [s.studioId, key, scope]);
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    await store(p!.key, "off");
+    await store(k.key, "studio"); // stored, but capped off by its prerequisite
+    const before = (await getp(s.userId, s.studioId)).roles.practitioner[k.key].effective as Scope;
+    expect(before).toBe("off");
+    const ver = (await getp(s.userId, s.studioId)).version as number;
+    const change = { practitioner: { [p!.key]: "studio" } };
+    const pv = await call(s.userId, "select public.preview_role_changes($1,$2::jsonb) as r", [s.studioId, JSON.stringify(change)]);
+    expect(pv).toMatchObject({ ok: true, reason_required: true });
+    expect(pv.sensitive_keys).toContain(k.key);
+    expect(await save(s.userId, s.studioId, ver, change, null, false)).toMatchObject({ code: "sensitive_unconfirmed" });
+    expect(await save(s.userId, s.studioId, ver, change, null, true)).toMatchObject({ code: "reason_required" });
+    expect(await save(s.userId, s.studioId, ver, change, "n/a", true)).toMatchObject({ code: "reason_required" });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1 and key=$2 and scope='studio'", [s.studioId, p!.key])).toBe(0);
+    expect(await save(s.userId, s.studioId, ver, change, GOOD_REASON, true)).toMatchObject({ ok: true });
+    expect((await getp(s.userId, s.studioId)).roles.practitioner[k.key].effective).toBe("studio");
+  });
+});
+
+describe("rollback: the 0287 down SQL removes the engine and touches nothing else", () => {
+  it("drops every engine object inside a transaction and leaves studios, practitioners and appointments as they were", async () => {
+    const { readFileSync } = await import("node:fs");
+    const down = readFileSync("supabase/rollbacks/0287_roles_permission_engine.down.sql", "utf8");
+    const s = await seedStudio("engine-down");
+    const counts = async (q: (t: string, p?: unknown[]) => Promise<{ rows: any[] }>) => {
+      const r = await q("select (select count(*) from public.studios) st, (select count(*) from public.practitioners) pr, (select count(*) from public.appointments) ap");
+      return [Number(r.rows[0].st), Number(r.rows[0].pr), Number(r.rows[0].ap)];
+    };
+    const base = await counts(adminQuery);
+    class Rollback extends Error {}
+    let gone: Record<string, unknown> = {};
+    try {
+      await adminTx(async (q) => {
+        // the file opens its own begin/commit; run its body statements inside this test's transaction instead of committing
+        const body = down.replace(/^begin;\s*$/im, "").replace(/^commit;\s*$/im, "");
+        await q(body);
+        gone = (await q(
+          `select to_regprocedure('public.has_studio_permission(uuid,text,uuid,uuid,uuid)') is null as fn,
+                  to_regprocedure('public.change_staff_role(uuid,uuid,text,text,text)') is null as role_fn,
+                  to_regclass('public.permission_catalog') is null as t1, to_regclass('public.permission_audit') is null as t2,
+                  to_regclass('public.studio_role_permissions') is null as t3,
+                  not exists (select 1 from pg_trigger where tgname='studios_permission_policy_seed_trg') as trg`,
+        )).rows[0];
+        throw new Rollback();
+      });
+    } catch (e) {
+      if (!(e instanceof Rollback)) throw e;
+    }
+    expect(gone).toEqual({ fn: true, role_fn: true, t1: true, t2: true, t3: true, trg: true });
+    expect(await counts(adminQuery)).toEqual(base); // nothing else moved
+    // the transaction rolled back: the engine is still there
+    expect((await getp(s.userId, s.studioId)).ok).toBe(true);
   });
 });
