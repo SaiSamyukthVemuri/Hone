@@ -42,6 +42,38 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     expect(b.indexOf('"appt.reassign"')).toBeLessThan(b.indexOf("move_or_reassign_appointment"));
   });
 
+  it("move refuses the WHOLE action when the reassign check cannot be read (never continues as a time-only move)", () => {
+    const b = body(read("app/(app)/calendar/move-appointment-actions.ts"), "moveAppointmentAction");
+    const ask = b.indexOf('"appt.reassign"');
+    const refuse = b.search(/reassignDecision\.engine === null && !reassignDecision\.engineAbsent/);
+    expect(refuse, "unreadable reassign check must refuse").toBeGreaterThan(ask);
+    expect(b.slice(refuse, refuse + 260)).toMatch(/return \{ ok: false/);
+    expect(refuse).toBeLessThan(b.indexOf("move_or_reassign_appointment"));
+  });
+
+  it("clin.view_records gates every treatment-data read path found in the audit (Codex #1335)", () => {
+    const gated = [
+      "app/(app)/clients/[id]/page.tsx",
+      "app/(app)/clients/[id]/sessions/new/page.tsx",
+      "app/(app)/clients/[id]/clinical-notes/print/page.tsx",
+      "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+      "app/(app)/calendar/[id]/page.tsx",
+      "app/(app)/global-search-actions.ts",
+    ];
+    for (const f of gated) expect(read(f), f).toContain('"clin.view_records"');
+    // The edit form reads the client row only: it opts out of the sessions read instead of asking.
+    expect(read("app/(app)/clients/[id]/edit/page.tsx")).toContain("includeSessions: false");
+    // getClientById reads sessions only when the caller says it may.
+    expect(read("lib/supabase/queries.ts")).toMatch(/includeSessions/);
+  });
+
+  it("the sessions page asks clin.view_aftercare before it renders the aftercare send panel", () => {
+    const s = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
+    expect(s).toContain('"clin.view_aftercare"');
+    expect(s.indexOf("canViewAftercare &&")).toBeGreaterThan(-1);
+    expect(s.indexOf("canViewAftercare &&")).toBeLessThan(s.indexOf("<PostcareSection"));
+  });
+
   it("every storage signing site is behind clin.view_photos (the URL is not issued when off)", () => {
     const sites: Array<[string, RegExp]> = [
       ["app/(app)/clients/[id]/images/sign-treatment-image.ts", /createSignedUrl/],
@@ -151,7 +183,7 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     const LEGACY: Record<string, { file: string; fn?: string; marker: RegExp; why: string }> = {
       "appt.book": { file: "app/(app)/calendar/actions.ts", fn: "bookAppointmentForClientAction", marker: /getCurrentPractitionerWithStudio/, why: "practitioner-only action path" },
       "appt.move": { file: "app/(app)/calendar/move-appointment-actions.ts", fn: "moveAppointmentAction", marker: /getCurrentPractitionerWithStudio/, why: "practitioner-only action path" },
-      "appt.reassign": { file: "app/(app)/calendar/move-appointment-actions.ts", fn: "moveAppointmentAction", marker: /practitioner\.role === "owner" &&/, why: "owner-only reassign" },
+      "appt.reassign": { file: "app/(app)/calendar/move-appointment-actions.ts", fn: "moveAppointmentAction", marker: /practitioner\.role === "owner"/, why: "owner-only reassign" },
       "avail.manage_own": { file: "app/(app)/settings/availability/actions.ts", marker: /Only studio owners can change availability\./, why: "owner-only availability floor" },
       "avail.manage_others": { file: "app/(app)/settings/availability/actions.ts", marker: /Only studio owners can change availability\./, why: "owner-only availability floor" },
       "avail.manage_studio_hours": { file: "app/(app)/settings/availability/actions.ts", marker: /Only studio owners can change availability\./, why: "owner-only availability floor" },
