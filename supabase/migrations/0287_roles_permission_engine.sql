@@ -350,7 +350,7 @@ declare
   v_cap text;
 begin
   select * into c from public.permission_catalog where key = p_key;
-  if not found or p_key = any (p_seen) or p_role not in ('practitioner', 'receptionist') then return 'off'; end if;
+  if not found or p_key = any (p_seen) or p_role is null or p_role not in ('practitioner', 'receptionist') then return 'off'; end if;
   if not (case p_role when 'practitioner' then c.offered_practitioner else c.offered_receptionist end) then return 'off'; end if;
   v_allowed := case when p_role = 'receptionist' then array_remove(c.scopes, 'own') else c.scopes end;
   v_scope := public.perm_base_scope(p_studio, p_role, p_key);
@@ -703,7 +703,7 @@ declare
 begin
   select * into a from public.perm_actor(p_studio);
   if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
-  if p_mode = 'reset' and p_role not in ('practitioner', 'receptionist') then return public.perm_fail('unknown_role', null, p_role); end if;
+  if p_mode = 'reset' and (p_role is null or p_role not in ('practitioner', 'receptionist')) then return public.perm_fail('unknown_role', null, p_role); end if;
   v_roles := case when p_mode = 'reset' then array[p_role] else array['practitioner', 'receptionist'] end;
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
 
@@ -969,6 +969,8 @@ begin
   if not coalesce((select g.met from public.permission_ship_gates g where g.studio_id = p_studio and g.gate = 'staff_role_change'), false) then
     return public.perm_fail('gate_unmet', null, null, null, jsonb_build_object('gate', 'staff_role_change'));
   end if;
+  -- NULL is refused explicitly: `null not in (...)` is null, not true, so a NULL role would skip this check and the reason rule below.
+  if p_new_role is null or p_expected_current_role is null then return public.perm_fail('unknown_role'); end if;
   if p_new_role not in ('practitioner', 'receptionist') or p_expected_current_role not in ('practitioner', 'receptionist') then
     return public.perm_fail('owner_role_fixed');
   end if;

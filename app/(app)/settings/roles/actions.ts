@@ -11,6 +11,7 @@ import {
   coreReset,
   coreSave,
 } from "@/lib/settings/roles/core";
+import { enforcementRefusal } from "@/lib/settings/roles/model";
 import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
 import { reasonAcceptable, type AccessResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
@@ -45,6 +46,24 @@ function changesShape(edits: unknown): Record<string, Record<string, string>> | 
   return out;
 }
 
+// Enforcement is a fact about app wiring and lives in the TypeScript catalog, so the core cannot refuse it. This guard runs BEFORE the
+// core on every free-form change (preview and save): a key the app does not yet enforce is not changed, and a deny_only key is not
+// widened above the studio's baseline. Reset and adopt carry no per-key input (a role, a version and a reason) and move values to the
+// studio's own basis, so there is nothing for this guard to refuse there. An owner calling the RPC directly can still store an inert
+// value; that is owner-only and grants no one anything that is read.
+async function wiringRefusal(studioId: string, changes: Record<string, Record<string, string>>): Promise<{ ok: false; error: RoleError } | null> {
+  const state = await loadStudioPolicyState(studioId);
+  if (!state.writable) return refuse({ code: "unavailable" });
+  for (const [role, keys] of Object.entries(changes)) {
+    if (!isRole(role)) continue;
+    for (const [key, scope] of Object.entries(keys)) {
+      const code = enforcementRefusal(role, state.policies[role], key, scope);
+      if (code) return refuse({ code, key, role });
+    }
+  }
+  return null;
+}
+
 const reasonText = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** The authoritative policy as get_role_permissions holds it NOW. The page reads this after a save instead of assuming its draft became the saved state. */
@@ -62,7 +81,7 @@ export async function previewRoleChangesAction(edits: unknown): Promise<PreviewR
   if (!owner) return refuse({ code: "refused" });
   const changes = changesShape(edits);
   if (!changes) return refuse({ code: "invalid_changes" });
-  return corePreviewChanges(owner.studioId, changes);
+  return (await wiringRefusal(owner.studioId, changes)) ?? corePreviewChanges(owner.studioId, changes);
 }
 
 export async function previewResetAction(role: unknown): Promise<PreviewResult> {
@@ -93,7 +112,7 @@ export async function saveRolePolicyAction(
   const text = reasonText(reason);
   // Optional here; the core requires it when the save widens sensitive access. Placeholder-only text is never entered.
   if (!reasonAcceptable("save", false, text)) return refuse({ code: "reason_invalid" });
-  return coreSave(owner.studioId, expectedVersion, changes, text.trim(), sensitiveConfirmed === true);
+  return (await wiringRefusal(owner.studioId, changes)) ?? coreSave(owner.studioId, expectedVersion, changes, text.trim(), sensitiveConfirmed === true);
 }
 
 /** Reset one role to the studio's own basis. Separate from Save; it has its own preview. */

@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import {
   getClientsForStudio,
@@ -503,6 +504,14 @@ async function ProceduresPrint({
     filter.to,
     timezone,
   );
+  // Roles R4: the procedure log is built from treatment sessions. Without clin.view_records the print says so instead of printing an empty log.
+  if (!(await requirePermission(await createClient(), studioId, "clin.view_records")).allowed) {
+    return (
+      <p role="status" data-testid="procedure-records-not-available">
+        Procedure records are not available to your role.
+      </p>
+    );
+  }
   const records = await getClientProcedureRecords(studioId, {
     clientId: filter.clientId,
     fromUtc,

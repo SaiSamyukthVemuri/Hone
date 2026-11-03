@@ -41,6 +41,27 @@ describe("without clin.view_records the aggregate readers read nothing and retur
     expect(r.items).toEqual([]);
     expect(fromSpy).not.toHaveBeenCalled();
   });
+  it("RO-1: the two panel sources say notAvailable, so the panel can refuse the all-clear", async () => {
+    const { getClientsNeedingAttention } = await import("@/lib/dashboard/clients-needing-attention");
+    const { getMissingRecordsAssistant } = await import("@/lib/dashboard/missing-records-assistant");
+    expect((await getClientsNeedingAttention("studio")).notAvailable).toBe(true);
+    expect((await getMissingRecordsAssistant("studio", NOW)).notAvailable).toBe(true);
+    expect(fromSpy).not.toHaveBeenCalled();
+  });
+  it("V1: last visit is unknown (ok:false), not 'no visit', and reads nothing", async () => {
+    const { readLastVisits } = await import("@/lib/clients/last-visit");
+    const fake = { from: (...a: unknown[]) => { fromSpy(...a); throw new Error("read"); } };
+    expect(await readLastVisits(fake as never, "studio", ["c1"], NOW)).toEqual({ ok: false });
+    expect(fromSpy).not.toHaveBeenCalled();
+  });
+  it("V1: the record-keeping readers of sessions and blocks read nothing", async () => {
+    const rk = await import("@/lib/record-keeping/queries");
+    expect(await rk.getClientProcedureRecords("studio")).toEqual([]);
+    expect(await rk.getLatestProbeLotByProbeKey("studio")).toEqual({});
+    expect(await rk.getProbeLotSuggestions("studio")).toEqual({ byKey: {}, byLabel: {} });
+    expect(await rk.getLotTraceability("studio", "LOT123")).toMatchObject({ sterileItems: [], usages: [] });
+    expect(fromSpy).not.toHaveBeenCalled();
+  });
   it("procedure action metrics", async () => {
     const { getProcedureActionMetrics } = await import("@/lib/dashboard/practice-metrics");
     await getProcedureActionMetrics("studio");
@@ -84,6 +105,21 @@ describe("the readers that stay in the page are gated at their call sites", () =
   it("the client list shows last visit as unknown without the key", () => {
     const s = read("app/(app)/clients/page.tsx");
     expect(s).toMatch(/archived \|\| !canViewRecords/);
+  });
+  it("Codex: the Consultation tab needs clin.view_records and the Overview's intake answers need clin.view_intake", () => {
+    const s = read("app/(app)/clients/[id]/page.tsx");
+    expect(s).toMatch(/needsConsultationNotes = activeTab === "treatment" && canViewRecords/);
+    expect(s).toMatch(/canViewIntakePromise\.then\(\(ok\) => \(ok \? getLatestSubmittedOrReviewedIntakeForClient/);
+    expect(s).toContain('"clin.view_intake"');
+    expect(read("app/(app)/clients/[id]/intake/assist/page.tsx")).toContain('"clin.view_intake"');
+    expect(read("app/(app)/calendar/[id]/page.tsx")).toContain('"clin.view_intake"');
+  });
+  it("the procedure-record print says it is not available instead of printing an empty log", () => {
+    const s = read("app/(app)/records/print/page.tsx");
+    const gate = s.indexOf('"clin.view_records"');
+    expect(gate).toBeGreaterThan(-1);
+    expect(s.indexOf("Procedure records are not available to your role.")).toBeGreaterThan(gate);
+    expect(gate).toBeLessThan(s.indexOf("await getClientProcedureRecords("));
   });
   it("the dashboard's charted-visit lookup needs the key", () => {
     const s = read("app/(app)/dashboard/page.tsx");

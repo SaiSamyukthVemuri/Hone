@@ -1,3 +1,5 @@
+import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
 import { PendingLink } from "@/components/pending-link";
@@ -282,11 +284,19 @@ export default async function RecordKeepingPage({
       case "incidents":
         return ExposureIncidentsSection({ studioId: studio.id, isOwner });
       case "procedures":
-        return ClientProcedureRecordsSection({
-          studioId: studio.id,
-          timezone: studio.timezone,
-          filter: procedureFilter,
-        });
+        // Roles R4: the procedure log is built from treatment sessions. Without clin.view_records it is said to be unavailable, never shown empty.
+        return (async () =>
+          (await requirePermission(await createClient(), studio.id, "clin.view_records")).allowed ? (
+            await ClientProcedureRecordsSection({
+              studioId: studio.id,
+              timezone: studio.timezone,
+              filter: procedureFilter,
+            })
+          ) : (
+            <p role="status" data-testid="procedure-records-not-available" className="text-sm text-neutral-500">
+              Procedure records are not available to your role.
+            </p>
+          ))();
     }
   });
 

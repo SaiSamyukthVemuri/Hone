@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CATALOG } from "@/lib/permissions/catalog";
 import {
   isRowError,
   reasonAcceptable,
@@ -22,6 +23,16 @@ const core = vi.hoisted(() => ({
   corePreviewAdopt: vi.fn(async () => ({ ok: false, error: { code: "nothing_changed" } })),
   coreHistory: vi.fn(async () => ({ ok: true, rows: [], next: null })),
   coreAccess: vi.fn(async () => ({ ok: false, error: { code: "not_found" } })),
+  // The studio as the core holds it: an existing-snapshot studio with nothing customised.
+  coreGetState: vi.fn(async () => ({
+    version: 3,
+    reviewed: false,
+    staffRoleChange: false,
+    policies: {
+      practitioner: { basis: "existing_snapshot", values: {}, gates: {} },
+      receptionist: { basis: "existing_snapshot", values: {}, gates: {} },
+    },
+  })),
 }));
 vi.mock("@/lib/supabase/queries", () => ({
   requirePractitionerWithStudio: vi.fn(async () => ({ practitioner: { role: owner.role }, studio: { id: "studio-1" } })),
@@ -62,6 +73,8 @@ describe("error codes", () => {
   it("has a message for every code and points a per-key code at its row", () => {
     for (const code of ROLE_ERROR_CODES) expect(roleErrorMessage({ code }).length).toBeGreaterThan(5);
     expect(isRowError({ code: "prerequisite_unmet", key: "pay.refund", role: "practitioner" })).toBe(true);
+    expect(isRowError({ code: "not_enforced", key: "appt.cancel", role: "practitioner" })).toBe(true);
+    expect(isRowError({ code: "widening_not_yet", key: "appt.move", role: "practitioner" })).toBe(true);
     expect(isRowError({ code: "stale_version", currentVersion: 4 })).toBe(false);
   });
   it("every code the migration can return is a code the page knows", () => {
@@ -88,7 +101,7 @@ describe("the actions hand the core only what the owner changed, after re-checki
     for (const f of Object.values(core)) expect(f).not.toHaveBeenCalled();
   });
   it("send the version, the changed keys, the confirmation and the trimmed reason to the core", async () => {
-    const edits = { practitioner: { "appt.move": "studio" } };
+    const edits = { practitioner: { "appt.cancel": "off" } }; // an enforced key
     expect(await actions.saveRolePolicyAction(edits, 3, true, "  needed for cover  ")).toEqual({ ok: true, newVersion: 5 });
     expect(core.coreSave).toHaveBeenCalledWith("studio-1", 3, edits, "needed for cover", true);
   });
@@ -302,5 +315,78 @@ describe("the editor", () => {
     const history = src.slice(src.indexOf("function HistoryPanel"), src.indexOf("function OwnerOnlySettingsNotes"));
     expect(history).not.toMatch(/email/i);
     expect(src).toContain("load(person.id)");
+  });
+});
+
+describe("the server-side wiring guard (OPS 3 Nov): enforcement is the catalog's, so the action refuses before the core", () => {
+  const setEnforcement = (key: string, v: string | undefined) => {
+    (CATALOG.find((d) => d.key === key) as { enforcement?: unknown }).enforcement = v;
+  };
+  const was = new Map<string, unknown>();
+  const hold = (key: string, v: string | undefined) => {
+    if (!was.has(key)) was.set(key, (CATALOG.find((d) => d.key === key) as { enforcement?: unknown }).enforcement);
+    setEnforcement(key, v);
+  };
+  afterEach(() => {
+    for (const [k, v] of was) setEnforcement(k, v as string | undefined);
+    was.clear();
+  });
+  const snapshotOf = (key: string) => (CATALOG.find((d) => d.key === key) as unknown as { existingSnapshot: { practitioner: string } }).existingSnapshot.practitioner;
+
+  it("refuses to change a not_yet or observe key, with the row's key and role, and never calls the core", async () => {
+    for (const mode of ["not_yet", "observe", undefined, "nonsense"]) {
+      hold("appt.cancel", mode);
+      const edits = { practitioner: { "appt.cancel": snapshotOf("appt.cancel") === "off" ? "studio" : "off" } };
+      for (const r of [await actions.saveRolePolicyAction(edits, 3, true, ""), await actions.previewRoleChangesAction(edits)]) {
+        expect(r, String(mode)).toEqual({ ok: false, error: { code: "not_enforced", key: "appt.cancel", role: "practitioner" } });
+      }
+    }
+    expect(core.coreSave).not.toHaveBeenCalled();
+    expect(core.corePreviewChanges).not.toHaveBeenCalled();
+  });
+  it("refuses to widen a deny_only key above the snapshot, and lets it be turned down", async () => {
+    hold("appt.move", "deny_only");
+    const base = snapshotOf("appt.move");
+    expect(base).toBe("own");
+    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 3, true, "")).toEqual({
+      ok: false,
+      error: { code: "widening_not_yet", key: "appt.move", role: "practitioner" },
+    });
+    expect(core.coreSave).not.toHaveBeenCalled();
+    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.move": "off" } }, 3, true, "")).ok).toBe(true);
+    expect(core.coreSave).toHaveBeenCalledTimes(1);
+  });
+  it("lets an enforced key move both ways, and treats a value already in force as no change", async () => {
+    hold("appt.move", "enforced");
+    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 3, true, "")).ok).toBe(true);
+    hold("appt.cancel", "not_yet");
+    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": snapshotOf("appt.cancel") } }, 3, true, "")).ok).toBe(true);
+  });
+  it("one refused key refuses the whole submission before the core (atomic)", async () => {
+    hold("appt.cancel", "enforced");
+    hold("appt.move", "not_yet");
+    const r = await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off", "appt.move": "off" } }, 3, true, "");
+    expect(r).toMatchObject({ ok: false, error: { code: "not_enforced" } });
+    expect(core.coreSave).not.toHaveBeenCalled();
+  });
+  it("is unavailable, not open, when the core's state cannot be read", async () => {
+    core.coreGetState.mockResolvedValueOnce(null as never);
+    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "")).toEqual({ ok: false, error: { code: "unavailable" } });
+    expect(core.coreSave).not.toHaveBeenCalled();
+  });
+  it("leaves unknown keys to the core, and a non-owner is refused before any of this", async () => {
+    await actions.saveRolePolicyAction({ practitioner: { "no.such_key": "off" } }, 3, true, "");
+    expect(core.coreSave).toHaveBeenCalledTimes(1);
+    owner.role = "practitioner";
+    core.coreGetState.mockClear();
+    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "")).toEqual({ ok: false, error: { code: "refused" } });
+    expect(core.coreGetState).not.toHaveBeenCalled();
+  });
+  it("reset and adopt carry no per-key input: the core receives only a role, a version and a reason", async () => {
+    hold("appt.cancel", "not_yet");
+    await actions.resetRolePolicyAction("practitioner", 3, "back to the studio basis");
+    await actions.adoptNewDefaultsAction(3, "moving to the new defaults");
+    expect(core.coreReset).toHaveBeenCalledWith("studio-1", "practitioner", 3, "back to the studio basis");
+    expect(core.coreAdopt).toHaveBeenCalledWith("studio-1", 3, "moving to the new defaults");
   });
 });
