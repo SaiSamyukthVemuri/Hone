@@ -216,7 +216,6 @@ export async function updateClientAction(
 
   const name = nullableString(formData.get("name"));
   if (!name) return { ok: false, error: "Name is required." };
-  if (name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
 
   // HON-58: the preferred name is written ONLY when the form submitted the field, so an older form
   // (or any other caller) can never blank it. A blank submission clears it (null). Validated here to
@@ -270,6 +269,10 @@ export async function updateClientAction(
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
   if (!stored) return { ok: false, error: "Client not found." };
+  // The length rule is about a name being WRITTEN: a stored name that is already over the limit (older data) must not
+  // block an unrelated edit, so it applies only when the submitted name differs from the stored one (the same test the
+  // database trigger uses: `new.name is distinct from old.name`).
+  if (name !== stored.name && name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
   const identityChanged =
     normalizeName(name) !== normalizeName(stored.name) ||
     normalizePhoneForSms(phone) !== normalizePhoneForSms(stored.phone) ||

@@ -18,10 +18,17 @@ describe("client name length (database limit 200)", () => {
     ["public booking", "app/book/[slug]/actions.ts"],
     ["new client form", "app/(app)/clients/new/actions.ts"],
     ["calendar quick-create", "app/(app)/calendar/actions.ts"],
-    ["client profile save", "app/(app)/clients/[id]/actions.ts"],
   ])("%s refuses an over-long name before any write", (_label, file) => {
     const src = read(file);
     expect(src).toMatch(/name\.length > CLIENT_NAME_MAX\) return \{ ok: false, error: CLIENT_NAME_TOO_LONG \}/);
+  });
+
+  it("the client profile save refuses an over-long name only when the name CHANGES (a legacy over-length name does not block other edits)", () => {
+    const src = read("app/(app)/clients/[id]/actions.ts");
+    expect(src).toMatch(/name !== stored\.name && name\.length > CLIENT_NAME_MAX\) return \{ ok: false, error: CLIENT_NAME_TOO_LONG \}/);
+    // and no unconditional check remains before the stored name is read
+    const before = src.slice(src.indexOf("export async function updateClientAction"), src.indexOf("name !== stored.name"));
+    expect(before).not.toMatch(/\n\s*if \(name\.length > CLIENT_NAME_MAX\)/);
   });
 
   it("quick import turns an over-long name into a row error and never an insert", () => {

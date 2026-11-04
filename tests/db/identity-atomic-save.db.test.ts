@@ -379,6 +379,40 @@ describe("0281 part 2: M1 revisions, audit, grants", () => {
     expect(await rev(), "not even the table owner can seed a revision").toBe(1);
   });
 
+  // Codex P2 on #1358: a client whose stored name is ALREADY over 200 characters (older data) must still save other fields.
+  // The shape rule applies when the name is written or changed, never to an unrelated update.
+  it("legacy over-length name: an unrelated edit, the atomic profile save and re-sending the same name all succeed; a changed name is still checked", async () => {
+    const s = await seedClient("m1-legacy-long");
+    const LONG = "L".repeat(250);
+    // Create the legacy shape the way older data has it: the trigger is switched off for this one transaction.
+    await adminTx(async (q) => {
+      await q(`alter table public.clients disable trigger clients_identity_guard`);
+      await q(`update public.clients set name = $2 where id = $1`, [s.clientId, LONG]);
+      await q(`alter table public.clients enable trigger clients_identity_guard`);
+    });
+    expect((await row(s.clientId)).name).toBe(LONG);
+    const before = await row(s.clientId);
+    // 1) unrelated direct update as a practitioner
+    await asUser(s.userId, (q) => q(`update public.clients set phone = '555-0199' where id = $1`, [s.clientId]));
+    let r = await row(s.clientId);
+    expect([r.phone, r.name, r.name_revision]).toEqual(["555-0199", LONG, before.name_revision]);
+    // 2) the atomic profile save, patching another field only
+    const saved = await asUser(s.userId, async (q) =>
+      (await q(`select public.update_client_profile_if_unchanged($1,$2,$3::jsonb,$4::jsonb) as id`, [s.studioId, s.clientId, JSON.stringify({ pronouns: "they/them" }), JSON.stringify({ pronouns: r.pronouns })])).rows[0].id,
+    );
+    expect(saved).toBe(s.clientId);
+    // 3) re-sending the SAME over-length name is not a name change
+    await asUser(s.userId, (q) => q(`update public.clients set name = $2, email = 'legacy-long@example.test' where id = $1`, [s.clientId, LONG]));
+    r = await row(s.clientId);
+    expect([r.name, r.email, r.name_revision]).toEqual([LONG, "legacy-long@example.test", before.name_revision]);
+    expect((await adminQuery(`select count(*)::int n from public.client_identity_audit where client_id = $1`, [s.clientId])).rows[0].n, "no name change, no audit row").toBe(0);
+    // 4) CHANGING the name is still checked: another over-length name is refused, a valid one is saved and bumps the revision once
+    await expect(asUser(s.userId, (q) => q(`update public.clients set name = $2 where id = $1`, [s.clientId, "M".repeat(251)]))).rejects.toMatchObject({ code: "23514" });
+    await asUser(s.userId, (q) => q(`update public.clients set name = 'Short Synthetic' where id = $1`, [s.clientId]));
+    r = await row(s.clientId);
+    expect([r.name, r.name_revision]).toEqual(["Short Synthetic", before.name_revision + 1]);
+  });
+
   it("AT5: a write with no signed-in practitioner (service role) still audits, with changed_by null", async () => {
     const s = await seedClient("m1-svc");
     const out = await asRole("service_role", async (q) => {
