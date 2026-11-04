@@ -1,16 +1,21 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
-import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { claimsFromAccessToken } from "@/lib/auth/email-proof";
+import { sessionMailboxProof } from "@/lib/auth/session-email-proof";
+import { changeEmailKeepingCompletion, stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // S-2b end to end on a REAL stack, through BOTH gates (Insurance Z-1/G-3, A-1, A-2):
 //   * getUser() (GET /auth/v1/user, what supabase-js getUser calls) carries email_change_sent_at and the email identity's
 //     updated_at once a real change has set them;
 //   * the magic-link attacker's OLD session is refused by the app rule (mailboxProofMethod) AND by 0291 over PostgREST, and a fresh
 //     victim sign-in is accepted by both;
-//   * A-2: how often a fresh sign-in made immediately after a change is refused by the whole-second comparison.
+//   * A-2: a fresh sign-in made immediately after a change (no delay) is accepted by both gates, all 20 times.
 // Synthetic addresses on a reserved test domain; local stack only.
 const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const evidence: Record<string, unknown> = {};
@@ -39,13 +44,12 @@ async function linkSession(email: string, type = "magiclink") {
   expect(l.status).toBe(200);
   return gotrue("POST", "verify", { type, token_hash: l.body.hashed_token as string }, ANON);
 }
-/** the attacker asks for the victim's address and both halves get confirmed */
+/** the attacker asks for the victim's address and both halves get confirmed by their MAILED links (Confirm ON or OFF, either double_confirm) */
 async function applyChange(accessToken: string, from: string, to: string) {
-  expect((await gotrue("PUT", "user", { email: to }, ANON, accessToken)).status).toBe(200);
-  for (const type of ["email_change_new", "email_change_current"]) {
-    const l = await gotrue("POST", "admin/generate_link", { type, email: from, new_email: to }, E2E_SERVICE_ROLE_KEY);
-    if (l.status === 200) await gotrue("POST", "verify", { type: "email_change", token_hash: l.body.hashed_token as string }, ANON);
-  }
+  const id = (await adminQuery(`select id from auth.users where lower(email) = lower($1)`, [from])).rows[0]?.id as string;
+  const done = await changeEmailKeepingCompletion(accessToken, id, from, to, { lastHalf: "new" });
+  expect(done.applied, "setup: the change applied").toBe(true);
+  return done;
 }
 const getUser = async (token: string) => (await gotrue("GET", "user", undefined, ANON, token)).body;
 async function dbGate(token: string): Promise<Json> {
@@ -53,7 +57,17 @@ async function dbGate(token: string): Promise<Json> {
   expect(r.status).toBe(200);
   return (await r.json()) as Json;
 }
-const appGate = (token: string, user: Json) => mailboxProofMethod(claimsFromAccessToken(token), user as never);
+/** The app's real reader: the pure rule, and for a changed account the 0291 RPC session_link_proof_is_current over PostgREST. */
+const appGate = async (token: string, user: Json) => {
+  const client = {
+    auth: { getUser: async () => ({ data: { user }, error: null }), getClaims: async () => ({ data: { claims: claimsFromAccessToken(token) }, error: null }) },
+    rpc: async (fn: string) => {
+      const r = await fetch(`${E2E_SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" });
+      return r.ok ? { data: await r.json(), error: null } : { data: null, error: { status: r.status } };
+    },
+  };
+  return (await sessionMailboxProof(client as never)).method;
+};
 
 // Y-4 (Insurance): the app rule reads email_change_sent_at and the email identity's updated_at from getUser(). If a Supabase CLI or
 // GoTrue bump stopped returning them, the rule would silently fail OPEN for an email-changed account. This file is under tests/db, so
@@ -69,7 +83,7 @@ describe("S-2b through both gates on a real stack", () => {
     const oldToken = old.body.access_token as string;
     const preUser = await getUser(oldToken);
     const preKeys = { email_change_sent_at: "email_change_sent_at" in preUser, identityUpdatedAt: ((preUser.identities as Json[]) ?? []).map((i) => "updated_at" in i) };
-    expect(appGate(oldToken, preUser), "control: before any change the link session is proven (absent or null = no constraint)").toBe("email_link_or_otp");
+    expect(await appGate(oldToken, preUser), "control: before any change the link session is proven (absent or null = no constraint)").toBe("email_link_or_otp");
 
     await sleep(1100);
     await applyChange(oldToken, attacker.email, victim);
@@ -95,7 +109,7 @@ describe("S-2b through both gates on a real stack", () => {
     expect(typeof emailIdentity?.updated_at, "A-1: getUser carries the email identity's updated_at after a real change").toBe("string");
 
     // Both gates, OLD session.
-    expect(appGate(oldNow, u), "app rule refuses the attacker's old session").toBeNull();
+    expect(await appGate(oldNow, u), "app rule refuses the attacker's old session").toBeNull();
     expect(await dbGate(oldNow), "0291 refuses it over PostgREST: no studio data").toEqual({ status: "proof_required" });
 
     // Both gates, a fresh victim sign-in.
@@ -103,12 +117,12 @@ describe("S-2b through both gates on a real stack", () => {
     const fresh = await linkSession(victim);
     const freshToken = fresh.body.access_token as string;
     const fu = await getUser(freshToken);
-    expect(appGate(freshToken, fu), "app rule accepts the fresh victim sign-in").toBe("email_link_or_otp");
+    expect(await appGate(freshToken, fu), "app rule accepts the fresh victim sign-in").toBe("email_link_or_otp");
     expect(await dbGate(freshToken)).toMatchObject({ status: "ok", studio_name: expect.any(String) });
     evidence.gates = { oldAmrTs: amrTs(oldNow), freshAmrTs: amrTs(freshToken), app_old: "refused", app_fresh: "accepted", db_old: "proof_required", db_fresh: "ok" };
   });
 
-  it("A-2: a fresh sign-in made IMMEDIATELY after a change is never refused by the whole-second comparison (20 samples)", async () => {
+  it("A-2: a fresh sign-in made IMMEDIATELY after a change is never refused by either gate (20 samples)", async () => {
     const N = 20;
     let refused = 0;
     let equalSecond = 0;
@@ -127,7 +141,7 @@ describe("S-2b through both gates on a real stack", () => {
         [a.id],
       )).rows[0] as { since: number };
       const user = await getUser(tok);
-      const app = appGate(tok, user);
+      const app = await appGate(tok, user);
       const db = (await dbGate(tok)).status as string;
       const ts = amrTs(tok);
       if (ts === row.since) equalSecond++;

@@ -5,11 +5,12 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { listMessageIds } from "../../e2e/helpers/mail";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { sessionMailboxProof } from "@/lib/auth/session-email-proof";
 import { changeEmailKeepingCompletion, fastVerifyLink, stackAuthConfig } from "./helpers/auth-email-change";
 
 // S-2b on a REAL GoTrue, written for the HOSTED shape (Confirm email ON) and valid for either double_confirm_changes value
 // (auth-worker, #1333 rule fix). It pins the three attack sessions the whole-second rules got wrong, and the normal sign-ins they
-// broke, through the APP rule (lib/auth/email-proof.ts). The database rule (held 0291) is #1338's and is asserted there.
+// broke, through BOTH gates on #1338: the app's reader (pure rule + the 0291 RPC for a changed account) and 0291's invitation gate.
 //   * the attacker's session created BEFORE an applied change, in the SAME whole second as the change (Codex P1 on `>=`);
 //   * the session GoTrue returns to whoever clicks the LAST confirm link (implicit flow: amr `otp`, ~10 ms after the change);
 //   * refresh of either keeps it refused.
@@ -34,8 +35,31 @@ const claimsOf = (t: string) => claimsFromAccessToken(t) as { amr?: { method: st
 const methods = (t: string) => (claimsOf(t)?.amr ?? []).map((e) => e.method);
 const amrSecond = (t: string) => Math.max(...(claimsOf(t)?.amr ?? []).map((e) => Math.floor(Number(e.timestamp) || 0)));
 const getUser = async (t: string) => (await gotrue("GET", "user", undefined, ANON, t)).body;
-/** The app rule exactly as the server applies it: verified claims + the getUser() account. */
-const appGate = async (t: string) => mailboxProofMethod(claimsFromAccessToken(t), (await getUser(t)) as never);
+/** The PURE app rule (lib/auth/email-proof.ts) alone. */
+const pureGate = async (t: string) => mailboxProofMethod(claimsFromAccessToken(t), (await getUser(t)) as never);
+/** 0291 over PostgREST with this token: my_pending_invitation answers proof_required unless session_proves_mailbox() holds. */
+const dbProven = async (t: string) => {
+  const r = await fetch(`${E2E_SUPABASE_URL}/rest/v1/rpc/my_pending_invitation`, { method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: "{}" });
+  expect(r.status, "0291 answered").toBe(200);
+  return ((await r.json()) as Json).status !== "proof_required";
+};
+/**
+ * BOTH GATES (#1338): the app's real reader (sessionMailboxProof: the pure rule, and for a changed account the RPC
+ * session_link_proof_is_current over PostgREST with this token), and 0291's invitation gate. They must agree on every case.
+ */
+const appGate = async (t: string) => {
+  const user = await getUser(t);
+  const client = {
+    auth: { getUser: async () => ({ data: { user }, error: null }), getClaims: async () => ({ data: { claims: claimsFromAccessToken(t) }, error: null }) },
+    rpc: async (fn: string) => {
+      const r = await fetch(`${E2E_SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: "{}" });
+      return r.ok ? { data: await r.json(), error: null } : { data: null, error: { status: r.status } };
+    },
+  };
+  const { method } = await sessionMailboxProof(client as never);
+  expect(await dbProven(t), `0291 agrees with the app reader (app: ${method})`).toBe(method !== null);
+  return method;
+};
 const refresh = async (rt: unknown) => {
   const r = await gotrue("POST", "token?grant_type=refresh_token", { refresh_token: rt }, ANON);
   expect(r.status, "setup: the session is still refreshable").toBe(200);
@@ -136,8 +160,8 @@ describe("ATTACK: a session created BEFORE the change, in the SAME whole second 
   }, 120_000);
 });
 
-describe("after an applied change, the APP rule alone is fail-closed for that account (the database rule, held 0291, decides)", () => {
-  it("the attacker's older session and its refresh are refused; a fresh link sign-in to the new address is ALSO refused by the app rule alone", async () => {
+describe("after an applied change the database decides: the attacker's old session is refused, a fresh sign-in to the new address is proven", () => {
+  it("the attacker's older session and its refresh are refused; a fresh PKCE link sign-in to the new address is proven by both gates", async () => {
     const attacker = await confirmedUser("fv");
     const victim = addr("fvv");
     const old = await linkSession(attacker.email);
@@ -148,7 +172,10 @@ describe("after an applied change, the APP rule alone is fail-closed for that ac
     await sleep(1100);
     const fresh = await pkceLinkSession(victim);
     expect(methods(fresh.access_token), "setup: a real PKCE magic link to the new address").toEqual(["magiclink"]);
-    expect(await appGate(fresh.access_token), "the app rule alone cannot tell this from the attacker's, so it refuses (Google still proves)").toBeNull();
+    expect(await pureGate(fresh.access_token), "the pure rule alone is fail-closed for a changed account").toBeNull();
+    expect(await appGate(fresh.access_token), "WORKS: the database proves the fresh session (credential issued between the change and it)").toBe("email_link_or_otp");
+    const t = await times(attacker.id, fresh.access_token);
+    expect(t.s_created, "measured: the fresh session postdates the change").toBeGreaterThan(t.anchor);
   }, 60_000);
 });
 

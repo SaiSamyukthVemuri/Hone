@@ -64,3 +64,20 @@ last email-change activity: `since = floor(epoch(greatest(auth.users.email_chang
 the measured matrix (machines/AUTH-S2B-columns-evidence.json): `users.updated_at` also moves on OTP requests, sign-ins and refreshes, so
 it is not used. Measured cost: only an account with email-change activity after the session began is asked to confirm again; nobody is
 locked out. DB proof (minted claims before/after the change, plus a real-GoTrue magic-link attacker) is written and runs in the next slot.
+
+## S-2b rule fix (auth-worker, 4 Nov) - supersedes the amendment above
+The whole-second `>= since` rule above is REPLACED. Measured on GoTrue v2.197.0 with Confirm email ON (hosted shape), it accepted
+two attacker sessions: one created before the change in the change's own second (Codex P1), and the session GoTrue returns to
+the LAST confirm click of a double-confirm change (implicit flow, amr `otp`, created about 6-10 ms after the change). With
+double_confirm on, that last click can be the OLD address's owner. The strict `>` alternative refused every first sign-in.
+0291 now gates link-type proof on `public.session_link_proof_is_current()`:
+- the JWT's session row exists for the caller (`auth.sessions`, by `session_id` AND `auth.uid()`);
+- AND either the address never changed (`email_change_sent_at` null and every `email` identity has `updated_at = created_at`),
+  OR a sign-in credential (`recovery_sent_at` / `confirmation_sent_at`) was issued strictly after
+  `greatest(email_change_sent_at, email identity updated_at)` and strictly before the session's `created_at`. All comparisons
+  are in microseconds.
+
+Every legitimate post-change sign-in moves `recovery_sent_at` into that window; the completion click moves none, and a credential
+issued before the change no longer redeems (`otp_expired`). The function is EXECUTE for `authenticated` only, revoked from
+public/anon/authenticated/service_role by name first. The app's reader calls it for exactly the accounts whose address changed,
+because the app cannot see `auth.sessions`. Evidence and negative controls: `auth-worker/1333-RULE-FIX-PACKAGE.md`.

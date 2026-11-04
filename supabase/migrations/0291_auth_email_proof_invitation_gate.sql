@@ -14,9 +14,20 @@
 --     `recovery` for a recovery link; password sign-in AND password sign-up produce `password`. No other method counts.
 --   * an `oauth` entry (GoTrue writes NO provider on it) counts only when the user has a Google identity whose email_verified is
 --     true and whose email equals the account email (same rule as lib/auth/email-proof.ts).
--- S-2b (Insurance Z-1/G-3): a link-type entry counts only if its amr timestamp (whole seconds) is at or after the account's last
--- email-change activity, so a proven session that predates an email change to someone else's address stops proving. Measured
--- cost: only an account with email-change activity after the session began is asked to confirm again (a fresh link; no lockout).
+-- S-2b (Insurance Z-1/G-3; auth-worker rule fix, 4 Nov): a link-type entry counts only if public.session_link_proof_is_current():
+--   * the JWT's session (auth.sessions, matched by session_id AND auth.uid()) still exists, and
+--   * the account's address NEVER changed (email_change_sent_at null and every `email` identity's updated_at = created_at), or
+--   * a sign-in credential was ISSUED to the account strictly AFTER its last email-change activity and strictly BEFORE this session
+--     was created (recovery_sent_at or confirmation_sent_at; microseconds, never whole seconds).
+--   MEASURED on GoTrue v2.197.0, Confirm email ON, double_confirm on and off (auth-worker/1333-RULE-FIX-PACKAGE.md): every
+--   legitimate post-change sign-in (mailed magic link, PKCE magic link, recovery, admin generate_link) moves recovery_sent_at into
+--   that window; the session GoTrue returns to the LAST confirm click of the change itself (amr `otp`, ~10 ms after the change,
+--   possibly the OLD address's owner) moves none, and a credential issued before the change no longer redeems. So the attacker's
+--   pre-change session (even in the change's own second) and the completion session are refused; a fresh sign-in is accepted.
+--   The earlier whole-second `>=` accepted both attacker sessions (Codex P1).
+-- session_link_proof_is_current() is also callable by `authenticated` (and nobody else): the app rule cannot see auth.sessions, so it
+-- asks the database for exactly the accounts whose address changed (lib/auth/session-email-proof.ts). It reads only the caller's
+-- own rows and returns a boolean.
 -- An unproven caller gets {"status":"proof_required"}: no studio data is returned, nothing is written. A session with no amr (an
 -- old or hand-minted token) is unproven. The two function bodies are 0141's, unchanged except for the gate that follows the
 -- authentication check; signatures, security-definer and grants are unchanged (0141 step 7 is re-stated below).
@@ -26,29 +37,62 @@
 begin;
 set local lock_timeout = '5s';
 
+create or replace function public.session_link_proof_is_current()
+returns boolean
+language sql stable security definer
+set search_path = pg_catalog, pg_temp
+as $$
+  with acct as (
+    select u.email_change_sent_at, u.recovery_sent_at, u.confirmation_sent_at
+      from auth.users u
+     where u.id = auth.uid()
+  ), ident as (
+    -- One row always (an aggregate). changed = some email identity was updated after it was created, or cannot be read.
+    select coalesce(bool_or(i.created_at is null or i.updated_at is null or i.updated_at <> i.created_at), false) as changed,
+           max(i.updated_at) as last_update
+      from auth.identities i
+     where i.user_id = auth.uid() and i.provider = 'email'
+  ), sess as (
+    -- The cast is inside the CASE: a session_id that is not a uuid never reaches ::uuid (Privacy Y1).
+    select s.created_at
+      from auth.sessions s
+     where s.user_id = auth.uid()
+       and s.id = case when (auth.jwt() ->> 'session_id') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                       then (auth.jwt() ->> 'session_id')::uuid end
+  )
+  select exists (
+    select 1
+      from acct, ident, sess
+     where (acct.email_change_sent_at is null and not ident.changed)
+        or exists (
+             select 1
+               from (values (acct.recovery_sent_at), (acct.confirmation_sent_at)) as credential(issued_at)
+              where credential.issued_at > greatest(acct.email_change_sent_at, ident.last_update)
+                and credential.issued_at < sess.created_at)
+  );
+$$;
+
+comment on function public.session_link_proof_is_current() is
+  '0291 S-2b: true when the caller''s JWT session still exists and either the account address never changed or a sign-in credential (recovery_sent_at, confirmation_sent_at) was issued strictly after the last email-change activity and strictly before the session was created (microseconds). Callable by authenticated only; reads only the caller''s own rows.';
+
+revoke execute on function public.session_link_proof_is_current() from public;
+revoke execute on function public.session_link_proof_is_current() from anon;
+revoke execute on function public.session_link_proof_is_current() from authenticated;
+revoke execute on function public.session_link_proof_is_current() from service_role;
+grant execute on function public.session_link_proof_is_current() to authenticated;
+
 create or replace function public.session_proves_mailbox()
 returns boolean
 language sql stable security definer
 set search_path = pg_catalog, pg_temp
 as $$
-  with change as (
-    -- S-2b: the account's last email-change activity. email_change_sent_at moves on an email-change request and on each confirm
-    -- half; the `email` identity's updated_at moves when the change is applied. Neither moves on an OTP request, a sign-in or a
-    -- refresh (users.updated_at moves on all of those, so it is NOT used). NULL = the address never changed = no constraint.
-    select floor(extract(epoch from greatest(
-             (select u.email_change_sent_at from auth.users u where u.id = auth.uid()),
-             (select max(i.updated_at) from auth.identities i where i.user_id = auth.uid() and i.provider = 'email')
-           ))) as since
-  )
   select exists (
     select 1
       from jsonb_array_elements(
              case when jsonb_typeof(auth.jwt() -> 'amr') = 'array' then auth.jwt() -> 'amr' else '[]'::jsonb end
-           ) as a,
-           change
+           ) as a
      where (a ->> 'method' in ('otp', 'magiclink', 'recovery')
-            and (change.since is null
-                 or floor(case when jsonb_typeof(a -> 'timestamp') = 'number' then (a ->> 'timestamp')::numeric end) >= change.since))
+            and public.session_link_proof_is_current())
         or (a ->> 'method' = 'oauth'
             and exists (
               select 1
@@ -62,7 +106,7 @@ as $$
 $$;
 
 comment on function public.session_proves_mailbox() is
-  '0291: true when the verified JWT amr shows a one-time mailbox credential (otp, magiclink or recovery amr) made at or after the last email change of the account, or a verified-Google oauth session. Internal helper; no role may call it directly.';
+  '0291: true when the verified JWT amr shows a one-time mailbox credential (otp, magiclink or recovery amr) whose session public.session_link_proof_is_current() accepts, or a verified-Google oauth session. Internal helper; no role may call it directly.';
 
 revoke execute on function public.session_proves_mailbox() from public;
 revoke execute on function public.session_proves_mailbox() from anon;

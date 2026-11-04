@@ -123,6 +123,29 @@ export function mailboxProofMethod(claims: ProofClaims, user: ProofUser): ProofM
   return null;
 }
 
+/**
+ * True when this pure rule refused a session ONLY because the account's address changed: a link-type (`otp`/`magiclink`/`recovery`)
+ * entry on a changed account. Only the database can decide those (held 0291, public.session_link_proof_is_current(): the session and
+ * credential times at microsecond precision), so the async readers ask it for exactly these sessions and fail closed otherwise.
+ */
+export function linkProofNeedsDatabase(claims: ProofClaims, user: ProofUser): boolean {
+  if (!norm(user?.email)) return false;
+  if (emailChangeState(user) !== "changed") return false;
+  return entries(claims).some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method));
+}
+
+/** The database half of S-2b (0291). Any error, a missing function or a non-true answer is "not proven". */
+export type LinkProofRpc = (fn: "session_link_proof_is_current") => PromiseLike<{ data: unknown; error: unknown }>;
+export async function databaseLinkProof(rpc: LinkProofRpc | undefined): Promise<boolean> {
+  if (!rpc) return false;
+  try {
+    const { data, error } = await rpc("session_link_proof_is_current");
+    return !error && data === true;
+  } catch {
+    return false;
+  }
+}
+
 export function sessionProvesMailbox(claims: ProofClaims, user: ProofUser): boolean {
   return mailboxProofMethod(claims, user) !== null;
 }

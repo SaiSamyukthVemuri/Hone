@@ -35,23 +35,41 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
     for (const method of tsSet("MAILBOX_METHODS")) expect((comment as RegExpMatchArray)[1]).toContain(method);
   });
 
-  it("S-2b: both sides bind link proof to the same two columns, the same floor and the same >= comparison", () => {
-    // TS
-    expect(ts).toContain("user?.email_change_sent_at");
-    expect(ts).toContain('norm(identity.provider) === "email"');
-    expect(ts).toContain("stamps.push(identity.updated_at)");
-    expect(ts).toContain("Math.floor(ms / 1000)");
-    expect(ts).toContain("Math.floor(entry.timestamp) >= lastChange");
-    // SQL
-    expect(sql).toMatch(/u\.email_change_sent_at from auth\.users u/);
-    expect(sql).toMatch(/max\(i\.updated_at\) from auth\.identities i where i\.user_id = auth\.uid\(\) and i\.provider = 'email'/);
-    expect(sql).toContain("floor(extract(epoch from greatest(");
-    // Y1 (Privacy): the numeric cast is inside a CASE, so it can never run on a non-number whatever the planner's AND order.
-    expect(sql).toContain("floor(case when jsonb_typeof(a -> 'timestamp') = 'number' then (a ->> 'timestamp')::numeric end) >= change.since");
-    expect(sql).toContain("change.since is null");
-    // the unusable column stays unused on both sides
+  it("S-2b: both sides define a NEVER-CHANGED account the same way, and neither compares whole-second amr timestamps", () => {
+    // TS: email_change_sent_at present, or an email identity whose updated_at differs from (or lacks) created_at = changed.
+    expect(ts).toContain("const sent = user?.email_change_sent_at;");
+    expect(ts).toContain('if (norm(identity.provider) !== "email") continue;');
+    expect(ts).toContain("if (created === null || updated === null || created !== updated) return \"changed\";");
+    expect(ts).toContain('if (emailChangeState(user) === "never_changed" && amr.some(');
+    // SQL: the same definition.
+    expect(sql).toContain("(acct.email_change_sent_at is null and not ident.changed)");
+    expect(sql).toContain("bool_or(i.created_at is null or i.updated_at is null or i.updated_at <> i.created_at)");
+    expect(sql).toMatch(/where i\.user_id = auth\.uid\(\) and i\.provider = 'email'/);
+    // Neither side compares the JWT's whole-second amr timestamp any more (Codex P1): the SQL compares microsecond timestamps
+    // (credential issue time between the last change and the session's creation); the TS defers a changed account to it.
     const code = (src: string) => src.split("\n").filter((l) => !/^\s*(--|\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(code(sql)).not.toMatch(/floor\(|'timestamp'/);
+    expect(code(ts)).not.toMatch(/entry\.timestamp|Math\.floor/);
+    expect(sql).toContain("credential.issued_at > greatest(acct.email_change_sent_at, ident.last_update)");
+    expect(sql).toContain("credential.issued_at < sess.created_at");
+    expect(sql).toContain("(values (acct.recovery_sent_at), (acct.confirmation_sent_at))");
+    // the session is the caller's own: matched by id AND user, the uuid cast guarded inside a CASE (Privacy Y1)
+    expect(sql).toContain("where s.user_id = auth.uid()");
+    expect(sql).toMatch(/s\.id = case when \(auth\.jwt\(\) ->> 'session_id'\) ~ '[^']+'\s+then \(auth\.jwt\(\) ->> 'session_id'\)::uuid end/);
+    // link-type proof in SQL goes through the one function the app also calls
+    expect(sql).toContain("and public.session_link_proof_is_current())");
+    expect(ts).toContain('rpc("session_link_proof_is_current")');
+    // the unusable column stays unused on both sides
     expect(code(sql)).not.toMatch(/u\.updated_at|users\.updated_at/);
     expect(code(ts)).not.toMatch(/user\??\.updated_at/);
+  });
+
+  it("grants: session_link_proof_is_current is revoked from all four roles by name and granted to authenticated only; session_proves_mailbox stays internal", () => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(sql).toContain(`revoke execute on function public.session_link_proof_is_current() from ${role};`);
+      expect(sql).toContain(`revoke execute on function public.session_proves_mailbox() from ${role};`);
+    }
+    expect([...sql.matchAll(/grant execute on function public\.session_link_proof_is_current\(\) to (\w+);/g)].map((m) => m[1])).toEqual(["authenticated"]);
+    expect(sql).not.toMatch(/grant execute on function public\.session_proves_mailbox\(\)/);
   });
 });

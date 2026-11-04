@@ -1,9 +1,13 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { closePool } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { claimsFromAccessToken } from "@/lib/auth/email-proof";
+import { stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // Privacy P1 / G3 (and Insurance G-2): can GoTrue ever put a password entry and a mailbox entry in ONE session's amr, in the
 // flows Hone uses? MEASUREMENT: each probe records the amr of every session it touches; the evidence states `mixedObserved`.

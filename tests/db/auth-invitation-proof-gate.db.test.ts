@@ -1,6 +1,10 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, closePool, seedStudio, userQueryWithClaims } from "./helpers/harness";
+import { stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // 0291 (HELD): the invitation functions refuse a session that has not proven control of its mailbox, in the DATABASE
 // (Insurance S-3, #1333). Every negative states the secure outcome: proof_required, no studio data in the answer, the
@@ -14,11 +18,23 @@ afterAll(async () => {
 
 const OTP = [{ method: "otp", timestamp: 1 }];
 
+// S-2b (auth-worker): a link-type proof needs the JWT's session to exist in auth.sessions for this user, so every synthetic caller
+// gets a real session row and presents its id as session_id, the way GoTrue's JWT does.
+const sessions = new Map<string, string>();
+async function newSession(userId: string, createdAt?: string): Promise<string> {
+  const sid = randomUUID();
+  await adminQuery(`insert into auth.sessions (id, user_id, created_at, updated_at, aal) values ($1, $2, coalesce($3::timestamptz, now()), now(), 'aal1')`, [sid, userId, createdAt ?? null]);
+  sessions.set(userId, sid);
+  return sid;
+}
+const claimsFor = (userId: string, amr: unknown) => ({ ...(amr === undefined ? {} : { amr }), ...(sessions.has(userId) ? { session_id: sessions.get(userId) } : {}) });
+
 async function invitedUser(): Promise<{ id: string; email: string; studioId: string; studioName: string }> {
   const studio = await seedStudio("gate");
   const id = randomUUID();
   const email = `gate-${randomUUID().slice(0, 8)}@harness.local`;
   await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [id, email]);
+  await newSession(id);
   await adminQuery(
     `insert into public.pending_invitations (studio_id, email, role, display_name) values ($1, $2, 'practitioner', 'Invited User')`,
     [studio.studioId, email],
@@ -41,11 +57,11 @@ async function googleIdentity(userId: string, email: string, opts: { verified?: 
 }
 
 const reconcile = (userId: string, amr: unknown) =>
-  userQueryWithClaims(userId, amr === undefined ? {} : { amr }, `select public.reconcile_my_pending_invitation() as r`).then(
+  userQueryWithClaims(userId, claimsFor(userId, amr), `select public.reconcile_my_pending_invitation() as r`).then(
     (r) => r.rows[0].r as Record<string, unknown>,
   );
 const pending = (userId: string, amr: unknown) =>
-  userQueryWithClaims(userId, amr === undefined ? {} : { amr }, `select public.my_pending_invitation() as r`).then(
+  userQueryWithClaims(userId, claimsFor(userId, amr), `select public.my_pending_invitation() as r`).then(
     (r) => r.rows[0].r as Record<string, unknown>,
   );
 
@@ -146,80 +162,128 @@ describe("0291 session_proves_mailbox: oauth counts only with a verified Google 
   });
 });
 
-describe("0291 S-2b: link proof counts only if made at or after the account's last email change (WRITTEN, NOT YET RUN)", () => {
-  const T = 1_793_674_853; // whole epoch seconds of the change
-  const at = (sec: number, ms = 0) => new Date(sec * 1000 + ms).toISOString();
-  const amrAt = (sec: number, method = "magiclink") => [{ method, timestamp: sec }];
-  const setChange = (id: string, o: { sent?: string | null; identity?: string | null }) =>
-    adminQuery(`update auth.users set email_change_sent_at = $2 where id = $1`, [id, o.sent ?? null]).then(() =>
-      o.identity === undefined
-        ? undefined
-        : adminQuery(`update auth.identities set updated_at = $2 where user_id = $1 and provider = 'email'`, [id, o.identity]),
-    );
-  async function withEmailIdentity(u: { id: string; email: string }) {
+describe("0291 S-2b: the JWT's session must exist, and on a changed account a credential must be issued between the change and the session", () => {
+  const T = Date.parse("2026-11-04T01:00:00Z");
+  const at = (ms: number) => new Date(T + ms).toISOString(); // millisecond offsets from T; Postgres keeps microseconds
+  const set = (id: string, cols: Record<string, string | null>) =>
+    adminQuery(`update auth.users set ${Object.keys(cols).map((k, i) => `${k} = $${i + 2}::timestamptz`).join(", ")} where id = $1`, [id, ...Object.values(cols)]);
+  async function emailIdentity(u: { id: string; email: string }, created: string, updated = created) {
     await adminQuery(
       `insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
-       values ($1, $2, $3::jsonb, 'email', now(), now(), now())`,
-      [u.id, u.id, JSON.stringify({ sub: u.id, email: u.email })],
+       values ($1, $2, $3::jsonb, 'email', now(), $4::timestamptz, $5::timestamptz)`,
+      [u.id, u.id, JSON.stringify({ sub: u.id, email: u.email }), created, updated],
     );
   }
+  const OK = async (u: { id: string }, method = "magiclink") => (await pending(u.id, [{ method, timestamp: 1 }])).status;
 
-  it.each(["otp", "magiclink", "recovery"])("%s: the earlier session is proof_required, a fresh one on the SAME account is ok", async (method) => {
+  it("session binding: no session_id, a malformed one, another user's session, or a deleted session is proof_required", async () => {
     const u = await invitedUser();
-    await withEmailIdentity(u);
-    await setChange(u.id, { sent: at(T), identity: at(T) });
-    expect(await pending(u.id, amrAt(T - 3, method))).toEqual({ status: "proof_required" });
-    expect(await reconcile(u.id, amrAt(T - 3, method))).toEqual({ status: "proof_required", choose_studio: false });
+    const other = await invitedUser();
+    const mine = sessions.get(u.id) as string;
+    const q = (sid: unknown) => userQueryWithClaims(u.id, { amr: [{ method: "otp", timestamp: 1 }], ...(sid === undefined ? {} : { session_id: sid }) }, `select public.my_pending_invitation() as r`).then((r) => r.rows[0].r as Record<string, unknown>);
+    expect((await q(mine)).status, "control: its own live session").toBe("ok");
+    for (const sid of [undefined, "not-a-uuid", "'; select 1 --", 42, sessions.get(other.id)]) expect(await q(sid), JSON.stringify(sid)).toEqual({ status: "proof_required" });
+    await adminQuery(`delete from auth.sessions where id = $1`, [mine]);
+    expect(await q(mine), "a signed-out (deleted) session").toEqual({ status: "proof_required" });
     await assertNothingChanged(u);
-    expect((await pending(u.id, amrAt(T + 2, method))).status).toBe("ok");
   });
 
-  it("an account whose address never changed (both columns null) is proven whatever the timestamp", async () => {
+  it("a never-changed account (no email_change_sent_at; email identity updated_at = created_at) is proven by any link method", async () => {
     const u = await invitedUser();
-    expect((await pending(u.id, amrAt(1))).status).toBe("ok");
-    expect((await pending(u.id, [{ method: "otp" }])).status).toBe("ok");
+    await emailIdentity(u, at(0));
+    for (const m of ["otp", "magiclink", "recovery"]) expect(await OK(u, m), m).toBe("ok");
   });
 
-  it("an equal second counts (>=)", async () => {
+  it.each(["otp", "magiclink", "recovery"])("%s: a session created BEFORE the change is refused even 100 microseconds before; one made from a credential issued after it is ok", async (method) => {
     const u = await invitedUser();
-    await setChange(u.id, { sent: at(T, 900) });
-    expect((await pending(u.id, amrAt(T))).status).toBe("ok");
-    expect(await pending(u.id, amrAt(T - 1))).toEqual({ status: "proof_required" });
+    await emailIdentity(u, at(-60_000), at(500)); // the change applied at T + 0.500
+    await set(u.id, { email_change_sent_at: at(100), recovery_sent_at: at(-30_000) });
+    await adminQuery(`update auth.sessions set created_at = $2::timestamptz - interval '100 microseconds' where id = $1`, [sessions.get(u.id), at(500)]);
+    expect(await pending(u.id, [{ method, timestamp: Math.floor(T / 1000) }]), "same whole second, 100 us before").toEqual({ status: "proof_required" });
+    expect(await reconcile(u.id, [{ method, timestamp: Math.floor(T / 1000) }])).toEqual({ status: "proof_required", choose_studio: false });
+    await assertNothingChanged(u);
+    await set(u.id, { recovery_sent_at: at(600) });
+    await newSession(u.id, at(700));
+    expect(await OK(u, method), "a link issued at +0.600 redeemed at +0.700").toBe("ok");
+  });
+
+  it("the completion shape: a session created AFTER the change with no credential issued in between is refused", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    await set(u.id, { email_change_sent_at: at(-1_000), recovery_sent_at: at(-30_000) });
+    await newSession(u.id, at(10)); // GoTrue's completion session, ~10 ms after the identity update
+    expect(await pending(u.id, [{ method: "otp", timestamp: 1 }])).toEqual({ status: "proof_required" });
+  });
+
+  it("the credential must fall strictly inside (change, session): before the change, after the session, or exactly on either edge is refused", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    await newSession(u.id, at(1_000));
+    for (const rec of [at(-1), at(0), at(1_000), at(1_001)]) {
+      await set(u.id, { recovery_sent_at: rec });
+      expect(await pending(u.id, [{ method: "otp", timestamp: 1 }]), rec).toEqual({ status: "proof_required" });
+    }
+    await set(u.id, { recovery_sent_at: at(1) });
+    expect(await OK(u)).toBe("ok");
+  });
+
+  it("confirmation_sent_at counts as a credential; email_change_sent_at and reauthentication_sent_at do not", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    await newSession(u.id, at(1_000));
+    await set(u.id, { reauthentication_sent_at: at(500) });
+    expect(await pending(u.id, [{ method: "otp", timestamp: 1 }]), "a reauthentication nonce is not a sign-in credential").toEqual({ status: "proof_required" });
+    await set(u.id, { confirmation_sent_at: at(500) });
+    expect(await OK(u)).toBe("ok");
   });
 
   it("uses the LATER of email_change_sent_at and the email identity's updated_at", async () => {
     const u = await invitedUser();
-    await withEmailIdentity(u);
-    await setChange(u.id, { sent: at(T), identity: at(T + 5) });
-    expect(await pending(u.id, amrAt(T + 1))).toEqual({ status: "proof_required" });
-    await setChange(u.id, { sent: at(T + 5), identity: at(T) });
-    expect(await pending(u.id, amrAt(T + 1))).toEqual({ status: "proof_required" });
-    expect((await pending(u.id, amrAt(T + 6))).status).toBe("ok");
+    await emailIdentity(u, at(-60_000), at(0));
+    await newSession(u.id, at(2_000));
+    await set(u.id, { email_change_sent_at: at(1_500), recovery_sent_at: at(1_000) }); // a newer change REQUEST after the credential
+    expect(await pending(u.id, [{ method: "otp", timestamp: 1 }])).toEqual({ status: "proof_required" });
+    await set(u.id, { email_change_sent_at: at(-5_000) });
+    expect(await OK(u)).toBe("ok");
   });
 
-  it("with a change time, an entry with no timestamp or a string timestamp is proof_required", async () => {
+  it("a pending change alone (email_change_sent_at, identity untouched) already counts as change activity", async () => {
     const u = await invitedUser();
-    await setChange(u.id, { sent: at(T) });
-    expect(await pending(u.id, [{ method: "otp" }])).toEqual({ status: "proof_required" });
-    expect(await pending(u.id, [{ method: "otp", timestamp: String(T + 100) }])).toEqual({ status: "proof_required" });
+    await emailIdentity(u, at(-60_000));
+    await newSession(u.id, at(1_000));
+    await set(u.id, { email_change_sent_at: at(0) });
+    expect(await pending(u.id, [{ method: "otp", timestamp: 1 }])).toEqual({ status: "proof_required" });
   });
 
-  it("a Google identity's updated_at never moves the floor", async () => {
+  it("a Google identity's updated_at never makes the account 'changed'", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(0));
+    await googleIdentity(u.id, u.email);
+    await adminQuery(`update auth.identities set updated_at = $2::timestamptz where user_id = $1 and provider = 'google'`, [u.id, at(100_000)]);
+    expect(await OK(u)).toBe("ok");
+  });
+
+  it("oauth is unaffected by the change (bound by the verified Google identity's own address)", async () => {
     const u = await invitedUser();
     await googleIdentity(u.id, u.email);
-    await adminQuery(`update auth.identities set updated_at = $2 where user_id = $1 and provider = 'google'`, [u.id, at(T + 100)]);
-    expect((await pending(u.id, amrAt(T - 50))).status).toBe("ok");
-  });
-
-  it("oauth is unaffected by the change time (bound by the verified Google identity's own address)", async () => {
-    const u = await invitedUser();
-    await googleIdentity(u.id, u.email);
-    await setChange(u.id, { sent: at(T) });
-    expect((await pending(u.id, [{ method: "oauth", timestamp: T - 500 }])).status).toBe("ok");
+    await set(u.id, { email_change_sent_at: at(0) });
+    expect((await pending(u.id, [{ method: "oauth", timestamp: 1 }])).status).toBe("ok");
   });
 });
 
 describe("0291 privileges", () => {
+  it("session_link_proof_is_current: EXECUTE for authenticated only (anon, service_role and PUBLIC revoked by name)", async () => {
+    const g = await adminQuery(
+      `select r.rolname, has_function_privilege(r.rolname, 'public.session_link_proof_is_current()', 'execute') as ok
+         from pg_roles r where r.rolname in ('anon', 'authenticated', 'service_role') order by 1`);
+    expect(Object.fromEntries(g.rows.map((r: { rolname: string; ok: boolean }) => [r.rolname, r.ok]))).toEqual({ anon: false, authenticated: true, service_role: false });
+    const acl = await adminQuery(`select coalesce(array_to_string(proacl, ','), '') as acl from pg_proc where oid = 'public.session_link_proof_is_current()'::regprocedure`);
+    expect(acl.rows[0].acl, "no PUBLIC (=X) entry").not.toMatch(/(^|,)=X/);
+    for (const role of ["anon", "service_role"] as const) {
+      await expect(asRole(role, (q) => q(`select public.session_link_proof_is_current()`))).rejects.toThrow(/permission denied|42501/i);
+    }
+  });
+
   it("the helper is callable by no browser or service role", async () => {
     for (const role of ["anon", "authenticated", "service_role"] as const) {
       await expect(asRole(role, (q) => q(`select public.session_proves_mailbox()`))).rejects.toThrow(/permission denied|42501/i);
