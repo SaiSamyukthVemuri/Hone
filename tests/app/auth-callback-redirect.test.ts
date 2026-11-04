@@ -71,6 +71,26 @@ describe("successful auth callback redirect boundary", () => {
       expect(h.harden).not.toHaveBeenCalled();
       expect(response.headers.get("location")).toBe(`${ORIGIN}/dashboard`); // still signed in; the accept page asks for proof
     });
+    it("CODEX-P2: a CHANGED account's link session is decided by stamp_session_link_proof (which records the proof), and its answer decides", async () => {
+      const changed = { ...user, email_change_sent_at: "2026-11-04T00:28:00Z", identities: [{ provider: "email", identity_data: {}, created_at: "2026-11-04T00:00:00Z", updated_at: "2026-11-04T00:28:01Z" }] };
+      for (const [answer, proven] of [[true, true], [false, false], [null, false]] as const) {
+        vi.clearAllMocks();
+        h.harden.mockResolvedValue("skipped_off");
+        h.exchange.mockResolvedValue(sessionWith([{ method: "magiclink", timestamp: 1 }], changed));
+        h.reconcile.mockImplementation(async (fn: string) => (fn === "stamp_session_link_proof" ? { data: answer, error: null } : { data: null, error: null }));
+        await GET(request("/dashboard"));
+        expect(h.reconcile, `stamp asked (answer ${answer})`).toHaveBeenCalledWith("stamp_session_link_proof");
+        expect(h.reconcile).not.toHaveBeenCalledWith("session_link_proof_is_current");
+        if (proven) expect(h.reconcile).toHaveBeenCalledWith("reconcile_my_pending_invitation");
+        else expect(h.reconcile).not.toHaveBeenCalledWith("reconcile_my_pending_invitation");
+      }
+    });
+    it("a NEVER-CHANGED account's session never calls the stamp (no database round trip)", async () => {
+      h.exchange.mockResolvedValue(sessionWith([{ method: "otp", timestamp: 1 }]));
+      await GET(request("/dashboard"));
+      expect(h.reconcile).not.toHaveBeenCalledWith("stamp_session_link_proof");
+      expect(h.reconcile).toHaveBeenCalledWith("reconcile_my_pending_invitation");
+    });
     it("NEGATIVE: a session with no access token / no amr is treated as unproven", async () => {
       h.exchange.mockResolvedValue({ data: { user }, error: null });
       await GET(request("/dashboard"));

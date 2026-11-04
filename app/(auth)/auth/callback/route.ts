@@ -6,7 +6,7 @@ import {
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
 import type { EmailOtpType } from "@supabase/supabase-js";
-import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { claimsFromAccessToken, databaseLinkProof, linkProofNeedsDatabase, mailboxProofMethod } from "@/lib/auth/email-proof";
 import { applyProofHardening, hardeningMode } from "@/lib/auth/proof-hardening";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
@@ -55,12 +55,19 @@ export async function GET(request: Request) {
       // email" was off proves nothing, so it must not link a membership. Not proven -> no reconcile; the person lands on the
       // accept page, which asks for a link to the address first.
       const accessToken = data.session?.access_token ?? null;
+      const proofClaims = claimsFromAccessToken(accessToken);
+      const proofUser = {
+        email: data.user.email,
+        email_change_sent_at: data.user.email_change_sent_at,
+        identities: data.user.identities,
+      };
+      // S-2b: for an account whose address changed, only the database can tell a fresh session from the attacker's (0291). The
+      // request client now carries the session the exchange just issued, so the RPC is asked about exactly that session, and it
+      // STAMPS the session while its credential window holds (CODEX-P2: a later link request on another device cannot un-prove it).
       const proven =
-        mailboxProofMethod(claimsFromAccessToken(accessToken), {
-          email: data.user.email,
-          email_change_sent_at: data.user.email_change_sent_at,
-          identities: data.user.identities,
-        }) !== null;
+        mailboxProofMethod(proofClaims, proofUser) !== null ||
+        (linkProofNeedsDatabase(proofClaims, proofUser) &&
+          (await databaseLinkProof((fn) => supabase.rpc(fn), "stamp_session_link_proof")));
       if (proven) {
         // Account-wide remediation is OFF unless the HONE_PROOF_HARDENING rollout flag says otherwise (lib/auth/proof-hardening.ts).
         // It rotates a password, which GoTrue answers by revoking every session, so it re-issues one for the person who just

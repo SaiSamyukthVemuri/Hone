@@ -1,0 +1,6 @@
+{
+  "pr": 1338,
+  "runtime": false,
+  "migrations": ["supabase/migrations/0291_auth_email_proof_invitation_gate.sql"],
+  "release_receipt": "01-ops/1338-release-receipt.json"
+}

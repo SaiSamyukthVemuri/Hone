@@ -177,6 +177,32 @@ export async function asRole<T>(
   }
 }
 
+// Like userQuery, but the JWT claims also carry `extra` (for example an `amr`). The default asUser claims have NO amr, which the
+// 0291 mailbox-proof gate treats as an unproven session; a test that needs a PROVEN session passes {amr:[{method:"otp",...}]}.
+export async function userQueryWithClaims(
+  userId: string,
+  extra: Record<string, unknown>,
+  text: string,
+  params: unknown[] = [],
+): Promise<QueryResult> {
+  const client: PoolClient = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query("set local role authenticated");
+    await client.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: userId, role: "authenticated", ...extra }),
+    ]);
+    const result = await client.query(text, params);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // Convenience: run a single statement as an authenticated user.
 export async function userQuery(
   userId: string,

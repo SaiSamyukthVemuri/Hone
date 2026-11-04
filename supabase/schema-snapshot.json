@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
+    "count": 254,
+    "last": "0291_auth_email_proof_invitation_gate.sql",
+    "sha256": "5c528a29924652b15ded3b266a04a512b78cdc914e1d63798f203bad6a4556e0"
   },
   "public": {
     "tables": [
@@ -14,6 +14,7 @@
       "appointment_settlements",
       "appointments",
       "audit_logs",
+      "auth_session_link_proofs",
       "booking_tracking_consents",
       "calendar_connection_secrets",
       "calendar_connections",
@@ -474,6 +475,8 @@
       "session_actor_practitioner",
       "session_block_areas_derive_studio",
       "session_is_visible",
+      "session_link_proof_is_current",
+      "session_proves_mailbox",
       "set_appointment_capacity_enabled",
       "set_appointment_notes",
       "set_client_portrait",
@@ -516,6 +519,7 @@
       "soft_delete_session",
       "soft_delete_session_area",
       "soft_delete_session_block",
+      "stamp_session_link_proof",
       "start_session",
       "stripe_account_provisioning_payment_country",
       "studio_account_acceptable_for_jurisdiction",

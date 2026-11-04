@@ -6,6 +6,7 @@ import {
   closePool,
   seedStudio,
   userQuery,
+  userQueryWithClaims,
 } from "./helpers/harness";
 
 // Migration 0141 — existing-user invitation reconciliation, proven on the real
@@ -73,8 +74,10 @@ async function addPractitioner(
 }
 
 async function reconcile(userId: string): Promise<Record<string, unknown>> {
-  const r = await userQuery(
+  // 0291: the invitation functions refuse a session with no mailbox proof, so the caller presents an otp (magic-link) session.
+  const r = await userQueryWithClaims(
     userId,
+    { amr: [{ method: "otp", timestamp: 1 }] },
     `select public.reconcile_my_pending_invitation() as r`,
   );
   return r.rows[0].r as Record<string, unknown>;
