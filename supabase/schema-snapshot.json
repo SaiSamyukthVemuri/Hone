@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0291_auth_email_proof_invitation_gate.sql",
-    "sha256": "7135ac97d9a036523f52401e152018930d73db25283951ecc641b204c34b499b"
+    "sha256": "fe13d5a97f90e17bae54e7bf400673edc4bdbbc5830de9ea51660049060e608b"
   },
   "public": {
     "tables": [

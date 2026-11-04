@@ -44,20 +44,27 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
     expect(ts).toContain("if (created === null || updated === null || created !== updated) return \"changed\";");
     expect(ts).toContain('if (emailChangeState(user) === "never_changed" && amr.some(');
     // SQL: the same definition.
-    expect(sql).toContain("(acct.email_change_sent_at is null and not ident.changed)");
+    expect(sql).toContain("if v_sent is null and not v_changed then\n    return true;");
     expect(sql).toContain("bool_or(i.created_at is null or i.updated_at is null or i.updated_at <> i.created_at)");
-    expect(sql).toMatch(/where i\.user_id = auth\.uid\(\) and i\.provider = 'email'/);
+    expect(sql).toContain("where i.user_id = v_uid and i.provider = 'email';");
     // Neither side compares the JWT's whole-second amr timestamp any more (Codex P1): the SQL compares microsecond timestamps
     // (credential issue time between the last change and the session's creation); the TS defers a changed account to it.
     const code = (src: string) => src.split("\n").filter((l) => !/^\s*(--|\/\/|\*|\/\*)/.test(l)).join("\n");
     expect(code(sql)).not.toMatch(/floor\(|'timestamp'/);
     expect(code(ts)).not.toMatch(/entry\.timestamp|Math\.floor/);
-    expect(sql).toContain("credential.issued_at > greatest(acct.email_change_sent_at, ident.last_update)");
-    expect(sql).toContain("credential.issued_at < sess.created_at");
-    expect(sql).toContain("(values (acct.recovery_sent_at), (acct.confirmation_sent_at))");
+    expect(sql).toContain("v_anchor := greatest(v_sent, v_last_update);");
+    expect(sql).toContain("(v_recovery > v_anchor and v_recovery < v_session_created)");
+    expect(sql).toContain("or (v_confirmation > v_anchor and v_confirmation < v_session_created)");
+    // AW1(b): the never-changed return comes BEFORE the only statement that reads auth.sessions.
+    const fn = sql.slice(sql.indexOf("create or replace function public.session_link_proof_is_current()"), sql.indexOf("comment on function public.session_link_proof_is_current()"));
+    expect(fn).toContain("language plpgsql stable security definer");
+    expect(fn.indexOf("if v_sent is null and not v_changed then")).toBeGreaterThan(0);
+    expect(fn.indexOf("if v_sent is null and not v_changed then")).toBeLessThan(fn.indexOf("from auth.sessions s"));
+    const fnCode = fn.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    expect(fnCode.split("auth.sessions").length - 1, "auth.sessions is read in exactly one statement").toBe(1);
     // the session is the caller's own: matched by id AND user, the uuid cast guarded inside a CASE (Privacy Y1)
-    expect(sql).toContain("where s.user_id = auth.uid()");
-    expect(sql).toMatch(/s\.id = case when \(auth\.jwt\(\) ->> 'session_id'\) ~ '[^']+'\s+then \(auth\.jwt\(\) ->> 'session_id'\)::uuid end/);
+    expect(sql).toContain("where s.id = v_session_id::uuid and s.user_id = v_uid;");
+    expect(sql).toMatch(/or v_session_id !~ '\^\[0-9a-fA-F\]\{8\}-[^']+\$' then\s+return false;/);
     // link-type proof in SQL goes through the one function the app also calls
     expect(sql).toContain("and public.session_link_proof_is_current())");
     expect(ts).toContain('rpc("session_link_proof_is_current")');

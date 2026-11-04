@@ -15,10 +15,10 @@
 --   * an `oauth` entry (GoTrue writes NO provider on it) counts only when the user has a Google identity whose email_verified is
 --     true and whose email equals the account email (same rule as lib/auth/email-proof.ts).
 -- S-2b (Insurance Z-1/G-3; auth-worker rule fix, 4 Nov): a link-type entry counts only if public.session_link_proof_is_current():
---   * the JWT's session (auth.sessions, matched by session_id AND auth.uid()) still exists, and
---   * the account's address NEVER changed (email_change_sent_at null and every `email` identity's updated_at = created_at), or
---   * a sign-in credential was ISSUED to the account strictly AFTER its last email-change activity and strictly BEFORE this session
---     was created (recovery_sent_at or confirmation_sent_at; microseconds, never whole seconds).
+--   * the account's address NEVER changed (email_change_sent_at null and every `email` identity's updated_at = created_at),
+--     decided WITHOUT reading auth.sessions (AW1(b): a hosted privilege failure there can only refuse changed accounts), or
+--   * the JWT's session (auth.sessions, matched by session_id AND auth.uid()) still exists and a sign-in credential was ISSUED to
+--     the account strictly AFTER its last email-change activity and strictly BEFORE this session was created (recovery_sent_at or confirmation_sent_at; microseconds, never whole seconds).
 --   MEASURED on GoTrue v2.197.0, Confirm email ON, double_confirm on and off (auth-worker/1333-RULE-FIX-PACKAGE.md): every
 --   legitimate post-change sign-in (mailed magic link, PKCE magic link, recovery, admin generate_link) moves recovery_sent_at into
 --   that window; the session GoTrue returns to the LAST confirm click of the change itself (amr `otp`, ~10 ms after the change,
@@ -39,41 +39,66 @@ set local lock_timeout = '5s';
 
 create or replace function public.session_link_proof_is_current()
 returns boolean
-language sql stable security definer
+language plpgsql stable security definer
 set search_path = pg_catalog, pg_temp
 as $$
-  with acct as (
-    select u.email_change_sent_at, u.recovery_sent_at, u.confirmation_sent_at
-      from auth.users u
-     where u.id = auth.uid()
-  ), ident as (
-    -- One row always (an aggregate). changed = some email identity was updated after it was created, or cannot be read.
-    select coalesce(bool_or(i.created_at is null or i.updated_at is null or i.updated_at <> i.created_at), false) as changed,
-           max(i.updated_at) as last_update
-      from auth.identities i
-     where i.user_id = auth.uid() and i.provider = 'email'
-  ), sess as (
-    -- The cast is inside the CASE: a session_id that is not a uuid never reaches ::uuid (Privacy Y1).
-    select s.created_at
-      from auth.sessions s
-     where s.user_id = auth.uid()
-       and s.id = case when (auth.jwt() ->> 'session_id') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-                       then (auth.jwt() ->> 'session_id')::uuid end
-  )
-  select exists (
-    select 1
-      from acct, ident, sess
-     where (acct.email_change_sent_at is null and not ident.changed)
-        or exists (
-             select 1
-               from (values (acct.recovery_sent_at), (acct.confirmation_sent_at)) as credential(issued_at)
-              where credential.issued_at > greatest(acct.email_change_sent_at, ident.last_update)
-                and credential.issued_at < sess.created_at)
-  );
+declare
+  v_uid uuid := auth.uid();
+  v_sent timestamptz;
+  v_recovery timestamptz;
+  v_confirmation timestamptz;
+  v_changed boolean;
+  v_last_update timestamptz;
+  v_anchor timestamptz;
+  v_session_id text := auth.jwt() ->> 'session_id';
+  v_session_created timestamptz;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+  select u.email_change_sent_at, u.recovery_sent_at, u.confirmation_sent_at
+    into v_sent, v_recovery, v_confirmation
+    from auth.users u
+   where u.id = v_uid;
+  if not found then
+    return false;
+  end if;
+  -- changed = some email identity was updated after it was created, or cannot be read.
+  select coalesce(bool_or(i.created_at is null or i.updated_at is null or i.updated_at <> i.created_at), false),
+         max(i.updated_at)
+    into v_changed, v_last_update
+    from auth.identities i
+   where i.user_id = v_uid and i.provider = 'email';
+
+  -- AW1(b) (Privacy): a NEVER-CHANGED account is decided from auth.users and auth.identities ONLY. PL/pgSQL plans and
+  -- permission-checks each statement when it first runs, so the auth.sessions read below is never reached for these accounts:
+  -- if the owner could not read auth.sessions on hosted, only CHANGED accounts would be refused (fail closed), never everyone.
+  if v_sent is null and not v_changed then
+    return true;
+  end if;
+
+  -- CHANGED: the JWT's session must exist for the caller, and a sign-in credential must have been issued strictly after the last
+  -- change activity and strictly before that session was created (microseconds). The uuid cast runs only on a well-formed id.
+  if v_session_id is null
+     or v_session_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then
+    return false;
+  end if;
+  select s.created_at into v_session_created
+    from auth.sessions s
+   where s.id = v_session_id::uuid and s.user_id = v_uid;
+  if not found then
+    return false;
+  end if;
+  v_anchor := greatest(v_sent, v_last_update);
+  return coalesce(
+    (v_recovery > v_anchor and v_recovery < v_session_created)
+    or (v_confirmation > v_anchor and v_confirmation < v_session_created),
+    false);
+end;
 $$;
 
 comment on function public.session_link_proof_is_current() is
-  '0291 S-2b: true when the caller''s JWT session still exists and either the account address never changed or a sign-in credential (recovery_sent_at, confirmation_sent_at) was issued strictly after the last email-change activity and strictly before the session was created (microseconds). Callable by authenticated only; reads only the caller''s own rows.';
+  '0291 S-2b: true when the account address never changed (decided without reading auth.sessions), or when the caller''s JWT session still exists and a sign-in credential (recovery_sent_at, confirmation_sent_at) was issued strictly after the last email-change activity and strictly before the session was created (microseconds). Callable by authenticated only; reads only the caller''s own rows.';
 
 revoke execute on function public.session_link_proof_is_current() from public;
 revoke execute on function public.session_link_proof_is_current() from anon;

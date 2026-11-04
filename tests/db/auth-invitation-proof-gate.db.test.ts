@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asRole, closePool, seedStudio, userQueryWithClaims } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, closePool, seedStudio, userQueryWithClaims } from "./helpers/harness";
 import { stackAuthConfig } from "./helpers/auth-email-change";
 
 // The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
@@ -176,16 +176,48 @@ describe("0291 S-2b: the JWT's session must exist, and on a changed account a cr
   }
   const OK = async (u: { id: string }, method = "magiclink") => (await pending(u.id, [{ method, timestamp: 1 }])).status;
 
-  it("session binding: no session_id, a malformed one, another user's session, or a deleted session is proof_required", async () => {
+  it("session binding (CHANGED account): no session_id, a malformed one, another user's session, or a deleted session is proof_required", async () => {
     const u = await invitedUser();
     const other = await invitedUser();
-    const mine = sessions.get(u.id) as string;
+    await emailIdentity(u, at(-60_000), at(0)); // changed at T
+    const mine = await newSession(u.id, at(2_000));
+    await set(u.id, { recovery_sent_at: at(1_000) }); // a credential inside (change, session): the control passes
     const q = (sid: unknown) => userQueryWithClaims(u.id, { amr: [{ method: "otp", timestamp: 1 }], ...(sid === undefined ? {} : { session_id: sid }) }, `select public.my_pending_invitation() as r`).then((r) => r.rows[0].r as Record<string, unknown>);
     expect((await q(mine)).status, "control: its own live session").toBe("ok");
     for (const sid of [undefined, "not-a-uuid", "'; select 1 --", 42, sessions.get(other.id)]) expect(await q(sid), JSON.stringify(sid)).toEqual({ status: "proof_required" });
     await adminQuery(`delete from auth.sessions where id = $1`, [mine]);
     expect(await q(mine), "a signed-out (deleted) session").toEqual({ status: "proof_required" });
     await assertNothingChanged(u);
+  });
+
+  it("AW1(b): a NEVER-CHANGED account is decided without auth.sessions: proven with no session_id, and while auth.sessions is LOCKED", async () => {
+    const never = await invitedUser();
+    await emailIdentity(never, at(0));
+    const changed = await invitedUser();
+    await emailIdentity(changed, at(-60_000), at(0));
+    const sid = await newSession(changed.id, at(2_000));
+    await set(changed.id, { recovery_sent_at: at(1_000) });
+    // No session_id at all (the never-changed branch never looks): proven, as the app's pure rule says.
+    expect((await userQueryWithClaims(never.id, { amr: [{ method: "otp", timestamp: 1 }] }, `select public.session_link_proof_is_current() as ok`)).rows[0].ok).toBe(true);
+    // Hold an ACCESS EXCLUSIVE lock on auth.sessions in another transaction: any statement that so much as plans a read of it
+    // blocks. The never-changed caller must answer at once; the changed caller must block (its lock_timeout fires). This is
+    // the same isolation a hosted privilege failure on auth.sessions would get: only changed accounts can be affected.
+    const call = (userId: string, claims: Record<string, unknown>) =>
+      userQueryWithClaims(userId, claims, `select public.session_link_proof_is_current() as ok`);
+    await adminTx(async (q) => {
+      await q(`lock table auth.sessions in access exclusive mode`);
+      const t0 = Date.now();
+      const r = await call(never.id, { amr: [{ method: "otp", timestamp: 1 }], session_id: randomUUID() });
+      expect(r.rows[0].ok, "never-changed: proven while auth.sessions is locked").toBe(true);
+      expect(Date.now() - t0, "never-changed: answered without waiting on the lock").toBeLessThan(2_000);
+      const blocked = await Promise.race([
+        call(changed.id, { amr: [{ method: "otp", timestamp: 1 }], session_id: sid }).then(() => "answered", () => "error"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("blocked"), 1_500)),
+      ]);
+      expect(blocked, "changed: must read auth.sessions, so it waits on the lock").toBe("blocked");
+    });
+    // After the lock is released the changed caller's (queued) read completes normally.
+    expect((await call(changed.id, { amr: [{ method: "otp", timestamp: 1 }], session_id: sid })).rows[0].ok).toBe(true);
   });
 
   it("a never-changed account (no email_change_sent_at; email identity updated_at = created_at) is proven by any link method", async () => {
