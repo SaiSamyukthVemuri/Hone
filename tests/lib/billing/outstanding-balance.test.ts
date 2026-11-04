@@ -172,3 +172,18 @@ describe("outstandingForAppointment", () => {
     expect(outstandingFromLoad({ ok: true, input: base })).toMatchObject({ kind: "owed" });
   });
 });
+
+describe("quoteIsCurrentPrice (OPS ruling, #1356)", () => {
+  const base = { status: "completed", endsAt: "2026-11-01T15:00:00Z", now: "2026-11-04T12:00:00Z", studioCurrency: "cad", settlements: [] };
+  const card = { status: "succeeded", amountCents: 10000, refundStatus: null, refundAmountCents: null, providerRefundStatus: null, currency: "cad" };
+  it("a succeeded card charge short of today's price is unavailable, not a balance", () => {
+    expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [card], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "amount_unavailable" });
+  });
+  it("the same inputs with a RECORDED quote still give the remainder", () => {
+    expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [card], quoteIsCurrentPrice: false } as never)).toMatchObject({ kind: "owed", outstandingCents: 2000 });
+  });
+  it("nothing paid keeps today's quote; paid up is paid", () => {
+    expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [], quoteIsCurrentPrice: true } as never)).toMatchObject({ kind: "owed", outstandingCents: 12000 });
+    expect(outstandingForAppointment({ ...base, quoteCents: 10000, cards: [card], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "paid" });
+  });
+});

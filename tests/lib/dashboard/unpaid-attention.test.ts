@@ -68,6 +68,22 @@ describe("a settled visit keeps the price it was settled against", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 4000, currency: "cad" });
   });
+  it("card-paid in full at an old price, price raised: 'Amount unavailable', never a balance", async () => {
+    db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, currency: "cad" }];
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items).toEqual([expect.objectContaining({ balance: { kind: "unavailable" } })]);
+  });
+  it("card-paid at the same price is still simply paid; an unpaid visit keeps today's quote", async () => {
+    db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, currency: "cad" }];
+    expect(await loadUnpaidAttention(base)).toMatchObject({ ok: true, items: [] });
+    db.rows.payment_charge_attempts = [];
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 12000, currency: "cad" });
+  });
   it("a settlement with no recorded quote falls back to the current price", async () => {
     db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 10000, quoted_amount_cents: null }];
     db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
@@ -92,15 +108,17 @@ describe("the authoritative balance", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items).toEqual([expect.objectContaining({ appointmentId: "a1", clientName: "Client a1", balance: { kind: "owed", outstandingCents: 10000, currency: "cad" } })]);
   });
-  it("a partial card payment leaves the remainder; a refunded part comes back into the balance", async () => {
-    db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 6000, refund_status: null, refund_amount_cents: null, currency: "cad" }];
-    let r = await loadUnpaidAttention(base);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 4000, currency: "cad" });
-    db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 6000, refund_status: "succeeded", refund_amount_cents: 2000, currency: "cad" }];
-    r = await loadUnpaidAttention(base);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 6000, currency: "cad" });
+  it("a partial card payment with no recorded quote cannot prove the price at visit time: 'Amount unavailable', refunded or not", async () => {
+    // Ruled by OPS (#1356): the current price is not proof of the price on the day, so no remainder is claimed.
+    for (const row of [
+      { session_id: "ss1", status: "succeeded", amount_cents: 6000, refund_status: null, refund_amount_cents: null, currency: "cad" },
+      { session_id: "ss1", status: "succeeded", amount_cents: 6000, refund_status: "succeeded", refund_amount_cents: 2000, currency: "cad" },
+    ]) {
+      db.rows.payment_charge_attempts = [row];
+      const r = await loadUnpaidAttention(base);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+    }
   });
   it("fully paid by card, or by a cash settlement, or waived: the appointment disappears", async () => {
     db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, currency: "cad" }];

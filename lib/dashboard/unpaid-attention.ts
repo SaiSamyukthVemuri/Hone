@@ -203,6 +203,7 @@ export async function loadUnpaidAttention(opts: {
       endsAt: a.ends_at,
       now: nowIso,
       quoteCents,
+      quoteIsCurrentPrice: recorded === undefined,
       studioCurrency,
       cards: cardsByAppt.get(a.id) ?? [],
       settlements: settlements.get(a.id) ?? [],

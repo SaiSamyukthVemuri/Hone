@@ -25,7 +25,7 @@ async function seedStudioWithMoney() {
     [seed.studioId],
   );
 
-  const visit = async (label: string, priceCents: number, daysAgo: number, cardCents?: number) => {
+  const visit = async (label: string, priceCents: number, daysAgo: number, cardCents?: number, cashCents?: number) => {
     const { clientId, name } = await seedE2eDashboardClient(seed, { label });
     const serviceId = randomUUID();
     await sql(
@@ -56,12 +56,21 @@ async function seedStudioWithMoney() {
         [randomUUID(), seed.studioId, clientId, sessionId, prac, cardCents],
       );
     }
+    if (cashCents) {
+      // A partial payment WITH a recorded quote: the figure is provable. (A card payment with no recorded quote is "Amount unavailable"
+      // once the price may have moved, so the exact-figure proofs use a settlement.)
+      await sql(
+        `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, quoted_amount_cents, recorded_by_practitioner_id)
+         values ($1,$2,'paid_cash',$3,'cad',$4,$5)`,
+        [seed.studioId, apptId, cashCents, priceCents, prac],
+      );
+    }
     return { clientId, name, serviceId, apptId };
   };
 
   // Unpaid in full: $120.00. Partly paid: quoted $200.00, $80.00 kept by card, so $120.00 -> no, make it distinguishable: $210.00 - $65.50.
   const unpaid = await visit("Unpaid", 12000, 2);
-  const partial = await visit("Partial", 21000, 4, 6550);
+  const partial = await visit("Partial", 21000, 4, undefined, 6550);
   // A client with a plain intake review (a non-money reminder).
   const intakeClient = await seedE2eDashboardClient(seed, { label: "Intake" });
   await seedE2eIntake(seed.studioId, intakeClient.clientId, "submitted");
@@ -115,7 +124,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     const partialLine = money((await partialCard.getByTestId("attention-unpaid-amount").innerText()).trim());
     console.log(`UNPAID LINE: ${unpaidLine}\nPARTIAL LINE: ${partialLine}`);
     expect(unpaidLine).toMatch(/^Hone can see\b.*120\.00.*still owed$/);
-    expect(partialLine).toMatch(/^Hone can see\b.*144\.50.*still owed$/); // 210.00 - 65.50
+    expect(partialLine).toMatch(/^Hone can see\b.*144\.50.*still owed$/); // 210.00 - 65.50 collected in cash
     expect(unpaidLine).toMatch(/CA\$|CAD/);
     expect(partialLine).toMatch(/CA\$|CAD/);
 
@@ -275,6 +284,8 @@ test.describe("Dashboard Needs attention: dismissal", () => {
   test("a collected settlement reduces or clears the balance, and a still_owes note never creates an amount", async ({ page }) => {
     const { seed, unpaid, partial, visit, prac } = await seedStudioWithMoney();
     const noted = await visit("Noted", 30000, 6);
+    // A card payment with no recorded quote: the price at visit time cannot be proven, so no figure is claimed.
+    const cardOnly = await visit("CardOnly", 21000, 7, 6550);
     const settle = (apptId: string, method: string, cents: number, quoted: number) =>
       sql(
         `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, quoted_amount_cents, recorded_by_practitioner_id)
@@ -286,14 +297,17 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await openDashboard(page);
     await expect(unpaidAmountOf(page, partial.name)).toContainText("144.50", { timeout: T });
     await expect(unpaidAmountOf(page, noted.name)).toContainText("300.00", { timeout: T });
+    await expect(unpaidAmountOf(page, cardOnly.name)).toContainText("Amount unavailable", { timeout: T });
+    await expect(unpaidAmountOf(page, cardOnly.name)).not.toContainText(/\d\.\d\d/);
 
-    // Cash collected on the partly paid visit: 210.00 - 65.50 card - 50.00 cash = 94.50. Full cash on the unpaid visit clears it.
-    await settle(partial.apptId, "paid_cash", 5000, 21000);
+    // Cash collected on a visit with nothing else paid: 210.00 - 50.00 = 160.00. Full cash on the unpaid visit clears it.
+    const cashed = await visit("Cashed", 21000, 5);
+    await settle(cashed.apptId, "paid_cash", 5000, 21000);
     await settle(unpaid.apptId, "paid_e_transfer", 12000, 12000);
     // A still_owes note of 777.00 on the 300.00 visit: the note records a claim, it must NOT become the amount shown.
     await settle(noted.apptId, "still_owes", 77700, 30000);
     await page.reload();
-    await expect(unpaidAmountOf(page, partial.name)).toContainText("94.50", { timeout: T });
+    await expect(unpaidAmountOf(page, cashed.name)).toContainText("160.00", { timeout: T });
     await expect(unpaidAmountOf(page, unpaid.name)).toHaveCount(0);
     const notedLine = await unpaidAmountOf(page, noted.name).innerText();
     console.log(`NOTED LINE: ${notedLine}`);
