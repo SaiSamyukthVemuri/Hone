@@ -213,6 +213,11 @@ export async function runHosted(d) {
       refuse(`${existingCount} of the planned rows already exist but the token expects ${token.expected_existing_rows}: the target is not in the state Sam approved`);
     }
 
+    // EXPIRY IS RECHECKED NOW, not only at the start (Codex P2): the prompt, the fingerprint and the reads above take time, and an approval that has
+    // run out must not start a run. Refusing here leaves the token unclaimed (no intent written yet).
+    const expiresAtMs = Date.parse(token.expires_at);
+    if (d.now() >= expiresAtMs) refuse("the token expired before the first hosted write; nothing was written");
+
     // WRITE-AHEAD INTENT, claimed EXCLUSIVELY at its final name before the first write (G1): of two runs of one token, one wins; the other is refused.
     // A crash after this burns the token. The receipt stub, which is meant to be replaced, is written atomically.
     const startedAt = new Date(d.now()).toISOString();
@@ -263,6 +268,13 @@ export async function runHosted(d) {
     // A FAILED RPC IS NOT "NOT ATTEMPTED" (Codex P2): the request was sent, and a lost answer may still have committed. It is recorded as an
     // attempt with an UNCERTAIN outcome, and read back to learn what actually happened. Only the rows after it were never attempted.
     let failure = null;
+    // A SECOND recheck immediately before the first RPC: the intent claim and receipt stub sit between the check above and the first write. If the
+    // approval ran out in that gap the token is already claimed (burned), so the receipt is finalized with every row not attempted.
+    if (d.now() >= expiresAtMs) {
+      receipt.not_attempted.push(...plan.publish.map(idOf));
+      finish("expired_before_first_write_token_burned");
+      refuse("the token expired before the first hosted write; no row was attempted and the token is burned (the receipt says so)");
+    }
     for (const [i, row] of plan.publish.entries()) {
       const id = plannedSet(plan)[i];
       if (failure) { receipt.not_attempted.push(id); continue; }

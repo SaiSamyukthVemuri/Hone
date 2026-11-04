@@ -357,6 +357,39 @@ describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (
   });
 });
 
+describe("approval expiry is rechecked before the first hosted write (Codex P2)", () => {
+  const EXP = Date.parse("2026-11-10T20:00:00Z");
+  it("an approval that runs out during the prompt/reads is refused with no intent and no write", async () => {
+    const x = deps();
+    let clock = NOW;
+    x.d.now = () => clock;
+    const real = x.d.client;
+    x.d.client = (a: unknown) => { const c = real(a); return { ...c, async readContract(r: any) { clock = EXP; return c.readContract(r); } }; };
+    await refused(x.d, /expired before the first hosted write/);
+    expect(x.calls.filter((c) => c.startsWith("rpc:") || c.startsWith("ledger:"))).toEqual([]);
+  });
+  it("an approval that runs out between the intent claim and the first RPC writes nothing and finalizes a burned receipt", async () => {
+    const x = deps();
+    let clock = NOW;
+    x.d.now = () => clock;
+    const real = x.d.ledger.createExclusive;
+    x.d.ledger.createExclusive = (n: string, b: string) => { real(n, b); clock = EXP; };
+    await refused(x.d, /token is burned/);
+    expect(x.calls.filter((c) => c.startsWith("rpc:"))).toEqual([]);
+    const receipt = JSON.parse([...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1]);
+    expect(receipt.status).toBe("expired_before_first_write_token_burned");
+    expect(receipt.not_attempted).toHaveLength(3);
+    expect(receipt.published).toEqual([]);
+    // and the token stays used
+    await refused(deps({ ledger: x.d.ledger }).d, /used or started/);
+  });
+  it("control: just before expiry the run still completes", async () => {
+    const x = deps();
+    x.d.now = () => EXP - 1;
+    expect((await runHosted(x.d)).status).toBe("complete");
+  });
+});
+
 describe("receipt durability (C7)", () => {
   it("a receipt-write failure after publishing prints the body and exits non-zero", async () => {
     const x = deps();
