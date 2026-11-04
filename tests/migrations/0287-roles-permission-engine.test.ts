@@ -139,7 +139,11 @@ describe("0287 activation rule: source contract", () => {
     const denyOnly = keys.filter((k) => enforcementOf(k) === "deny_only").sort();
     // vacuous before the enforcement branch sets the field; the literal list above pins the six either way
     expect(denyOnly.filter((k) => !narrow.includes(k))).toEqual([]);
-    expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)))).toEqual([]);
+    // clin.edit_records is seeded PENDING ahead of the catalog flip (decision, OPS 4 Nov): its enforcement is the held 0289 guard plus the app gates,
+    // and the catalog keeps it not_yet until the 0289 proof and reviews. The flip commit removes this carve-out.
+    const RELEASED_AHEAD_OF_FLIP = ["clin.edit_records"];
+    expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)) && !RELEASED_AHEAD_OF_FLIP.includes(k))).toEqual([]);
+    for (const k of RELEASED_AHEAD_OF_FLIP) expect(all, `${k} is no longer seeded: remove it from RELEASED_AHEAD_OF_FLIP`).toContain(k);
   });
 
   it("activation requires an explicit non-empty key list and a preview hash; mark_permissions_released is granted to no API role (AA-1, AA-4)", () => {
