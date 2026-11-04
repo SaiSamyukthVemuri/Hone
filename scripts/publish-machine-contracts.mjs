@@ -38,7 +38,9 @@ try {
   console.log(JSON.stringify({ sha256, ...plan }, null, 2));
   if (apply) {
     if (!args.includes(`--expect-plan=${sha256}`)) throw new Error("Catalogue plan changed; review a new dry-run before applying.");
-    const holder = readFileSync(join(homedir(), "hone-handoffs/heavy-slot"), "utf8").trim();
+    // A missing slot file is "no holder", refused below with its own message, never a raw ENOENT.
+    let holder = "";
+    try { holder = readFileSync(join(homedir(), "hone-handoffs/heavy-slot"), "utf8").trim(); } catch { /* no slot file */ }
     for (const name of ["VERCEL", "VERCEL_ENV", "AWS_REGION", "AWS_EXECUTION_ENV", "KUBERNETES_SERVICE_HOST"]) {
       if (process.env[name]) throw new Error("Local publication refuses a deployed environment.");
     }
@@ -46,7 +48,11 @@ try {
     // from adjacent ports, and the API and SQL endpoints must be loopback containers of ONE Supabase project.
     let apiPort = "64821", dbPort = "64822", project = "hone-mpx-0223";
     if (owned) {
-      if (!holder || process.env.HONE_SLOT_HOLDER !== holder) throw new Error("--owned-target needs HONE_SLOT_HOLDER equal to the current heavy-slot holder.");
+      if (!holder) throw new Error("--owned-target refused: there is no heavy-slot file or it is empty, so nobody holds the heavy-test slot.");
+      // HONE_SLOT_HOLDER is an ATTESTATION that the operator is the holder, checked only against the slot file. The stack itself is
+      // checked below by READING BACK the container mapping and project label for the paired ports, which proves the endpoints are one
+      // local Supabase project and not the shared stack. NEITHER proves the stack is the holder's own; that cannot be established here.
+      if (process.env.HONE_SLOT_HOLDER !== holder) throw new Error("--owned-target refused: HONE_SLOT_HOLDER must equal the current heavy-slot holder (an attestation; this tool cannot prove whose stack it is).");
       const api = process.env.E2E_SUPABASE_URL, db = process.env.HONE_LOCAL_DB_URL;
       if (!api || !db) throw new Error("--owned-target needs BOTH E2E_SUPABASE_URL and HONE_LOCAL_DB_URL (a run-scoped pair).");
       const a = new URL(api), d = new URL(db);
@@ -57,7 +63,9 @@ try {
       const kong = names.find((n) => n.startsWith("supabase_kong_") && execFileSync("docker", ["port", n, "8000/tcp"], { encoding: "utf8" }).includes(`:${apiPort}`));
       if (!kong) throw new Error("No local Supabase API container maps the given API port; publication refused.");
       project = kong.slice("supabase_kong_".length);
-      if (project === "Hone-0162" || project === "hone-0162") throw new Error("--owned-target must not be the shared stack.");
+      if (project.toLowerCase() === "hone-0162") throw new Error("--owned-target must not be the shared stack.");
+      const label = (container) => execFileSync("docker", ["inspect", "-f", '{{index .Config.Labels "com.supabase.cli.project"}}', container], { encoding: "utf8" }).trim();
+      if (label(kong) !== project || label(`supabase_db_${project}`) !== project) throw new Error("--owned-target refused: the API and SQL containers do not carry the same Supabase project label.");
     } else if (holder !== "machines") {
       throw new Error("Machines does not hold the heavy-test slot. Ask ops01; do not change the holder yourself.");
     }
