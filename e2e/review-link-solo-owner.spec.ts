@@ -60,6 +60,11 @@ for (const vp of [{ name: "1280", width: 1280, height: 900 }, { name: "390", wid
       const { ctx, page } = await openWithOwner(browser, s.ownerEmail, vp.width, vp.height);
       try {
         await expectLinks(page, false);
+        // DQ-7: the reminder is hidden, but Settings keeps a quiet permanent entry that opens the same page.
+        await page.goto("/settings/team");
+        await expect(page.getByTestId("team-review-assignments-quiet")).toBeVisible({ timeout: 30_000 });
+        await page.getByTestId("team-review-assignments-quiet").click();
+        await expect(page.getByTestId("check-practitioner-empty")).toBeVisible({ timeout: 30_000 });
         expect((await page.goto("/calendar/check-practitioner"))?.status()).toBe(200);
         await expect(page.getByTestId("check-practitioner-empty")).toBeVisible();
       } finally {
