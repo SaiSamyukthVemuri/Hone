@@ -1,10 +1,14 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { closePool } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { listMessageIds, waitForMagicLink } from "../../e2e/helpers/mail";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // The browser's sign-in is the PKCE flow: the login form calls signInWithOtp from the SSR client, GoTrue mails a verify link,
 // the link redirects to /auth/callback?code=..., and the app calls exchangeCodeForSession. The earlier amr measurements used the
@@ -57,7 +61,16 @@ describe("real PKCE mailbox sign-ins carry mailbox proof (what /auth/callback ac
     expect(s.status).toBe(200);
     const token = s.body.access_token as string;
     evidence.newUserPkce = { amr: amrOf(token), proof: await proof(token) };
-    expect(await proof(token), "a real mailbox PKCE sign-in must be proven").not.toBeNull();
+    const methods = ((amrOf(token) as { method: string }[] | undefined) ?? []).map((e) => e.method);
+    if ((await stackAuthConfig()).mailerAutoconfirm === false) {
+      // Confirm ON (hosted): GoTrue mails a SIGNUP CONFIRMATION for the new unconfirmed user, so the PKCE amr is `email/signup`,
+      // which is NOT in the proof set (pending Insurance; auth-worker/1333-RULE-FIX-PACKAGE.md). Pinned so a change is noticed.
+      expect(methods, "Confirm ON: a new address's PKCE sign-in is email/signup").toEqual(["email/signup"]);
+      expect(await proof(token), "email/signup is not proof until Insurance widens the set (TS + 0291 together)").toBeNull();
+    } else {
+      expect(methods, "Confirm OFF: a new address's PKCE sign-in is magiclink").toEqual(["magiclink"]);
+      expect(await proof(token), "a real mailbox PKCE sign-in must be proven").not.toBeNull();
+    }
   });
 
   it("an EXISTING confirmed address asking for a magic link -> PKCE session", async () => {
@@ -95,15 +108,17 @@ describe("real PKCE mailbox sign-ins carry mailbox proof (what /auth/callback ac
     expect(await proof(token)).toBeNull();
   });
 
-  it("amr survives a PKCE session's refresh", async () => {
+  it("amr survives a PKCE session's refresh (an EXISTING address, so the case means the same under Confirm ON and OFF)", async () => {
     const email = addr("ref");
+    expect((await gotrue("POST", "admin/users", { email, email_confirm: true }, E2E_SERVICE_ROLE_KEY)).status).toBe(200);
     const { verifier, challenge } = pkce();
     const seen = await listMessageIds(email);
-    await gotrue("POST", "otp", { email, create_user: true, code_challenge: challenge, code_challenge_method: "s256" }, ANON);
+    await gotrue("POST", "otp", { email, create_user: false, code_challenge: challenge, code_challenge_method: "s256" }, ANON);
     const s = await redeemPkce(email, seen, verifier);
+    expect(await proof(s.body.access_token as string), "control: proven before the refresh").toBe("email_link_or_otp");
     const r = await gotrue("POST", "token?grant_type=refresh_token", { refresh_token: s.body.refresh_token }, ANON);
     const token = r.body.access_token as string;
     evidence.pkceRefreshed = { amr: amrOf(token), proof: await proof(token) };
-    expect(await proof(token)).not.toBeNull();
+    expect(await proof(token), "refresh keeps the proven state").toBe("email_link_or_otp");
   });
 });

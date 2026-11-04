@@ -7,7 +7,7 @@
 // production build against the drill's project, signs in as the seeded
 // synthetic practitioner and makes three reads through the real app:
 //   1. /clients lists the seeded client;
-//   2. /clients/<id>?tab=consultation renders the client's name and its
+//   2. /clients/<id>?tab=treatment renders the client's name and its
 //      restored clinical note;
 //   3. the app's signed-URL route signs one restored photo, and the bytes
 //      behind that URL hash equal to the bytes the drill uploaded.
@@ -55,6 +55,11 @@ export const SEED = {
   imageId: "d0d0d0d0-0000-4000-8000-000000000011",
   imageObject: "obj-1.bin", // its line in the drill's objects-before.sha256
 };
+
+// The profile tab that renders the seeded consultation note. `consultation` is a LEGACY alias that the
+// app redirects (307) to `treatment`, and this check does not follow redirects, so it asks for the tab
+// itself. tests/scripts/restore-drill-app-check.test.ts fails if this ever becomes a legacy alias.
+export const RECORD_TAB = "treatment";
 
 export const MISS = 1;
 export const HARNESS = 2;
@@ -339,7 +344,7 @@ async function check(phase, api, evidence) {
 
     const list = await get("/clients");
     const r1 = clientListShowsClient(list.status, await list.text(), list.headers.get("location"));
-    const record = await get(`/clients/${SEED.clientId}?tab=consultation`);
+    const record = await get(`/clients/${SEED.clientId}?tab=${RECORD_TAB}`);
     const r2 = recordRendersFields(record.status, await record.text(), record.headers.get("location"));
     const sign = await get(`/api/clients/${SEED.clientId}/images/${SEED.imageId}/signed-url?variant=original`);
     const signed = sign.headers.get("content-type")?.includes("json") ? await sign.json() : {};
