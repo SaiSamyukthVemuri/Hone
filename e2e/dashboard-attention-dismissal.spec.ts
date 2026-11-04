@@ -65,7 +65,7 @@ async function seedStudioWithMoney() {
   // A client with a plain intake review (a non-money reminder).
   const intakeClient = await seedE2eDashboardClient(seed, { label: "Intake" });
   await seedE2eIntake(seed.studioId, intakeClient.clientId, "submitted");
-  return { seed, unpaid, partial, intakeClient };
+  return { seed, unpaid, partial, intakeClient, visit, prac };
 }
 
 // "N clients, M items" -> numbers. Seeded visits also raise ordinary record/charting reminders, so counts are asserted as DELTAS.
@@ -243,4 +243,53 @@ test.describe("Dashboard Needs attention: dismissal", () => {
       await page.screenshot({ path: test.info().outputPath(`needs-attention-${width}.png`), fullPage: false });
     });
   }
+
+  test("a collected settlement reduces or clears the balance, and a still_owes note never creates an amount", async ({ page }) => {
+    const { seed, unpaid, partial, visit, prac } = await seedStudioWithMoney();
+    const noted = await visit("Noted", 30000, 6);
+    const settle = (apptId: string, method: string, cents: number, quoted: number) =>
+      sql(
+        `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, quoted_amount_cents, recorded_by_practitioner_id)
+         values ($1,$2,$3,$4,'cad',$5,$6)`,
+        [seed.studioId, apptId, method, cents, quoted, prac],
+      );
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    await expect(unpaidAmountOf(page, partial.name)).toContainText("144.50", { timeout: T });
+    await expect(unpaidAmountOf(page, noted.name)).toContainText("300.00", { timeout: T });
+
+    // Cash collected on the partly paid visit: 210.00 - 65.50 card - 50.00 cash = 94.50. Full cash on the unpaid visit clears it.
+    await settle(partial.apptId, "paid_cash", 5000, 21000);
+    await settle(unpaid.apptId, "paid_e_transfer", 12000, 12000);
+    // A still_owes note of 777.00 on the 300.00 visit: the note records a claim, it must NOT become the amount shown.
+    await settle(noted.apptId, "still_owes", 77700, 30000);
+    await page.reload();
+    await expect(unpaidAmountOf(page, partial.name)).toContainText("94.50", { timeout: T });
+    await expect(unpaidAmountOf(page, unpaid.name)).toHaveCount(0);
+    const notedLine = await unpaidAmountOf(page, noted.name).innerText();
+    console.log(`NOTED LINE: ${notedLine}`);
+    expect(notedLine).toContain("300.00");
+    expect(notedLine).not.toContain("777");
+  });
+
+  test("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {
+    const { seed, partial, visit } = await seedStudioWithMoney();
+    const older = await visit("Older", 8800, 100);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    await expect(unpaidAmountOf(page, partial.name)).toBeVisible({ timeout: T });
+    await expect(unpaidAmountOf(page, older.name)).toHaveCount(0);
+    const note = page.getByTestId("needs-attention-unpaid-window");
+    await expect(note).toContainText(/90/);
+    await page.getByTestId("needs-attention-unpaid-toggle").click();
+    await expect(page).toHaveURL(/unpaid=all/);
+    await expect(unpaidAmountOf(page, older.name)).toContainText("88.00", { timeout: T });
+    await expect(unpaidAmountOf(page, partial.name)).toContainText("144.50");
+    // And back to the default window.
+    await page.getByTestId("needs-attention-unpaid-toggle").click();
+    await expect(page).not.toHaveURL(/unpaid=all/);
+    await expect(unpaidAmountOf(page, older.name)).toHaveCount(0, { timeout: T });
+  });
 });
