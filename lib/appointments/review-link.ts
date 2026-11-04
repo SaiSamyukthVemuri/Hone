@@ -16,6 +16,8 @@ type Db = Awaited<ReturnType<typeof createClient>>;
 // at most CANDIDATE_LIMIT - 1 rows before it fails toward showing, so the filter carries at most MAX_CANDIDATE_IDS uuids (about 3.7 KB encoded,
 // against a gateway line limit of about 8 KB). A test pins the bound.
 export const CANDIDATE_LIMIT = 50;
+export const SESSION_PAGE = 100;
+export const MAX_SESSION_PAGES = 10;
 export const MAX_CANDIDATE_IDS = 2 * (CANDIDATE_LIMIT - 1);
 const SELECT_FULL = "id, starts_at, practitioner_id, created_by_practitioner_id, sessions(performed_by_practitioner_id, started_at, deleted_at)";
 
@@ -43,8 +45,49 @@ export async function shouldShowReviewLink(studioId: string, client?: Db): Promi
     .is("practitioner_id", null);
   if (none.error || (none.count ?? 0) > 0) return true;
 
-  const candidates = () =>
-    supabase
+  // A2 (charted by anyone but the sole active practitioner) is driven from the studio's sessions, not from its appointments (V-1b option B).
+  // Starting from appointments had to prove "no other performer" for every confirmed appointment (a seq scan plus one probe each), which is
+  // exactly the case that hides the link. Starting from sessions reads only sessions another performer charted: none, in the solo studio that
+  // is clean. Status, practitioner and studio are then confirmed on the hits only, so the candidate set is unchanged: confirmed appointments
+  // of this studio with a practitioner and a live session by someone else. The scan is keyset-paged on appointment_id (the order of the
+  // sessions(studio_id, appointment_id) index); a full page of confirmed hits, an error, or a scan longer than MAX_SESSION_PAGES fails toward SHOWING.
+  const ids = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; ; page++) {
+    if (page >= MAX_SESSION_PAGES) return true; // could not finish the scan: do not hide
+    let q = supabase
+      .from("sessions")
+      .select("appointment_id")
+      .eq("studio_id", studioId)
+      .is("deleted_at", null)
+      .not("performed_by_practitioner_id", "is", null)
+      .not("appointment_id", "is", null);
+    if (soleId) q = q.neq("performed_by_practitioner_id", soleId);
+    if (cursor) q = q.gt("appointment_id", cursor);
+    const sres = await q.order("appointment_id", { ascending: true }).limit(SESSION_PAGE);
+    if (sres.error) return true;
+    const hit = [...new Set(((sres.data ?? []) as unknown as { appointment_id: string }[]).map((r) => r.appointment_id))];
+    for (let i = 0; i < hit.length; i += CANDIDATE_LIMIT) {
+      const chunk = hit.slice(i, i + CANDIDATE_LIMIT);
+      const conf = await supabase
+        .from("appointments")
+        .select("id")
+        .eq("studio_id", studioId)
+        .eq("status", "confirmed")
+        .not("practitioner_id", "is", null)
+        .in("id", chunk);
+      if (conf.error) return true;
+      for (const row of (conf.data ?? []) as unknown as { id: string }[]) ids.add(row.id);
+      if (ids.size >= CANDIDATE_LIMIT) return true; // could not read every candidate: do not hide
+    }
+    if ((sres.data ?? []).length < SESSION_PAGE) break;
+    cursor = hit.length ? hit[hit.length - 1]! : cursor;
+    if (!cursor) return true;
+  }
+
+  // A3: charted by the sole practitioner on an appointment that belongs to someone else (unchanged shape).
+  if (soleId) {
+    const r = await supabase
       .from("appointments")
       .select("id, sessions!inner(performed_by_practitioner_id)")
       .eq("studio_id", studioId)
@@ -52,17 +95,12 @@ export async function shouldShowReviewLink(studioId: string, client?: Db): Promi
       .not("practitioner_id", "is", null)
       .is("sessions.deleted_at", null)
       .not("sessions.performed_by_practitioner_id", "is", null)
+      .neq("practitioner_id", soleId)
+      .eq("sessions.performed_by_practitioner_id", soleId)
       .limit(CANDIDATE_LIMIT);
-  // Charted by anyone but the sole active practitioner, or charted by them on an appointment that belongs to someone else.
-  const reads = soleId
-    ? [candidates().neq("sessions.performed_by_practitioner_id", soleId), candidates().neq("practitioner_id", soleId).eq("sessions.performed_by_practitioner_id", soleId)]
-    : [candidates()];
-  const results = await Promise.all(reads);
-  const ids = new Set<string>();
-  for (const r of results) {
     if (r.error) return true;
     const rows = (r.data ?? []) as unknown as { id: string }[];
-    if (rows.length >= CANDIDATE_LIMIT) return true; // could not read every candidate: do not hide
+    if (rows.length >= CANDIDATE_LIMIT) return true;
     for (const row of rows) ids.add(row.id);
   }
   if (ids.size === 0) return false;

@@ -41,7 +41,10 @@ describe("authorization is unchanged (a source pin)", () => {
     expect(review.indexOf("requirePractitionerWithStudio()")).toBeLessThan(review.indexOf('if (practitioner.role !== "owner") notFound();'));
   });
   it("the calendar reminder is still owner-only and still hidden when nothing needs review", () => {
-    expect(calendar).toContain('isOwner && (await shouldShowReviewLink(studio.id)) ? "/calendar/check-practitioner" : undefined');
+    // V-1b A moved the read off the critical path; who gets it and when it hides are unchanged (behaviour: review-link-off-critical-path.test.ts)
+    expect(calendar).toContain("? shouldShowReviewLink(studio.id).then(");
+    expect(calendar).toContain('(show) => (show ? "/calendar/check-practitioner" : undefined)');
+    expect(calendar).toMatch(/isOwner\s*\? shouldShowReviewLink/);
   });
   it("the Team page still hides the prominent reminder through shouldShowReviewLink", () => {
     expect(team).toContain("const showReviewLink = await shouldShowReviewLink(studio.id);");

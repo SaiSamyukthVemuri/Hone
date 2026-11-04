@@ -294,9 +294,11 @@ describe("navigation: an owner-only link, hidden for others, and independent of 
     expect(bar).toMatch(/\{reviewAssignmentsHref && \(/);
     expect(bar).toContain("Review practitioner assignments");
     const page = read("app/(app)/calendar/page.tsx");
-    // one owner-only computation, passed to all three views; a non-owner gets undefined and never runs the read
-    expect(page).toMatch(/const reviewAssignmentsHref =\s*isOwner && \(await shouldShowReviewLink\(studio\.id\)\) \? "\/calendar\/check-practitioner" : undefined/);
-    expect(page.match(/reviewAssignmentsHref=\{reviewAssignmentsHref\}/g) ?? []).toHaveLength(3);
+    // one owner-only computation, STARTED once and awaited at each of the three toolbars (V-1b A; the ordering is proved behaviourally in
+    // review-link-off-critical-path.test.ts); a non-owner never runs the read
+    expect(page).toMatch(/const reviewAssignmentsHref: Promise<string \| undefined> = isOwner\s*\? shouldShowReviewLink\(studio\.id\)\.then\(/);
+    expect(page).not.toMatch(/await shouldShowReviewLink/);
+    expect(page.match(/reviewAssignmentsHref=\{await reviewAssignmentsHref\}/g) ?? []).toHaveLength(3);
     expect(page).not.toMatch(/reviewAssignmentsHref=\{[^}]*"\/calendar\/check-practitioner"/);
   });
   it("Team settings (an owner-only page) links to it", () => {
