@@ -1065,6 +1065,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The list of decided changes that narrow what existing staff can do, with the notice text (migration 0287, ROLES R1). Hone's own reference data, identical for every studio; no studio_id and no studio content.",
   },
+  permission_key_release: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "When each permission key's enforcement became real (migration 0287, ROLES R1, activation rule). Hone's own release state, identical for every studio, written only by a migration or the operator; it carries no studio_id and no studio content.",
+  },
+  permission_key_activation: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Which released permission keys a studio's owner has explicitly activated, with who, when, the reason given and the policy version (migration 0287, ROLES R1, activation rule). Studio-owned decision history, so PENDING under TRUTH-01B; field review first because it carries the activating user's auth id and a free-text reason.",
+  },
   permission_ship_gates: {
     kind: "excluded",
     category: "platform",

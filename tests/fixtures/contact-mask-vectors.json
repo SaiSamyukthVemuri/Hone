@@ -1,0 +1,117 @@
+{
+  "_comment": "R5 contact-audit mask parity vectors. The TypeScript masks (lib/clients/contact-audit.ts) and the held SQL masks (0290 draft) must BOTH reproduce every row. Expected values are the spec, written by hand; a change to either implementation that moves a row is a change to what an audit shows and needs review. Synthetic values only.",
+  "email": [
+    {
+      "in": "jane.doe@example.com",
+      "out": "j•••@e•••.com"
+    },
+    {
+      "in": "a@b.co.uk",
+      "out": "a•••@b•••.uk"
+    },
+    {
+      "in": "  Jane@Example.COM ",
+      "out": "J•••@E•••.COM"
+    },
+    {
+      "in": "x@localhost",
+      "out": "x•••@l•••"
+    },
+    {
+      "in": "me@a.b",
+      "out": "m•••@a•••.b"
+    },
+    {
+      "in": "not-an-email",
+      "out": "n•••"
+    },
+    {
+      "in": "@nodomain.com",
+      "out": "@•••"
+    },
+    {
+      "in": "",
+      "out": "(empty)"
+    },
+    {
+      "in": "   ",
+      "out": "(empty)"
+    },
+    {
+      "in": null,
+      "out": "(empty)"
+    }
+  ],
+  "phone": [
+    {
+      "in": "604-555-0123",
+      "out": "•••• 0123"
+    },
+    {
+      "in": "+1 (604) 555 0123",
+      "out": "•••• 0123"
+    },
+    {
+      "in": "+44 20 7946 0958",
+      "out": "•••• 0958"
+    },
+    {
+      "in": "12345",
+      "out": "•••• 2345"
+    },
+    {
+      "in": "1234",
+      "out": "••••"
+    },
+    {
+      "in": "12",
+      "out": "••••"
+    },
+    {
+      "in": "ext",
+      "out": "(empty)"
+    },
+    {
+      "in": "",
+      "out": "(empty)"
+    },
+    {
+      "in": null,
+      "out": "(empty)"
+    }
+  ],
+  "preferred_name": [
+    {
+      "in": "Jo",
+      "out": "J••• (2)"
+    },
+    {
+      "in": "  x ",
+      "out": "x••• (1)"
+    },
+    {
+      "in": "Æ",
+      "out": "Æ••• (1)"
+    },
+    {
+      "in": "😀ab",
+      "out": "😀••• (3)"
+    },
+    {
+      "in": "é",
+      "out": "e••• (2)"
+    },
+    {
+      "in": "",
+      "out": "(empty)"
+    },
+    {
+      "in": "  ",
+      "out": "(empty)"
+    },
+    {
+      "in": null,
+      "out": "(empty)"
+    }
+  ]
+}

@@ -918,7 +918,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/calendar/check-practitioner",
     reason:
-      "Owner-only one-time review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's own prompt, not a destination to search for; revisit if it becomes a standing surface.",
+      "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
   },
   {
     route: "/records/print",

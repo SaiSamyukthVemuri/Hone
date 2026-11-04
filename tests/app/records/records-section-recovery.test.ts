@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isValidElement, type ReactNode } from "react";
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 
 // RECORDS-SECTION-RECOVERY. After #1095 every record-keeping loader refuses a
 // failed read with a fixed message. These cases pin how far that refusal may

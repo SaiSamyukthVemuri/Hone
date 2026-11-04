@@ -159,8 +159,12 @@ describe("the print page (source)", () => {
 
   it("loads counts only for a per-client pull", () => {
     expect(code).toMatch(
-      /const photoCounts = filter\.clientId\s*\?\s*await loadLinkedPhotoCounts\(\s*studioId,\s*filter\.clientId,/,
+      /const photoCounts = filter\.clientId && canViewPhotos\s*\?\s*await loadLinkedPhotoCounts\(\s*studioId,\s*filter\.clientId,/,
     );
+  });
+
+  it("asks clin.view_photos before loading counts (photo existence is photo data)", () => {
+    expect(code).toMatch(/canViewPhotos[\s\S]{0,200}"clin\.view_photos"/);
   });
 
   it("the note is screen-only (print:hidden) and links to the client's photos page", () => {

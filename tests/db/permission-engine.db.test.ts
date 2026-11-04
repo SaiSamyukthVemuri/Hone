@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CATALOG, effectiveScope, type PermissionDef, type Role, type Scope, type StudioPolicy, GATES } from "@/lib/permissions/catalog";
 import { consequenceClass } from "@/lib/permissions/consequence";
+import { releaseAllKeys } from "./helpers/permission-release";
 import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0287 (held): the permission engine, proved on the real migrated database. Synthetic values only.
@@ -57,6 +58,7 @@ beforeAll(async () => {
   prac2 = await seedMember(A, "pb");
   desk = await seedDesk(A, "front");
 });
+beforeAll(async () => releaseAllKeys());
 afterAll(async () => closePool());
 
 describe("seed parity and resolver parity with lib/permissions/catalog.ts", () => {
@@ -74,7 +76,6 @@ describe("seed parity and resolver parity with lib/permissions/catalog.ts", () =
       expect([r.gate_practitioner, r.gate_receptionist], d.key).toEqual([d.shipGate?.practitioner ?? null, d.shipGate?.receptionist ?? null]);
       expect(r.sensitive, d.key).toBe(!!d.sensitive);
       expect(r.consequence, d.key).toBe(consequenceClass(d));
-      expect(r.enforcement, d.key).toBe(d.enforcement ?? "not_yet");
     }
   });
 
@@ -138,14 +139,14 @@ describe("basis, ownership and privileges", () => {
   });
 
   it("no API role can read or write the tables; anon and service_role cannot execute any command; authenticated can execute only the API", async () => {
-    for (const t of ["permission_catalog", "studio_permission_policy", "studio_role_permissions", "permission_ship_gates", "permission_audit", "permission_narrowings"]) {
+    for (const t of ["permission_catalog", "studio_permission_policy", "studio_role_permissions", "permission_ship_gates", "permission_audit", "permission_narrowings", "permission_key_release", "permission_key_activation"]) {
       for (const role of ["anon", "authenticated", "service_role"]) {
         const r = await adminQuery("select has_table_privilege($1, $2, 'select') or has_table_privilege($1, $2, 'insert') or has_table_privilege($1, $2, 'update') or has_table_privilege($1, $2, 'delete') as p", [role, `public.${t}`]);
         expect(r.rows[0].p, `${role}.${t}`).toBe(false);
       }
     }
-    const fns = (await adminQuery("select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'perm\\_%' or p.proname in ('has_studio_permission','preview_role_changes','save_role_permissions','preview_reset','reset_role_to_defaults','preview_adopt_new_defaults','adopt_new_defaults','get_role_permissions','effective_access','list_permission_audit','change_staff_role','studios_permission_policy_seed','permission_audit_append_only'))")).rows;
-    const api = new Set(["has_studio_permission", "preview_role_changes", "save_role_permissions", "preview_reset", "reset_role_to_defaults", "preview_adopt_new_defaults", "adopt_new_defaults", "get_role_permissions", "effective_access", "list_permission_audit", "change_staff_role"]);
+    const fns = (await adminQuery("select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'perm\\_%' or p.proname in ('has_studio_permission','preview_role_changes','save_role_permissions','preview_reset','reset_role_to_defaults','preview_adopt_new_defaults','adopt_new_defaults','preview_activation','activate_released_permissions','mark_permissions_released','get_role_permissions','effective_access','list_permission_audit','change_staff_role','studios_permission_policy_seed','permission_audit_append_only'))")).rows;
+    const api = new Set(["has_studio_permission", "preview_role_changes", "save_role_permissions", "preview_reset", "reset_role_to_defaults", "preview_adopt_new_defaults", "adopt_new_defaults", "preview_activation", "activate_released_permissions", "get_role_permissions", "effective_access", "list_permission_audit", "change_staff_role"]);
     expect(fns.length).toBeGreaterThan(20);
     for (const f of fns) {
       for (const role of ["anon", "service_role"]) expect((await adminQuery("select has_function_privilege($1,$2,'execute') as p", [role, f.sig])).rows[0].p, `${role} ${f.sig}`).toBe(false);
@@ -294,7 +295,12 @@ describe("reasons (Sam, 3 Nov): required to expand sensitive access, adopt or re
     expect(rs).toMatchObject({ ok: true, new_version: 2 });
     expect((await adminQuery("select basis from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0].basis).toBe("existing_snapshot");
     expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
-    const ad = await call(s.userId, "select public.adopt_new_defaults($1,2,$2) as r", [s.studioId, GOOD_REASON]);
+    // Insurance PY-1: adopting newly enables sensitive keys for the receptionist role, so it needs the same explicit confirmation as save.
+    expect(pa.confirmation_required).toBe(true);
+    expect(pa.sensitive_keys.length).toBeGreaterThan(0);
+    expect(await call(s.userId, "select public.adopt_new_defaults($1,2,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ ok: false, code: "sensitive_unconfirmed" });
+    expect((await adminQuery("select basis, version from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0]).toMatchObject({ basis: "existing_snapshot", version: "2" });
+    const ad = await call(s.userId, "select public.adopt_new_defaults($1,2,$2,true) as r", [s.studioId, GOOD_REASON]);
     expect(ad).toMatchObject({ ok: true, new_version: 3 });
     expect((await adminQuery("select basis from public.studio_permission_policy where studio_id=$1", [s.studioId])).rows[0].basis).toBe("new_studio");
     expect(await call(s.userId, "select public.adopt_new_defaults($1,3,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ code: "nothing_changed" });
@@ -397,6 +403,19 @@ describe("effective_access", () => {
     expect(g.rows.every((x: J) => x.scope === "off" && x.capped_by === "deactivated")).toBe(true);
     expect(await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, randomUUID()])).toMatchObject({ code: "not_found" });
   });
+
+  it("a DEACTIVATED OWNER shows no access: the active state is judged before the owner branch (Codex)", async () => {
+    const s = await seedStudio("engine-effective-owner");
+    const second = await seedMember(s, "o2");
+    await adminQuery("update public.practitioners set role='owner' where id=$1", [second.practitionerId]);
+    const live = await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, second.practitionerId]);
+    expect(live).toMatchObject({ ok: true, role: "owner", state: "active" });
+    expect(live.rows.every((x: J) => x.scope === "studio" && x.source === "owner")).toBe(true); // an active owner holds every key
+    await adminQuery("update public.practitioners set active=false where id=$1", [second.practitionerId]);
+    const g = await call(s.userId, "select public.effective_access($1,$2) as r", [s.studioId, second.practitionerId]);
+    expect(g).toMatchObject({ ok: true, role: "owner", state: "deactivated" });
+    expect(g.rows.every((x: J) => x.scope === "off" && x.capped_by === "deactivated")).toBe(true);
+  });
 });
 
 const openStaffRoleGate = (studioId: string) =>
@@ -423,6 +442,21 @@ describe("change_staff_role", () => {
     expect(await rowCount("select count(*) n from public.studio_receptionists where studio_id=$1", [s.studioId])).toBe(1);
   });
 
+  it("rejects a NULL role (Codex: `null not in (...)` is null and skipped the checks and the reason rule)", async () => {
+    const s = await seedStudio("engine-role-null");
+    await openStaffRoleGate(s.studioId);
+    const m = await seedMember(s, "rnull");
+    for (const sql of [
+      "select public.change_staff_role($1,$2,null,'practitioner',null) as r",
+      "select public.change_staff_role($1,$2,'receptionist',null,null) as r",
+      "select public.change_staff_role($1,$2,null,null,null) as r",
+    ]) {
+      expect(await call(s.userId, sql, [s.studioId, m.practitionerId]), sql).toMatchObject({ ok: false, code: "unknown_role" });
+    }
+    expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(true);
+    expect(await call(s.userId, "select public.preview_reset($1,null) as r", [s.studioId])).toMatchObject({ ok: false, code: "unknown_role" });
+  });
+
   it("refuses self, an owner as source or target, a stale expected role, upcoming appointments, and a non-owner", async () => {
     const s = await seedStudio("engine-role2");
     await openStaffRoleGate(s.studioId);
@@ -444,7 +478,7 @@ describe("the page can tell when a reason is needed: sensitive flag and conseque
     const s = await seedStudio("engine-consequence");
     const r = await getp(s.userId, s.studioId);
     expect(Object.keys(r.keys).sort()).toEqual(DEFS.map((d) => d.key).sort());
-    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d), enforcement: d.enforcement ?? "not_yet" });
+    for (const d of DEFS) expect(r.keys[d.key], d.key).toEqual({ sensitive: !!d.sensitive, consequence: consequenceClass(d) });
     expect(r.keys["pay.refund"].consequence).toBe("financial");
     expect(r.keys["appt.cancel"].consequence).toBeNull();
     expect(Object.values(r.keys).some((k: any) => k.consequence === "destructive")).toBe(false);
@@ -627,7 +661,7 @@ describe("reason rule judges the EFFECTIVE widening (Privacy E1)", () => {
 
 describe("rollback: the 0287 down SQL removes the engine and touches nothing else", () => {
   it("drops every engine object inside a transaction and leaves studios, practitioners and appointments as they were", async () => {
-    const { readFileSync } = await import("node:fs");
+    const { readFileSync, existsSync } = await import("node:fs");
     const down = readFileSync("supabase/rollbacks/0287_roles_permission_engine.down.sql", "utf8");
     const s = await seedStudio("engine-down");
     const counts = async (q: (t: string, p?: unknown[]) => Promise<{ rows: any[] }>) => {
@@ -641,7 +675,11 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
     try {
       await adminTx(async (q) => {
         // the file opens its own begin/commit; run its body statements inside this test's transaction instead of committing
-        const body = down.replace(/^begin;\s*$/im, "").replace(/^commit;\s*$/im, "");
+        const strip = (t: string) => t.replace(/^begin;\s*$/im, "").replace(/^commit;\s*$/im, "");
+        // A stack that also carries a LATER migration (0289 depends on has_studio_permission) must unwind that first, newest first.
+        const later = "supabase/rollbacks/0289_roles_edit_record_protections.down.sql";
+        if (existsSync(later) && (await q("select to_regclass('public.chart_revisions') is not null as present")).rows[0].present) await q(strip(readFileSync(later, "utf8")));
+        const body = strip(down);
         await q(body);
         gone = (await q(
           `select to_regprocedure('public.has_studio_permission(uuid,text,uuid,uuid,uuid)') is null as fn,
@@ -670,5 +708,19 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
     expect(await counts(adminQuery)).toEqual(base); // nothing else moved
     // the transaction rolled back: the engine is still there
     expect((await getp(s.userId, s.studioId)).ok).toBe(true);
+  });
+
+  it("reset that newly enables a sensitive key also needs sensitive_confirmed (Insurance PY-1); one that enables nothing sensitive does not", async () => {
+    const s = await seedStudio("engine-py1");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    // snapshot gives the practitioner clin.view_records (sensitive); the owner stored OFF; a reset returns it to studio, which is a rise.
+    await adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope) values ($1,'practitioner','clin.view_records','off') on conflict (studio_id,role,key) do update set scope='off'", [s.studioId]);
+    const pv = await call(s.userId, "select public.preview_reset($1,'practitioner') as r", [s.studioId]);
+    expect(pv).toMatchObject({ ok: true, confirmation_required: true });
+    expect(pv.sensitive_keys).toContain("clin.view_records");
+    expect(await call(s.userId, "select public.reset_role_to_defaults($1,'practitioner',0,$2) as r", [s.studioId, GOOD_REASON])).toMatchObject({ ok: false, code: "sensitive_unconfirmed" });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(1);
+    expect(await call(s.userId, "select public.reset_role_to_defaults($1,'practitioner',0,$2,true) as r", [s.studioId, GOOD_REASON])).toMatchObject({ ok: true });
+    expect(await rowCount("select count(*) n from public.studio_role_permissions where studio_id=$1", [s.studioId])).toBe(0);
   });
 });

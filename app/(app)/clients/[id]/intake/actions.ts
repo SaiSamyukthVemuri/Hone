@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE, type Questionnaire } from "@/lib/intake/questionnaire";
 import { isDeepStrictEqual } from "node:util";
 
@@ -170,6 +171,9 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
     return { ok: false, error: "Inactive practitioners cannot review intakes." };
   }
 
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_intake", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
   const supabase = await createClient();
 
   // 0246 requires every serving/rollback reader to decode known provenance
@@ -300,6 +304,9 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
     return { ok: false, error: "Inactive practitioners cannot edit intakes." };
   }
 
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_intake", { client: clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("client_intake_forms")
@@ -359,8 +366,15 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
 // ---------------------------------------------------------------------------
 
 export type IntakeReissueResult =
-  | { ok: true; intakeId: string; intakeUrl: string; emailSent: boolean }
+  // intakeUrl is null when the viewer lacks clin.view_intake: the email may still be sent, but a bearer link that opens saved answers is not handed back.
+  | { ok: true; intakeId: string; intakeUrl: string | null; emailSent: boolean }
   | { ok: false; error: string };
+
+// A fresh intake link is a bearer credential that opens saved answers. Messaging the client does not need it back, so the staff member
+// only receives it while clin.view_intake is on (Codex, #1341 35883d5d1; Sam's group 4).
+async function mayReceiveIntakeLink(studioId: string, clientId: string): Promise<boolean> {
+  return (await requirePermission(await createClient(), studioId, "clin.view_intake", { client: clientId })).allowed;
+}
 
 // Loads the client and verifies it belongs to the practitioner's
 // studio. Returns the client row (with email) or an error result.
@@ -508,7 +522,7 @@ export async function requestIntakeUpdateAction(
   return {
     ok: true,
     intakeId: created.id,
-    intakeUrl: created.url,
+    intakeUrl: (await mayReceiveIntakeLink(auth.studioId, auth.client.id)) ? created.url : null,
     emailSent,
   };
 }
@@ -533,6 +547,9 @@ export async function getIntakeLinkAction(
 
   const auth = await loadAuthorisedClient(clientId);
   if (!auth.ok) return auth;
+  if (!(await requirePermission(await createClient(), auth.studioId, "clin.view_intake", { client: auth.client.id })).allowed) {
+    return { ok: false, error: INTAKE_NOT_AVAILABLE };
+  }
 
   // RLS-scoped fetch confirms this intake belongs to the practitioner's
   // studio AND the specified client AND is still in_progress.
@@ -662,7 +679,7 @@ export async function resendIntakeEmailAction(
   return {
     ok: true,
     intakeId: intake.id,
-    intakeUrl: url,
+    intakeUrl: (await mayReceiveIntakeLink(auth.studioId, auth.client.id)) ? url : null,
     emailSent: true,
   };
 }
@@ -802,6 +819,13 @@ export async function saveAssistedIntakeStepAction(payload: {
   // step is not in this set, so it cannot even be addressed here.
   const step = Math.floor(Number(payload.step));
 
+  // loadAssistedIntake reads the intake row: ask the intake key first (RU-1).
+  const who = await loadAuthorisedClient(clientId);
+  if (!who.ok) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  if (!(await requirePermission(await createClient(), who.studioId, "clin.view_intake", { client: who.client.id })).allowed) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+
   const loaded = await loadAssistedIntake(intakeId, clientId);
   if (!loaded.ok) return loaded;
   if (loaded.revision !== expectedRevision) return { ok: false, error: INTAKE_CONFLICT };
@@ -890,6 +914,13 @@ export async function handOffAssistedIntakeAction(
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
   if (typeof clientId !== "string" || !clientId) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+
+  // The hand-off link opens the form and any prefilled answers: ask the intake key before the intake row is read.
+  const who = await loadAuthorisedClient(clientId);
+  if (!who.ok) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  if (!(await requirePermission(await createClient(), who.studioId, "clin.view_intake", { client: who.client.id })).allowed) {
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
 
@@ -997,6 +1028,9 @@ export async function startAssistedIntakeAction(
   // trusted beyond naming which client row to look for.
   const auth = await loadAuthorisedClient(clientId);
   if (!auth.ok) return { ok: false, error: START_NOT_PERMITTED };
+  if (!(await requirePermission(await createClient(), auth.studioId, "clin.view_intake", { client: auth.client.id })).allowed) {
+    return { ok: false, error: START_NOT_PERMITTED };
+  }
 
   // DUPLICATE SAFETY. An in_progress intake already open for this client IS
   // the one to complete with them, so open it rather than stacking a second

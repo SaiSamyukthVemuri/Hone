@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0287_roles_permission_engine.sql",
-    "sha256": "103980b6bb6fb70bb4b88aa210ad26c92c225405ded9016bbe8c11c2ebd53f0e"
+    "sha256": "87eed8a849cdbf4ce168448c997a2422d6628f1ee679b11f00123b274b5ce2bf"
   },
   "public": {
     "tables": [
@@ -72,6 +72,8 @@
       "pending_invitations",
       "permission_audit",
       "permission_catalog",
+      "permission_key_activation",
+      "permission_key_release",
       "permission_narrowings",
       "permission_ship_gates",
       "photos",
@@ -148,6 +150,7 @@
       "_whole_session_copy_fingerprint",
       "_whole_session_copy_source_id",
       "acquire_studio_capacity_lock",
+      "activate_released_permissions",
       "add_electrolysis_pass",
       "add_studio_receptionist",
       "admin_accept_pending_invitation",
@@ -345,6 +348,7 @@
       "lookup_payment_recovery_token",
       "mark_appointment_complete",
       "mark_appointment_no_show",
+      "mark_permissions_released",
       "mark_session_cleaned",
       "mark_session_finalization_failed",
       "mark_session_payment_method_saved",
@@ -376,6 +380,7 @@
       "payment_charge_attempts_jurisdiction_guard",
       "payment_charge_attempts_money_immutable",
       "payment_charge_attempts_touch_updated_at",
+      "perm_activation_hash",
       "perm_actor",
       "perm_affected_people",
       "perm_base_scope",
@@ -385,13 +390,16 @@
       "perm_fail",
       "perm_rank",
       "perm_reason_ok",
+      "perm_run_activation",
       "perm_run_basis",
       "perm_run_changes",
+      "perm_scope_source",
       "permission_audit_append_only",
       "platform_lead_alerts_guard",
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "preview_activation",
       "preview_adopt_new_defaults",
       "preview_reset",
       "preview_role_changes",
