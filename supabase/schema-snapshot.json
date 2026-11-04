@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
+    "count": 254,
+    "last": "0301_session_block_machine_identity.sql",
+    "sha256": "e57ca7941835a418155858842676ece01df979d0abf9777d344707083496bbcd"
   },
   "public": {
     "tables": [
@@ -152,6 +152,7 @@
       "amend_finalized_session",
       "amend_finalized_session_with_image",
       "apply_block_extra_fields",
+      "apply_block_machine_identity",
       "appointment_actor_role",
       "appointment_audit_derive_trusted_fields",
       "appointment_buffer_conflict",
@@ -232,6 +233,7 @@
       "create_appointment_core",
       "create_block_with_entry",
       "create_block_with_initial_setup",
+      "create_block_with_initial_setup_and_identity",
       "create_internal_appointment_v2",
       "create_laser_entry",
       "create_or_claim_refund_attempt",
@@ -401,6 +403,7 @@
       "reconcile_refund_event",
       "reconcile_setup_intent_succeeded",
       "record_appointment_settlement",
+      "record_block_machine_identity",
       "record_calendar_sync_result",
       "record_client_archive_audit_governed",
       "record_clinical_records_audit",
@@ -418,6 +421,7 @@
       "record_platform_early_access_signup",
       "record_platform_lead_alerts_unconfigured",
       "record_setup_group_in_scope",
+      "record_setup_submission_with_identity",
       "record_sms_delivery_status",
       "record_sms_result",
       "record_stripe_account_jurisdiction",
