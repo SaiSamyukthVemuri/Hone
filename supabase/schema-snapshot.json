@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0287_roles_permission_engine.sql",
-    "sha256": "87eed8a849cdbf4ce168448c997a2422d6628f1ee679b11f00123b274b5ce2bf"
+    "count": 255,
+    "last": "0288_roles_payments_pricing.sql",
+    "sha256": "9e0ecdc8ce8143a897112e6dc6e63c24ecc067160f46db22ce2e3b625b12e40c"
   },
   "public": {
     "tables": [
@@ -324,6 +324,7 @@
       "guard_treatment_reading_history_immutable",
       "handle_new_user",
       "has_studio_permission",
+      "has_studio_permission_for_target",
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
@@ -382,8 +383,10 @@
       "payment_charge_attempts_touch_updated_at",
       "perm_activation_hash",
       "perm_actor",
+      "perm_actor_of",
       "perm_affected_people",
       "perm_base_scope",
+      "perm_decide",
       "perm_diff",
       "perm_effective_map",
       "perm_effective_scope",
