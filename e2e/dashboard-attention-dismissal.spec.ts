@@ -284,7 +284,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
   test("a collected settlement reduces or clears the balance, and a still_owes note never creates an amount", async ({ page }) => {
     const { seed, unpaid, partial, visit, prac } = await seedStudioWithMoney();
     const noted = await visit("Noted", 30000, 6);
-    // A card payment with no recorded quote: the price at visit time cannot be proven, so no figure is claimed.
+    // A card payment with no recorded quote: the page says Paid, so the dashboard says nothing.
     const cardOnly = await visit("CardOnly", 21000, 7, 6550);
     const settle = (apptId: string, method: string, cents: number, quoted: number) =>
       sql(
@@ -297,8 +297,8 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await openDashboard(page);
     await expect(unpaidAmountOf(page, partial.name)).toContainText("144.50", { timeout: T });
     await expect(unpaidAmountOf(page, noted.name)).toContainText("300.00", { timeout: T });
-    await expect(unpaidAmountOf(page, cardOnly.name)).toContainText("Amount unavailable", { timeout: T });
-    await expect(unpaidAmountOf(page, cardOnly.name)).not.toContainText(/\d\.\d\d/);
+    // HON-65: the appointment page reads this visit as "Paid" (a Hone-verified card charge), so Needs attention does not list it at all.
+    await expect(unpaidAmountOf(page, cardOnly.name)).toHaveCount(0, { timeout: T });
 
     // Cash collected on a visit with nothing else paid: 210.00 - 50.00 = 160.00. Full cash on the unpaid visit clears it.
     const cashed = await visit("Cashed", 21000, 5);

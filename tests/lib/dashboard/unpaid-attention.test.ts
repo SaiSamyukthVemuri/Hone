@@ -68,12 +68,12 @@ describe("a settled visit keeps the price it was settled against", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 4000, currency: "cad" });
   });
-  it("card-paid in full at an old price, price raised: 'Amount unavailable', never a balance", async () => {
+  it("card-paid in full at an old price, price raised: not listed (HON-65: an unknown amount is not a reason to nag)", async () => {
     db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, currency: "cad" }];
     db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
     const r = await loadUnpaidAttention(base);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items).toEqual([expect.objectContaining({ balance: { kind: "unavailable" } })]);
+    if (r.ok) expect(r.items).toEqual([]);
   });
   it("card-paid at the same price is still simply paid; an unpaid visit keeps today's quote", async () => {
     db.rows.payment_charge_attempts = [{ session_id: "ss1", status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, currency: "cad" }];
@@ -84,13 +84,13 @@ describe("a settled visit keeps the price it was settled against", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 12000, currency: "cad" });
   });
-  it("a collected settlement with no recorded quote, price raised: 'Amount unavailable', never a balance (Insurance Q-1 / Privacy AS1)", async () => {
+  it("a collected settlement with no recorded quote, price raised: not listed (HON-65: an unknown amount is not a reason to nag) (Insurance Q-1 / Privacy AS1)", async () => {
     for (const method of ["paid_cash", "paid_e_transfer"]) {
       db.rows.appointment_settlements = [{ appointment_id: "a1", method, amount_cents: 10000, quoted_amount_cents: null }];
       db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
       const r = await loadUnpaidAttention(base);
       expect(r.ok).toBe(true);
-      if (r.ok) expect(r.items).toEqual([expect.objectContaining({ balance: { kind: "unavailable" } })]);
+      if (r.ok) expect(r.items).toEqual([]);
     }
   });
   it("a collected settlement with no recorded quote and nothing short of today's price is simply paid", async () => {
@@ -113,7 +113,7 @@ describe("Codex P2 (9d9982f1c): a row-capped page is never treated as authoritat
     db.rows.client_pricing = pricingRows(1000);
     const r = await loadUnpaidAttention(base);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items).toEqual([expect.objectContaining({ balance: { kind: "unavailable" } })]);
+    if (r.ok) expect(r.items).toEqual([]);
   });
   it("a page just under the cap is read normally", async () => {
     db.rows.client_pricing = pricingRows(999);
@@ -125,7 +125,7 @@ describe("Codex P2 (9d9982f1c): a row-capped page is never treated as authoritat
     db.rows.services = Array.from({ length: 1000 }, (_, i) => ({ id: i === 0 ? "svc" : `s${i}`, name: "Facial", price_cents: 10000 }));
     const r = await loadUnpaidAttention(base);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+    if (r.ok) expect(r.items).toEqual([]);
   });
   it("a capped page on any other read fails the whole load rather than presenting a partial list", async () => {
     db.rows.payment_charge_attempts = Array.from({ length: 1000 }, () => ({ session_id: "ss1", status: "failed", amount_cents: 1, currency: "cad" }));
@@ -157,7 +157,7 @@ describe("the authoritative balance", () => {
       db.rows.payment_charge_attempts = [row];
       const r = await loadUnpaidAttention(base);
       expect(r.ok).toBe(true);
-      if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+      if (r.ok) expect(r.items).toEqual([]);
     }
   });
   it("fully paid by card, or by a cash settlement, or waived: the appointment disappears", async () => {
@@ -180,19 +180,19 @@ describe("the authoritative balance", () => {
     const r = await loadUnpaidAttention(base);
     expect(r).toMatchObject({ ok: true });
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+    if (r.ok) expect(r.items).toEqual([]);
   });
   it("no provable currency is Amount unavailable", async () => {
     juris.value = { ok: false, reason: "missing" };
     const r = await loadUnpaidAttention(base);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+    if (r.ok) expect(r.items).toEqual([]);
   });
   it("a failed service or pricing read makes every quote unknown, not a guessed price", async () => {
     db.errors.add("client_pricing");
     const r = await loadUnpaidAttention(base);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+    if (r.ok) expect(r.items).toEqual([]);
   });
 });
 
@@ -240,11 +240,11 @@ const balanceOf = async () => {
 describe("AO1: a refund that cannot be read is never 'no refund'", () => {
   it("a succeeded refund with no amount makes the item 'Amount unavailable', not paid and not the full quote", async () => {
     db.rows.payment_charge_attempts = [card({ amount_cents: 10000, refund_status: "succeeded", refund_amount_cents: null })];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
   it("a refund still pending at the provider is 'Amount unavailable'", async () => {
     db.rows.payment_charge_attempts = [card({ stripe_refund_status: "pending" })];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
 });
 
@@ -252,7 +252,7 @@ describe("AO2 / U2: every other money form either counts or forces 'Amount unava
   it("a charge on a soft-deleted session is not subtracted and is not ignored", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
     db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
   it("a failed charge on a deleted session is nothing", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
@@ -261,15 +261,15 @@ describe("AO2 / U2: every other money form either counts or forces 'Amount unava
   });
   it("a late-cancellation or no-show fee charge on the appointment forces 'Amount unavailable'", async () => {
     db.rows.payment_charge_attempts = [{ appointment_id: "a1", session_id: null, status: "succeeded", charge_reason: "no_show_fee" }];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
   it("a manual fee charge on the appointment forces 'Amount unavailable'", async () => {
     db.rows.manual_fee_charge_attempts = [{ appointment_id: "a1", status: "succeeded" }];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
   it("a price recorded on the session forces 'Amount unavailable'; zero or none does not", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: null, price_paid_cents: 5000 }];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: null, price_paid_cents: 0 }];
     expect(await balanceOf()).toEqual([{ kind: "owed", outstandingCents: 10000, currency: "cad" }]);
   });
@@ -287,13 +287,13 @@ describe("AO2 / U2: every other money form either counts or forces 'Amount unava
 describe("U3: currencies", () => {
   it("card money in a currency other than the studio's, or in two currencies, is 'Amount unavailable'", async () => {
     db.rows.payment_charge_attempts = [card({ currency: "usd" })];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
     db.rows.payment_charge_attempts = [card({ currency: "cad" }), card({ currency: "usd" })];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
   it("a settlement in another currency is 'Amount unavailable'", async () => {
     db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 1000, currency: "usd" }];
-    expect(await balanceOf()).toEqual([{ kind: "unavailable" }]);
+    expect(await balanceOf()).toEqual([]);
   });
 });
 
@@ -313,5 +313,85 @@ describe("U1: no request carries an id list near the gateway limit", () => {
     expect(covered("sessions", "appointment_id")).toBe(600);
     expect(covered("appointment_settlements", "appointment_id")).toBe(600);
     expect(covered("payment_charge_attempts", "session_id")).toBe(600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HON-65 acceptance matrix (Photos' nine cases): the same rows through the appointment page's reducer and through Needs attention.
+// Synthetic data only. The rule: a visit the page calls "Paid" is never listed, and a visit is listed only when money is provably owed.
+// ---------------------------------------------------------------------------
+const { deriveAppointmentPaymentState } = await import("@/lib/billing/appointment-payment-state");
+const pageWord = () => {
+  const attempts = (db.rows.payment_charge_attempts as Array<Record<string, unknown>>).filter((a) => a.session_id === "ss1");
+  return deriveAppointmentPaymentState(true, attempts.map((a) => ({ status: a.status as string, refund_status: a.refund_status as string | null, amount_cents: a.amount_cents as number, refund_amount_cents: a.refund_amount_cents as number | null })));
+};
+const listed = async () => {
+  const r = await loadUnpaidAttention(base);
+  expect(r.ok).toBe(true);
+  return r.ok ? r.items.length : -1;
+};
+
+describe("HON-65: the page's 'Paid' and Needs attention never contradict each other", () => {
+  beforeEach(() => {
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
+  });
+  it("1. card = quote, nothing else: page Paid, not listed", async () => {
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
+  });
+  it("2. card = quote plus a price recorded on the session: page Paid, not listed (a typed price is not Hone-verified money, and not a reason to nag)", async () => {
+    db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: null, price_paid_cents: 10000 }];
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
+  });
+  it("3. card = quote plus a charge on a soft-deleted session: page Paid, not listed", async () => {
+    db.rows.sessions = [
+      { id: "ss1", appointment_id: "a1", deleted_at: null, price_paid_cents: null },
+      { id: "ss0", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null },
+    ];
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000 }), card({ session_id: "ss0", amount_cents: 10000 })];
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
+  });
+  it("4. card = quote plus a refund still pending: page Paid, not listed", async () => {
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000, refund_status: "pending_stripe" })];
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
+  });
+  it("5. card below the settled quote: page Paid, so not listed", async () => {
+    db.rows.payment_charge_attempts = [card({ amount_cents: 6000 })];
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "still_owes", amount_cents: 0, quoted_amount_cents: 10000 }];
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
+  });
+  it("6. card below today's price, no settlement: page Paid, not listed", async () => {
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
+  });
+  it("7. two attempts, one fully refunded, in both orders: the page is never 'Paid' while the visit is listed", async () => {
+    const refunded = card({ amount_cents: 10000, refund_status: "succeeded", refund_amount_cents: 10000, stripe_refund_status: "succeeded" });
+    const repaid = card({ amount_cents: 10000 });
+    for (const order of [[refunded, repaid], [repaid, refunded]]) {
+      db.rows.payment_charge_attempts = order;
+      const word = pageWord();
+      if (word === "paid") expect(await listed()).toBe(0);
+    }
+  });
+  it("8. cash settlement = quote: not listed", async () => {
+    db.rows.payment_charge_attempts = [];
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 10000, quoted_amount_cents: 10000 }];
+    expect(await listed()).toBe(0);
+  });
+  it("9. waived: not listed", async () => {
+    db.rows.payment_charge_attempts = [];
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "waived", amount_cents: 0, quoted_amount_cents: 10000 }];
+    expect(await listed()).toBe(0);
+  });
+  it("control: nothing paid at all is still listed with the whole quote (the check is not simply off)", async () => {
+    db.rows.payment_charge_attempts = [];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok && r.items.map((i) => i.balance)).toEqual([{ kind: "owed", outstandingCents: 10000, currency: "cad" }]);
   });
 });

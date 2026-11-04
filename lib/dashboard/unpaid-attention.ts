@@ -7,6 +7,7 @@ import { clientDisplayName } from "@/lib/clients/identity";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { outstandingForAppointment } from "@/lib/billing/outstanding-balance";
+import { deriveAppointmentPaymentState } from "@/lib/billing/appointment-payment-state";
 import type { UnpaidAttention } from "./needs-attention-model";
 import { readInChunks } from "./in-chunks";
 import { readOtherMoneyForms } from "./other-money-forms";
@@ -225,6 +226,12 @@ export async function loadUnpaidAttention(opts: {
   for (const a of appts) {
     const result = evaluate(a);
     if (result.kind === "paid" || result.kind === "not_applicable") continue;
+    // HON-65: list a visit only when Hone can ESTABLISH that money is still owed. An amount Hone cannot determine is not a reason to nag.
+    if (result.kind === "amount_unavailable") continue;
+    // And never contradict the appointment page: when it reads this visit as "Paid" (a Hone-verified card charge that was not refunded),
+    // the dashboard does not call it outstanding, whatever today's price says. The same reducer the page uses.
+    const cards = cardsByAppt.get(a.id) ?? [];
+    if (cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
     seen += 1;
     if (items.length >= UNPAID_ROW_CAP) continue;
     const c = Array.isArray(a.clients) ? a.clients[0] : a.clients;
