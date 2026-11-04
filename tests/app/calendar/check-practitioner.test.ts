@@ -302,7 +302,7 @@ describe("navigation: an owner-only link, hidden for others, and independent of 
   it("Team settings (an owner-only page) links to it", () => {
     const team = read("app/(app)/settings/team/page.tsx");
     expect(team).toContain('href="/calendar/check-practitioner"');
-    expect(team).toMatch(/showReviewLink \? \(/); // DQ-7: the reminder is conditional; a quiet entry stands in when it is hidden (tests/app/settings/team-review-entry.test.ts)
+    expect(team).toMatch(/showReviewLink && \(/); // the prominent reminder is conditional again; the quiet DQ-7 entry is separate and unconditional (tests/app/settings/team-review-entry.test.ts)
     expect(team).toContain("Review practitioner assignments");
   });
   it("the page still 404s for a non-owner and reads no table that needs new storage", () => {

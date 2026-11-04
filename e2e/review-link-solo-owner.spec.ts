@@ -36,6 +36,8 @@ async function expectLinks(page: Page, shown: boolean) {
       await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId(id)).toHaveCount(0);
     }
+    // DQ-7: the quiet Settings entry is PERMANENT, so it is on the Team page whether the reminder is shown or hidden.
+    if (id === "team-review-assignments") await expect(page.getByTestId("team-review-assignments-quiet")).toBeVisible({ timeout: 30_000 });
   }
 }
 
@@ -60,7 +62,7 @@ for (const vp of [{ name: "1280", width: 1280, height: 900 }, { name: "390", wid
       const { ctx, page } = await openWithOwner(browser, s.ownerEmail, vp.width, vp.height);
       try {
         await expectLinks(page, false);
-        // DQ-7: the reminder is hidden, but Settings keeps a quiet permanent entry that opens the same page.
+        // DQ-7: the reminder is hidden, and the quiet permanent entry (asserted in expectLinks) opens the same page.
         await page.goto("/settings/team");
         await expect(page.getByTestId("team-review-assignments-quiet")).toBeVisible({ timeout: 30_000 });
         await page.getByTestId("team-review-assignments-quiet").click();
