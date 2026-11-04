@@ -26,7 +26,7 @@ const LAYOUT = read("app/admin/layout.tsx");
 describe("operator-only access (reuses the /admin layout isAdmin gate)", () => {
   it("the admin layout still guards every /admin route incl. studio detail", () => {
     expect(LAYOUT).toMatch(/if \(!user\) redirect\("\/login"\);/);
-    expect(LAYOUT).toMatch(/if \(!isAdmin\(user\.email\)\) redirect\("\/dashboard"\);/);
+    expect(LAYOUT).toMatch(/if \(!\(await isProvenPlatformAdmin\(supabase, user\)\)\) redirect\("\/dashboard"\);/);
   });
 
   it("reads via the service-role admin client (gated by the layout)", () => {

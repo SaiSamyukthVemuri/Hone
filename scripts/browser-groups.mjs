@@ -266,6 +266,9 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // EMAIL-TRUST (2 Nov): invitation acceptance and the platform-admin check need mailbox proof in THIS session; a password
+      // session on an auto-confirmed account has none. Sits with the invite/auth-gate family; not in `smoke` (cost pin).
+      "email-trust.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already

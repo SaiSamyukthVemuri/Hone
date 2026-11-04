@@ -1,6 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 
 // IMPORT-01, immediate launch-safety mitigation for Quick Import.
 //
@@ -56,7 +56,8 @@ export async function isImportOperator(): Promise<boolean> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  return isAdmin(user?.email);
+  if (!user) return false;
+  return await isProvenPlatformAdmin(supabase, user);
 }
 
 /**

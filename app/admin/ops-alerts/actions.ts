@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { isAdmin } from "@/lib/admin";
+import { isProvenPlatformAdmin } from "@/lib/auth/session-email-proof";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { logAdminAction } from "@/lib/audit/admin-actions";
 import { dbErrorCode } from "@/lib/logging/error-class";
@@ -27,7 +27,7 @@ export async function sendTestCriticalAlertAction(): Promise<void> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
+  if (!user || !(await isProvenPlatformAdmin(supabase, user))) {
     throw new Error("Unauthorized.");
   }
 
@@ -52,7 +52,7 @@ export async function resolveOpsAlertAction(
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
+  if (!user || !(await isProvenPlatformAdmin(supabase, user))) {
     await logAdminAction({
       actorUserId: user?.id ?? null,
       actorEmail: user?.email ?? null,

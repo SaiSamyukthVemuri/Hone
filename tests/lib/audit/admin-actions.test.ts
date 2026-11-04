@@ -134,7 +134,7 @@ describe("admin actions are wired to the audit log (source pins)", () => {
   });
 
   it("the /admin audit page is isAdmin-gated + reads via the helper + no raw JSON dump", () => {
-    expect(PAGE).toMatch(/isAdmin\(user\.email\)/);
+    expect(PAGE).toMatch(/isProvenPlatformAdmin\(supabase, user\)/);
     expect(PAGE).toMatch(/getRecentAdminActionEvents\(/);
     expect(PAGE).not.toMatch(/JSON\.stringify\(.*metadata/);
     // no Stripe/payment/email/SMS surface introduced
