@@ -5,7 +5,7 @@ import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { parsePreferredName } from "@/lib/clients/identity";
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG, parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -216,6 +216,7 @@ export async function updateClientAction(
 
   const name = nullableString(formData.get("name"));
   if (!name) return { ok: false, error: "Name is required." };
+  if (name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
 
   // HON-58: the preferred name is written ONLY when the form submitted the field, so an older form
   // (or any other caller) can never blank it. A blank submission clears it (null). Validated here to
