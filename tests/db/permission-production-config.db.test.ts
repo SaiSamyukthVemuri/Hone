@@ -8,7 +8,7 @@ import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudi
 type J = Record<string, any>;
 const GOOD = "Reviewed the front desk duties with the team";
 const SEED: { key: string; kind: "full" | "narrow" }[] = [
-  ...["appt.cancel", "appt.mark_no_show", "appt.edit_notes", "clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare"].map((key) => ({ key, kind: "full" as const })),
+  ...["appt.cancel", "appt.mark_no_show", "appt.edit_notes", "clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare", "clin.edit_records"].map((key) => ({ key, kind: "full" as const })),
   ...["appt.book", "appt.move", "appt.reassign", "avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"].map((key) => ({ key, kind: "narrow" as const })),
 ];
 const call = async (userId: string, sql: string, params: unknown[]): Promise<J> => asUser(userId, async (q) => (await q(sql, params)).rows[0].r as J);
@@ -38,6 +38,15 @@ describe("production configuration: releases are pending", () => {
     const rows = (await adminQuery("select key, release_kind, released_at from public.permission_key_release order by key")).rows;
     expect(rows.map((r) => r.key)).not.toContain("appt.complete");
     expect(rows.filter((r) => r.release_kind === "narrow").map((r) => r.key).sort()).toEqual(SEED.filter((r) => r.kind === "narrow").map((r) => r.key).sort());
+  });
+
+  it("clin.edit_records is seeded PENDING: an owner's Off has no effect, the chart stays editable, until the operator releases it", async () => {
+    const s = await seedStudio("prod0e");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    expect((await adminQuery("select release_kind, released_at from public.permission_key_release where key='clin.edit_records'")).rows[0]).toMatchObject({ release_kind: "full", released_at: null });
+    await stored(s, "clin.edit_records", "off");
+    expect(await eff(s, "practitioner", "clin.edit_records")).toBe(await snap("clin.edit_records"));
+    expect((await getp(s.userId, s.studioId)).roles.practitioner["clin.edit_records"]).toMatchObject({ stored: "off", source: "unreleased" });
   });
 
   it("while pending, an owner's stored choice for a full key is inert and the practitioner keeps today's access", async () => {
