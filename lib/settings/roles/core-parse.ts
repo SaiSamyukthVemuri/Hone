@@ -170,8 +170,10 @@ export function parseHistory(raw: unknown, limit: number): HistoryResult {
       after: changes.after,
     });
   }
-  const last = rows.length === limit ? rows[rows.length - 1]?.id ?? null : null;
-  return { ok: true, rows, next: last };
+  // The cursor follows the RAW page: a row of a kind this page does not know is dropped from the list but must not end the paging.
+  const lastRaw = raw.rows.length === limit ? raw.rows[raw.rows.length - 1] : null;
+  const next = isObj(lastRaw) && lastRaw.id !== undefined && lastRaw.id !== null ? String(lastRaw.id) : null;
+  return { ok: true, rows, next };
 }
 
 export function parseAccess(raw: unknown): AccessResult {
@@ -206,14 +208,18 @@ export function parseState(raw: unknown): CoreState | null {
   let customised = false;
   for (const role of ["practitioner", "receptionist"] as const) {
     const values: Record<string, Scope> = {};
+    const effective: Record<string, Scope> = {};
+    const source: Record<string, string> = {};
     const entries = isObj(raw.roles[role]) ? (raw.roles[role] as Json) : {};
     for (const [key, v] of Object.entries(entries)) {
+      if (isObj(v) && typeof v.effective === "string") effective[key] = toScope(v.effective);
+      if (isObj(v) && typeof v.source === "string") source[key] = v.source;
       if (isObj(v) && typeof v.stored === "string") {
         values[key] = toScope(v.stored);
         customised = true;
       }
     }
-    policies[role] = { basis, values, gates } as StudioPolicy;
+    policies[role] = { basis, values, gates, server: { stored: { ...values }, effective, source } } as StudioPolicy;
   }
   return { version, basis, policies, reviewed: basis === "new_studio" || customised, staffRoleChange: gates.staff_role_change === true };
 }

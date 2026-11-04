@@ -1,3 +1,4 @@
+import { isInertUntilReleased, shownEffectiveScope, type PolicyWithServer } from "./server-effective";
 import { COMMON_KEYS, consequenceOf, SECTIONS, sectionOfKey, type Consequence, type SectionId } from "./sections";
 import {
   CATALOG,
@@ -5,7 +6,6 @@ import {
   GROUPS,
   catalogByKey,
   checkChange,
-  effectiveScope,
   enforcementOf as catalogEnforcementOf,
   scopeRank,
   scopesFor,
@@ -57,7 +57,7 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
 // BELOW the studio's current snapshot/default and wider options are disabled. Only "enforced" takes effect both ways.
 export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
-export const NOT_ENFORCED_LINE = "Not enforced yet. This switch will apply when that area is wired.";
+export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
 export const ENFORCEMENT_SCOPE_LINE = "This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
@@ -108,10 +108,13 @@ const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scop
 
 // NQ-10 (Sam, 3 Nov): a saved choice whose prerequisite is off is PRESERVED but INACTIVE. It is never deleted, and turning it on never
 // turns the prerequisite on for the owner: the row says what it needs and the owner decides.
+// The core says this saved choice is not in force: its key is not released yet, or the release has not been activated by the owner.
+export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. It takes effect when this setting is released and you activate it.";
+
 export const inactiveNeeds = (labels: string[]): string =>
   `Inactive: needs ${labels.join(", ")}. Your choice is kept and applies again when ${labels.length > 1 ? "those are" : "that is"} on.`;
 
-export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel[] {
+export function buildRoleModel(role: Role, policy: PolicyWithServer): RoleGroupModel[] {
   const defs = CATALOG as readonly PermissionDef[];
   const order = [...GROUPS, ...Array.from(new Set(defs.map((d) => d.group))).filter((g) => !(GROUPS as readonly string[]).includes(g))];
   const out: RoleGroupModel[] = [];
@@ -119,7 +122,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
     const rows: RoleRow[] = [];
     for (const d of defs.filter((x) => x.group === group)) {
       const chosen: Scope = policy.values[d.key] ?? (policy.basis === "new_studio" ? d.newStudioDefault[role] : d.existingSnapshot[role]);
-      const effective = effectiveScope(role, d.key, policy);
+      const effective = shownEffectiveScope(role, d.key, policy);
       const locked = !d.ownerConfigurable
         ? "A fixed part of this role. It is not a switch."
         : !d.offeredTo[role]
@@ -137,7 +140,7 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
           reason: check.ok ? (widerThanBaseline ? WIDENING_LATER_LINE : null) : check.reason, // a missing prerequisite is the more specific reason
         };
       });
-      const dependents = dependentsOf(d.key, role).filter((x) => effectiveScope(role, x.key, policy) !== "off");
+      const dependents = dependentsOf(d.key, role).filter((x) => shownEffectiveScope(role, x.key, policy) !== "off");
       const gate = d.shipGate?.[role];
       rows.push({
         key: d.key,
@@ -149,7 +152,9 @@ export function buildRoleModel(role: Role, policy: StudioPolicy): RoleGroupModel
         effective,
         inactiveBecause:
           scopeRank(effective) < scopeRank(chosen)
-            ? gate && policy.gates?.[gate] !== true && scopeRank(chosen) > scopeRank(d.existingSnapshot[role])
+            ? isInertUntilReleased(policy.server?.source[d.key])
+              ? NOT_ACTIVE_YET_LINE
+              : gate && policy.gates?.[gate] !== true && scopeRank(chosen) > scopeRank(d.existingSnapshot[role])
               ? `Inactive: not yet available: ${GATES[gate]}.`
               : inactiveNeeds(d.requires.map((r) => catalogByKey.get(r)?.label ?? r))
             : null,
@@ -218,7 +223,7 @@ export function applyEdit(
 export type RoleSectionModel = { id: SectionId; label: string; common: RoleRow[]; advanced: RoleRow[] };
 
 /** The eight sections for a role, common actions first and finer controls under Advanced. Presentation only: every row is one key. */
-export function buildRoleSections(role: Role, policy: StudioPolicy): RoleSectionModel[] {
+export function buildRoleSections(role: Role, policy: PolicyWithServer): RoleSectionModel[] {
   const rows = buildRoleModel(role, policy).flatMap((g) => g.rows);
   return SECTIONS.map((s) => {
     const mine = rows.filter((r) => r.section === s.id);

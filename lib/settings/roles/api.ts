@@ -15,6 +15,9 @@ export const ROLE_ERROR_CODES = [
   "scope_not_allowed",
   "prerequisite_unmet",
   "gate_unmet",
+  "keys_required",
+  "preview_required",
+  "stale_preview",
   "not_released",
   "not_enforced",
   "widening_not_yet",
@@ -71,6 +74,12 @@ export type AccessRow = { key: string; scope: string; source: string; cappedBy: 
 export type AccessResult = { ok: true; state: "active" | "deactivated"; role: string; rows: AccessRow[] } | { ok: false; error: RoleError };
 export type HistoryResult = { ok: true; rows: AuditRow[]; next: string | null } | { ok: false; error: RoleError };
 
+/** Append an older page to the rows already shown. A row seen twice (a page that overlaps) is kept once; order is newest first. */
+export function appendHistoryPage(shown: AuditRow[], older: AuditRow[]): AuditRow[] {
+  const seen = new Set(shown.map((r) => r.id));
+  return [...shown, ...older.filter((r) => !seen.has(r.id))];
+}
+
 export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   role_permissions_saved: "Permissions changed",
   defaults_adopted: "New defaults adopted",
@@ -119,7 +128,10 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   prerequisite_unmet: "A setting this one depends on is off. Turn that on first. Nothing was saved.",
   gate_unmet: "This setting is not available yet. Nothing was saved.",
   not_released: "This setting has not been released yet. Nothing was changed.",
-  not_enforced: "Not enforced yet. This switch will apply when that area is wired. Nothing was saved.",
+  keys_required: "Choose at least one setting first. Nothing was changed.",
+  preview_required: "Review what would change first. Nothing was changed.",
+  stale_preview: "What would change has moved since you reviewed it. Review it again. Nothing was changed.",
+  not_enforced: "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired. Nothing was saved.",
   widening_not_yet: "Widening arrives in a later release. You can turn this down now. Nothing was saved.",
   sensitive_unconfirmed: "Confirm that you understand the newly enabled financial or sensitive access, then save again.",
   reason_required: "Say why you are making this change.",
@@ -134,7 +146,7 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   not_active: "That person is not active.",
   has_upcoming_appointments: "That practitioner still has upcoming appointments. Move them first.",
   email_required: "That person needs an email address on file first.",
-  unexpected: "Something went wrong. Nothing was changed.",
+  unexpected: "Something went wrong and we could not confirm the result. Reload the page to see what is saved.",
   unavailable: "Saving role changes turns on with the permission core. Nothing was changed.",
 };
 

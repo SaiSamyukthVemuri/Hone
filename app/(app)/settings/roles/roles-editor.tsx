@@ -14,6 +14,7 @@ import {
   reasonRequired,
   roleErrorMessage,
   AUDIT_KIND_LABEL,
+  appendHistoryPage,
   type AccessResult,
   type AuditRow,
   type CommandResult,
@@ -95,6 +96,10 @@ export function RolesEditor(props: RolesEditorProps) {
   const baseId = useId();
   // Bumped whenever a pending preview stops being wanted (tab switch, cancel), so a late response is ignored.
   const previewSeq = useRef(0);
+  // PY-3. The review is sequenced the same way: a late preview from an earlier click is ignored, and Save sends the edits that were
+  // PREVIEWED (not whatever the draft has become), so the owner cannot confirm a consequence list that is not the one being saved.
+  const reviewSeq = useRef(0);
+  const reviewedEdits = useRef<Partial<Record<Role, Record<string, Scope>>> | null>(null);
 
   const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
   const dirty = dirtyRoles.length > 0;
@@ -118,6 +123,8 @@ export function RolesEditor(props: RolesEditorProps) {
     }
     setRowError(null);
     feedback.reset();
+    reviewSeq.current += 1;
+    reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
     setDrafts((d) => ({ ...d, [role]: result.policy }));
@@ -152,21 +159,28 @@ export function RolesEditor(props: RolesEditorProps) {
   }
 
   async function onReview() {
+    const seq = ++reviewSeq.current;
+    const edits = changedEdits();
+    reviewedEdits.current = null;
     setReviewing(true);
     setReviewData(null);
     setConfirmed(false);
-    const r = await props.previewSave(changedEdits());
-    if (r.ok) setReviewData(r.preview);
-    else handleError(r.error);
+    const r = await props.previewSave(edits);
+    if (seq !== reviewSeq.current) return; // the draft changed (or the review was closed) while the core was answering
+    if (r.ok) {
+      reviewedEdits.current = edits;
+      setReviewData(r.preview);
+    } else handleError(r.error);
   }
 
   const needsReason = reviewing && reasonRequired("save", sensitiveCount > 0);
   const reasonOk = reasonAcceptable("save", sensitiveCount > 0, reason);
 
   async function onSave() {
-    if (!reviewData) return;
+    if (!reviewData || !reviewedEdits.current) return;
     feedback.saving();
-    const result = await props.save(changedEdits(), reviewData.version, confirmed, reason.trim());
+    const boundVersion = reviewData.version;
+    const result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim());
     if (result.ok) {
       // The core owns what was saved: read it back rather than assume the draft became the saved state.
       const fresh = await props.reload();
@@ -183,12 +197,38 @@ export function RolesEditor(props: RolesEditorProps) {
       setConfirmed(false);
       setReason("");
       feedback.saved();
+    } else if (result.error.code === "unexpected") {
+      await resolveUnexpected(boundVersion);
     } else {
       handleError(result.error);
     }
   }
 
+  // PY-6. A transport error after a commit looks the same as a failure, so "Nothing was changed" cannot be claimed. Read the policy
+  // back: a moved version means it went through; the same version means it did not; an unreadable policy is said plainly.
+  async function resolveUnexpected(boundVersion: number) {
+    const fresh = await props.reload();
+    if (!fresh.ok) {
+      feedback.failed("We could not confirm whether that was saved. Reload the page to check before trying again.");
+      return;
+    }
+    if (fresh.state.version === boundVersion) {
+      feedback.failed("Something went wrong. We checked, and nothing was changed.");
+      return;
+    }
+    setSaved(fresh.state.policies);
+    setDrafts(fresh.state.policies);
+    setReviewed(fresh.state.reviewed);
+    setReviewing(false);
+    setReviewData(null);
+    setPreview(null);
+    setConfirmed(false);
+    setReason("");
+    feedback.failed("The response was lost, but the change went through. The page now shows what is saved.");
+  }
+
   function discard() {
+    reviewSeq.current += 1;
     setDrafts(saved);
     setReviewing(false);
     setReviewData(null);
@@ -199,6 +239,12 @@ export function RolesEditor(props: RolesEditorProps) {
   }
 
   async function openPreview(kind: Preview["kind"]) {
+    // PY-4. Reset and adopt replace the page with the saved state and would drop every unsaved choice, on both roles, without a
+    // warning. They are refused while there are unsaved choices.
+    if (dirty) {
+      feedback.failed("You have unsaved changes. Save or discard them first; resetting or adopting would replace them.");
+      return;
+    }
     setReason("");
     const forRole = role;
     const seq = ++previewSeq.current;
@@ -212,7 +258,12 @@ export function RolesEditor(props: RolesEditorProps) {
   async function confirmPreview() {
     if (!preview) return;
     feedback.saving();
-    const result = preview.kind === "adopt" ? await props.adopt(preview.data.version, reason.trim()) : await props.reset(preview.role, preview.data.version, reason.trim());
+    const boundVersion = preview.data.version;
+    const result = preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim()) : await props.reset(preview.role, boundVersion, reason.trim());
+    if (!result.ok && result.error.code === "unexpected") {
+      await resolveUnexpected(boundVersion);
+      return;
+    }
     if (result.ok) {
       // The core owns the resulting policy; reload to read it rather than guess it here.
       setPreview(null);
@@ -420,7 +471,7 @@ export function RolesEditor(props: RolesEditorProps) {
             </button>
             <SaveStatus state={feedback.state} />
           </div>
-          <p className="text-xs text-neutral-500">Changes apply to each person&rsquo;s next request, including people who are signed in now.</p>
+          <p className="text-xs text-neutral-500">A saved change applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
         </div>
       )}
     </div>
@@ -575,16 +626,32 @@ function RowList({
 
 function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Promise<HistoryResult>; timeZone: string }): ReactNode {
   const [state, setState] = useState<{ kind: "loading" } | { kind: "error"; message: string } | { kind: "rows"; rows: AuditRow[]; next: string | null }>({ kind: "loading" });
+  // "Load older" appends the next page by the cursor the core returned. A failed page keeps what is shown and says so; a second click
+  // while one is loading does nothing.
+  const [more, setMore] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const live = useRef(true);
   useEffect(() => {
-    let live = true;
+    live.current = true;
     load(null).then((r) => {
-      if (!live) return;
+      if (!live.current) return;
       setState(r.ok ? { kind: "rows", rows: r.rows, next: r.next } : { kind: "error", message: roleErrorMessage(r.error) });
     });
     return () => {
-      live = false;
+      live.current = false;
     };
   }, [load]);
+  const loadOlder = async (cursor: string) => {
+    if (more.busy) return;
+    setMore({ busy: true, error: null });
+    const r = await load(cursor).catch(() => null);
+    if (!live.current) return;
+    if (!r || !r.ok) {
+      setMore({ busy: false, error: r ? roleErrorMessage(r.error) : "Could not load older changes. Nothing was changed." });
+      return;
+    }
+    setState((s) => (s.kind === "rows" ? { kind: "rows", rows: appendHistoryPage(s.rows, r.rows), next: r.next } : s));
+    setMore({ busy: false, error: null });
+  };
   return (
     <section data-testid="roles-history" className="flex min-w-0 flex-col gap-3">
       <h3 className="text-base font-medium">Change history</h3>
@@ -619,6 +686,22 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
             </li>
           ))}
         </ul>
+      )}
+      {state.kind === "rows" && more.error && (
+        <p data-testid="history-more-error" role="alert" className="text-sm text-neutral-600 dark:text-neutral-400">
+          {more.error}
+        </p>
+      )}
+      {state.kind === "rows" && state.next !== null && (
+        <button
+          type="button"
+          data-testid="history-load-older"
+          disabled={more.busy}
+          onClick={() => void loadOlder(state.next as string)}
+          className="min-h-11 self-start rounded-lg border border-neutral-300 px-4 text-sm font-medium disabled:opacity-60 dark:border-neutral-700"
+        >
+          {more.busy ? "Loading\u2026" : "Load older changes"}
+        </button>
       )}
     </section>
   );
