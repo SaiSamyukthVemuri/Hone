@@ -367,9 +367,28 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await expect(unpaidAmountOf(page, unpaid.name)).toContainText("120.00", { timeout: T });
     await expect(unpaidAmountOf(page, paid.name)).toHaveCount(0);
     await expect(page.locator("li[data-attention-client]").filter({ hasText: paid.name }).getByText(/Unpaid|Amount unavailable|outstanding/i)).toHaveCount(0);
+    // Fully paid visits are also NOT COUNTED as "no price or payment detail Hone can verify": with every visit here either paid or priced, the
+    // count line must be absent altogether (Sam, 4 Nov).
+    await expect(page.getByTestId("needs-attention-unpaid-unlisted")).toHaveCount(0);
+    await expect(page.locator("#needs-attention-list, [data-testid=needs-attention-unpaid-window]").first()).toBeVisible({ timeout: T });
     // The same visit's own page says Paid.
     await page.goto(`/calendar/${paid.apptId}`);
     await expect(page.getByRole("heading", { name: "Payment" }).locator("xpath=..").getByText("Paid")).toBeVisible({ timeout: T });
+  });
+
+  unpaidGated("HON-65: a visit with no price on record is not listed but COUNTED, in words and with no amount", async ({ page }) => {
+    const { seed, unpaid, visit } = await seedStudioWithMoney();
+    const unknown = await visit("NoPrice", 0, 3);
+    await sql(`update public.services set price_cents = null where id = $1`, [unknown.serviceId]);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    await expect(unpaidAmountOf(page, unknown.name)).toHaveCount(0, { timeout: T });
+    const line = page.getByTestId("needs-attention-unpaid-unlisted");
+    await expect(line).toBeVisible({ timeout: T });
+    await expect(line).toContainText(/no price or payment detail Hone can verify, so (it is|they are) not listed/);
+    await expect(line).not.toContainText(/\d\.\d\d/);
+    expect(unpaid.name).toBeTruthy();
   });
 
   unpaidGated("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {
