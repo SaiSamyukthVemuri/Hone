@@ -233,7 +233,10 @@ export type MachineFirstSetupPanelProps = {
    * auto-selected machine on screen that the save never carried.
    */
   onResolvedChoice?: (
-    choice: { deviceId: string; modeKey: string } | null,
+    choice:
+      | { deviceId: string; modeKey: string; legacy?: false }
+      | { deviceId: null; modeKey: null; legacy: true }
+      | null,
   ) => void;
   /**
    * Records ONE SAVE - every settings group at once. Supplied by the connected
@@ -565,12 +568,18 @@ export function MachineFirstSetupPanel({
   const resolvedDeviceId = chosen && mode ? chosen.device.deviceId : null;
   const resolvedModeKey = chosen && mode ? mode.key : null;
   useEffect(() => {
+    // THE EXISTING WORKFLOW IS A CHOICE TOO. This effect re-fires whenever the
+    // host hands a new callback, so reporting nothing for it let a later pass
+    // overwrite the host's draft with "none" and the area saved with no
+    // machine at all.
     onResolvedChoice?.(
-      resolvedDeviceId && resolvedModeKey
-        ? { deviceId: resolvedDeviceId, modeKey: resolvedModeKey }
-        : null,
+      legacyChosen
+        ? { deviceId: null, modeKey: null, legacy: true }
+        : resolvedDeviceId && resolvedModeKey
+          ? { deviceId: resolvedDeviceId, modeKey: resolvedModeKey }
+          : null,
     );
-  }, [resolvedDeviceId, resolvedModeKey, onResolvedChoice]);
+  }, [legacyChosen, resolvedDeviceId, resolvedModeKey, onResolvedChoice]);
 
   /**
    * onRecord, plus the one side effect the status line needs. Counting here

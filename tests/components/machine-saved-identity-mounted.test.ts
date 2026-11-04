@@ -99,13 +99,14 @@ const CTX = {
 };
 
 async function mount(extra: Record<string, unknown>) {
-  const load = vi.fn(async () => CTX);
+  const { ctx: ctxOverride, ...rest } = extra as { ctx?: Record<string, unknown> };
+  const load = vi.fn(async () => ({ ...CTX, ...(ctxOverride ?? {}) }));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", load, ...extra } as never),
+      createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", load, ...rest } as never),
     );
   });
   return load;
@@ -187,5 +188,25 @@ describe("a saved machine identity, through the connected wrapper", () => {
       true,
     );
     expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: choosing the existing workflow on a NEW area is still the draft after the panel finishes resolving", async () => {
+    const onIdentityDraft = vi.fn();
+    // A remembered unit is auto-selected first, so the panel resolves a native choice and THEN the practitioner switches.
+    await mount({ blockId: null, onIdentityDraft, savedIdentity: null, onSettingDraft: vi.fn(), ctx: { remembered: { deviceId: "room-9", modeKey: "galvanic" } } });
+    const open = host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!;
+    await act(async () => open.click());
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(sel, "legacy:xcell");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // A later render hands the panel a NEW callback and re-runs its resolution pass.
+    await act(async () => {
+      root!.render(createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", blockId: null, onIdentityDraft, savedIdentity: null, onSettingDraft: vi.fn(), load: vi.fn(async () => CTX) } as never));
+    });
+    // The LAST thing the host heard is what its Save records: the panel's own resolution pass must not clear it.
+    expect(onIdentityDraft.mock.calls.at(-1)?.[0]).toEqual({ deviceId: null, modeKey: null, profileId: "dectro-apilus:xcell" });
   });
 });

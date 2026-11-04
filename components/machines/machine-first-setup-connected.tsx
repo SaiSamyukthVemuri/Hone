@@ -433,7 +433,13 @@ export function MachineFirstSetupConnected({
           ? undefined
           : (c) =>
               onIdentityDraft(
-                c ? { deviceId: c.deviceId, modeKey: c.modeKey, profileId: null } : null,
+                c
+                  ? {
+                      deviceId: c.deviceId,
+                      modeKey: c.modeKey,
+                      profileId: c.legacy ? (ctx.legacyMachine?.profileId ?? null) : null,
+                    }
+                  : null,
                 false,
               )
       }
