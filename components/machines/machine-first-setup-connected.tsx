@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -72,7 +72,33 @@ export type MachineFirstSetupConnectedProps = {
   select?: (choice: {
     deviceId: string | null;
     modeKey: string | null;
+    legacy?: boolean;
   }) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * The machine SAVED on this treatment area (migration 0301), read from the
+   * block row the page already loaded. It is the record, and it wins over the
+   * remembered preference and over a suggestion. When present, the panel opens
+   * on it at once instead of waiting for a click, so a reopened area shows its
+   * machine rather than an empty "Choose machine".
+   */
+  savedIdentity?: {
+    profileId: string | null;
+    deviceId: string | null;
+    modeKey: string | null;
+  } | null;
+  /** Forwarded to the panel: which kind of machine is in force. */
+  onKindChange?: NonNullable<
+    Parameters<typeof MachineFirstSetupPanel>[0]["onKindChange"]
+  >;
+  /**
+   * CREATE MODE: the choice, handed to the host form so its Save writes the
+   * area and the choice in one transaction. Null when nothing is chosen.
+   */
+  onIdentityDraft?: (
+    choice: { deviceId: string | null; modeKey: string | null; profileId: string | null } | null,
+    /** True for a pick the practitioner made; false for one the panel resolved. */
+    explicit: boolean,
+  ) => void;
 };
 
 type MachineFirstSetupPanelRecord = NonNullable<
@@ -127,6 +153,9 @@ export function MachineFirstSetupConnected({
   onSettingDraft,
   settingDraftFrozen = false,
   onRevisionUnresolved,
+  savedIdentity = null,
+  onKindChange,
+  onIdentityDraft,
 }: MachineFirstSetupConnectedProps) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
@@ -150,6 +179,17 @@ export function MachineFirstSetupConnected({
       setState("failed");
     }
   }, [load, clientId, sessionId, blockId]);
+
+  // A SAVED CHOICE OPENS THE PANEL AT ONCE. Only an area that already carries
+  // an identity does this, so the on-mount server action stays out of every
+  // other charting path (the reason the load waits for a click elsewhere).
+  const hasSavedIdentity = Boolean(
+    savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId),
+  );
+  useEffect(() => {
+    if (hasSavedIdentity && state === "idle" && ctx === null) void open();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSavedIdentity]);
 
   if (!ctx) {
     return (
@@ -311,18 +351,49 @@ export function MachineFirstSetupConnected({
   const onSelectMachine = async (choice: {
     deviceId: string | null;
     modeKey: string | null;
+    legacy?: boolean;
   }) => {
     const mod = await import(
       "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
     );
-    const out =
-      choice.deviceId === null
-        ? await mod.clearMachineSelectionAction()
-        : await mod.rememberMachineSelectionAction({
-            deviceId: choice.deviceId,
-            modeKey: choice.modeKey,
-          });
-    return out.ok ? { ok: true } : { ok: false, error: out.error };
+    const legacyProfile = choice.legacy ? (ctx.legacyMachine?.profileId ?? null) : null;
+    // THE PREFERENCE (a suggestion for the next visit) is written only for a
+    // native unit; choosing the existing workflow leaves it alone.
+    let pref: { ok: boolean; error?: string } = { ok: true };
+    if (!choice.legacy) {
+      const out =
+        choice.deviceId === null
+          ? await mod.clearMachineSelectionAction()
+          : await mod.rememberMachineSelectionAction({
+              deviceId: choice.deviceId,
+              modeKey: choice.modeKey,
+            });
+      pref = out.ok ? { ok: true } : { ok: false, error: out.error };
+    }
+    const chosen =
+      choice.deviceId !== null || legacyProfile !== null
+        ? { deviceId: choice.deviceId, modeKey: choice.modeKey, profileId: legacyProfile }
+        : null;
+    // THE RECORD: this area's own machine. A new area carries it into the
+    // host's Save (one transaction); a saved area writes it now.
+    if (!blockId) {
+      onIdentityDraft?.(chosen, true);
+      return pref;
+    }
+    if (chosen === null) {
+      return savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId)
+        ? { ok: false, error: "Choose another machine to change this one." }
+        : pref;
+    }
+    const saved = await mod.recordBlockMachineIdentityAction({
+      clientId,
+      sessionId,
+      blockId,
+      deviceId: chosen.deviceId,
+      modeKey: chosen.modeKey,
+      profileId: chosen.profileId,
+    });
+    return saved.ok ? pref : { ok: false, error: saved.error };
   };
 
   return (
@@ -343,7 +414,29 @@ export function MachineFirstSetupConnected({
       suggestedMachine={ctx.suggestedMachine}
       // A reopened visit's last saved unit and mode. Forwarded here or it is
       // inert in the real route.
-      restoredSelection={ctx.restoredSelection}
+      restoredSelection={
+        savedIdentity?.deviceId && savedIdentity.modeKey
+          ? { deviceId: savedIdentity.deviceId, modeKey: savedIdentity.modeKey }
+          : ctx.restoredSelection
+      }
+      // The existing workflow as a choice in THE selector, and whether this
+      // area was saved as it.
+      legacyMachine={ctx.legacyMachine}
+      initialLegacyChosen={
+        savedIdentity?.deviceId == null && savedIdentity?.profileId != null
+      }
+      onKindChange={onKindChange}
+      // A machine the panel resolves on its own is carried too (create mode),
+      // so what is shown is what Save records. Not marked as an edit.
+      onResolvedChoice={
+        blockId || !onIdentityDraft
+          ? undefined
+          : (c) =>
+              onIdentityDraft(
+                c ? { deviceId: c.deviceId, modeKey: c.modeKey, profileId: null } : null,
+                false,
+              )
+      }
       inventoryReason={ctx.inventoryReason}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo

@@ -1284,6 +1284,12 @@ export type SessionBlock = {
   reaction_notes: string | null;
   caution_for_next_session: boolean;
   caution_note: string | null;
+  // Migration 0301: the SAVED machine identity of this treatment area. All
+  // three are NULL for every row recorded before it - NULL means "not
+  // recorded", never "legacy xCell Pur" - and none is ever inferred.
+  machine_profile_id: string | null;
+  studio_machine_id: string | null;
+  machine_mode_key: string | null;
   // Migration 0095 (PR #279, Chloe charting feedback). numbing_status is NULL
   // for every legacy row ("Not recorded"); 'none' = no numbing used; 'used' =
   // numbing used. probe_lot_confirmed records that the practitioner confirmed

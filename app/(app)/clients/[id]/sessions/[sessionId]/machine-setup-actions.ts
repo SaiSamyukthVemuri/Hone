@@ -4,7 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
 import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getCurrentPractitionerWithStudio,
+  studioHasLegacyMachineHistory,
+} from "@/lib/supabase/queries";
 import {
   activeModes,
   currentProfile,
@@ -12,6 +15,12 @@ import {
 } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
+import {
+  LEGACY_MACHINE_PROFILE_ID,
+  legacyMachineOffer,
+  type LegacyMachineOffer,
+} from "@/lib/machines/legacy-machine";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -56,7 +65,7 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
-import { machinesByIds } from "@/lib/machines/machine-queries";
+import { machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -198,6 +207,13 @@ export type MachineSetupContext = {
    * restore-recorded-selection restores nothing.
    */
   restoredSelection: RestoredSelection | null;
+  /**
+   * The existing charting workflow as a choice in the one selector, offered
+   * ONLY where this studio has that workflow's history (a treatment area with
+   * a legacy mode, or one already saved as that model). Null for a studio
+   * that has never charted that way; nothing tenant-specific lives in code.
+   */
+  legacyMachine: LegacyMachineOffer | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -216,6 +232,7 @@ const ANONYMOUS: MachineSetupContext = {
   unitNames: {},
   suggestedMachine: null,
   restoredSelection: null,
+  legacyMachine: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -410,6 +427,17 @@ export async function loadMachineSetupContext(input: {
     catalogue,
   });
 
+  // OFFERED FROM THE STUDIO'S OWN HISTORY (read in lib/supabase/queries, as
+  // this module reads no clinical table itself). A failed read offers nothing.
+  let legacyMachine: LegacyMachineOffer | null = null;
+  try {
+    if (await studioHasLegacyMachineHistory(scope.studioId, LEGACY_MACHINE_PROFILE_ID)) {
+      legacyMachine = legacyMachineOffer(catalogue);
+    }
+  } catch {
+    legacyMachine = null;
+  }
+
   const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
@@ -454,6 +482,7 @@ export async function loadMachineSetupContext(input: {
     unitNames,
     suggestedMachine,
     restoredSelection,
+    legacyMachine,
   };
 }
 
@@ -525,6 +554,53 @@ export async function clearMachineSelectionAction(): Promise<ActionResult> {
     return { ok: true };
   } catch {
     return { ok: false, code: "not_persisted", error: "Could not clear it." };
+  }
+}
+
+/**
+ * SAVE THE MACHINE CHOSEN FOR AN EXISTING TREATMENT AREA (migration 0301).
+ *
+ * This is the saved TREATMENT RECORD, kept apart from the remembered
+ * preference `rememberMachineSelectionAction` writes: one is the truth about
+ * this area, the other only a suggestion for the next one. Studio and actor are
+ * derived in the database; the route's own client and session bind the block.
+ * Either a registered unit (with its mode) or, for the existing xCell
+ * workflow, a model with no unit and no mode.
+ */
+export async function recordBlockMachineIdentityAction(input: {
+  clientId: string;
+  sessionId: string;
+  blockId: string;
+  deviceId: string | null;
+  modeKey: string | null;
+  profileId: string | null;
+}): Promise<ActionResult> {
+  const scope = await identity();
+  if (!scope) {
+    return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
+  }
+  if (input.deviceId === null && input.profileId !== LEGACY_MACHINE_PROFILE_ID) {
+    return { ok: false, code: "rejected", error: "That machine could not be checked." };
+  }
+  const db = await machineDb();
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+    const out = await recordBlockMachineIdentity(db, {
+      blockId: input.blockId,
+      sessionId: input.sessionId,
+      clientId: input.clientId,
+      deviceId: input.deviceId,
+      modeKey: input.modeKey,
+      profileId: input.profileId,
+    });
+    if (!out.ok) {
+      return isDefinitiveDatabaseAnswer(out.error)
+        ? { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." }
+        : { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
   }
 }
 

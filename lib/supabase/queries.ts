@@ -1258,3 +1258,26 @@ export function resolveTreatmentParams(
     machine_frequency: block?.machine_frequency ?? entry.machine_frequency,
   };
 }
+
+
+/**
+ * Whether this studio has charted with the existing (legacy) workflow: a
+ * treatment area with a legacy mode, or one already saved as that model.
+ * Read under the caller's session, so row security decides what is visible;
+ * a failed read answers false. Used only to decide whether the one machine
+ * selector offers that workflow as a choice.
+ */
+export async function studioHasLegacyMachineHistory(
+  studioId: string,
+  legacyProfileId: string,
+): Promise<boolean> {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("session_blocks")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .is("deleted_at", null)
+    .or(`mode.not.is.null,machine_profile_id.eq.${legacyProfileId}`);
+  if (error) return false;
+  return (count ?? 0) > 0;
+}

@@ -1165,8 +1165,25 @@ export type InitialSetupInput = {
   }>;
 };
 
+/**
+ * The machine the practitioner chose for this treatment area, saved WITH the
+ * area (migration 0301) so reopening it restores the choice even when no value
+ * was entered. `machineId` names a registered unit (the mode then belongs to
+ * it); without one, `profileId` names a model with no registered unit (the
+ * existing xCell Pur workflow), and no mode is recorded. Studio and actor are
+ * never supplied: the database derives them.
+ */
+export type MachineIdentityInput = {
+  machineId: string | null;
+  modeKey: string | null;
+  profileId: string | null;
+};
+
 export async function createTreatmentAreaWithEntryAction(
-  input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
+  input: CreateAreaWithEntryInput & {
+    initialSetup?: InitialSetupInput | null;
+    machineIdentity?: MachineIdentityInput | null;
+  },
 ): Promise<BlockResult & { setup?: unknown }> {
   // AN IDENTITY REFUSAL IS A REFUSAL TOO (Codex, #860 4308620484). This call
   // THROWS on a removed membership or an invalid studio selection, before any
@@ -1455,12 +1472,29 @@ export async function createTreatmentAreaWithEntryAction(
     }
   }
 
-  const { data: createdRows, error: cmdErr } = withSetup
-    ? await supabase.rpc("create_block_with_initial_setup", {
+  // THE IDENTITY RIDES THE SAME TRANSACTION (0301). With settings, the unit and
+  // mode already arrive below, so the command derives the identity from them.
+  // Without settings, a chosen machine (or an xCell Pur model) is still saved
+  // with the area, which is what lets a reopened area restore a choice that
+  // wrote no reading. No identity chosen: the unchanged commands.
+  const identity = input.machineIdentity ?? null;
+  const identityOnly =
+    !withSetup &&
+    identity !== null &&
+    (identity.machineId !== null || identity.profileId !== null);
+  const { data: createdRows, error: cmdErr } = withSetup || identityOnly
+    ? await supabase.rpc("create_block_with_initial_setup_and_identity", {
         ...blockArgs,
-        p_studio_machine_id: input.initialSetup!.machineId,
-        p_setup_mode_key: input.initialSetup!.modeKey,
-        p_setup_idempotency_key: input.initialSetup!.idempotencyKey,
+        p_machine_profile_id: withSetup ? null : (identity?.profileId ?? null),
+        p_studio_machine_id: withSetup
+          ? input.initialSetup!.machineId
+          : (identity?.machineId ?? null),
+        p_setup_mode_key: withSetup
+          ? input.initialSetup!.modeKey
+          : (identity?.modeKey ?? null),
+        p_setup_idempotency_key: withSetup
+          ? input.initialSetup!.idempotencyKey
+          : null,
         // THE DERIVED ROWS, never the caller's: unit and precision come from
         // the contract the validator resolved.
         p_setup_groups: setupGroups.map((g) => ({

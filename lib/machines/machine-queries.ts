@@ -535,7 +535,7 @@ export async function recordSetupSubmission(
   clientId: string;
   },
 ): Promise<MachineOutcome<SetupSubmissionResult>> {
-  const { data, error } = await db.rpc("record_treatment_setup_submission", {
+  const { data, error } = await db.rpc("record_setup_submission_with_identity", {
     p_block_id: input.blockId,
     p_studio_machine_id: input.machineId,
     p_mode_key: input.modeKey,
@@ -1069,4 +1069,33 @@ export async function latestRecordedSetup(
   }
   const rows = ((data ?? []) as ReadingRow[]).map(toReading);
   return { ok: true, value: rows };
+}
+
+
+/**
+ * Save the machine chosen for ONE existing treatment area (migration 0301).
+ * Studio and actor are derived by the command; the route's own client and
+ * session bind the block. Either a registered unit with its mode, or a model
+ * with no unit and no mode (the existing workflow).
+ */
+export async function recordBlockMachineIdentity(
+  db: MachineDb,
+  input: {
+    blockId: string;
+    sessionId: string;
+    clientId: string;
+    deviceId: string | null;
+    modeKey: string | null;
+    profileId: string | null;
+  },
+): Promise<{ ok: true } | { ok: false; error: MachineDbError }> {
+  const { error } = await db.rpc("record_block_machine_identity", {
+    p_block_id: input.blockId,
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+    p_profile_id: input.deviceId === null ? input.profileId : null,
+    p_studio_machine_id: input.deviceId,
+    p_mode_key: input.deviceId === null ? null : input.modeKey,
+  });
+  return error ? { ok: false, error } : { ok: true };
 }

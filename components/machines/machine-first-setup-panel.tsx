@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
 import { unsupportedModes } from "@/lib/machines/unsupported-modes";
 import { Button } from "@/components/ui/button";
@@ -207,7 +208,33 @@ export type MachineFirstSetupPanelProps = {
   onSelectMachine?: (choice: {
     deviceId: string | null;
     modeKey: string | null;
+    /** The existing charting workflow was chosen: no unit, no mode. */
+    legacy?: boolean;
   }) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * The existing charting workflow (the studio's xCell) as one more choice in
+   * THE selector, so there is one control for one decision. Offered only when
+   * the server says this studio has that workflow's history.
+   */
+  legacyMachine?: { profileId: string; label: string } | null;
+  /** The area was saved as that workflow: open on it. */
+  initialLegacyChosen?: boolean;
+  /**
+   * What kind of machine is in force, so the host form can show ONLY that
+   * machine's fields: the existing fields for `legacy` and `none`, none of the
+   * overlapping legacy ones for `native`.
+   */
+  onKindChange?: (kind: "none" | "legacy" | "native") => void;
+  /**
+   * The machine and mode IN FORCE after every resolution, including the one
+   * the panel makes on its own from a remembered, restored or suggested
+   * choice. The host needs it because a machine the panel SHOWS must be the
+   * machine the area SAVES; reporting only explicit picks left an
+   * auto-selected machine on screen that the save never carried.
+   */
+  onResolvedChoice?: (
+    choice: { deviceId: string; modeKey: string } | null,
+  ) => void;
   /**
    * Records ONE SAVE - every settings group at once. Supplied by the connected
    * wrapper.
@@ -294,6 +321,10 @@ export function MachineFirstSetupPanel({
   restoredSelection: restored = null,
   unitNames = {},
   onSelectMachine,
+  legacyMachine = null,
+  initialLegacyChosen = false,
+  onKindChange,
+  onResolvedChoice,
   onRecord,
 }: MachineFirstSetupPanelProps) {
   // SELECTION, STORED FACT AND NOTE MOVE TOGETHER, under one rule.
@@ -399,6 +430,10 @@ export function MachineFirstSetupPanel({
   // How many readings this panel has actually saved in this mount. Drives the
   // "Recorded:" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+  const [legacyChosen, setLegacyChosen] = useState(
+    initialLegacyChosen && legacyMachine !== null,
+  );
   /**
    * Choose (or clear) the machine.
    *
@@ -406,7 +441,8 @@ export function MachineFirstSetupPanel({
    * but it will not survive a reload, and saying nothing is what made the old
    * behaviour look like it had worked.
    */
-  const chooseDevice = async (next: string | null) => {
+  const chooseDevice = async (next: string | null, legacy = false) => {
+    setLegacyChosen(legacy);
     // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
     // previous one over would persist a key from a different profile, which
     // means nothing - a mode exists only within the profile that declares it.
@@ -432,7 +468,11 @@ export function MachineFirstSetupPanel({
     let write: Awaited<ReturnType<NonNullable<typeof onSelectMachine>>> | null = null;
     try {
       write = onSelectMachine
-        ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
+        ? await onSelectMachine({
+            deviceId: next,
+            modeKey: nextMode,
+            ...(legacy ? { legacy: true } : {}),
+          })
         : null;
     } catch {
       // A REJECTION IS A FAILED WRITE, not an absence of one.
@@ -497,7 +537,9 @@ export function MachineFirstSetupPanel({
   // to a studio and the filter is studio-scoped. Without identity the panel
   // shows the catalogue status and nothing else, rather than guessing.
   const selectable = scope ? selectableDevices(scope, devices, catalogue) : [];
-  const chosen = selectable.find((s) => s.device.deviceId === deviceId) ?? null;
+  const chosen = legacyChosen
+    ? null
+    : (selectable.find((s) => s.device.deviceId === deviceId) ?? null);
   // A MODE KEY IS ONLY MEANINGFUL WITHIN ONE PROFILE, so an unrecognised one
   // falls back rather than blanking the panel: a remembered mode can outlive
   // the machine it was chosen on.
@@ -508,6 +550,27 @@ export function MachineFirstSetupPanel({
   const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const unsupported = chosen ? unsupportedModes(chosen.profile) : [];
+  // TELL THE HOST WHICH KIND OF MACHINE IS IN FORCE, so its form shows only
+  // that machine's fields. A chosen native unit with a mode hides the
+  // overlapping legacy fields; nothing chosen, or the existing workflow, keeps
+  // them exactly as they were.
+  const machineKind: "none" | "legacy" | "native" = legacyChosen
+    ? "legacy"
+    : chosen && mode
+      ? "native"
+      : "none";
+  useEffect(() => {
+    onKindChange?.(machineKind);
+  }, [machineKind, onKindChange]);
+  const resolvedDeviceId = chosen && mode ? chosen.device.deviceId : null;
+  const resolvedModeKey = chosen && mode ? mode.key : null;
+  useEffect(() => {
+    onResolvedChoice?.(
+      resolvedDeviceId && resolvedModeKey
+        ? { deviceId: resolvedDeviceId, modeKey: resolvedModeKey }
+        : null,
+    );
+  }, [resolvedDeviceId, resolvedModeKey, onResolvedChoice]);
 
   /**
    * onRecord, plus the one side effect the status line needs. Counting here
@@ -586,8 +649,13 @@ export function MachineFirstSetupPanel({
         >
           <select
             className={fieldControlClass()}
-            value={deviceId ?? ""}
-            onChange={(e) => void chooseDevice(e.target.value || null)}
+            ref={selectRef}
+            value={legacyChosen ? LEGACY_MACHINE_OPTION_VALUE : (deviceId ?? "")}
+            onChange={(e) =>
+              e.target.value === LEGACY_MACHINE_OPTION_VALUE
+                ? void chooseDevice(null, true)
+                : void chooseDevice(e.target.value || null)
+            }
             // FROZEN BY THE HOST'S UNRESOLVED SAVE TOO, not only by a
             // selection write in flight.
             //
@@ -620,6 +688,11 @@ export function MachineFirstSetupPanel({
                 {profile.variant ? ` (${profile.variant})` : ""}
               </option>
             ))}
+            {legacyMachine && (
+              <option value={LEGACY_MACHINE_OPTION_VALUE}>
+                {legacyMachine.label}
+              </option>
+            )}
           </select>
         </FieldLabel>
       )}
@@ -703,8 +776,16 @@ export function MachineFirstSetupPanel({
       {!blockId && onSettingDraft && !(chosen && mode) && (
         <MachineSettingDraftReset onSettingDraft={onSettingDraft} />
       )}
+      {legacyChosen && (
+        <p
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+          data-testid="machine-legacy-chosen"
+        >
+          {legacyMachine?.label}: use the treatment fields below.
+        </p>
+      )}
       {selectable.length === 0 ? (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" hidden={legacyChosen}>
           No verified machine is available to select yet.{" "}
           {!scope
             ? "This surface does not yet know which practitioner and studio is charting, so no machine list can be scoped to it."
@@ -720,7 +801,7 @@ export function MachineFirstSetupPanel({
           controls for one decision, which is the "additional conflicting
           set" the assignment rules out (#860 6156583955).
         */
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" hidden={legacyChosen}>
           Choose the machine you are working on, and its own settings appear
           here.
         </p>
@@ -733,6 +814,19 @@ export function MachineFirstSetupPanel({
               {chosen.profile.variant ? ` (${chosen.profile.variant})` : ""}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
+            {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one
+                selector, so a machine suggested or restored is never a trap. */}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              disabled={selectionPending || identityFrozen}
+              onClick={() => selectRef.current?.focus()}
+              data-testid="machine-change"
+            >
+              Change machine
+            </Button>
           </p>
 
           {/*

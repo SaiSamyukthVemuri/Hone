@@ -504,7 +504,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
 
     const calls = DB.calls.filter(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     );
     // ONE CALL. Two would mean the atomicity this exists for was never
     // obtained, whatever the command does.
@@ -542,7 +542,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
     });
     const args = DB.calls.find(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     )!.args as Record<string, unknown>;
     const readings = (args.p_groups as Array<Record<string, unknown>>)[0]!
       .readings as Array<Record<string, unknown>>;
@@ -588,7 +588,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     // NOTHING WAS SENT. A refusal that had already issued the call would have
     // recorded the first group.
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(0);
   });
 
@@ -1817,7 +1817,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     const calls = DB.calls.filter(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     );
     expect(calls, "the save was refused, or never reached the command").toHaveLength(1);
     // AND IT ASKED FOR AN IDENTITY rather than naming one. The placeholder
@@ -1869,7 +1869,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     // REFUSED BEFORE THE WRITE. A refusal that still called the command would
     // be a message, not a guard.
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
       "the command ran anyway",
     ).toHaveLength(0);
   });
@@ -1905,7 +1905,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     if (!out.ok) return;
     expect(out.reused).toBe(true);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
       "the retry never reached the command that recognises the key",
     ).toHaveLength(1);
   });
@@ -1926,7 +1926,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     if (out.ok) return;
     expect(out.error).toBe(SETUP_GROUPS_MOVED);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(0);
   });
 
@@ -1976,7 +1976,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(1);
   });
 });

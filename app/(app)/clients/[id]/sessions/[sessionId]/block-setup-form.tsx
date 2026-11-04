@@ -20,8 +20,12 @@
 // actions already accept every field used here, no action behavior
 // change.
 
-import { useEffect, useId, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { SaveStatus } from "@/components/sessions/save-status";
+import type { SaveState } from "@/lib/sessions/save-state";
+import { useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
@@ -427,6 +431,79 @@ export function BlockSetupForm({
   const [draft, setDraftRaw] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
+  // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
+  // Opened from the area's SAVED identity (migration 0301), never inferred:
+  // an area with no saved identity is "none", and "none" keeps the existing
+  // charting fields exactly as they were.
+  const [machineKind, setMachineKind] = useState<"none" | "legacy" | "native">(
+    block?.studio_machine_id ? "native" : block?.machine_profile_id ? "legacy" : "none",
+  );
+  // A NEW area carries the chosen machine into its Save (one transaction).
+  const identityDraftRef = useRef<{
+    deviceId: string | null;
+    modeKey: string | null;
+    profileId: string | null;
+  } | null>(null);
+  const [identityDirty, setIdentityDirty] = useState(false);
+  // An EXISTING area that already holds legacy readings is never switched to a
+  // native machine: that would leave two machines' settings on one area, or
+  // overwrite the first. The choice is refused and a new area is the way.
+  const legacyDataLocked = Boolean(
+    block &&
+      (block.mode ||
+        block.apilus_modality ||
+        block.energy_level != null ||
+        block.machine_frequency ||
+        firstEntry?.thermolysis_intensity_percent != null ||
+        firstEntry?.thermolysis_duration_seconds != null ||
+        firstEntry?.galvanic_ma != null ||
+        firstEntry?.galvanic_duration_seconds != null ||
+        firstEntry?.units_of_lye != null),
+  );
+  // The FROZEN setter, reached through a ref because it is declared further
+  // down and this callback has to keep one identity.
+  const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
+  const onKindChange = useCallback(
+    (kind: "none" | "legacy" | "native") => {
+      if (kind === "native" && legacyDataLocked) return;
+      setMachineKind(kind);
+      if (kind === "native") {
+        // Switching never mixes settings: the overlapping legacy fields are
+        // cleared with the switch, and the area saves them as NOT RECORDED.
+        setDraftRef.current((d) => ({
+          ...d,
+          mode: "",
+          apilusModality: "",
+          energyLevel: "",
+          machineFrequency: "",
+          thermolysisIntensityPercent: "",
+          thermolysisDurationSeconds: "",
+          galvanicMa: "",
+          galvanicDurationSeconds: "",
+          unitsOfLye: "",
+          pulseCount: String(PULSE_COUNT_DEFAULT),
+          pulseDelay: String(PULSE_DELAY_DEFAULT),
+        }));
+      }
+    },
+    [legacyDataLocked],
+  );
+  const onIdentityDraft = useCallback(
+    (
+      choice: {
+        deviceId: string | null;
+        modeKey: string | null;
+        profileId: string | null;
+      } | null,
+      explicit: boolean,
+    ) => {
+      identityDraftRef.current = choice;
+      // Only a pick the practitioner made counts as an unsaved edit.
+      if (explicit) setIdentityDirty(choice !== null);
+    },
+    [],
+  );
+  const showLegacyFields = machineKind !== "native";
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
   // rather than as a global "has she edited it?" boolean.
   //
@@ -847,6 +924,7 @@ export function BlockSetupForm({
     if (draftFrozen) return;
     setDraftRaw(...args);
   };
+  setDraftRef.current = setDraft as (u: (d: Draft) => Draft) => void;
   /**
    * The retry key of the save in progress, or null when none is open.
    *
@@ -900,6 +978,24 @@ export function BlockSetupForm({
     blocking: string | null;
     identity: PendingSetupIdentity;
   } | null>(null);
+
+  // THE SAVE STATE, derived from what the form already knows rather than kept
+  // as a second account of it: Saving while the save runs, Couldn't save after
+  // a refusal (the same Save button retries), Unsaved while anything entered
+  // has not been saved, and Saved only for an existing area with nothing
+  // pending. A new area with nothing entered shows no status, because there is
+  // nothing to lose.
+  const initialDraftJson = useRef<string | null>(null);
+  if (initialDraftJson.current === null) {
+    initialDraftJson.current = JSON.stringify(draft);
+  }
+  const dirty =
+    JSON.stringify(draft) !== initialDraftJson.current ||
+    machineDraft !== null ||
+    identityDirty;
+  // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
+  const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void } | null>(null);
+  useUnsavedGuard(dirty && !pending, (proceed) => setLeaveAttempt({ proceed }));
 
   /**
    * The collector's report, plus the key's lifetime rule.
@@ -1417,6 +1513,15 @@ export function BlockSetupForm({
         // same save. Null when nothing was entered, which is an ordinary save
         // of an area with no machine settings.
         initialSetup: attachedSetup,
+        // THE CHOSEN MACHINE, saved with the area in the same transaction. Null
+        // when none was chosen, which saves exactly as before.
+        machineIdentity: identityDraftRef.current
+          ? {
+              machineId: identityDraftRef.current.deviceId,
+              modeKey: identityDraftRef.current.modeKey,
+              profileId: identityDraftRef.current.profileId,
+            }
+          : null,
       }).catch(() => {
         // THE TRANSPORT FAILED, so the server's answer is UNKNOWN - not
         // negative. The area may well have been created.
@@ -1646,6 +1751,33 @@ export function BlockSetupForm({
 
   return (
     <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+      <ConfirmDialog
+        open={leaveAttempt !== null}
+        title="Leave without saving?"
+        description="You have unsaved changes. If you leave, they will be lost."
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        onConfirm={() => {
+          const go = leaveAttempt?.proceed;
+          setLeaveAttempt(null);
+          go?.();
+        }}
+        onCancel={() => setLeaveAttempt(null)}
+      />
+      {(() => {
+        const state: SaveState | null = pending
+          ? { status: "saving" }
+          : error
+            ? { status: "failed", message: error }
+            : dirty
+              ? { status: "unsaved" }
+              : isEdit
+                ? { status: "saved" }
+                : null;
+        return state ? (
+          <SaveStatus state={state} onRetry={() => submit()} />
+        ) : null;
+      })()}
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-medium">
           {isEdit ? "Edit settings block" : "Add settings block"}
@@ -1696,6 +1828,18 @@ export function BlockSetupForm({
         // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
         // below can be frozen by it (Codex, #860 4302176844).
         onRevisionUnresolved={setRevisionUnresolved}
+        // THE SAVED CHOICE of this area (the record), not a preference.
+        savedIdentity={
+          block
+            ? {
+                profileId: block.machine_profile_id ?? null,
+                deviceId: block.studio_machine_id ?? null,
+                modeKey: block.machine_mode_key ?? null,
+              }
+            : null
+        }
+        onKindChange={onKindChange}
+        onIdentityDraft={block ? undefined : onIdentityDraft}
       />
 
       {copyMessage && (
@@ -1717,6 +1861,7 @@ export function BlockSetupForm({
           order (PR #204): frequency (a property of the machine),
           then probe, then mode and the mode-specific modality.
           Minutes performed moved to the end, after the readings. */}
+      {showLegacyFields && (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Machine frequency</span>
         <div className="flex flex-wrap gap-2">
@@ -1741,6 +1886,7 @@ export function BlockSetupForm({
           })}
         </div>
       </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Probe</span>
@@ -1849,6 +1995,7 @@ export function BlockSetupForm({
         )}
       </div>
 
+      {showLegacyFields && (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
@@ -1871,8 +2018,9 @@ export function BlockSetupForm({
           })}
         </div>
       </div>
+      )}
 
-      {showModality && (
+      {showLegacyFields && showModality && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Modality</span>
           <select
@@ -1915,6 +2063,7 @@ export function BlockSetupForm({
 
         {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
             used to sit near modality). Same energy_level column; UI move only. */}
+        {showLegacyFields && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Energy level (EL)</span>
           <input
@@ -1927,13 +2076,14 @@ export function BlockSetupForm({
             className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         </label>
+        )}
 
         {/* MACHINE ORDER (Chloe): the COMPLETE galvanic group precedes
             thermolysis for every blend modality: PicoBlend, OmniBlend,
             MultiBlend, EvoluBlend, SynchroBlend, not only OmniBlend as before.
             Pure modes render whichever single group applies. */}
-        {galvSection}
-        {thermoSection}
+        {showLegacyFields && galvSection}
+        {showLegacyFields && thermoSection}
 
         <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
           <span className="text-sm font-medium">Hairs treated</span>

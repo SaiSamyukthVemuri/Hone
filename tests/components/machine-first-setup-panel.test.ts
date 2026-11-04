@@ -293,8 +293,12 @@ describe("once chosen, the panel shows that model's native fields", () => {
     // control would be a second way to do what this one already does
     // (Sam, 19:16; #860 6156583955).
     expect(html).toContain('data-testid="machine-select"');
-    expect(html, "the link it replaced must not linger").not.toContain(
-      "Change machine",
+    // HON-8 (Sam, 4 Nov preview feedback): an EXPLICIT "Change machine" control
+    // is wanted again. It is deliberately NOT a second picker: it only moves
+    // focus to this one selector, so there is still one control for one decision.
+    expect(html).toContain('data-testid="machine-change"');
+    expect(html, "no second picker beside the selector").not.toContain(
+      'data-testid="machine-pills"',
     );
     // The empty option is how a selection is cleared, so clearing stays
     // reachable after a choice.
@@ -416,8 +420,12 @@ describe("the connected wrapper makes NO request until asked", () => {
       .split("\n")
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .join("\n");
-    // An effect is how the regression got in. Its absence is the guard.
-    expect(code).not.toContain("useEffect");
+    // An effect is how the regression got in. HON-8 allows exactly ONE, and
+    // only for an area that already carries a SAVED machine (migration 0301):
+    // a reopened area opens on its machine instead of an empty "Choose
+    // machine". Every other charting path still makes no request on mount.
+    expect((code.match(/useEffect\(/g) ?? []).length).toBe(1);
+    expect(code).toMatch(/if \(hasSavedIdentity && state === "idle" && ctx === null\) void open\(\)/);
     expect(code).toContain("useCallback");
   });
 
