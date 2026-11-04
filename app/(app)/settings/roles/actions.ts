@@ -3,8 +3,10 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   coreAccess,
+  coreActivate,
   coreAdopt,
   coreHistory,
+  corePreviewActivation,
   corePreviewAdopt,
   corePreviewChanges,
   corePreviewReset,
@@ -13,7 +15,7 @@ import {
 } from "@/lib/settings/roles/core";
 import { enforcementRefusal } from "@/lib/settings/roles/model";
 import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
-import { reasonAcceptable, type AccessResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
+import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
 // Server actions of the Roles page (R2). Each one re-checks on the server that the caller is the owner, then hands the request to the
 // permission core, which decides everything again from the CURRENT membership row and answers with a code. The page never computes a
@@ -149,4 +151,36 @@ export async function effectiveAccessAction(membershipId: unknown): Promise<Acce
   if (!owner) return refuse({ code: "refused" });
   if (typeof membershipId !== "string" || membershipId.length === 0) return refuse({ code: "not_found" });
   return coreAccess(owner.studioId, membershipId);
+}
+
+// Activation of released settings (0287 Activation rule). Owner-only; the core decides which keys are released and what would change.
+// The page names the keys it showed the owner, so a key released later is never activated by a stale screen.
+const keyList = (v: unknown): string[] | null =>
+  Array.isArray(v) && v.length > 0 && v.every((k) => typeof k === "string" && k.length > 0) ? [...new Set(v as string[])] : null;
+
+/** What activating these released settings would change, computed by the core. Writes nothing. */
+export async function previewActivationAction(keys: unknown): Promise<ActivationPreviewResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  const list = keyList(keys);
+  if (!list) return refuse({ code: "keys_required" });
+  return corePreviewActivation(owner.studioId, list);
+}
+
+/** Activate the named keys, bound to the version and the preview hash the owner saw. A hash that no longer matches is refused. */
+export async function activatePermissionsAction(
+  keys: unknown,
+  expectedVersion: unknown,
+  reason: unknown,
+  previewHash: unknown,
+  sensitiveConfirmed: unknown,
+): Promise<CommandResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  const list = keyList(keys);
+  if (!list) return refuse({ code: "keys_required" });
+  if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
+  if (typeof previewHash !== "string" || previewHash === "") return refuse({ code: "preview_required" });
+  if (!reasonAcceptable("adopt", false, reasonText(reason))) return refuse({ code: "reason_required" });
+  return coreActivate(owner.studioId, list, expectedVersion, reasonText(reason).trim(), previewHash, sensitiveConfirmed === true);
 }

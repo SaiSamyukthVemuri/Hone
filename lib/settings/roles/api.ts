@@ -52,7 +52,11 @@ export type ServerPreview = { version: number; roles: RolePreview[] };
 export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; error: RoleError };
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
 
-export type AuditKind = "role_permissions_saved" | "defaults_adopted" | "role_reset" | "staff_role_changed";
+/** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 Insurance AA-1). */
+export type ActivationPreview = ServerPreview & { keys: string[]; digest: string; sensitiveKeys: string[]; confirmationRequired: boolean };
+export type ActivationPreviewResult = { ok: true; preview: ActivationPreview } | { ok: false; error: RoleError };
+
+export type AuditKind = "role_permissions_saved" | "defaults_adopted" | "role_reset" | "staff_role_changed" | "permissions_activated";
 
 /** One audit row as list_permission_audit returns it: names resolved at read time, no emails. A removed member reads as "former member". */
 export type AuditRow = {
@@ -85,6 +89,7 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   defaults_adopted: "New defaults adopted",
   role_reset: "Role reset to defaults",
   staff_role_changed: "Staff role changed",
+  permissions_activated: "Released settings activated",
 };
 
 export type Operation = "save" | "reset" | "adopt";

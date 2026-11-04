@@ -5,9 +5,11 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 import { loadStudioPolicyState } from "@/lib/settings/roles/policy-store";
 import type { Role } from "@/lib/permissions/catalog";
 import {
+  activatePermissionsAction,
   adoptNewDefaultsAction,
   effectiveAccessAction,
   listPermissionAuditAction,
+  previewActivationAction,
   previewAdoptAction,
   previewResetAction,
   previewRoleChangesAction,
@@ -102,6 +104,8 @@ export default async function RolesSettingsPage() {
         reload={reloadPolicyAction}
         reset={resetRolePolicyAction}
         adopt={adoptNewDefaultsAction}
+        previewActivation={previewActivationAction}
+        activate={activatePermissionsAction}
         loadHistory={listPermissionAuditAction}
         loadAccess={effectiveAccessAction}
       />

@@ -2,8 +2,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import type { Role } from "@/lib/permissions/catalog";
-import type { AccessResult, CommandResult, HistoryResult, PreviewResult } from "./api";
-import { UNEXPECTED, parseAccess, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
+import type { AccessResult, ActivationPreviewResult, CommandResult, HistoryResult, PreviewResult } from "./api";
+import { UNEXPECTED, parseAccess, parseActivationPreview, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
 
 // The ONLY place the Roles page talks to the permission core (0287). Every call runs as the signed-in user, so the core decides who the
 // owner is from the CURRENT membership row (never from anything passed here) and refuses everyone else with a code. A transport error
@@ -57,6 +57,30 @@ export async function coreReset(studioId: string, role: Role, version: number, r
 
 export async function coreAdopt(studioId: string, version: number, reason: string): Promise<CommandResult> {
   return parseCommand(await call("adopt_new_defaults", { p_studio: studioId, p_expected_version: version, p_reason: reason }));
+}
+
+export async function corePreviewActivation(studioId: string, keys: string[]): Promise<ActivationPreviewResult> {
+  return parseActivationPreview(await call("preview_activation", { p_studio: studioId, p_keys: keys }));
+}
+
+export async function coreActivate(
+  studioId: string,
+  keys: string[],
+  version: number,
+  reason: string,
+  previewHash: string,
+  sensitiveConfirmed: boolean,
+): Promise<CommandResult> {
+  return parseCommand(
+    await call("activate_released_permissions", {
+      p_studio: studioId,
+      p_keys: keys,
+      p_expected_version: version,
+      p_reason: reason,
+      p_preview_hash: previewHash,
+      p_sensitive_confirmed: sensitiveConfirmed,
+    }),
+  );
 }
 
 export async function coreHistory(studioId: string, before: string | null): Promise<HistoryResult> {

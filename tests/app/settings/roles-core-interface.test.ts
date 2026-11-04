@@ -131,7 +131,7 @@ describe("the migration's functions and parameter names are the ones the page ca
   const src = readFileSync("lib/settings/roles/core.ts", "utf8");
   it("matches every rpc name and p_ argument", () => {
     const calls = [...src.matchAll(/call\("([a-z_]+)", \{([^}]*)\}\)/g)];
-    expect(calls.length).toBe(9);
+    expect(calls.length).toBe(11);
     for (const [, fn, args] of calls) {
       const sig = sql.match(new RegExp(`function public\\.${fn}\\(([^)]*)\\)`));
       expect(sig, fn).not.toBeNull();

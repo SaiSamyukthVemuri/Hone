@@ -46,6 +46,8 @@ const render = (over: Record<string, unknown> = {}) =>
       save: noop,
       reset: noop,
       adopt: noop,
+      previewActivation: noop,
+      activate: noop,
       loadHistory: noop,
       loadAccess: noop,
       reload: noop,
