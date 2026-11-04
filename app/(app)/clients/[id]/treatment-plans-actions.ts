@@ -12,6 +12,7 @@ import type {
   TreatmentPlanStageLengthUnit,
 } from "@/lib/types/database";
 import { DEFAULT_PLAN_STAGES } from "@/lib/treatment-plans/stage-defaults";
+import { EDIT_RECORDS_REFUSAL, VIEW_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 const MAX_NAME = 100;
 const MAX_VISITS = 200;
@@ -144,10 +145,9 @@ async function recordsRefusal(formData: FormData): Promise<ActionResult | null> 
   // from THIS file to find the gap between the plan check and the mutation, and the gate must not shift that count.
   const gate = await gateClient();
   // Plans are chart content: viewing is the floor (NQ-10) and editing is its own key (NQ-11/12, ahead of enforcement).
-  const ok =
-    (await requirePermission(gate, studio.id, "clin.view_records", { client })).allowed &&
-    (await requirePermission(gate, studio.id, "clin.edit_records", { client })).allowed;
-  return ok ? null : { ok: false, error: "Not available to your role." };
+  if (!(await requirePermission(gate, studio.id, "clin.view_records", { client })).allowed) return { ok: false, error: VIEW_REFUSAL };
+  if (!(await requirePermission(gate, studio.id, "clin.edit_records", { client })).allowed) return { ok: false, error: EDIT_RECORDS_REFUSAL };
+  return null;
 }
 
 export async function createTreatmentPlanAction(

@@ -21,6 +21,7 @@ import {
   PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"];
 
@@ -235,7 +236,7 @@ export async function addElectrolysisEntryAction(
     return { ok: false, code: "not_persisted", error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, code: "not_persisted", error: "Not available to your role." };
+    return { ok: false, code: "not_persisted", error: EDIT_RECORDS_REFUSAL };
   }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
@@ -426,7 +427,7 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
     throw new Error("Not available to your role.");
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error("Not available to your role.");
+    throw new Error(EDIT_RECORDS_REFUSAL);
   }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
@@ -503,7 +504,7 @@ async function softDeleteEntry(
     throw new Error("Not available to your role.");
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error("Not available to your role.");
+    throw new Error(EDIT_RECORDS_REFUSAL);
   }
 
   // L18 FINAL (migration 0169) revoked INSERT/UPDATE/DELETE from `authenticated`
@@ -663,7 +664,7 @@ export async function updateNextSessionNoteAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   const supabase = await createClient();
@@ -695,7 +696,7 @@ export async function updateSessionPerformerAction(
     throw new Error("Not available to your role.");
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error("Not available to your role.");
+    throw new Error(EDIT_RECORDS_REFUSAL);
   }
 
   const newPerformerId = typeof performerId === "string" && performerId
@@ -824,7 +825,7 @@ export async function editSessionStartedAtAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   // L18 Phase 3: the read-validate-write-audit sequence is now ONE transaction

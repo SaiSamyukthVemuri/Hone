@@ -61,6 +61,7 @@ import type {
   SessionBlockSide,
   SessionMode,
 } from "@/lib/types/database";
+import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 // Body Chart v1 Phase B caps + enum mirror the migration 0039 CHECKs.
 // Defense in depth: RLS + DB CHECK already reject bad values; the action
@@ -403,7 +404,7 @@ export async function createSessionBlockAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   // Validate the new structured-area fields up front so the caller gets a
@@ -547,7 +548,7 @@ export async function updateSessionBlockAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   // Validate any structured-area fields present in the patch. Each is
@@ -814,7 +815,7 @@ export async function softDeleteSessionBlockAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   const supabase = await createClient();
@@ -872,7 +873,7 @@ export async function removeSessionAreaAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   const supabase = await createClient();
@@ -1228,7 +1229,7 @@ export async function createTreatmentAreaWithEntryAction(
     return { ok: false, error: "Not available to your role.", unresolved: false };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role.", unresolved: false };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL, unresolved: false };
   }
   // WHY THAT CATCH EXISTS (Codex, #860 4305702526). `assertSessionForClient`
   // THROWS, and the create form's catch labels anything thrown as unresolved
@@ -1739,7 +1740,7 @@ export async function updateTreatmentAreaWithEntryAction(
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   const areaCheck = normalizeStructuredArea({

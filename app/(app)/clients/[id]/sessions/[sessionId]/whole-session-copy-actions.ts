@@ -14,6 +14,7 @@ import {
   normalizeWholeSessionCopy,
   type WholeSessionCopyDraftInput,
 } from "@/lib/sessions/whole-session-copy-normalize";
+import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 // Whole-session "Copy areas and settings" (migration 0157).
 //
@@ -277,7 +278,7 @@ export async function commitWholeSessionCopyAction(input: {
     return { ok: false, error: "Not available to your role." };
   }
   if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: input.clientId })).allowed) {
-    return { ok: false, error: "Not available to your role." };
+    return { ok: false, error: EDIT_RECORDS_REFUSAL };
   }
 
   if (!input.idempotencyKey || input.idempotencyKey.trim() === "") {
