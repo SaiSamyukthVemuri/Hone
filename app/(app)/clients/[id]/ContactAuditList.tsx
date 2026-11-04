@@ -14,7 +14,7 @@ export function ContactAuditList({ rows }: { rows: ContactAuditRow[] }) {
           {items.map((i) => (
             <li key={i.id} className="text-sm" data-testid="contact-audit-row">
               <span className="font-medium">{i.label}</span>: {i.from} → {i.to}
-              <span className="text-muted-foreground"> · {i.who} · {new Date(i.at).toISOString().slice(0, 10)} UTC</span>
+              <span className="text-muted-foreground"> · {i.who} · {Number.isNaN(Date.parse(i.at)) ? "date unavailable" : `${new Date(i.at).toISOString().slice(0, 10)} UTC`}</span>
             </li>
           ))}
         </ul>

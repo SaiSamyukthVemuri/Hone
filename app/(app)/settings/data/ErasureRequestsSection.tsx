@@ -28,6 +28,7 @@ export function ErasureRequestsSection({
   onAdvance,
   onWithdraw,
   onCorrect,
+  onClear,
 }: {
   requests: ErasureRequestRow[];
   clients: ClientNames;
@@ -35,6 +36,7 @@ export function ErasureRequestsSection({
   onAdvance: Action;
   onWithdraw: Action;
   onCorrect: Action;
+  onClear: Action;
 }) {
   const rows = requests.map(describeErasureRequest);
   return (
@@ -63,10 +65,16 @@ export function ErasureRequestsSection({
             <div className="text-muted-foreground" data-testid="erasure-reason">{r.reasonCleared ? "Reason cleared" : r.reason}</div>
             <form action={onCorrect} className="mt-2 grid gap-1" data-testid="erasure-correct-form">
               <input type="hidden" name="request_id" value={r.id} />
-              <label className="text-xs" htmlFor={`erasure-correct-${r.id}`}>Correct the reason (leave blank to clear it)</label>
-              <input id={`erasure-correct-${r.id}`} name="reason" maxLength={ERASURE_REASON_MAX} className="rounded border px-2 py-1 text-sm" autoComplete="off" />
+              <label className="text-xs" htmlFor={`erasure-correct-${r.id}`}>Replace the reason</label>
+              <input id={`erasure-correct-${r.id}`} name="reason" required maxLength={ERASURE_REASON_MAX} className="rounded border px-2 py-1 text-sm" autoComplete="off" />
               <button type="submit" className="w-fit rounded border px-3 py-1">Save reason</button>
             </form>
+            {r.reasonCleared ? null : (
+              <form action={onClear} className="mt-1" data-testid="erasure-clear-form">
+                <input type="hidden" name="request_id" value={r.id} />
+                <button type="submit" className="w-fit rounded border px-3 py-1">Clear reason</button>
+              </form>
+            )}
             <div className="mt-2 flex flex-wrap gap-2">
               {r.next ? (
                 <form action={onAdvance}>

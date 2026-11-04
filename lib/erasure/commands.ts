@@ -49,15 +49,20 @@ export async function advanceErasure(ctx: ErasureCtx, input: { requestId: unknow
   return call(ctx, "advance_client_erasure_request", { p_studio: ctx.studio.id, p_request: input.requestId, p_to: input.to });
 }
 
-/** Correct the reason, or clear it (a blank reason clears). The one exception to a request being unchangeable; the database audits that it happened, never the text. */
+/** Replace the reason. A blank value is an error here, never a clear: clearing is its own deliberate command (Privacy DP1), because the earlier wording is not kept. */
 export async function correctErasureReason(ctx: ErasureCtx, input: { requestId: unknown; reason: unknown }): Promise<ErasureResult> {
   if (!isOwner(ctx)) return { ok: false, error: REFUSED };
   if (!isUuid(input.requestId)) return { ok: false, error: FAILED };
-  const raw = typeof input.reason === "string" ? input.reason.trim() : "";
-  if (raw === "") return call(ctx, "correct_client_erasure_reason", { p_studio: ctx.studio.id, p_request: input.requestId, p_reason: null });
-  const reason = validateErasureReason(raw);
+  const reason = validateErasureReason(input.reason);
   if (!reason.ok) return reason;
   return call(ctx, "correct_client_erasure_reason", { p_studio: ctx.studio.id, p_request: input.requestId, p_reason: reason.reason });
+}
+
+/** Clear the reason (NULL). Only reachable from the explicit "Clear reason" control; the database audits that it happened, never the text. */
+export async function clearErasureReason(ctx: ErasureCtx, input: { requestId: unknown }): Promise<ErasureResult> {
+  if (!isOwner(ctx)) return { ok: false, error: REFUSED };
+  if (!isUuid(input.requestId)) return { ok: false, error: FAILED };
+  return call(ctx, "correct_client_erasure_reason", { p_studio: ctx.studio.id, p_request: input.requestId, p_reason: null });
 }
 
 export async function withdrawErasure(ctx: ErasureCtx, input: { requestId: unknown }): Promise<ErasureResult> {

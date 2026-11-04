@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { advanceErasure, correctErasureReason, erasureErrorCopy, requestErasure, withdrawErasure, type ErasureCtx } from "@/lib/erasure/commands";
+import { advanceErasure, clearErasureReason, correctErasureReason, erasureErrorCopy, requestErasure, withdrawErasure, type ErasureCtx } from "@/lib/erasure/commands";
 
 const CLIENT = "22222222-2222-4222-8222-222222222222";
 const REQ = "33333333-3333-4333-8333-333333333333";
@@ -52,10 +52,21 @@ describe("erasure commands: owner first, studio from the session, plain errors (
     expect((await correctErasureReason(c, { requestId: "nope", reason: "x" })).ok).toBe(false);
     expect((await correctErasureReason(c, { requestId: REQ, reason: "x".repeat(301) })).ok).toBe(false);
     expect(rpc).not.toHaveBeenCalled();
-    expect(await correctErasureReason(c, { requestId: REQ, reason: "   " })).toEqual({ ok: true });
-    expect(rpc).toHaveBeenLastCalledWith("correct_client_erasure_reason", { p_studio: STUDIO, p_request: REQ, p_reason: null });
+    for (const blank of ["   ", "", null, undefined]) expect((await correctErasureReason(c, { requestId: REQ, reason: blank })).ok, String(blank)).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
     expect(await correctErasureReason(c, { requestId: REQ, reason: "  Fixed  " })).toEqual({ ok: true });
     expect(rpc).toHaveBeenLastCalledWith("correct_client_erasure_reason", { p_studio: STUDIO, p_request: REQ, p_reason: "Fixed" });
+  });
+
+  it("clear: owner only, sends NULL, and is the only way to clear", async () => {
+    const denied = ctx({ role: "practitioner" });
+    expect((await clearErasureReason(denied.c, { requestId: REQ })).ok).toBe(false);
+    expect(denied.rpc).not.toHaveBeenCalled();
+    const { c, rpc } = ctx();
+    expect((await clearErasureReason(c, { requestId: "nope" })).ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(await clearErasureReason(c, { requestId: REQ })).toEqual({ ok: true });
+    expect(rpc).toHaveBeenCalledWith("correct_client_erasure_reason", { p_studio: STUDIO, p_request: REQ, p_reason: null });
   });
 
   it("withdraw calls the held command with the session's studio", async () => {

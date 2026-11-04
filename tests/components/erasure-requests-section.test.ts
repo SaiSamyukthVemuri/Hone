@@ -9,7 +9,7 @@ const noop = async () => {};
 const row = (id: string, client: string, state: ErasureRequestRow["state"]): ErasureRequestRow => ({ id, client_id: client, state, reason: "Asked in writing", requested_at: "2026-11-04T10:00:00Z" });
 const C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const render = (requests: ErasureRequestRow[], clients = {}) => renderToStaticMarkup(createElement(ErasureRequestsSection, { requests, clients, onRequest: noop, onAdvance: noop, onWithdraw: noop, onCorrect: noop }));
+const render = (requests: ErasureRequestRow[], clients = {}) => renderToStaticMarkup(createElement(ErasureRequestsSection, { requests, clients, onRequest: noop, onAdvance: noop, onWithdraw: noop, onCorrect: noop, onClear: noop }));
 
 describe("erasure requests section (R5, prepared)", () => {
   it("says, above everything else, that recording a request deletes nothing and erasure is not available", () => {
@@ -60,7 +60,13 @@ describe("erasure requests section (R5, prepared)", () => {
     expect(html).toContain("Do not include personal details about the client here.");
     expect(html).toContain("correct or clear the reason");
     expect(html).toContain('data-testid="erasure-correct-form"');
-    expect(html).toContain("leave blank to clear it");
+    expect(html).toContain("Replace the reason");
+    expect(html).not.toContain("leave blank");
+    // Save requires text; clearing is its own control and is not offered once cleared (Privacy DP1, Insurance U-1).
+    expect(html).toMatch(/id="erasure-correct-r1"[^>]*required/);
+    expect(html).toContain('data-testid="erasure-clear-form"');
+    expect(html).toContain("Clear reason");
+    expect(render([{ ...row("r1", C1, "confirmed"), reason: null }])).not.toContain('data-testid="erasure-clear-form"');
   });
   it("a cleared reason is shown as cleared, never as blank or null", () => {
     const html = render([{ ...row("r1", C1, "confirmed"), reason: null }]);
