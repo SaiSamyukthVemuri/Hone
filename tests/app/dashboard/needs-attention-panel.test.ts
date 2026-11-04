@@ -49,7 +49,7 @@ describe("Needs Attention panel interaction contract", () => {
   });
 
   it("Dismiss exists only for the owner, and only when the owner's dismissals could be read", () => {
-    expect(SRC).toMatch(/enabled: isOwner && !dismissalsUnavailable/);
+    expect(SRC).toMatch(/enabled: isOwner && dismissalsEnabled && !dismissalsUnavailable/);
     expect(SRC).toMatch(/if \(!api\.enabled \|\| identity === null\) return null/);
   });
 

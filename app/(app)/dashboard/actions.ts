@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
 
 export async function signOut() {
   const supabase = await createClient();
@@ -35,6 +36,8 @@ function asResult(data: unknown, error: unknown): AttentionActionResult {
 }
 
 export async function dismissAttentionAction(itemKey: unknown, instanceToken: unknown): Promise<AttentionActionResult> {
+  // Gate OFF: the command does not exist yet on a database without 0298. Refuse before touching anything.
+  if (!dashboardDismissalsEnabled()) return { ok: false, code: "unavailable" };
   const studioId = await ownerStudioId();
   if (!studioId) return { ok: false, code: "refused" };
   if (typeof itemKey !== "string" || typeof instanceToken !== "string" || !SHAPE.test(itemKey) || !SHAPE.test(instanceToken)) {
@@ -48,6 +51,7 @@ export async function dismissAttentionAction(itemKey: unknown, instanceToken: un
 }
 
 export async function restoreAttentionAction(itemKey: unknown): Promise<AttentionActionResult> {
+  if (!dashboardDismissalsEnabled()) return { ok: false, code: "unavailable" };
   const studioId = await ownerStudioId();
   if (!studioId) return { ok: false, code: "refused" };
   if (typeof itemKey !== "string" || !SHAPE.test(itemKey)) return { ok: false, code: "invalid_item" };

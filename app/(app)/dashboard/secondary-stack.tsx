@@ -29,6 +29,7 @@ import {
 } from "@/lib/dashboard/needs-attention-model";
 import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
 import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
+import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
 import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
 import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
@@ -669,6 +670,8 @@ type VisibleNeeds = {
   // Owner only: how far back unpaid appointments were looked for, and whether the list was cut. Null for everyone else.
   unpaid: { windowDays: number | null; notReturned: number } | null;
   dismissed: DismissedRow[];
+  // False while the dismissals gate is OFF (migration 0298 not applied): no Dismiss, no Dismissed view, no note, no database call.
+  dismissalsEnabled: boolean;
   // True when the owner's dismissals could not be read: every reminder is shown and Dismiss is withheld.
   dismissalsUnavailable: boolean;
   // False when a check that feeds the client cards could not run, so no number is claimed.
@@ -699,11 +702,13 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     const unpaid = unpaidRead?.ok ? { windowDays: unpaidRead.windowDays, notReturned: unpaidRead.notReturned } : null;
     const countKnown = !model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c));
     // Non-owners have no dismissals, no Dismissed view and no Dismiss: their list is the model as built.
-    if (!props.isOwner) return { shown: model, unpaid, dismissed: [], dismissalsUnavailable: false, countKnown };
+    if (!props.isOwner) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };
+    // Gate OFF: nothing is dismissed, nothing is read, nothing is called.
+    if (!dashboardDismissalsEnabled()) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };
     const read = await loadMyDismissals(props.studioId);
-    if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsUnavailable: true, countKnown };
+    if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: true, dismissalsUnavailable: true, countKnown };
     const { shown, dismissed } = applyDismissals(model, read.rows);
-    return { shown, unpaid, dismissed, dismissalsUnavailable: false, countKnown };
+    return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
   })();
   visibleMemo.set(props.attentionSources, run);
   return run;
@@ -716,6 +721,7 @@ export async function NeedsAttentionSection(props: OwnerNeedsInputs) {
       needs={v.shown}
       dismissed={v.dismissed}
       isOwner={props.isOwner}
+      dismissalsEnabled={v.dismissalsEnabled}
       dismissalsUnavailable={v.dismissalsUnavailable}
       unpaid={v.unpaid}
       unpaidAll={props.unpaidAll}

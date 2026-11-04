@@ -17,6 +17,8 @@ const { NeedsAttentionPanel } = await import("@/app/(app)/dashboard/needs-attent
 const { buildNeedsAttention } = await import("@/lib/dashboard/needs-attention-model");
 
 beforeEach(() => {
+  // These cases are about the gate being ON (migration 0298 applied); the OFF cases live in dismissals-gate.test.ts.
+  vi.stubEnv("HONE_DASHBOARD_DISMISSALS_ENABLED", "true");
   role.value = "owner";
   rpc.mockClear();
 });
@@ -59,7 +61,7 @@ describe("the panel", () => {
       { appointmentId: "a2", clientId: "c3", clientName: "Cy Client", endsAt: "2026-11-01T16:00:00Z", balance: { kind: "unavailable" } },
     ],
   });
-  const render = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(NeedsAttentionPanel, { needs: model, ...over } as never));
+  const render = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(NeedsAttentionPanel, { needs: model, dismissalsEnabled: true, ...over } as never));
   it("owner: Dismiss on dismissable items; the unpaid amount is the authoritative figure; an unknown balance reads Amount unavailable and has no Dismiss", () => {
     const html = render({ isOwner: true });
     expect(html).toContain("Still owes $50.00 CAD");
@@ -86,7 +88,7 @@ describe("the panel", () => {
   it("an empty list with dismissed rows is still the all-clear, with the Dismissed control kept", () => {
     const empty = buildNeedsAttention({ assistant: { items: [], hasItems: false, totalFound: 0, allItems: [], allTotal: 0 } as never, intakesAwaitingReview: [], todo: { items: [], moreCount: 0 } as never });
     const html = renderToStaticMarkup(
-      createElement(NeedsAttentionPanel, { needs: empty, isOwner: true, dismissed: [{ itemKey: "k", instanceToken: "1", who: "Payments", label: "x", detail: null, kind: "studio", href: "/h", actionLabel: "Open" }] } as never),
+      createElement(NeedsAttentionPanel, { needs: empty, isOwner: true, dismissalsEnabled: true, dismissed: [{ itemKey: "k", instanceToken: "1", who: "Payments", label: "x", detail: null, kind: "studio", href: "/h", actionLabel: "Open" }] } as never),
     );
     expect(html).toContain("Nothing needs attention right now");
     expect(html).toContain("Dismissed (1)");

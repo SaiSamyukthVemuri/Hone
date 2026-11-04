@@ -223,6 +223,7 @@ export function NeedsAttentionPanel({
   needs,
   dismissed = [],
   isOwner = false,
+  dismissalsEnabled = false,
   dismissalsUnavailable = false,
   unpaid = null,
   unpaidAll = false,
@@ -231,6 +232,8 @@ export function NeedsAttentionPanel({
   needs: NeedsAttention;
   dismissed?: ReadonlyArray<DismissedRow>;
   isOwner?: boolean;
+  // The server-side gate (lib/dashboard/dismissals-gate). Fails closed: absent means no Dismiss, no Dismissed view, no note.
+  dismissalsEnabled?: boolean;
   dismissalsUnavailable?: boolean;
   // Owner only. How far back unpaid appointments were looked for (null = every finished appointment) and how many were not returned.
   unpaid?: { windowDays: number | null; notReturned: number } | null;
@@ -253,13 +256,13 @@ export function NeedsAttentionPanel({
     });
   };
   const api: DismissApi = {
-    enabled: isOwner && !dismissalsUnavailable,
+    enabled: isOwner && dismissalsEnabled && !dismissalsUnavailable,
     busy: pending,
     error: actionError,
     dismiss: (key, token) => run(() => dismissAttentionAction(key, token)),
   };
   const restore = (key: string) => run(() => restoreAttentionAction(key));
-  const dismissedView = isOwner ? <DismissedView rows={dismissed} isOwner={!dismissalsUnavailable} restore={restore} busy={pending} /> : null;
+  const dismissedView = isOwner && dismissalsEnabled ? <DismissedView rows={dismissed} isOwner={!dismissalsUnavailable} restore={restore} busy={pending} /> : null;
   // Says what the unpaid check covers, and offers the bounded "All outstanding" view. Owners only: nobody else has the check.
   const unpaidNote =
     isOwner && unpaid ? (
@@ -278,7 +281,7 @@ export function NeedsAttentionPanel({
       {actionError}
     </p>
   ) : null;
-  const dismissalsNote = isOwner && dismissalsUnavailable ? (
+  const dismissalsNote = isOwner && dismissalsEnabled && dismissalsUnavailable ? (
     <p data-testid="attention-dismissals-unavailable" className="text-xs text-neutral-500">
       Could not read your dismissed reminders just now, so every reminder is shown and Dismiss is off. Reload to try again.
     </p>

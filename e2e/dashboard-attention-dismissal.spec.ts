@@ -96,8 +96,13 @@ async function moneyHashes(seed: E2eSeed) {
   return out;
 }
 
+// Dismissal needs migration 0298 AND the gate (HONE_DASHBOARD_DISMISSALS_ENABLED=true). Cases that need it run only on an owned stack that
+// has both; the gate-OFF case and the money cases below run everywhere, which is the proof that the app ships without 0298.
+const GATE_ON = process.env.HONE_DASHBOARD_DISMISSALS_ENABLED === "true";
+const gated: typeof test = GATE_ON ? test : (test.skip as unknown as typeof test);
+
 test.describe("Dashboard Needs attention: dismissal", () => {
-  test("shows exact money, dismisses per owner across reload and a second device, reappears on a real change, never touches money", async ({ page, browser }) => {
+  gated("shows exact money, dismisses per owner across reload and a second device, reappears on a real change, never touches money", async ({ page, browser }) => {
     const { seed, unpaid, partial, intakeClient } = await seedStudioWithMoney();
     await page.setViewportSize({ width: 1280, height: 900 });
     await loginAsOwner(page, seed);
@@ -172,7 +177,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await ctx2.close();
   });
 
-  test("setup status stays visible in Settings after its reminder is dismissed", async ({ page }) => {
+  gated("setup status stays visible in Settings after its reminder is dismissed", async ({ page }) => {
     const { seed } = await seedStudioWithMoney();
     await page.setViewportSize({ width: 1280, height: 900 });
     await loginAsOwner(page, seed);
@@ -185,6 +190,27 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await setupDismiss.click();
     await page.goto("/settings/payments");
     await expect(page.locator("main")).toContainText(/not connected|connect|set up|not set up/i);
+  });
+
+  // Gate OFF (the default of every ordinary run, and what ships while 0298 is held): no Dismiss, no Dismissed view, no "could not read"
+  // note, and nothing in the page asked the database for dismissals; the one count and the exact unpaid amounts still work.
+  (GATE_ON ? test.skip : test)("gate OFF: no Dismiss, no Dismissed view, no note; the one count and the exact amounts still work", async ({ page }) => {
+    const { seed, unpaid, partial } = await seedStudioWithMoney();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    const c = await counts(page);
+    expect(c.clients).toBe(3);
+    await expect(unpaidAmountOf(page, unpaid.name)).toContainText("120.00");
+    await expect(unpaidAmountOf(page, unpaid.name)).toContainText("CAD");
+    await expect(unpaidAmountOf(page, partial.name)).toContainText("144.50");
+    await expect(page.getByTestId("attention-dismiss")).toHaveCount(0);
+    await expect(page.getByTestId("attention-dismissed")).toHaveCount(0);
+    await expect(page.getByTestId("attention-dismissed-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("attention-dismissals-unavailable")).toHaveCount(0);
+    await expect(page.locator("main")).not.toContainText(/could not read your dismissed/i);
+    await expect(page.getByTestId("needs-attention-unpaid-toggle")).toBeVisible();
+    await expect(page.getByTestId("dashboard-summary-strip")).not.toContainText(/clients to review/i);
   });
 
   test("a non-owner sees no amounts and no Dismiss", async ({ page }) => {
@@ -211,14 +237,16 @@ test.describe("Dashboard Needs attention: dismissal", () => {
       await loginAsOwner(page, seed);
       await openDashboard(page);
       await expect(panel(page)).toBeVisible({ timeout: T });
-      // A click before hydration is lost: retry until the dismissal has actually landed (the Dismissed view appears).
-      await expect(async () => {
-        if (await page.getByTestId("attention-dismissed-toggle").count()) return;
-        await dismissIn(page, "Intake").click({ timeout: 3_000 });
-        await expect(page.getByTestId("attention-dismissed-toggle")).toBeVisible({ timeout: 5_000 });
-      }).toPass({ timeout: 60_000 });
-      await page.getByTestId("attention-dismissed-toggle").click();
-      await expect(page.getByTestId("attention-restore").first()).toBeVisible({ timeout: T });
+      if (GATE_ON) {
+        // A click before hydration is lost: retry until the dismissal has actually landed (the Dismissed view appears).
+        await expect(async () => {
+          if (await page.getByTestId("attention-dismissed-toggle").count()) return;
+          await dismissIn(page, "Intake").click({ timeout: 3_000 });
+          await expect(page.getByTestId("attention-dismissed-toggle")).toBeVisible({ timeout: 5_000 });
+        }).toPass({ timeout: 60_000 });
+        await page.getByTestId("attention-dismissed-toggle").click();
+        await expect(page.getByTestId("attention-restore").first()).toBeVisible({ timeout: T });
+      }
 
       const report = await page.evaluate((vw) => {
         const doc = document.documentElement;
@@ -238,7 +266,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
       console.log(`LAYOUT ${width}: ${JSON.stringify(report)}`);
       expect(report.scrollWidth, `scrollWidth ${report.scrollWidth}`).toBeLessThanOrEqual(width);
       expect(report.offenders, report.offenders.join("\n")).toEqual([]);
-      expect(report.dismiss.length).toBeGreaterThan(0);
+      if (GATE_ON) expect(report.dismiss.length).toBeGreaterThan(0);
       for (const d of report.dismiss) expect(d.h, `Dismiss height ${d.h}`).toBeGreaterThanOrEqual(36);
       await page.screenshot({ path: test.info().outputPath(`needs-attention-${width}.png`), fullPage: false });
     });
