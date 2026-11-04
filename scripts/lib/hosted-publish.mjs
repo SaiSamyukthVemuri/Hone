@@ -317,7 +317,7 @@ export function makeHostedClient({ url, key, fetchImpl = fetch, checkUrl = parse
     return res.json();
   };
   return {
-    // NO NEW EXPOSURE (Privacy BB1): nothing here reads supabase_migrations, which the API does not expose. The fingerprint is whether the sync
+    // NO NEW EXPOSURE (Privacy BB1): nothing here reads the migrations schema, which the API does not expose. The fingerprint is whether the sync
     // function is present on the target (the API's own OpenAPI document). The migration head and the count of already-published rows are bound
     // into the approval token from Sam's separate read-only check; the runner compares the row count itself (before any write) and holds the
     // head to the repo's declared value. Project kind is NOT read: it is asserted by the token.
