@@ -37,6 +37,28 @@
 begin;
 set local lock_timeout = '5s';
 
+-- CODEX-P2 (session-bound proof stamp). The credential window below reads the account's CURRENT recovery_sent_at /
+-- confirmation_sent_at, which ANY later link or recovery request moves (no redemption needed): an honest changed-account session on
+-- device 1 would lose proof the moment device 2 asks for a link. So when a sign-in completes, the app asks
+-- public.stamp_session_link_proof() to record that the window held for THIS session, together with the anchor it held against.
+-- A stamp proves its session until the next email-change activity moves the anchor. A stamp is written ONLY while the window holds,
+-- so it never proves a session the window would not have proved at that moment (the completion and pre-change sessions never get one).
+-- No API role can read or write the table; only the two SECURITY DEFINER functions below use it. Rows of signed-out sessions are
+-- inert (the link check also requires the session row to exist).
+create table if not exists public.auth_session_link_proofs (
+  session_id uuid primary key,
+  user_id uuid not null,
+  anchor timestamptz not null,
+  stamped_at timestamptz not null default now()
+);
+alter table public.auth_session_link_proofs enable row level security;
+revoke all on table public.auth_session_link_proofs from public;
+revoke all on table public.auth_session_link_proofs from anon;
+revoke all on table public.auth_session_link_proofs from authenticated;
+revoke all on table public.auth_session_link_proofs from service_role;
+comment on table public.auth_session_link_proofs is
+  '0291 CODEX-P2: one row per session whose credential window held when the sign-in completed (anchor = the last email-change activity it held against). Written only by stamp_session_link_proof(); read only by session_link_proof_is_current(). No API role has access.';
+
 create or replace function public.session_link_proof_is_current()
 returns boolean
 language plpgsql stable security definer
@@ -90,10 +112,16 @@ begin
     return false;
   end if;
   v_anchor := greatest(v_sent, v_last_update);
-  return coalesce(
-    (v_recovery > v_anchor and v_recovery < v_session_created)
-    or (v_confirmation > v_anchor and v_confirmation < v_session_created),
-    false);
+  if coalesce(
+       (v_recovery > v_anchor and v_recovery < v_session_created)
+       or (v_confirmation > v_anchor and v_confirmation < v_session_created),
+       false) then
+    return true;
+  end if;
+  -- CODEX-P2: the window held for THIS session when its sign-in completed, against the same (still current) anchor.
+  return exists (
+    select 1 from public.auth_session_link_proofs p
+     where p.session_id = v_session_id::uuid and p.user_id = v_uid and p.anchor = v_anchor);
 end;
 $$;
 
@@ -105,6 +133,89 @@ revoke execute on function public.session_link_proof_is_current() from anon;
 revoke execute on function public.session_link_proof_is_current() from authenticated;
 revoke execute on function public.session_link_proof_is_current() from service_role;
 grant execute on function public.session_link_proof_is_current() to authenticated;
+
+create or replace function public.stamp_session_link_proof()
+returns boolean
+language plpgsql volatile security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_sent timestamptz;
+  v_recovery timestamptz;
+  v_confirmation timestamptz;
+  v_changed boolean;
+  v_last_update timestamptz;
+  v_anchor timestamptz;
+  v_anchor_now timestamptz;
+  v_session_id text := auth.jwt() ->> 'session_id';
+  v_session_created timestamptz;
+begin
+  if v_uid is null then
+    return false;
+  end if;
+  select u.email_change_sent_at, u.recovery_sent_at, u.confirmation_sent_at
+    into v_sent, v_recovery, v_confirmation
+    from auth.users u
+   where u.id = v_uid;
+  if not found then
+    return false;
+  end if;
+  select coalesce(bool_or(i.created_at is null or i.updated_at is null or i.updated_at <> i.created_at), false),
+         max(i.updated_at)
+    into v_changed, v_last_update
+    from auth.identities i
+   where i.user_id = v_uid and i.provider = 'email';
+  -- Never-changed: proven without a stamp (and without reading auth.sessions, as in session_link_proof_is_current).
+  if v_sent is null and not v_changed then
+    return true;
+  end if;
+  if v_session_id is null
+     or v_session_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then
+    return false;
+  end if;
+  select s.created_at into v_session_created
+    from auth.sessions s
+   where s.id = v_session_id::uuid and s.user_id = v_uid;
+  if not found then
+    return false;
+  end if;
+  v_anchor := greatest(v_sent, v_last_update);
+  if coalesce(
+       (v_recovery > v_anchor and v_recovery < v_session_created)
+       or (v_confirmation > v_anchor and v_confirmation < v_session_created),
+       false) then
+    insert into public.auth_session_link_proofs (session_id, user_id, anchor)
+    values (v_session_id::uuid, v_uid, v_anchor)
+    on conflict (session_id) do update
+      set anchor = excluded.anchor, stamped_at = now()
+      where public.auth_session_link_proofs.user_id = excluded.user_id;
+    -- The reads above are separate statements; if a change committed meanwhile, the anchor has moved: drop the stamp.
+    select greatest(
+             (select u.email_change_sent_at from auth.users u where u.id = v_uid),
+             (select max(i.updated_at) from auth.identities i where i.user_id = v_uid and i.provider = 'email'))
+      into v_anchor_now;
+    if v_anchor_now is distinct from v_anchor then
+      delete from public.auth_session_link_proofs where session_id = v_session_id::uuid and anchor = v_anchor;
+      return false;
+    end if;
+    return true;
+  end if;
+  -- Not provable now; an existing stamp for this session against the current anchor still proves it (no new row is written).
+  return exists (
+    select 1 from public.auth_session_link_proofs p
+     where p.session_id = v_session_id::uuid and p.user_id = v_uid and p.anchor = v_anchor);
+end;
+$$;
+
+comment on function public.stamp_session_link_proof() is
+  '0291 CODEX-P2: the link check of session_link_proof_is_current(), and when the credential window holds for the caller''s session, records it (auth_session_link_proofs) so a later link request on another device cannot un-prove it. Writes only while the window holds. Callable by authenticated only.';
+
+revoke execute on function public.stamp_session_link_proof() from public;
+revoke execute on function public.stamp_session_link_proof() from anon;
+revoke execute on function public.stamp_session_link_proof() from authenticated;
+revoke execute on function public.stamp_session_link_proof() from service_role;
+grant execute on function public.stamp_session_link_proof() to authenticated;
 
 create or replace function public.session_proves_mailbox()
 returns boolean

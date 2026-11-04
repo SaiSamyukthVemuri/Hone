@@ -140,12 +140,18 @@ export function linkProofNeedsDatabase(claims: ProofClaims, user: ProofUser): bo
   return entries(claims).some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method));
 }
 
-/** The database half of S-2b (0291). Any error, a missing function or a non-true answer is "not proven". */
-export type LinkProofRpc = (fn: "session_link_proof_is_current") => PromiseLike<{ data: unknown; error: unknown }>;
-export async function databaseLinkProof(rpc: LinkProofRpc | undefined): Promise<boolean> {
+/**
+ * The database half of S-2b (0291). Any error, a missing function or a non-true answer is "not proven".
+ *   * `session_link_proof_is_current`: read-only check (page loads, the admin gate);
+ *   * `stamp_session_link_proof`: the same check, and when the credential window holds it RECORDS that for this session (CODEX-P2),
+ *     so a later link request on another device cannot un-prove it. Called once, where a sign-in completes (/auth/callback).
+ */
+export type LinkProofFunction = "session_link_proof_is_current" | "stamp_session_link_proof";
+export type LinkProofRpc = (fn: LinkProofFunction) => PromiseLike<{ data: unknown; error: unknown }>;
+export async function databaseLinkProof(rpc: LinkProofRpc | undefined, fn: LinkProofFunction = "session_link_proof_is_current"): Promise<boolean> {
   if (!rpc) return false;
   try {
-    const { data, error } = await rpc("session_link_proof_is_current");
+    const { data, error } = await rpc(fn);
     return !error && data === true;
   } catch {
     return false;

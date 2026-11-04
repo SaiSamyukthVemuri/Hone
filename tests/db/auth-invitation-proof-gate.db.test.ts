@@ -239,6 +239,58 @@ describe("0291 S-2b: the JWT's session must exist, and on a changed account a cr
     expect(await OK(u, method), "a link issued at +0.600 redeemed at +0.700").toBe("ok");
   });
 
+  const stamp = (userId: string, sid: string | undefined) =>
+    userQueryWithClaims(userId, { amr: [{ method: "otp", timestamp: 1 }], ...(sid ? { session_id: sid } : {}) }, `select public.stamp_session_link_proof() as ok`).then((r) => r.rows[0].ok as boolean);
+  const stamps = (sid: string) => adminQuery(`select count(*)::int as n from public.auth_session_link_proofs where session_id = $1`, [sid]).then((r) => r.rows[0].n as number);
+
+  it("CODEX-P2 CONFIRMED (unstamped): a later link request that moves recovery_sent_at past the session un-proves it", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    await newSession(u.id, at(2_000));
+    await set(u.id, { recovery_sent_at: at(1_000) });
+    expect(await OK(u), "control: proven while its own credential is the latest").toBe("ok");
+    await set(u.id, { recovery_sent_at: at(5_000) }); // a second device asked for a link; not redeemed
+    expect(await pending(u.id, [{ method: "otp", timestamp: 1 }]), "the unstamped session lost proof (the Codex P2 finding)").toEqual({ status: "proof_required" });
+  });
+
+  it("CODEX-P2 FIX: a session stamped while its window held KEEPS proof after another device's request; a NEW change voids the stamp", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    const sid = await newSession(u.id, at(2_000));
+    await set(u.id, { recovery_sent_at: at(1_000) });
+    expect(await stamp(u.id, sid), "the stamp is written while the window holds").toBe(true);
+    expect(await stamps(sid)).toBe(1);
+    await set(u.id, { recovery_sent_at: at(5_000) });
+    expect(await OK(u), "still proven after a later link request (session-bound)").toBe("ok");
+    expect(await stamp(u.id, sid), "re-stamping is a read of the existing stamp, no new proof").toBe(true);
+    await set(u.id, { email_change_sent_at: at(6_000) }); // new email-change activity moves the anchor
+    expect(await pending(u.id, [{ method: "otp", timestamp: 1 }]), "a new change voids the stamp").toEqual({ status: "proof_required" });
+    expect(await stamp(u.id, sid), "and it cannot be re-stamped against the new anchor").toBe(false);
+  });
+
+  it("CODEX-P2: no stamp is ever written outside the window (completion shape, pre-change session, foreign or missing session)", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    await set(u.id, { email_change_sent_at: at(-1_000), recovery_sent_at: at(-30_000) });
+    const completion = await newSession(u.id, at(10));
+    expect(await stamp(u.id, completion), "completion shape").toBe(false);
+    expect(await stamps(completion)).toBe(0);
+    const before = await newSession(u.id, at(-500));
+    expect(await stamp(u.id, before), "pre-change session").toBe(false);
+    expect(await stamps(before)).toBe(0);
+    const other = await invitedUser();
+    expect(await stamp(u.id, sessions.get(other.id)), "another user's session id").toBe(false);
+    expect(await stamp(u.id, undefined), "no session id").toBe(false);
+    expect(await adminQuery(`select count(*)::int as n from public.auth_session_link_proofs where user_id = $1`, [u.id]).then((r) => r.rows[0].n)).toBe(0);
+  });
+
+  it("CODEX-P2: a never-changed account's stamp call is true and writes nothing", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(0));
+    expect(await stamp(u.id, sessions.get(u.id))).toBe(true);
+    expect(await adminQuery(`select count(*)::int as n from public.auth_session_link_proofs where user_id = $1`, [u.id]).then((r) => r.rows[0].n)).toBe(0);
+  });
+
   it("the completion shape: a session created AFTER the change with no credential issued in between is refused", async () => {
     const u = await invitedUser();
     await emailIdentity(u, at(-60_000), at(0));
@@ -314,6 +366,22 @@ describe("0291 privileges", () => {
     for (const role of ["anon", "service_role"] as const) {
       await expect(asRole(role, (q) => q(`select public.session_link_proof_is_current()`))).rejects.toThrow(/permission denied|42501/i);
     }
+  });
+
+  it("CODEX-P2 privileges: stamp_session_link_proof is EXECUTE for authenticated only; the stamp table is closed to every API role", async () => {
+    const g = await adminQuery(
+      `select r.rolname, has_function_privilege(r.rolname, 'public.stamp_session_link_proof()', 'execute') as ok,
+              has_table_privilege(r.rolname, 'public.auth_session_link_proofs', 'select') as sel,
+              has_table_privilege(r.rolname, 'public.auth_session_link_proofs', 'insert') as ins
+         from pg_roles r where r.rolname in ('anon', 'authenticated', 'service_role') order by 1`);
+    expect(g.rows).toEqual([
+      { rolname: "anon", ok: false, sel: false, ins: false },
+      { rolname: "authenticated", ok: true, sel: false, ins: false },
+      { rolname: "service_role", ok: false, sel: false, ins: false },
+    ]);
+    const acl = await adminQuery(`select coalesce(array_to_string(proacl, ','), '') as acl from pg_proc where oid = 'public.stamp_session_link_proof()'::regprocedure`);
+    expect(acl.rows[0].acl, "no PUBLIC (=X) entry").not.toMatch(/(^|,)=X/);
+    await expect(asRole("authenticated", (q) => q(`select count(*) from public.auth_session_link_proofs`))).rejects.toThrow(/permission denied|42501/i);
   });
 
   it("the helper is callable by no browser or service role", async () => {

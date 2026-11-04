@@ -62,11 +62,12 @@ export async function GET(request: Request) {
         identities: data.user.identities,
       };
       // S-2b: for an account whose address changed, only the database can tell a fresh session from the attacker's (0291). The
-      // request client now carries the session the exchange just issued, so the RPC is asked about exactly that session.
+      // request client now carries the session the exchange just issued, so the RPC is asked about exactly that session, and it
+      // STAMPS the session while its credential window holds (CODEX-P2: a later link request on another device cannot un-prove it).
       const proven =
         mailboxProofMethod(proofClaims, proofUser) !== null ||
         (linkProofNeedsDatabase(proofClaims, proofUser) &&
-          (await databaseLinkProof((fn) => supabase.rpc(fn))));
+          (await databaseLinkProof((fn) => supabase.rpc(fn), "stamp_session_link_proof")));
       if (proven) {
         // Account-wide remediation is OFF unless the HONE_PROOF_HARDENING rollout flag says otherwise (lib/auth/proof-hardening.ts).
         // It rotates a password, which GoTrue answers by revoking every session, so it re-issues one for the person who just

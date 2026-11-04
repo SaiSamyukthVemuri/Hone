@@ -81,3 +81,24 @@ Every legitimate post-change sign-in moves `recovery_sent_at` into that window; 
 issued before the change no longer redeems (`otp_expired`). The function is EXECUTE for `authenticated` only, revoked from
 public/anon/authenticated/service_role by name first. The app's reader calls it for exactly the accounts whose address changed,
 because the app cannot see `auth.sessions`. Evidence and negative controls: `auth-worker/1333-RULE-FIX-PACKAGE.md`.
+
+## CODEX-P2 (session-bound proof stamp, auth-worker, 4 Nov)
+**The finding (Codex, confirmed by test):** the credential window reads the account's CURRENT `recovery_sent_at` /
+`confirmation_sent_at`. Any later link or recovery request moves them, even if never redeemed, so an honest changed-account session
+on one device lost proof when another device asked for a link. It failed closed: an availability problem, not a hole.
+
+**The fix:** `public.stamp_session_link_proof()` (volatile, SECURITY DEFINER, EXECUTE for authenticated only).
+- `/auth/callback` calls it when a sign-in completes.
+- It runs the same window check. Only when the window holds does it record `(session_id, user_id, anchor)` in
+  `public.auth_session_link_proofs` (RLS on, no API role may read or write it).
+- It re-reads the anchor afterwards and drops the stamp if a change committed in between.
+- `session_link_proof_is_current()` also accepts a stamp for the caller's own session whose anchor equals the CURRENT anchor.
+  Any new email-change activity voids it.
+
+**Why the attack refusals are unchanged:** a stamp is written only at a moment the existing rule would itself prove the session.
+- the completion session and a pre-change session can never be stamped (tested, including an attacker calling the RPC directly
+  in every race round);
+- refresh keeps `session_id`;
+- a signed-out session is still refused (the session row must exist).
+
+**Residual:** a session that never reaches the callback (no app sign-in path) is not stamped and keeps the previous behaviour.

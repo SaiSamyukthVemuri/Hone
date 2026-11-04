@@ -62,12 +62,15 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
     expect(fn.indexOf("if v_sent is null and not v_changed then")).toBeLessThan(fn.indexOf("from auth.sessions s"));
     const fnCode = fn.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
     expect(fnCode.split("auth.sessions").length - 1, "auth.sessions is read in exactly one statement").toBe(1);
+    // CODEX-P2: the stamp is consulted only after the window, against the SAME current anchor, for the caller's own session.
+    expect(fn).toContain("where p.session_id = v_session_id::uuid and p.user_id = v_uid and p.anchor = v_anchor);");
     // the session is the caller's own: matched by id AND user, the uuid cast guarded inside a CASE (Privacy Y1)
     expect(sql).toContain("where s.id = v_session_id::uuid and s.user_id = v_uid;");
     expect(sql).toMatch(/or v_session_id !~ '\^\[0-9a-fA-F\]\{8\}-[^']+\$' then\s+return false;/);
     // link-type proof in SQL goes through the one function the app also calls
     expect(sql).toContain("and public.session_link_proof_is_current())");
-    expect(ts).toContain('rpc("session_link_proof_is_current")');
+    expect(ts).toContain('fn: LinkProofFunction = "session_link_proof_is_current"');
+    expect(ts).toContain('export type LinkProofFunction = "session_link_proof_is_current" | "stamp_session_link_proof";');
     // the unusable column stays unused on both sides
     expect(code(sql)).not.toMatch(/u\.updated_at|users\.updated_at/);
     expect(code(ts)).not.toMatch(/user\??\.updated_at/);
@@ -80,5 +83,13 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
     }
     expect([...sql.matchAll(/grant execute on function public\.session_link_proof_is_current\(\) to (\w+);/g)].map((m) => m[1])).toEqual(["authenticated"]);
     expect(sql).not.toMatch(/grant execute on function public\.session_proves_mailbox\(\)/);
+    // CODEX-P2: the stamp recorder has the same grant shape; the stamp table is closed to every API role.
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(sql).toContain(`revoke execute on function public.stamp_session_link_proof() from ${role};`);
+      expect(sql).toContain(`revoke all on table public.auth_session_link_proofs from ${role};`);
+    }
+    expect([...sql.matchAll(/grant execute on function public\.stamp_session_link_proof\(\) to (\w+);/g)].map((m) => m[1])).toEqual(["authenticated"]);
+    expect(sql).not.toMatch(/grant [a-z, ]+ on (table )?public\.auth_session_link_proofs/);
+    expect(sql).toContain("alter table public.auth_session_link_proofs enable row level security;");
   });
 });

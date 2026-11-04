@@ -38,6 +38,12 @@ const getUser = async (t: string) => (await gotrue("GET", "user", undefined, ANO
 /** The PURE app rule (lib/auth/email-proof.ts) alone. */
 const pureGate = async (t: string) => mailboxProofMethod(claimsFromAccessToken(t), (await getUser(t)) as never);
 /** 0291 over PostgREST with this token: my_pending_invitation answers proof_required unless session_proves_mailbox() holds. */
+/** CODEX-P2: what /auth/callback calls when a sign-in completes (and what an attacker can call at will over PostgREST). */
+const stampRpc = async (t: string) => {
+  const r = await fetch(`${E2E_SUPABASE_URL}/rest/v1/rpc/stamp_session_link_proof`, { method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: "{}" });
+  expect(r.status, "stamp RPC answered").toBe(200);
+  return (await r.json()) as boolean;
+};
 const dbProven = async (t: string) => {
   const r = await fetch(`${E2E_SUPABASE_URL}/rest/v1/rpc/my_pending_invitation`, { method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: "{}" });
   expect(r.status, "0291 answered").toBe(200);
@@ -60,6 +66,7 @@ const appGate = async (t: string) => {
   expect(await dbProven(t), `0291 agrees with the app reader (app: ${method})`).toBe(method !== null);
   return method;
 };
+const c0 = (t: string) => (claimsFromAccessToken(t) as { sub?: string } | null)?.sub;
 const refresh = async (rt: unknown) => {
   const r = await gotrue("POST", "token?grant_type=refresh_token", { refresh_token: rt }, ANON);
   expect(r.status, "setup: the session is still refreshable").toBe(200);
@@ -121,6 +128,7 @@ describe("ATTACK: the session the LAST confirm click returns is not proof of the
       const t = await times(attacker.id, token);
       expect(t.s_created, "precondition: the completion session was created AFTER the change (microseconds)").toBeGreaterThan(t.anchor);
       evidence[`completion_implicit_${lastHalf}`] = { mailerAutoconfirm, doubleConfirm, completedBy: done.completedBy, amr: claimsOf(token)?.amr, sessionMinusAnchorMs: Math.round(((t.s_created as number) - t.anchor) * 1000 * 100) / 100, amrSecondMinusAnchorSecond: amrSecond(token) - Math.floor(t.anchor) };
+      expect(await stampRpc(token), "SECURE: the completion session cannot be stamped").toBe(false);
       expect(await appGate(token), "SECURE: the completion session does not prove the new address").toBeNull();
       expect(await appGate(await refresh(done.completionRefreshToken)), "SECURE: nor does its refresh").toBeNull();
     }, 60_000);
@@ -158,6 +166,7 @@ describe("ATTACK: a session created BEFORE the change, in the SAME whole second 
     evidence.sameSecond = tries;
     expect(reached, `precondition: a pre-change session in the change's own second was produced (tries: ${JSON.stringify(tries)})`).not.toBeNull();
     const r = reached as NonNullable<typeof reached>;
+    expect(await stampRpc(r.token), "SECURE: the same-second pre-change session cannot be stamped").toBe(false);
     expect(await appGate(r.token), "SECURE: the same-second pre-change session is refused").toBeNull();
     expect(await appGate(await refresh(r.refreshToken)), "SECURE: refresh does not launder it").toBeNull();
   }, 120_000);
@@ -329,6 +338,8 @@ describe("RACE (AW2): credential requests fired CONCURRENTLY with the completing
       const verdicts: Json[] = [];
       for (const h of held) {
         attackerSessions++;
+        const stamped = await stampRpc(h.token); // the attacker calls the recorder too
+        if (c0(h.token) === a.id) expect(stamped, "SECURE: no stamp for a session on the changed account").toBe(false);
         const v = await appGate(h.token);
         const c = claimsFromAccessToken(h.token) as { sub?: string; email?: string; amr?: { method: string }[] } | null;
         // MEASURED: during the race GoTrue can mail a `signup` link for the now-free OLD address and create a NEW account for it
@@ -346,4 +357,27 @@ describe("RACE (AW2): credential requests fired CONCURRENTLY with the completing
     evidence.race = { rounds: ROUNDS, doubleConfirm, attackerSessions, acceptedOnChangedAccount: accepted, rows };
     expect(accepted, `SECURE: no proven session on the CHANGED account (rows: ${JSON.stringify(rows).slice(0, 2000)})`).toBe(0);
   }, 600_000);
+});
+describe("CODEX-P2 on a real GoTrue: proof is bound to the session by the stamp written when its sign-in completes", () => {
+  it("device 1's stamped session stays proven after device 2 asks for a link; an UNSTAMPED session loses proof (the finding)", async () => {
+    const owner = await confirmedUser("p2");
+    const victim = addr("p2v"); // the owner's new address
+    const s0 = await linkSession(owner.email);
+    await sleep(1100);
+    expect((await changeEmailKeepingCompletion(s0.access_token, owner.id, owner.email, victim, { lastHalf: "new" })).applied, "setup: applied").toBe(true);
+    await sleep(1100);
+    const device1 = await pkceLinkSession(victim);
+    expect(await stampRpc(device1.access_token), "the callback's stamp succeeds for a fresh post-change sign-in").toBe(true);
+    await sleep(1100); // GoTrue's per-address send frequency (max_frequency) between two link requests
+    const device3 = await pkceLinkSession(victim); // never stamped (control)
+    expect(await appGate(device3.access_token), "control: the unstamped session is proven while its credential is the latest").toBe("email_link_or_otp");
+    await sleep(1100);
+    // device 2 asks for a link (never redeemed); GoTrue's per-address send frequency may answer 429 first, so retry (bounded).
+    let device2 = 0;
+    for (let i = 0; i < 6 && device2 !== 200; i++) { device2 = (await gotrue("POST", "otp", { email: victim, create_user: false }, ANON)).status; if (device2 !== 200) await sleep(1100); }
+    expect(device2, "device 2's link request was accepted").toBe(200);
+    expect(await appGate(device1.access_token), "FIXED: the stamped session keeps its proof (both gates)").toBe("email_link_or_otp");
+    expect(await appGate(await refresh(device1.refresh_token)), "and across refresh").toBe("email_link_or_otp");
+    expect(await appGate(device3.access_token), "CONFIRMED: an unstamped session loses proof (Codex P2 without the stamp)").toBeNull();
+  }, 90_000);
 });

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isAdmin } from "@/lib/admin";
-import { databaseLinkProof, linkProofNeedsDatabase, mailboxProofMethod, type LinkProofRpc, type ProofClaims, type ProofMethod, type ProofUser } from "@/lib/auth/email-proof";
+import { databaseLinkProof, linkProofNeedsDatabase, mailboxProofMethod, type LinkProofFunction, type LinkProofRpc, type ProofClaims, type ProofMethod, type ProofUser } from "@/lib/auth/email-proof";
 
 // Server-side readers for the session's mailbox proof. The user comes from getUser() (validated by the auth server) and the
 // claims from getClaims() (signature-verified), so neither is read from an unverified cookie. Any failure answers "no proof".
@@ -25,7 +25,7 @@ export async function sessionMailboxProof(
     const claims = claimsData.claims as ProofClaims;
     const method = mailboxProofMethod(claims, user);
     if (method === null && linkProofNeedsDatabase(claims, user)) {
-      const rpc = supabase.rpc ? (fn: "session_link_proof_is_current") => supabase.rpc!(fn) : undefined;
+      const rpc = supabase.rpc ? (fn: LinkProofFunction) => supabase.rpc!(fn) : undefined;
       if (await databaseLinkProof(rpc)) return { user: user as ProofUser & { id?: string }, method: "email_link_or_otp" };
     }
     return { user: user as ProofUser & { id?: string }, method };
