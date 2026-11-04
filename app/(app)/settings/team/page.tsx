@@ -110,7 +110,7 @@ function CurrentPractitioners({
             ? "Just you."
             : `${practitioners.length} active.`}
         </p>
-        {showReviewLink && (
+        {showReviewLink ? (
           <p className="mt-2 text-sm">
             <Link
               href="/calendar/check-practitioner"
@@ -120,6 +120,19 @@ function CurrentPractitioners({
               Review practitioner assignments
             </Link>
             <span className="text-neutral-500"> to check who is recorded on open appointments.</span>
+          </p>
+        ) : (
+          // Sam, DQ-7: the reminder above is hidden when nothing needs review, but the page stays reachable from Settings. This quiet entry is
+          // rendered only inside the owner-only branch of this page (non-owners are stopped before it) and opens a page that keeps its own owner
+          // guard; it grants nothing.
+          <p className="mt-2 text-xs text-neutral-500">
+            <Link
+              href="/calendar/check-practitioner"
+              data-testid="team-review-assignments-quiet"
+              className="underline underline-offset-2"
+            >
+              Practitioner assignment review
+            </Link>
           </p>
         )}
       </div>
