@@ -30,6 +30,7 @@ import {
 import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
 import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
 import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
+import { dashboardUnpaidEnabled } from "@/lib/dashboard/unpaid-gate";
 import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
 import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
@@ -685,7 +686,9 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
   const run = (async (): Promise<VisibleNeeds> => {
     const input = await resolveNeedsAttentionInput(props);
     // Unpaid balances are owner-only money (0254). A practitioner's render never queries them and never receives a figure.
-    const unpaidRead = props.isOwner
+    // HON-65: also OFF unless the unpaid gate is on (lib/dashboard/unpaid-gate). OFF = the loader is never called, so there are no
+    // items, no window note or link, no "could not check" entry, and the heading count excludes unpaid.
+    const unpaidRead = props.isOwner && dashboardUnpaidEnabled()
       ? await loadUnpaidAttention({
           studioId: props.studioId,
           studioTimezone: props.studioTimezone,
