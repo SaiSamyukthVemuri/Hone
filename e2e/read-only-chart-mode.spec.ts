@@ -13,6 +13,17 @@ import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 
 const T = 20_000;
 
+// Insurance B-1: the release row is GLOBAL to the stack, so the arrange step must not leave it released for later specs. The prior row is read
+// before the arrange step and put back in afterAll (also when the case fails or is skipped after arranging).
+let priorRelease: { released_at: string | null; release_tag: string; release_kind: string } | null = null;
+test.afterAll(async () => {
+  if (!priorRelease) return;
+  await sql(
+    `update public.permission_key_release set released_at = $1::timestamptz, release_tag = $2, release_kind = $3 where key = 'clin.edit_records'`,
+    [priorRelease.released_at, priorRelease.release_tag, priorRelease.release_kind],
+  );
+});
+
 test("a practitioner with clin.edit_records Off sees the chart read-only; the owner still edits", async ({ browser }) => {
   const host = new URL(E2E_DB_URL).hostname;
   test.skip(!["127.0.0.1", "localhost", "::1"].includes(host), `BLOCKED: database host ${host} is not loopback; this fixture is local-stack only`);
@@ -20,6 +31,12 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
   const seed = await seedE2eStudio();
   const member = await seedE2eMember(seed);
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+
+  priorRelease = (
+    await sql<{ released_at: string | null; release_tag: string; release_kind: string }>(
+      `select released_at::text as released_at, release_tag, release_kind from public.permission_key_release where key = 'clin.edit_records'`,
+    )
+  )[0] ?? null;
 
   await test.step("arrange (local only): operator releases the key, then the owner's Off is stored for the practitioner role", async () => {
     await sql(
