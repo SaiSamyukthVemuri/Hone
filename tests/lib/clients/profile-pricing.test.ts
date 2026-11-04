@@ -96,7 +96,7 @@ describe("the profile page wires the ruling", () => {
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
   it("the owner decision gates both loaders", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
-    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: canViewRecords \};/);
+    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate \};/);
     expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
     expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
   });
