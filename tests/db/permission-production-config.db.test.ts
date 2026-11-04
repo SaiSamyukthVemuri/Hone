@@ -31,6 +31,8 @@ afterAll(async () => {
   for (const r of SAVED) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,$2,$3,$4)", [r.key, r.released_at, r.release_tag, r.release_kind]);
   await closePool();
 });
+// Put a key's release row back to PENDING so a case does not depend on what an earlier case marked.
+const unrelease = (key: string, kind: "full" | "narrow") => adminQuery("update public.permission_key_release set released_at=null, release_tag='R1-R2', release_kind=$2 where key=$1", [key, kind]);
 const mark = (keys: string[], tag: string, kind = "full") => adminQuery("select public.mark_permissions_released($1::text[],$2,$3) n", [keys, tag, kind]);
 
 describe("production configuration: releases are pending", () => {
@@ -72,6 +74,7 @@ describe("production configuration: releases are pending", () => {
   it("AZ1: narrow release, the owner stores a deny, the key is upgraded to full under a new tag: access stays denied; a widening still waits for activation", async () => {
     const s = await seedStudio("az1");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    await unrelease("appt.move", "narrow");
     const snapMove = await snap("appt.move");
     expect(snapMove).not.toBe("off"); // otherwise "stays denied" proves nothing
     await mark(["appt.move"], "R1-R2", "narrow");
@@ -115,6 +118,7 @@ describe("production configuration: releases are pending", () => {
   it("a later FULL release under a new tag lets a widening take effect only after the owner activates it", async () => {
     const s = await seedStudio("prod4");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    await unrelease("appt.move", "narrow");
     await mark(["appt.move"], "R1-R2", "narrow");
     await stored(s, "appt.move", "studio");
     const snapMove = await snap("appt.move");
