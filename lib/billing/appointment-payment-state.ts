@@ -360,7 +360,10 @@ export async function getAppointmentPaymentStates(
       .eq("studio_id", studioId)
       .eq("charge_reason", "session_payment")
       .eq("stripe_livemode", inferStripeLivemode())
-      .in("session_id", sessionIds);
+      .in("session_id", sessionIds)
+      // HON-65: the reducer returns on the FIRST succeeded row, so the order must be fixed. The dashboard's unpaid check reads in the same order.
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
     if (attemptError) attemptsUntrusted = true;
     for (const a of (attemptRows ?? []) as Array<{
       session_id: string;

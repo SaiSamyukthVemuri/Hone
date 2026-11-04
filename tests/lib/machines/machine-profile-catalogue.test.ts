@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FIRST_SLICE_ACTIVE_MODES } from "@/lib/machines/apilus-3g";
 
 import {
   MACHINE_CATALOGUE,
@@ -219,12 +220,16 @@ describe("nothing is offered that is not yet verified", () => {
     // runtime support and the exact studio inventory remain unverified. When a
     // manual lands, this number changes and the integrity gate above is what
     // permits it.
-    expect(activeProfiles(MACHINE_CATALOGUE)).toEqual([]);
+    // First slice (HON-8): only the two Apilus 3G v3 text/choice contracts.
+    expect(activeProfiles(MACHINE_CATALOGUE).map((p) => `${p.profileId}@${p.version}`).sort()).toEqual([
+      "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3",
+    ]);
   });
 
   it("offers no mode through a blocked profile", () => {
     for (const p of MACHINE_CATALOGUE) {
-      expect(activeModes(p), `${p.profileId} leaked a mode`).toEqual([]);
+      const allowed = p.version === 3 ? FIRST_SLICE_ACTIVE_MODES[p.profileId] ?? [] : [];
+      expect(activeModes(p).map((m) => m.key), `${p.profileId}@${p.version} leaked a mode`).toEqual([...allowed]);
     }
   });
 
@@ -721,8 +726,11 @@ describe("contract readiness is derived separately from activation authority", (
     const ready = MACHINE_CATALOGUE.filter((p) => activationReadiness(p).ready).map(
       (p) => `${p.profileId}@${p.version}`,
     );
-    expect(ready).toEqual(["dectro-apilus:senior-3g@3"]);
-    expect(MACHINE_CATALOGUE.filter((p) => p.availability === "active")).toEqual([]);
+    expect([...ready].sort()).toEqual(["dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3"]);
+    // Readiness is not authority: the first slice activates by explicit mode list only.
+    expect(MACHINE_CATALOGUE.filter((p) => p.availability === "active").map((p) => `${p.profileId}@${p.version}`).sort()).toEqual([
+      "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3",
+    ]);
   });
 
   it("ST 350 — the closest candidate — is NOT ready, and says exactly why", () => {
@@ -2151,18 +2159,21 @@ describe("EVERY offered profile has a mode a reading is accepted against", () =>
   // and both were found by review rather than by a test. This asserts the
   // guarantee `activeProfiles` is for, by composition with the validator, so
   // the next route to the same state fails here instead.
-  const readAgainst = (prof: MachineProfile, modeKey: string, catalogue: MachineProfile[]) =>
-    validateReading(
+  const readAgainst = (prof: MachineProfile, modeKey: string, catalogue: MachineProfile[]) => {
+    // Native text/choice contracts (v3) carry no numeric "current" field.
+    const text = prof.modes.find((m) => m.key === modeKey)?.fields.find((f) => f.valueKind === "text");
+    return validateReading(
       {
         profileId: prof.profileId,
         version: prof.version,
         modeKey,
-        fieldKey: "current",
+        fieldKey: text ? text.key : "current",
         source: "practitioner-entered",
-        value: { kind: "value", value: 1.2 },
+        value: text ? { kind: "text", value: "003i" } : { kind: "value", value: 1.2 },
       },
       { catalogue },
     );
+  };
 
   const usable = (catalogue: MachineProfile[]) =>
     activeProfiles(catalogue).every((prof) =>
