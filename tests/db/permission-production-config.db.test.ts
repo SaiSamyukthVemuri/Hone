@@ -59,13 +59,43 @@ describe("production configuration: releases are pending", () => {
     expect(m.userId).toBeTruthy();
   });
 
-  it("marking a key released does NOT make an earlier stored choice active; it waits for the owner's activation", async () => {
+  it("marking a key released does NOT make an earlier WIDENING active (it waits for the owner's activation), but an earlier NARROWING applies at once (AZ1)", async () => {
     const s = await seedStudio("prod2");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
     await stored(s, "appt.mark_no_show", "off");
     await mark(["appt.mark_no_show"], "R1-R2", "full");
-    expect(await eff(s, "practitioner", "appt.mark_no_show")).toBe(await snap("appt.mark_no_show"));
-    expect((await getp(s.userId, s.studioId)).roles.practitioner["appt.mark_no_show"]).toMatchObject({ stored: "off", source: "inactive_until_activated" });
+    // Narrowing never waits for activation: a stored Off below the snapshot applies the moment the key is released.
+    expect(await eff(s, "practitioner", "appt.mark_no_show")).toBe("off");
+    expect((await getp(s.userId, s.studioId)).roles.practitioner["appt.mark_no_show"]).toMatchObject({ stored: "off", effective: "off", source: "stored" });
+  });
+
+  it("AZ1: narrow release, the owner stores a deny, the key is upgraded to full under a new tag: access stays denied; a widening still waits for activation", async () => {
+    const s = await seedStudio("az1");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    const snapMove = await snap("appt.move");
+    expect(snapMove).not.toBe("off"); // otherwise "stays denied" proves nothing
+    await mark(["appt.move"], "R1-R2", "narrow");
+    await stored(s, "appt.move", "off");
+    expect(await eff(s, "practitioner", "appt.move")).toBe("off"); // narrow release: the deny applies at once
+    await mark(["appt.move"], "R3", "full"); // the upgrade
+    expect(await eff(s, "practitioner", "appt.move")).toBe("off"); // the deny the owner withdrew access with is NOT handed back
+    expect((await getp(s.userId, s.studioId)).roles.practitioner["appt.move"]).toMatchObject({ stored: "off", effective: "off", source: "stored" });
+    // (a widening stored before an upgrade stays at the snapshot until activation: covered by the 'later FULL release' case below)
+  });
+
+  it("AZ1: a NEW-STUDIO default narrower than the snapshot also keeps applying after a narrow key is upgraded to full", async () => {
+    const k = (await adminQuery(
+      `select key from public.permission_catalog c join public.permission_key_release r using (key)
+        where r.release_kind = 'narrow' and r.released_at is null and public.perm_rank(c.new_practitioner) < public.perm_rank(c.snapshot_practitioner)
+        order by key limit 1`)).rows[0]?.key as string | undefined;
+    if (!k) return; // no narrow key has a narrower new-studio default today; the stored-value case above carries AZ1
+    const s = await seedStudio("az1d");
+    await mark([k], "R1-R2", "narrow");
+    await adminQuery("update public.studio_permission_policy set basis='new_studio', basis_at = now() where studio_id=$1", [s.studioId]); // after the narrow release
+    const narrowed = await eff(s, "practitioner", k);
+    expect(narrowed).not.toBe(await snap(k)); // the default really narrows
+    await mark([k], "R3", "full"); // released_at moves past basis_at: the default is now 'older than the release'
+    expect(await eff(s, "practitioner", k)).toBe(narrowed);
   });
 
   it("a pending narrow key ignores an owner's 'turn off' until it is released; a released narrow key applies a narrowing at once and holds a widening at the snapshot (AH1)", async () => {
