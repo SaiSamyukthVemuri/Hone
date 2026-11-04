@@ -18,7 +18,7 @@
 --      verified and cannot satisfy billing completeness without staff confirmation (Insurance C-8).
 --   5. Unforgeable stamps: the BEFORE INSERT OR UPDATE trigger OVERWRITES clients.name_revision and preferred_name_revision on every
 --      write: an insert gets 1, an update keeps the old value and adds 1 only when that concept's value changed. A caller-supplied revision
---      is ignored, so a direct write to the revision columns has no effect. The trigger also writes the audit row and takes the author
+--      is ignored (on clients AND client_legal_identities, insert and update), so a direct write to a revision column has no effect. The trigger also writes the audit row and takes the author
 --      from auth.uid(). (This file changes no column privilege on clients; the guarantee is the trigger, not a grant.)
 --      Audit author: changed_by is NULL for a write with no signed-in practitioner of that studio (service role, SQL, a migration).
 --   6. Audit READ is owner and practitioner only, never a desk role (the gate is can_use_client_legal_identity, the one the legal
@@ -144,6 +144,11 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 begin
+  -- CB-8: a first insert is stamped 1 whatever the caller sent (no audit row for the first entry; CB-5 stays a stated limit).
+  if tg_op = 'INSERT' then
+    new.revision := 1;
+    return new;
+  end if;
   if tg_op = 'UPDATE' and (
        new.legal_given_name  is distinct from old.legal_given_name
     or new.legal_middle_name is distinct from old.legal_middle_name
@@ -163,7 +168,7 @@ revoke all on function public.client_legal_identities_revision() from public, an
 -- Fires after 0272's guard (alphabetical trigger order: "client_legal_identities_revision" sorts after "..._guard"),
 -- so updated_by is already the caller's own practitioner row.
 create trigger client_legal_identities_revision
-  before update on public.client_legal_identities
+  before insert or update on public.client_legal_identities
   for each row execute function public.client_legal_identities_revision();
 
 -- 6) Atomic profile save (Sam, 3 Nov 2026: he does NOT accept the read-to-write gap for long allergy and address fields).

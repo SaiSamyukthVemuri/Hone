@@ -33,4 +33,17 @@ describe("client name length (database limit 200)", () => {
     expect(errorRows.map((r) => r.rowNumber)).toEqual([2]);
     expect(groups).toHaveLength(2);
   });
+
+  // Privacy CD2: the public form limits the name BEFORE any database call, so a 23514 never reaches a visitor raw.
+  it("the public booking action refuses an over-long name before its first database call and never maps 23514 to the visitor", () => {
+    const src = read("app/book/[slug]/actions.ts");
+    const limit = src.indexOf("name.length > CLIENT_NAME_MAX");
+    expect(limit).toBeGreaterThan(-1);
+    // Inside the action that holds the limit: nothing before it may touch the database.
+    const action = src.slice(src.lastIndexOf("export async function", limit), limit);
+    for (const call of [".rpc(", ".from(", "createAdminClient(", "createClient("]) {
+      expect(action, `${call} appears before the name limit`).not.toContain(call);
+    }
+    expect(src).not.toMatch(/["']23514["']/);
+  });
 });

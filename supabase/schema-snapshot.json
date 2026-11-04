@@ -3,7 +3,7 @@
   "migrations": {
     "count": 254,
     "last": "0281_identity_revisions_audit_atomic_save.sql",
-    "sha256": "1fed51cf0a481d1ef505d2a05665469f8a56a9a00683c619513a262e98c48c37"
+    "sha256": "cfac1112524643bd2c9e5ba775ff6e313cf23f2ccb1c8dd9c1b079845b7293f1"
   },
   "public": {
     "tables": [

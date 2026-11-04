@@ -365,6 +365,20 @@ describe("0281 part 2: M1 revisions, audit, grants", () => {
     expect(a).toEqual([{ concept: "name", revision: 2 }]);
   });
 
+  it("CB-8: a legal-identity row is stamped revision 1 on INSERT whatever the caller sent (practitioner and table owner), and an update still bumps once", async () => {
+    const s = await seedClient("m1-legal-forge");
+    await asUser(s.userId, (q) =>
+      q(`insert into public.client_legal_identities (client_id, studio_id, legal_given_name, legal_family_name, revision) values ($1,$2,'Given','Family', 99)`, [s.clientId, s.studioId]),
+    );
+    const rev = async () => (await adminQuery(`select revision from public.client_legal_identities where client_id = $1`, [s.clientId])).rows[0].revision as number;
+    expect(await rev(), "forged insert revision is discarded").toBe(1);
+    await asUser(s.userId, (q) => q(`update public.client_legal_identities set legal_given_name = 'Other' where client_id = $1`, [s.clientId]));
+    expect(await rev(), "the next real change audits revision 2, not 100").toBe(2);
+    await adminQuery(`delete from public.client_legal_identities where client_id = $1`, [s.clientId]);
+    await adminQuery(`insert into public.client_legal_identities (client_id, studio_id, legal_given_name, revision) values ($1,$2,'Given', 55)`, [s.clientId, s.studioId]);
+    expect(await rev(), "not even the table owner can seed a revision").toBe(1);
+  });
+
   it("AT5: a write with no signed-in practitioner (service role) still audits, with changed_by null", async () => {
     const s = await seedClient("m1-svc");
     const out = await asRole("service_role", async (q) => {
@@ -425,6 +439,64 @@ describe("0281 part 2: M1 revisions, audit, grants", () => {
       }
       const g = await adminQuery(`select * from public.${fn}($1, $2, $3, $4)`, [s.studioId, `${fn}-ok@example.test`, "Valid Synthetic", null]);
       expect(g.rows[0].client_created_during_call).toBe(true);
+    }
+  });
+
+  // Privacy CD2: the two booking commands that create a client inside the appointment transaction get the SAME refusal
+  // cases as the find-or-create pair above. The public form limits the name first (client-name-length.test.ts), so a
+  // customer never sees 23514 raw; this proves the database still refuses if anything ever reaches it.
+  it("CD2: create_public_appointment_for_new_client and _v2 refuse a blank, spaces-only or over-200 name and write nothing; a valid name books", async () => {
+    const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
+    const studioId = randomUUID();
+    const userId = randomUUID();
+    const serviceId = randomUUID();
+    const email = `cd2-${studioId.slice(0, 8)}@harness.local`;
+    await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [userId, email]);
+    await adminQuery(
+      `insert into public.studios (id, name, owner_email, timezone, buffer_minutes, slug, public_booking_horizon_months)
+       values ($1, 'CD2 booking', $2, 'UTC', 0, $3, 3)`,
+      [studioId, email, `cd2-${studioId.slice(0, 8)}`],
+    );
+    await adminQuery(
+      `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1, $2, $3, 'Owner', $4, 'owner', true)`,
+      [randomUUID(), studioId, userId, email],
+    );
+    await adminQuery(
+      `insert into public.services (id, studio_id, name, default_duration_minutes, active) values ($1, $2, 'Consultation', 60, true)`,
+      [serviceId, studioId],
+    );
+    await adminQuery(
+      `insert into public.studio_availability_default (studio_id, day_of_week, is_open, open_time, close_time, practitioner_id)
+       select $1, g, true, '09:00', '17:00', null from generate_series(0, 6) g`,
+      [studioId],
+    );
+    await adminTx(async (q) => {
+      await q("select set_config('hone.admission_mode_studio_id', $1, true)", [studioId]);
+      await q(`update public.studios set new_client_admission_mode = 'open', new_client_admission_mode_set_at = now() where id = $1`, [studioId]);
+    });
+    const slot = (days: number) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + days);
+      d.setUTCHours(11, 0, 0, 0);
+      return d.toISOString();
+    };
+    const call = (fn: string, name: string, mail: string, startsAt: string) =>
+      adminTx(async (q) => {
+        await q("set local role service_role");
+        return q(
+          `select * from public.${fn}($1, null, $2, $3, '+15550177', now(), $4, $5::timestamptz, $6, false, null, null)`,
+          [studioId, name, mail, serviceId, startsAt, hash64()],
+        );
+      });
+    let n = 0;
+    for (const fn of ["create_public_appointment_for_new_client", "create_public_appointment_for_new_client_v2"]) {
+      n += 1;
+      for (const name of ["", "   ", "x".repeat(201)]) {
+        await expect(call(fn, name, `cd2-bad-${n}@example.test`, slot(5 + n)), `${fn} ${JSON.stringify(name.slice(0, 5))}`).rejects.toMatchObject({ code: "23514" });
+      }
+      expect((await adminQuery(`select count(*)::int c from public.clients where studio_id = $1 and email = $2`, [studioId, `cd2-bad-${n}@example.test`])).rows[0].c).toBe(0);
+      const ok = await call(fn, "Valid Synthetic", `cd2-ok-${n}@example.test`, slot(5 + n));
+      expect(ok.rows[0].result).toBe("created");
     }
   });
 });
