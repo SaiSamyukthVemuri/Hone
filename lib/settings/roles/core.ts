@@ -2,8 +2,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import type { Role } from "@/lib/permissions/catalog";
-import type { AccessResult, ActivationPreviewResult, CommandResult, HistoryResult, PreviewResult } from "./api";
-import { UNEXPECTED, parseAccess, parseActivationPreview, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
+import type { AccessResult, ActivationPreviewResult, ChangeRoleResult, CommandResult, HistoryResult, PreviewResult } from "./api";
+import { UNEXPECTED, parseAccess, parseActivationPreview, parseChangeRole, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
 
 // The ONLY place the Roles page talks to the permission core (0287). Every call runs as the signed-in user, so the core decides who the
 // owner is from the CURRENT membership row (never from anything passed here) and refuses everyone else with a code. A transport error
@@ -90,4 +90,24 @@ export async function coreHistory(studioId: string, before: string | null): Prom
 
 export async function coreAccess(studioId: string, membershipId: string): Promise<AccessResult> {
   return parseAccess(await call("effective_access", { p_studio: studioId, p_membership: membershipId }));
+}
+
+/** Move one person between practitioner and receptionist. The core refuses self, an owner on either side, a gate that is off, a stale
+ *  `expectedCurrentRole`, and a practitioner who still has upcoming appointments; it writes the audit row in the same transaction. */
+export async function coreChangeRole(
+  studioId: string,
+  membershipId: string,
+  newRole: Role,
+  expectedCurrentRole: Role,
+  reason: string,
+): Promise<ChangeRoleResult> {
+  return parseChangeRole(
+    await call("change_staff_role", {
+      p_studio: studioId,
+      p_membership: membershipId,
+      p_new_role: newRole,
+      p_expected_current_role: expectedCurrentRole,
+      p_reason: reason === "" ? null : reason,
+    }),
+  );
 }

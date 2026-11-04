@@ -7,6 +7,7 @@ import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioP
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
+import { changeRoleCopy } from "@/lib/settings/roles/change-role";
 import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
 import {
@@ -20,6 +21,7 @@ import {
   type ActivationPreview,
   type ActivationPreviewResult,
   type AuditRow,
+  type ChangeRoleResult,
   type CommandResult,
   type HistoryResult,
   type PreviewResult,
@@ -50,6 +52,8 @@ export type PersonView = {
   email: string;
   role: "owner" | Role;
   state: "active" | "invited" | "deactivated";
+  // The signed-in owner's own row. Their role cannot be changed here (the core refuses it too).
+  isSelf?: boolean;
 };
 
 export type RolesEditorProps = {
@@ -77,6 +81,9 @@ export type RolesEditorProps = {
   activate: (keys: string[], expectedVersion: number, reason: string, previewDigest: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
   loadHistory: (before: string | null) => Promise<HistoryResult>;
   loadAccess: (membershipId: string) => Promise<AccessResult>;
+  // Move one person between practitioner and receptionist. The core is the only writer and the only judge (gate, self, owner, stale
+  // role, upcoming appointments); the page shows exactly what it answers.
+  changeRole: (membershipId: string, newRole: Role, expectedCurrentRole: Role, reason: string) => Promise<ChangeRoleResult>;
 };
 
 type View = "people" | "permissions" | "history";
@@ -375,7 +382,7 @@ export function RolesEditor(props: RolesEditorProps) {
         ))}
       </div>
 
-      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} />}
+      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} changeRole={props.changeRole} onChanged={() => router.refresh()} />}
 
       {view === "history" && <HistoryPanel load={props.loadHistory} timeZone={props.timezone} />}
 
@@ -772,7 +779,19 @@ function OwnerOnlySettingsNotes(): ReactNode {
   );
 }
 
-function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonView[]; loadAccess: RolesEditorProps["loadAccess"]; staffRoleChange: boolean }) {
+function PeoplePanel({
+  people,
+  loadAccess,
+  staffRoleChange,
+  changeRole,
+  onChanged,
+}: {
+  people: PersonView[];
+  loadAccess: RolesEditorProps["loadAccess"];
+  staffRoleChange: boolean;
+  changeRole: RolesEditorProps["changeRole"];
+  onChanged: () => void;
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const groups: { state: PersonView["state"]; label: string; empty: string }[] = [
     { state: "active", label: "Active", empty: "" },
@@ -823,6 +842,14 @@ function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonVi
                         Change role: not available yet.
                       </p>
                     )}
+                    {p.state === "active" && p.role !== "owner" && staffRoleChange && p.isSelf && (
+                      <p data-testid="change-role-self" className="break-words text-xs text-neutral-500">
+                        You cannot change your own role.
+                      </p>
+                    )}
+                    {p.state === "active" && p.role !== "owner" && staffRoleChange && !p.isSelf && (
+                      <ChangeRole person={p as PersonView & { role: Role }} changeRole={changeRole} onChanged={onChanged} />
+                    )}
                     {open === p.id && <AccessSummary person={p} load={loadAccess} />}
                   </li>
                 ))}
@@ -831,6 +858,98 @@ function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonVi
           </section>
         );
       })}
+    </div>
+  );
+}
+
+// Change one person's role. The consequences are stated before the owner confirms; the core decides everything else and its answer is
+// shown as is. Nothing is deleted: the old membership is deactivated and the person keeps their sign-in.
+function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { role: Role }; changeRole: RolesEditorProps["changeRole"]; onChanged: () => void }) {
+  const copy = changeRoleCopy(person.role);
+  const target = copy.to;
+  const widens = target === "practitioner";
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ kind: "ok"; text: string } | { kind: "error"; text: string } | null>(null);
+  const id = useId();
+  const needsReason = copy.reasonRequired;
+  const reasonOk = reasonAcceptable(widens ? "adopt" : "save", false, reason);
+  const canConfirm = !busy && reasonOk && (!needsReason || reason.trim() !== "");
+
+  async function confirm() {
+    if (!canConfirm) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await changeRole(person.id, target, person.role, reason.trim());
+      if (r.ok) {
+        setResult({ kind: "ok", text: `${person.name} is now a ${ROLE_LABELS[target].toLowerCase()}. It is in the history.` });
+        setOpen(false);
+        setReason("");
+        onChanged();
+      } else {
+        setResult({ kind: "error", text: roleErrorMessage(r.error) });
+      }
+    } catch {
+      setResult({ kind: "error", text: roleErrorMessage({ code: "unexpected" }) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div data-testid="change-role" className="mt-1 flex min-w-0 flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${id}-panel`}
+        onClick={() => {
+          setOpen(!open);
+          setResult(null);
+        }}
+        className="min-h-[44px] self-start text-sm font-medium underline underline-offset-2"
+      >
+        {open ? "Cancel role change" : "Change role"}
+      </button>
+      {open && (
+        <div id={`${id}-panel`} data-testid="change-role-panel" className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+          <p className="break-words font-medium">{copy.title(person.name)}</p>
+          <ul className="list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            {copy.bullets.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+          <label className="flex flex-col gap-1">
+            <span className="font-medium">{copy.reasonLabel}</span>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              maxLength={500}
+              data-testid="change-role-reason"
+              className="w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-base dark:border-neutral-700"
+            />
+          </label>
+          {reason.trim() !== "" && !reasonOk && <p className="text-xs text-red-700 dark:text-red-400">Say why in your own words.</p>}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!canConfirm}
+              onClick={confirm}
+              data-testid="change-role-confirm"
+              className="min-h-[44px] rounded-md bg-neutral-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+            >
+              {busy ? "Changing…" : copy.confirmLabel}
+            </button>
+          </div>
+        </div>
+      )}
+      {result && (
+        <p role={result.kind === "error" ? "alert" : "status"} data-testid={`change-role-${result.kind}`} className={`break-words text-xs ${result.kind === "error" ? "text-red-700 dark:text-red-400" : "text-neutral-600 dark:text-neutral-400"}`}>
+          {result.text}
+        </p>
+      )}
     </div>
   );
 }

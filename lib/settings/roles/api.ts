@@ -40,7 +40,7 @@ export const ROLE_ERROR_CODES = [
 export type RoleErrorCode = (typeof ROLE_ERROR_CODES)[number];
 
 /** `key` and `role` are present on the per-key refusals so the message lands on the row; `currentVersion` on `stale_version`. */
-export type RoleError = { code: RoleErrorCode; key?: string; role?: Role; currentVersion?: number };
+export type RoleError = { code: RoleErrorCode; key?: string; role?: Role; currentVersion?: number; count?: number };
 
 export type PersonRef = { id: string; name: string; state: "active" | "invited" | "deactivated" };
 
@@ -51,6 +51,9 @@ export type ServerPreview = { version: number; roles: RolePreview[] };
 
 export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; error: RoleError };
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
+
+/** change_staff_role: the membership the person now holds and the role they now have. */
+export type ChangeRoleResult = { ok: true; membershipId: string; role: Role } | { ok: false; error: RoleError };
 
 /** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 Insurance AA-1). */
 export type ActivationPreview = ServerPreview & { keys: string[]; digest: string; sensitiveKeys: string[]; confirmationRequired: boolean };
@@ -145,7 +148,7 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   version_required: "This page is out of date. Reload it and try again.",
   unknown_role: "That role does not exist. Nothing was saved.",
   reason_invalid: "That reason is not meaningful. Say why in your own words.",
-  not_found: "That person was not found in this studio.",
+  not_found: "That person was not found with that role. Their role may have just changed. Reload the page to see the current state. Nothing was changed.",
   owner_role_fixed: "The owner role is fixed and cannot be changed here.",
   self_change: "You cannot change your own role.",
   not_active: "That person is not active.",
@@ -155,7 +158,10 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   unavailable: "Saving role changes turns on with the permission core. Nothing was changed.",
 };
 
-export const roleErrorMessage = (e: RoleError): string => MESSAGES[e.code];
+export const roleErrorMessage = (e: RoleError): string =>
+  e.code === "has_upcoming_appointments" && typeof e.count === "number" && e.count > 0
+    ? `That practitioner still has ${e.count} upcoming appointment${e.count === 1 ? "" : "s"}. Move or cancel ${e.count === 1 ? "it" : "them"} first. Nothing was changed.`
+    : MESSAGES[e.code];
 
 /** Codes that point at one row. The page keeps the draft, opens that role and shows the message on the row. */
 export const isRowError = (e: RoleError): e is RoleError & { key: string } =>

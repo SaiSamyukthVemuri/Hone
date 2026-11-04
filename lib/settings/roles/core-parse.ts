@@ -14,6 +14,7 @@ import {
   type AuditKind,
   type ActivationPreviewResult,
   type AuditRow,
+  type ChangeRoleResult,
   type CommandResult,
   type HistoryResult,
   type PersonRef,
@@ -46,6 +47,9 @@ export function parseError(raw: unknown): RoleError {
   const v = raw.current_version;
   if (typeof v === "number") err.currentVersion = v;
   else if (typeof v === "string" && /^\d+$/.test(v)) err.currentVersion = Number(v);
+  const count = raw.count;
+  if (typeof count === "number" && Number.isInteger(count) && count >= 0) err.count = count;
+  else if (typeof count === "string" && /^\d+$/.test(count)) err.count = Number(count);
   return err;
 }
 
@@ -130,6 +134,14 @@ export function parseCommand(raw: unknown): CommandResult {
   if (raw.ok !== true) return { ok: false, error: parseError(raw) };
   const v = num(raw.new_version);
   return v === null ? { ok: false, error: UNEXPECTED } : { ok: true, newVersion: v };
+}
+
+/** change_staff_role -> the new membership id and role. Anything that is not exactly that is "unexpected": a success is never guessed. */
+export function parseChangeRole(raw: unknown): ChangeRoleResult {
+  if (!isObj(raw)) return { ok: false, error: UNEXPECTED };
+  if (raw.ok !== true) return { ok: false, error: parseError(raw) };
+  const id = str(raw.membership_id);
+  return id && isRole(raw.role) ? { ok: true, membershipId: id, role: raw.role } : { ok: false, error: UNEXPECTED };
 }
 
 const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed", "permissions_activated"];

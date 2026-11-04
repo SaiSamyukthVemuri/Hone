@@ -50,6 +50,7 @@ const render = (over: Record<string, unknown> = {}) =>
       activate: noop,
       loadHistory: noop,
       loadAccess: noop,
+      changeRole: noop,
       reload: noop,
       ...over,
     }),
