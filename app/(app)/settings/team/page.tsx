@@ -15,6 +15,7 @@ import {
 } from "./actions";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+import { shouldShowReviewLink } from "@/lib/appointments/review-link";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -60,11 +61,14 @@ export default async function TeamSettingsPage() {
     getPendingInvitations(studio.id),
   ]);
 
+  const showReviewLink = await shouldShowReviewLink(studio.id);
+
   return (
     <div className="flex flex-col gap-12">
       <CurrentPractitioners
         practitioners={practitioners}
         currentPractitionerId={practitioner.id}
+        showReviewLink={showReviewLink}
       />
 
       <section className="flex flex-col gap-4">
@@ -89,7 +93,9 @@ export default async function TeamSettingsPage() {
 function CurrentPractitioners({
   practitioners,
   currentPractitionerId,
+  showReviewLink,
 }: {
+  showReviewLink: boolean;
   practitioners: Practitioner[];
   currentPractitionerId: string;
 }) {
@@ -104,15 +110,29 @@ function CurrentPractitioners({
             ? "Just you."
             : `${practitioners.length} active.`}
         </p>
-        <p className="mt-2 text-sm">
+        {showReviewLink && (
+          <p className="mt-2 text-sm">
+            <Link
+              href="/calendar/check-practitioner"
+              data-testid="team-review-assignments"
+              className="font-medium underline underline-offset-2"
+            >
+              Review practitioner assignments
+            </Link>
+            <span className="text-neutral-500"> to check who is recorded on open appointments.</span>
+          </p>
+        )}
+        {/* Sam, DQ-7: a quiet PERMANENT entry, always shown here, whether or not the reminder above is (the reminder appears in addition when
+            something needs review). It sits after the owner-only guard of this page (non-owners are stopped before anything renders) and opens a
+            page that keeps its own owner guard; it grants nothing. */}
+        <p className="mt-2 text-xs text-neutral-500">
           <Link
             href="/calendar/check-practitioner"
-            data-testid="team-review-assignments"
-            className="font-medium underline underline-offset-2"
+            data-testid="team-review-assignments-quiet"
+            className="underline underline-offset-2"
           >
-            Review practitioner assignments
+            Practitioner assignment review
           </Link>
-          <span className="text-neutral-500"> to check who is recorded on open appointments.</span>
         </p>
       </div>
       <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
