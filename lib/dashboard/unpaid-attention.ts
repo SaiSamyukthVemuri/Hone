@@ -31,7 +31,7 @@ export const UNPAID_DEFAULT_WINDOW_DAYS = 90;
 export const UNPAID_ROW_CAP = 200;
 
 export type UnpaidLoad =
-  | { ok: true; items: UnpaidAttention[]; notReturned: number; windowDays: number | null }
+  | { ok: true; items: UnpaidAttention[]; notReturned: number; windowDays: number | null; unlisted: number }
   | { ok: false };
 
 type ApptRow = {
@@ -71,7 +71,7 @@ export async function loadUnpaidAttention(opts: {
   const { data: apptData, error: apptError } = await q;
   if (apptError) return { ok: false };
   const appts = (apptData ?? []) as unknown as ApptRow[];
-  if (appts.length === 0) return { ok: true, items: [], notReturned: 0, windowDays: opts.windowDays };
+  if (appts.length === 0) return { ok: true, items: [], notReturned: 0, windowDays: opts.windowDays, unlisted: 0 };
   const ids = appts.map((a) => a.id);
   const livemode = inferStripeLivemode();
 
@@ -102,6 +102,8 @@ export async function loadUnpaidAttention(opts: {
   const cardsByAppt = new Map<string, Card[]>();
   if (sessionToAppt.size > 0) {
     const attempts = await readInChunks<{
+      id: string;
+      created_at: string;
       session_id: string;
       status: string | null;
       amount_cents: number | null;
@@ -112,14 +114,16 @@ export async function loadUnpaidAttention(opts: {
     }>([...sessionToAppt.keys()], (chunk) =>
       supabase
         .from("payment_charge_attempts")
-        .select("session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, currency")
+        .select("id, created_at, session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, currency")
         .eq("studio_id", studioId)
         .eq("charge_reason", "session_payment")
         .eq("stripe_livemode", livemode)
         .in("session_id", chunk),
     );
     if (!attempts.ok) return { ok: false };
-    for (const a of attempts.rows) {
+    // The same fixed order the appointment page reads in (created_at, id): its reducer returns on the first succeeded row.
+    const ordered = [...attempts.rows].sort((x, y) => (x.created_at ?? "").localeCompare(y.created_at ?? "") || (x.id ?? "").localeCompare(y.id ?? ""));
+    for (const a of ordered) {
       const owner = sessionToAppt.get(a.session_id);
       if (!owner) continue;
       if (owner.deleted) {
@@ -166,7 +170,9 @@ export async function loadUnpaidAttention(opts: {
       supabase.from("client_pricing").select("client_id, service_name, price_cents, notes, effective_from").eq("studio_id", studioId).in("client_id", chunk),
     ),
   ]);
-  const quotesReadable = svc.ok && pricing.ok;
+  // A failed or row-capped services / client_pricing read is a FAILED CHECK (the "unpaid balances unavailable" line), never an empty list: it would
+  // read as "nothing owed". Individual visits whose price is unknown are skipped and counted below.
+  if (!svc.ok || !pricing.ok) return { ok: false };
   const serviceById = new Map<string, { name: string; price_cents: number | null }>();
   if (svc.ok) for (const r of svc.rows) serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
   const pricingByClient = new Map<string, Array<{ service_name: string; price_cents: number; notes: string | null; effective_from: string }>>();
@@ -179,7 +185,8 @@ export async function loadUnpaidAttention(opts: {
   }
 
   const jurisdiction = await getStudioPaymentJurisdiction(studioId);
-  const studioCurrency = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
+  if (!jurisdiction.ok) return { ok: false }; // an unreadable jurisdiction is a failed check too
+  const studioCurrency = jurisdiction.jurisdiction.currency;
   const today = todayInTz(opts.studioTimezone);
 
   const evaluate = (a: ApptRow) => {
@@ -189,7 +196,7 @@ export async function loadUnpaidAttention(opts: {
     const recorded = settledQuote.get(a.id);
     if (recorded !== undefined) {
       quoteCents = recorded;
-    } else if (quotesReadable) {
+    } else {
       const s = a.service_id ? serviceById.get(a.service_id) : null;
       const r = resolveAuthoritativeSessionPaymentAmount({
         service: s ? { name: s.name, price_cents: s.price_cents } : null,
@@ -223,11 +230,16 @@ export async function loadUnpaidAttention(opts: {
 
   const items: UnpaidAttention[] = [];
   let seen = 0;
+  // Finished visits Hone could not price or verify. Skipped, and COUNTED, so the owner is never led to think every visit was checked.
+  let unlisted = 0;
   for (const a of appts) {
     const result = evaluate(a);
     if (result.kind === "paid" || result.kind === "not_applicable") continue;
     // HON-65: list a visit only when Hone can ESTABLISH that money is still owed. An amount Hone cannot determine is not a reason to nag.
-    if (result.kind === "amount_unavailable") continue;
+    if (result.kind === "amount_unavailable") {
+      unlisted += 1;
+      continue;
+    }
     // And never contradict the appointment page: when it reads this visit as "Paid" (a Hone-verified card charge that was not refunded),
     // the dashboard does not call it outstanding, whatever today's price says. The same reducer the page uses.
     const cards = cardsByAppt.get(a.id) ?? [];
@@ -248,5 +260,5 @@ export async function loadUnpaidAttention(opts: {
   }
   // The look-back query itself is capped; if it filled up, older finished appointments were not examined.
   const examinedCapped = appts.length >= UNPAID_ROW_CAP * 3;
-  return { ok: true, items, notReturned: Math.max(0, seen - items.length) + (examinedCapped ? 1 : 0), windowDays: opts.windowDays };
+  return { ok: true, items, notReturned: Math.max(0, seen - items.length) + (examinedCapped ? 1 : 0), windowDays: opts.windowDays, unlisted };
 }

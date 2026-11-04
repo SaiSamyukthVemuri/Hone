@@ -315,6 +315,23 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     expect(notedLine).not.toContain("777");
   });
 
+  test("HON-65: a visit the appointment page calls Paid is never listed, even with a price recorded on its session", async ({ page }) => {
+    const { seed, unpaid, visit } = await seedStudioWithMoney();
+    // Card = price, plus a price typed onto the session (the shape the dashboard used to list as "Amount unavailable").
+    const paid = await visit("PaidWithPrice", 21000, 3, 21000);
+    await sql(`update public.sessions set price_paid_cents = 21000 where appointment_id = $1`, [paid.apptId]);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    // The control is listed (the check is on). The paid visit may still have OTHER reminders (the fixture has no charting); it has no unpaid line.
+    await expect(unpaidAmountOf(page, unpaid.name)).toContainText("120.00", { timeout: T });
+    await expect(unpaidAmountOf(page, paid.name)).toHaveCount(0);
+    await expect(page.locator("li[data-attention-client]").filter({ hasText: paid.name }).getByText(/Unpaid|Amount unavailable|outstanding/i)).toHaveCount(0);
+    // The same visit's own page says Paid.
+    await page.goto(`/calendar/${paid.apptId}`);
+    await expect(page.getByRole("heading", { name: "Payment" }).locator("xpath=..").getByText("Paid")).toBeVisible({ timeout: T });
+  });
+
   test("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {
     const { seed, partial, visit } = await seedStudioWithMoney();
     const older = await visit("Older", 8800, 100);

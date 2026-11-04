@@ -668,7 +668,7 @@ type OwnerNeedsInputs = NeedsAttentionInputs & { studioId: string; studioTimezon
 type VisibleNeeds = {
   shown: NeedsAttention;
   // Owner only: how far back unpaid appointments were looked for, and whether the list was cut. Null for everyone else.
-  unpaid: { windowDays: number | null; notReturned: number } | null;
+  unpaid: { windowDays: number | null; notReturned: number; unlisted: number } | null;
   dismissed: DismissedRow[];
   // False while the dismissals gate is OFF (migration 0298 not applied): no Dismiss, no Dismissed view, no note, no database call.
   dismissalsEnabled: boolean;
@@ -699,7 +699,7 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
       unavailableChecks: [...input.unavailableChecks, ...(unpaidRead && !unpaidRead.ok ? [UNAVAILABLE_UNPAID] : [])],
       unpaid: unpaidRead?.ok ? unpaidRead.items : undefined,
     });
-    const unpaid = unpaidRead?.ok ? { windowDays: unpaidRead.windowDays, notReturned: unpaidRead.notReturned } : null;
+    const unpaid = unpaidRead?.ok ? { windowDays: unpaidRead.windowDays, notReturned: unpaidRead.notReturned, unlisted: unpaidRead.unlisted } : null;
     const countKnown = !model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c));
     // Non-owners have no dismissals, no Dismissed view and no Dismiss: their list is the model as built.
     if (!props.isOwner) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };

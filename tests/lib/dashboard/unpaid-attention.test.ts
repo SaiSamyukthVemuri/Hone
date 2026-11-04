@@ -109,11 +109,9 @@ describe("a settled visit keeps the price it was settled against", () => {
 describe("Codex P2 (9d9982f1c): a row-capped page is never treated as authoritative", () => {
   const pricingRows = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ client_id: i === 0 ? "c-a1" : `other-${i}`, service_name: `Other ${i}`, price_cents: 100, notes: null, effective_from: "2026-01-01" }));
-  it("a full (1000-row) client_pricing page hides nothing silently: every amount is 'Amount unavailable', not the menu price", async () => {
+  it("a full (1000-row) client_pricing page is a FAILED CHECK, never an empty list that reads as nothing owed", async () => {
     db.rows.client_pricing = pricingRows(1000);
-    const r = await loadUnpaidAttention(base);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items).toEqual([]);
+    expect(await loadUnpaidAttention(base)).toEqual({ ok: false });
   });
   it("a page just under the cap is read normally", async () => {
     db.rows.client_pricing = pricingRows(999);
@@ -121,11 +119,9 @@ describe("Codex P2 (9d9982f1c): a row-capped page is never treated as authoritat
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 10000, currency: "cad" });
   });
-  it("a capped services page is also 'Amount unavailable'", async () => {
+  it("a capped services page is also a failed check", async () => {
     db.rows.services = Array.from({ length: 1000 }, (_, i) => ({ id: i === 0 ? "svc" : `s${i}`, name: "Facial", price_cents: 10000 }));
-    const r = await loadUnpaidAttention(base);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items).toEqual([]);
+    expect(await loadUnpaidAttention(base)).toEqual({ ok: false });
   });
   it("a capped page on any other read fails the whole load rather than presenting a partial list", async () => {
     db.rows.payment_charge_attempts = Array.from({ length: 1000 }, () => ({ session_id: "ss1", status: "failed", amount_cents: 1, currency: "cad" }));
@@ -182,17 +178,21 @@ describe("the authoritative balance", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items).toEqual([]);
   });
-  it("no provable currency is Amount unavailable", async () => {
+  it("an unreadable studio jurisdiction is a failed check, not an empty list", async () => {
     juris.value = { ok: false, reason: "missing" };
-    const r = await loadUnpaidAttention(base);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items).toEqual([]);
+    expect(await loadUnpaidAttention(base)).toEqual({ ok: false });
   });
-  it("a failed service or pricing read makes every quote unknown, not a guessed price", async () => {
-    db.errors.add("client_pricing");
+  it("a failed services read or a failed client_pricing read is a failed check, never a guessed price and never an empty list", async () => {
+    for (const table of ["services", "client_pricing"]) {
+      db.errors.clear();
+      db.errors.add(table);
+      expect(await loadUnpaidAttention(base)).toEqual({ ok: false });
+    }
+  });
+  it("a PER-VISIT unknown (no price on record) is skipped but COUNTED, never silent", async () => {
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: null }];
     const r = await loadUnpaidAttention(base);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items).toEqual([]);
+    expect(r).toMatchObject({ ok: true, items: [], unlisted: 1 });
   });
 });
 
@@ -322,7 +322,9 @@ describe("U1: no request carries an id list near the gateway limit", () => {
 // ---------------------------------------------------------------------------
 const { deriveAppointmentPaymentState } = await import("@/lib/billing/appointment-payment-state");
 const pageWord = () => {
-  const attempts = (db.rows.payment_charge_attempts as Array<Record<string, unknown>>).filter((a) => a.session_id === "ss1");
+  const attempts = (db.rows.payment_charge_attempts as Array<Record<string, unknown>>)
+    .filter((a) => a.session_id === "ss1")
+    .sort((x, y) => String(x.created_at ?? "").localeCompare(String(y.created_at ?? "")) || String(x.id ?? "").localeCompare(String(y.id ?? "")));
   return deriveAppointmentPaymentState(true, attempts.map((a) => ({ status: a.status as string, refund_status: a.refund_status as string | null, amount_cents: a.amount_cents as number, refund_amount_cents: a.refund_amount_cents as number | null })));
 };
 const listed = async () => {
@@ -370,14 +372,16 @@ describe("HON-65: the page's 'Paid' and Needs attention never contradict each ot
     expect(pageWord()).toBe("paid");
     expect(await listed()).toBe(0);
   });
-  it("7. two attempts, one fully refunded, in both orders: the page is never 'Paid' while the visit is listed", async () => {
-    const refunded = card({ amount_cents: 10000, refund_status: "succeeded", refund_amount_cents: 10000, stripe_refund_status: "succeeded" });
-    const repaid = card({ amount_cents: 10000 });
-    for (const order of [[refunded, repaid], [repaid, refunded]]) {
-      db.rows.payment_charge_attempts = order;
-      const word = pageWord();
-      if (word === "paid") expect(await listed()).toBe(0);
-    }
+  it("7. two attempts, one fully refunded, in both orders: the page word follows (created_at, id) and the dashboard never lists a visit the page calls Paid", async () => {
+    const refunded = (at: string) => card({ id: `r-${at}`, created_at: at, amount_cents: 10000, refund_status: "succeeded", refund_amount_cents: 10000, stripe_refund_status: "succeeded" });
+    const repaid = (at: string) => card({ id: `p-${at}`, created_at: at, amount_cents: 10000 });
+    // The rows are handed over in the WRONG array order on purpose: the order is the timestamp, on both surfaces.
+    db.rows.payment_charge_attempts = [repaid("2026-11-02T10:00:00Z"), refunded("2026-11-01T10:00:00Z")]; // refunded first, then repaid
+    expect(pageWord()).toBe("refunded_full");
+    expect(await listed()).toBe(0);
+    db.rows.payment_charge_attempts = [refunded("2026-11-02T10:00:00Z"), repaid("2026-11-01T10:00:00Z")]; // repaid first, then refunded
+    expect(pageWord()).toBe("paid");
+    expect(await listed()).toBe(0);
   });
   it("8. cash settlement = quote: not listed", async () => {
     db.rows.payment_charge_attempts = [];
