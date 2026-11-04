@@ -12,7 +12,6 @@ import {
   describeConflicts,
   parseBaseline,
   planProfileUpdate,
-  splitConditions,
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -290,36 +289,19 @@ export async function updateClientAction(
     }
   }
 
-  // Only short conditions go in the URL (see splitConditions). A changed field whose baseline is too long for a URL
-  // gets no equality condition on the write. Instead its CURRENT value is read here, in the same action just before
-  // the write (a select, answered in the body, no URL condition), and compared with the baseline; a difference is
-  // the "changed by someone else" review and nothing is written. What remains is the gap between that read and the
-  // write for those fields only (allergies and address in practice); the atomic fix is a JSON-body database function.
-  const { inUrl, unconditioned } = splitConditions(plan.conditions);
-  if (unconditioned.length > 0) {
-    const { data: current, error: currentError } = await supabase
-      .from("clients")
-      .select(unconditioned.map((c) => c.key).join(","))
-      .eq("id", clientId)
-      .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (currentError) return { ok: false, error: NOT_SAVED_ERROR };
-    if (!current) return { ok: false, error: "Client not found." };
-    const moved = describeConflicts(
-      { ...plan, conditions: unconditioned },
-      current as unknown as Record<string, unknown>,
-    );
-    if (moved.length > 0) return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts: moved };
-  }
-  // ONE conditional UPDATE: it applies only while every column it changes still holds the value the page
-  // loaded, and it returns the row it changed. Zero rows is "not saved", never success.
+  // ONE atomic compare-and-write in the database (migration 0281): the function updates only while every changed
+  // column still holds the value the page loaded, comparing in the JSON body so long fields need no URL condition.
+  // A NULL result is "not saved"; the reads below say why. Migration-first: this call needs 0281 applied hosted.
   // Chloe Session 1A: `clients.skin_notes` is retired as an editor and is never written here.
-  // The column list is spelled out (undefined = unchanged, dropped from the request) so the write census can
+  // The patch keys are spelled out (undefined = unchanged, dropped from the JSON body) so the write census can
   // prove which columns this action can ever touch.
   const p = plan.patch;
-  let update = supabase
-    .from("clients")
-    .update({
+  const expected: Record<string, unknown> = {};
+  for (const { key, value } of plan.conditions) expected[key] = value;
+  const { data: changedId, error } = await supabase.rpc("update_client_profile_if_unchanged", {
+    p_studio_id: studio.id,
+    p_client_id: clientId,
+    p_patch: {
       name: p.name,
       preferred_name: p.preferred_name,
       pronouns: p.pronouns,
@@ -331,13 +313,9 @@ export async function updateClientAction(
       allergies: p.allergies,
       emergency_contact_name: p.emergency_contact_name,
       emergency_contact_phone: p.emergency_contact_phone,
-    })
-    .eq("id", clientId)
-    .eq("studio_id", studio.id);
-  for (const { key, value } of inUrl) {
-    update = value === null ? update.is(key, null) : update.eq(key, value);
-  }
-  const { data: changed, error } = await update.select("id");
+    },
+    p_expected: expected,
+  });
 
   if (error) {
     if (isClientDuplicateEmailDbError(error)) {
@@ -361,7 +339,7 @@ export async function updateClientAction(
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
 
-  if (!changed || changed.length === 0) {
+  if (!changedId) {
     // Not saved. Say why: the client is gone, or one of the changed fields no longer holds what the page
     // loaded (somebody else changed it). The current values go only to this signed-in staff member.
     const { data: stored, error: readError } = await supabase

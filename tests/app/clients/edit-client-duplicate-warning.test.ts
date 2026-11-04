@@ -31,6 +31,11 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    // 0281: the edit is one function call; record its patch where the old chain recorded `.update(row)`.
+    rpc: async (_name: string, args: { p_client_id: string; p_patch: Record<string, unknown> }) => {
+      db.updates.push(JSON.parse(JSON.stringify(args.p_patch)));
+      return { data: args.p_client_id, error: null };
+    },
     from: (table: string) => {
       expect(table).toBe("clients");
       const filters: Array<[string, unknown]> = [];

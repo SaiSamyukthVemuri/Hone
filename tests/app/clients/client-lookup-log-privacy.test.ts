@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   getUser: vi.fn(), member: vi.fn(), memberFilters: [] as Array<[string, unknown]>,
-  admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
+  admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(), rpc: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidate }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.identity }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: h.getUser }, from: (table: string) => {
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: h.getUser }, rpc: h.rpc, from: (table: string) => {
   if (table === "practitioners") {
     const member = { select: () => member, eq: (key: string, value: unknown) => { h.memberFilters.push([key, value]); return member; }, maybeSingle: h.member };
     return member;
@@ -129,13 +129,10 @@ describe("client UPDATE failure diagnostic privacy", () => {
   function prepareUpdate(error: { code: string; message: string }) {
     h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
     h.duplicate.mockReset(); h.duplicate.mockResolvedValue({ data: [], error: null });
-    // update(patch).eq(id).eq(studio).is(email, null).select("id"): one conditional write.
-    const query = { eq: vi.fn(), is: vi.fn(), select: vi.fn() };
-    query.eq.mockReturnValue(query); query.is.mockReturnValue(query);
-    query.select.mockResolvedValue({ data: null, error });
-    h.writes.mockReset(); h.writes.mockReturnValue(query);
+    // 0281: one atomic function call carries the patch, the loaded values and the scope.
+    h.rpc.mockReset(); h.rpc.mockResolvedValue({ data: null, error });
     const data = form(); data.set("email", "synthetic-email@example.test");
-    return { data, updateFilters: query.eq };
+    return { data, updateFilters: h.rpc };
   }
   it("omits UPDATE error free text while preserving safe metadata, scope and generic response", async () => {
     const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
@@ -144,8 +141,8 @@ describe("client UPDATE failure diagnostic privacy", () => {
     await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
     // One single-row read (visibility): what the page loaded travels with the form, so there is no second read.
     expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
-    expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1); expect(h.writes).toHaveBeenCalledOnce();
-    expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1); expect(h.rpc).toHaveBeenCalledOnce();
+    expect(updateFilters.mock.calls[0]![1]).toMatchObject({ p_client_id: CLIENT, p_studio_id: STUDIO });
     expect(log).toHaveBeenCalledOnce();
     const payload = JSON.parse(String(log.mock.calls[0]![0]));
     expect(payload).toEqual({ event: "client_update_failed", clientId: "[id]", code: "23514", timestamp: expect.any(String) });
@@ -163,8 +160,8 @@ describe("client UPDATE failure diagnostic privacy", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error });
     expect(h.duplicate.mock.calls).toEqual([[1], [1]]);
-    expect(h.writes).toHaveBeenCalledOnce();
-    expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(h.rpc).toHaveBeenCalledOnce();
+    expect(updateFilters.mock.calls[0]![1]).toMatchObject({ p_client_id: CLIENT, p_studio_id: STUDIO });
     expect(log).not.toHaveBeenCalled();
   });
 });

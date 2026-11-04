@@ -26,6 +26,14 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    // 0281: the edit is ONE function call. Record its patch (defined keys only, as the JSON body carries it) and its scope
+    // exactly where the old chain recorded `.update(row)` and the id / studio filters.
+    rpc: async (name: string, args: { p_studio_id: string; p_client_id: string; p_patch: Record<string, unknown> }) => {
+      expect(name).toBe("update_client_profile_if_unchanged");
+      db.updates.push(JSON.parse(JSON.stringify(args.p_patch)));
+      db.updateFilters.push(["id", args.p_client_id], ["studio_id", args.p_studio_id]);
+      return { data: args.p_client_id, error: null };
+    },
     from: (table: string) => {
       expect(table).toBe("clients");
       const query: Record<string, unknown> = {
