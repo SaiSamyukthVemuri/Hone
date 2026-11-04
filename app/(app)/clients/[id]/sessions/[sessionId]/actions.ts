@@ -870,6 +870,10 @@ export async function softDeleteSessionAction(formData: FormData): Promise<void>
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
+  // Soft-deleting a session writes its chart row: the edit key too (asked ahead of enforcement, NQ-12; the 0289 guard is the database backstop).
+  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    throw new Error(EDIT_RECORDS_REFUSAL);
+  }
 
   const supabase = await createClient();
   // deleted_by is derived by the command from auth.uid(), never sent.
