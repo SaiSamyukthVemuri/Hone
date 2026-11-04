@@ -186,4 +186,10 @@ describe("quoteIsCurrentPrice (OPS ruling, #1356)", () => {
     expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [], quoteIsCurrentPrice: true } as never)).toMatchObject({ kind: "owed", outstandingCents: 12000 });
     expect(outstandingForAppointment({ ...base, quoteCents: 10000, cards: [card], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "paid" });
   });
+  it("a collected settlement amount against today's price is treated like a card charge", () => {
+    const cash = { method: "paid_cash", amountCents: 10000, currency: "cad" };
+    expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [], settlements: [cash], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "amount_unavailable" });
+    expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [], settlements: [cash], quoteIsCurrentPrice: false } as never)).toMatchObject({ kind: "owed", outstandingCents: 2000 });
+    expect(outstandingForAppointment({ ...base, quoteCents: 10000, cards: [], settlements: [cash], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "paid" });
+  });
 });

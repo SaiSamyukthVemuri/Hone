@@ -84,12 +84,25 @@ describe("a settled visit keeps the price it was settled against", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 12000, currency: "cad" });
   });
-  it("a settlement with no recorded quote falls back to the current price", async () => {
+  it("a collected settlement with no recorded quote, price raised: 'Amount unavailable', never a balance (Insurance Q-1 / Privacy AS1)", async () => {
+    for (const method of ["paid_cash", "paid_e_transfer"]) {
+      db.rows.appointment_settlements = [{ appointment_id: "a1", method, amount_cents: 10000, quoted_amount_cents: null }];
+      db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+      const r = await loadUnpaidAttention(base);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.items).toEqual([expect.objectContaining({ balance: { kind: "unavailable" } })]);
+    }
+  });
+  it("a collected settlement with no recorded quote and nothing short of today's price is simply paid", async () => {
     db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 10000, quoted_amount_cents: null }];
+    expect(await loadUnpaidAttention(base)).toMatchObject({ ok: true, items: [] });
+  });
+  it("nothing collected keeps today's quote even when a note-only settlement exists", async () => {
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "still_owes", amount_cents: 0, quoted_amount_cents: null }];
     db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
     const r = await loadUnpaidAttention(base);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 2000, currency: "cad" });
+    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 12000, currency: "cad" });
   });
 });
 

@@ -53,8 +53,8 @@ export type OutstandingInput = {
    */
   unprovenMoney?: ReadonlyArray<string>;
   /**
-   * True when `quoteCents` is TODAY's price rather than one recorded at settlement. With a succeeded card charge and a current price
-   * above the money Hone can see, the price at visit time cannot be proven, so no balance is claimed (amount_unavailable).
+   * True when `quoteCents` is TODAY's price rather than one recorded at settlement. With any money collected (a succeeded card charge or a collected
+   * settlement amount) and a current price above the money Hone can see, the price at visit time cannot be proven, so no balance is claimed (amount_unavailable).
    * A visit with nothing paid keeps today's quote. Omitted = false (the quote is a recorded one).
    */
   quoteIsCurrentPrice?: boolean;
@@ -151,7 +151,8 @@ export function outstandingForAppointment(input: OutstandingInput): Outstanding 
 
   const outstandingCents = Math.max(0, input.quoteCents - cardKeptCents - collectedCents);
   if (outstandingCents === 0) return { kind: "paid" };
-  if (input.quoteIsCurrentPrice && input.cards.some((c) => c.status === "succeeded")) return { kind: "amount_unavailable" };
+  // Any money collected (a succeeded card charge, or a collected settlement amount) against today's price: the price at visit time is unprovable.
+  if (input.quoteIsCurrentPrice && (input.cards.some((c) => c.status === "succeeded") || collectedCents > 0)) return { kind: "amount_unavailable" };
 
   const currency = only ?? studio;
   if (!currency) return { kind: "amount_unavailable" };
