@@ -51,6 +51,8 @@ export const BROWSER_GROUPS = {
       // before a block exists, then the one atomic save that follows. Same
       // group as its sibling for the same reason.
       "machine-create-mode-journey.spec.ts",
+      // HON-8: the same journey on the REAL Senior and Junior 3G contracts (the sibling uses synthetic ids only).
+      "machine-real-3g.spec.ts",
       // MPX-03: changing the machine or the mode UNDER a typed draft, and the
       // unit going out of service mid-draft. Same surface again - the panel
       // inside the settings-block form - so the same group: a diff to that

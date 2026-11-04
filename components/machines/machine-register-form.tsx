@@ -8,6 +8,8 @@ export type RegisterResult = { ok: boolean; error?: string };
 
 type Props = {
   models: ReadonlyArray<RegisterableModel>;
+  /** The published-contract read failed: say so, rather than claiming nothing is available. */
+  contractCheckFailed?: boolean;
   /** The server action. Passed in so the form never imports server code. */
   register: (input: {
     profileId: string;
@@ -31,7 +33,7 @@ export function registrationProblem(
   return null;
 }
 
-export function MachineRegisterForm({ models, register }: Props) {
+export function MachineRegisterForm({ models, register, contractCheckFailed = false }: Props) {
   const [profileId, setProfileId] = useState(models[0]?.profileId ?? "");
   const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(
@@ -39,15 +41,24 @@ export function MachineRegisterForm({ models, register }: Props) {
   );
   const [pending, startTransition] = useTransition();
 
+  if (models.length === 0 && contractCheckFailed) {
+    return (
+      <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-register-check-failed">
+        We couldn&apos;t check which machine models are available just now. Please reload the page to try again.
+      </p>
+    );
+  }
+
   if (models.length === 0) {
     return (
       <p
         className="text-sm text-neutral-600 dark:text-neutral-400"
         data-testid="machine-register-none"
       >
-        No machine model has passed its evidence review yet, so there is
-        nothing to register. To have yours reviewed, send Hone the details
-        listed above.
+        No machine model is available to register yet. A model appears here
+        once its evidence review is complete and its settings contract is
+        published. To have yours reviewed, send Hone the details listed
+        above.
       </p>
     );
   }

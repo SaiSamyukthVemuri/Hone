@@ -15,17 +15,66 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-11-01T22:02:45Z-22:03:37Z, post-S2 apply; `0274` APPLIED above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo > hosted by the pending `0300`)
+## Current state (verified 2026-11-04T19:24:08Z-19:24:10Z, post-0300 apply; `0300` APPLIED above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
-> **CURRENT RELATIONSHIP: repo > hosted (MIGRATION-FIRST PENDING `0300`; hosted max `0274`), with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265`, `0267`-`0271` and `0273` declared unhosted.** The single sealed migration `0274_receptionist_desk_projection.sql` (sha256 `4de5175cf6129801f99a5d83af0427469caa7e304a744ae49070b6928c987b29`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/S2-AUTHORIZATION-20261101.md`, recorded 2026-11-01). Carrier PR #1294 head `290e55fb7029173c0f2e5aa251b09e80c6a9183f`; package manifest sha256 `85c8fd8a7b21a47ab48d24ef4b1aec190ea5da5723bae2d3c65a480f5440f62a`.
+> **CURRENT RELATIONSHIP: repo == hosted at `0300`, with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0296`, `0298` and `0299` declared unhosted.** The single sealed migration `0300_card_setup_legacy_event_order_bound.sql` (sha256 `edf1a4a92ba4e4091721a8d23f2741025ca427874ffa5fdeab478574656b8ce0`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/SAM-AUTHORIZATION-0300-b02-20261104T192245Z.txt`, sha256 `f8c142a014134116360ee074f0baee6cc76e71970efe66abc3d307b199b30cd8`). Carrier PR #1367 head `081827bddaa6a86362afb6d681d4eb2fd97d6851` at the apply; stage `stage-0300-b02-mac`, `SHA256SUMS.txt` sha256 `07c5ed4666e996f752874cb714b886cac73038587931cf0becd07fbe76aef4a3`.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0300**, declared in `docs/production/migration-state.json`. Read back 2026-11-04T19:24:08Z-19:24:10Z: APPLIED+VERIFIED as recorded by OPS: 255 history rows, max 0300, the expected version set, `0300` exactly once; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
+| **Repo migration max** | **0300** (`0300_card_setup_legacy_event_order_bound.sql`), derived from the source files on this tree; the file is present at the applied bytes. |
+| **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0296`, `0298` and `0299` are declared unhosted gaps below it, not a pending suffix. Every held number below `0300` (including `0298`, #1357, and `0299`, a Team claim) is now OUT OF ORDER by construction: its stage must be rebuilt on the 255-row base. |
+| **Next free number** | Next free number is **0301** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0300 apply (facts as recorded by OPS, 2026-11-04; `01-ops/RECORD-0300-APPLIED-20261104.md`)
+
+- **What it is.** PAY-006 legacy card history: `save_client_card_on_file_ordered` replaced with the same signature so a setup success event provably newer than every pre-0245 card row of that client and mode (`ceil(epoch(created_at)) + 900 s`, writer-attested `'portal'` rows only) proceeds through 0245's ordering logic; everything else 0245 refused still returns `unknown_event_order`. Grants restated by name. No table, column, index, trigger or row was created, changed or written by the migration; legacy rows keep NULL evidence. Proof: [0300-card-legacy-event-order-bound.md](./0300-card-legacy-event-order-bound.md).
+- **Order.** One plain `db push` of one file, no `--include-all`; the dry run listed exactly `0300_card_setup_legacy_event_order_bound.sql`. `0300` is above the previous hosted max `0297`, so it was not applied out of order.
+- **Package and tool.** Stage `stage-0300-b02-mac` (internal stage id `0300-b00`), `SHA256SUMS.txt` sha256 `07c5ed4666e996f752874cb714b886cac73038587931cf0becd07fbe76aef4a3`; the 255-file bundle (the 254 hosted files plus `0300`) tar sha256 `be7e6732626499ba466b29509dcec8b9e8f9204b6575c5b6030e31266a345134`; apply script `68d5a9db…`, reconcile `8ce748a0…` (full values in the OPS record); pinned CLI v2.102.0.
+- **Pre-apply.** Repeated inside the approved run: 254 history rows, max 0297, the expected version set, `0300` absent; the G12 preflight passed, including the public catalog fingerprint pinned to the HOSTED value `60fb55348c04bca2691d846fd0a4f168` (4109 entries) that Sam measured on 4 Nov. Apply-time prechecks (legacy-card census, P1, P1b, P2, P4) matched the 4 Nov baseline exactly and were confirmed by OPS, Insurance and Privacy.
+- **Safe stop before it.** An earlier run the same day through `stage-0300-b00-mac` (`SHA256SUMS.txt` `880ee267…`) STOPPED at G12 `catalog_baseline_ok = false`: NOT APPLIED, nothing pushed, no marker. Its pin came from a migration-chain replay rather than from hosted; the diagnosis (five pre-existing hosted-vs-chain differences D1-D5, none touched by 0300) is in the OPS handoff `incident-card-20261104/catalog-diag/DIFF-REPORT-20261104.md`.
+- **Read-back.** 2026-11-04T19:24:08Z-19:24:10Z: OVERALL PASS. 255 rows, max 0300, expected version set, `0300` exactly once; function facts and ACLs passed, the ordered card command equals the sealed 0300 body, the unordered save path stays closed, and every other public catalog object is unchanged. Evidence is on Sam's machine (paths in the OPS record).
+- **Not captured.** Any server-side apply instant and statement-level timing. Migration history is not table-content evidence.
+- **Release.** #1367 was NOT merged at apply time and no application code was deployed (none is needed: same signature). The merge is a release; this record change is in the same PR.
+- **Still open, each under its own approval.** Stripe's retry of the stuck event and `POST-RECOVERY-VERIFY.sql`; the BEFORE INSERT trigger closing `service_role` table INSERT on `client_payment_methods` (Insurance F-3); the webhook change making provably permanent refusals terminal; recording D3/D5 in docs/09. No rollback.
+
+## Previous state (verified 2026-11-04T18:06:44Z-18:06:47Z, post-0297 apply; `0297` APPLIED above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0297`, with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265`, `0267`-`0271`, `0273` and `0275`-`0296` declared unhosted.** The single sealed migration `0297_calendar_source_lock_order.sql` (sha256 `1254fdb65b48a2aa740b571d35a7323531555e3ef1a92928c17046c08e773eee`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/SAM-AUTHORIZATION-0297-20261104T180543Z.txt`, sha256 `8f2eef146cd9f3871685d8102b47e04892da2358f84eb5d8bc1d9613d11e2adf`). Carrier PR #1352 head `6e8444e4d6f29a6bfdbd572df7696ba09e633e20` at the apply; stage `0297-b00`, `SHA256SUMS.txt` sha256 `b13e94b6dff6d37476abf6126af568b865deb8e7c383574335fc35747a8e07e9`.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0297**, declared in `docs/production/migration-state.json`. Read back 2026-11-04T18:06:44Z-18:06:47Z: APPLIED+VERIFIED as recorded by OPS: 254 history rows, max 0297, the expected version set, `0297` exactly once; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
+| **Repo migration max** | **0297** (`0297_calendar_source_lock_order.sql`), derived from the source files on this tree; the file is present at the applied bytes. |
+| **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273` and `0275`-`0296` are declared unhosted gaps below it, not a pending suffix. Every held number below `0297` (including `0281`, `0287` and `0289`) is now OUT OF ORDER by construction: its stage must be rebuilt on the 254-row base. |
+| **Next free number** | Next free number is **0298** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0297 apply (facts as recorded by OPS, 2026-11-04; `01-ops/RECORD-0297-APPLIED-20261104.md`)
+
+- **What it is.** HON-48 calendar source lock order: six calendar-source functions redefined so every path takes its locks in the same order, and `lock_structural_calendar_source_mutation` loses `service_role` EXECUTE by design. No table, column or index was created, changed or dropped, and no data was written by the migration.
+- **Order.** One plain `db push` of one file, no `--include-all`; the dry run listed exactly `0297_calendar_source_lock_order.sql`. `0297` is above the previous hosted max `0274`, so it was not applied out of order.
+- **Package and tool.** Stage `0297-b00`, `SHA256SUMS.txt` sha256 `b13e94b6dff6d37476abf6126af568b865deb8e7c383574335fc35747a8e07e9`; the 254-file bundle (the 253 hosted files plus `0297`) tar sha256 `45e3c4642713f94694384b4c7470860d826eb8bf584829c339dfa36359c26354`; installer `3a9d5da5…`, apply script `b6142bc5…`, reconcile `6230f84e…` (full values in the OPS record); pinned CLI v2.102.0. Apply package: `willow/APPLY-PACKAGE-0297-1254fdb6.md`.
+- **Pre-apply.** Repeated inside the approved run: 253 history rows, max 0274, the expected version set, `0297` absent; the G12 preflight passed (baseline ACL and function bodies). An earlier attempt the same day stopped at the history read with HTTP 401 (expired token): NOT APPLIED, nothing pushed, no marker.
+- **Read-back.** 2026-11-04T18:06:44Z-18:06:47Z: OVERALL PASS. 254 rows, max 0297, expected version set, `0297` exactly once; function facts, ACL snapshot, sealed function bodies and triggers all passed. Evidence is on Sam's machine (paths in the OPS record).
+- **Not captured.** Any server-side apply instant and statement-level timing. Migration history is not table-content evidence.
+- **Release.** #1352 was NOT merged at apply time and no application code was deployed. The merge is a release; this record change is in the same PR.
+- **Holds unchanged.** Every other migration (`0281`, `0287`, `0289`, `0290`, `0295` and the rest below `0297`); `0300` is above the max (a plain push through its own stage); no rollback.
+
+## Previous state (verified 2026-11-01T22:02:45Z-22:03:37Z, post-S2 apply; `0274` APPLIED above the hosted max, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0274`, with `0247`, `0249`-`0252`, `0255` and `0256` declared unhosted and the unallocated or held numbers `0259`-`0265`, `0267`-`0271` and `0273` declared unhosted.** The single sealed migration `0274_receptionist_desk_projection.sql` (sha256 `4de5175cf6129801f99a5d83af0427469caa7e304a744ae49070b6928c987b29`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/S2-AUTHORIZATION-20261101.md`, recorded 2026-11-01). Carrier PR #1294 head `290e55fb7029173c0f2e5aa251b09e80c6a9183f`; package manifest sha256 `85c8fd8a7b21a47ab48d24ef4b1aec190ea5da5723bae2d3c65a480f5440f62a`.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0274**, declared in `docs/production/migration-state.json`. Read back 2026-11-01T22:02:45Z-22:03:37Z: APPLIED+VERIFIED as recorded by OPS: 253 history rows, max 0274, `0274` exactly once, the S1 trio once each; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0300** (`0300_card_setup_legacy_event_order_bound.sql`, HELD, **NOT applied**), derived from the source files on this tree. `0274` is present at the applied bytes. |
+| **Repo migration max** | **0274** (`0274_receptionist_desk_projection.sql`), derived from the source files on this tree; the file is present at the applied bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **`0300`** — `0300_card_setup_legacy_event_order_bound.sql` (PAY-006 legacy card history upper bound; proof in [0300-card-legacy-event-order-bound.md](./0300-card-legacy-event-order-bound.md)), authored and **NOT applied** (the MIGRATION-FIRST PENDING shape); held, never applied without Sam's per-change approval. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271` and `0273` remain declared unhosted gaps below the hosted head, not a pending suffix. |
-| **Next free number** | Next free number is **0301** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271` and `0273` are declared unhosted gaps below it, not a pending suffix. |
+| **Next free number** | Next free number is **0275** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The S2 apply (facts as recorded by OPS, 2026-11-01)
