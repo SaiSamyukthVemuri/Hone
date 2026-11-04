@@ -244,7 +244,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // RECORDED AS A DECISION per the note above. Cost: ONE spec, a seeded solo studio and two page loads.
     // Now 51: read-only-chart-mode.spec.ts (Roles R4 read-only chart mode, #1351) joined `sessions`. One case (~15 s measured locally after the build), no
     // extra stack; a DECISION recorded here, not a silent +1.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(51);
+    // Now 52: read-only-states.spec.ts (Roles R4: DW1 no-view cards, I-5 failed-read state, #1351) joined `sessions`. One case (~8 s after the build), no extra stack;
+    // a DECISION recorded here, not a silent +1.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(52);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
