@@ -70,7 +70,7 @@ describe("(1) an eligible repeat client is offered the fast path as the PRIMARY 
 
   it("the gate is unchanged: the panel still renders only on an EMPTY editable electrolysis chart", () => {
     expect(PAGE).toMatch(
-      /!isFinalized &&\s*\n\s*session\.modality === "electrolysis" &&\s*\n\s*blockData &&\s*\n\s*blockData\.blocks\.length === 0 &&\s*\n\s*canCopyFromPrevious/,
+      /!isFinalized &&\s*\n\s*canEditRecords &&\s*\n\s*session\.modality === "electrolysis" &&\s*\n\s*blockData &&\s*\n\s*blockData\.blocks\.length === 0 &&\s*\n\s*canCopyFromPrevious/,
     );
   });
 });
@@ -406,7 +406,7 @@ describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/s
     // first entry — the form that carries minutes, hairs, chips, tolerance and
     // notes. That is what makes the landing immediately actionable.
     expect(VIEW).toMatch(
-      /\{editing \? \(\s*\n\s*<BlockSetupForm[\s\S]{0,400}?block=\{block\}[\s\S]{0,200}?firstEntry=\{entriesSorted\[0\] \?\? null\}/,
+      /\{editing && !readOnly \? \(\s*\n\s*<BlockSetupForm[\s\S]{0,400}?block=\{block\}[\s\S]{0,200}?firstEntry=\{entriesSorted\[0\] \?\? null\}/,
     );
   });
 
