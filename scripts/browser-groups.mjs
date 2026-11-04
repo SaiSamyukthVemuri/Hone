@@ -116,6 +116,8 @@ export const BROWSER_GROUPS = {
       // Insurance PEER-1308 D-4: the CLOSED compact row (pinned notes, allergy flag, caution line,
       // intake pill visible) proved without the helper that opens the row details.
       "dashboard-closed-row.spec.ts",
+      // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
+      "dashboard-last-treatment-closed.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default

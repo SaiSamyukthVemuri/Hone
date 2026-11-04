@@ -116,15 +116,8 @@ export function DashboardTreatmentMemory({
 
   return (
     <div className="mt-1 flex flex-col gap-1">
-      {/* ---- COMPACT: the one line that says which visit this is ---- */}
-      <p
-        data-testid="dashboard-memory-compact"
-        className="whitespace-pre-wrap break-words text-xs text-neutral-600 dark:text-neutral-400"
-      >
-        <span className="font-medium text-neutral-500">Last treatment: </span>
-        {summary.compactSummary}
-      </p>
-
+      {/* The one-line "Last treatment" summary is painted on the CLOSED row by RowSafetyLines (HON-65), so
+          it is not repeated here; this control only opens the full chart. */}
       <button
         type="button"
         onClick={toggle}
