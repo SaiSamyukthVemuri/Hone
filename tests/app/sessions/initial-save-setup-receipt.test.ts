@@ -208,7 +208,7 @@ describe("ANTI-VACUITY: the harness really reaches the response handling", () =>
     }).then((out) => {
       expect(out.ok, out.ok ? "" : out.error).toBe(true);
       expect(rpc).toHaveBeenCalledWith(
-        "create_block_with_initial_setup",
+        "create_block_with_initial_setup_and_identity",
         expect.anything(),
       );
     });
@@ -267,7 +267,7 @@ it("initial save preserves exact text in the governed atomic payload", async () 
     textInput.initialSetup!.groups[0].readings[0].value = { kind: "text", value: "003i" };
     const out = await createTreatmentAreaWithEntryAction(textInput);
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
-    expect(rpc).toHaveBeenCalledWith("create_block_with_initial_setup", expect.objectContaining({ p_setup_groups: [expect.objectContaining({ readings: [expect.objectContaining({ value_text: "003i", native_unit: "none", decimals: 0 })] })] }));
+    expect(rpc).toHaveBeenCalledWith("create_block_with_initial_setup_and_identity", expect.objectContaining({ p_setup_groups: [expect.objectContaining({ readings: [expect.objectContaining({ value_text: "003i", native_unit: "none", decimals: 0 })] })] }));
   } finally {
     Object.assign(field, before);
     delete (field as typeof field & { valueKind?: string }).valueKind;

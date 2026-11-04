@@ -1586,7 +1586,7 @@ export function BlockSetupForm({
   const isOmniblend = draft.apilusModality === "Omniblend";
 
   const thermoSection =
-    modeSections.showThermo ? (
+    showLegacyFields && modeSections.showThermo ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
           <SectionLabel>
@@ -1691,7 +1691,7 @@ export function BlockSetupForm({
     ) : null;
 
   const galvSection =
-    modeSections.showGalv ? (
+    showLegacyFields && modeSections.showGalv ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
           <SectionLabel>
@@ -2082,8 +2082,8 @@ export function BlockSetupForm({
             thermolysis for every blend modality: PicoBlend, OmniBlend,
             MultiBlend, EvoluBlend, SynchroBlend, not only OmniBlend as before.
             Pure modes render whichever single group applies. */}
-        {showLegacyFields && galvSection}
-        {showLegacyFields && thermoSection}
+        {galvSection}
+        {thermoSection}
 
         <label className="flex flex-col gap-1.5 md:max-w-[16rem]">
           <span className="text-sm font-medium">Hairs treated</span>

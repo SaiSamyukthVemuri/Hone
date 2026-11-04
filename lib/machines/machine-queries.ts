@@ -1,4 +1,5 @@
 import { isDefinitiveDatabaseAnswer } from "./save-attempt";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import type { ReadingValue } from "./profile-contract";
 import type { StudioDevice } from "./selection";
 
@@ -1088,7 +1089,7 @@ export async function recordBlockMachineIdentity(
     modeKey: string | null;
     profileId: string | null;
   },
-): Promise<{ ok: true } | { ok: false; error: MachineDbError }> {
+): Promise<{ ok: true } | { ok: false; error: { code: string } }> {
   const { error } = await db.rpc("record_block_machine_identity", {
     p_block_id: input.blockId,
     p_session_id: input.sessionId,
@@ -1097,5 +1098,7 @@ export async function recordBlockMachineIdentity(
     p_studio_machine_id: input.deviceId,
     p_mode_key: input.deviceId === null ? null : input.modeKey,
   });
-  return error ? { ok: false, error } : { ok: true };
+  return error
+    ? { ok: false, error: { code: dbErrorCode(error) } }
+    : { ok: true };
 }

@@ -109,7 +109,7 @@ describe("the UNEXECUTED command is not on the default path", () => {
       "the claim-only arm is back, and it can create a settings-less area",
     ).not.toMatch(/const withClaim/);
     const branchAt = createBody.indexOf("withSetup");
-    const newAt = createBody.indexOf('"create_block_with_initial_setup"');
+    const newAt = createBody.indexOf('"create_block_with_initial_setup_and_identity"');
     const oldAt = createBody.indexOf('"create_block_with_entry"');
     expect(newAt).toBeGreaterThan(branchAt);
     expect(oldAt).toBeGreaterThan(branchAt);
@@ -136,7 +136,7 @@ describe("validation still precedes the write, on BOTH arms", () => {
     expect(checkIdx).toBeGreaterThan(-1);
     for (const cmd of [
       '"create_block_with_entry"',
-      '"create_block_with_initial_setup"',
+      '"create_block_with_initial_setup_and_identity"',
     ]) {
       expect(createBody.indexOf(cmd), `${cmd} must come after validation`).toBeGreaterThan(
         checkIdx,
@@ -147,7 +147,7 @@ describe("validation still precedes the write, on BOTH arms", () => {
   it("resolves the probe-lot selection before either command", () => {
     const invIdx = createBody.indexOf("resolveProbeInventorySelection(");
     expect(invIdx).toBeGreaterThan(-1);
-    expect(createBody.indexOf('"create_block_with_initial_setup"')).toBeGreaterThan(
+    expect(createBody.indexOf('"create_block_with_initial_setup_and_identity"')).toBeGreaterThan(
       invIdx,
     );
   });
@@ -213,7 +213,7 @@ describe("the settings payload keeps the rules the other write paths use", () =>
     // The key identifies the SAVE and is minted once at handoff. Minting here
     // would make every attempt a new save and a lost response a duplicate.
     expect(createBody).toMatch(
-      /p_setup_idempotency_key: input\.initialSetup!\.idempotencyKey/,
+      /p_setup_idempotency_key: withSetup\s*\?\s*input\.initialSetup!\.idempotencyKey/,
     );
     expect(createBody).not.toMatch(/randomUUID/);
   });
