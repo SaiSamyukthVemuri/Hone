@@ -34,7 +34,14 @@ describe("new session / start session", () => {
   });
   it("the appointment page's two start-a-chart CTAs are behind canEditRecords", () => {
     const p = strip(read("app/(app)/calendar/[id]/page.tsx"));
-    expect(p).toMatch(/const canEditRecords = canViewRecords && \(await requirePermission\(supabase, studio\.id, "clin\.edit_records", \{ appointment: id \}\)\)\.allowed;/);
+    expect(p).toMatch(/const editDecision = canViewRecords \? await requirePermission\(supabase, studio\.id, "clin\.edit_records", \{ appointment: id \}\) : null;\s*const canEditRecords = editDecision\?\.allowed === true;/);
+    // Privacy DW1: without clin.view_records the two cards say "Not available to your role.", never the read-only sentence (which claims a view right).
+    expect(p).toContain('data-testid="chart-session-not-available"');
+    expect(p).toContain('data-testid="next-step-not-available"');
+    expect(p).toMatch(/<ChartSessionCard[\s\S]*?canViewRecords=\{canViewRecords\}/);
+    expect(p).toMatch(/<NextStepCard[\s\S]*?canViewRecords=\{canViewRecords\}/);
+    // Insurance I-5: a FAILED read is its own state, not the read-only sentence.
+    expect(p).toMatch(/editCheckFailed \? PERMISSION_CHECK_FAILED : EDIT_RECORDS_REFUSAL/);
     expect(p).toMatch(/\{canEditRecords \? \(\s*<Link\s+href=\{`\/clients\/\$\{clientId\}\/sessions\/new\?appointment_id=/);
     expect(p).toContain('data-testid="next-step-read-only"');
     expect(p).toMatch(/<ChartSessionCard[\s\S]*?canEditRecords=\{canEditRecords\}/);
@@ -66,5 +73,25 @@ describe("their UI entry points are withdrawn in read-only mode (UI side of the 
   it("new plan: the plans card takes readOnly and a deep link cannot open the create form", () => {
     expect(plans).toMatch(/readOnly/);
     expect(plans).toMatch(/useState\(autoOpenCreate && !readOnly\)/);
+  });
+});
+
+describe("failed permission read (Insurance I-5) and client id validation (Privacy DW2)", () => {
+  it("the helper separates a failed read from a no, and a no keeps the read-only sentence", async () => {
+    const { editRecordsRefusal, EDIT_RECORDS_REFUSAL, PERMISSION_CHECK_FAILED } = await import("@/lib/permissions/refusal-copy");
+    expect(editRecordsRefusal({ allowed: false, engine: null })).toBe(PERMISSION_CHECK_FAILED);
+    expect(editRecordsRefusal({ allowed: false, engine: false })).toBe(EDIT_RECORDS_REFUSAL);
+    expect(editRecordsRefusal({ allowed: true, engine: null, engineAbsent: true })).toBe(EDIT_RECORDS_REFUSAL);
+    expect(PERMISSION_CHECK_FAILED).not.toContain("view this chart");
+  });
+  it("every page that prints the read-only sentence shows the check-failed words when the read failed", () => {
+    for (const f of [`${C}/page.tsx`, `${C}/sessions/[sessionId]/page.tsx`, `${C}/sessions/new/page.tsx`, "app/(app)/calendar/[id]/page.tsx"]) {
+      expect(strip(read(f))).toContain("PERMISSION_CHECK_FAILED");
+    }
+  });
+  it("startSessionAction checks the client id is a UUID before it builds the refusal redirect", () => {
+    const a = strip(read(`${C}/sessions/new/actions.ts`));
+    expect(a.indexOf("UUID_RE.test(clientId)")).toBeGreaterThan(-1);
+    expect(a.indexOf("UUID_RE.test(clientId)")).toBeLessThan(a.indexOf("redirect(`/clients/${clientId}/sessions/new`)"));
   });
 });

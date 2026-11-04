@@ -9,7 +9,7 @@ import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/permissions/require-permission";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { EDIT_RECORDS_REFUSAL, PERMISSION_CHECK_FAILED, permissionCheckFailed } from "@/lib/permissions/refusal-copy";
 import { contained, gateClient, once } from "@/lib/permissions/ask-permission";
 import {
   buildLastSessionSummary,
@@ -303,11 +303,20 @@ export default async function ClientCheatSheetPage({
   const canViewRecords = data.sessionsAllowed;
   // Read-only chart mode: viewing the chart without editing it. Started here and awaited inside the profile's one parallel wave, so it adds no serial stage; contained, so a
   // failing check reads as 'cannot edit' and never crashes the page. Editing needs viewing (NQ-10), so no edit check runs without it.
+  // Insurance I-5: a FAILED read (not a "no") is remembered so the page says "couldn't check", never the read-only sentence.
+  let editCheckFailed = false;
   const canEditRecordsPromise = canViewRecords
     ? contained("clin.edit_records", () =>
         gateClient()
           .then((db) => requirePermission(db, studio.id, "clin.edit_records", { client: id }))
-          .then((d) => d.allowed),
+          .then((d) => {
+            if (permissionCheckFailed(d)) editCheckFailed = true;
+            return d.allowed;
+          })
+          .catch((e) => {
+            editCheckFailed = true;
+            throw e;
+          }),
       )
     : Promise.resolve(false);
 
@@ -1075,7 +1084,7 @@ export default async function ClientCheatSheetPage({
           ) : (
             canViewRecords && (
               <p data-testid="log-session-read-only" className="text-sm text-neutral-600 dark:text-neutral-400">
-                {EDIT_RECORDS_REFUSAL}
+                {editCheckFailed ? PERMISSION_CHECK_FAILED : EDIT_RECORDS_REFUSAL}
               </p>
             )
           )}
@@ -1901,7 +1910,7 @@ export default async function ClientCheatSheetPage({
           data-testid="chart-read-only-note"
           className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
         >
-          {EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to make a change.
+          {editCheckFailed ? PERMISSION_CHECK_FAILED : `${EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to make a change.`}
         </p>
       )}
 

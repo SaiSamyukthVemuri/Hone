@@ -58,6 +58,6 @@ describe("goal action", () => {
     expect(resolved).toBeGreaterThan(-1);
     expect(gate).toBeGreaterThan(resolved);
     expect(write === -1 || gate < write).toBe(true);
-    expect(GOAL_ACTION).toContain("error: EDIT_RECORDS_REFUSAL");
+    expect(GOAL_ACTION).toContain("error: editRecordsRefusal(editDecision)");
   });
 });

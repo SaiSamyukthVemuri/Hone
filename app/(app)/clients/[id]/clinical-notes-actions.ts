@@ -34,7 +34,7 @@ import type {
 } from "@/lib/types/database";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { editRecordsRefusal } from "@/lib/permissions/refusal-copy";
 
 const MAX_BODY_LENGTH = 20000;
 const MAX_AREAS = 40;
@@ -198,8 +198,9 @@ async function insertClinicalNote(params: {
   if (!(await requirePermission(supabase, studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, code: "error", error: "Not available to your role." };
   }
-  if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, code: "error", error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, code: "error", error: editRecordsRefusal(editDecision) };
   }
 
   // studio_id passed for documentation; the BEFORE INSERT trigger overwrites it

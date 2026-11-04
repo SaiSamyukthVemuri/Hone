@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/permissions/require-permission";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { EDIT_RECORDS_REFUSAL, PERMISSION_CHECK_FAILED, permissionCheckFailed } from "@/lib/permissions/refusal-copy";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -117,7 +117,10 @@ export default async function AppointmentDetailPage({
   // The prior treatment, the linked session and the clinical-notes summary are treatment RECORDS: without clin.view_records they are not read at all.
   const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records", { appointment: id })).allowed;
   // Starting a chart from here creates a session: clin.edit_records (read-only chart mode). Only asked when the viewer may see records at all.
-  const canEditRecords = canViewRecords && (await requirePermission(supabase, studio.id, "clin.edit_records", { appointment: id })).allowed;
+  const editDecision = canViewRecords ? await requirePermission(supabase, studio.id, "clin.edit_records", { appointment: id }) : null;
+  const canEditRecords = editDecision?.allowed === true;
+  // Insurance I-5: a failed read is not "read-only"; the two cards say so in their own words.
+  const editCheckFailed = editDecision !== null && permissionCheckFailed(editDecision);
   // The briefing shows intake STATUS only; without clin.view_intake the row is carried without its answers.
   const canViewIntake = (await requirePermission(supabase, studio.id, "clin.view_intake", { appointment: id })).allowed;
 
@@ -485,7 +488,9 @@ export default async function AppointmentDetailPage({
           appointmentId={id}
           clientId={data.client?.id ?? null}
           linkedSession={linkedSession}
+          canViewRecords={canViewRecords}
           canEditRecords={canEditRecords}
+          editCheckFailed={editCheckFailed}
         />
       )}
 
@@ -626,7 +631,9 @@ export default async function AppointmentDetailPage({
           appointmentId={id}
           linkedSession={linkedSession}
           isOwner={isOwner}
+          canViewRecords={canViewRecords}
           canEditRecords={canEditRecords}
+          editCheckFailed={editCheckFailed}
         />
       )}
 
@@ -1364,12 +1371,16 @@ function ChartSessionCard({
   appointmentId,
   clientId,
   linkedSession,
+  canViewRecords,
   canEditRecords,
+  editCheckFailed,
 }: {
   appointmentId: string;
   clientId: string | null;
   linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null;
+  canViewRecords: boolean;
   canEditRecords: boolean;
+  editCheckFailed: boolean;
 }) {
   if (!clientId) {
     return null;
@@ -1408,9 +1419,14 @@ function ChartSessionCard({
         >
           + Chart session
         </Link>
-      ) : (
+      ) : canViewRecords ? (
         <p data-testid="chart-session-read-only" className="text-xs text-neutral-600 dark:text-neutral-400">
-          {EDIT_RECORDS_REFUSAL}
+          {editCheckFailed ? PERMISSION_CHECK_FAILED : EDIT_RECORDS_REFUSAL}
+        </p>
+      ) : (
+        // Privacy DW1: the read-only sentence claims a view right. Without clin.view_records the viewer gets the view refusal instead.
+        <p data-testid="chart-session-not-available" className="text-xs text-neutral-600 dark:text-neutral-400">
+          Not available to your role.
         </p>
       )}
     </section>
@@ -1452,12 +1468,16 @@ function NextStepCard({
   appointmentId,
   linkedSession,
   isOwner,
+  canViewRecords,
   canEditRecords,
+  editCheckFailed,
 }: {
   clientId: string | null;
   appointmentId: string;
   linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null;
+  canViewRecords: boolean;
   canEditRecords: boolean;
+  editCheckFailed: boolean;
   // HON-44: billing is owner-only, so a non-owner is never sent to the (withdrawn)
   // payment card and is not told to charge.
   isOwner: boolean;
@@ -1483,7 +1503,11 @@ function NextStepCard({
       return (
         <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900">
           <p className="text-sm font-medium">Appointment completed</p>
-          <p data-testid="next-step-read-only" className="text-sm text-neutral-700 dark:text-neutral-300">{EDIT_RECORDS_REFUSAL}</p>
+          {canViewRecords ? (
+            <p data-testid="next-step-read-only" className="text-sm text-neutral-700 dark:text-neutral-300">{editCheckFailed ? PERMISSION_CHECK_FAILED : EDIT_RECORDS_REFUSAL}</p>
+          ) : (
+            <p data-testid="next-step-not-available" className="text-sm text-neutral-700 dark:text-neutral-300">Not available to your role.</p>
+          )}
         </section>
       );
     }

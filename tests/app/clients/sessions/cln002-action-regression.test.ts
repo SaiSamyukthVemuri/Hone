@@ -34,7 +34,7 @@ let linked: { data: { appointment_id: string | null } | null; error: { message: 
 
 function form(appointmentId: string | null = B): FormData {
   const data = new FormData();
-  data.set("client_id", "client"); data.set("modality", "electrolysis");
+  data.set("client_id", "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11"); data.set("modality", "electrolysis");
   if (appointmentId) data.set("appointment_id", appointmentId);
   return data;
 }
@@ -47,7 +47,7 @@ function expectNoSideEffects() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  appointment = { id: B, studio_id: "studio", client_id: "client", practitioner_id: "practitioner", status: "confirmed", ends_at: "2020-01-01T00:00:00Z" };
+  appointment = { id: B, studio_id: "studio", client_id: "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11", practitioner_id: "practitioner", status: "confirmed", ends_at: "2020-01-01T00:00:00Z" };
   linked = { data: { appointment_id: B }, error: null };
   runtime.rpc.mockResolvedValue({ data: [{ session_id: "chart", reused: false }], error: null });
   runtime.adminRpc.mockResolvedValue({ error: null });
@@ -67,10 +67,10 @@ describe("reverse skew: an app ahead of its database (PGRST202 fallback)", () =>
     runtime.rpc
       .mockResolvedValueOnce({ data: null, error: { code: "PGRST202", message: "not found" } })
       .mockResolvedValueOnce({ data: [{ session_id: "chart", reused: false }], error: null });
-    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart");
     expect(runtime.rpc).toHaveBeenCalledTimes(2);
     expect(runtime.rpc.mock.calls[1]).toEqual(["start_session", {
-      p_client_id: "client", p_modality: "electrolysis", p_appointment_id: B, p_coalesce_minutes: 90,
+      p_client_id: "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11", p_modality: "electrolysis", p_appointment_id: B, p_coalesce_minutes: 90,
     }]);
   });
 
@@ -129,7 +129,7 @@ describe("appointment lineage is refused before the command runs", () => {
 
   it("an unassigned appointment in the same studio and client may be charted", async () => {
     appointment = { ...appointment, practitioner_id: null };
-    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart");
     expect(runtime.rpc).toHaveBeenCalledWith("start_session", expect.objectContaining({ p_appointment_id: B, p_studio_id: "studio" }));
   });
 });
@@ -142,7 +142,7 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
     ["confirmed", "2999-01-01T00:00:00Z"],
   ])("status %s ending %s: the chart opens, but no completion and no postcare", async (status, endsAt) => {
     appointment = { ...appointment, status, ends_at: endsAt };
-    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart");
     expect(runtime.adminRpc).not.toHaveBeenCalled();
     expect(runtime.postcare).not.toHaveBeenCalled();
   });
@@ -150,7 +150,7 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
   it("a failed completion is fail-soft: no postcare, and the chart still opens", async () => {
     runtime.adminRpc.mockResolvedValue({ error: { code: "P0001", message: "synthetic refusal" } });
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart");
     expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
     expect(runtime.postcare).not.toHaveBeenCalled();
     log.mockRestore();
@@ -158,7 +158,7 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
 
   it("separate appointments get separate charts: B's new chart completes B, never A", async () => {
     runtime.rpc.mockResolvedValue({ data: [{ session_id: "chart-b", reused: false }], error: null });
-    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart-b");
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart-b");
     expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
     expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", expect.objectContaining({ p_appointment_id: B }));
     expect(runtime.analytics).toHaveBeenCalledWith(expect.objectContaining({ properties: expect.objectContaining({ is_new_session: true }) }));

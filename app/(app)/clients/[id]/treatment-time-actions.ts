@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { requirePermission } from "@/lib/permissions/require-permission";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { editRecordsRefusal } from "@/lib/permissions/refusal-copy";
 import type { TreatmentGoalStatus } from "@/lib/types/database";
 
 const MAX_HOURS = 1000;
@@ -57,8 +57,9 @@ export async function upsertTreatmentGoalAction(
   }
   if (!client) return { ok: false, error: "Client not found." };
   // Roles engine: the treatment goal is chart content (CLI-16). Asked ahead of enforcement (the catalog stays not_yet), after the client has resolved for this studio.
-  if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, error: editRecordsRefusal(editDecision) };
   }
 
   // Upsert by client_id (unique constraint). On conflict, update in place

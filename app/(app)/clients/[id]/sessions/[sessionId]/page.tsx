@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/permissions/require-permission";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { EDIT_RECORDS_REFUSAL, PERMISSION_CHECK_FAILED, permissionCheckFailed } from "@/lib/permissions/refusal-copy";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -129,7 +129,8 @@ export default async function SessionDetailPage({
   // The aftercare send panel also needs clin.view_aftercare (same key the calendar appointment page asks).
   const canViewAftercare = (await requirePermission(permissionClient, studio.id, "clin.view_aftercare", { client: id })).allowed;
   // Read-only chart mode: viewing is allowed here, so a missing clin.edit_records only locks the controls (every action asks the key again).
-  const canEditRecords = (await requirePermission(permissionClient, studio.id, "clin.edit_records", { client: id })).allowed;
+  const editDecision = await requirePermission(permissionClient, studio.id, "clin.edit_records", { client: id });
+  const canEditRecords = editDecision.allowed;
 
 
   // ------------------------------------------------------------------
@@ -622,7 +623,7 @@ export default async function SessionDetailPage({
             data-testid="chart-read-only-note"
             className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
           >
-            {EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to make a change.
+            {permissionCheckFailed(editDecision) ? PERMISSION_CHECK_FAILED : `${EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to make a change.`}
           </p>
         )}
         {/* PR #199 (Chloe iPad retest): the inline line under the

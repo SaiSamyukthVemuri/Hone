@@ -339,7 +339,7 @@ describe("CLN-002 committed appointment lineage before action side effects", () 
           return chain;
         }),
         maybeSingle: vi.fn(async () => table === "sessions" ? linked : ({
-          data: { id: appointmentB, studio_id: "studio", client_id: "client", practitioner_id: "practitioner", status: "confirmed", ends_at: "2020-01-01T00:00:00Z" }, error: null,
+          data: { id: appointmentB, studio_id: "studio", client_id: "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11", practitioner_id: "practitioner", status: "confirmed", ends_at: "2020-01-01T00:00:00Z" }, error: null,
         })),
       };
       return chain;
@@ -347,7 +347,7 @@ describe("CLN-002 committed appointment lineage before action side effects", () 
   });
   function form(appointment = appointmentB) {
     const data = new FormData();
-    data.set("client_id", "client"); data.set("modality", "electrolysis");
+    data.set("client_id", "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11"); data.set("modality", "electrolysis");
     if (appointment) data.set("appointment_id", appointment);
     return data;
   }
@@ -363,17 +363,17 @@ describe("CLN-002 committed appointment lineage before action side effects", () 
     expect(runtime.postcare).not.toHaveBeenCalled();
     expect(runtime.analytics).not.toHaveBeenCalled();
     expect(runtime.revalidate).not.toHaveBeenCalled();
-    expect(sessionFilters).toEqual([["id", "chart"], ["studio_id", "studio"], ["client_id", "client"]]);
+    expect(sessionFilters).toEqual([["id", "chart"], ["studio_id", "studio"], ["client_id", "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11"]]);
   });
   it("continues matching appointment B including reused-chart completion recovery", async () => {
-    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart");
     expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", {
       p_appointment_id: appointmentB, p_studio_id: "studio", p_practitioner_id: "practitioner",
     });
     expect(runtime.postcare).toHaveBeenCalledWith(appointmentB, "studio", "practitioner");
   });
   it("preserves chart-without-appointment starts without an appointment side effect", async () => {
-    await expect(startSessionAction(form(""))).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    await expect(startSessionAction(form(""))).rejects.toThrow("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/chart");
     expect(runtime.from).not.toHaveBeenCalled();
     expect(runtime.adminRpc).not.toHaveBeenCalled();
     expect(runtime.postcare).not.toHaveBeenCalled();

@@ -21,7 +21,7 @@ import {
   PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { editRecordsRefusal } from "@/lib/permissions/refusal-copy";
 
 const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"];
 
@@ -235,8 +235,9 @@ export async function addElectrolysisEntryAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, code: "not_persisted", error: "Not available to your role." };
   }
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, code: "not_persisted", error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, code: "not_persisted", error: editRecordsRefusal(editDecision) };
   }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
@@ -426,8 +427,9 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error(EDIT_RECORDS_REFUSAL);
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    throw new Error(editRecordsRefusal(editDecision));
   }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
@@ -503,8 +505,9 @@ async function softDeleteEntry(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error(EDIT_RECORDS_REFUSAL);
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    throw new Error(editRecordsRefusal(editDecision));
   }
 
   // L18 FINAL (migration 0169) revoked INSERT/UPDATE/DELETE from `authenticated`
@@ -663,8 +666,9 @@ export async function updateNextSessionNoteAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, error: editRecordsRefusal(editDecision) };
   }
 
   const supabase = await createClient();
@@ -695,8 +699,9 @@ export async function updateSessionPerformerAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     throw new Error("Not available to your role.");
   }
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error(EDIT_RECORDS_REFUSAL);
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    throw new Error(editRecordsRefusal(editDecision));
   }
 
   const newPerformerId = typeof performerId === "string" && performerId
@@ -824,8 +829,9 @@ export async function editSessionStartedAtAction(
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId })).allowed) {
     return { ok: false, error: "Not available to your role." };
   }
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    return { ok: false, error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, error: editRecordsRefusal(editDecision) };
   }
 
   // L18 Phase 3: the read-validate-write-audit sequence is now ONE transaction
@@ -871,8 +877,9 @@ export async function softDeleteSessionAction(formData: FormData): Promise<void>
     throw new Error("Not available to your role.");
   }
   // Soft-deleting a session writes its chart row: the edit key too (asked ahead of enforcement, NQ-12; the 0289 guard is the database backstop).
-  if (!(await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error(EDIT_RECORDS_REFUSAL);
+  const editDecision = await requirePermission(await createClient(), studio.id, "clin.edit_records", { client: clientId });
+  if (!editDecision.allowed) {
+    throw new Error(editRecordsRefusal(editDecision));
   }
 
   const supabase = await createClient();

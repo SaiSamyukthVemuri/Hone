@@ -115,6 +115,10 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   if (modality !== "electrolysis" && modality !== "laser") {
     throw new Error("Invalid modality.");
   }
+  // Privacy DW2: the refusal redirect below is built from this string, so check it is a UUID first (the lineage checks rely on the same shape).
+  if (!UUID_RE.test(clientId)) {
+    throw new Error("Missing client id.");
+  }
 
   const { practitioner, studio } = await timed("session-start.identity", () =>
     getCurrentPractitionerWithStudio(),

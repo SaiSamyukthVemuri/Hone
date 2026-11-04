@@ -18,14 +18,14 @@ vi.mock("@/lib/observability/perf-timing", () => ({ timed: async (_n: string, fn
 
 import { startSessionAction } from "@/app/(app)/clients/[id]/sessions/new/actions";
 
-const form = () => { const f = new FormData(); f.set("client_id", "c1"); f.set("modality", "electrolysis"); return f; };
+const form = () => { const f = new FormData(); f.set("client_id", "3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11"); f.set("modality", "electrolysis"); return f; };
 
 describe("startSessionAction asks the edit key first", () => {
   beforeEach(() => { rt.allowed = true; rt.asked.length = 0; rt.from.mockReset(); rt.rpc.mockReset(); });
   it("refuses with edit off, before any read or write, by redirecting to the explanation (not by throwing the refusal)", async () => {
     rt.allowed = false;
     const err = await startSessionAction(form()).catch((e: Error) => e);
-    expect((err as Error).message).toBe("REDIRECT:/clients/c1/sessions/new");
+    expect((err as Error).message).toBe("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/new");
     expect((err as Error).message).not.toContain(EDIT_RECORDS_REFUSAL);
     expect(rt.asked).toEqual(["clin.edit_records"]);
     expect(rt.from).not.toHaveBeenCalled();

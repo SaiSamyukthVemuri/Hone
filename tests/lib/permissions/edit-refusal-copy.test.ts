@@ -22,7 +22,7 @@ describe("edit refusal copy", () => {
         const win = L.slice(i, i + 4).join("\n");
         // startSessionAction is a form action: it answers a refusal with a redirect to the new-session page, which renders EDIT_RECORDS_REFUSAL (a throw would land on the error boundary).
         const handled = f.endsWith("sessions/new/actions.ts") && /redirect\(`\/clients\/\$\{clientId\}\/sessions\/new`\)/.test(win);
-        if (!win.includes("EDIT_RECORDS_REFUSAL") && !handled) bad.push(`${f}:${i + 1}`);
+        if (!win.includes("editRecordsRefusal(editDecision)") && !win.includes("EDIT_RECORDS_REFUSAL") && !handled) bad.push(`${f}:${i + 1}`);
       });
     }
     expect(gates).toBeGreaterThan(15);

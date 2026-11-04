@@ -12,7 +12,7 @@ import type {
   TreatmentPlanStageLengthUnit,
 } from "@/lib/types/database";
 import { DEFAULT_PLAN_STAGES } from "@/lib/treatment-plans/stage-defaults";
-import { EDIT_RECORDS_REFUSAL, VIEW_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { editRecordsRefusal, VIEW_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 const MAX_NAME = 100;
 const MAX_VISITS = 200;
@@ -146,7 +146,8 @@ async function recordsRefusal(formData: FormData): Promise<ActionResult | null> 
   const gate = await gateClient();
   // Plans are chart content: viewing is the floor (NQ-10) and editing is its own key (NQ-11/12, ahead of enforcement).
   if (!(await requirePermission(gate, studio.id, "clin.view_records", { client })).allowed) return { ok: false, error: VIEW_REFUSAL };
-  if (!(await requirePermission(gate, studio.id, "clin.edit_records", { client })).allowed) return { ok: false, error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(gate, studio.id, "clin.edit_records", { client });
+  if (!editDecision.allowed) return { ok: false, error: editRecordsRefusal(editDecision) };
   return null;
 }
 

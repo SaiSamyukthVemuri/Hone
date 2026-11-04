@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isValidProbeOptionKey } from "@/lib/probes";
 import { requirePermission } from "@/lib/permissions/require-permission";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
+import { editRecordsRefusal } from "@/lib/permissions/refusal-copy";
 
 // PR #205 (migration 0085): record-keeping server actions. All
 // practitioner-authenticated; studio_id always resolved server-side
@@ -241,8 +241,9 @@ export async function markAftercareExplainedAction(
   if (!sessionId) return { ok: false, error: GENERIC_ERROR };
   const supabase = await createClient();
   // The aftercare-explained stamp is chart content: the edit key too (asked ahead of enforcement, NQ-12; the 0289 guard is the database backstop).
-  if (!(await requirePermission(supabase, studioId, "clin.edit_records")).allowed) {
-    return { ok: false, error: EDIT_RECORDS_REFUSAL };
+  const editDecision = await requirePermission(supabase, studioId, "clin.edit_records");
+  if (!editDecision.allowed) {
+    return { ok: false, error: editRecordsRefusal(editDecision) };
   }
   // L18 Phase 3: both columns are set or cleared together inside
   // set_session_aftercare_explained (migration 0167), and the stamping

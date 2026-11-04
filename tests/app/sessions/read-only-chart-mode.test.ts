@@ -17,7 +17,7 @@ describe("session page in read-only mode", () => {
     const edit = src.indexOf('"clin.edit_records"');
     expect(view).toBeGreaterThan(-1);
     expect(edit).toBeGreaterThan(view);
-    expect(src).toMatch(/const canEditRecords = \(await requirePermission\(permissionClient, studio\.id, "clin\.edit_records", \{ client: id \}\)\)\.allowed;/);
+    expect(src).toMatch(/const editDecision = await requirePermission\(permissionClient, studio\.id, "clin\.edit_records", \{ client: id \}\);\s*const canEditRecords = editDecision\.allowed;/);
     expect(src).not.toMatch(/clin\.edit_records[^\n]*\n?[^\n]*notFound\(\)/);
   });
   it("says why the chart is locked, in the edit copy", () => {
