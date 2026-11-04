@@ -33,29 +33,22 @@ describe("clinical reminder dismissal state", () => {
     const reacted = stamp([withCaution, block({ reaction_type: "blistering" })]);
     expect(reacted).not.toBe(base);
   });
-  it("end to end: the item reaches the dismissal with the state token, so a changed state is a different instance", () => {
-    const itemFor = (state: string | undefined) => {
-      const todo = {
-        items: [
-          {
-            id: "treatment_memory:c1", kind: "treatment_memory", subject: { kind: "client", id: "c1", label: "Client One" }, reason: "Caution", detail: null,
-            action: { label: "Open", href: "/clients/c1" }, priority: 1, occurredAt: "2026-11-01T15:00:00Z", tone: "normal", ...(state ? { state } : {}),
-          },
-        ],
-        hasItems: true, moreCount: 0,
-      };
-      const out = buildNeedsAttention({
-        assistant: buildMissingRecordsAssistant({ unchartedAppointments: [], incompleteIntakes: [], sessions: [] }),
-        intakesAwaitingReview: [], todo: todo as never, upcomingVisitClientIds: new Set(),
-      });
-      return out.clients[0].items[0];
+  it("end to end: a stored clinical reminder no longer becomes a Needs attention item (HON-65), so it has no dismissal instance to key", () => {
+    const todo = {
+      items: [
+        {
+          id: "treatment_memory:c1", kind: "treatment_memory", subject: { kind: "client", id: "c1", label: "Client One" }, reason: "Caution", detail: null,
+          action: { label: "Open", href: "/clients/c1" }, priority: 1, occurredAt: "2026-11-01T15:00:00Z", tone: "normal", state: "aaaa1111bbbb2222",
+        },
+      ],
+      hasItems: true, moreCount: 0,
     };
-    const a = itemFor("aaaa1111bbbb2222");
-    const b = itemFor("cccc3333dddd4444");
-    expect(a.stamp).toBe("aaaa1111bbbb2222");
-    expect(b.stamp).toBe("cccc3333dddd4444");
-    expect(attentionIdentity(a, a.stamp).instanceToken).not.toBe(attentionIdentity(b, b.stamp).instanceToken);
-    // No state supplied: the date is the fallback, as before.
-    expect(itemFor(undefined).stamp).toBe("2026-11-01T15:00:00Z");
+    const out = buildNeedsAttention({
+      assistant: buildMissingRecordsAssistant({ unchartedAppointments: [], incompleteIntakes: [], sessions: [] }),
+      intakesAwaitingReview: [], todo: todo as never, upcomingVisitClientIds: new Set(),
+    });
+    expect(out.clients).toEqual([]);
+    expect(out.others).toEqual([]);
+    expect(out.itemCount).toBe(0);
   });
 });

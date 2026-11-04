@@ -94,6 +94,30 @@ export type AttentionItem = {
   stamp?: string | null;
   // Unpaid items only: the authoritative balance. Absent for every other kind.
   balance?: UnpaidAttention["balance"];
+  // The visit (or submission) this item is about, ISO, or null when the source has none. The panel prints it so every item says WHICH visit.
+  occurredAt: string | null;
+};
+
+// HON-65 (Sam, 4 Nov): every item says what needs attention, which visit and date, and the action that resolves it, with specific
+// button text. These replace the generic "Review session", "Open client", "Follow-up". The destination (href) is the source's own and is
+// not changed here.
+export const ISSUE_REASON: Record<AttentionIssueKind | "unpaid", string> = {
+  intake_review: "Intake submitted, waiting for your review",
+  intake_incomplete: "Intake started, not yet submitted",
+  charting: "Appointment finished, no chart yet",
+  aftercare: "Aftercare not marked on the session",
+  probe_lot: "Probe lot missing on a treated area",
+  record_details: "Client or operator details missing on the session",
+  unpaid: "Appointment finished, payment outstanding",
+};
+export const ISSUE_ACTION: Record<AttentionIssueKind | "unpaid", string> = {
+  intake_review: "Review intake",
+  intake_incomplete: "Check intake status",
+  charting: "Chart this appointment",
+  aftercare: "Mark aftercare",
+  probe_lot: "Record probe lot",
+  record_details: "Add client and operator details",
+  unpaid: "Record payment",
 };
 
 export type AttentionClient = {
@@ -221,9 +245,9 @@ export function buildNeedsAttention(input: {
       },
       {
         kind: "intake_review",
-        label: "Intake awaiting review",
+        label: ISSUE_REASON.intake_review,
         href: practitionerIntakeReviewHref(i.clientId),
-        actionLabel: "Review intake",
+        actionLabel: ISSUE_ACTION.intake_review,
       },
     );
   }
@@ -242,9 +266,9 @@ export function buildNeedsAttention(input: {
         },
         {
           kind: "intake_incomplete",
-          label: item.chip,
+          label: ISSUE_REASON.intake_incomplete,
           href: item.href,
-          actionLabel: item.actionLabel,
+          actionLabel: ISSUE_ACTION.intake_incomplete,
         },
       );
       continue;
@@ -261,9 +285,9 @@ export function buildNeedsAttention(input: {
         },
         {
           kind: "charting",
-          label: item.chip,
+          label: ISSUE_REASON.charting,
           href: item.href,
-          actionLabel: item.actionLabel,
+          actionLabel: ISSUE_ACTION.charting,
         },
       );
       continue;
@@ -283,9 +307,9 @@ export function buildNeedsAttention(input: {
         },
         {
           kind: item.type,
-          label: item.chip,
+          label: ISSUE_REASON[item.type],
           href: item.href,
-          actionLabel: item.actionLabel,
+          actionLabel: ISSUE_ACTION[item.type],
         },
       );
     }
@@ -303,9 +327,9 @@ export function buildNeedsAttention(input: {
       },
       {
         kind: "record_details",
-        label: "Client or operator details missing",
+        label: ISSUE_REASON.record_details,
         href: `/clients/${g.clientId}/sessions/${g.sessionId}`,
-        actionLabel: "Review session",
+        actionLabel: ISSUE_ACTION.record_details,
       },
     );
   }
@@ -320,6 +344,8 @@ export function buildNeedsAttention(input: {
   const others = input.todo.items.filter(
     (i) =>
       !GROUPED_TODO_KINDS.has(i.kind) &&
+      // Clinical memory is not a task here (HON-65): see the note where the client cards are built.
+      i.kind !== "treatment_memory" &&
       // Replaced by per-session entries when those were supplied.
       !(input.recordDetailGaps && i.kind === "records_details"),
   );
@@ -357,31 +383,23 @@ export function buildNeedsAttention(input: {
         detail: null,
         href: issue.href,
         actionLabel: issue.actionLabel,
+        occurredAt: e.occurredAt,
         ...(issue.kind === "intake_review" || issue.kind === "intake_incomplete" ? { stamp: e.occurredAt } : {}),
       });
     }
   }
-  for (const item of others) {
-    if (item.subject.kind !== "client") continue;
-    touch(item.subject.id, item.subject.label, item.occurredAt || null).items.push({
-      id: item.id,
-      kind: "treatment_memory",
-      label: item.reason,
-      detail: detailWithoutRepeats(item.reason, item.detail),
-      href: item.action.href,
-      actionLabel: item.action.label,
-      // The reported clinical state when the source supplies one; its date only as a fallback.
-      stamp: item.state || item.occurredAt || null,
-    });
-  }
+  // HON-65 (Sam, 4 Nov): an OLD reaction or watch record must not by itself create a follow-up task. Treatment memory (a watch note, the
+  // latest recorded reaction) is clinical memory, not work: it stays on the client page, the appointment prep and the history, and is no
+  // longer a Needs attention item. (A genuine record gap, an intake, an unpaid visit still are.)
   for (const u of input.unpaid ?? []) {
     touch(u.clientId, u.clientName, u.endsAt).items.push({
       id: `unpaid:${u.appointmentId}`,
       kind: "unpaid",
-      label: "Appointment finished, payment outstanding",
+      label: ISSUE_REASON.unpaid,
       detail: null,
       href: `/calendar/${u.appointmentId}`,
-      actionLabel: "Open appointment",
+      actionLabel: ISSUE_ACTION.unpaid,
+      occurredAt: u.endsAt,
       balance: u.balance,
     });
   }

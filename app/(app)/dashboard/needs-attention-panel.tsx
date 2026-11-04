@@ -12,6 +12,7 @@ import { cardHasReaction } from "@/lib/dashboard/attention-card";
 import type { DashboardTodoItem } from "@/lib/dashboard/todo-model";
 import { itemIdentity, studioIdentity, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
 import { formatMoney, parsePaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { groupItemsByKind, visitDateLabel, visitsLabel } from "@/lib/dashboard/attention-compact";
 import { dismissAttentionAction, restoreAttentionAction } from "./attention-actions";
 
 // Needs Attention: ONE list, ONE card per client id. Presentational: `needs` is already grouped, ordered and filtered by the owner's
@@ -81,7 +82,44 @@ function unpaidLine(item: AttentionClient["items"][number]): string {
   return `Hone can see ${formatMoney(item.balance.outstandingCents, currency)} still owed`;
 }
 
-function ClientCard({ card, api }: { card: AttentionClient; api: DismissApi }) {
+// One row per KIND of issue. A kind on one visit shows its reason, the visit date and its own action. A kind on several visits shows the
+// reason once with a count, and the visits (each with its date and its own action) sit one click away, so the card never repeats the same
+// sentence and button. Distinct kinds stay distinct rows.
+function ItemRow({ item, card, api, timeZone, withReason }: { item: AttentionClient["items"][number]; card: AttentionClient; api: DismissApi; timeZone: string; withReason: boolean }) {
+  const date = visitDateLabel(item.occurredAt, timeZone);
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
+        {withReason ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className={BADGE_CLASS}>{BADGE[item.kind]}</span>
+            <span className="min-w-0 break-words text-sm text-neutral-700 dark:text-neutral-300">{item.label}</span>
+          </span>
+        ) : null}
+        {date && (
+          <span data-testid="attention-visit-date" className="text-xs text-neutral-500">
+            {item.kind === "intake_review" || item.kind === "intake_incomplete" ? "Intake" : "Visit"} {date}
+          </span>
+        )}
+        {item.kind === "unpaid" && (
+          <span data-testid="attention-unpaid-amount" className="break-words text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            {unpaidLine(item)}
+          </span>
+        )}
+        {item.detail && <span className="break-words text-xs text-neutral-500">{item.detail}</span>}
+      </div>
+      <span className="flex flex-wrap items-center gap-2">
+        <Link href={item.href} className={ACTION_CLASS}>
+          {item.actionLabel}
+        </Link>
+        <DismissButton api={api} identity={itemIdentity(item)} what={`${card.clientName}, ${item.label}${date ? `, ${date}` : ""}`} />
+      </span>
+    </div>
+  );
+}
+
+function ClientCard({ card, api, timeZone }: { card: AttentionClient; api: DismissApi; timeZone: string }) {
+  const groups = groupItemsByKind(card.items);
   return (
     <li
       data-attention-client={card.clientId}
@@ -99,41 +137,38 @@ function ClientCard({ card, api }: { card: AttentionClient; api: DismissApi }) {
           {card.sharesNameWithAnotherClient && (
             <span data-testid="needs-attention-same-name">Same name as another client</span>
           )}
-          <span>{card.tier === "preparation" ? "Before visit" : "Follow-up"}</span>
+          <span>{card.tier === "preparation" ? "Before the visit" : "Records to complete"}</span>
           {card.items.length > 1 && <span>{card.items.length} items</span>}
         </span>
       </div>
       <ul className="flex flex-col gap-2">
-        {card.items.map((item) => (
-          <li
-            key={item.id}
-            data-attention-issue={item.kind}
-            className="flex flex-wrap items-start justify-between gap-2"
-          >
-            <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className={BADGE_CLASS}>{BADGE[item.kind]}</span>
-                <span className="min-w-0 break-words text-sm text-neutral-700 dark:text-neutral-300">
-                  {item.label}
-                </span>
-              </span>
-              {item.kind === "unpaid" && (
-                <span data-testid="attention-unpaid-amount" className="break-words text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  {unpaidLine(item)}
-                </span>
-              )}
-              {item.detail && (
-                <span className="break-words text-xs text-neutral-500">{item.detail}</span>
-              )}
-            </div>
-            <span className="flex flex-wrap items-center gap-2">
-              <Link href={item.href} className={ACTION_CLASS}>
-                {item.actionLabel}
-              </Link>
-              <DismissButton api={api} identity={itemIdentity(item)} what={`${card.clientName}, ${item.label}`} />
-            </span>
-          </li>
-        ))}
+        {groups.map((g) =>
+          g.items.length === 1 ? (
+            <li key={g.items[0].id} data-attention-issue={g.kind}>
+              <ItemRow item={g.items[0]} card={card} api={api} timeZone={timeZone} withReason />
+            </li>
+          ) : (
+            <li key={g.kind} data-attention-issue={g.kind} data-attention-group-size={g.items.length}>
+              <details className="group">
+                <summary className="flex min-h-[44px] cursor-pointer flex-wrap items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+                  <span className={BADGE_CLASS}>{BADGE[g.kind]}</span>
+                  <span className="min-w-0 break-words">{g.items[0].label}</span>
+                  <span data-testid="attention-group-count" className="text-xs text-neutral-500">
+                    {visitsLabel(g.items.length)}
+                  </span>
+                  <span className="text-xs text-neutral-500 underline">Show visits</span>
+                </summary>
+                <ul className="mt-1 flex flex-col gap-2 border-l border-neutral-200 pl-3 dark:border-neutral-800">
+                  {g.items.map((item) => (
+                    <li key={item.id}>
+                      <ItemRow item={item} card={card} api={api} timeZone={timeZone} withReason={false} />
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          ),
+        )}
       </ul>
     </li>
   );
@@ -229,6 +264,7 @@ export function NeedsAttentionPanel({
   unpaid = null,
   unpaidAll = false,
   unpaidHrefs = { all: "?unpaid=all", recent: "?" },
+  timeZone = "UTC",
 }: {
   needs: NeedsAttention;
   dismissed?: ReadonlyArray<DismissedRow>;
@@ -241,6 +277,8 @@ export function NeedsAttentionPanel({
   unpaidAll?: boolean;
   // Same-page links that keep the day and period in the query.
   unpaidHrefs?: { all: string; recent: string };
+  // The studio's timezone: the visit dates are the days they happened THERE.
+  timeZone?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const router = useRouter();
@@ -384,7 +422,7 @@ export function NeedsAttentionPanel({
         className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800"
       >
         {shownClients.map((card) => (
-          <ClientCard key={card.clientId} card={card} api={api} />
+          <ClientCard key={card.clientId} card={card} api={api} timeZone={timeZone} />
         ))}
         {studioPresent && <StudioCard items={needs.studioItems} api={api} />}
       </ul>
