@@ -45,6 +45,7 @@ import {
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
@@ -610,12 +611,17 @@ export default async function SessionDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight capitalize">
             {session.modality} session
           </h1>
-          {canEditRecords && (
+          {canEditRecords ? (
             <EditSessionStartedAt
               sessionId={session.id}
               clientId={id}
               startedAtIso={session.started_at}
             />
+          ) : (
+            // Codex P2 (#1351): read-only mode still shows WHEN the session started, as plain text (the editor is withdrawn, the fact is not).
+            <p data-testid="session-started-at-static" className="text-sm text-neutral-500">
+              Started <FormattedDateTime iso={session.started_at} />
+            </p>
           )}
         </div>
         {!canEditRecords && (
@@ -673,6 +679,7 @@ export default async function SessionDetailPage({
                   status: attachedPlan.status,
                 }}
                 activePlans={[]}
+                canEdit={canEditRecords}
                 attachAction={attachChartEntryToPlanAction}
                 detachAction={detachChartEntryFromPlanAction}
               />
@@ -687,6 +694,7 @@ export default async function SessionDetailPage({
               id: p.id,
               name: p.name,
             }))}
+            canEdit={canEditRecords}
             attachAction={attachChartEntryToPlanAction}
             detachAction={detachChartEntryFromPlanAction}
           />

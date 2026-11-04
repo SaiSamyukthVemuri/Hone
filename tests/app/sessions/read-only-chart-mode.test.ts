@@ -25,7 +25,7 @@ describe("session page in read-only mode", () => {
     expect(src).toContain("{EDIT_RECORDS_REFUSAL}");
   });
   it.each([
-    ["EditSessionStartedAt", /\{canEditRecords && \(\s*<EditSessionStartedAt/],
+    ["EditSessionStartedAt", /\{canEditRecords \? \(\s*<EditSessionStartedAt/], // Codex P2: the else branch is the static start time
     ["CopyPreviousAreasPanel", /canEditRecords &&\s*session\.modality === "electrolysis"/],
     ["DeleteSessionForm", /\{!isFinalized && canEditRecords && \(\s*<div className="pt-6">\s*<DeleteSessionForm/],
     ["NextVisitNoteForm", /isFinalized \|\| !canEditRecords \?/],

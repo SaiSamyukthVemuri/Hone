@@ -8,6 +8,8 @@ type Props = {
   clientId: string;
   attachedPlan: { id: string; name: string; status: TreatmentPlan["status"] } | null;
   activePlans: ReadonlyArray<Pick<TreatmentPlan, "id" | "name">>;
+  // Read-only chart mode (clin.edit_records Off): attach and detach would be refused, so no control is offered; the plan banner still shows the attached plan.
+  canEdit: boolean;
   attachAction: (formData: FormData) => Promise<
     { ok: true } | { ok: false; error: string }
   >;
@@ -26,6 +28,7 @@ export function TreatmentPlanAttachment({
   clientId,
   attachedPlan,
   activePlans,
+  canEdit,
   attachAction,
   detachAction,
 }: Props) {
@@ -56,6 +59,9 @@ export function TreatmentPlanAttachment({
       if (!res.ok) setError(res.error);
     });
   }
+
+  // Codex P2 (#1351): no control a click on which can only be refused.
+  if (!canEdit) return null;
 
   // State 4: attached. PR #199 (Chloe iPad retest): the detach
   // affordance now renders INSIDE the TreatmentPlanBanner via its
