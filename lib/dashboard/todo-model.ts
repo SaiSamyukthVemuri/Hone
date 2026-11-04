@@ -414,6 +414,8 @@ export function buildDashboardTodo(
       // must be the attention SIGNAL's date, not the client's newest session,
       // otherwise a plan-only session reorders the To-do list too.
       occurredAt: c.attentionDate,
+      // The clinical state being reported (dismissal identity), so a new reaction/caution on the same session reappears.
+      state: c.stateStamp,
       tone: "normal",
     });
   }

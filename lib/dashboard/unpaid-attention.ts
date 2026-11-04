@@ -140,12 +140,15 @@ export async function loadUnpaidAttention(opts: {
   }
 
   // Live collections. At most one live row per appointment (the single-truth index).
-  const settleRead = await readInChunks<{ appointment_id: string; method: string; amount_cents: number; currency: string | null }>(ids, (chunk) =>
-    supabase.from("appointment_settlements").select("appointment_id, method, amount_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
+  const settleRead = await readInChunks<{ appointment_id: string; method: string; amount_cents: number; quoted_amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
+    supabase.from("appointment_settlements").select("appointment_id, method, amount_cents, quoted_amount_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
   );
   if (!settleRead.ok) return { ok: false };
   const settlements = new Map<string, Array<{ method: never; amountCents: number; currency: string | null }>>();
+  // The price the visit was SETTLED against (0187 keeps it on the settlement). A later price change must not reopen a settled visit.
+  const settledQuote = new Map<string, number>();
   for (const r of settleRead.rows) {
+    if (typeof r.quoted_amount_cents === "number" && r.quoted_amount_cents >= 0) settledQuote.set(r.appointment_id, r.quoted_amount_cents);
     const b = settlements.get(r.appointment_id) ?? [];
     b.push({ method: r.method as never, amountCents: r.amount_cents, currency: r.currency });
     settlements.set(r.appointment_id, b);
@@ -180,7 +183,12 @@ export async function loadUnpaidAttention(opts: {
 
   const evaluate = (a: ApptRow) => {
     let quoteCents: number | null = null;
-    if (quotesReadable) {
+    // Same priority as the settlement coverage logic (lib/billing/settlement-coverage.ts): the settlement's recorded quote first; today's
+    // price only when none was recorded. There is no booked-price snapshot on appointments, so nothing sits between the two.
+    const recorded = settledQuote.get(a.id);
+    if (recorded !== undefined) {
+      quoteCents = recorded;
+    } else if (quotesReadable) {
       const s = a.service_id ? serviceById.get(a.service_id) : null;
       const r = resolveAuthoritativeSessionPaymentAmount({
         service: s ? { name: s.name, price_cents: s.price_cents } : null,

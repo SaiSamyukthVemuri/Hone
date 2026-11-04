@@ -370,7 +370,8 @@ export function buildNeedsAttention(input: {
       detail: detailWithoutRepeats(item.reason, item.detail),
       href: item.action.href,
       actionLabel: item.action.label,
-      stamp: item.occurredAt || null,
+      // The reported clinical state when the source supplies one; its date only as a fallback.
+      stamp: item.state || item.occurredAt || null,
     });
   }
   for (const u of input.unpaid ?? []) {

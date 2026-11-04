@@ -50,6 +50,33 @@ beforeEach(() => {
   };
 });
 
+describe("a settled visit keeps the price it was settled against", () => {
+  it("settled at $100, then the service price rises to $120: nothing is owed", async () => {
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 10000, quoted_amount_cents: 10000 }];
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+    expect(await loadUnpaidAttention(base)).toMatchObject({ ok: true, items: [] });
+  });
+  it("a client's custom price raised after settlement does not reopen it either", async () => {
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 10000, quoted_amount_cents: 10000 }];
+    db.rows.client_pricing = [{ client_id: "c-a1", service_name: "Facial", price_cents: 15000, notes: null, effective_from: "2026-11-02" }];
+    expect(await loadUnpaidAttention(base)).toMatchObject({ ok: true, items: [] });
+  });
+  it("a part payment is still short of the recorded quote, not of the new price", async () => {
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 6000, quoted_amount_cents: 10000 }];
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 4000, currency: "cad" });
+  });
+  it("a settlement with no recorded quote falls back to the current price", async () => {
+    db.rows.appointment_settlements = [{ appointment_id: "a1", method: "paid_cash", amount_cents: 10000, quoted_amount_cents: null }];
+    db.rows.services = [{ id: "svc", name: "Facial", price_cents: 12000 }];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 2000, currency: "cad" });
+  });
+});
+
 describe("owner-only", () => {
   it("a non-owner is refused before ANY query is issued", async () => {
     const r = await loadUnpaidAttention({ ...base, viewerIsOwner: false });
