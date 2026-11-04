@@ -102,3 +102,18 @@ on one device lost proof when another device asked for a link. It failed closed:
 - a signed-out session is still refused (the session row must exist).
 
 **Residual:** a session that never reaches the callback (no app sign-in path) is not stamped and keeps the previous behaviour.
+
+### Stated residuals of the stamp (Insurance S-1, S-4; Privacy BC1)
+- **S-1. A stamp binds proof to the session id, not to a client.** Once stamped, a session stays proven through later recovery or
+  link requests until the next email-change activity moves the anchor. This is the intended trade: the unstamped rule failed
+  honest users. It is bounded by the session's lifetime (sign-out deletes the session row, which the check requires) and by the
+  anchor void.
+- **BC1. The recorder checks the credential window, not the amr.** A PASSWORD session created after an unredeemed recovery request
+  satisfies the window and can be stamped. That gives it nothing:
+  - `session_proves_mailbox()` still requires an `otp`/`magiclink`/`recovery` amr (or verified Google);
+  - the app still requires a mailbox amr before it asks the database.
+
+  Pinned by `auth-invitation-proof-gate` › "BC1 / S-1 residual": a password amr is refused, stamped or not, including after a
+  later request.
+- **S-4.** Sessions created before deploy, and sign-ins that never pass `/auth/callback`, carry no stamp and keep the read-only
+  window rule (the previous behaviour). Expected.

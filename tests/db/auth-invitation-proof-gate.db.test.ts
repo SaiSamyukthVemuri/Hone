@@ -284,6 +284,24 @@ describe("0291 S-2b: the JWT's session must exist, and on a changed account a cr
     expect(await adminQuery(`select count(*)::int as n from public.auth_session_link_proofs where user_id = $1`, [u.id]).then((r) => r.rows[0].n)).toBe(0);
   });
 
+  it("BC1 / S-1 residual: a PASSWORD session can be stamped (the recorder checks the window, not the amr), but a password amr never passes session_proves_mailbox, stamped or not", async () => {
+    const u = await invitedUser();
+    await emailIdentity(u, at(-60_000), at(0));
+    const sid = await newSession(u.id, at(2_000));
+    await set(u.id, { recovery_sent_at: at(1_000) }); // an unredeemed recovery request inside the window
+    const PASSWORD = [{ method: "password", timestamp: 1 }];
+    const st = await userQueryWithClaims(u.id, { amr: PASSWORD, session_id: sid }, `select public.stamp_session_link_proof() as ok`).then((r) => r.rows[0].ok as boolean);
+    expect(st, "measured residual (BC1): the password session's window holds, so it is stamped").toBe(true);
+    expect(await stamps(sid)).toBe(1);
+    for (const amr of [PASSWORD, [{ method: "password", timestamp: 1 }, { method: "mfa/totp", timestamp: 2 }], []]) {
+      expect(await pending(u.id, amr), `stamped, still no proof: ${JSON.stringify(amr)}`).toEqual({ status: "proof_required" });
+      expect(await reconcile(u.id, amr)).toEqual({ status: "proof_required", choose_studio: false });
+    }
+    await set(u.id, { recovery_sent_at: at(5_000) }); // the stamp outlives a later request (the residual), and still proves nothing
+    expect(await pending(u.id, PASSWORD)).toEqual({ status: "proof_required" });
+    await assertNothingChanged(u);
+  });
+
   it("CODEX-P2: a never-changed account's stamp call is true and writes nothing", async () => {
     const u = await invitedUser();
     await emailIdentity(u, at(0));
