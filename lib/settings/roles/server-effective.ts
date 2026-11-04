@@ -48,7 +48,8 @@ function prerequisiteChanged(role: Role, key: string, policy: PolicyWithServer, 
   return def.requires.some((r) => policy.values[r] !== s.stored[r] || prerequisiteChanged(role, r, policy, s, seen));
 }
 
-export type PendingActivation = { key: string; label: string; roles: Role[] };
+/** `discard` lists the roles whose saved choice differs from the studio's basis: those can be put back (an ordinary previewed save). */
+export type PendingActivation = { key: string; label: string; roles: Role[]; discard: { role: Role; basis: Scope }[] };
 
 /**
  * Keys the core holds a value for that are released but not yet activated by the owner (`inactive_until_activated`), with the roles
@@ -63,6 +64,15 @@ export function pendingActivations(policies: Record<Role, PolicyWithServer>): Pe
     }
   }
   return [...out.entries()]
-    .map(([key, roles]) => ({ key, label: catalogByKey.get(key)?.label ?? key, roles }))
+    .map(([key, roles]) => {
+      const def = catalogByKey.get(key);
+      const discard = roles.flatMap((role) => {
+        const pol = policies[role];
+        const basis = def ? (pol.basis === "new_studio" ? def.newStudioDefault[role] : def.existingSnapshot[role]) : undefined;
+        const stored = pol.values[key];
+        return basis !== undefined && stored !== undefined && stored !== basis ? [{ role, basis }] : [];
+      });
+      return { key, label: def?.label ?? key, roles, discard };
+    })
     .sort((x, y) => x.label.localeCompare(y.label) || x.key.localeCompare(y.key));
 }

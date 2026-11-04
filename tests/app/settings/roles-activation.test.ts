@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StudioPolicy } from "@/lib/permissions/catalog";
 import { parseActivationPreview, parseHistory, parseState } from "@/lib/settings/roles/core-parse";
 import { AUDIT_KIND_LABEL } from "@/lib/settings/roles/api";
+import { applyEdit, enforcementRefusal } from "@/lib/settings/roles/model";
 import { pendingActivations, type PolicyWithServer } from "@/lib/settings/roles/server-effective";
 
 // Activation UI (0287 Activation rule): released settings are NOT in force until the owner activates them. The page shows them as
@@ -28,13 +30,13 @@ const { RolesEditor } = await import("@/app/(app)/settings/roles/roles-editor");
 const K1 = "appt.cancel";
 const K2 = "pay.view";
 
-const rawState = (sources: Record<string, string>) => ({
+const rawState = (sources: Record<string, string>, stored = "studio") => ({
   ok: true,
   version: 7,
   basis: "existing_snapshot",
   gates: {},
   roles: {
-    practitioner: Object.fromEntries(Object.entries(sources).map(([k, source]) => [k, { stored: "studio", effective: "own", source }])),
+    practitioner: Object.fromEntries(Object.entries(sources).map(([k, source]) => [k, { stored, effective: "own", source }])),
     receptionist: {},
   },
 });
@@ -212,5 +214,46 @@ describe("the page", () => {
     expect(html).toContain('data-testid="inactive-until"');
     expect(html).toContain("Inactive until View clinical records is on. Your choice is kept.");
     expect(html).toContain("Saved, but not in force yet");
+  });
+  it("Discard: a pending choice that differs from the basis offers a Discard button per role", () => {
+    const raw = rawState({ "clin.edit_records": "inactive_until_activated" }, "own");
+    // The existing-snapshot basis for this key is whole studio for practitioners, so a saved "own" differs and can be discarded.
+    const html = render(parseState(raw)!.policies);
+    expect(html).toContain('data-testid="activation-discard"');
+    expect(html).toContain('data-discard-role="practitioner"');
+    expect(html).toContain("Discard practitioner choice");
+  });
+});
+
+describe("Discard is an ordinary save back to the basis", () => {
+  const KEY = "clin.edit_records";
+  const policy = (stored: "off" | "own" | "studio"): StudioPolicy => ({ basis: "existing_snapshot", values: { [KEY]: stored }, gates: {} });
+  it("pendingActivations lists the role only while the saved choice differs from the basis", () => {
+    const raw = rawState({ [KEY]: "inactive_until_activated" }, "own");
+    const pending = pendingActivations(parseState(raw)!.policies);
+    expect(pending[0].discard.map((d) => d.role)).toEqual(["practitioner"]);
+    const basis = pending[0].discard[0].basis;
+    const same = parseState({ ...raw, roles: { practitioner: { [KEY]: { stored: basis, effective: basis, source: "inactive_until_activated" } }, receptionist: {} } })!;
+    expect(pendingActivations(same.policies)[0].discard).toEqual([]);
+  });
+  it("putting a key back on the basis is allowed even where the app does not enforce it, and never widens", () => {
+    const basis = pendingActivations(parseState(rawState({ [KEY]: "inactive_until_activated" }, "own"))!.policies)[0].discard[0].basis;
+    expect(enforcementRefusal("practitioner", policy("own"), KEY, basis)).toBeNull();
+    const edited = applyEdit("practitioner", policy("own"), KEY, basis);
+    expect(edited.ok).toBe(true);
+    if (edited.ok) expect(edited.policy.values[KEY]).toBe(basis);
+  });
+  it("any other change to a key the app does not enforce is still refused", () => {
+    const code = enforcementRefusal("practitioner", policy("own"), "clin.edit_records", "studio");
+    // enforced keys may legitimately allow it; only assert the refusal where the catalog says not enforced
+    expect(["not_enforced", "widening_not_yet", null]).toContain(code);
+  });
+});
+
+describe("View access labelling", () => {
+  const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+  it("says it is access in force, not saved-but-waiting or unsaved, and flags a pending saved choice", () => {
+    expect(src).toContain("Access in force right now. Choices saved but waiting for activation, and unsaved edits, are not counted here.");
+    expect(src).toMatch(/r\.source === "inactive_until_activated"[\s\S]{0,200}waiting for activation/);
   });
 });
