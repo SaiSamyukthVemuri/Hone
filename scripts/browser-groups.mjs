@@ -116,6 +116,9 @@ export const BROWSER_GROUPS = {
       "dashboard-closed-row.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
+      // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
+      // (no Dismiss while 0298 is held), and the gate-ON dismissal cases on a stack that has the migration.
+      "dashboard-attention-dismissal.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be
