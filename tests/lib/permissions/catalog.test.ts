@@ -598,15 +598,15 @@ describe("Sam's group 7 (3 Nov): platform and operations", () => {
 });
 
 describe("enforcement state (Privacy X3)", () => {
-  it("is set on exactly the keys the app asks; every other key resolves to not_yet", async () => {
+  it("R4 marks exactly the keys the app asks: 7 enforced, 6 deny_only, 1 observe, every other key not_yet", async () => {
     const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
-    const marked = CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key).sort();
-    expect(marked).toHaveLength(16);
-    expect(enforcementOf("clin.edit_records")).toBe("not_yet");
-    expect(enforcementOf("appt.complete")).toBe("observe");
-    expect(enforcementOf("appt.cancel")).toBe("enforced");
-    // widening is inert behind a legacy check for these, so they are deny_only, not enforced (OPS, delta review RE-1/RG-2/F1)
-    for (const k of ["appt.book", "appt.move", "appt.reassign", "avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"]) expect(enforcementOf(k), k).toBe("deny_only");
+    const by = (st: string) => CATALOG.filter((d) => enforcementOf(d.key) === st).map((d) => d.key).sort();
+    expect(by("enforced")).toEqual(["appt.cancel", "appt.edit_notes", "appt.mark_no_show", "client.create", "clin.view_aftercare", "clin.view_intake", "clin.view_photos", "clin.view_records", "comm.send_routine"]);
+    expect(by("deny_only")).toEqual(["appt.book", "appt.move", "appt.reassign", "avail.manage_others", "avail.manage_own", "avail.manage_studio_hours"]);
+    expect(by("observe")).toEqual(["appt.complete"]);
+    expect(by("not_yet").length).toBe(CATALOG.length - 16);
+    // R5 slice 1 adds client.create and comm.send_routine to the enforced set; client.edit_contact stays not_yet until its masked audit exists (held 0290)
+    expect(enforcementOf("client.edit_contact")).toBe("not_yet");
     expect(enforcementOf("not.a.key")).toBe("not_yet");
   });
 });

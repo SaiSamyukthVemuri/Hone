@@ -320,15 +320,22 @@ export async function moveAppointmentAction(input: {
   // Reassigning someone's appointment is its own key (appt.reassign). Handing away one's OWN appointment
   // (appt.handoff_own) needs the held R4 command (0289): move_appointment_core still refuses a non-owner reassign,
   // so it is deliberately not opened here.
-  const reassignEnabled =
-    practitioner.role === "owner" &&
-    (!requestedTarget ||
-      requestedTarget === appt.practitioner_id ||
-      (
-        await requirePermission(userDb, studio.id, "appt.reassign", {
-          appointment: appointmentId,
-        })
-      ).allowed);
+  let reassignEnabled = false;
+  if (practitioner.role === "owner") {
+    if (!requestedTarget || requestedTarget === appt.practitioner_id) {
+      reassignEnabled = true;
+    } else {
+      const reassignDecision = await requirePermission(userDb, studio.id, "appt.reassign", {
+        appointment: appointmentId,
+      });
+      // The check could not be read (engine null, not merely absent): refuse the WHOLE action. Continuing as a time-only
+      // move would change the time under a request that also asked to hand the appointment to someone else.
+      if (reassignDecision.engine === null && !reassignDecision.engineAbsent) {
+        return { ok: false, error: "We couldn't move the appointment. Please try again." };
+      }
+      reassignEnabled = reassignDecision.allowed;
+    }
+  }
   if (reassignEnabled && requestedTarget && requestedTarget !== appt.practitioner_id) {
     const eligible = await loadEligiblePractitioners(
       admin,
