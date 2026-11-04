@@ -118,7 +118,10 @@ export async function changeEmailKeepingCompletion(
   const put = await auth("PUT", "user", body, ANON, accessToken);
   if (put.status !== 200) throw new Error(`email change request refused: ${put.status}`);
   const linkNew = await fastVerifyLink(to, seenTo);
-  const linkCurrent = await fastVerifyLink(from, seenFrom, 1500); // none when double confirm is off
+  // The old address is mailed only when double confirm is on (MEASURED per stack, never assumed). Waiting for a mail that cannot
+  // come would push the change ~1.5 s after the request and make a same-second case unreachable.
+  const { doubleConfirm } = await stackAuthConfig();
+  const linkCurrent = doubleConfirm === false ? null : await fastVerifyLink(from, seenFrom, doubleConfirm === true ? 8000 : 1500);
   const order: ["new" | "current", string | null][] = opts.lastHalf === "current" ? [["new", linkNew], ["current", linkCurrent]] : [["current", linkCurrent], ["new", linkNew]];
   let completionToken: string | null = null;
   let completionRefreshToken: string | null = null;
