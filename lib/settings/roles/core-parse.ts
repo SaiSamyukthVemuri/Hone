@@ -12,6 +12,7 @@ import {
   ROLE_ERROR_CODES,
   type AccessResult,
   type AuditKind,
+  type ActivationPreviewResult,
   type AuditRow,
   type CommandResult,
   type HistoryResult,
@@ -112,6 +113,18 @@ export function parsePreview(raw: unknown): PreviewResult {
   return { ok: true, preview: { version, roles } };
 }
 
+/** preview_activation: the same diff shape as any preview, plus the keys it covers and the hash a commit must present. */
+export function parseActivationPreview(raw: unknown): ActivationPreviewResult {
+  const base = parsePreview(raw);
+  if (!base.ok) return base;
+  const r = raw as Json;
+  const keys = Array.isArray(r.keys) ? r.keys.filter((k): k is string => typeof k === "string") : null;
+  const hash = str(r.preview_hash);
+  if (keys === null || hash === null || hash === "") return { ok: false, error: UNEXPECTED };
+  const sensitiveKeys = Array.isArray(r.sensitive_keys) ? r.sensitive_keys.filter((k): k is string => typeof k === "string") : [];
+  return { ok: true, preview: { ...base.preview, keys, digest: hash, sensitiveKeys, confirmationRequired: r.confirmation_required === true } };
+}
+
 export function parseCommand(raw: unknown): CommandResult {
   if (!isObj(raw)) return { ok: false, error: UNEXPECTED };
   if (raw.ok !== true) return { ok: false, error: parseError(raw) };
@@ -119,7 +132,7 @@ export function parseCommand(raw: unknown): CommandResult {
   return v === null ? { ok: false, error: UNEXPECTED } : { ok: true, newVersion: v };
 }
 
-const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed"];
+const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed", "permissions_activated"];
 const scopeWord = (v: unknown): string => (v === "studio" ? "Whole studio" : v === "own" ? "Own assigned" : v === "off" ? "Off" : typeof v === "string" ? v : "unset");
 
 /** Display strings for what changed in one audit row. Saved rows carry {key:{stored,effective}}; reset and adopt carry effective maps. */
@@ -129,6 +142,17 @@ function auditChanges(kind: AuditKind, before: unknown, after: unknown): { befor
   const label = (k: string) => byKey.get(k)?.label ?? k;
   if (!isObj(after)) return { before: b, after: a };
   const pre = isObj(before) ? before : {};
+  if (kind === "permissions_activated") {
+    // {keys, effective:{key:scope}} on both sides: show only the keys whose effective value moved when the release was activated.
+    const aEff = isObj(after.effective) ? after.effective : {};
+    const bEff = isObj(pre.effective) ? pre.effective : {};
+    for (const k of Object.keys(aEff)) {
+      if (aEff[k] === bEff[k]) continue;
+      b[label(k)] = scopeWord(bEff[k]);
+      a[label(k)] = scopeWord(aEff[k]);
+    }
+    return { before: b, after: a };
+  }
   for (const k of Object.keys(after)) {
     if (kind === "staff_role_changed") {
       if (k === "role") {

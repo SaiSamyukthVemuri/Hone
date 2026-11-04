@@ -47,3 +47,22 @@ function prerequisiteChanged(role: Role, key: string, policy: PolicyWithServer, 
   seen.add(key);
   return def.requires.some((r) => policy.values[r] !== s.stored[r] || prerequisiteChanged(role, r, policy, s, seen));
 }
+
+export type PendingActivation = { key: string; label: string; roles: Role[] };
+
+/**
+ * Keys the core holds a value for that are released but not yet activated by the owner (`inactive_until_activated`), with the roles
+ * affected. `unreleased` keys are not here: nothing can activate them. Order follows the catalog so the list reads the same every time.
+ */
+export function pendingActivations(policies: Record<Role, PolicyWithServer>): PendingActivation[] {
+  const out = new Map<string, Role[]>();
+  for (const role of ["practitioner", "receptionist"] as const) {
+    for (const [key, source] of Object.entries(policies[role]?.server?.source ?? {})) {
+      if (source !== "inactive_until_activated") continue;
+      out.set(key, [...(out.get(key) ?? []), role]);
+    }
+  }
+  return [...out.entries()]
+    .map(([key, roles]) => ({ key, label: catalogByKey.get(key)?.label ?? key, roles }))
+    .sort((x, y) => x.label.localeCompare(y.label) || x.key.localeCompare(y.key));
+}

@@ -7,6 +7,7 @@ import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioP
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
+import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
 import {
   isRowError,
@@ -16,6 +17,8 @@ import {
   AUDIT_KIND_LABEL,
   appendHistoryPage,
   type AccessResult,
+  type ActivationPreview,
+  type ActivationPreviewResult,
   type AuditRow,
   type CommandResult,
   type HistoryResult,
@@ -69,6 +72,9 @@ export type RolesEditorProps = {
   reload: () => Promise<{ ok: true; state: StudioPolicyState } | { ok: false; error: RoleError }>;
   reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
   adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
+  // Released settings the owner has not activated yet: the core previews the change (with a digest) and commits only that exact preview.
+  previewActivation: (keys: string[]) => Promise<ActivationPreviewResult>;
+  activate: (keys: string[], expectedVersion: number, reason: string, previewDigest: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
   loadHistory: (before: string | null) => Promise<HistoryResult>;
   loadAccess: (membershipId: string) => Promise<AccessResult>;
 };
@@ -111,6 +117,9 @@ export function RolesEditor(props: RolesEditorProps) {
     () => new Map(buildRoleSections(role, saved[role]).flatMap((s) => [...s.common, ...s.advanced]).map((r) => [r.key, r])),
     [role, saved],
   );
+
+  // Settings the core has released but the owner has not activated: saved or default values that are NOT in force yet.
+  const pending = useMemo(() => pendingActivations(props.policies), [props.policies]);
 
   const peopleWith = (r: Role) => props.people.filter((p) => p.role === r && p.state === "active");
   const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
@@ -354,6 +363,14 @@ export function RolesEditor(props: RolesEditorProps) {
 
       {view === "permissions" && (
         <div className="flex min-w-0 flex-col gap-8">
+          <ActivationSection
+            pending={pending}
+            writable={props.writable}
+            blockedByDraft={dirty}
+            previewActivation={props.previewActivation}
+            activate={props.activate}
+            onActivated={() => router.refresh()}
+          />
           <div role="tablist" aria-label="Role" className="flex gap-2">
             {ROLES.map((r) => (
               <button
@@ -938,6 +955,145 @@ function ReviewPanel({
         </label>
       )}
       {data && <ReasonField id={`${id}-reason`} value={reason} onChange={onReason} required={needsReason} />}
+    </section>
+  );
+}
+
+const ACTIVATION_DRAFT_LINE = "You have unsaved changes. Save or discard them first; activating replaces this page with the saved state.";
+
+function ActivationSection({
+  pending,
+  writable,
+  blockedByDraft,
+  previewActivation,
+  activate,
+  onActivated,
+}: {
+  pending: PendingActivation[];
+  writable: boolean;
+  blockedByDraft: boolean;
+  previewActivation: RolesEditorProps["previewActivation"];
+  activate: RolesEditorProps["activate"];
+  onActivated: () => void;
+}): ReactNode {
+  const id = useId();
+  const [review, setReview] = useState<ActivationPreview | null>(null);
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  // A late preview from an earlier click is ignored, so the owner never confirms a list that is not the one being committed.
+  const seq = useRef(0);
+  if (pending.length === 0) return null;
+
+  async function open() {
+    if (blockedByDraft) {
+      setMessage(ACTIVATION_DRAFT_LINE);
+      return;
+    }
+    const mine = ++seq.current;
+    setBusy(true);
+    setMessage(null);
+    const r = await previewActivation(pending.map((p) => p.key));
+    if (mine !== seq.current) return;
+    setBusy(false);
+    if (r.ok) {
+      setReview(r.preview);
+      setReason("");
+      setConfirmed(false);
+    } else {
+      setMessage(roleErrorMessage(r.error));
+    }
+  }
+
+  function cancel() {
+    seq.current += 1;
+    setReview(null);
+    setReason("");
+    setConfirmed(false);
+    setMessage(null);
+    setBusy(false);
+  }
+
+  async function commit() {
+    if (!review) return;
+    setBusy(true);
+    setMessage(null);
+    // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
+    const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
+    setBusy(false);
+    if (r.ok) {
+      cancel();
+      onActivated();
+    } else {
+      setMessage(roleErrorMessage(r.error));
+      if (r.error.code === "unexpected" || r.error.code === "stale_version" || r.error.code === "stale_preview") onActivated();
+    }
+  }
+
+  const needsConfirm = review?.confirmationRequired === true;
+  const canCommit = review !== null && !busy && writable && reasonAcceptable("adopt", false, reason) && (!needsConfirm || confirmed);
+  return (
+    <section data-testid="activation-pending" aria-label="Settings waiting for activation" className="flex min-w-0 flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+      <h3 className="font-medium">Pending activation</h3>
+      <p>
+        These settings have been released in the app, but they are not in force for your staff until you activate them. Today your
+        staff keep the access they have now. Review what would change, then activate.
+      </p>
+      <ul className="flex flex-col gap-1">
+        {pending.map((p) => (
+          <li key={p.key} data-pending-key={p.key} className="break-words">
+            {p.label}
+            <span className="text-xs"> ({p.roles.map((r) => ROLE_LABELS[r].toLowerCase()).join(", ")})</span>
+          </li>
+        ))}
+      </ul>
+      {review === null ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            data-testid="activation-review"
+            onClick={open}
+            disabled={busy || !writable}
+            className="min-h-[44px] rounded-md border border-amber-400 px-3 py-2 text-sm font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+          >
+            Review activation
+          </button>
+        </div>
+      ) : (
+        <div data-testid="activation-review-panel" className="flex min-w-0 flex-col gap-3 rounded-md bg-white p-3 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
+          {review.roles.every((r) => r.diff.changes.length === 0) ? (
+            <p>Activating changes nobody&apos;s access today. It records that you reviewed these settings.</p>
+          ) : (
+            review.roles.map((item) => (
+              <div key={item.role} data-activation-role={item.role} className="flex min-w-0 flex-col gap-2">
+                <h4 className="font-medium">{ROLE_LABELS[item.role]}s</h4>
+                <DiffList item={item} testPrefix="preview" />
+              </div>
+            ))
+          )}
+          <ReasonField id={`${id}-reason`} value={reason} onChange={setReason} required />
+          {needsConfirm && (
+            <label className="flex min-h-[44px] items-start gap-2 text-sm">
+              <input type="checkbox" data-testid="activation-confirm" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />
+              <span>I understand this switches on financial or sensitive access for the people listed.</span>
+            </label>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" data-testid="activation-commit" onClick={commit} disabled={!canCommit} className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
+              Activate these settings
+            </button>
+            <button type="button" onClick={cancel} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-700">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {message && (
+        <p data-testid="activation-message" role="alert" className="break-words font-medium">
+          {message}
+        </p>
+      )}
     </section>
   );
 }
