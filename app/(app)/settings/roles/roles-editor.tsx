@@ -589,6 +589,11 @@ function RowList({
                 {BASELINE_NOTES[row.key]}
               </p>
             )}
+            {row.inactiveUntil && (
+              <p data-testid="inactive-until" className="break-words text-xs text-amber-800 dark:text-amber-300">
+                {row.inactiveUntil}
+              </p>
+            )}
             {row.inactiveBecause && (
               <p data-testid="inactive-because" className="break-words text-xs text-amber-800 dark:text-amber-300">
                 {row.inactiveBecause}

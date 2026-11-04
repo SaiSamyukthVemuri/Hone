@@ -194,4 +194,23 @@ describe("the page", () => {
     const html = render(mk({ [K1]: "inactive_until_activated" }), false);
     expect(html).toMatch(/data-testid="activation-review"[^>]*disabled|disabled=""[^>]*data-testid="activation-review"/);
   });
+  it("NQ-10: a pending edit choice with viewing off says it is inactive until viewing is on", () => {
+    const raw = {
+      ok: true,
+      version: 7,
+      basis: "existing_snapshot",
+      gates: {},
+      roles: {
+        practitioner: {
+          "clin.edit_records": { stored: "own", effective: "off", source: "inactive_until_activated" },
+          "clin.view_records": { stored: "off", effective: "off", source: "stored" },
+        },
+        receptionist: {},
+      },
+    };
+    const html = render(parseState(raw)!.policies);
+    expect(html).toContain('data-testid="inactive-until"');
+    expect(html).toContain("Inactive until View clinical records is on. Your choice is kept.");
+    expect(html).toContain("Saved, but not in force yet");
+  });
 });
