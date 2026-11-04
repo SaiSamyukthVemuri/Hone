@@ -106,3 +106,29 @@ describe("Codex P2 (30555b1d0): reset and adopt collect the sensitive confirmati
     expect(src).toMatch(/props\.reset\(preview\.role, boundVersion, reason\.trim\(\), previewConfirmed\)/);
   });
 });
+
+describe("Codex threads from 3 Nov that GitHub still anchors to the head (already fixed in earlier commits)", () => {
+  it("History pages past 50 (4456759405, fixed in dad7f777c): the panel keeps the cursor and offers Load older", () => {
+    const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(src).toContain('data-testid="history-load-older"');
+    expect(src).toMatch(/loadOlder\(state\.next as string\)/);
+  });
+  it("the existing-studio adoption preview names archive_clients, delete_treatment_records_and_photos and restore_deleted_records (4449283700)", async () => {
+    const { parsePreview } = await import("@/lib/settings/roles/core-parse");
+    const ids = ["archive_clients", "delete_treatment_records_and_photos", "restore_deleted_records"];
+    const r = parsePreview({
+      ok: true,
+      version: 0,
+      changes: { practitioner: [], receptionist: [] },
+      affected: {},
+      fixed_narrowings: ids.map((id) => ({ id, label: id, notice: "n", practitioner_access: "narrows" })),
+    });
+    if (!r.ok) throw new Error("expected ok");
+    const kinds = r.preview.roles.find((x) => x.role === "practitioner")!.diff.fixedNarrowings;
+    expect(kinds.map((k) => k.id)).toEqual(ids);
+    expect(kinds.every((k) => k.kind === "narrows")).toBe(true);
+    // and the migration the core ships names all three in the notices the preview returns
+    const mig = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+    for (const id of ids) expect(mig).toContain(`('${id}', 'DN-25'`);
+  });
+});
