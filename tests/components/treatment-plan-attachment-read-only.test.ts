@@ -12,8 +12,11 @@ const html = (props: Record<string, unknown>) => renderToStaticMarkup(createElem
 
 describe("TreatmentPlanAttachment in read-only chart mode", () => {
   const attached = { id: "p", name: "Plan A", status: "active" as const };
-  it("offers no detach control for an attached plan, and no attach control when canEdit is false", () => {
-    expect(html({ attachedPlan: attached, activePlans: [], canEdit: false })).toBe("");
+  it("shows an attached plan as read-only text with no control, and offers no attach control when canEdit is false", () => {
+    const ro = html({ attachedPlan: attached, activePlans: [], canEdit: false });
+    expect(ro).toContain('data-testid="plan-attachment-read-only"');
+    expect(ro).toContain("Attached to Plan A");
+    expect(ro).not.toMatch(/<button|<select|Detach|aria-label/);
     expect(html({ attachedPlan: null, activePlans: [{ id: "p", name: "Plan A" }], canEdit: false })).toBe("");
     expect(html({ attachedPlan: null, activePlans: [{ id: "p", name: "A" }, { id: "q", name: "B" }], canEdit: false })).toBe("");
   });

@@ -32,6 +32,11 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
   const member = await seedE2eMember(seed);
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
 
+  // Codex P2 x2: an ATTACHED plan and the session start time, so read-only mode can be seen to keep the information and drop the controls.
+  const planName = `RO Plan ${seed.runId}`;
+  const plan = (await sql<{ id: string }>(`insert into public.treatment_plans (studio_id, client_id, status, name) values ($1,$2,'active',$3) returning id`, [seed.studioId, clientId, planName]))[0]!;
+  await sql(`update public.sessions set treatment_plan_id = $1 where id = $2`, [plan.id, sessionId]);
+
   priorRelease = (
     await sql<{ released_at: string | null; release_tag: string; release_kind: string }>(
       `select released_at::text as released_at, release_tag, release_kind from public.permission_key_release where key = 'clin.edit_records'`,
@@ -72,6 +77,10 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
     await expect(owner.getByTestId("add-settings-block-cta")).toBeVisible({ timeout: T });
     await expect(owner.getByTestId("chart-read-only-note")).toHaveCount(0);
     await expect(owner.getByRole("button", { name: /procedure risks explained/i })).toBeVisible({ timeout: T });
+    // owner: the plan has its Detach control and the start time keeps its editor (no static stand-in)
+    await expect(owner.getByRole("button", { name: /detach treatment plan/i })).toBeVisible({ timeout: T });
+    await expect(owner.getByTestId("session-started-at-static")).toHaveCount(0);
+    await expect(owner.getByTestId("plan-attachment-read-only")).toHaveCount(0);
   });
 
   await test.step("practitioner (Off): session chart is read-only: note shown, edit controls withdrawn", async () => {
@@ -81,6 +90,12 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
     await expect(prac.getByTestId("chart-read-only-note")).toContainText("You can view this chart but not change it.");
     await expect(prac.getByTestId("add-settings-block-cta")).toHaveCount(0);
     await expect(prac.getByRole("button", { name: /procedure risks explained/i })).toHaveCount(0); // Codex P2: no control that would be refused
+    // Codex P2 (r4472078942): the session start time stays visible as static text
+    await expect(prac.getByTestId("session-started-at-static")).toBeVisible({ timeout: T });
+    await expect(prac.getByTestId("session-started-at-static")).toContainText("Started");
+    // Codex P2 (r4472078957): no plan attach/detach control; the attached plan is still shown, as read-only text
+    await expect(prac.getByRole("button", { name: /detach|attach/i })).toHaveCount(0);
+    await expect(prac.getByTestId("plan-attachment-read-only")).toContainText(planName);
     await prac.screenshot({ path: test.info().outputPath("practitioner-session-read-only.png"), fullPage: true });
   });
 
