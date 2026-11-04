@@ -1014,6 +1014,17 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   // EXCLUDED - a decision on the record, with the reason it was made.
   // -------------------------------------------------------------------------
 
+  // derived
+  // 0298. Per-owner view state of the Dashboard "Needs attention" list: which reminder an owner chose to hide, and when. It carries no
+  // client, appointment, payment or clinical fact (item_key and instance_token are opaque text) and is rebuilt by simply not dismissing.
+  // Excluded as a DECISION for Privacy to confirm, not an omission: nothing in it is studio content a departing studio needs back.
+  dashboard_attention_events: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events keyed by opaque text). View state, not studio content: it holds no client, payment, scheduling or clinical fact, and every reminder it hides is recomputed from records that ARE exported.",
+  },
+
   // security
   calendar_connection_secrets: {
     kind: "excluded",
