@@ -383,16 +383,18 @@ call of a trigger function fails anyway; but a fresh or rebuilt project from the
 **Chain versus hosted drift: function bodies (hosted catalog comparison, 2026-11-04).** A read-only comparison of
 the hosted function catalog against a rebuild from the migration chain found three function bodies that differ.
 No other function, column, constraint, trigger or policy difference was found beyond those already recorded in this
-document.
+document or in the migration ledger: `waitlist.source` (absent on hosted; the ledger) and `rls_auto_enable()` with its
+`ensure_rls` event trigger (hosted only; this document, above).
 
 - `set_updated_at()` (0015, trigger helper): **whitespace only** (indentation); the statements are identical. The
   hosted copy appears to have been applied from an earlier, differently indented text. Harmless.
 - `rebuild_blockout_reservations_for_studio_tz()` (0030, security definer): **whitespace only** (indentation and
   blank lines); the statements are identical, with the same early-text origin. Harmless.
 - `snapshot_appointment_buffer()` (0029, 0030; security definer): a **body** difference, not only the grants drift
-  above. Hosted has an early return when the `app.bypass_appointment_buffer_snapshot` setting is `on`. Provenance:
-  the 0030 version committed on 2026-05-22 carried that bypass, and the file was edited on 2026-05-23 after
-  production had applied the earlier text, so the repository no longer contains the hosted body. The migration
+  above. Hosted has an early return when the `app.bypass_appointment_buffer_snapshot` setting is `on`. Provenance
+  (inferred, not proven): the hosted body is consistent with the 2026-05-22 0030 text, which carried that bypass;
+  the file was edited on 2026-05-23, after production had applied the earlier text. No committed text matches the
+  hosted body byte for byte. The migration
   ledger's 0176 apply record pins the hosted definition, and the 2026-11-04 read matches that pin: unchanged since
   that record. `tests/migrations/0171` also documents the bypass as absent from the repository.
 
