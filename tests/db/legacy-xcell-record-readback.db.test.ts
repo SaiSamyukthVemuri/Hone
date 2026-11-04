@@ -99,10 +99,10 @@ const NULL_ENTRY = {
 
 const SHAPES: Shape[] = [
   {
-    name: "thermolysis",
+    name: "thermo",
     block: {
       ...NULL_BLOCK,
-      mode: "thermolysis",
+      mode: "thermo",
       machine_frequency: "13.56 MHz",
       minutes_performed: 12,
       primary_area: "Upper lip",
@@ -110,8 +110,8 @@ const SHAPES: Shape[] = [
     },
     entry: {
       ...NULL_ENTRY,
-      mode: "thermolysis",
-      pulse_delay_seconds: "0.5",
+      mode: "thermo",
+      pulse_delay_seconds: "0.50",
       thermolysis_intensity_percent: 40,
       thermolysis_duration_seconds: "0.7",
       hairs_treated: 31,
@@ -119,11 +119,11 @@ const SHAPES: Shape[] = [
   },
   {
     name: "galvanic",
-    block: { ...NULL_BLOCK, mode: "galvanic", primary_area: "Chin", side: "left" },
+    block: { ...NULL_BLOCK, mode: "galv", primary_area: "Chin", side: "left" },
     entry: {
       ...NULL_ENTRY,
       area: "Chin",
-      mode: "galvanic",
+      mode: "galv",
       units_of_lye: "2.5",
       galvanic_duration_seconds: 90,
       galvanic_ma: "0.8",
@@ -141,7 +141,7 @@ const SHAPES: Shape[] = [
       probe_key: "synthetic-probe",
       probe_lot_number: "LOT-SYN-1",
       probe_lot_confirmed: true,
-      numbing_status: "topical",
+      numbing_status: "used",
       tolerance_rating: 4,
       caution_for_next_session: true,
       caution_note: "synthetic caution",
@@ -150,7 +150,7 @@ const SHAPES: Shape[] = [
       ...NULL_ENTRY,
       area: "Jaw",
       mode: "blend",
-      pulse_delay_seconds: "1",
+      pulse_delay_seconds: "1.00",
       thermolysis_intensity_percent: 25,
       thermolysis_duration_seconds: "0.3",
       units_of_lye: "1.5",
@@ -162,11 +162,11 @@ const SHAPES: Shape[] = [
   },
   {
     name: "oldest row with a retired galvanic intensity and no chips",
-    block: { ...NULL_BLOCK, mode: "galvanic", primary_area: "Neck" },
+    block: { ...NULL_BLOCK, mode: "galv", primary_area: "Neck" },
     entry: {
       ...NULL_ENTRY,
       area: "Neck",
-      mode: "galvanic",
+      mode: "galv",
       units_of_lye: "1",
       galvanic_intensity_percent: 30,
       comments: "synthetic legacy note",
