@@ -249,7 +249,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // run (gate OFF; the two dismissal cases skip), each a seeded studio, a magic-link login and a page load: about 45 seconds.
     // Now 52 after merging production into HON-8 (#1350): production's 51 (which counts dashboard-attention-dismissal.spec.ts) plus HON-8's
     // machine-real-3g.spec.ts, which is not in production. The number is the measured count of the merged tree; no group was re-decided.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(52);
+    // Now 53: machine-one-selector.spec.ts (HON-8, one selector for xCell/Junior/Senior, save/reopen, leave guard) joined `sessions`
+    // beside machine-switch-discards-draft.spec.ts. RECORDED AS A DECISION per the note above: it is the only lane its subject can regress in.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(53);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

@@ -22,10 +22,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0300**, declared in `docs/production/migration-state.json`. Read back 2026-11-04T19:24:08Z-19:24:10Z: APPLIED+VERIFIED as recorded by OPS: 255 history rows, max 0300, the expected version set, `0300` exactly once; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0300** (`0300_card_setup_legacy_event_order_bound.sql`), derived from the source files on this tree; the file is present at the applied bytes. |
+| **Repo migration max** | **0301** (`0301_session_block_machine_identity.sql`), derived from the source files on this tree; source-only and pending (HON-8, PR #1369, held). `0300` is present at the applied bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0296`, `0298` and `0299` are declared unhosted gaps below it, not a pending suffix. Every held number below `0300` (including `0298`, #1357, and `0299`, a Team claim) is now OUT OF ORDER by construction: its stage must be rebuilt on the 255-row base. |
-| **Next free number** | Next free number is **0301** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | PENDING, NOT APPLIED: **0301** (`0301_session_block_machine_identity.sql`, additive, held; needs Sam's per-change authorization before any hosted apply). `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0296`, `0298` and `0299` are declared unhosted gaps below it, not a pending suffix. Every held number below `0300` (including `0298`, #1357, and `0299`, a Team claim) is now OUT OF ORDER by construction: its stage must be rebuilt on the 255-row base. |
+| **Next free number** | Next free number is **0302** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The 0300 apply (facts as recorded by OPS, 2026-11-04; `01-ops/RECORD-0300-APPLIED-20261104.md`)
