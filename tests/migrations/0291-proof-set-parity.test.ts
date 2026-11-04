@@ -38,7 +38,9 @@ describe("0291 / lib/auth/email-proof.ts proof-set parity", () => {
   it("S-2b: both sides define a NEVER-CHANGED account the same way, and neither compares whole-second amr timestamps", () => {
     // TS: email_change_sent_at present, or an email identity whose updated_at differs from (or lacks) created_at = changed.
     expect(ts).toContain("const sent = user?.email_change_sent_at;");
-    expect(ts).toContain('if (norm(identity.provider) !== "email") continue;');
+    expect(ts).toContain('if (norm((identity as ProofIdentity).provider) !== "email") continue;');
+    // EA-1: TS has no "missing field" case in SQL (the row set is data); a non-array identities value is changed in TS.
+    expect(ts).toContain('if (!Array.isArray(identities)) return "changed";');
     expect(ts).toContain("if (created === null || updated === null || created !== updated) return \"changed\";");
     expect(ts).toContain('if (emailChangeState(user) === "never_changed" && amr.some(');
     // SQL: the same definition.
