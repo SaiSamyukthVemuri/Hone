@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import {
   getAvailableSlots,
   filterFutureSlots,
@@ -285,6 +287,16 @@ export async function moveAppointmentAction(input: {
     return { ok: false, error: "This appointment can no longer be moved." };
   }
 
+  // Roles engine (0287): the existing-snapshot basis is the rule the database already enforces (an owner, or the
+  // practitioner the appointment is assigned to), so this changes nothing today. Moving never implies reassigning.
+  const userDb = await createClient();
+  const movePermission = await requirePermission(userDb, studio.id, "appt.move", {
+    appointment: appointmentId,
+  });
+  if (!movePermission.allowed) {
+    return { ok: false, error: "You don't have permission to move this appointment." };
+  }
+
   // §9: custom-time mode is an OWNER-ONLY override, authorized on the LIVE
   // server-resolved role, and requires the explicit override acknowledgement.
   // These gates run BEFORE any mutation.
@@ -304,7 +316,25 @@ export async function moveAppointmentAction(input: {
   // NULL = a time-only move that preserves the current practitioner. The DB
   // command re-validates the target independently.
   let target: string | null = null;
-  const reassignEnabled = practitioner.role === "owner";
+  // Reassigning someone's appointment is its own key (appt.reassign). Handing away one's OWN appointment
+  // (appt.handoff_own) needs the held R4 command (0289): move_appointment_core still refuses a non-owner reassign,
+  // so it is deliberately not opened here.
+  let reassignEnabled = false;
+  if (practitioner.role === "owner") {
+    if (!requestedTarget || requestedTarget === appt.practitioner_id) {
+      reassignEnabled = true;
+    } else {
+      const reassignDecision = await requirePermission(userDb, studio.id, "appt.reassign", {
+        appointment: appointmentId,
+      });
+      // The check could not be read (engine null, not merely absent): refuse the WHOLE action. Continuing as a time-only
+      // move would change the time under a request that also asked to hand the appointment to someone else.
+      if (reassignDecision.engine === null && !reassignDecision.engineAbsent) {
+        return { ok: false, error: "We couldn't move the appointment. Please try again." };
+      }
+      reassignEnabled = reassignDecision.allowed;
+    }
+  }
   if (reassignEnabled && requestedTarget && requestedTarget !== appt.practitioner_id) {
     const eligible = await loadEligiblePractitioners(
       admin,

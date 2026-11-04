@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -39,6 +40,8 @@ export async function signedSessionPhotos(input: {
 }): Promise<SessionPhoto[]> {
   try {
     const supabase = await createClient();
+    // Roles engine (0287), the STORAGE plane: no signed URL unless the caller may view photos (unchanged on the existing snapshot).
+    if (!(await requirePermission(supabase, input.studioId, "clin.view_photos", { client: input.clientId })).allowed) return [];
     const { data: rows, error } = await supabase
       .from("treatment_images")
       .select(

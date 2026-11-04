@@ -308,9 +308,15 @@ export async function SecondaryStack({
       <div data-testid="dashboard-lower-row" className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <div className="flex min-w-0 flex-col gap-4">
         {!isOwner && personalCharting !== null && (
-          <PersonalChartingCard
-            metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
-          />
+          personalCharting !== CHECK_UNAVAILABLE && personalCharting.notAvailable ? (
+            <p role="status" data-testid="personal-charting-not-available" className="text-sm text-neutral-500">
+              Charting timeliness is not available to your role.
+            </p>
+          ) : (
+            <PersonalChartingCard
+              metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
+            />
+          )
         )}
           {isOwner && practiceMetrics && <ChartedWithin24hCard metrics={practiceMetrics} />}
         </div>
@@ -634,6 +640,8 @@ async function resolveNeedsAttentionInput({
     assistant: followUpAssistant,
     intakesAwaitingReview,
     todo: dashboardTodo,
+    // Roles R4 (RO-1): a viewer without clin.view_records is told so; an empty list is never presented as "all caught up".
+    notAvailableToRole: followUpAssistant.notAvailable === true || clientsNeedingAttention.notAvailable === true,
     unavailableChecks: [
       ...(intakesUnavailable ? [UNAVAILABLE_INTAKE_REVIEW] : []),
       ...(paymentUnavailable ? [UNAVAILABLE_PAYMENT_SETUP] : []),
@@ -673,9 +681,11 @@ export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
  * without one could say 0 while someone needs review. Payment setup and expiring supplies only add
  * studio items and do not change this count.
  */
-async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | null> {
+async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | "restricted" | null> {
   try {
     const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
+    // Roles R4 (RO-1): a viewer without clin.view_records never sees a 0 that reads as "nothing needs review".
+    if (model.notAvailableToRole) return "restricted";
     return model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c)) ? null : model.clients.length;
   } catch {
     return null;
@@ -686,7 +696,7 @@ async function ClientsToReviewValue(props: NeedsAttentionInputs) {
   const count = await resolveClientReviewCount(props);
   return (
     <span data-testid="summary-clients-to-review-value">
-      {count === null ? "Unavailable" : count}
+      {count === null ? "Unavailable" : count === "restricted" ? "Not available to your role" : count}
     </span>
   );
 }
@@ -698,7 +708,7 @@ async function ClientCountPillValue(props: NeedsAttentionInputs) {
       data-testid="needs-attention-count-pill"
       className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
     >
-      {count === null ? "Unavailable" : `${count} ${count === 1 ? "client" : "clients"}`}
+      {count === null ? "Unavailable" : count === "restricted" ? "Not available to your role" : `${count} ${count === 1 ? "client" : "clients"}`}
     </span>
   );
 }

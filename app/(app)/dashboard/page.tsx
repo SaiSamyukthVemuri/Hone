@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { Suspense } from "react";
 import { SummaryStrip } from "./summary-strip";
 import { computeTimeInsights, formatInsightHours, insightPeriod } from "@/lib/calendar/time-insights";
@@ -577,7 +578,9 @@ export default async function DashboardPage({
     string,
     { sessionId: string; hasChartedArea: boolean }
   >();
-  if (apptIds.length > 0) {
+  // Roles R4: which visits are charted is treatment data; without clin.view_records the lookup is not issued.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
+  if (apptIds.length > 0 && canViewRecords) {
     const { data: linkedSessions, error: linkedError } = await supabase
       .from("sessions")
       .select("id, appointment_id")
@@ -721,9 +724,10 @@ export default async function DashboardPage({
         ? linked.hasChartedArea
           ? "charted"
           : "started"
-        : appt.status === "completed"
+        : appt.status === "completed" && canViewRecords
           ? "needs"
-          : "none";
+          : // Without clin.view_records the lookup was not issued, so "no linked session" is UNKNOWN, never "needs charting".
+            "none";
       const intakeStatus = intakeByClient.get(appt.client_id) ?? null;
       const intake: TodayIntake = intakeStatus ?? "none";
       return {
@@ -982,6 +986,11 @@ export default async function DashboardPage({
           }
         />
 
+        {!canViewRecords && visibleAppointments.length > 0 && (
+          <p role="status" data-testid="today-history-not-available" className="mb-2 text-sm text-neutral-500">
+            Treatment history and charting status are not available to your role.
+          </p>
+        )}
         {visibleAppointments.length === 0 ? (
           <EmptyDayState selectedDay={selectedDayLocal} todayLocal={todayLocal} />
         ) : (
@@ -997,7 +1006,7 @@ export default async function DashboardPage({
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
                   isOwner={isOwner}
                   portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
-                  historyAsked={viewingToday}
+                  historyAsked={viewingToday && canViewRecords}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,

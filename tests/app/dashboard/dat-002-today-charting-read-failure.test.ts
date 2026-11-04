@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isValidElement } from "react";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 // DAT-002: today's charting status on the dashboard is derived from two reads
 // in app/(app)/dashboard/page.tsx (sessions, then session_blocks). Their errors
 // used to be discarded, so a failed read presented a completed, already charted

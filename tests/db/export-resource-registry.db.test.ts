@@ -915,7 +915,10 @@ describe("what is excluded, and on what grounds", () => {
       // LEAD-ALERT-01, no studio_id) and delivery_sweep_heartbeat (0215,
       // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
       // derived from the two ledgers.
-      platform: 7,
+      // 7 -> 10 platform: permission_catalog, permission_narrowings and permission_ship_gates (0287, ROLES R1). Hone's own reference
+      // data and operator release flags, with no studio content; the studio-scoped permission tables are PENDING under TRUTH-01B.
+      // 10 -> 11 platform: permission_key_release (0287, activation rule): when each key's enforcement became real, written only by a migration.
+      platform: 11,
       derived: 7,
       deliberate_privacy: 2,
     });

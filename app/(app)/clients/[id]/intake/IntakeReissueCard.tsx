@@ -29,7 +29,7 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [result, setResult] = useState<{
-    intakeUrl: string;
+    intakeUrl: string | null;
     emailSent: boolean;
   } | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -51,7 +51,7 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
   }
 
   function copyLink() {
-    if (!result) return;
+    if (!result?.intakeUrl) return;
     void navigator.clipboard.writeText(result.intakeUrl).then(
       () => {
         setCopied(true);
@@ -144,9 +144,11 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
             {result.emailSent
               ? " The client has been emailed the new link."
               : clientHasEmail
-                ? " Email was not sent; copy the link below to share it manually."
-                : " This client has no email on file; copy the link below to share it manually."}
+                ? " Email was not sent."
+                : " This client has no email on file."}
+            {result.intakeUrl === null ? " The link is not shown to your role." : result.emailSent ? "" : " Copy the link below to share it manually."}
           </p>
+          {result.intakeUrl !== null && (
           <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900">
             <span className="break-all text-xs text-neutral-700 dark:text-neutral-300">
               {result.intakeUrl}
@@ -161,6 +163,7 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
               </button>
             </div>
           </div>
+          )}
           {error && (
             <p className="text-xs text-red-700" role="alert">
               {error}

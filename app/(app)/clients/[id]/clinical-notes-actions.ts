@@ -26,6 +26,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type {
   ClientClinicalNote,
@@ -192,6 +193,10 @@ async function insertClinicalNote(params: {
     return { ok: false, code: "error", error: CLIENT_LOOKUP_FAILED_COPY };
   }
   if (!client) return { ok: false, code: "not_found", error: "Client not found." };
+  // The stored note is returned to the caller, so an open tab cannot use this after clin.view_records is revoked.
+  if (!(await requirePermission(supabase, studio.id, "clin.view_records", { client: clientId })).allowed) {
+    return { ok: false, code: "error", error: "Not available to your role." };
+  }
 
   // studio_id passed for documentation; the BEFORE INSERT trigger overwrites it
   // from the parent client. practitioner_id is the signed-in practitioner.
