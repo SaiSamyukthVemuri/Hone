@@ -252,6 +252,8 @@ export const BROWSER_GROUPS = {
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
       // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
       "review-assignments-navigation.spec.ts",
+      // The same link hidden for a solo owner with nothing to review, shown otherwise (Sam, 2 Nov).
+      "review-link-solo-owner.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",

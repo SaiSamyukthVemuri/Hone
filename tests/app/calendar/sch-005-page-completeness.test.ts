@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   calls: [] as Array<[string, string]>,
 }));
 
+vi.mock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink: async () => false }));
 vi.mock("@/lib/supabase/queries", () => ({
   requirePractitionerWithStudio: async () => ({
     practitioner: { id: "p-owner", role: "owner", display_name: "Owner" },
