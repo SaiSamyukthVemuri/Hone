@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0297_calendar_source_lock_order.sql",
-    "sha256": "b8914be8964f7588dd3b5220e711b71e74548e17c26a72abfe0d86f7aa694499"
+    "count": 255,
+    "last": "0300_card_setup_legacy_event_order_bound.sql",
+    "sha256": "a80a61b3724ec45f181f1f0c8a6d30212693af63e55dcbe42d45438c65216519"
   },
   "public": {
     "tables": [
