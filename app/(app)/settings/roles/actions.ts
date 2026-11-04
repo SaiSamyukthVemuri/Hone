@@ -48,9 +48,11 @@ function changesShape(edits: unknown): Record<string, Record<string, string>> | 
 
 // Enforcement is a fact about app wiring and lives in the TypeScript catalog, so the core cannot refuse it. This guard runs BEFORE the
 // core on every free-form change (preview and save): a key the app does not yet enforce is not changed, and a deny_only key is not
-// widened above the studio's baseline. Reset and adopt carry no per-key input (a role, a version and a reason) and move values to the
-// studio's own basis, so there is nothing for this guard to refuse there. An owner calling the RPC directly can still store an inert
-// value; that is owner-only and grants no one anything that is read.
+// widened above the studio's baseline. Reset and adopt carry no per-key input (a role, a version and a reason) so this guard has nothing
+// to refuse there, but they are NOT neutral: adopt moves the studio to the new defaults, which can be wider than today's access for
+// deny_only and not_yet keys, and reset can move a stored narrowing back up. Those values are inert until the key is released and the
+// owner activates it (the Activation rule); the guard does not prevent storing them. An owner calling the RPC directly can still store
+// an inert value; that is owner-only and grants no one anything that is read.
 async function wiringRefusal(studioId: string, changes: Record<string, Record<string, string>>): Promise<{ ok: false; error: RoleError } | null> {
   const state = await loadStudioPolicyState(studioId);
   if (!state.writable) return refuse({ code: "unavailable" });

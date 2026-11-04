@@ -289,12 +289,14 @@ describe("the editor", () => {
     expect(src).not.toMatch(/diffPolicies|defaultsPolicy/);
   });
   it("runs every preview through the core's preview calls", () => {
-    expect(src).toContain("props.previewSave(changedEdits())");
+    expect(src).toContain("props.previewSave(edits)");
+    expect(src).toContain("const edits = changedEdits();");
     expect(src).toContain("props.previewAdopt()");
     expect(src).toContain("props.previewReset(forRole)");
   });
   it("saves only changed keys at the version the preview returned", () => {
-    expect(src).toMatch(/props\.save\(changedEdits\(\), reviewData\.version, confirmed, reason\.trim\(\)\)/);
+    expect(src).toMatch(/props\.save\(reviewedEdits\.current, boundVersion, confirmed, reason\.trim\(\)\)/);
+    expect(src).toContain("const boundVersion = reviewData.version;");
     expect(src).toContain("if (saved[r].values[k] !== v) e[k] = v");
   });
   it("returns to the draft with Review available after a stale version (found in the integrated run)", () => {

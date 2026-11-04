@@ -131,7 +131,7 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   keys_required: "Choose at least one setting first. Nothing was changed.",
   preview_required: "Review what would change first. Nothing was changed.",
   stale_preview: "What would change has moved since you reviewed it. Review it again. Nothing was changed.",
-  not_enforced: "Not enforced yet. This switch will apply when that area is wired. Nothing was saved.",
+  not_enforced: "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired. Nothing was saved.",
   widening_not_yet: "Widening arrives in a later release. You can turn this down now. Nothing was saved.",
   sensitive_unconfirmed: "Confirm that you understand the newly enabled financial or sensitive access, then save again.",
   reason_required: "Say why you are making this change.",
@@ -146,7 +146,7 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   not_active: "That person is not active.",
   has_upcoming_appointments: "That practitioner still has upcoming appointments. Move them first.",
   email_required: "That person needs an email address on file first.",
-  unexpected: "Something went wrong. Nothing was changed.",
+  unexpected: "Something went wrong and we could not confirm the result. Reload the page to see what is saved.",
   unavailable: "Saving role changes turns on with the permission core. Nothing was changed.",
 };
 

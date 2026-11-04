@@ -57,7 +57,7 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
 // BELOW the studio's current snapshot/default and wider options are disabled. Only "enforced" takes effect both ways.
 export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
-export const NOT_ENFORCED_LINE = "Not enforced yet. This switch will apply when that area is wired.";
+export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
 export const ENFORCEMENT_SCOPE_LINE = "This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {

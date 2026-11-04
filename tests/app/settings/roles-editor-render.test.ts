@@ -127,7 +127,7 @@ describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
   });
   it("fails SAFE: a key with no enforcement in the catalog reads Not enforced yet", () => {
     const r = row(withEnforcement({ "appt.move": undefined }, () => render({ initialView: "permissions" })), "appt.move");
-    expect(r).toContain("Not enforced yet. This switch will apply when that area is wired.");
+    expect(r).toContain("Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.");
     expect(r).toMatch(/<fieldset[^>]*disabled/);
   });
   it("an enforced key has no such line and its fieldset is not disabled by it; observe and not_yet say Not enforced yet", () => {

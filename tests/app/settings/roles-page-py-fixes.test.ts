@@ -1,0 +1,62 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { ROLE_ERROR_CODES } from "@/lib/settings/roles/api";
+import { roleErrorMessage } from "@/lib/settings/roles/api";
+
+// Insurance PEER-1335 3888b802a: PY-2 .. PY-6. Source pins: the editor is a client component with no DOM harness in this repo, so the
+// behaviour is pinned where it is written.
+const editor = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+const model = readFileSync("lib/settings/roles/model.ts", "utf8");
+const fn = (name: string) => {
+  const i = editor.indexOf(name);
+  return editor.slice(i, editor.indexOf("\n  }\n", i));
+};
+
+describe("PY-2 no blanket or forbidden promises", () => {
+  it("the next-request line is qualified to enforced settings", () => {
+    expect(editor).toContain("only for settings the app already enforces");
+    expect(editor).not.toMatch(/Changes apply to each person&rsquo;s next request, including people who are signed in now\./);
+  });
+  it("the not-enforced line no longer promises the switch will apply when the area is wired", () => {
+    expect(model).not.toContain("will apply when that area is wired");
+    expect(model).toContain("will not switch on by itself");
+  });
+});
+
+describe("PY-3 the review is sequenced and Save sends what was previewed", () => {
+  it("onReview ignores a late response; Save uses the previewed edits", () => {
+    expect(fn("async function onReview")).toMatch(/seq !== reviewSeq\.current\) return/);
+    expect(fn("async function onSave")).toContain("props.save(reviewedEdits.current,");
+    expect(fn("async function onSave")).not.toContain("changedEdits()");
+  });
+  it("any new choice or discard invalidates a pending review", () => {
+    expect(fn("function choose")).toContain("reviewSeq.current += 1");
+    expect(fn("function discard")).toContain("reviewSeq.current += 1");
+  });
+});
+
+describe("PY-4 reset and adopt never drop unsaved choices silently", () => {
+  it("openPreview refuses while dirty, before asking the core", () => {
+    const body = fn("async function openPreview");
+    expect(body.indexOf("if (dirty)")).toBeGreaterThan(-1);
+    expect(body.indexOf("if (dirty)")).toBeLessThan(body.indexOf("props.previewAdopt"));
+  });
+});
+
+describe("PY-6 'unexpected' does not claim nothing changed", () => {
+  it("the message says the result could not be confirmed", () => {
+    expect(roleErrorMessage({ code: "unexpected" })).not.toMatch(/Nothing was changed/);
+    expect(roleErrorMessage({ code: "unexpected" })).toMatch(/could not confirm/);
+  });
+  it("save, reset and adopt read the policy back on 'unexpected' and compare versions", () => {
+    expect(fn("async function onSave")).toContain("resolveUnexpected(boundVersion)");
+    expect(fn("async function confirmPreview")).toContain("resolveUnexpected(boundVersion)");
+    const body = fn("async function resolveUnexpected");
+    expect(body).toContain("props.reload()");
+    expect(body).toContain("fresh.state.version === boundVersion");
+  });
+});
+
+it("the page knows every code the core returns", () => {
+  for (const c of ["keys_required", "preview_required", "stale_preview", "not_released"]) expect(ROLE_ERROR_CODES as readonly string[]).toContain(c);
+});
