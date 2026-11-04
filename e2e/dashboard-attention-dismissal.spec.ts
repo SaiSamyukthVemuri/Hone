@@ -250,10 +250,14 @@ test.describe("Dashboard Needs attention: dismissal", () => {
       await expect(unpaidAmountOf(page, partial.name)).toHaveCount(0);
       const main = page.locator("main");
       await expect(main).not.toContainText(/still owed|Amount unavailable|Show all outstanding|unpaid balances/i);
+      // The one count lives in the heading only (#1356), whatever the unpaid gate says.
+      await expect(page.getByTestId("dashboard-summary-strip")).not.toContainText(/clients to review/i);
       if (!GATE_ON) {
         await expect(page.getByTestId("attention-dismiss")).toHaveCount(0);
+        await expect(page.getByTestId("attention-dismissed")).toHaveCount(0);
         await expect(page.getByTestId("attention-dismissed-toggle")).toHaveCount(0);
         await expect(page.getByTestId("attention-dismissals-unavailable")).toHaveCount(0);
+        await expect(main).not.toContainText(/could not read your dismissed/i);
       }
     }
   });
