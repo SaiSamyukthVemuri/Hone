@@ -70,3 +70,27 @@ describe("parseState carries the core's effective and source", () => {
     expect((s.policies.receptionist as PolicyWithServer).server!.stored[KEY]).toBeUndefined();
   });
 });
+
+describe("NQ-10: a pending choice also says what it is waiting on", () => {
+  const EDIT = "clin.edit_records";
+  const VIEW = "clin.view_records";
+  it("names View clinical records when viewing is off, and says the choice is kept", () => {
+    const p = policy(
+      { effective: { [EDIT]: "off", [VIEW]: "off" }, source: { [EDIT]: "inactive_until_activated", [VIEW]: "stored" } },
+      { [EDIT]: "own", [VIEW]: "off" },
+    );
+    const r = rowOf(p, EDIT);
+    expect(r.inactiveBecause).toBe(NOT_ACTIVE_YET_LINE);
+    expect(r.inactiveUntil).toBe("Inactive until View clinical records is on. Your choice is kept.");
+  });
+  it("shows no such line when viewing is on, or when the row is not pending", () => {
+    const on = policy(
+      { effective: { [EDIT]: "off", [VIEW]: "own" }, source: { [EDIT]: "inactive_until_activated", [VIEW]: "stored" } },
+      { [EDIT]: "own", [VIEW]: "own" },
+    );
+    expect(rowOf(on, EDIT).inactiveUntil).toBeNull();
+    const notPending = policy({ effective: { [EDIT]: "off", [VIEW]: "off" }, source: { [EDIT]: "stored", [VIEW]: "stored" } }, { [EDIT]: "own", [VIEW]: "off" });
+    expect(rowOf(notPending, EDIT).inactiveUntil).toBeNull();
+    expect(rowOf(notPending, EDIT).inactiveBecause).toMatch(/^Inactive: needs/);
+  });
+});

@@ -76,6 +76,9 @@ export type RoleRow = {
   chosen: Scope; // what the owner has set (or the basis value)
   effective: Scope; // what is actually in force after prerequisites and gates
   inactiveBecause: string | null; // set when effective is lower than chosen
+  // NQ-10: set when the saved choice is ALSO held down by a prerequisite that is off (judged from the core's effective values), even
+  // while the more general "not in force yet" line is showing. Names what must be on; the choice is kept.
+  inactiveUntil: string | null;
   options: OptionState[];
   locked: string | null; // why no control is offered at all
   enforcement: Enforcement; // "enforced" is editable; "deny_only" only at or below the baseline; "observe" and "not_yet" are shown for planning
@@ -110,6 +113,8 @@ const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scop
 // turns the prerequisite on for the owner: the row says what it needs and the owner decides.
 // The core says this saved choice is not in force: its key is not released yet, or the release has not been activated by the owner.
 export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. It takes effect when this setting is released and you activate it.";
+
+export const inactiveUntilOn = (labels: string[]): string => `Inactive until ${labels.join(" and ")} ${labels.length > 1 ? "are" : "is"} on. Your choice is kept.`;
 
 export const inactiveNeeds = (labels: string[]): string =>
   `Inactive: needs ${labels.join(", ")}. Your choice is kept and applies again when ${labels.length > 1 ? "those are" : "that is"} on.`;
@@ -158,6 +163,11 @@ export function buildRoleModel(role: Role, policy: PolicyWithServer): RoleGroupM
               ? `Inactive: not yet available: ${GATES[gate]}.`
               : inactiveNeeds(d.requires.map((r) => catalogByKey.get(r)?.label ?? r))
             : null,
+        inactiveUntil: (() => {
+          if (scopeRank(effective) >= scopeRank(chosen) || !isInertUntilReleased(policy.server?.source[d.key])) return null;
+          const off = d.requires.filter((r) => scopeRank(shownEffectiveScope(role, r, policy)) < scopeRank(chosen));
+          return off.length > 0 ? inactiveUntilOn(off.map((r) => catalogByKey.get(r)?.label ?? r)) : null;
+        })(),
         options,
         locked,
         enforcement,
