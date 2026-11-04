@@ -799,6 +799,7 @@ export default async function SessionDetailPage({
             reviseAction={reviseClinicalNoteAction}
             profileHref={`/clients/${id}?tab=treatment`}
             printHref={`/clients/${id}/clinical-notes/print`}
+            readOnly={!canEditRecords}
           />
         </div>
       </details>
