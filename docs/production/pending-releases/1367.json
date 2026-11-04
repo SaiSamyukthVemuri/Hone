@@ -1,0 +1,6 @@
+{
+  "pr": 1367,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0300_card_setup_legacy_event_order_bound.sql"],
+  "release_receipt": "01-ops/1367-release-receipt.json"
+}
