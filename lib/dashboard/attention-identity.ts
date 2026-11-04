@@ -29,6 +29,11 @@ const STAMPED: ReadonlySet<AttentionItemKind | string> = new Set([
   "treatment_memory",
 ]);
 
+/** The stored token allows only [A-Za-z0-9:_.-] and 200 characters (0298), so a timestamp's "+" or space becomes "_". Deterministic. */
+export function safeToken(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9:_.-]/g, "_").slice(0, 200);
+}
+
 export function attentionItemKey(item: Pick<AttentionItem, "id">): string {
   return item.id;
 }
@@ -44,7 +49,7 @@ export function attentionInstanceToken(
 ): string {
   if (!STAMPED.has(item.kind)) return "1";
   const s = typeof stamp === "string" ? stamp.trim() : "";
-  return s === "" ? "unstamped" : s;
+  return s === "" ? "unstamped" : safeToken(s);
 }
 
 /** An unstamped token never equals a stored one (see `isDismissed`). */

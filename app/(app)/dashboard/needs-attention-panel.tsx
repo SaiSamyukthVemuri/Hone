@@ -34,6 +34,7 @@ const BADGE: Record<AttentionItemKind, string> = {
   probe_lot: "Probe lot",
   record_details: "Record details",
   treatment_memory: "Reaction / watch",
+  unpaid: "Unpaid",
 };
 
 const BADGE_CLASS =
