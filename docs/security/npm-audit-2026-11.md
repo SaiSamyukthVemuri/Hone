@@ -1,9 +1,12 @@
 # npm audit, November 2026: what was fixed and what remains
 
 Recorded 2026-11-04 on branch `ops/deps-audit-20261104`, cut from production
-`8dedcf694`. This was a lockfile-only update. `package.json` is unchanged and
-nothing moved to a new major version. Source review: the operator's
-`NPM-AUDIT-REVIEW-20261104` (handoff, outside the repo).
+`8dedcf694`. This was a lockfile-only update and `package.json` is unchanged.
+No **direct** dependency moved to a new major version. Two **transitive,
+build-time-only** packages show a major change in the lockfile; see
+[Major version changes in transitive packages](#major-version-changes-in-transitive-packages).
+Source review: the operator's `NPM-AUDIT-REVIEW-20261104` (handoff, outside
+the repo).
 
 Toolchain: node 24.22.1 and npm 11.19.1, the same node version CI pins. Counts
 come from `npm audit --json` run on a clean `npm ci` of the committed lockfile.
@@ -89,6 +92,35 @@ Follow-up, which is also the revisit trigger for the Sentry pin: repoint
 `PLUGIN_CORE` at `@sentry/bundler-plugins/core` in its own change, then bump
 `@sentry/nextjs` to the latest 10.x.
 
+### Major version changes in transitive packages
+
+Paths and versions below were confirmed with `npm ls dotenv ajv-formats --all`
+on the committed lockfile. Hone's own source (`app/ lib/ components/ scripts/
+tests/ e2e/`, `middleware.ts`, `next.config.ts`, `instrumentation*.ts`) never
+imports either package, and neither appears in `package.json`.
+
+| Package | Before → after | Path | Why it moved | Class |
+|---|---|---|---|---|
+| `ajv-formats` | 2.1.1 → 3.0.1 | `@sentry/nextjs` → `@sentry/webpack-plugin` 5.4.1 → `webpack` 5.112.2 → `schema-utils` 4.8.2 → `ajv-formats` | `webpack` is a peer dependency of Sentry's webpack plugin, installed standalone. Next uses its own bundled compiler, `next/dist/compiled/webpack`. That standalone `webpack` moved within 5.x (5.108.4 → 5.112.2) and pulled `schema-utils` 4.3.3 → 4.8.2, whose own range moved from `ajv-formats ^2.1.1` to `^3.0.1`. It is used only to validate webpack plugin options at build time. | transitive, build-only |
+| `dotenv` | 16.6.1 → 17.4.2 at the top level | `@sentry/nextjs` → `@sentry/webpack-plugin` → `@sentry/bundler-plugins` 10.78.0 → `dotenv` 17.4.2; `@sentry/nextjs` → `@sentry/bundler-plugin-core` 5.3.0 → `dotenv` 16.6.1 (now nested) | Both versions were already in the tree before this change: 17.4.2 nested under `@sentry/bundler-plugins`, and 16.6.1 at the top level for `@sentry/bundler-plugin-core`. npm swapped which one is hoisted. Each consumer still resolves the same major it did before (`^17.4.2` and `^16.3.1`). The Sentry build plugin uses it only to read `.env.sentry-build-plugin` during `next build`. | transitive, build-only |
+
+### Two copies of `@sentry/core`
+
+Two `@sentry/core` versions are in the tree:
+- **10.76.1, the runtime copy.** It is nested under every SDK package that
+  ships in the server and browser bundles: `@sentry/nextjs`, `@sentry/node`,
+  `@sentry/node-core`, `@sentry/browser`, `@sentry/browser-utils`,
+  `@sentry/react`, `@sentry/replay`, `@sentry/replay-canvas`,
+  `@sentry/feedback`, `@sentry/opentelemetry`, `@sentry/server-utils` and
+  `@sentry/vercel-edge`.
+- **10.78.0, the build-time copy.** It sits at the top level and is used by
+  `@sentry/bundler-plugins` 10.78.0, the build plugin that
+  `@sentry/webpack-plugin` 5.4.1 depends on.
+
+Before this change the single copy was 10.66.0. The split follows from the
+10.76.1 pin. It goes away when `@sentry/nextjs` moves to 10.78.x (see the
+follow-ups).
+
 ### Expected but not cleared: `glob` and the Sentry chain
 
 The source review expected `glob` and the four Sentry entries to clear with
@@ -148,10 +180,14 @@ Total: 1 + 4 + 1 + 13 + 1 + 1 = 21. Under `--omit=dev`, 8 remain: R1, R2 (4), R3
   `@sentry/bundler-plugins/core`, the module the webpack build actually uses.
   Then bump `@sentry/nextjs` to the latest 10.x. See "Why `@sentry/nextjs` is
   at 10.76.1" above.
-- Raise the `@sentry/nextjs` floor in `package.json` (at least `^10.75.2`), so
-  that a fresh resolve can never drop below the version that fixes the tunnel
-  advisory. The lockfile already holds that guarantee today. A `package.json`
-  change was not strictly necessary, so it is left for a separate change.
+- **Recorded follow-up: raise the `@sentry/nextjs` floor in `package.json`**
+  (today `^10.66.0`; at least `^10.75.2`).
+  - Only the lockfile holds 10.76.1 today. A fresh resolve without it (a
+    regenerated lockfile, `npm install` after deleting it, or a consumer that
+    ignores it) is free to pick any version in `^10.66.0`. That includes
+    versions below 10.75.2, which still carry the critical GHSA-mchm-gjx6-7h55.
+  - It is left out of this PR only because the PR is lockfile-only by
+    authorization.
 - The comment at `lib/supabase/middleware.ts` near line 61 still says
   `tunnelRoute: "/monitoring" in next.config.ts`. That wording is stale. The
   tunnel is Hone's own `app/monitoring/route.ts`.
