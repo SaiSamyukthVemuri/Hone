@@ -216,9 +216,17 @@ async function openMachinePanel(page: Page): Promise<boolean> {
   // ON DEMAND, which is load-bearing: an on-mount request once broke
   // repeat-client-fast-charting, which classifies any server-action POST
   // without an idempotencyKey as a source re-read.
-  await expect(page.getByTestId("machine-first-trigger")).toBeVisible({ timeout: T });
-  await page.getByTestId("machine-first-open").click();
-  await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+  //
+  // The exception is an area that already carries a saved machine identity: it
+  // opens the panel itself (the saved choice must be restored on reopen), so
+  // the trigger is only briefly visible, disabled on "Loading", and then gone.
+  // The panel appearing is the real assertion; the click is best effort.
+  const panel = page.getByTestId("machine-first-panel");
+  await expect(page.getByTestId("machine-first-trigger").or(panel)).toBeVisible({ timeout: T });
+  if (!(await panel.isVisible())) {
+    await page.getByTestId("machine-first-open").click({ timeout: 3000 }).catch(() => undefined);
+  }
+  await expect(panel).toBeVisible({ timeout: T });
 
   // COUNTING OPTIONS, not the control's presence. The dropdown also renders
   // DISABLED with only the empty option when the studio has nothing usable,
