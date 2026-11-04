@@ -306,9 +306,17 @@ test("clin.edit_records: stored choice is kept, effective access is off capped b
   await row.scrollIntoViewIfNeeded().catch(() => undefined);
   const det = row.locator("xpath=ancestor::details[1]");
   if (await det.count()) await det.evaluate((d) => ((d as HTMLDetailsElement).open = true)).catch(() => undefined);
-  const note = row.getByText(/Inactive: needs/).first();
-  const seen = (await row.count()) === 1 && (await note.isVisible().catch(() => false));
-  const pageText = seen ? ((await note.textContent()) ?? "").slice(0, 160) : "";
+  // Shipped copy at #1342 8bbd30b6e (lib/settings/roles/model.ts): clin.edit_records is not_yet, so its source is inert and the row carries
+  // NOT_ACTIVE_YET_LINE (inactive-because) plus inactiveUntilOn(["View clinical records"]) (inactive-until). Both exact strings are asserted.
+  const BECAUSE = "Saved, but not in force yet. It takes effect when this setting is released and you activate it.";
+  const UNTIL = "Inactive until View clinical records is on. Your choice is kept.";
+  const until = row.getByTestId("inactive-until");
+  const because = row.getByTestId("inactive-because");
+  const seen =
+    (await row.count()) === 1 &&
+    ((await until.textContent().catch(() => null)) ?? "").trim() === UNTIL &&
+    ((await because.textContent().catch(() => null)) ?? "").trim() === BECAUSE;
+  const pageText = seen ? `${UNTIL} / ${BECAUSE}`.slice(0, 200) : `until=${JSON.stringify(await until.textContent().catch(() => null))} because=${JSON.stringify(await because.textContent().catch(() => null))}`;
   await shot(op, "edit-records-inactive-page");
   rec({
     id, realPath: true,
