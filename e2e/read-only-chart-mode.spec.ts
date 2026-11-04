@@ -71,6 +71,7 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
     await owner.goto(sessionUrl);
     await expect(owner.getByTestId("add-settings-block-cta")).toBeVisible({ timeout: T });
     await expect(owner.getByTestId("chart-read-only-note")).toHaveCount(0);
+    await expect(owner.getByRole("button", { name: /procedure risks explained/i })).toBeVisible({ timeout: T });
   });
 
   await test.step("practitioner (Off): session chart is read-only: note shown, edit controls withdrawn", async () => {
@@ -79,6 +80,7 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
     await expect(prac.getByTestId("chart-read-only-note")).toBeVisible({ timeout: T });
     await expect(prac.getByTestId("chart-read-only-note")).toContainText("You can view this chart but not change it.");
     await expect(prac.getByTestId("add-settings-block-cta")).toHaveCount(0);
+    await expect(prac.getByRole("button", { name: /procedure risks explained/i })).toHaveCount(0); // Codex P2: no control that would be refused
     await prac.screenshot({ path: test.info().outputPath("practitioner-session-read-only.png"), fullPage: true });
   });
 

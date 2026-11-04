@@ -31,6 +31,23 @@ describe("session page in read-only mode", () => {
     ["NextVisitNoteForm", /isFinalized \|\| !canEditRecords \?/],
     ["DoneChartingButton", /isFinalized \|\| !canEditRecords \?\s*\(\s*<Link/],
   ])("%s is withdrawn", (_n, re) => expect(src).toMatch(re));
+  // Codex P2 on #1351: controls whose actions refuse must not be offered at all (a laser form would let a user type details first).
+  it.each([
+    ["LogLaserEntryForm (laser)", /\{!isFinalized && canEditRecords && \(\s*<LogLaserEntryForm/],
+    ["AftercareExplainedToggle", /\{!isFinalized && canEditRecords && \(\s*<AftercareExplainedToggle/],
+  ])("%s is withdrawn", (_n, re) => expect(src).toMatch(re));
+  it("hands read-only to LaserEntriesSection, which drops the remove control", () => {
+    expect(src).toMatch(/<LaserEntriesSection[\s\S]*?readOnly=\{!canEditRecords\}/);
+    expect(src).toMatch(/readOnly \? undefined : \(\s*<RemovePassButton/);
+    expect(src).toMatch(/function LaserEntriesSection\([\s\S]*?readOnly = false/);
+  });
+  it("no chart-changing control is rendered outside a canEditRecords / readOnly guard", () => {
+    for (const comp of ["LogLaserEntryForm", "AftercareExplainedToggle", "RemovePassButton", "EditSessionStartedAt", "DeleteSessionForm"]) {
+      const i = src.search(new RegExp(`<${comp}[\\s>]`));
+      expect(i, comp).toBeGreaterThan(-1);
+      expect(src.slice(Math.max(0, i - 160), i), `${comp} must sit behind the edit gate`).toMatch(/canEditRecords|readOnly/);
+    }
+  });
   it("hands read-only to the blocks view and the performer line", () => {
     expect(src).toMatch(/<SessionBlocksView[\s\S]*?readOnly=\{!canEditRecords\}/);
     expect(src).toMatch(/<SessionPerformerLine[\s\S]*?readOnly=\{!canEditRecords\}/);

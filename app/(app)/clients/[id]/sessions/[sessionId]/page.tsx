@@ -829,7 +829,7 @@ export default async function SessionDetailPage({
         />
       ) : (
         <>
-          {!isFinalized && (
+          {!isFinalized && canEditRecords && (
             <LogLaserEntryForm
               sessionId={session.id}
               clientId={id}
@@ -849,6 +849,7 @@ export default async function SessionDetailPage({
               clientId={id}
               sessionId={session.id}
               entries={session.laser_entries}
+              readOnly={!canEditRecords}
             />
           </section>
         </>
@@ -947,7 +948,7 @@ export default async function SessionDetailPage({
               aftercare provided" once marked, and can still be un-marked if she
               taps it by mistake. Gating it on "not marked" would have removed
               both, which is a behaviour change nobody asked for. */}
-          {!isFinalized && (
+          {!isFinalized && canEditRecords && (
             <AftercareExplainedToggle
               sessionId={session.id}
               explainedAt={session.aftercare_and_risks_explained_at ?? null}
@@ -1145,10 +1146,13 @@ function LaserEntriesSection({
   clientId,
   sessionId,
   entries,
+  readOnly = false,
 }: {
   clientId: string;
   sessionId: string;
   entries: LaserEntry[];
+  // Read-only chart mode (clin.view_records without clin.edit_records): the passes are shown, the remove control is not.
+  readOnly?: boolean;
 }) {
   if (entries.length === 0) {
     return (
@@ -1167,6 +1171,7 @@ function LaserEntriesSection({
           <LaserEntryRow
             entry={e}
             action={
+              readOnly ? undefined : (
               <RemovePassButton
                 action={deleteLaserEntryAction}
                 entryId={e.id}
@@ -1174,6 +1179,7 @@ function LaserEntriesSection({
                 clientId={clientId}
                 ariaLabel={sorted.length > 1 ? "Remove laser pass" : "Remove pass"}
               />
+              )
             }
           />
         </li>
