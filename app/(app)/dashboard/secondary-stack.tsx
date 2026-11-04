@@ -25,7 +25,13 @@ import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
 import {
   buildNeedsAttention,
   CHECK_UNAVAILABLE,
+  type NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
+import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
+import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
+import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
+import { dashboardUnpaidEnabled } from "@/lib/dashboard/unpaid-gate";
+import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
 import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
   buildGettingStarted,
@@ -544,6 +550,7 @@ const UNAVAILABLE_RECENT_SESSIONS = "recent sessions";
 const UNAVAILABLE_MISSING_RECORDS = "missing records";
 const UNAVAILABLE_RECORD_DETAILS = "record details";
 const UNAVAILABLE_EXPIRING_SUPPLIES = "expiring supplies";
+const UNAVAILABLE_UNPAID = "unpaid balances";
 const STUDIO_ONLY_CHECKS: ReadonlySet<string> = new Set([UNAVAILABLE_PAYMENT_SETUP, UNAVAILABLE_EXPIRING_SUPPLIES]);
 
 const EMPTY_PROCEDURE_ACTIONS: ProcedureActionMetrics = {
@@ -653,72 +660,104 @@ async function resolveNeedsAttentionInput({
   };
 }
 
-export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
+// What the signed-in user actually sees: the model minus THIS owner's dismissals (owners only), and the dismissed rows for the
+// Dismissed view. Memoised on the request's own `attentionSources` promise, so the heading count and the panel share ONE computation
+// (and one dismissal read) instead of repeating it.
+// Owner-only inputs for the Needs attention model. Both heading count and panel must be given the SAME values (one shared computation).
+type OwnerNeedsInputs = NeedsAttentionInputs & { studioId: string; studioTimezone: string; unpaidAll: boolean; unpaidHrefs: { all: string; recent: string } };
+
+type VisibleNeeds = {
+  shown: NeedsAttention;
+  // Owner only: how far back unpaid appointments were looked for, and whether the list was cut. Null for everyone else.
+  unpaid: { windowDays: number | null; notReturned: number } | null;
+  dismissed: DismissedRow[];
+  // False while the dismissals gate is OFF (migration 0298 not applied): no Dismiss, no Dismissed view, no note, no database call.
+  dismissalsEnabled: boolean;
+  // True when the owner's dismissals could not be read: every reminder is shown and Dismiss is withheld.
+  dismissalsUnavailable: boolean;
+  // False when a check that feeds the client cards could not run, so no number is claimed.
+  countKnown: boolean;
+};
+const visibleMemo = new WeakMap<object, Promise<VisibleNeeds>>();
+
+function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
+  const hit = visibleMemo.get(props.attentionSources);
+  if (hit) return hit;
+  const run = (async (): Promise<VisibleNeeds> => {
+    const input = await resolveNeedsAttentionInput(props);
+    // Unpaid balances are owner-only money (0254). A practitioner's render never queries them and never receives a figure.
+    // HON-65: also OFF unless the unpaid gate is on (lib/dashboard/unpaid-gate). OFF = the loader is never called, so there are no
+    // items, no window note or link, no "could not check" entry, and the heading count excludes unpaid.
+    const unpaidRead = props.isOwner && dashboardUnpaidEnabled()
+      ? await loadUnpaidAttention({
+          studioId: props.studioId,
+          studioTimezone: props.studioTimezone,
+          viewerIsOwner: true,
+          now: new Date(),
+          windowDays: props.unpaidAll ? null : UNPAID_DEFAULT_WINDOW_DAYS,
+        }).catch((): { ok: false } => ({ ok: false }))
+      : null;
+    const model = buildNeedsAttention({
+      ...input,
+      unavailableChecks: [...input.unavailableChecks, ...(unpaidRead && !unpaidRead.ok ? [UNAVAILABLE_UNPAID] : [])],
+      unpaid: unpaidRead?.ok ? unpaidRead.items : undefined,
+    });
+    const unpaid = unpaidRead?.ok ? { windowDays: unpaidRead.windowDays, notReturned: unpaidRead.notReturned } : null;
+    const countKnown = !model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c));
+    // Non-owners have no dismissals, no Dismissed view and no Dismiss: their list is the model as built.
+    if (!props.isOwner) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };
+    // Gate OFF: nothing is dismissed, nothing is read, nothing is called.
+    if (!dashboardDismissalsEnabled()) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };
+    const read = await loadMyDismissals(props.studioId);
+    if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: true, dismissalsUnavailable: true, countKnown };
+    const { shown, dismissed } = applyDismissals(model, read.rows);
+    return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
+  })();
+  visibleMemo.set(props.attentionSources, run);
+  return run;
+}
+
+export async function NeedsAttentionSection(props: OwnerNeedsInputs) {
+  const v = await resolveVisibleNeeds(props);
   return (
     <NeedsAttentionPanel
-      needs={buildNeedsAttention(await resolveNeedsAttentionInput(props))}
+      needs={v.shown}
+      dismissed={v.dismissed}
+      isOwner={props.isOwner}
+      dismissalsEnabled={v.dismissalsEnabled}
+      dismissalsUnavailable={v.dismissalsUnavailable}
+      unpaid={v.unpaid}
+      unpaidAll={props.unpaidAll}
+      unpaidHrefs={props.unpaidHrefs}
     />
   );
 }
 
-/**
- * The "Clients to review" value of the summary strip: the number of client cards in Needs Attention,
- * from the SAME model. A failed read renders "Unavailable", never 0 (a zero would claim nothing needs
- * review when nobody could read it).
- */
-/**
- * The client count both the strip and the header pill show, from the SAME model as the panel. It is
- * null (rendered "Unavailable") when the read failed OR when any check that contributes client cards
- * could not run (intake review, recent sessions, missing records, record details): a count taken
- * without one could say 0 while someone needs review. Payment setup and expiring supplies only add
- * studio items and do not change this count.
- */
-async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | null> {
+async function HeadingCountValue(props: OwnerNeedsInputs) {
+  let text: string;
   try {
-    const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
-    return model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c)) ? null : model.clients.length;
+    const v = await resolveVisibleNeeds(props);
+    const { clients, items } = headingCount(v.shown);
+    // A check that feeds the client cards could not run: no number, never "0".
+    text = v.countKnown ? `${clients} ${clients === 1 ? "client" : "clients"}, ${items} ${items === 1 ? "item" : "items"}` : "Unavailable";
   } catch {
-    return null;
+    text = "Unavailable";
   }
-}
-
-async function ClientsToReviewValue(props: NeedsAttentionInputs) {
-  const count = await resolveClientReviewCount(props);
-  return (
-    <span data-testid="summary-clients-to-review-value">
-      {count === null ? "Unavailable" : count}
-    </span>
-  );
-}
-
-async function ClientCountPillValue(props: NeedsAttentionInputs) {
-  const count = await resolveClientReviewCount(props);
   return (
     <span
-      data-testid="needs-attention-count-pill"
+      data-testid="needs-attention-heading-count"
       className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
     >
-      {count === null ? "Unavailable" : `${count} ${count === 1 ? "client" : "clients"}`}
+      {text}
     </span>
   );
 }
 
-/** The header count pill of the Needs attention card: same model, same count as the strip. Own Suspense. */
-export function NeedsAttentionCountPill(props: NeedsAttentionInputs) {
+/** THE count of Needs attention, shown once, beside the heading: clients and items, after this owner's dismissals. Own Suspense. */
+export function NeedsAttentionHeadingCount(props: OwnerNeedsInputs) {
   return (
     <Suspense fallback={null}>
-      <ClientCountPillValue {...props} />
-    </Suspense>
-  );
-}
-
-/** Own Suspense so the roster and the strip never wait on the model. The caller keys it per day/period. */
-export function ClientsToReview(props: NeedsAttentionInputs) {
-  return (
-    <Suspense
-      fallback={<span aria-hidden className="inline-block h-6 w-8 rounded bg-neutral-100 dark:bg-neutral-800" />}
-    >
-      <ClientsToReviewValue {...props} />
+      <HeadingCountValue {...props} />
     </Suspense>
   );
 }
