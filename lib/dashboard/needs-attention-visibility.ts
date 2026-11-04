@@ -40,9 +40,18 @@ export function itemIdentity(item: AttentionItem): AttentionIdentity | null {
   return id.instanceToken === "unstamped" ? null : id;
 }
 
-/** Studio-level reminders (setup, supplies, roll-ups). Dismissable; the real status stays in Settings and in the workflow itself. */
-export function studioIdentity(item: DashboardTodoItem): AttentionIdentity {
-  return { itemKey: item.id, instanceToken: item.kind === "supply_expiry" && item.occurredAt ? safeToken(item.occurredAt) : "1" };
+/**
+ * Studio-level reminders (setup, supplies, roll-ups). Dismissable; the real status stays in Settings and in the workflow itself.
+ *
+ * The token is DERIVED FROM THE STATE the reminder reports (Privacy AO3, #1356), never a constant: which setup step is missing
+ * (the setup reminder), how many intakes or records are involved, the supply plus its expiry date. A dismissal therefore holds only for the
+ * state the owner dismissed; when that state changes the reminder is shown again. A studio item that reports no state cannot be told
+ * apart from a later one, so it is NOT dismissable (null) rather than hidden on a guess.
+ */
+export function studioIdentity(item: DashboardTodoItem): AttentionIdentity | null {
+  const stamp = item.kind === "supply_expiry" ? item.occurredAt : (item.state ?? null);
+  const raw = typeof stamp === "string" ? stamp.trim() : "";
+  return raw === "" ? null : { itemKey: item.id, instanceToken: safeToken(raw) };
 }
 
 function hidden(item: AttentionItem, dismissals: ReadonlyArray<StoredDismissal>): boolean {
@@ -87,8 +96,8 @@ export function applyDismissals(
   }
   const studioItems: DashboardTodoItem[] = [];
   for (const item of needs.studioItems) {
-    if (isDismissed(studioIdentity(item), dismissals)) {
-      const id = studioIdentity(item);
+    const id = studioIdentity(item);
+    if (id !== null && isDismissed(id, dismissals)) {
       dismissed.push({
         itemKey: id.itemKey,
         instanceToken: id.instanceToken,

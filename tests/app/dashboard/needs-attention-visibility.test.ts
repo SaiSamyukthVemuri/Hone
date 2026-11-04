@@ -10,7 +10,7 @@ const todo = (items: DashboardTodoItem[] = []): DashboardTodo => ({ items, moreC
 const setup = (id: string, kind: string, label = "Payments"): DashboardTodoItem =>
   ({
     id, kind, subject: { kind: "studio", id: "studio", label }, reason: "Stripe not connected yet", detail: null,
-    action: { label: "Open payments", href: "/settings/payments" }, priority: 10, occurredAt: null, tone: "normal",
+    action: { label: "Open payments", href: "/settings/payments" }, priority: 10, occurredAt: null, state: "no_account", tone: "normal",
   }) as unknown as DashboardTodoItem;
 const unpaid = (id: string, client: string, cents: number | null): UnpaidAttention => ({
   appointmentId: id, clientId: client, clientName: `Client ${client}`, endsAt: "2026-11-01T15:00:00Z",
@@ -74,7 +74,7 @@ describe("setup reminders are dismissable and only the reminder hides", () => {
   it("hides the studio reminder and lists it as dismissed; the model's source item is untouched", () => {
     const m = model({ todo: todo([item]) });
     expect(m.studioItems).toHaveLength(1);
-    const r = applyDismissals(m, [{ itemKey: "payment_setup:studio", instanceToken: "1" }]);
+    const r = applyDismissals(m, [{ itemKey: "payment_setup:studio", instanceToken: "no_account" }]);
     expect(r.shown.studioItems).toHaveLength(0);
     expect(r.dismissed[0]).toEqual(expect.objectContaining({ kind: "studio", who: "Payments", href: "/settings/payments" }));
     // The input model and the todo item (the real setup status carrier) are unchanged.

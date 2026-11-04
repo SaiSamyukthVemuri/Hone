@@ -73,11 +73,12 @@ function DismissButton({ api, identity, what }: { api: DismissApi; identity: { i
   );
 }
 
-// "Still owes" is the AUTHORITATIVE balance only. An unknown balance reads "Amount unavailable", never 0.
+// The amount HONE CAN SEE (Privacy AO2 / Insurance U2, #1356): the quote minus the payments Hone records and can read. It is not claimed
+// as the final balance until the money-form inventory (lib/dashboard/other-money-forms.ts) is complete. Unknown reads "Amount unavailable", never 0.
 function unpaidLine(item: AttentionClient["items"][number]): string {
   if (item.balance?.kind !== "owed") return "Amount unavailable";
   const currency = parsePaymentCurrency(item.balance.currency.toLowerCase());
-  return `Still owes ${formatMoney(item.balance.outstandingCents, currency)}`;
+  return `Hone can see ${formatMoney(item.balance.outstandingCents, currency)} still owed`;
 }
 
 function ClientCard({ card, api }: { card: AttentionClient; api: DismissApi }) {
@@ -270,6 +271,7 @@ export function NeedsAttentionPanel({
         {unpaid.windowDays === null
           ? "Unpaid appointments: all finished appointments with a balance."
           : `Unpaid appointments: finished in the last ${unpaid.windowDays} days.`}{" "}
+        Amounts are what Hone can see from recorded payments.{" "}
         {unpaid.notReturned > 0 && <span data-testid="needs-attention-unpaid-capped">Some older or additional ones are not shown, so this may not be everything. </span>}
         <Link href={unpaidAll ? unpaidHrefs.recent : unpaidHrefs.all} data-testid="needs-attention-unpaid-toggle" className="underline">
           {unpaidAll ? "Show last 90 days only" : "Show all outstanding"}

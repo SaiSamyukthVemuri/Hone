@@ -58,16 +58,48 @@ describe("outstandingForAppointment", () => {
       }),
     ).toMatchObject({ kind: "owed", outstandingCents: 10000 });
   });
-  it("an unreadable refund amount is NOT assumed full", () => {
-    expect(
-      outstandingForAppointment({
-        ...base, cards: [card({ amountCents: 10000, refundStatus: "succeeded", refundAmountCents: null })],
-      }),
-    ).toEqual({ kind: "paid" });
+  // AO1 (Privacy, #1356): a refund we cannot read is NOT "no refund". It must never let the visit read as fully paid.
+  it("a succeeded refund with an unreadable amount is 'amount unavailable', not paid", () => {
+    for (const refundAmountCents of [null, undefined as unknown as null, -5]) {
+      expect(
+        outstandingForAppointment({
+          ...base, cards: [card({ amountCents: 10000, refundStatus: "succeeded", refundAmountCents })],
+        }),
+      ).toEqual({ kind: "amount_unavailable" });
+    }
   });
-  it("a pending or failed charge is not money", () => {
-    expect(outstandingForAppointment({ ...base, cards: [card({ status: "pending_stripe" })] }))
-      .toMatchObject({ kind: "owed", outstandingCents: 10000 });
+  it("a refund still pending or needing action (ours or the provider's) is 'amount unavailable'", () => {
+    for (const c of [
+      card({ refundStatus: "pending_stripe" }),
+      card({ providerRefundStatus: "pending" }),
+      card({ providerRefundStatus: "requires_action" }),
+    ]) {
+      expect(outstandingForAppointment({ ...base, cards: [c] })).toEqual({ kind: "amount_unavailable" });
+    }
+  });
+  it("a refund that FAILED or was cancelled left the money in place; a readable partial refund is subtracted", () => {
+    expect(outstandingForAppointment({ ...base, cards: [card({ refundStatus: "failed" })] }))
+      .toMatchObject({ kind: "owed", outstandingCents: 6000 });
+    expect(outstandingForAppointment({ ...base, cards: [card({ providerRefundStatus: "canceled" })] }))
+      .toMatchObject({ kind: "owed", outstandingCents: 6000 });
+    expect(
+      outstandingForAppointment({ ...base, cards: [card({ amountCents: 10000, refundStatus: "succeeded", refundAmountCents: 2500 })] }),
+    ).toMatchObject({ kind: "owed", outstandingCents: 2500 });
+  });
+  it("a failed or never-started charge is not money, but a charge in flight (pending) makes the amount unavailable", () => {
+    for (const status of ["failed", "ready", "blocked", "cancelled"]) {
+      expect(outstandingForAppointment({ ...base, cards: [card({ status })] })).toMatchObject({ kind: "owed", outstandingCents: 10000 });
+    }
+    expect(outstandingForAppointment({ ...base, cards: [card({ status: "pending_stripe" })] })).toEqual({ kind: "amount_unavailable" });
+  });
+  // AO2 / U2: every other money form the caller found makes the amount unavailable, never a guess.
+  it("any money form this function does not subtract makes the amount unavailable", () => {
+    for (const form of ["fee_charge", "booking_charge", "appointment_refund", "dispute", "deleted_session_charge", "session_price_recorded"]) {
+      expect(outstandingForAppointment({ ...base, unprovenMoney: [form] })).toEqual({ kind: "amount_unavailable" });
+    }
+    expect(outstandingForAppointment({ ...base, unprovenMoney: [] })).toMatchObject({ kind: "owed" });
+    // A waived visit is owner-attested as owing nothing, whatever else is recorded.
+    expect(outstandingForAppointment({ ...base, unprovenMoney: ["dispute"], settlements: [{ method: "waived", amountCents: 0 }] })).toEqual({ kind: "paid" });
   });
   it("waived owes nothing; still_owes changes no amount", () => {
     expect(outstandingForAppointment({ ...base, settlements: [{ method: "waived", amountCents: 0 }] }))
@@ -87,10 +119,21 @@ describe("outstandingForAppointment", () => {
   it("unknown currency shows no amount", () => {
     expect(outstandingForAppointment({ ...base, studioCurrency: null })).toEqual({ kind: "amount_unavailable" });
   });
-  it("the charge's own currency wins over the studio's", () => {
+  // U3 (Insurance, #1356): money in two currencies, or in a currency other than the studio's, is never summed.
+  it("card money in a currency other than the studio's is 'amount unavailable'", () => {
+    expect(outstandingForAppointment({ ...base, studioCurrency: "CAD", cards: [card({ currency: "usd" })] })).toEqual({ kind: "amount_unavailable" });
+  });
+  it("two card currencies, a succeeded card with no currency, or a settlement in another currency are 'amount unavailable'", () => {
+    expect(outstandingForAppointment({ ...base, cards: [card({ currency: "cad" }), card({ currency: "usd" })] })).toEqual({ kind: "amount_unavailable" });
+    expect(outstandingForAppointment({ ...base, cards: [card({ currency: null })] })).toEqual({ kind: "amount_unavailable" });
     expect(
-      outstandingForAppointment({ ...base, studioCurrency: "CAD", cards: [card({ currency: "usd" })] }),
-    ).toMatchObject({ currency: "USD" });
+      outstandingForAppointment({ ...base, settlements: [{ method: "paid_cash", amountCents: 1000, currency: "usd" }] }),
+    ).toEqual({ kind: "amount_unavailable" });
+  });
+  it("matching currencies (any case) sum normally, and an unknown studio currency takes the single card currency", () => {
+    expect(outstandingForAppointment({ ...base, studioCurrency: "cad", cards: [card({ currency: "CAD" })], settlements: [{ method: "paid_cash", amountCents: 1000, currency: "cad" }] }))
+      .toMatchObject({ kind: "owed", outstandingCents: 5000, currency: "CAD" });
+    expect(outstandingForAppointment({ ...base, studioCurrency: null, cards: [card({ currency: "usd" })] })).toMatchObject({ kind: "owed", currency: "USD" });
   });
   it("cancelled, no-show, future and $0 appointments are excluded", () => {
     for (const status of ["cancelled", "no_show", "scheduled", null]) {

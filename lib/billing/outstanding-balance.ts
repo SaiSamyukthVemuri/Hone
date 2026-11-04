@@ -21,12 +21,16 @@ export type OutstandingCard = {
   amountCents: number | null;
   refundStatus: string | null;
   refundAmountCents: number | null;
+  /** The provider's own refund state (payment_charge_attempts.stripe_refund_status), when recorded. */
+  providerRefundStatus?: string | null;
   currency: string | null;
 };
 
 export type OutstandingSettlement = {
   method: SettlementMethod;
   amountCents: number;
+  /** Mirrors the studio currency today; when present and different, the amount is not summed. */
+  currency?: string | null;
 };
 
 export type OutstandingInput = {
@@ -42,6 +46,12 @@ export type OutstandingInput = {
   cards: ReadonlyArray<OutstandingCard>;
   /** LIVE settlements only (superseded rows already removed by the caller). */
   settlements: ReadonlyArray<OutstandingSettlement>;
+  /**
+   * Money forms Hone records for this appointment that this function does NOT subtract (a fee charge, a booking-time charge, an
+   * appointment-level refund, a dispute, a charge on a deleted session, a price recorded on the session). The caller names each
+   * one it found; any one makes the amount unavailable, because the owner would otherwise be shown a figure that may be too high.
+   */
+  unprovenMoney?: ReadonlyArray<string>;
 };
 
 export type Outstanding =
@@ -64,11 +74,20 @@ const COLLECTED: ReadonlySet<SettlementMethod> = new Set([
   "paid_other_external",
 ]);
 
-/** Money from one succeeded charge that was NOT returned. Unreadable refund = nothing assumed returned beyond what is stated. */
-function cardKept(c: OutstandingCard): number {
-  if (c.status !== "succeeded" || typeof c.amountCents !== "number") return 0;
-  if (c.refundStatus !== "succeeded") return Math.max(0, c.amountCents);
-  if (typeof c.refundAmountCents !== "number") return Math.max(0, c.amountCents);
+/**
+ * Money from one succeeded charge that was NOT returned, or null when that cannot be proven. A refund we cannot read is NOT "no
+ * refund": a succeeded refund with no readable amount, or one still pending / needing action at the provider, makes the figure
+ * unprovable (the visit could read as fully paid, or as owing more, on a guess).
+ */
+function cardKept(c: OutstandingCard): number | null {
+  if (c.status === "pending_stripe") return null; // money may or may not have moved
+  if (c.status !== "succeeded") return 0;
+  if (typeof c.amountCents !== "number") return null;
+  const provider = c.providerRefundStatus ?? null;
+  if (provider === "pending" || provider === "requires_action") return null;
+  if (c.refundStatus === "pending_stripe") return null;
+  if (c.refundStatus !== "succeeded") return Math.max(0, c.amountCents); // none, or a refund that failed: the money stayed
+  if (typeof c.refundAmountCents !== "number" || c.refundAmountCents < 0) return null;
   return Math.max(0, c.amountCents - c.refundAmountCents);
 }
 
@@ -86,16 +105,34 @@ export function outstandingForAppointment(input: OutstandingInput): Outstanding 
   }
   if (input.quoteCents === 0) return { kind: "not_applicable" };
 
-  const cardKeptCents = input.cards.reduce((n, c) => n + cardKept(c), 0);
-  const collectedCents = input.settlements.reduce(
-    (n, s) => (COLLECTED.has(s.method) ? n + Math.max(0, s.amountCents) : n),
-    0,
-  );
+  if ((input.unprovenMoney ?? []).length > 0) return { kind: "amount_unavailable" };
+
+  let cardKeptCents = 0;
+  for (const c of input.cards) {
+    const kept = cardKept(c);
+    if (kept === null) return { kind: "amount_unavailable" };
+    cardKeptCents += kept;
+  }
+  const collected = input.settlements.filter((s) => COLLECTED.has(s.method));
+  const collectedCents = collected.reduce((n, s) => n + Math.max(0, s.amountCents), 0);
+
+  // One currency or none. Card money in two currencies, or in a currency other than the studio's, is never summed.
+  const studio = input.studioCurrency ? input.studioCurrency.toLowerCase() : null;
+  const seen = new Set<string>();
+  for (const c of input.cards) {
+    if (c.status !== "succeeded") continue;
+    if (!c.currency) return { kind: "amount_unavailable" };
+    seen.add(c.currency.toLowerCase());
+  }
+  for (const s of collected) if (s.currency) seen.add(s.currency.toLowerCase());
+  if (seen.size > 1) return { kind: "amount_unavailable" };
+  const only = [...seen][0] ?? null;
+  if (only && studio && only !== studio) return { kind: "amount_unavailable" };
+
   const outstandingCents = Math.max(0, input.quoteCents - cardKeptCents - collectedCents);
   if (outstandingCents === 0) return { kind: "paid" };
 
-  const cardCurrency = input.cards.find((c) => c.status === "succeeded" && c.currency)?.currency;
-  const currency = cardCurrency ?? input.studioCurrency;
+  const currency = only ?? studio;
   if (!currency) return { kind: "amount_unavailable" };
 
   return {

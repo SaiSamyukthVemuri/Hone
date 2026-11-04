@@ -74,7 +74,7 @@ describe("gate OFF: the panel", () => {
   it("still shows every reminder, the authoritative amount, Amount unavailable and the window with its All outstanding link", () => {
     const html = render({ unpaid: { windowDays: 90, notReturned: 0 }, unpaidHrefs: { all: "?unpaid=all", recent: "?" } });
     expect(html).toContain("Ada Client");
-    expect(html).toContain("Still owes");
+    expect(html).toContain("still owed");
     expect(html).toContain("$50.00");
     expect(html).toContain("Amount unavailable");
     expect(html).toContain("needs-attention-unpaid-window");

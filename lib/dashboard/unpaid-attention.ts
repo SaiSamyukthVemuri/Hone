@@ -8,6 +8,8 @@ import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { outstandingForAppointment } from "@/lib/billing/outstanding-balance";
 import type { UnpaidAttention } from "./needs-attention-model";
+import { readInChunks } from "./in-chunks";
+import { readOtherMoneyForms } from "./other-money-forms";
 
 // ===========================================================================
 // Finished appointments with money still owed: the OWNER-ONLY loader.
@@ -70,40 +72,82 @@ export async function loadUnpaidAttention(opts: {
   const appts = (apptData ?? []) as unknown as ApptRow[];
   if (appts.length === 0) return { ok: true, items: [], notReturned: 0, windowDays: opts.windowDays };
   const ids = appts.map((a) => a.id);
+  const livemode = inferStripeLivemode();
 
-  // Sessions -> session_payment attempts (mode-scoped, like every other payment read) -> the card money kept per appointment.
-  const { data: sessionRows, error: sessionError } = await supabase.from("sessions").select("id, appointment_id").eq("studio_id", studioId).in("appointment_id", ids).is("deleted_at", null);
-  if (sessionError) return { ok: false };
-  const sessionToAppt = new Map<string, string>();
-  for (const s of (sessionRows ?? []) as Array<{ id: string; appointment_id: string | null }>) if (s.appointment_id) sessionToAppt.set(s.id, s.appointment_id);
+  // Sessions (INCLUDING deleted ones: a charge on a deleted session is money we cannot attribute, so it is named, not ignored)
+  // -> session_payment attempts (mode-scoped, like every other payment read) -> the card money kept per appointment.
+  const sessions = await readInChunks<{ id: string; appointment_id: string | null; deleted_at: string | null; price_paid_cents: number | null }>(ids, (chunk) =>
+    supabase.from("sessions").select("id, appointment_id, deleted_at, price_paid_cents").eq("studio_id", studioId).in("appointment_id", chunk),
+  );
+  if (!sessions.ok) return { ok: false };
+  const sessionToAppt = new Map<string, { appt: string; deleted: boolean }>();
+  const unproven = new Map<string, Set<string>>();
+  const flag = (appt: string, form: string) => (unproven.get(appt) ?? unproven.set(appt, new Set()).get(appt)!).add(form);
+  for (const s of sessions.rows) {
+    if (!s.appointment_id) continue;
+    sessionToAppt.set(s.id, { appt: s.appointment_id, deleted: Boolean(s.deleted_at) });
+    // A price recorded on the session is money Hone shows elsewhere (the client page) and this balance does not subtract.
+    if (!s.deleted_at && typeof s.price_paid_cents === "number" && s.price_paid_cents > 0) flag(s.appointment_id, "session_price_recorded");
+  }
 
-  type Card = { status: string | null; amountCents: number | null; refundStatus: string | null; refundAmountCents: number | null; currency: string | null };
+  type Card = {
+    status: string | null;
+    amountCents: number | null;
+    refundStatus: string | null;
+    refundAmountCents: number | null;
+    providerRefundStatus: string | null;
+    currency: string | null;
+  };
   const cardsByAppt = new Map<string, Card[]>();
   if (sessionToAppt.size > 0) {
-    const { data: attemptRows, error: attemptError } = await supabase
-      .from("payment_charge_attempts")
-      .select("session_id, status, amount_cents, refund_status, refund_amount_cents, currency")
-      .eq("studio_id", studioId)
-      .eq("charge_reason", "session_payment")
-      .eq("stripe_livemode", inferStripeLivemode())
-      .in("session_id", [...sessionToAppt.keys()]);
-    if (attemptError) return { ok: false };
-    for (const a of (attemptRows ?? []) as Array<{ session_id: string; status: string | null; amount_cents: number | null; refund_status: string | null; refund_amount_cents: number | null; currency: string | null }>) {
-      const appt = sessionToAppt.get(a.session_id);
-      if (!appt) continue;
-      const bucket = cardsByAppt.get(appt) ?? [];
-      bucket.push({ status: a.status, amountCents: a.amount_cents, refundStatus: a.refund_status, refundAmountCents: a.refund_amount_cents, currency: a.currency });
-      cardsByAppt.set(appt, bucket);
+    const attempts = await readInChunks<{
+      session_id: string;
+      status: string | null;
+      amount_cents: number | null;
+      refund_status: string | null;
+      refund_amount_cents: number | null;
+      stripe_refund_status: string | null;
+      currency: string | null;
+    }>([...sessionToAppt.keys()], (chunk) =>
+      supabase
+        .from("payment_charge_attempts")
+        .select("session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, currency")
+        .eq("studio_id", studioId)
+        .eq("charge_reason", "session_payment")
+        .eq("stripe_livemode", livemode)
+        .in("session_id", chunk),
+    );
+    if (!attempts.ok) return { ok: false };
+    for (const a of attempts.rows) {
+      const owner = sessionToAppt.get(a.session_id);
+      if (!owner) continue;
+      if (owner.deleted) {
+        // Money taken (or in flight) against a deleted session cannot be matched to the visit: never subtracted, never ignored.
+        if (a.status === "succeeded" || a.status === "pending_stripe") flag(owner.appt, "deleted_session_charge");
+        continue;
+      }
+      const bucket = cardsByAppt.get(owner.appt) ?? [];
+      bucket.push({
+        status: a.status,
+        amountCents: a.amount_cents,
+        refundStatus: a.refund_status,
+        refundAmountCents: a.refund_amount_cents,
+        providerRefundStatus: a.stripe_refund_status,
+        currency: a.currency,
+      });
+      cardsByAppt.set(owner.appt, bucket);
     }
   }
 
   // Live collections. At most one live row per appointment (the single-truth index).
-  const { data: settleRows, error: settleError } = await supabase.from("appointment_settlements").select("appointment_id, method, amount_cents").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", ids);
-  if (settleError) return { ok: false };
-  const settlements = new Map<string, Array<{ method: never; amountCents: number }>>();
-  for (const r of (settleRows ?? []) as Array<{ appointment_id: string; method: string; amount_cents: number }>) {
+  const settleRead = await readInChunks<{ appointment_id: string; method: string; amount_cents: number; currency: string | null }>(ids, (chunk) =>
+    supabase.from("appointment_settlements").select("appointment_id, method, amount_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
+  );
+  if (!settleRead.ok) return { ok: false };
+  const settlements = new Map<string, Array<{ method: never; amountCents: number; currency: string | null }>>();
+  for (const r of settleRead.rows) {
     const b = settlements.get(r.appointment_id) ?? [];
-    b.push({ method: r.method as never, amountCents: r.amount_cents });
+    b.push({ method: r.method as never, amountCents: r.amount_cents, currency: r.currency });
     settlements.set(r.appointment_id, b);
   }
 
@@ -111,26 +155,30 @@ export async function loadUnpaidAttention(opts: {
   const serviceIds = [...new Set(appts.map((a) => a.service_id).filter(Boolean))] as string[];
   const clientIds = [...new Set(appts.map((a) => a.client_id).filter(Boolean))] as string[];
   const [svc, pricing] = await Promise.all([
-    serviceIds.length ? supabase.from("services").select("id, name, price_cents").eq("studio_id", studioId).in("id", serviceIds) : Promise.resolve({ data: [] as never[], error: null }),
-    clientIds.length ? supabase.from("client_pricing").select("client_id, service_name, price_cents, notes, effective_from").eq("studio_id", studioId).in("client_id", clientIds) : Promise.resolve({ data: [] as never[], error: null }),
+    readInChunks<{ id: string; name: string; price_cents: number | null }>(serviceIds, (chunk) =>
+      supabase.from("services").select("id, name, price_cents").eq("studio_id", studioId).in("id", chunk),
+    ),
+    readInChunks<{ client_id: string; service_name: string; price_cents: number; notes: string | null; effective_from: string }>(clientIds, (chunk) =>
+      supabase.from("client_pricing").select("client_id, service_name, price_cents, notes, effective_from").eq("studio_id", studioId).in("client_id", chunk),
+    ),
   ]);
-  const quotesReadable = !svc.error && !pricing.error;
+  const quotesReadable = svc.ok && pricing.ok;
   const serviceById = new Map<string, { name: string; price_cents: number | null }>();
-  for (const r of (svc.data ?? []) as Array<{ id: string; name: string; price_cents: number | null }>) serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
+  if (svc.ok) for (const r of svc.rows) serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
   const pricingByClient = new Map<string, Array<{ service_name: string; price_cents: number; notes: string | null; effective_from: string }>>();
-  for (const r of (pricing.data ?? []) as Array<{ client_id: string; service_name: string; price_cents: number; notes: string | null; effective_from: string }>) {
-    const b = pricingByClient.get(r.client_id) ?? [];
-    b.push({ service_name: r.service_name, price_cents: r.price_cents, notes: r.notes, effective_from: r.effective_from });
-    pricingByClient.set(r.client_id, b);
+  if (pricing.ok) {
+    for (const r of pricing.rows) {
+      const b = pricingByClient.get(r.client_id) ?? [];
+      b.push({ service_name: r.service_name, price_cents: r.price_cents, notes: r.notes, effective_from: r.effective_from });
+      pricingByClient.set(r.client_id, b);
+    }
   }
 
   const jurisdiction = await getStudioPaymentJurisdiction(studioId);
   const studioCurrency = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
   const today = todayInTz(opts.studioTimezone);
 
-  const items: UnpaidAttention[] = [];
-  let seen = 0;
-  for (const a of appts) {
+  const evaluate = (a: ApptRow) => {
     let quoteCents: number | null = null;
     if (quotesReadable) {
       const s = a.service_id ? serviceById.get(a.service_id) : null;
@@ -142,7 +190,7 @@ export async function loadUnpaidAttention(opts: {
       });
       quoteCents = r.kind === "resolved" ? r.amountCents : r.kind === "free" ? 0 : null;
     }
-    const result = outstandingForAppointment({
+    return outstandingForAppointment({
       status: a.status,
       endsAt: a.ends_at,
       now: nowIso,
@@ -150,7 +198,23 @@ export async function loadUnpaidAttention(opts: {
       studioCurrency,
       cards: cardsByAppt.get(a.id) ?? [],
       settlements: settlements.get(a.id) ?? [],
+      unprovenMoney: [...(unproven.get(a.id) ?? [])],
     });
+  };
+
+  // Pass 1: which visits would show an amount. Only those need the remaining money forms looked up (a visit that is paid, free or
+  // already unavailable shows no figure, so nothing more can make it wrong).
+  const owedIds = appts.filter((a) => evaluate(a).kind === "owed").map((a) => a.id);
+  if (owedIds.length > 0) {
+    const other = await readOtherMoneyForms(supabase, studioId, owedIds, livemode);
+    if (!other.ok) return { ok: false };
+    for (const [appt, forms] of other.forms) for (const f of forms) flag(appt, f);
+  }
+
+  const items: UnpaidAttention[] = [];
+  let seen = 0;
+  for (const a of appts) {
+    const result = evaluate(a);
     if (result.kind === "paid" || result.kind === "not_applicable") continue;
     seen += 1;
     if (items.length >= UNPAID_ROW_CAP) continue;

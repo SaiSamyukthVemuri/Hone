@@ -90,6 +90,10 @@ export type DashboardTodoItem = {
   // ISO instant, or a YYYY-MM-DD date for supply expiry. Null when the domain
   // genuinely has no timestamp (studio-level setup items).
   occurredAt: string | null;
+  // A STUDIO-level item's state, for dismissal (Privacy AO3, #1356). A dismissed studio reminder must come back when the state it
+  // reports changes, so its dismissal token is derived from this, never a constant. Which setup step is missing; how many intakes or
+  // records are involved. Absent on kinds that carry occurredAt (supply expiry: item plus expiry date) and on client items.
+  state?: string;
   // Drives the amber accent, carried over from the existing Needs-attention
   // tone so urgency presentation does not change meaning.
   tone: "urgent" | "normal";
@@ -283,6 +287,7 @@ export function buildDashboardTodo(
       action: { href: "/clients", label: "Open clients" },
       priority: TODO_PRIORITY.intake_review,
       occurredAt: null,
+      state: `n${n}`,
       tone: "urgent",
     });
   }
@@ -299,6 +304,7 @@ export function buildDashboardTodo(
       action: { href: "/settings/services", label: "Add a service" },
       priority: TODO_PRIORITY.no_services,
       occurredAt: null,
+      state: "none",
       tone: "urgent",
     });
   }
@@ -309,6 +315,7 @@ export function buildDashboardTodo(
     // nudge is ever shown, and it is the earliest unmet step.
     const nudge = !p.hasAccount
       ? {
+          step: "no_account",
           reason: "Stripe not connected yet",
           detail: studio.staffManaged
             ? "Connect when you're ready to accept payments."
@@ -317,6 +324,7 @@ export function buildDashboardTodo(
         }
       : !p.onboardingCompleted
         ? {
+            step: "onboarding_incomplete",
             reason: "Stripe setup not finished",
             detail:
               "A few details are still needed. Continue setup when you have a minute.",
@@ -324,6 +332,7 @@ export function buildDashboardTodo(
           }
         : !p.payoutsEnabled
           ? {
+              step: "payouts_disabled",
               reason: "Payout setup needs attention",
               detail: "Stripe is connected, but payouts aren't ready yet.",
               label: "Open Payments",
@@ -339,6 +348,7 @@ export function buildDashboardTodo(
         action: { href: "/settings/payments", label: nudge.label },
         priority: TODO_PRIORITY.payment_setup,
         occurredAt: null,
+        state: nudge.step,
         tone: "normal",
       });
     }
@@ -452,6 +462,7 @@ export function buildDashboardTodo(
       },
       priority: TODO_PRIORITY.records_details,
       occurredAt: null,
+      state: `n${n}`,
       tone: "normal",
     });
   }

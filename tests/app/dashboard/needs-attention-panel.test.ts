@@ -55,7 +55,7 @@ describe("Needs Attention panel interaction contract", () => {
 
   it("an unknown balance reads Amount unavailable, never 0, and a known one is the authoritative figure", () => {
     expect(SRC).toContain('return "Amount unavailable"');
-    expect(SRC).toMatch(/Still owes \$\{formatMoney\(item\.balance\.outstandingCents/);
+    expect(SRC).toMatch(/Hone can see \$\{formatMoney\(item\.balance\.outstandingCents/);
   });
 
   it("starts compact", () => {

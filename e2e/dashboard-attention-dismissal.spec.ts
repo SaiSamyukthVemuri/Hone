@@ -114,8 +114,8 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     const unpaidLine = money((await unpaidCard.getByTestId("attention-unpaid-amount").innerText()).trim());
     const partialLine = money((await partialCard.getByTestId("attention-unpaid-amount").innerText()).trim());
     console.log(`UNPAID LINE: ${unpaidLine}\nPARTIAL LINE: ${partialLine}`);
-    expect(unpaidLine).toMatch(/^Still owes\b.*120\.00/);
-    expect(partialLine).toMatch(/^Still owes\b.*144\.50/); // 210.00 - 65.50
+    expect(unpaidLine).toMatch(/^Hone can see\b.*120\.00.*still owed$/);
+    expect(partialLine).toMatch(/^Hone can see\b.*144\.50.*still owed$/); // 210.00 - 65.50
     expect(unpaidLine).toMatch(/CA\$|CAD/);
     expect(partialLine).toMatch(/CA\$|CAD/);
 
@@ -226,7 +226,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await expect(page.getByTestId("attention-dismissed-toggle")).toHaveCount(0);
     await expect(page.getByTestId("attention-unpaid-amount")).toHaveCount(0);
     await expect(page.getByTestId("needs-attention-unpaid-window")).toHaveCount(0);
-    await expect(page.locator("main")).not.toContainText(/Still owes/);
+    await expect(page.locator("main")).not.toContainText(/still owed/);
     await expect(page.locator("main")).not.toContainText(/\$\s?\d+\.\d\d|CAD/);
   });
 

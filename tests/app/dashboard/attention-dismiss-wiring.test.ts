@@ -64,10 +64,10 @@ describe("the panel", () => {
   const render = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(NeedsAttentionPanel, { needs: model, dismissalsEnabled: true, ...over } as never));
   it("owner: Dismiss on dismissable items; the unpaid amount is the authoritative figure; an unknown balance reads Amount unavailable and has no Dismiss", () => {
     const html = render({ isOwner: true });
-    expect(html).toContain("Still owes $50.00 CAD");
+    expect(html).toContain("Hone can see $50.00 CAD still owed");
     expect(html).toContain("Amount unavailable");
     expect(html.match(/data-testid="attention-dismiss"/g)).toHaveLength(2); // the intake and the known unpaid; not the unknown one
-    expect(html).not.toMatch(/Still owes \$0\.00/);
+    expect(html).not.toMatch(/\$0\.00 still owed/);
   });
   it("non-owner: no Dismiss, no Dismissed view, even if rows were passed", () => {
     const html = render({ isOwner: false, dismissed: [{ itemKey: "k", instanceToken: "1", who: "X", label: "L", detail: null, kind: "studio", href: "/h", actionLabel: "Open" }] });
