@@ -83,12 +83,26 @@ function cardKept(c: OutstandingCard): number | null {
   if (c.status === "pending_stripe") return null; // money may or may not have moved
   if (c.status !== "succeeded") return 0;
   if (typeof c.amountCents !== "number") return null;
+  const ours = c.refundStatus ?? null;
   const provider = c.providerRefundStatus ?? null;
-  if (provider === "pending" || provider === "requires_action") return null;
-  if (c.refundStatus === "pending_stripe") return null;
-  if (c.refundStatus !== "succeeded") return Math.max(0, c.amountCents); // none, or a refund that failed: the money stayed
-  if (typeof c.refundAmountCents !== "number" || c.refundAmountCents < 0) return null;
-  return Math.max(0, c.amountCents - c.refundAmountCents);
+  // Our refund state and the provider's must AGREE (Insurance V-1, #1356). They are separate columns (payment_charge_attempts.
+  // refund_status and stripe_refund_status) written by different paths, and nothing in the schema forces them to match, so a
+  // disagreement or a value we do not know is unprovable, never resolved by picking one.
+  //   ours succeeded            -> the provider must say succeeded (or say nothing yet)
+  //   ours none / failed        -> the provider must say nothing, failed or canceled (a provider refund that succeeded, is pending
+  //                                or needs action while we recorded none is money we cannot place)
+  //   ours pending, or unknown  -> unprovable
+  const KNOWN_OURS = [null, "pending_stripe", "succeeded", "failed"];
+  const KNOWN_PROVIDER = [null, "pending", "requires_action", "succeeded", "failed", "canceled"];
+  if (!KNOWN_OURS.includes(ours) || !KNOWN_PROVIDER.includes(provider)) return null;
+  if (ours === "pending_stripe") return null;
+  if (ours === "succeeded") {
+    if (provider !== null && provider !== "succeeded") return null;
+    if (typeof c.refundAmountCents !== "number" || c.refundAmountCents < 0) return null;
+    return Math.max(0, c.amountCents - c.refundAmountCents);
+  }
+  if (provider !== null && provider !== "failed" && provider !== "canceled") return null;
+  return Math.max(0, c.amountCents); // no refund, or one that failed: the money stayed
 }
 
 export function outstandingForAppointment(input: OutstandingInput): Outstanding {

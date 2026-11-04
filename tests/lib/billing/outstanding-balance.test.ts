@@ -77,6 +77,30 @@ describe("outstandingForAppointment", () => {
       expect(outstandingForAppointment({ ...base, cards: [c] })).toEqual({ kind: "amount_unavailable" });
     }
   });
+  // V-1 (Insurance, #1356): our refund_status and the provider's stripe_refund_status are separate columns; they must agree.
+  it("the provider says a refund succeeded (or anything unknown) while ours is not succeeded: 'amount unavailable'", () => {
+    for (const ours of [null, "failed"]) {
+      for (const provider of ["succeeded", "pending", "requires_action", "some_new_value"]) {
+        expect(
+          outstandingForAppointment({ ...base, cards: [card({ refundStatus: ours, providerRefundStatus: provider })] }),
+          `ours ${ours} / provider ${provider}`,
+        ).toEqual({ kind: "amount_unavailable" });
+      }
+    }
+  });
+  it("an unknown value of OUR refund_status is 'amount unavailable'", () => {
+    expect(outstandingForAppointment({ ...base, cards: [card({ refundStatus: "weird" })] })).toEqual({ kind: "amount_unavailable" });
+  });
+  it("ours succeeded while the provider says failed, canceled, pending or unknown: 'amount unavailable'; provider succeeded or silent is counted", () => {
+    const refunded = (providerRefundStatus: string | null) =>
+      card({ amountCents: 10000, refundStatus: "succeeded", refundAmountCents: 2500, providerRefundStatus });
+    for (const provider of ["failed", "canceled", "pending", "requires_action", "some_new_value"]) {
+      expect(outstandingForAppointment({ ...base, cards: [refunded(provider)] }), provider).toEqual({ kind: "amount_unavailable" });
+    }
+    for (const provider of ["succeeded", null]) {
+      expect(outstandingForAppointment({ ...base, cards: [refunded(provider)] }), String(provider)).toMatchObject({ kind: "owed", outstandingCents: 2500 });
+    }
+  });
   it("a refund that FAILED or was cancelled left the money in place; a readable partial refund is subtracted", () => {
     expect(outstandingForAppointment({ ...base, cards: [card({ refundStatus: "failed" })] }))
       .toMatchObject({ kind: "owed", outstandingCents: 6000 });
