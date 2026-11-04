@@ -21,7 +21,7 @@ function request(next?: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
-  h.exchange.mockResolvedValue({ data: { user: { id: "11111111-2222-4333-8444-555555555555", email: "member@harness.local" }, session: { access_token: OTP_TOKEN } }, error: null });
+  h.exchange.mockResolvedValue({ data: { user: { id: "11111111-2222-4333-8444-555555555555", email: "member@harness.local", identities: [] }, session: { access_token: OTP_TOKEN } }, error: null });
   h.harden.mockResolvedValue("skipped_off");
   delete process.env.HONE_PROOF_HARDENING;
   h.reconcile.mockResolvedValue({ data: null, error: null });
@@ -61,7 +61,7 @@ describe("successful auth callback redirect boundary", () => {
   });
 
   describe("mailbox proof (email-trust, 2 Nov)", () => {
-    const user = { id: "11111111-2222-4333-8444-555555555555", email: "member@harness.local" };
+    const user = { id: "11111111-2222-4333-8444-555555555555", email: "member@harness.local", identities: [] as unknown[] };
     const sessionWith = (amr: unknown[], u: Record<string, unknown> = user) => ({ data: { user: u, session: { access_token: token(amr) } }, error: null });
     it("NEGATIVE: a session without mailbox proof does not link an invitation and is not hardened", async () => {
       h.exchange.mockResolvedValue(sessionWith([{ method: "password", timestamp: 1 }]));

@@ -82,10 +82,16 @@ function instantMicros(raw: unknown): bigint | null {
 export function emailChangeState(user: ProofUser): EmailChangeState {
   const sent = user?.email_change_sent_at;
   if (sent !== undefined && sent !== null && sent !== "") return "changed";
-  for (const identity of user?.identities ?? []) {
-    if (norm(identity.provider) !== "email") continue;
-    const created = instantMicros(identity.created_at);
-    const updated = instantMicros(identity.updated_at);
+  // EA-1 (Insurance): the identities list must be PRESENT to judge the account never-changed. An absent, null or non-array value
+  // (or a non-object entry) is unreadable, so the account counts as changed and only the database can prove it (fail closed). An
+  // EMPTY array is real data: an account with no email identity row (e.g. Google-only) whose address has no change activity.
+  const identities: unknown = user?.identities;
+  if (!Array.isArray(identities)) return "changed";
+  for (const identity of identities as unknown[]) {
+    if (!identity || typeof identity !== "object") return "changed";
+    if (norm((identity as ProofIdentity).provider) !== "email") continue;
+    const created = instantMicros((identity as ProofIdentity).created_at);
+    const updated = instantMicros((identity as ProofIdentity).updated_at);
     if (created === null || updated === null || created !== updated) return "changed";
   }
   return "never_changed";
