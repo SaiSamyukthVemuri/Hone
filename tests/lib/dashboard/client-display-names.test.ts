@@ -89,7 +89,7 @@ describe("withDisplayNamesOnDetailGaps (C1)", () => {
     const { client } = fake([{ id: "a", name: "Stored Alpha", preferred_name: "Preferred Alpha" }]);
     const { detailGaps } = await withDisplayNamesOnDetailGaps(client, "s", { detailGaps: gaps });
     const out = buildNeedsAttention({
-      assistant: buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] }),
+      assistant: buildMissingRecordsAssistant({ canEditRecords: true, unchartedAppointments: [], sessions: [], incompleteIntakes: [] }),
       intakesAwaitingReview: [{ clientId: "a", clientName: "Preferred Alpha", submittedAt: "2026-10-09T10:00:00Z" }],
       todo: { items: [], hasItems: false, moreCount: 0 },
       recordDetailGaps: detailGaps,

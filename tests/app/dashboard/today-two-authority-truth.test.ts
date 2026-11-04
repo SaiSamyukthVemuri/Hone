@@ -108,6 +108,7 @@ describe("Today never contradicts itself about the relationship", () => {
 
 describe("the TODAY ACTION MATRIX — four cases, no false claim", () => {
   const base = {
+  canEditRecords: true,
     clientId: "c1",
     appointmentId: "a1",
     sessionId: null as string | null,
