@@ -234,7 +234,10 @@ describe("5. dashboard: worklist first", () => {
     );
     expect(DASH).not.toMatch(/<ActionNeeded/);
     expect(DASH).toMatch(/attention: clientsNeedingAttention/);
-    expect(DASH).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
+    // Intended change (dashboard attention, #1356): the panel now takes the model through the visibility resolver (dismissals applied)
+    // instead of calling buildNeedsAttention inline. The model is still built by buildNeedsAttention, and the panel still renders it.
+    expect(DASH).toMatch(/buildNeedsAttention\(\{/);
+    expect(DASH).toMatch(/<NeedsAttentionPanel\s+needs=\{v\.shown\}/);
     // Loaded exactly once — the split must not have introduced a second read.
     expect(DASH.match(/getClientsNeedingAttention\(/g) ?? []).toHaveLength(1);
   });

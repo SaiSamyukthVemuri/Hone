@@ -238,9 +238,18 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 48: #1308's dashboard-phone-overflow.spec.ts joined `sessions` with the other Today-roster specs.
     // RECORDED AS A DECISION per the note above. Cost: FIVE executed cases (320 and 390 x owner and practitioner, plus one
     // five-tap navigation case), each a seeded studio, a magic-link login and a page load or a few.
-    // Now 49: the merge of production joined one more spec to this selection (production's own pin was 47 before #1308's two). The
+    // Now 51 after the merge of production: HON-8's machine-real-3g.spec.ts joined `sessions` beside machine-create-mode-journey (same surface; it proves the REAL
+    // contracts, which the synthetic-id sibling cannot). CI cost: four journeys (flash and blend per model) at about 25 s each.
+    // Before that, 49: the merge of production joined one more spec to this selection (production's own pin was 47 before #1308's two). The
     // number is the measured count of the merged tree, not a re-decision of any group; no executed-case cost of mine changes.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(49);
+    // Production before this merge, 50: review-link-solo-owner.spec.ts (the review link hidden for a solo owner with nothing to review, #1336) joined `sessions`.
+    // RECORDED AS A DECISION per the note above. Cost: ONE spec, a seeded solo studio and two page loads.
+    // Now 51: dashboard-attention-dismissal.spec.ts (Needs attention: exact unpaid amounts, All outstanding, the gate-OFF default) joined
+    // `sessions` with the other Dashboard specs. RECORDED AS A DECISION per the note above. Cost: SEVEN executed cases in an ordinary
+    // run (gate OFF; the two dismissal cases skip), each a seeded studio, a magic-link login and a page load: about 45 seconds.
+    // Now 52 after merging production into HON-8 (#1350): production's 51 (which counts dashboard-attention-dismissal.spec.ts) plus HON-8's
+    // machine-real-3g.spec.ts, which is not in production. The number is the measured count of the merged tree; no group was re-decided.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(52);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
