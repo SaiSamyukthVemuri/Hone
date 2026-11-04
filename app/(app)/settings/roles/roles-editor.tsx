@@ -14,6 +14,7 @@ import {
   reasonRequired,
   roleErrorMessage,
   AUDIT_KIND_LABEL,
+  appendHistoryPage,
   type AccessResult,
   type AuditRow,
   type CommandResult,
@@ -575,16 +576,32 @@ function RowList({
 
 function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Promise<HistoryResult>; timeZone: string }): ReactNode {
   const [state, setState] = useState<{ kind: "loading" } | { kind: "error"; message: string } | { kind: "rows"; rows: AuditRow[]; next: string | null }>({ kind: "loading" });
+  // "Load older" appends the next page by the cursor the core returned. A failed page keeps what is shown and says so; a second click
+  // while one is loading does nothing.
+  const [more, setMore] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const live = useRef(true);
   useEffect(() => {
-    let live = true;
+    live.current = true;
     load(null).then((r) => {
-      if (!live) return;
+      if (!live.current) return;
       setState(r.ok ? { kind: "rows", rows: r.rows, next: r.next } : { kind: "error", message: roleErrorMessage(r.error) });
     });
     return () => {
-      live = false;
+      live.current = false;
     };
   }, [load]);
+  const loadOlder = async (cursor: string) => {
+    if (more.busy) return;
+    setMore({ busy: true, error: null });
+    const r = await load(cursor).catch(() => null);
+    if (!live.current) return;
+    if (!r || !r.ok) {
+      setMore({ busy: false, error: r ? roleErrorMessage(r.error) : "Could not load older changes. Nothing was changed." });
+      return;
+    }
+    setState((s) => (s.kind === "rows" ? { kind: "rows", rows: appendHistoryPage(s.rows, r.rows), next: r.next } : s));
+    setMore({ busy: false, error: null });
+  };
   return (
     <section data-testid="roles-history" className="flex min-w-0 flex-col gap-3">
       <h3 className="text-base font-medium">Change history</h3>
@@ -619,6 +636,22 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
             </li>
           ))}
         </ul>
+      )}
+      {state.kind === "rows" && more.error && (
+        <p data-testid="history-more-error" role="alert" className="text-sm text-neutral-600 dark:text-neutral-400">
+          {more.error}
+        </p>
+      )}
+      {state.kind === "rows" && state.next !== null && (
+        <button
+          type="button"
+          data-testid="history-load-older"
+          disabled={more.busy}
+          onClick={() => void loadOlder(state.next as string)}
+          className="min-h-11 self-start rounded-lg border border-neutral-300 px-4 text-sm font-medium disabled:opacity-60 dark:border-neutral-700"
+        >
+          {more.busy ? "Loading\u2026" : "Load older changes"}
+        </button>
       )}
     </section>
   );

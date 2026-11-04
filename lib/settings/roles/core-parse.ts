@@ -170,8 +170,10 @@ export function parseHistory(raw: unknown, limit: number): HistoryResult {
       after: changes.after,
     });
   }
-  const last = rows.length === limit ? rows[rows.length - 1]?.id ?? null : null;
-  return { ok: true, rows, next: last };
+  // The cursor follows the RAW page: a row of a kind this page does not know is dropped from the list but must not end the paging.
+  const lastRaw = raw.rows.length === limit ? raw.rows[raw.rows.length - 1] : null;
+  const next = isObj(lastRaw) && lastRaw.id !== undefined && lastRaw.id !== null ? String(lastRaw.id) : null;
+  return { ok: true, rows, next };
 }
 
 export function parseAccess(raw: unknown): AccessResult {

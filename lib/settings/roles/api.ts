@@ -71,6 +71,12 @@ export type AccessRow = { key: string; scope: string; source: string; cappedBy: 
 export type AccessResult = { ok: true; state: "active" | "deactivated"; role: string; rows: AccessRow[] } | { ok: false; error: RoleError };
 export type HistoryResult = { ok: true; rows: AuditRow[]; next: string | null } | { ok: false; error: RoleError };
 
+/** Append an older page to the rows already shown. A row seen twice (a page that overlaps) is kept once; order is newest first. */
+export function appendHistoryPage(shown: AuditRow[], older: AuditRow[]): AuditRow[] {
+  const seen = new Set(shown.map((r) => r.id));
+  return [...shown, ...older.filter((r) => !seen.has(r.id))];
+}
+
 export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   role_permissions_saved: "Permissions changed",
   defaults_adopted: "New defaults adopted",
