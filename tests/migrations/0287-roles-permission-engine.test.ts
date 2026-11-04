@@ -123,7 +123,8 @@ describe("0287 activation rule: source contract", () => {
   it("releases are seeded PENDING; the six deny_only keys are narrow releases; observe keys are not released (AA-4, AH1)", () => {
     const seed = code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0];
     const rows = [...seed.matchAll(/\('([a-z_.]+)', (null|now\(\)[^,]*), '([^']+)', '(full|narrow)'\)/g)].map((m) => ({ key: m[1], at: m[2], kind: m[4] }));
-    expect(rows.length).toBe(13);
+    expect(rows.length).toBe(14);
+    expect(rows.find((r) => r.key === "clin.edit_records")).toMatchObject({ at: "null", kind: "full" }); // edit records: pending until the operator releases it
     expect(rows.every((r) => r.at === "null")).toBe(true);
     expect(rows.filter((r) => r.kind === "narrow").map((r) => r.key).sort()).toEqual(["appt.book", "appt.move", "appt.reassign", "avail.manage_others", "avail.manage_own", "avail.manage_studio_hours"]);
     expect(rows.map((r) => r.key)).not.toContain("appt.complete");
