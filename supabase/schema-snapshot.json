@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0298_dashboard_attention_dismissals.sql",
-    "sha256": "131c72069ed75973bdd9518e1218ebbe6cf9360992bb0e90c65f880a5a360a83"
+    "count": 253,
+    "last": "0274_receptionist_desk_projection.sql",
+    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
   },
   "public": {
     "tables": [
@@ -44,7 +44,6 @@
       "clinical_record_snapshots",
       "consent_form_templates",
       "conversion_event_deliveries",
-      "dashboard_attention_events",
       "delivery_concerns",
       "delivery_incidents",
       "delivery_sweep_heartbeat",
@@ -250,7 +249,6 @@
       "create_waitlist_public_appointment",
       "current_privacy_version",
       "current_terms_version",
-      "dashboard_attention_events_immutable",
       "decline_new_client_waitlist_invitation",
       "default_eligibility_for_practitioner",
       "default_eligibility_for_service",
@@ -259,7 +257,6 @@
       "delete_recurring_break_rule",
       "delivery_concerns_identity_guard",
       "delivery_concerns_server_defaults",
-      "dismiss_attention_item",
       "edit_client_pinned_note",
       "edit_session_started_at",
       "effective_new_client_admission",
@@ -330,7 +327,6 @@
       "join_new_client_waitlist_with_sms_answer",
       "latest_setup_for_client",
       "link_invited_membership",
-      "list_dismissed_attention",
       "lock_appointment_for_command",
       "lock_structural_calendar_source_mutation",
       "lock_studio_and_assert_owner",
@@ -466,7 +462,6 @@
       "resolve_public_any_available_practitioner",
       "resolve_studio_by_sms_messaging_service",
       "resolve_waitlist_invitation_recipient_identity",
-      "restore_attention_item",
       "retire_practitioner_capacity",
       "retire_ready_card_attempts",
       "retire_studio_machine",
