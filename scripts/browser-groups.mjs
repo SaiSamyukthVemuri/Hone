@@ -111,6 +111,11 @@ export const BROWSER_GROUPS = {
       // the right-side action moving from reading (Review Before Today) to
       // doing (Chart session). Same Today row, so the same group.
       "dashboard-all-pinned-notes.spec.ts",
+      // Insurance PEER-1308 D-4: the CLOSED compact row (pinned notes, allergy flag, caution line,
+      // intake pill visible) proved without the helper that opens the row details.
+      "dashboard-closed-row.spec.ts",
+      // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
+      "dashboard-phone-overflow.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be
@@ -242,6 +247,9 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
+      // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
+      "review-assignments-navigation.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",

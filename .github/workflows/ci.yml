@@ -88,7 +88,7 @@ jobs:
   # -------------------------------------------------------------------------
   changes:
     name: changed-path detection
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
@@ -283,7 +283,7 @@ jobs:
     name: typecheck / lint / build / test / safety gates
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
     # UNCHANGED; 25 minutes is only the point at which a run is declared broken,
     # and is NOT an acceptable runtime.
@@ -458,7 +458,7 @@ jobs:
     name: canonical production record (docs-only)
     needs: changes
     if: ${{ needs.changes.outputs.docs_only == 'true' && (needs.changes.outputs.production_record == 'true' || needs.changes.outputs.docs_consistency == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - name: Checkout repository
@@ -516,7 +516,7 @@ jobs:
     name: db integration (local supabase)
     needs: changes
     if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -816,7 +816,7 @@ jobs:
     name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
     needs: changes
     if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -1232,7 +1232,7 @@ jobs:
     # Codex P1 4296967177): branch protection must never point at a new name.
     needs: [changes, browser-e2e-shard, canonical-record]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Aggregate browser shard results
@@ -1356,7 +1356,7 @@ jobs:
     name: payment browser e2e (fake stripe)
     needs: changes
     if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -1625,7 +1625,7 @@ jobs:
     name: mobile completion e2e (chromium iphone-profile)
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -1877,7 +1877,7 @@ jobs:
     name: google browser e2e (fake google)
     needs: changes
     if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -2145,7 +2145,7 @@ jobs:
     name: storage photos (not required)
     needs: changes
     if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -2400,7 +2400,7 @@ jobs:
     name: webkit time inputs (HON-62, not required)
     needs: changes
     if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read

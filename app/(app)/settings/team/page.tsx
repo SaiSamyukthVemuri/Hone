@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import {
   requirePractitionerWithStudio,
@@ -102,6 +103,16 @@ function CurrentPractitioners({
           {practitioners.length === 1
             ? "Just you."
             : `${practitioners.length} active.`}
+        </p>
+        <p className="mt-2 text-sm">
+          <Link
+            href="/calendar/check-practitioner"
+            data-testid="team-review-assignments"
+            className="font-medium underline underline-offset-2"
+          >
+            Review practitioner assignments
+          </Link>
+          <span className="text-neutral-500"> to check who is recorded on open appointments.</span>
         </p>
       </div>
       <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
