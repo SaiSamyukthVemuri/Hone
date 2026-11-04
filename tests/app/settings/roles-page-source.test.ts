@@ -96,3 +96,13 @@ describe("Codex 3 Nov on #1335: a reset is confirmed for the role that was previ
     expect(b).toMatch(/state\.writable \? \{ ok: true, state \} : refuse\(\{ code: "unavailable" \}\)/);
   });
 });
+
+describe("Codex P2 (30555b1d0): reset and adopt collect the sensitive confirmation", () => {
+  it("the preview shows the checkbox when it would newly enable a sensitive permission, gates Confirm on it, and passes it to the action", () => {
+    const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(src).toContain('data-testid="preview-sensitive-confirm"');
+    expect(src).toMatch(/newlyEnabledSensitive, 0\) === 0 \|\| previewConfirmed/);
+    expect(src).toMatch(/props\.adopt\(boundVersion, reason\.trim\(\), previewConfirmed\)/);
+    expect(src).toMatch(/props\.reset\(preview\.role, boundVersion, reason\.trim\(\), previewConfirmed\)/);
+  });
+});

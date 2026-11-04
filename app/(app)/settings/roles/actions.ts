@@ -121,22 +121,22 @@ export async function saveRolePolicyAction(
 }
 
 /** Reset one role to the studio's own basis. Separate from Save; it has its own preview. */
-export async function resetRolePolicyAction(role: unknown, expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
+export async function resetRolePolicyAction(role: unknown, expectedVersion: unknown, reason: unknown, sensitiveConfirmed: unknown): Promise<CommandResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   if (!isRole(role)) return refuse({ code: "unknown_role" });
   if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
   if (!reasonAcceptable("reset", false, reasonText(reason))) return refuse({ code: "reason_required" });
-  return coreReset(owner.studioId, role, expectedVersion, reasonText(reason).trim());
+  return coreReset(owner.studioId, role, expectedVersion, reasonText(reason).trim(), sensitiveConfirmed === true);
 }
 
 /** The only way an existing studio takes the new defaults. */
-export async function adoptNewDefaultsAction(expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
+export async function adoptNewDefaultsAction(expectedVersion: unknown, reason: unknown, sensitiveConfirmed: unknown): Promise<CommandResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
   if (!reasonAcceptable("adopt", false, reasonText(reason))) return refuse({ code: "reason_required" });
-  return coreAdopt(owner.studioId, expectedVersion, reasonText(reason).trim());
+  return coreAdopt(owner.studioId, expectedVersion, reasonText(reason).trim(), sensitiveConfirmed === true);
 }
 
 /** The change history, newest first. Read-only. */

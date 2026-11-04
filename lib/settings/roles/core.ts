@@ -51,12 +51,16 @@ export async function coreSave(
   );
 }
 
-export async function coreReset(studioId: string, role: Role, version: number, reason: string): Promise<CommandResult> {
-  return parseCommand(await call("reset_role_to_defaults", { p_studio: studioId, p_role: role, p_expected_version: version, p_reason: reason }));
+// Reset and adopt can widen a SENSITIVE key (a role whose override is Off goes back to the default). The core then requires the owner's explicit
+// confirmation (`sensitive_unconfirmed` otherwise), exactly as for a save (Codex P2 on 30555b1d0).
+export async function coreReset(studioId: string, role: Role, version: number, reason: string, sensitiveConfirmed: boolean): Promise<CommandResult> {
+  return parseCommand(
+    await call("reset_role_to_defaults", { p_studio: studioId, p_role: role, p_expected_version: version, p_reason: reason, p_sensitive_confirmed: sensitiveConfirmed }),
+  );
 }
 
-export async function coreAdopt(studioId: string, version: number, reason: string): Promise<CommandResult> {
-  return parseCommand(await call("adopt_new_defaults", { p_studio: studioId, p_expected_version: version, p_reason: reason }));
+export async function coreAdopt(studioId: string, version: number, reason: string, sensitiveConfirmed: boolean): Promise<CommandResult> {
+  return parseCommand(await call("adopt_new_defaults", { p_studio: studioId, p_expected_version: version, p_reason: reason, p_sensitive_confirmed: sensitiveConfirmed }));
 }
 
 export async function corePreviewActivation(studioId: string, keys: string[]): Promise<ActivationPreviewResult> {

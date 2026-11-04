@@ -74,8 +74,8 @@ export type RolesEditorProps = {
   save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string) => Promise<CommandResult>;
   // The authoritative policy as the core holds it now; read after a save so the page never assumes its draft became the saved state.
   reload: () => Promise<{ ok: true; state: StudioPolicyState } | { ok: false; error: RoleError }>;
-  reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
-  adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
+  reset: (role: Role, expectedVersion: number, reason: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
+  adopt: (expectedVersion: number, reason: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
   // Released settings the owner has not activated yet: the core previews the change (with a digest) and commits only that exact preview.
   previewActivation: (keys: string[]) => Promise<ActivationPreviewResult>;
   activate: (keys: string[], expectedVersion: number, reason: string, previewDigest: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
@@ -99,6 +99,8 @@ export function RolesEditor(props: RolesEditorProps) {
   const [drafts, setDrafts] = useState<Record<Role, StudioPolicy>>(props.policies);
   const [rowError, setRowError] = useState<{ key: string; message: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  // The owner's explicit confirmation when a reset or adopt would newly enable a sensitive permission (the core refuses without it).
+  const [previewConfirmed, setPreviewConfirmed] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [reviewData, setReviewData] = useState<ServerPreview | null>(null);
   const [reason, setReason] = useState("");
@@ -280,6 +282,7 @@ export function RolesEditor(props: RolesEditorProps) {
       return;
     }
     setReason("");
+    setPreviewConfirmed(false);
     const forRole = role;
     const seq = ++previewSeq.current;
     const r = await (kind === "adopt" ? props.previewAdopt() : props.previewReset(forRole));
@@ -293,7 +296,8 @@ export function RolesEditor(props: RolesEditorProps) {
     if (!preview) return;
     feedback.saving();
     const boundVersion = preview.data.version;
-    const result = preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim()) : await props.reset(preview.role, boundVersion, reason.trim());
+    const result =
+      preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim(), previewConfirmed) : await props.reset(preview.role, boundVersion, reason.trim(), previewConfirmed);
     if (!result.ok && result.error.code === "unexpected") {
       await resolveUnexpected(boundVersion);
       return;
@@ -439,7 +443,10 @@ export function RolesEditor(props: RolesEditorProps) {
               kind={preview.kind}
               role={preview.role}
               data={preview.data}
-              canConfirm={props.writable && reasonAcceptable(preview.kind, false, reason)}
+              sensitiveCount={preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0)}
+              confirmed={previewConfirmed}
+              onConfirmed={setPreviewConfirmed}
+              canConfirm={props.writable && reasonAcceptable(preview.kind, false, reason) && (preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0) === 0 || previewConfirmed)}
               blockedReason={props.writable ? null : props.notWritableReason}
               reason={reason}
               onReason={setReason}
@@ -1268,6 +1275,9 @@ function PreviewPanel({
   kind,
   role,
   data,
+  sensitiveCount,
+  confirmed,
+  onConfirmed,
   canConfirm,
   blockedReason,
   reason,
@@ -1278,6 +1288,9 @@ function PreviewPanel({
   kind: "reset" | "adopt";
   role: Role;
   data: ServerPreview;
+  sensitiveCount: number;
+  confirmed: boolean;
+  onConfirmed: (v: boolean) => void;
   canConfirm: boolean;
   blockedReason: string | null;
   reason: string;
@@ -1301,6 +1314,14 @@ function PreviewPanel({
             <DiffList item={item} testPrefix="preview" />
           </div>
         ))
+      )}
+      {sensitiveCount > 0 && (
+        <label className="flex items-start gap-2 text-sm font-medium">
+          <input type="checkbox" data-testid="preview-sensitive-confirm" checked={confirmed} onChange={(e) => onConfirmed(e.target.checked)} className="mt-1" />
+          <span data-testid="preview-sensitive">
+            I understand this newly enables {sensitiveCount} financial or sensitive {sensitiveCount === 1 ? "permission" : "permissions"}.
+          </span>
+        </label>
       )}
       <ReasonField id={`${id}-reason`} value={reason} onChange={onReason} required={reasonRequired(kind, false)} />
       <div className="flex flex-wrap items-center gap-3">

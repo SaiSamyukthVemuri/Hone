@@ -92,8 +92,8 @@ describe("the actions hand the core only what the owner changed, after re-checki
       await actions.previewResetAction("practitioner"),
       await actions.previewAdoptAction(),
       await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 0, false, ""),
-      await actions.resetRolePolicyAction("practitioner", 0, "a reason"),
-      await actions.adoptNewDefaultsAction(0, "a reason"),
+      await actions.resetRolePolicyAction("practitioner", 0, "a reason", false),
+      await actions.adoptNewDefaultsAction(0, "a reason", false),
       await actions.listPermissionAuditAction(null),
       await actions.effectiveAccessAction("m1"),
     ])
@@ -113,15 +113,15 @@ describe("the actions hand the core only what the owner changed, after re-checki
     expect(core.coreSave).not.toHaveBeenCalled();
   });
   it("require a meaningful reason for adopt and reset", async () => {
-    expect(await actions.adoptNewDefaultsAction(0, "n/a")).toEqual({ ok: false, error: { code: "reason_required" } });
-    expect(await actions.resetRolePolicyAction("receptionist", 0, "")).toEqual({ ok: false, error: { code: "reason_required" } });
+    expect(await actions.adoptNewDefaultsAction(0, "n/a", false)).toEqual({ ok: false, error: { code: "reason_required" } });
+    expect(await actions.resetRolePolicyAction("receptionist", 0, "", false)).toEqual({ ok: false, error: { code: "reason_required" } });
     expect(core.coreAdopt).not.toHaveBeenCalled();
     expect(core.coreReset).not.toHaveBeenCalled();
-    await actions.adoptNewDefaultsAction(2, "moving to the new defaults");
-    expect(core.coreAdopt).toHaveBeenCalledWith("studio-1", 2, "moving to the new defaults");
+    await actions.adoptNewDefaultsAction(2, "moving to the new defaults", false);
+    expect(core.coreAdopt).toHaveBeenCalledWith("studio-1", 2, "moving to the new defaults", false);
   });
   it("refuse an unknown role", async () => {
-    expect((await actions.resetRolePolicyAction("owner", 0, "a good reason")).ok).toBe(false);
+    expect((await actions.resetRolePolicyAction("owner", 0, "a good reason", false)).ok).toBe(false);
     expect(core.coreReset).not.toHaveBeenCalled();
   });
 });
@@ -379,11 +379,19 @@ describe("the server-side wiring guard (OPS 3 Nov): enforcement is the catalog's
     expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "")).toEqual({ ok: false, error: { code: "refused" } });
     expect(core.coreGetState).not.toHaveBeenCalled();
   });
-  it("reset and adopt carry no per-key input: the core receives only a role, a version and a reason", async () => {
+  it("reset and adopt carry no per-key input: the core receives only a role, a version, a reason and the sensitive confirmation", async () => {
     hold("appt.cancel", "not_yet");
-    await actions.resetRolePolicyAction("practitioner", 3, "back to the studio basis");
-    await actions.adoptNewDefaultsAction(3, "moving to the new defaults");
-    expect(core.coreReset).toHaveBeenCalledWith("studio-1", "practitioner", 3, "back to the studio basis");
-    expect(core.coreAdopt).toHaveBeenCalledWith("studio-1", 3, "moving to the new defaults");
+    await actions.resetRolePolicyAction("practitioner", 3, "back to the studio basis", false);
+    await actions.adoptNewDefaultsAction(3, "moving to the new defaults", false);
+    expect(core.coreReset).toHaveBeenCalledWith("studio-1", "practitioner", 3, "back to the studio basis", false);
+    expect(core.coreAdopt).toHaveBeenCalledWith("studio-1", 3, "moving to the new defaults", false);
+  });
+  it("Codex P2: an explicit sensitive confirmation reaches the core for reset and adopt; anything but true is false", async () => {
+    await actions.resetRolePolicyAction("practitioner", 3, "back to the studio basis", true);
+    await actions.adoptNewDefaultsAction(3, "moving to the new defaults", true);
+    expect(core.coreReset).toHaveBeenLastCalledWith("studio-1", "practitioner", 3, "back to the studio basis", true);
+    expect(core.coreAdopt).toHaveBeenLastCalledWith("studio-1", 3, "moving to the new defaults", true);
+    await actions.resetRolePolicyAction("practitioner", 3, "back to the studio basis", "true");
+    expect(core.coreReset).toHaveBeenLastCalledWith("studio-1", "practitioner", 3, "back to the studio basis", false);
   });
 });
