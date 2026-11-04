@@ -15,7 +15,11 @@ import {
 } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
-import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
+import {
+  isDefinitiveDatabaseAnswer,
+  isMissingCommand,
+  MACHINE_CHOICE_NOT_STORABLE_YET,
+} from "@/lib/machines/save-attempt";
 import {
   LEGACY_MACHINE_PROFILE_ID,
   legacyMachineOffer,
@@ -594,6 +598,10 @@ export async function recordBlockMachineIdentityAction(input: {
       profileId: input.profileId,
     });
     if (!out.ok) {
+      // 0301 not applied yet: say so, never "saved".
+      if (isMissingCommand(out.error)) {
+        return { ok: false, code: "rejected", error: MACHINE_CHOICE_NOT_STORABLE_YET };
+      }
       return isDefinitiveDatabaseAnswer(out.error)
         ? { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." }
         : { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };

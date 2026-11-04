@@ -25,7 +25,7 @@ const SESSION = vi.hoisted(() => ({
 const DB = vi.hoisted(() => ({
   rows: [] as unknown[],
   rpcResult: null as unknown,
-  rpcError: null as null | { message: string },
+  rpcError: null as null | { message: string; code?: string },
   selectError: null as null | { message: string },
   /**
    * PER-TABLE overrides, because some behaviour only exists when one read
@@ -1978,5 +1978,45 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     expect(
       DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// 0301 NOT APPLIED YET (Privacy EH-1/EH-2): saving the machine choice on an
+// existing area says it cannot be saved yet. It never says saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction without 0301", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: "11111111-1111-4111-8111-111111111111",
+    modeKey: "flash",
+    profileId: null,
+  };
+
+  it("a missing command (PGRST202) is a visible, definitive 'can't save the machine choice yet'", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "PGRST202", message: "Could not find the function" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect(out.error).toMatch(/can't save the machine choice yet/i);
+  });
+
+  it("NEGATIVE CONTROL: another refusal keeps its own message, not the 0301 one", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).not.toMatch(/yet/i);
+  });
+
+  it("with the command present the choice is saved", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = null;
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(true);
   });
 });

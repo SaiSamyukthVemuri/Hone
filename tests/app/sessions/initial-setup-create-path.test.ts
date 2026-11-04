@@ -116,10 +116,12 @@ describe("the UNEXECUTED command is not on the default path", () => {
   });
 
   it("keeps the PROVEN command as the fallback arm", () => {
-    // Explicitly: the ternary's else is the old command, so a save with no
-    // settings is byte-for-byte the path that has been running.
+    // Explicitly: the ELSE arm is the old command, so a save with no
+    // settings and no machine choice is byte-for-byte the path that has been
+    // running. (An if/else since 0301, which needs a fallback inside the first
+    // arm; the else arm is unchanged.)
     expect(createBody).toMatch(
-      /:\s*await supabase\.rpc\("create_block_with_entry", blockArgs\);/,
+      /else\s*\{\s*\(\{ data: createdRows, error: cmdErr \} = await supabase\.rpc\("create_block_with_entry", blockArgs\)\);/,
     );
   });
 

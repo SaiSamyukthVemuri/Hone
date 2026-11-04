@@ -1278,6 +1278,18 @@ export async function studioHasLegacyMachineHistory(
     .eq("studio_id", studioId)
     .is("deleted_at", null)
     .or(`mode.not.is.null,machine_profile_id.eq.${legacyProfileId}`);
-  if (error) return false;
-  return (count ?? 0) > 0;
+  if (!error) return (count ?? 0) > 0;
+  // THE IDENTITY COLUMN MAY NOT EXIST YET (0301 is migration-first and the
+  // order can slip), which fails the whole query. Ask the question the old
+  // schema can answer: has this studio ever charted in the existing workflow?
+  const legacy = await supabase
+    .from("session_blocks")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .is("deleted_at", null)
+    .not("mode", "is", null);
+  // STILL FAILING: offer the existing workflow rather than hide it. It is
+  // the studio's own default, and withholding it is the worse error.
+  if (legacy.error) return true;
+  return (legacy.count ?? 0) > 0;
 }

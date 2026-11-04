@@ -1,4 +1,4 @@
-import { isDefinitiveDatabaseAnswer } from "./save-attempt";
+import { isDefinitiveDatabaseAnswer, isMissingCommand } from "./save-attempt";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import type { ReadingValue } from "./profile-contract";
 import type { StudioDevice } from "./selection";
@@ -536,7 +536,7 @@ export async function recordSetupSubmission(
   clientId: string;
   },
 ): Promise<MachineOutcome<SetupSubmissionResult>> {
-  const { data, error } = await db.rpc("record_setup_submission_with_identity", {
+  const submissionArgs = {
     p_block_id: input.blockId,
     p_studio_machine_id: input.machineId,
     p_mode_key: input.modeKey,
@@ -564,7 +564,15 @@ export async function recordSetupSubmission(
     })),
     p_session_id: input.sessionId,
     p_client_id: input.clientId,
-  });
+  };
+  // MIGRATION-FIRST ORDER CAN SLIP (0301). The identity-recording wrapper is
+  // tried first; if the database does not have it yet (PGRST202 / 42883, so
+  // nothing ran), the SAME arguments go to the 0223 command, which records the
+  // readings exactly as before and simply does not stamp the identity.
+  let { data, error } = await db.rpc("record_setup_submission_with_identity", submissionArgs);
+  if (isMissingCommand(error)) {
+    ({ data, error } = await db.rpc("record_treatment_setup_submission", submissionArgs));
+  }
   if (error) {
     // A TRANSPORT FAILURE IS NOT A REFUSAL (Codex, #860 4301722737).
     //

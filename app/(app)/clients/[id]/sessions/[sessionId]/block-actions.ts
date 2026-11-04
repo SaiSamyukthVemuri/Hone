@@ -12,7 +12,11 @@ import { SessionLineageError } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
 import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
-import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
+import {
+  isDefinitiveDatabaseAnswer,
+  isMissingCommand,
+  MACHINE_CHOICE_NOT_STORABLE_YET,
+} from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { currentProfile } from "@/lib/machines/profile-contract";
@@ -1482,8 +1486,9 @@ export async function createTreatmentAreaWithEntryAction(
     !withSetup &&
     identity !== null &&
     (identity.machineId !== null || identity.profileId !== null);
-  const { data: createdRows, error: cmdErr } = withSetup || identityOnly
-    ? await supabase.rpc("create_block_with_initial_setup_and_identity", {
+  // Built once so the older command can be called with the same arguments when
+  // 0301 is not applied yet (see the fallback below).
+  const identityArgs = {
         ...blockArgs,
         p_machine_profile_id: withSetup ? null : (identity?.profileId ?? null),
         p_studio_machine_id: withSetup
@@ -1531,8 +1536,33 @@ export async function createTreatmentAreaWithEntryAction(
             observation_source: r.observationSource,
           })),
         })),
-      })
-    : await supabase.rpc("create_block_with_entry", blockArgs);
+      };
+  let createdRows: unknown;
+  let cmdErr: { code?: string | null; message?: string } | null;
+  if (withSetup || identityOnly) {
+    ({ data: createdRows, error: cmdErr } = await supabase.rpc(
+      "create_block_with_initial_setup_and_identity",
+      identityArgs,
+    ));
+    // MIGRATION-FIRST ORDER CAN SLIP (0301). PGRST202 / 42883 means the
+    // wrapper does not exist, so nothing ran and nothing was written.
+    if (isMissingCommand(cmdErr)) {
+      if (identityOnly) {
+        // Nothing but a machine choice to store: never report it as saved.
+        return { ok: false, error: MACHINE_CHOICE_NOT_STORABLE_YET };
+      }
+      // Settings save: the 0223 command writes the area and the settings
+      // exactly as before; the identity simply is not stamped yet.
+      const { p_machine_profile_id: _omit, ...legacyArgs } = identityArgs;
+      void _omit;
+      ({ data: createdRows, error: cmdErr } = await supabase.rpc(
+        "create_block_with_initial_setup",
+        legacyArgs,
+      ));
+    }
+  } else {
+    ({ data: createdRows, error: cmdErr } = await supabase.rpc("create_block_with_entry", blockArgs));
+  }
   if (cmdErr) {
     // A TRANSPORT FAILURE HERE IS A LOST ANSWER TOO (Codex, #860 4301722740).
     //

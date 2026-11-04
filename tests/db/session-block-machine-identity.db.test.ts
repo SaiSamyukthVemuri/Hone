@@ -300,6 +300,62 @@ describe("0301: an existing area", () => {
     expect(await readings(blockId)).toBeGreaterThan(0);
     expect((await identity(blockId)).machine_mode_key).toBe("galvanic");
   });
+
+  it("a LATE REPLAY of an earlier submission does not put the earlier unit back (Privacy F-2)", async () => {
+    const studio = await seedStudio("identity-replay");
+    const { sessionId, blockId } = await seedSession(studio);
+    const first = await register(studio);
+    const second = await asUser(studio.userId, async (q) => {
+      const r = await q(`select public.register_studio_machine($1,$2,$3,$4,$5) as id`, [
+        studio.studioId, PROFILE, VERSION, "Room 2", [],
+      ]);
+      return r.rows[0].id as string;
+    });
+    const submit = (machine: string) =>
+      asUser(studio.userId, (q) =>
+        q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7) as r`, [
+          blockId, machine, "galvanic", "identity-replay-0001", JSON.stringify(groups("9")), sessionId, studio.clientId,
+        ]),
+      );
+    await submit(first);
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, null, second, "galvanic"]),
+    );
+    expect((await identity(blockId)).studio_machine_id).toBe(second);
+    const replay = await submit(first);
+    expect(replay.rows[0].r.reused).toBe(true);
+    expect((await identity(blockId)).studio_machine_id).toBe(second);
+  });
+});
+
+describe("0301: no direct write path to the new columns (Privacy EH-3)", () => {
+  const COLS = ["machine_profile_id", "studio_machine_id", "machine_mode_key"];
+
+  it("authenticated and anon hold no UPDATE or INSERT privilege on them, by table or by column", async () => {
+    for (const role of ["authenticated", "anon"]) {
+      for (const col of COLS) {
+        for (const priv of ["UPDATE", "INSERT"]) {
+          const r = await adminQuery(
+            `select has_column_privilege($1, 'public.session_blocks', $2, $3) as ok`,
+            [role, col, priv],
+          );
+          expect(r.rows[0].ok, `${role} ${priv} ${col}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("a practitioner's direct UPDATE of the identity is refused and changes nothing", async () => {
+    const studio = await seedStudio("identity-direct");
+    const { blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`update public.session_blocks set studio_machine_id = $1, machine_profile_id = $2 where id = $3`, [machine, PROFILE, blockId]),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+    expect(await identity(blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+  });
 });
 
 describe("0301: legacy rows", () => {

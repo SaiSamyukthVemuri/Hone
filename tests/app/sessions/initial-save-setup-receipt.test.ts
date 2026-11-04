@@ -273,3 +273,84 @@ it("initial save preserves exact text in the governed atomic payload", async () 
     delete (field as typeof field & { valueKind?: string }).valueKind;
   }
 });
+
+// ===========================================================================
+// MIGRATION-FIRST ORDER CAN SLIP (0301; Privacy EH-1/EH-2)
+// ===========================================================================
+//
+// The app now calls an identity-recording wrapper that exists only after 0301.
+// If the database does not have it (PGRST202 / 42883) NOTHING ran, so:
+//   * a save WITH settings goes to the 0223 command, as before, minus the
+//     identity argument, and the settings are recorded;
+//   * a save that carries ONLY a machine choice is refused with a visible
+//     "can't save the machine choice yet" and writes nothing: never "saved".
+// Both directions are driven through the action, and the negative controls
+// show an ordinary refusal does NOT fall back.
+describe("0301 not applied yet: the app degrades safely", () => {
+  const GOOD = {
+    block_id: "block-1",
+    setup: { submission_id: "22222222-2222-4222-8222-222222222222", groups: 1, readings: 1, reused: false },
+  };
+  const missing = { code: "PGRST202", message: "Could not find the function" };
+
+  it("a settings save falls back to create_block_with_initial_setup, without the identity argument", async () => {
+    rpc.mockImplementation(async (name: string) =>
+      name === "create_block_with_initial_setup_and_identity"
+        ? { data: null, error: missing }
+        : { data: GOOD, error: null },
+    );
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction(input);
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    const names = rpc.mock.calls.map((c) => c[0]);
+    expect(names).toEqual([
+      "create_block_with_initial_setup_and_identity",
+      "create_block_with_initial_setup",
+    ]);
+    const fallbackArgs = rpc.mock.calls[1][1] as Record<string, unknown>;
+    expect(fallbackArgs).not.toHaveProperty("p_machine_profile_id");
+    expect(fallbackArgs).toHaveProperty("p_setup_groups");
+    expect(fallbackArgs.p_setup_idempotency_key).toBe(input.initialSetup.idempotencyKey);
+  });
+
+  it("42883 (undefined_function) falls back the same way", async () => {
+    rpc.mockImplementation(async (name: string) =>
+      name === "create_block_with_initial_setup_and_identity"
+        ? { data: null, error: { code: "42883", message: "function does not exist" } }
+        : { data: GOOD, error: null },
+    );
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction(input);
+    expect(out.ok).toBe(true);
+  });
+
+  it("an identity-only save is REFUSED with a visible message and writes nothing", async () => {
+    rpc.mockResolvedValue({ data: null, error: missing });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction({
+      clientId: "client-1",
+      sessionId: "session-1",
+      machineIdentity: { machineId: "dev-1", modeKey: MODE_KEY, profileId: null },
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/can't save the machine choice yet/i);
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual(["create_block_with_initial_setup_and_identity"]);
+  });
+
+  it("NEGATIVE CONTROL: an ordinary refusal does NOT fall back to the older command", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "23514", message: "check violation" } });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction(input);
+    expect(out.ok).toBe(false);
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual(["create_block_with_initial_setup_and_identity"]);
+  });
+
+  it("WITH 0301 present nothing changes: one call, the identity wrapper", async () => {
+    rpc.mockResolvedValue({ data: GOOD, error: null });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction(input);
+    expect(out.ok).toBe(true);
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual(["create_block_with_initial_setup_and_identity"]);
+  });
+});

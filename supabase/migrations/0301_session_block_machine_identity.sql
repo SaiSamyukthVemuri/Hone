@@ -276,9 +276,14 @@ begin
     p_session_id => p_session_id,
     p_client_id => p_client_id
   );
-  v_studio := public.assert_session_writable(p_session_id, p_client_id);
-  perform public.apply_block_machine_identity(
-    p_block_id, v_studio, null, p_studio_machine_id, p_mode_key);
+  -- A REPLAY (same key, answered with the original) changes nothing: a late
+  -- replay after the area moved to another unit must not put the earlier unit
+  -- back (Privacy F-2). Same rule as the create wrapper above.
+  if coalesce((v_result->>'reused')::boolean, false) is not true then
+    v_studio := public.assert_session_writable(p_session_id, p_client_id);
+    perform public.apply_block_machine_identity(
+      p_block_id, v_studio, null, p_studio_machine_id, p_mode_key);
+  end if;
   return v_result;
 end;
 $$;

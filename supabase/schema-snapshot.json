@@ -3,7 +3,7 @@
   "migrations": {
     "count": 256,
     "last": "0301_session_block_machine_identity.sql",
-    "sha256": "d6b7c60e6912e9e76544963c660166a6ed07689fd3bbab14f6c854c9379aaac1"
+    "sha256": "74e84b5427d2c324ab844dd6af26458ac6c125bd603f8b83bb6ffeec54f2205b"
   },
   "public": {
     "tables": [
