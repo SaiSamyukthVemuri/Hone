@@ -132,6 +132,24 @@ describe("activation rule", () => {
     expect(m.userId).toBeTruthy();
   });
 
+  it("unreleased key: an Off has no effect, and the page says so (no release row, and a PENDING row, both)", async () => {
+    const [k] = KEYS;
+    expect(k.practitioner_snap).not.toBe("off"); // otherwise the assertion below proves nothing
+    for (const [label, pending] of [["no release row", false], ["pending release row", true]] as const) {
+      const s = await seedStudio(pending ? "unrel2" : "unrel1");
+      await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+      await clearReleases();
+      if (pending) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,null,'ACT-TEST','full')", [k.key]);
+      await dated(s, k.key, "off", 3);
+      expect((await adminQuery("select public.perm_effective_scope($1,'practitioner',$2) e", [s.studioId, k.key])).rows[0].e, label).toBe(k.practitioner_snap);
+      const row = (await getp(s.userId, s.studioId)).roles.practitioner[k.key];
+      expect(row, label).toMatchObject({ stored: "off", effective: k.practitioner_snap, source: "unreleased" });
+      // There is nothing to activate yet: the preview and the commit both answer not_released, and no activation row is written.
+      expect(await call(s.userId, "select public.preview_activation($1,$2::text[]) as r", [s.studioId, [k.key]]), label).toMatchObject({ ok: false, code: "not_released" });
+      expect(Number((await adminQuery("select count(*) n from public.permission_key_activation where studio_id=$1", [s.studioId])).rows[0].n), label).toBe(0);
+    }
+  });
+
   it("non-owners, other studios, stale versions, missing reasons and unreleased keys are refused", async () => {
     const s = await seedStudio("act3");
     const other = await seedStudio("act3b");
