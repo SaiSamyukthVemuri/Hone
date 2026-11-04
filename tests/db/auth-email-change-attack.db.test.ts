@@ -6,7 +6,7 @@ import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../.
 import { listMessageIds } from "../../e2e/helpers/mail";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
 import { sessionMailboxProof } from "@/lib/auth/session-email-proof";
-import { changeEmailKeepingCompletion, fastVerifyLink, stackAuthConfig } from "./helpers/auth-email-change";
+import { allLinksOfType, changeEmailKeepingCompletion, fastVerifyLink, linkOfType, redeemImplicit, stackAuthConfig } from "./helpers/auth-email-change";
 
 // S-2b on a REAL GoTrue, written for the HOSTED shape (Confirm email ON) and valid for either double_confirm_changes value
 // (auth-worker, #1333 rule fix). It pins the three attack sessions the whole-second rules got wrong, and the normal sign-ins they
@@ -239,4 +239,111 @@ describe("NORMAL ACCESS under the hosted config (never-changed accounts), throug
     expect(methods(re.access_token)).toEqual(["magiclink"]);
     expect(await appGate(re.access_token), "the re-link is proven").toBe("email_link_or_otp");
   }, 60_000);
+});
+
+describe("ATTACK (AV4): a link the attacker requests for the OLD address WHILE the change is pending dies at completion", () => {
+  for (const step3 of ["none", "otp-to-new-address", "recover-to-new-address"] as const) {
+    it(`pending-phase stale link; afterwards ${step3}`, async () => {
+      const { doubleConfirm } = await stackAuthConfig();
+      const a = await confirmedUser(`pp-${step3}`);
+      const victim = addr(`ppv-${step3}`);
+      const s0 = await linkSession(a.email);
+      const seenA = await listMessageIds(a.email), seenV = await listMessageIds(victim);
+      expect((await gotrue("PUT", "user", { email: victim }, ANON, s0.access_token)).status).toBe(200);
+      await sleep(1100);
+      // Still pending: the address is still the attacker's. Ask for a magic link to it and KEEP it.
+      expect((await gotrue("POST", "otp", { email: a.email, create_user: false }, ANON)).status).toBe(200);
+      const stale = await linkOfType(a.email, seenA, "magiclink");
+      expect(stale, "setup: the pending-phase link was mailed").toBeTruthy();
+      await sleep(1100);
+      // Complete by hand (no second request): the new address's half, then the old address's half when double confirm is on.
+      const vLink = await linkOfType(victim, seenV, "email_change");
+      const aLink = doubleConfirm === false ? null : await linkOfType(a.email, seenA, "email_change", 3000);
+      if (vLink) await redeemImplicit(vLink);
+      if (aLink) await redeemImplicit(aLink);
+      expect((await adminQuery(`select email from auth.users where id = $1`, [a.id])).rows[0].email, "setup: applied").toBe(victim);
+      await sleep(1100);
+      if (step3 !== "none") {
+        // An unredeemable request to the NEW address moves recovery_sent_at INTO the window: the attack's precondition.
+        expect((await gotrue("POST", step3 === "otp-to-new-address" ? "otp" : "recover", step3 === "otp-to-new-address" ? { email: victim, create_user: false } : { email: victim }, ANON)).status).toBe(200);
+        const w = await adminQuery(`select u.recovery_sent_at > greatest(u.email_change_sent_at, (select max(i.updated_at) from auth.identities i where i.user_id = u.id and i.provider = 'email')) as inside from auth.users u where u.id = $1`, [a.id]);
+        expect(w.rows[0].inside, "precondition: recovery_sent_at now lies after the change").toBe(true);
+        await sleep(1100);
+      }
+      const r = await redeemImplicit(stale as string);
+      evidence[`pendingPhase_${step3}`] = { doubleConfirm, staleRedeemed: !!r.access, error: r.error };
+      if (r.access) expect(await appGate(r.access), "SECURE: had it redeemed, no gate may prove it").toBeNull();
+      expect(r.access, "MEASURED premise (GoTrue v2.197.0): the pending-phase link is dead after the change").toBeNull();
+      expect(r.error).toBe("otp_expired");
+    }, 90_000);
+  }
+});
+
+describe("RACE (AW2): credential requests fired CONCURRENTLY with the completing click", () => {
+  const ROUNDS = Number(process.env.AUTH_RACE_ROUNDS ?? 10);
+  it(`no session the attacker can hold on the CHANGED account is proven, over ${ROUNDS} rounds`, async () => {
+    const { doubleConfirm } = await stackAuthConfig();
+    const rows: Json[] = [];
+    let accepted = 0;
+    let attackerSessions = 0;
+    for (let round = 0; round < ROUNDS; round++) {
+      const a = await confirmedUser(`race${round}`);
+      const victim = addr(`racev${round}`);
+      const s0 = await linkSession(a.email);
+      const seenA = await listMessageIds(a.email), seenV = await listMessageIds(victim);
+      expect((await gotrue("PUT", "user", { email: victim }, ANON, s0.access_token)).status).toBe(200);
+      const vLink = await linkOfType(victim, seenV, "email_change");
+      const aLink = doubleConfirm === false ? null : await linkOfType(a.email, seenA, "email_change", 3000);
+      expect(vLink, "setup: the new address's confirm link").toBeTruthy();
+      const seenA2 = await listMessageIds(a.email);
+      // With double confirm the victim confirms first and the ATTACKER's click completes it (they hold that session); without,
+      // the victim's click completes it (their session, not the attacker's).
+      if (aLink) await redeemImplicit(vLink as string);
+      const completing = (aLink ?? vLink) as string;
+      // Offsets 0..60 ms cover the completing request's own duration (its identity update and session insert land inside it).
+      const burst = Array.from({ length: 21 }, (_, i) => i * 3).flatMap((ms) => [
+        sleep(ms).then(() => gotrue("POST", "otp", { email: a.email, create_user: false }, ANON)),
+        sleep(ms).then(() => gotrue("POST", "otp", { email: victim, create_user: false }, ANON)),
+        sleep(ms + 1).then(() => gotrue("POST", "recover", { email: victim }, ANON)),
+      ]);
+      const [completion, ...answers] = await Promise.all([redeemImplicit(completing), ...burst]);
+      expect((await adminQuery(`select email from auth.users where id = $1`, [a.id])).rows[0].email, "setup: applied").toBe(victim);
+      await sleep(1200); // let any mail from the burst land
+      const held: { kind: string; token: string }[] = [];
+      if (aLink && completion.access) held.push({ kind: "completion", token: completion.access });
+      // EVERY link the burst got mailed to the OLD address, of any type (a `signup` link was observed here), is redeemed and gated.
+      const oldAddressMailTypes: [string, number][] = [];
+      const linkErrors: string[] = [];
+      for (const t of ["magiclink", "signup", "recovery", "invite", "email_change"]) {
+        const links = await allLinksOfType(a.email, seenA2, t);
+        if (links.length) oldAddressMailTypes.push([t, links.length]);
+        if (t === "email_change") continue; // the change's own links (already used or the completion itself)
+        for (const l of links) {
+          const r = await redeemImplicit(l);
+          if (r.access) held.push({ kind: `old-address ${t} link from the burst`, token: r.access });
+          else linkErrors.push(`${t}:${r.error ?? "none"}`);
+        }
+      }
+      const w = (await adminQuery(
+        `select u.recovery_sent_at > greatest(u.email_change_sent_at, (select max(i.updated_at) from auth.identities i where i.user_id = u.id and i.provider = 'email')) as rec_after_change from auth.users u where u.id = $1`, [a.id])).rows[0];
+      const verdicts: Json[] = [];
+      for (const h of held) {
+        attackerSessions++;
+        const v = await appGate(h.token);
+        const c = claimsFromAccessToken(h.token) as { sub?: string; email?: string; amr?: { method: string }[] } | null;
+        // MEASURED: during the race GoTrue can mail a `signup` link for the now-free OLD address and create a NEW account for it
+        // (even for /otp with create_user false). That session is on ANOTHER account whose address IS the old address, i.e. the
+        // attacker's own mailbox; proving it is correct and gives nothing over the changed account. Only a proven session on the
+        // CHANGED account (sub = the attacker's account, which now carries the victim's address) is an S-2b acceptance.
+        if (c?.sub !== a.id) expect(c?.email, "a session on another account must be for the old address itself").toBe(a.email);
+        if (v !== null && c?.sub === a.id) accepted++;
+        verdicts.push({ kind: h.kind, proven: v, sameAccountAsAttacker: c?.sub === a.id, sessionEmailIs: c?.email === victim ? "victim" : c?.email === a.email ? "old-address" : "other", amr: (c?.amr ?? []).map((x) => x.method) });
+      }
+      const statuses = (answers as { status: number }[]).map((x) => x.status);
+      const tally = (from: number) => statuses.filter((_, i) => i % 3 === from).reduce<Record<string, number>>((m, st) => ({ ...m, [st]: (m[st] ?? 0) + 1 }), {});
+      rows.push({ round, doubleConfirm, otpOld: tally(0), otpNew: tally(1), recoverNew: tally(2), oldAddressMailTypes, oldAddressLinkErrors: linkErrors, recoveryAfterChange: w.rec_after_change, held: verdicts });
+    }
+    evidence.race = { rounds: ROUNDS, doubleConfirm, attackerSessions, acceptedOnChangedAccount: accepted, rows };
+    expect(accepted, `SECURE: no proven session on the CHANGED account (rows: ${JSON.stringify(rows).slice(0, 2000)})`).toBe(0);
+  }, 600_000);
 });

@@ -144,3 +144,41 @@ export async function changeEmailKeepingCompletion(
   const applied = (await adminQuery(`select email from auth.users where id = $1`, [userId])).rows[0]?.email === to;
   return { applied, completionToken, completionRefreshToken, completedBy, links: { new: !!linkNew, current: !!linkCurrent } };
 }
+
+/** The verify link of one `type` (magiclink, email_change, ...) mailed to `to` and not among `seen`; polled every 50 ms. */
+export async function linkOfType(to: string, seen: string[], type: string, timeoutMs = 8000): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const list = await fetch(`${E2E_MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`).then((r) => r.json() as Promise<{ messages?: { ID: string }[] }>);
+    for (const m of (list.messages ?? []).filter((x) => !seen.includes(x.ID))) {
+      const full = await fetch(`${E2E_MAILPIT_URL}/api/v1/message/${m.ID}`).then((r) => r.json() as Promise<{ Text?: string; HTML?: string }>);
+      for (const hit of `${full.Text ?? ""}\n${full.HTML ?? ""}`.matchAll(/https?:\/\/[^\s"'<>\])]+verify[^\s"'<>\])]*/g)) {
+        const u = hit[0].replaceAll("&amp;", "&");
+        if (new URL(u).searchParams.get("type") === type) return u;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
+}
+
+/** Every verify link of one `type` mailed to `to` and not among `seen` (no waiting beyond one read). */
+export async function allLinksOfType(to: string, seen: string[], type: string): Promise<string[]> {
+  const out: string[] = [];
+  const list = await fetch(`${E2E_MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`).then((r) => r.json() as Promise<{ messages?: { ID: string }[] }>);
+  for (const m of (list.messages ?? []).filter((x) => !seen.includes(x.ID))) {
+    const full = await fetch(`${E2E_MAILPIT_URL}/api/v1/message/${m.ID}`).then((r) => r.json() as Promise<{ Text?: string; HTML?: string }>);
+    for (const hit of `${full.Text ?? ""}\n${full.HTML ?? ""}`.matchAll(/https?:\/\/[^\s"'<>\])]+verify[^\s"'<>\])]*/g)) {
+      const u = hit[0].replaceAll("&amp;", "&");
+      if (new URL(u).searchParams.get("type") === type && !out.includes(u)) out.push(u);
+    }
+  }
+  return out;
+}
+
+/** Follow an implicit verify link; the session tokens it redirects with, or null (with the redirect's error code). */
+export async function redeemImplicit(link: string): Promise<{ access: string | null; refresh: string | null; error: string | null }> {
+  const r = await fetch(link, { redirect: "manual" });
+  const frag = new URLSearchParams(new URL(r.headers.get("location") ?? "", "http://x").hash.slice(1));
+  return { access: frag.get("access_token"), refresh: frag.get("refresh_token"), error: frag.get("error_code") };
+}
