@@ -173,7 +173,7 @@ describe("0301: the identity is saved with the area", () => {
     const before = await adminQuery(`select count(*)::int n from public.session_blocks where session_id=$1`, [sessionId]);
     await expect(
       save(studio, sessionId, { machine, mode: "galvanic", groups: { not: "a list" } }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/list of groups/);
     const after = await adminQuery(`select count(*)::int n from public.session_blocks where session_id=$1`, [sessionId]);
     expect(after.rows[0].n).toBe(before.rows[0].n);
   });
@@ -187,7 +187,7 @@ describe("0301: the identity is saved with the area", () => {
       studio_machine_id: null,
       machine_mode_key: null,
     });
-    await expect(save(studio, sessionId, { profile: XCELL, mode: "galvanic" })).rejects.toThrow();
+    await expect(save(studio, sessionId, { profile: XCELL, mode: "galvanic" })).rejects.toThrow(/needs a registered machine/);
   });
 
   it("no identity supplied means NULL: nothing is inferred", async () => {
@@ -219,7 +219,7 @@ describe("0301: refusals", () => {
     const theirs = await seedStudio("identity-theirs");
     const { sessionId } = await seedSession(mine);
     const foreign = await register(theirs);
-    await expect(save(mine, sessionId, { machine: foreign, mode: "galvanic" })).rejects.toThrow();
+    await expect(save(mine, sessionId, { machine: foreign, mode: "galvanic" })).rejects.toThrow(/not available in this studio/);
   });
 
   it("a retired unit is refused for a new save", async () => {
@@ -227,14 +227,14 @@ describe("0301: refusals", () => {
     const { sessionId } = await seedSession(studio);
     const machine = await register(studio);
     await adminQuery(`update public.studio_machines set retired_at = now() where id = $1`, [machine]);
-    await expect(save(studio, sessionId, { machine, mode: "galvanic" })).rejects.toThrow();
+    await expect(save(studio, sessionId, { machine, mode: "galvanic" })).rejects.toThrow(/not available in this studio/);
   });
 
   it("a caller cannot name a profile that disagrees with the unit", async () => {
     const studio = await seedStudio("identity-mismatch");
     const { sessionId } = await seedSession(studio);
     const machine = await register(studio);
-    await expect(save(studio, sessionId, { machine, mode: "galvanic", profile: XCELL })).rejects.toThrow();
+    await expect(save(studio, sessionId, { machine, mode: "galvanic", profile: XCELL })).rejects.toThrow(/does not match the selected model/);
   });
 
   it("anon and service_role cannot execute the commands or the internal writer", async () => {
