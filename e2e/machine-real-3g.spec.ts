@@ -99,8 +99,10 @@ for (const device of [
           // THE APP SERVER, not the runner's env: the owner's Settings page is server-rendered from the server's own catalogue. If the
           // server had the synthetic gate on, a synthetic model would be offered; and only the two real, PUBLISHED models may be.
           await page.goto("/settings/machines");
+          // Playwright never reports a <select>'s <option> as visible: wait for the select, then count the options.
+          await expect(page.locator("#machine-model")).toBeVisible({ timeout: T });
           const options = page.locator("#machine-model option");
-          await expect(options.first()).toBeVisible({ timeout: T });
+          await expect(options).not.toHaveCount(0, { timeout: T });
           const values = await options.evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
           expect(values.some((v) => v.startsWith("synthetic:")), "the app server must not offer a synthetic profile").toBe(false);
           expect([...values].sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
