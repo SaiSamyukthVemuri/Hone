@@ -7,6 +7,7 @@ import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioP
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
+import { classifyUnexpected, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
 import { changeRoleCopy } from "@/lib/settings/roles/change-role";
 import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
@@ -234,7 +235,7 @@ export function RolesEditor(props: RolesEditorProps) {
       setReason("");
       feedback.saved();
     } else if (result.error.code === "unexpected") {
-      await resolveUnexpected(boundVersion);
+      await resolveUnexpected(boundVersion, reviewedEdits.current);
     } else {
       handleError(result.error);
     }
@@ -242,25 +243,37 @@ export function RolesEditor(props: RolesEditorProps) {
 
   // PY-6. A transport error after a commit looks the same as a failure, so "Nothing was changed" cannot be claimed. Read the policy
   // back: a moved version means it went through; the same version means it did not; an unreadable policy is said plainly.
-  async function resolveUnexpected(boundVersion: number) {
+  // A moved version alone is never proof (another writer may have committed): success is claimed only when the reloaded choices equal
+  // the exact set this operation attempted. Otherwise the draft is kept and the outcome is said to be uncertain.
+  async function resolveUnexpected(boundVersion: number, attempted: AttemptedEdits | null) {
     const fresh = await props.reload();
-    if (!fresh.ok) {
+    const outcome = classifyUnexpected({
+      boundVersion,
+      attempted,
+      fresh: fresh.ok ? { version: fresh.state.version, policies: fresh.state.policies } : null,
+    });
+    if (outcome === "unreadable" || !fresh.ok) {
       feedback.failed("We could not confirm whether that was saved. Reload the page to check before trying again.");
       return;
     }
-    if (fresh.state.version === boundVersion) {
+    if (outcome === "unchanged") {
       feedback.failed("Something went wrong. We checked, and nothing was changed.");
       return;
     }
     setSaved(fresh.state.policies);
-    setDrafts(fresh.state.policies);
     setReviewed(fresh.state.reviewed);
     setReviewing(false);
     setReviewData(null);
     setPreview(null);
     setConfirmed(false);
-    setReason("");
-    feedback.failed("The response was lost, but the change went through. The page now shows what is saved.");
+    if (outcome === "landed") {
+      setDrafts(fresh.state.policies);
+      setReason("");
+      feedback.failed("The response was lost, but the change went through. The page now shows what is saved.");
+      return;
+    }
+    // Uncertain: our draft stays exactly as the person left it, against the permissions as they are now.
+    feedback.failed(UNCERTAIN_SAVE_MESSAGE);
   }
 
   function discard() {
@@ -299,7 +312,7 @@ export function RolesEditor(props: RolesEditorProps) {
     const result =
       preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim(), previewConfirmed) : await props.reset(preview.role, boundVersion, reason.trim(), previewConfirmed);
     if (!result.ok && result.error.code === "unexpected") {
-      await resolveUnexpected(boundVersion);
+      await resolveUnexpected(boundVersion, null);
       return;
     }
     if (result.ok) {

@@ -49,11 +49,13 @@ describe("PY-6 'unexpected' does not claim nothing changed", () => {
     expect(roleErrorMessage({ code: "unexpected" })).toMatch(/could not confirm/);
   });
   it("save, reset and adopt read the policy back on 'unexpected' and compare versions", () => {
-    expect(fn("async function onSave")).toContain("resolveUnexpected(boundVersion)");
-    expect(fn("async function confirmPreview")).toContain("resolveUnexpected(boundVersion)");
+    expect(fn("async function onSave")).toContain("resolveUnexpected(boundVersion, reviewedEdits.current)");
+    expect(fn("async function confirmPreview")).toContain("resolveUnexpected(boundVersion, null)");
     const body = fn("async function resolveUnexpected");
     expect(body).toContain("props.reload()");
-    expect(body).toContain("fresh.state.version === boundVersion");
+    expect(body).toContain("classifyUnexpected(");
+    expect(body).not.toContain("fresh.state.version === boundVersion");
+    expect(body).toContain("UNCERTAIN_SAVE_MESSAGE");
   });
 });
 
