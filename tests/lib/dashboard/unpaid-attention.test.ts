@@ -106,6 +106,33 @@ describe("a settled visit keeps the price it was settled against", () => {
   });
 });
 
+describe("Codex P2 (9d9982f1c): a row-capped page is never treated as authoritative", () => {
+  const pricingRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ client_id: i === 0 ? "c-a1" : `other-${i}`, service_name: `Other ${i}`, price_cents: 100, notes: null, effective_from: "2026-01-01" }));
+  it("a full (1000-row) client_pricing page hides nothing silently: every amount is 'Amount unavailable', not the menu price", async () => {
+    db.rows.client_pricing = pricingRows(1000);
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items).toEqual([expect.objectContaining({ balance: { kind: "unavailable" } })]);
+  });
+  it("a page just under the cap is read normally", async () => {
+    db.rows.client_pricing = pricingRows(999);
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "owed", outstandingCents: 10000, currency: "cad" });
+  });
+  it("a capped services page is also 'Amount unavailable'", async () => {
+    db.rows.services = Array.from({ length: 1000 }, (_, i) => ({ id: i === 0 ? "svc" : `s${i}`, name: "Facial", price_cents: 10000 }));
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.items[0].balance).toEqual({ kind: "unavailable" });
+  });
+  it("a capped page on any other read fails the whole load rather than presenting a partial list", async () => {
+    db.rows.payment_charge_attempts = Array.from({ length: 1000 }, () => ({ session_id: "ss1", status: "failed", amount_cents: 1, currency: "cad" }));
+    expect(await loadUnpaidAttention(base)).toEqual({ ok: false });
+  });
+});
+
 describe("owner-only", () => {
   it("a non-owner is refused before ANY query is issued", async () => {
     const r = await loadUnpaidAttention({ ...base, viewerIsOwner: false });

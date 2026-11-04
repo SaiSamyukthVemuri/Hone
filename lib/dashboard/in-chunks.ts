@@ -5,6 +5,11 @@
 
 export const ID_CHUNK = 80;
 
+// PostgREST truncates a response at `max_rows` (supabase/config.toml: 1000) WITHOUT an error. A page that reaches the cap may have hidden
+// rows, so absence from it proves nothing (a client price could fall back to the menu price). A capped page is therefore a FAILED read:
+// callers already turn a failed read into "Amount unavailable" (quotes) or an unreadable panel (everything else), never a guessed figure.
+export const ROW_CAP = 1000;
+
 export function chunkIds<T>(ids: readonly T[], size: number = ID_CHUNK): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
@@ -13,7 +18,7 @@ export function chunkIds<T>(ids: readonly T[], size: number = ID_CHUNK): T[][] {
 
 export type ChunkRead<Row> = { data: Row[] | null; error: unknown };
 
-/** Runs `read` once per chunk (in parallel) and concatenates. One failed chunk = the whole read fails. */
+/** Runs `read` once per chunk (in parallel) and concatenates. One failed or row-capped chunk = the whole read fails. */
 export async function readInChunks<Row>(
   ids: readonly string[],
   read: (chunk: string[]) => PromiseLike<ChunkRead<Row>>,
@@ -22,6 +27,7 @@ export async function readInChunks<Row>(
   const rows: Row[] = [];
   for (const p of parts) {
     if (p.error) return { ok: false };
+    if ((p.data?.length ?? 0) >= ROW_CAP) return { ok: false };
     rows.push(...(p.data ?? []));
   }
   return { ok: true, rows };
