@@ -3,7 +3,7 @@
   "migrations": {
     "count": 255,
     "last": "0289_roles_edit_record_protections.sql",
-    "sha256": "397a35d7ad058f71a22ff6d80584cc3724b334f064b4d070b96746a04f9dd442"
+    "sha256": "e660801f4ff1967ea8175caedb5f56581367935087a79a46bb9b24e892265b83"
   },
   "public": {
     "tables": [

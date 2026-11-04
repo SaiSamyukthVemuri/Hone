@@ -269,13 +269,16 @@ values
   ('restore_deleted_records', 'DN-25', 'Restoring deleted records becomes owner-only', 'R4', true, 'narrows', 'Restoring deleted records is open to practitioners today. From the enforcement release only the owner can.'),
   ('id_portraits_owner_only', 'DN-24', 'Client ID photos and portraits are owner-only', 'R4', true, 'narrows', 'ID photos and portraits become owner-only and not delegable until the separate ID-photo review is complete. The feature is off today, so no practitioner loses a photo they can see now.');
 
--- Release registry seed: the keys whose enforcement is real in THIS release (a test compares this list with the catalog's enforced keys).
+-- Release registry seed: the keys whose enforcement is real in THIS release, plus clin.edit_records, whose enforcement is the held 0289 triggers and the
+-- app's edit gates (the catalog keeps it not_yet until the 0289 proof and reviews; the PENDING row means an owner's choice is inert until the operator
+-- releases it).
 -- Every other key is unreleased: its stored or default value is inert and it resolves to the existing snapshot.
 -- Every row is seeded PENDING (released_at null): nothing here changes anyone's access until the operator marks the keys released after the
 -- enforcing app is live. The deny_only keys are 'narrow' releases; observe keys (appt.complete) are not released at all.
 insert into public.permission_key_release (key, released_at, release_tag, release_kind) values
   ('appt.cancel', null, 'R1-R2', 'full'), ('appt.mark_no_show', null, 'R1-R2', 'full'), ('appt.edit_notes', null, 'R1-R2', 'full'),
   ('clin.view_records', null, 'R1-R2', 'full'), ('clin.view_photos', null, 'R1-R2', 'full'), ('clin.view_intake', null, 'R1-R2', 'full'), ('clin.view_aftercare', null, 'R1-R2', 'full'),
+  ('clin.edit_records', null, 'R1-R2', 'full'),
   ('appt.book', null, 'R1-R2', 'narrow'), ('appt.move', null, 'R1-R2', 'narrow'), ('appt.reassign', null, 'R1-R2', 'narrow'),
   ('avail.manage_own', null, 'R1-R2', 'narrow'), ('avail.manage_others', null, 'R1-R2', 'narrow'), ('avail.manage_studio_hours', null, 'R1-R2', 'narrow');
 
