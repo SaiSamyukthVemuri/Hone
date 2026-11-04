@@ -94,15 +94,19 @@ describe("the panel", () => {
     expect(html).toContain("Dismissed (1)");
   });
   it("owner: says what the unpaid check covers and offers the bounded All outstanding view; says when it is cut", () => {
-    const html = render({ isOwner: true, unpaid: { windowDays: 90, notReturned: 3 }, unpaidHrefs: { all: "?period=day&unpaid=all", recent: "?period=day" } });
+    const html = render({ isOwner: true, unpaid: { windowDays: 90, notReturned: 3, unlisted: 2 }, unpaidHrefs: { all: "?period=day&unpaid=all", recent: "?period=day" } });
     expect(html).toContain("finished in the last 90 days");
     expect(html).toContain('data-testid="needs-attention-unpaid-capped"');
     expect(html).toContain('href="?period=day&amp;unpaid=all"');
-    const all = render({ isOwner: true, unpaidAll: true, unpaid: { windowDays: null, notReturned: 0 }, unpaidHrefs: { all: "?unpaid=all", recent: "?" } });
+    // HON-65 (Insurance F-2): a count-only line, no amounts, so skipped unknowns are never silently invisible.
+    expect(html).toContain('data-testid="needs-attention-unpaid-unlisted"');
+    expect(html).toContain("2 finished visits have no price or payment detail Hone can verify, so they are not listed.");
+    const all = render({ isOwner: true, unpaidAll: true, unpaid: { windowDays: null, notReturned: 0, unlisted: 0 }, unpaidHrefs: { all: "?unpaid=all", recent: "?" } });
     expect(all).toContain("all finished appointments with a balance");
     expect(all).not.toContain("needs-attention-unpaid-capped");
+    expect(all).not.toContain("needs-attention-unpaid-unlisted");
   });
   it("non-owner: no unpaid window note or toggle", () => {
-    expect(render({ isOwner: false, unpaid: { windowDays: 90, notReturned: 0 } })).not.toContain("needs-attention-unpaid");
+    expect(render({ isOwner: false, unpaid: { windowDays: 90, notReturned: 0, unlisted: 0 } })).not.toContain("needs-attention-unpaid");
   });
 });
