@@ -117,3 +117,14 @@ on one device lost proof when another device asked for a link. It failed closed:
   later request.
 - **S-4.** Sessions created before deploy, and sign-ins that never pass `/auth/callback`, carry no stamp and keep the read-only
   window rule (the previous behaviour). Expected.
+
+### Rollback (Insurance S-3)
+`supabase/rollbacks/0291_session_link_proof_stamp.down.sql`, run by an operator only after 0291 is applied, in one transaction:
+- restores the pre-CODEX-P2 `session_link_proof_is_current()` (byte-for-byte the 55cf93031 body; grants restated);
+- drops `stamp_session_link_proof()` and `public.auth_session_link_proofs`;
+- **REFUSES while any stamp row exists** unless the same transaction sets
+  `set local hone.rollback_0291_discard_stamps = 'discard'`.
+
+Proven by `tests/db/auth-0291-stamp-rollback.db.test.ts` (refusal, opt-in, empty table, all rolled back) and
+`tests/migrations/0291-stamp-rollback.test.ts` (source contract). Effect after rollback: changed accounts fall back to the window
+rule (fail closed); the callback's stamp call then errors and counts as "not proven".
