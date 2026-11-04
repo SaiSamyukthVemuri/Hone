@@ -79,7 +79,7 @@ async function pkceLinkSession(email: string, createUser = false) {
 describe("ATTACK: the session the LAST confirm click returns is not proof of the new address", () => {
   for (const lastHalf of ["current", "new"] as const) {
     it(`implicit flow, ${lastHalf === "current" ? "the OLD address (attacker) clicks last" : "the NEW address (victim) clicks last"}`, async () => {
-      const { doubleConfirm } = await stackAuthConfig();
+      const { doubleConfirm, mailerAutoconfirm } = await stackAuthConfig();
       const attacker = await confirmedUser(`c-${lastHalf}`);
       const victim = addr(`cv-${lastHalf}`);
       const old = await linkSession(attacker.email);
@@ -88,12 +88,15 @@ describe("ATTACK: the session the LAST confirm click returns is not proof of the
       expect(done.applied, "setup: the change applied").toBe(true);
       expect(done.completionToken, "precondition: GoTrue returned a session to the completing click").toBeTruthy();
       const token = done.completionToken as string;
-      // With double confirm the last clicker completes it; without, only the new address is mailed and its click completes it.
-      expect(done.completedBy, "precondition: the expected half completed the change").toBe(doubleConfirm === true ? lastHalf : "new");
+      // Confirm ON (hosted): with double confirm the LAST clicker completes it; without, only the new address is mailed and its click
+      // completes it. Confirm OFF (MEASURED): GoTrue applies the change on the FIRST click of EITHER link, double confirm or not, so
+      // there the completer is recorded, not predicted. Either way the completion session must be refused.
+      if (mailerAutoconfirm === false) expect(done.completedBy, "precondition: the expected half completed the change").toBe(doubleConfirm === true ? lastHalf : "new");
+      else expect(done.completedBy, "precondition: some click completed the change").not.toBeNull();
       expect(methods(token), "precondition: the completion session carries `otp`, a proof-set method (the dangerous shape)").toContain("otp");
       const t = await times(attacker.id, token);
       expect(t.s_created, "precondition: the completion session was created AFTER the change (microseconds)").toBeGreaterThan(t.anchor);
-      evidence[`completion_implicit_${lastHalf}`] = { doubleConfirm, completedBy: done.completedBy, amr: claimsOf(token)?.amr, sessionMinusAnchorMs: Math.round(((t.s_created as number) - t.anchor) * 1000 * 100) / 100, amrSecondMinusAnchorSecond: amrSecond(token) - Math.floor(t.anchor) };
+      evidence[`completion_implicit_${lastHalf}`] = { mailerAutoconfirm, doubleConfirm, completedBy: done.completedBy, amr: claimsOf(token)?.amr, sessionMinusAnchorMs: Math.round(((t.s_created as number) - t.anchor) * 1000 * 100) / 100, amrSecondMinusAnchorSecond: amrSecond(token) - Math.floor(t.anchor) };
       expect(await appGate(token), "SECURE: the completion session does not prove the new address").toBeNull();
       expect(await appGate(await refresh(done.completionRefreshToken)), "SECURE: nor does its refresh").toBeNull();
     }, 60_000);
