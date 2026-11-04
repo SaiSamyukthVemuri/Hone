@@ -15,7 +15,6 @@ export function SaveStatus({
   state: SaveState;
   onRetry?: () => void;
 }) {
-  const message = state.status === "failed" ? state.message : null;
   return (
     <div
       role="status"
@@ -33,9 +32,6 @@ export function SaveStatus({
       >
         {LABEL[state.status]}
       </span>
-      {message && (
-        <span className="text-neutral-600 dark:text-neutral-400">{message}</span>
-      )}
       {state.status === "failed" && onRetry && (
         <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
           Try again

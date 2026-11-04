@@ -22,11 +22,12 @@ describe("SaveStatus", () => {
       expect(out).toContain(text);
     }
   });
-  it("offers Try again only after a failure, with the message", () => {
+  it("offers Try again only after a failure, and does not repeat the error text the form already shows", () => {
     expect(html({ status: "saved" }, () => undefined)).not.toContain("Try again");
     const out = html({ status: "failed", message: "Check the connection." }, () => undefined);
     expect(out).toContain("Try again");
-    expect(out).toContain("Check the connection.");
+    // the form renders the error in its own alert; repeating it here made one message match twice
+    expect(out).not.toContain("Check the connection.");
   });
   it("uses no pronouns", () => {
     expect(html({ status: "failed", message: "x" }, () => undefined)).not.toMatch(/\b(she|he|her|his|they)\b/i);
