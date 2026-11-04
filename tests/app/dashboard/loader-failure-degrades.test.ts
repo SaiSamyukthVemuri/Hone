@@ -32,7 +32,7 @@ const ok = {
 type Key = keyof typeof ok;
 
 function props(failing?: Key) {
-  const p: Record<string, unknown> = { isOwner: false, todayLocal: "2026-11-02", studioId: "studio-1" };
+  const p: Record<string, unknown> = { isOwner: false, todayLocal: "2026-11-02", studioId: "studio-1", studioTimezone: "America/Toronto", unpaidAll: false, unpaidHrefs: { all: "?unpaid=all", recent: "?" } };
   for (const k of Object.keys(ok) as Key[]) {
     p[k] = k === failing ? Promise.reject(new Error("42501")) : ok[k]();
     (p[k] as Promise<unknown>).catch(() => undefined);

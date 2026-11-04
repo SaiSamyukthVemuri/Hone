@@ -29,6 +29,7 @@ import {
 } from "@/lib/dashboard/needs-attention-model";
 import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
 import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
+import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
 import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
   buildGettingStarted,
@@ -547,6 +548,7 @@ const UNAVAILABLE_RECENT_SESSIONS = "recent sessions";
 const UNAVAILABLE_MISSING_RECORDS = "missing records";
 const UNAVAILABLE_RECORD_DETAILS = "record details";
 const UNAVAILABLE_EXPIRING_SUPPLIES = "expiring supplies";
+const UNAVAILABLE_UNPAID = "unpaid balances";
 const STUDIO_ONLY_CHECKS: ReadonlySet<string> = new Set([UNAVAILABLE_PAYMENT_SETUP, UNAVAILABLE_EXPIRING_SUPPLIES]);
 
 const EMPTY_PROCEDURE_ACTIONS: ProcedureActionMetrics = {
@@ -659,8 +661,13 @@ async function resolveNeedsAttentionInput({
 // What the signed-in user actually sees: the model minus THIS owner's dismissals (owners only), and the dismissed rows for the
 // Dismissed view. Memoised on the request's own `attentionSources` promise, so the heading count and the panel share ONE computation
 // (and one dismissal read) instead of repeating it.
+// Owner-only inputs for the Needs attention model. Both heading count and panel must be given the SAME values (one shared computation).
+type OwnerNeedsInputs = NeedsAttentionInputs & { studioId: string; studioTimezone: string; unpaidAll: boolean; unpaidHrefs: { all: string; recent: string } };
+
 type VisibleNeeds = {
   shown: NeedsAttention;
+  // Owner only: how far back unpaid appointments were looked for, and whether the list was cut. Null for everyone else.
+  unpaid: { windowDays: number | null; notReturned: number } | null;
   dismissed: DismissedRow[];
   // True when the owner's dismissals could not be read: every reminder is shown and Dismiss is withheld.
   dismissalsUnavailable: boolean;
@@ -669,24 +676,40 @@ type VisibleNeeds = {
 };
 const visibleMemo = new WeakMap<object, Promise<VisibleNeeds>>();
 
-function resolveVisibleNeeds(props: NeedsAttentionInputs & { studioId: string }): Promise<VisibleNeeds> {
+function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
   const hit = visibleMemo.get(props.attentionSources);
   if (hit) return hit;
   const run = (async (): Promise<VisibleNeeds> => {
-    const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
+    const input = await resolveNeedsAttentionInput(props);
+    // Unpaid balances are owner-only money (0254). A practitioner's render never queries them and never receives a figure.
+    const unpaidRead = props.isOwner
+      ? await loadUnpaidAttention({
+          studioId: props.studioId,
+          studioTimezone: props.studioTimezone,
+          viewerIsOwner: true,
+          now: new Date(),
+          windowDays: props.unpaidAll ? null : UNPAID_DEFAULT_WINDOW_DAYS,
+        }).catch((): { ok: false } => ({ ok: false }))
+      : null;
+    const model = buildNeedsAttention({
+      ...input,
+      unavailableChecks: [...input.unavailableChecks, ...(unpaidRead && !unpaidRead.ok ? [UNAVAILABLE_UNPAID] : [])],
+      unpaid: unpaidRead?.ok ? unpaidRead.items : undefined,
+    });
+    const unpaid = unpaidRead?.ok ? { windowDays: unpaidRead.windowDays, notReturned: unpaidRead.notReturned } : null;
     const countKnown = !model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c));
     // Non-owners have no dismissals, no Dismissed view and no Dismiss: their list is the model as built.
-    if (!props.isOwner) return { shown: model, dismissed: [], dismissalsUnavailable: false, countKnown };
+    if (!props.isOwner) return { shown: model, unpaid, dismissed: [], dismissalsUnavailable: false, countKnown };
     const read = await loadMyDismissals(props.studioId);
-    if (!read.ok) return { shown: model, dismissed: [], dismissalsUnavailable: true, countKnown };
+    if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsUnavailable: true, countKnown };
     const { shown, dismissed } = applyDismissals(model, read.rows);
-    return { shown, dismissed, dismissalsUnavailable: false, countKnown };
+    return { shown, unpaid, dismissed, dismissalsUnavailable: false, countKnown };
   })();
   visibleMemo.set(props.attentionSources, run);
   return run;
 }
 
-export async function NeedsAttentionSection(props: NeedsAttentionInputs & { studioId: string }) {
+export async function NeedsAttentionSection(props: OwnerNeedsInputs) {
   const v = await resolveVisibleNeeds(props);
   return (
     <NeedsAttentionPanel
@@ -694,11 +717,14 @@ export async function NeedsAttentionSection(props: NeedsAttentionInputs & { stud
       dismissed={v.dismissed}
       isOwner={props.isOwner}
       dismissalsUnavailable={v.dismissalsUnavailable}
+      unpaid={v.unpaid}
+      unpaidAll={props.unpaidAll}
+      unpaidHrefs={props.unpaidHrefs}
     />
   );
 }
 
-async function HeadingCountValue(props: NeedsAttentionInputs & { studioId: string }) {
+async function HeadingCountValue(props: OwnerNeedsInputs) {
   let text: string;
   try {
     const v = await resolveVisibleNeeds(props);
@@ -719,7 +745,7 @@ async function HeadingCountValue(props: NeedsAttentionInputs & { studioId: strin
 }
 
 /** THE count of Needs attention, shown once, beside the heading: clients and items, after this owner's dismissals. Own Suspense. */
-export function NeedsAttentionHeadingCount(props: NeedsAttentionInputs & { studioId: string }) {
+export function NeedsAttentionHeadingCount(props: OwnerNeedsInputs) {
   return (
     <Suspense fallback={null}>
       <HeadingCountValue {...props} />

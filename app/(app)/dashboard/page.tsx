@@ -242,7 +242,7 @@ export default async function DashboardPage({
 }: {
   // `day` is browser-controlled and Next hands repeated params through as an
   // array, so the type says so rather than lying about it.
-  searchParams: Promise<{ period?: string; day?: string | string[] }>;
+  searchParams: Promise<{ period?: string; day?: string | string[]; unpaid?: string }>;
 }) {
   const sp = await searchParams;
   // PR #208: practice-snapshot period filter. Default: this week.
@@ -757,6 +757,15 @@ export default async function DashboardPage({
   // opt-in per studio and owner-only: when the flag is off, NONE of this runs
   // and the dashboard renders exactly as today (the getting-started link card /
   // footer below). Read as `=== true` so an undefined flag is off.
+  // Links for the Needs attention "All outstanding" toggle: they keep the day and period the page is showing.
+  const unpaidHrefs = (() => {
+    const base = new URLSearchParams();
+    base.set("period", period);
+    if (selectedDayLocal !== todayLocal) base.set("day", selectedDayLocal);
+    const recent = base.toString();
+    base.set("unpaid", "all");
+    return { all: `?${base.toString()}`, recent: recent === "" ? "?" : `?${recent}` };
+  })();
   const onboardingV2On = isOwner && studio.onboarding_v2_enabled === true;
   const onboarding = onboardingV2On
     ? await (async () => {
@@ -1016,6 +1025,9 @@ export default async function DashboardPage({
           <NeedsAttentionHeadingCount
             key={`needs-count:${selectedDayLocal}:${period}`}
             studioId={studio.id}
+            studioTimezone={studio.timezone}
+            unpaidAll={sp.unpaid === "all"}
+            unpaidHrefs={unpaidHrefs}
             attentionSources={attentionSourcesPromise}
             staffManaged={staffManagedPromise}
             procedureActions={procedureActionsPromise}
@@ -1034,6 +1046,9 @@ export default async function DashboardPage({
         >
           <NeedsAttentionSection
             studioId={studio.id}
+            studioTimezone={studio.timezone}
+            unpaidAll={sp.unpaid === "all"}
+            unpaidHrefs={unpaidHrefs}
             attentionSources={attentionSourcesPromise}
             staffManaged={staffManagedPromise}
             procedureActions={procedureActionsPromise}

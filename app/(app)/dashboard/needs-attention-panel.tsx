@@ -76,7 +76,7 @@ function DismissButton({ api, identity, what }: { api: DismissApi; identity: { i
 // "Still owes" is the AUTHORITATIVE balance only. An unknown balance reads "Amount unavailable", never 0.
 function unpaidLine(item: AttentionClient["items"][number]): string {
   if (item.balance?.kind !== "owed") return "Amount unavailable";
-  const currency = parsePaymentCurrency(item.balance.currency);
+  const currency = parsePaymentCurrency(item.balance.currency.toLowerCase());
   return `Still owes ${formatMoney(item.balance.outstandingCents, currency)}`;
 }
 
@@ -224,11 +224,19 @@ export function NeedsAttentionPanel({
   dismissed = [],
   isOwner = false,
   dismissalsUnavailable = false,
+  unpaid = null,
+  unpaidAll = false,
+  unpaidHrefs = { all: "?unpaid=all", recent: "?" },
 }: {
   needs: NeedsAttention;
   dismissed?: ReadonlyArray<DismissedRow>;
   isOwner?: boolean;
   dismissalsUnavailable?: boolean;
+  // Owner only. How far back unpaid appointments were looked for (null = every finished appointment) and how many were not returned.
+  unpaid?: { windowDays: number | null; notReturned: number } | null;
+  unpaidAll?: boolean;
+  // Same-page links that keep the day and period in the query.
+  unpaidHrefs?: { all: string; recent: string };
 }) {
   const [expanded, setExpanded] = useState(false);
   const router = useRouter();
@@ -252,6 +260,19 @@ export function NeedsAttentionPanel({
   };
   const restore = (key: string) => run(() => restoreAttentionAction(key));
   const dismissedView = isOwner ? <DismissedView rows={dismissed} isOwner={!dismissalsUnavailable} restore={restore} busy={pending} /> : null;
+  // Says what the unpaid check covers, and offers the bounded "All outstanding" view. Owners only: nobody else has the check.
+  const unpaidNote =
+    isOwner && unpaid ? (
+      <p data-testid="needs-attention-unpaid-window" className="text-xs text-neutral-500">
+        {unpaid.windowDays === null
+          ? "Unpaid appointments: all finished appointments with a balance."
+          : `Unpaid appointments: finished in the last ${unpaid.windowDays} days.`}{" "}
+        {unpaid.notReturned > 0 && <span data-testid="needs-attention-unpaid-capped">Some older or additional ones are not shown, so this may not be everything. </span>}
+        <Link href={unpaidAll ? unpaidHrefs.recent : unpaidHrefs.all} data-testid="needs-attention-unpaid-toggle" className="underline">
+          {unpaidAll ? "Show last 90 days only" : "Show all outstanding"}
+        </Link>
+      </p>
+    ) : null;
   const errorNote = actionError ? (
     <p role="alert" data-testid="attention-action-error" className="text-sm text-neutral-700 dark:text-neutral-300">
       {actionError}
@@ -289,6 +310,7 @@ export function NeedsAttentionPanel({
     const tail = (
       <>
         {errorNote}
+        {unpaidNote}
         {dismissedView}
         {dismissalsNote}
       </>
@@ -375,6 +397,7 @@ export function NeedsAttentionPanel({
       )}
       {windowNote}
       {errorNote}
+      {unpaidNote}
       {dismissedView}
       {dismissalsNote}
     </div>

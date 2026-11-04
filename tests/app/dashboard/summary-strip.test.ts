@@ -124,6 +124,9 @@ describe("Needs attention shows ONE count, in its heading, from the model the ow
     isOwner: false,
     todayLocal: "2026-11-02",
     studioId: "studio-1",
+    studioTimezone: "America/Toronto",
+    unpaidAll: false,
+    unpaidHrefs: { all: "?unpaid=all", recent: "?" },
   });
   const render = async (el: { props: unknown }) => {
     const child = (el.props as { children: { type: (p: unknown) => Promise<unknown>; props: unknown } }).children;
