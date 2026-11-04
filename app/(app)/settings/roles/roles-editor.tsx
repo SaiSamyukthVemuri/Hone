@@ -139,6 +139,24 @@ export function RolesEditor(props: RolesEditorProps) {
     setDrafts((d) => ({ ...d, [role]: result.policy }));
   }
 
+  // Discard a saved choice that is waiting on a release: stage the key back on the studio's basis in the draft. Nothing is written
+  // until the owner goes through the usual Review and Save, so the core previews it and records who did it.
+  function stageBasisChoice(forRole: Role, key: string, basis: Scope) {
+    const result = applyEdit(forRole, drafts[forRole], key, basis);
+    if (!result.ok) {
+      setRowError({ key, message: result.reason });
+      return;
+    }
+    setRole(forRole);
+    setRowError(null);
+    feedback.reset();
+    reviewSeq.current += 1;
+    reviewedEdits.current = null;
+    setReviewing(false);
+    setReviewData(null);
+    setDrafts((d) => ({ ...d, [forRole]: result.policy }));
+  }
+
   function changedEdits() {
     const edits: Partial<Record<Role, Record<string, Scope>>> = {};
     for (const r of dirtyRoles) {
@@ -370,6 +388,7 @@ export function RolesEditor(props: RolesEditorProps) {
             previewActivation={props.previewActivation}
             activate={props.activate}
             onActivated={() => router.refresh()}
+            onDiscard={stageBasisChoice}
           />
           <div role="tablist" aria-label="Role" className="flex gap-2">
             {ROLES.map((r) => (
@@ -846,12 +865,13 @@ function AccessSummary({ person, load }: { person: PersonView; load: RolesEditor
   const defs = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
   return (
     <div data-testid="access-summary" className="mt-2 flex flex-col gap-2 text-sm">
-      <p className="text-neutral-600 dark:text-neutral-400">What this person can do right now, from the saved settings. Unsaved edits are not shown here.</p>
+      <p className="text-neutral-600 dark:text-neutral-400">Access in force right now. Choices saved but waiting for activation, and unsaved edits, are not counted here.</p>
       <ul className="flex flex-col gap-0.5">
         {state.rows.map((r) => (
           <li key={r.key} data-access-row={r.key} data-effective={r.scope} className="break-words text-xs">
             {defs.get(r.key)?.label ?? r.key}: <span className="font-medium">{scopeText(r.scope === "own" || r.scope === "studio" ? r.scope : "off")}</span>
             {r.cappedBy ? <span className="text-neutral-500"> ({CAP_TEXT(r.cappedBy)})</span> : null}
+            {r.source === "inactive_until_activated" ? <span data-testid="access-pending" className="text-neutral-500"> (a saved choice is waiting for activation)</span> : null}
           </li>
         ))}
       </ul>
@@ -973,6 +993,7 @@ function ActivationSection({
   previewActivation,
   activate,
   onActivated,
+  onDiscard,
 }: {
   pending: PendingActivation[];
   writable: boolean;
@@ -980,6 +1001,7 @@ function ActivationSection({
   previewActivation: RolesEditorProps["previewActivation"];
   activate: RolesEditorProps["activate"];
   onActivated: () => void;
+  onDiscard: (role: Role, key: string, basis: Scope) => void;
 }): ReactNode {
   const id = useId();
   const [review, setReview] = useState<ActivationPreview | null>(null);
@@ -1050,6 +1072,19 @@ function ActivationSection({
           <li key={p.key} data-pending-key={p.key} className="break-words">
             {p.label}
             <span className="text-xs"> ({p.roles.map((r) => ROLE_LABELS[r].toLowerCase()).join(", ")})</span>
+            {p.discard.map((d) => (
+              <button
+                key={d.role}
+                type="button"
+                data-testid="activation-discard"
+                data-discard-role={d.role}
+                onClick={() => onDiscard(d.role, p.key, d.basis)}
+                disabled={!writable}
+                className="ml-2 min-h-[44px] rounded-md border border-amber-400 px-2 py-1 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+              >
+                Discard {ROLE_LABELS[d.role].toLowerCase()} choice
+              </button>
+            ))}
           </li>
         ))}
       </ul>

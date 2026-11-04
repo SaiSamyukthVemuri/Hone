@@ -199,6 +199,9 @@ export function enforcementRefusal(role: Role, policy: StudioPolicy, key: string
   if (!def) return null;
   const inForce = policy.values[key] ?? baselineScope(def, role, policy);
   if (inForce === next) return null;
+  // Discard: putting a key back on the studio's basis never grants anything the basis does not, so it is allowed for every key,
+  // including ones the app does not enforce yet (the owner can always take back a choice that is waiting on a release).
+  if (next === baselineScope(def, role, policy)) return null;
   const mode = enforcementState(key);
   if (mode === "observe" || mode === "not_yet") return "not_enforced";
   if (mode === "deny_only" && scopeRank(next as Scope) > scopeRank(baselineScope(def, role, policy))) return "widening_not_yet";
@@ -214,8 +217,9 @@ export function applyEdit(
 ): { ok: true; policy: StudioPolicy } | { ok: false; reason: string } {
   {
     const mode = enforcementState(key);
-    if (mode === "observe" || mode === "not_yet") return { ok: false, reason: NOT_ENFORCED_LINE };
     const defOf = catalogByKey.get(key);
+    const toBasis = defOf !== undefined && next === baselineScope(defOf, role, policy);
+    if (!toBasis && (mode === "observe" || mode === "not_yet")) return { ok: false, reason: NOT_ENFORCED_LINE };
     if (mode === "deny_only" && defOf && scopeRank(next) > scopeRank(baselineScope(defOf, role, policy)) && policy.values[key] !== next) {
       return { ok: false, reason: WIDENING_LATER_LINE };
     }
