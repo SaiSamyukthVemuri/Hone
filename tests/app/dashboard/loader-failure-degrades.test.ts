@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/app/(app)/dashboard/actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
+vi.mock("@/lib/dashboard/attention-dismissal-store", () => ({ loadMyDismissals: vi.fn(async () => ({ ok: false })) }));
 vi.mock("next/link", () => ({
   default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never),
 }));
@@ -12,7 +15,7 @@ vi.mock("next/link", () => ({
 // because the Needs attention loaders were awaited bare. One failing loader must degrade to its own
 // "unavailable" state. These render the real components with each loader rejecting in turn.
 
-const { NeedsAttentionSection, NeedsAttentionCountPill, ClientsToReview } = await import(
+const { NeedsAttentionSection, NeedsAttentionHeadingCount } = await import(
   "@/app/(app)/dashboard/secondary-stack"
 );
 
@@ -29,7 +32,7 @@ const ok = {
 type Key = keyof typeof ok;
 
 function props(failing?: Key) {
-  const p: Record<string, unknown> = { isOwner: false, todayLocal: "2026-11-02" };
+  const p: Record<string, unknown> = { isOwner: false, todayLocal: "2026-11-02", studioId: "studio-1" };
   for (const k of Object.keys(ok) as Key[]) {
     p[k] = k === failing ? Promise.reject(new Error("42501")) : ok[k]();
     (p[k] as Promise<unknown>).catch(() => undefined);
@@ -55,7 +58,7 @@ describe("one failing Needs attention loader degrades to its own unavailable sta
     const out = await section();
     expect(out).toContain("Nothing needs attention right now");
     expect(out).not.toContain("Could not check");
-    expect(await inner(ClientsToReview(props()) as never)).toMatch(/>0</);
+    expect(await inner(NeedsAttentionHeadingCount(props()) as never)).toContain("0 clients, 0 items");
   });
 
   it.each(CASES)("$loader rejecting: the panel renders, names $named, and is not the all-clear", async ({ loader, named }) => {
@@ -67,16 +70,13 @@ describe("one failing Needs attention loader degrades to its own unavailable sta
     for (const other of CASES.filter((c) => c.loader !== loader)) expect(out).not.toContain(other.named);
   });
 
-  it.each(CASES)("$loader rejecting: the strip and the header pill do not claim a count when the check feeds client cards", async ({ loader, clientAffecting }) => {
-    const strip = await inner(ClientsToReview(props(loader)) as never);
-    const pill = await inner(NeedsAttentionCountPill(props(loader)) as never);
+  it.each(CASES)("$loader rejecting: the heading count does not claim a number when the check feeds client cards", async ({ loader, clientAffecting }) => {
+    const count = await inner(NeedsAttentionHeadingCount(props(loader)) as never);
     if (clientAffecting) {
-      expect(strip).toContain("Unavailable");
-      expect(pill).toContain("Unavailable");
+      expect(count).toContain("Unavailable");
     } else {
-      // expiring supplies only adds a studio item: the client count is still a real number
-      expect(strip).toMatch(/>0</);
-      expect(pill).toContain("0 clients");
+      // expiring supplies only adds a studio item: the count is still a real number
+      expect(count).toContain("0 clients");
     }
   });
 

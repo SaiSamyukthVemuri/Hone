@@ -57,9 +57,8 @@ import {
 import {
   SecondaryStack,
   NeedsAttentionSection,
-  ClientsToReview,
   BirthdaysTopRight,
-  NeedsAttentionCountPill,
+  NeedsAttentionHeadingCount,
   NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
 } from "./secondary-stack";
@@ -966,20 +965,6 @@ export default async function DashboardPage({
                   }).minutes,
                 )
           }
-          clientsToReview={
-            <ClientsToReview
-              key={`summary-review:${selectedDayLocal}:${period}`}
-              attentionSources={attentionSourcesPromise}
-              staffManaged={staffManagedPromise}
-              procedureActions={procedureActionsPromise}
-              upcomingVisitClients={upcomingVisitClientsPromise}
-              clientsNeedingAttention={clientsNeedingAttentionPromise}
-              followUpAssistant={followUpAssistantPromise}
-              expiringSupplies={expiringSuppliesPromise}
-              isOwner={isOwner}
-              todayLocal={todayLocal}
-            />
-          }
         />
 
         {visibleAppointments.length === 0 ? (
@@ -1028,8 +1013,9 @@ export default async function DashboardPage({
           <h2 id="needs-attention-heading" className="text-lg font-medium">
             Needs attention
           </h2>
-          <NeedsAttentionCountPill
-            key={`needs-pill:${selectedDayLocal}:${period}`}
+          <NeedsAttentionHeadingCount
+            key={`needs-count:${selectedDayLocal}:${period}`}
+            studioId={studio.id}
             attentionSources={attentionSourcesPromise}
             staffManaged={staffManagedPromise}
             procedureActions={procedureActionsPromise}
@@ -1047,6 +1033,7 @@ export default async function DashboardPage({
           fallback={<NeedsAttentionSkeleton />}
         >
           <NeedsAttentionSection
+            studioId={studio.id}
             attentionSources={attentionSourcesPromise}
             staffManaged={staffManagedPromise}
             procedureActions={procedureActionsPromise}

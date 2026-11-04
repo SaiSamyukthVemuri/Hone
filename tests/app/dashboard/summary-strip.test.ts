@@ -15,17 +15,17 @@ const ALL = { mode: "all" as const, ids: new Set<string>() };
 const day = insightPeriod(new Date("2026-11-02T05:00:00Z"), new Date("2026-11-03T05:00:00Z"));
 
 describe("summary strip (fidelity A)", () => {
-  it("renders the three labelled values", () => {
+  it("renders the two labelled values, and no second Needs attention count (Sam, 4 Nov)", () => {
     const out = renderToStaticMarkup(
-      createElement(SummaryStrip, { appointmentCount: 4, clientCount: 3, bookedTime: "5 h 30 min", clientsToReview: "7" }),
+      createElement(SummaryStrip, { appointmentCount: 4, clientCount: 3, bookedTime: "5 h 30 min" }),
     );
     expect(out).toContain("Appointments");
     expect(out).toContain("Booked time");
-    expect(out).toContain("Clients to review");
+    expect(out).not.toContain("Clients to review");
     expect(out).toContain('data-testid="summary-appointments-value">4<');
     expect(out).toContain("5 h 30 min");
     expect(out).toContain("3 clients");
-    expect(renderToStaticMarkup(createElement(SummaryStrip, { appointmentCount: 0, clientCount: 0, bookedTime: "0 h", clientsToReview: "0" }))).not.toContain("clients<");
+    expect(renderToStaticMarkup(createElement(SummaryStrip, { appointmentCount: 0, clientCount: 0, bookedTime: "0 h" }))).not.toContain("clients<");
   });
   it("booked time is the calendar definition: cancelled excluded, only minutes inside the day", () => {
     const m = computeTimeInsights({
@@ -52,14 +52,14 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
     expect(strip).toMatch(/max-\[359px\]:text-sm/);
     expect(strip).toMatch(/px-2[^"]*min-\[360px\]:px-4/);
     expect(strip).toMatch(/text-xl font-semibold/);
-    expect(strip).toContain('className="grid grid-cols-3 gap-3"');
+    expect(strip).toContain('className="grid grid-cols-2 gap-3"');
   });
   it("renders the Unavailable value through the same wrapping value class", () => {
     const out = renderToStaticMarkup(
-      createElement(SummaryStrip, { appointmentCount: 1, clientCount: 1, bookedTime: "Unavailable", clientsToReview: "Unavailable" }),
+      createElement(SummaryStrip, { appointmentCount: 1, clientCount: 1, bookedTime: "Unavailable" }),
     );
-    // three values and, since the 320px label fix, the three labels
-    expect(out.match(/\[overflow-wrap:anywhere\]/g)).toHaveLength(6);
+    // two values and, since the 320px label fix, the two labels
+    expect(out.match(/\[overflow-wrap:anywhere\]/g)).toHaveLength(4);
   });
   it("the uppercase LABEL can wrap and shrinks under 360px, so 'APPOINTMENTS' stays inside its cell (Photos, fa5183e8d)", () => {
     expect(strip).toMatch(/const LABEL =[\s\S]*?min-w-0[\s\S]*?\[overflow-wrap:anywhere\][\s\S]*?max-\[359px\]:text-\[10px\][\s\S]*?max-\[359px\]:tracking-normal/);
@@ -98,40 +98,21 @@ describe("an unbroken long name wraps inside Needs attention and the visit detai
   });
 });
 
-describe("Clients to review comes from the Needs attention model", () => {
+describe("Needs attention shows ONE count, in its heading, from the model the owner sees", () => {
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
-  it("one builder serves the panel and the strip, and the strip reads .clients.length", () => {
-    expect(stack).toMatch(/async function resolveNeedsAttentionInput\(/);
-    expect(stack).toMatch(/needs=\{buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)\}/);
-    expect(stack).toMatch(/async function resolveClientReviewCount[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)[\s\S]*?\.clients\.length/);
-    expect(page).toMatch(/<ClientsToReview\b/);
+  const panel = readFileSync("app/(app)/dashboard/needs-attention-panel.tsx", "utf8");
+  it("the strip cell, the old pill and the panel's own count line are gone", () => {
+    expect(page).not.toMatch(/ClientsToReview|NeedsAttentionCountPill|clientsToReview/);
+    expect(stack).not.toMatch(/ClientsToReview|ClientCountPillValue|needs-attention-count-pill/);
+    expect(panel).not.toContain('data-testid="needs-attention-count"');
+    expect(page).toMatch(/<NeedsAttentionHeadingCount/);
   });
-  it("a failed read says Unavailable, never 0", async () => {
-    const mod = await import("@/app/(app)/dashboard/secondary-stack");
-    const { ClientsToReview } = mod;
-    const rejected = Promise.reject(new Error("x"));
-    rejected.catch(() => undefined);
-    const wrapper = ClientsToReview({
-      attentionSources: rejected as never,
-      staffManaged: Promise.resolve(false),
-      procedureActions: rejected as never,
-      upcomingVisitClients: rejected as never,
-      clientsNeedingAttention: rejected as never,
-      followUpAssistant: rejected as never,
-      expiringSupplies: rejected as never,
-      isOwner: true,
-      todayLocal: "2026-11-02",
-    });
-    // the wrapper is a Suspense around the async value; resolve the async child directly
-    const child = (wrapper.props as { children: { type: (p: unknown) => Promise<unknown>; props: unknown } }).children;
-    const out = renderToStaticMarkup((await child.type(child.props)) as never);
-    expect(out).toContain("Unavailable");
-    expect(out).not.toMatch(/>0</);
+  it("the heading count and the panel share ONE computation of the visible model", () => {
+    expect(stack).toMatch(/const visibleMemo = new WeakMap/);
+    expect(stack.match(/resolveVisibleNeeds\(/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(stack).toMatch(/headingCount\(v\.shown\)/);
   });
-});
-
-describe("an unavailable intake-review check is never a definite client count (Codex P2)", () => {
   const resolved = (intakes: unknown) => ({
     attentionSources: Promise.resolve([intakes, 1, null, []]) as never,
     staffManaged: Promise.resolve(false),
@@ -142,28 +123,23 @@ describe("an unavailable intake-review check is never a definite client count (C
     expiringSupplies: Promise.resolve([]) as never,
     isOwner: false,
     todayLocal: "2026-11-02",
+    studioId: "studio-1",
   });
   const render = async (el: { props: unknown }) => {
     const child = (el.props as { children: { type: (p: unknown) => Promise<unknown>; props: unknown } }).children;
     return renderToStaticMarkup((await child.type(child.props)) as never);
   };
-  it("the strip says Unavailable when the intake check could not run, never 0", async () => {
-    const { ClientsToReview } = await import("@/app/(app)/dashboard/secondary-stack");
-    const out = await render(ClientsToReview(resolved("unavailable")) as never);
-    expect(out).toContain("Unavailable");
-    expect(out).not.toMatch(/>0</);
-  });
-  it("the header pill says Unavailable too", async () => {
-    const { NeedsAttentionCountPill } = await import("@/app/(app)/dashboard/secondary-stack");
-    const out = await render(NeedsAttentionCountPill(resolved("unavailable")) as never);
+  it("an unavailable intake-review check is Unavailable, never 0 (Codex P2)", async () => {
+    const { NeedsAttentionHeadingCount } = await import("@/app/(app)/dashboard/secondary-stack");
+    const out = await render(NeedsAttentionHeadingCount(resolved("unavailable")) as never);
     expect(out).toContain("Unavailable");
     expect(out).not.toContain("0 clients");
   });
-  it("with the check available, the same inputs give a real count (0 is honest then)", async () => {
-    const { ClientsToReview } = await import("@/app/(app)/dashboard/secondary-stack");
-    const out = await render(ClientsToReview(resolved([])) as never);
-    expect(out).not.toContain("Unavailable");
-    expect(out).toMatch(/>0</);
+  it("with the check available, the count reads clients and items (0 is honest then)", async () => {
+    const { NeedsAttentionHeadingCount } = await import("@/app/(app)/dashboard/secondary-stack");
+    const out = await render(NeedsAttentionHeadingCount(resolved([])) as never);
+    expect(out).toContain('data-testid="needs-attention-heading-count"');
+    expect(out).toContain("0 clients, 0 items");
   });
 });
 
@@ -195,13 +171,9 @@ describe("booked time counts a midnight-crossing visit (Codex P2)", () => {
 
 describe("panel headers share one top edge (fidelity B)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
-  const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
-  it("both column header rows have the same minimum height, and Needs attention carries a client-count pill from the same model", () => {
+  it("both column header rows have the same minimum height; the Needs attention header carries the one count", () => {
     expect((page.match(/<div className="flex min-h-\[44px\]/g) ?? []).length).toBe(2);
-    expect(page).toMatch(/<NeedsAttentionCountPill/);
-    expect(stack).toMatch(/clients\.length[\s\S]{0,400}needs-attention-count-pill|needs-attention-count-pill[\s\S]{0,400}clients/);
-    expect(stack).toMatch(/async function ClientCountPillValue[\s\S]*?resolveClientReviewCount\(props\)/);
-    expect(stack).toMatch(/async function resolveClientReviewCount[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)[\s\S]*?STUDIO_ONLY_CHECKS[\s\S]*?\.clients\.length/);
+    expect(page).toMatch(/<h2 id="needs-attention-heading"[\s\S]{0,200}<\/h2>\s*<NeedsAttentionHeadingCount/);
   });
 });
 

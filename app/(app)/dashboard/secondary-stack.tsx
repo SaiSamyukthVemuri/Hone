@@ -25,7 +25,10 @@ import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
 import {
   buildNeedsAttention,
   CHECK_UNAVAILABLE,
+  type NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
+import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
+import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
 import type { IntakeAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
   buildGettingStarted,
@@ -653,72 +656,73 @@ async function resolveNeedsAttentionInput({
   };
 }
 
-export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
+// What the signed-in user actually sees: the model minus THIS owner's dismissals (owners only), and the dismissed rows for the
+// Dismissed view. Memoised on the request's own `attentionSources` promise, so the heading count and the panel share ONE computation
+// (and one dismissal read) instead of repeating it.
+type VisibleNeeds = {
+  shown: NeedsAttention;
+  dismissed: DismissedRow[];
+  // True when the owner's dismissals could not be read: every reminder is shown and Dismiss is withheld.
+  dismissalsUnavailable: boolean;
+  // False when a check that feeds the client cards could not run, so no number is claimed.
+  countKnown: boolean;
+};
+const visibleMemo = new WeakMap<object, Promise<VisibleNeeds>>();
+
+function resolveVisibleNeeds(props: NeedsAttentionInputs & { studioId: string }): Promise<VisibleNeeds> {
+  const hit = visibleMemo.get(props.attentionSources);
+  if (hit) return hit;
+  const run = (async (): Promise<VisibleNeeds> => {
+    const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
+    const countKnown = !model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c));
+    // Non-owners have no dismissals, no Dismissed view and no Dismiss: their list is the model as built.
+    if (!props.isOwner) return { shown: model, dismissed: [], dismissalsUnavailable: false, countKnown };
+    const read = await loadMyDismissals(props.studioId);
+    if (!read.ok) return { shown: model, dismissed: [], dismissalsUnavailable: true, countKnown };
+    const { shown, dismissed } = applyDismissals(model, read.rows);
+    return { shown, dismissed, dismissalsUnavailable: false, countKnown };
+  })();
+  visibleMemo.set(props.attentionSources, run);
+  return run;
+}
+
+export async function NeedsAttentionSection(props: NeedsAttentionInputs & { studioId: string }) {
+  const v = await resolveVisibleNeeds(props);
   return (
     <NeedsAttentionPanel
-      needs={buildNeedsAttention(await resolveNeedsAttentionInput(props))}
+      needs={v.shown}
+      dismissed={v.dismissed}
+      isOwner={props.isOwner}
+      dismissalsUnavailable={v.dismissalsUnavailable}
     />
   );
 }
 
-/**
- * The "Clients to review" value of the summary strip: the number of client cards in Needs Attention,
- * from the SAME model. A failed read renders "Unavailable", never 0 (a zero would claim nothing needs
- * review when nobody could read it).
- */
-/**
- * The client count both the strip and the header pill show, from the SAME model as the panel. It is
- * null (rendered "Unavailable") when the read failed OR when any check that contributes client cards
- * could not run (intake review, recent sessions, missing records, record details): a count taken
- * without one could say 0 while someone needs review. Payment setup and expiring supplies only add
- * studio items and do not change this count.
- */
-async function resolveClientReviewCount(props: NeedsAttentionInputs): Promise<number | null> {
+async function HeadingCountValue(props: NeedsAttentionInputs & { studioId: string }) {
+  let text: string;
   try {
-    const model = buildNeedsAttention(await resolveNeedsAttentionInput(props));
-    return model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c)) ? null : model.clients.length;
+    const v = await resolveVisibleNeeds(props);
+    const { clients, items } = headingCount(v.shown);
+    // A check that feeds the client cards could not run: no number, never "0".
+    text = v.countKnown ? `${clients} ${clients === 1 ? "client" : "clients"}, ${items} ${items === 1 ? "item" : "items"}` : "Unavailable";
   } catch {
-    return null;
+    text = "Unavailable";
   }
-}
-
-async function ClientsToReviewValue(props: NeedsAttentionInputs) {
-  const count = await resolveClientReviewCount(props);
-  return (
-    <span data-testid="summary-clients-to-review-value">
-      {count === null ? "Unavailable" : count}
-    </span>
-  );
-}
-
-async function ClientCountPillValue(props: NeedsAttentionInputs) {
-  const count = await resolveClientReviewCount(props);
   return (
     <span
-      data-testid="needs-attention-count-pill"
+      data-testid="needs-attention-heading-count"
       className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
     >
-      {count === null ? "Unavailable" : `${count} ${count === 1 ? "client" : "clients"}`}
+      {text}
     </span>
   );
 }
 
-/** The header count pill of the Needs attention card: same model, same count as the strip. Own Suspense. */
-export function NeedsAttentionCountPill(props: NeedsAttentionInputs) {
+/** THE count of Needs attention, shown once, beside the heading: clients and items, after this owner's dismissals. Own Suspense. */
+export function NeedsAttentionHeadingCount(props: NeedsAttentionInputs & { studioId: string }) {
   return (
     <Suspense fallback={null}>
-      <ClientCountPillValue {...props} />
-    </Suspense>
-  );
-}
-
-/** Own Suspense so the roster and the strip never wait on the model. The caller keys it per day/period. */
-export function ClientsToReview(props: NeedsAttentionInputs) {
-  return (
-    <Suspense
-      fallback={<span aria-hidden className="inline-block h-6 w-8 rounded bg-neutral-100 dark:bg-neutral-800" />}
-    >
-      <ClientsToReviewValue {...props} />
+      <HeadingCountValue {...props} />
     </Suspense>
   );
 }
