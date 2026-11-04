@@ -190,29 +190,42 @@ for S in $STAGES; do good_step "$S"; done
 # ================================================================== B. negative controls
 if [ "${ONLY_A:-0}" = 1 ]; then echo "# RESULT: $pass passed, $fail failed"; [ $fail = 0 ]; exit; fi
 echo "# B. negative controls"
-S1=$(echo $STAGES | cut -d' ' -f1); S2=$(echo $STAGES | cut -d' ' -f2); S3=$(echo $STAGES | cut -d' ' -f3)
-FORWARD2=$(ex $S2 'd["migration"]')
+# SINGLE-STAGE SAFE: `cut -f2` on a one-word list prints the WHOLE word (a line with no delimiter), so S2 and S3 used to be copies of S1 and the
+# multi-step controls below ran step 1 as if it were a later step. awk prints an empty field instead, and each multi-step section states why it skips.
+S1=$(echo $STAGES | awk '{print $1}'); S2=$(echo $STAGES | awk '{print $2}'); S3=$(echo $STAGES | awk '{print $3}')
+FORWARD2=""; [ -n "$S2" ] && FORWARD2=$(ex $S2 'd["migration"]')
+multi() { # multi N LABEL: true when the plan has at least N stages; otherwise print a stated skip (never a silent one) and return 1
+  [ "$NSTEPS" -ge "$1" ] && return 0; local n=$1; shift; echo "skip - $*: needs at least $n stages, this plan has $NSTEPS"; return 1; }
 
+if multi 2 "B1 a marker that was not reconciled refuses the next step"; then
 # B1. a marker that was NOT reconciled refuses the next step (single flight)
 newhome B1; install_step "$S1"; run_apply "$S1"; install_step "$S2"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S2"
 [ $RC != 0 ] && echo "$OUT" | grep -q "STOP: a previous run left .*APPLY-STATE" && [ "$(calls)" = "" ] && [ "$CONSUMED" = 0 ] && [ "$(marker)" = APPLIED-UNVERIFIED ] && [ "$(hist_rows)" = "$before" ] \
   && ok "step 2 refuses to start while step 1's APPLY-STATE marker has not been reconciled: no prompt, no call, history unchanged" || bad "B1 marker gate" "rc=$RC calls=[$(calls)] consumed=$CONSUMED $(echo "$OUT" | tail -2)"
 
+fi
+if multi 2 "B2 a later step's migration in step 1's bundle"; then
 # B2. extra file (a later step's migration) in step 1's bundle, correctly pinned: the file-set gates must stop it
 newhome B2; install_step "$S1"; mkvb "$S1" "$FORWARD2" "" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "EXTRA FILE: step 1's bundle also carries step 2's migration (pinned consistently): STOP before any call" "(files|holds|names|not part of this stage|differs|lines)" "$(hist_rows)"
 [ "$(calls)" = "" ] && ok "  ... and it stopped before the CLI was even called" || bad "  extra file: a call was made" "$(calls)"
+fi
 # B3. an extra unapplied OLD version (the include-all danger): 0255 in step 1's bundle
 newhome B3; install_step "$S1"; mkvb "$S1" "0255_stray.sql" "" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "EXTRA FILE below the head (0255, would be taken by --include-all): STOP, nothing pushed" "(files|holds|names|not part of this stage|differs|lines)" "$(hist_rows)"
 # B3b. count-neutral swap: the stray 0255 added and hosted 0001 dropped, so the file COUNT is right and only the NAMED-FILE gates can stop it
 newhome B3b; install_step "$S1"; mkvb "$S1" "0255_stray.sql" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "SWAPPED FILE (right count): 0255 added, 0001 dropped: STOP on the named-file gates, nothing pushed" "(not part of this stage|names|holds|pending file)" "$(hist_rows)"
 # B3c. count-neutral swap with a number OUTSIDE every named absent list (0158 is permanently skipped): only the embedded ALLOWLIST can stop it
 newhome B3c; install_step "$S1"; mkvb "$S1" "0158_stray.sql" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "SWAPPED FILE of an unlisted number (0158 added, 0001 dropped, right count): STOP (adopted v2: at the dry-run listing, before any push), nothing pushed" "(allowlist|dry run lists)" "$(hist_rows)"
+if multi 2 "B3d the allowlist swap on a generated later step"; then
 # the same swap on a GENERATED step (embedded allowlist): it must stop on the allowlist itself, earlier than the dry run
 newhome B3d; advance 1; install_step "$S2"; mkvb "$S2" "0158_stray.sql" "0001" 0; install_step "$S2" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S2"; expect_stop "SWAPPED FILE of an unlisted number at step 2 (generated, embedded allowlist): STOP on the allowlist, nothing pushed" "allowlist" "$(hist_rows)"
+fi
 # B6b. a hosted file CHANGED (0257), list and tar re-pinned consistently: only the allowlist / sha pins can stop it
 newhome B6b; install_step "$S1"; mkvb "$S1" "" "" 0 "0257"; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "CHANGED HOSTED FILE: 0257's body altered in a consistently re-pinned bundle: STOP on the allowlist / sha pin" "(allowlist|pinned|differs|does not carry)" "$(hist_rows)"
+if multi 2 "B6c an earlier step's file changed in a later step's bundle"; then
 # B6c. an EARLIER STEP's file changed in a later step's bundle
 newhome B6c; install_step "$S2"; mkvb "$S2" "" "" 0 "$(ex $S1 'd["migration"][:4]')"; install_step "$S2" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S2"; expect_stop "CHANGED EARLIER STEP: step 1's migration altered inside step 2's bundle: STOP on the allowlist / sha pin" "(allowlist|pinned|differs)" "$(hist_rows)"
+fi
+if multi 2 "B6d a renamed hosted file at a later step"; then
 # B6d. every file of the bundle is unexpected: a hosted file of another number swapped for a different NAME (rename)
 newhome B6d; advance 1; install_step "$S2"; python3 -I - "$D" "$PKG/$S2/s1-apply-$S2-online/migrations-stage$S2.tar" "$T/vb2" <<'PY'
 import hashlib, os, sys, tarfile
@@ -230,12 +243,13 @@ open(out + "/b.tar", "wb").write(build.ustar(files))
 open(out + "/l.txt", "w").write("".join("%s  %s\n" % (hashlib.sha256(b).hexdigest(), n) for n, b in sorted(files.items())))
 PY
 install_step "$S2" "$T/vb2"; rm -f "$H/calls.log"; run_apply "$S2"; expect_stop "RENAMED FILE at step 2 (generated, embedded allowlist): a hosted migration under a different name (same bytes, same count): STOP on the allowlist" "allowlist" "$(hist_rows)"
+fi
 # B6e. DOCUMENTED difference of the adopted v2 step 1: it has no per-name allowlist of the 247 hosted files (its LIST_SHA pin IS the allowlist). A hosted file renamed
 # inside a bundle that is re-pinned in the script too (a different script) is accepted, but a same-version rename cannot change what is applied (the history keys on the version).
 # B4. missing hosted file
 newhome B4; install_step "$S1"; mkvb "$S1" "" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "MISSING FILE: hosted 0001 absent from the bundle: STOP before any call" "(files|missing|differs|names|lines)" "$(hist_rows)"
 # B5. missing pending file
-newhome B5; install_step "$S1"; mkvb "$S1" "" "$(ex $S1 'd["migration"][:4]')" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "MISSING FILE: the pending migration is not in the bundle: STOP before any call" "(files|missing|does not name|differs|lines)" "$(hist_rows)"
+newhome B5; install_step "$S1"; mkvb "$S1" "" "$(ex $S1 'd["migration"][:4]')" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "MISSING FILE: the pending migration is not in the bundle: STOP before any call" "(files|missing|does not name|does not end|differs|lines)" "$(hist_rows)"
 # B6. altered pending file (sealed sha differs)
 newhome B6; install_step "$S1"; mkvb "$S1" "" "" 1; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "ALTERED FILE: the pending migration differs from its sealed sha: STOP before any call" "(sealed|differs)" "$(hist_rows)"
 # B7. wrong sha: a byte appended to the pinned bundle, constants untouched
@@ -261,25 +275,60 @@ g02case() { # g02case NAME LABEL REGEX [forge knob] : the stub answers the g02 r
   [ $RC != 0 ] && [ "$(receipt_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && [ "$(calls)" = "query:g02-history-$S1" ] && [ "$(hist_rows)" = "$before" ] && echo "$OUT" | grep -Eq "$3" && [ -z "$(leaks)" ] \
     && ok "$2: STOP at the history gate, only the g02 read ran (before the dry run), nothing pushed" || bad "$1 $2" "rc=$RC receipt=$(receipt_of) marker=$(marker) calls=[$(calls)] $(echo "$OUT" | grep STOP | tail -1)"
 }
+APPLY1=$PKG/$S1/s1-apply-$S1-online/s1-apply-$S1-online.sh
+if grep -q "r\.rows_0248" "$APPLY1"; then
 g02case B7f "rows_0248 differs (forged rows_0248=0, everything else as expected)" "rows_0248" "G02_FORGE_ROWS0248=0"
+else echo "skip - B7f: this plan's g02 rule does not read rows_0248 (a forged-field control is GENERATED for every field it does read: B7i)"; fi
+if grep -q "r\.last4" "$APPLY1"; then
 g02case B7g "last4 differs (forged, everything else as expected)" "last4" "G02_FORGE_LAST4=0257,0248,0247,0246"
+else echo "skip - B7g: this plan's g02 rule does not read last4 (see B7i)"; fi
 g02case B7h "history really differs: 0248 replaced by 0247 (same count and max)" "(rows_0248|last4|0247)" "" 'sed -i.bak "s/^0248\$/0247/" "$H/remote-history"; rm -f "$H/remote-history.bak"'
+# B7i. FORGED-FIELD controls GENERATED FROM THE PLAN'S OWN history gate, not hand-listed. For every stage, the field names are read out of that stage's
+# generated apply script (the `if (rule === "g02") {...}` block: every `r.<field>` it checks); for EACH field the stub's history row is forged (a different
+# value) and, separately, DROPPED, with everything else as expected. Each must STOP at the history gate: only the g02 read ran (before the dry run),
+# nothing pushed, receipt NOT APPLIED, no marker, history unchanged. A field the generic stub row does not model is a STATED skip (covered by that
+# package's own B7f/B7g knobs), and a stage whose g02 fields cannot be derived at all is a FAILURE, never a silent pass.
+bi=0
+for S in $STAGES; do
+  bi=$((bi+1))
+  sc=$PKG/$S/s1-apply-$S-online/s1-apply-$S-online.sh
+  fields=$(sed -n '/^if (rule === "g02") {/,/^} else if/p' "$sc" 2>/dev/null | grep -oE '(^|[^A-Za-z_.])r\.[a-z_0-9]+' | sed -E 's/.*r\.//' | sort -u | tr '\n' ' ')
+  [ -n "$fields" ] || { bad "B7i step $bi ($S): no g02 rule fields could be derived from the generated apply script"; continue; }
+  unmodelled=""; for f in $fields; do case $f in applied_count|hosted_max|list_md5|rows_[0-9]*) ;; *) unmodelled="$unmodelled $f";; esac; done
+  if [ -n "$unmodelled" ]; then echo "skip - B7i step $bi ($S): g02 fields the generic stub row does not model:$unmodelled (covered by the package-specific B7f/B7g knobs)"; continue; fi
+  for f in $fields; do for mode in value drop; do
+    newhome "B7i-$bi-$f-$mode"; advance $((bi-1)); install_step "$S"; cfgset "G02_FORGE_FIELD=$f" "G02_FORGE_MODE=$mode"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S"
+    [ $RC != 0 ] && [ "$(receipt_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && [ "$(calls)" = "query:g02-history-$S" ] && [ "$(hist_rows)" = "$before" ] && echo "$OUT" | grep -q "STOP:" && [ -z "$(leaks)" ] \
+      && ok "B7i step $bi ($S): g02 field $f ${mode}-forged: STOP at the history gate, only the g02 read ran (before the dry run), nothing pushed" \
+      || bad "B7i step $bi ($S): g02 field $f ${mode}-forged" "rc=$RC receipt=$(receipt_of) marker=$(marker) calls=[$(calls)] $(echo "$OUT" | grep STOP | tail -1)"
+  done; done
+done
+if multi 3 "B8 step 3 offered at the start history"; then
 # B8. out of order: step 3 offered while the history is at the start (step 1 and 2 absent)
 newhome B8; install_step "$S3"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S3"; expect_stop "OUT OF ORDER: step 3 run on the start history (steps 1 and 2 not applied): STOP at the history gate, nothing after it runs" "(rows|max|version set|history)" "$before"
 [ "$(calls)" = "query:g02-history-$S3" ] && ok "  ... only the history read ran" || bad "  out-of-order: calls" "$(calls)"
+fi
+if multi 2 "B9 step 2 offered at the start history"; then
 # B9. out of order: step 2 run after step 1 has not been applied but with step 2's own bundle (which lacks step 1)
 newhome B9; install_step "$S2"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S2"; expect_stop "OUT OF ORDER: step 2 on the start history (step 1 missing): STOP at the history gate" "(rows|max|version set|history)" "$before"
+fi
 # B10. repeat: step 1 run a second time after it is applied
 newhome B10; advance 1; install_step "$S1"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S1"; expect_stop "REPEAT: step 1 run again after it was applied: STOP at the history gate (no second push)" "(rows|max|version set|already applied|history)" "$before"
+if multi 2 "B11 a failure injected at step 2"; then
 # B11. failure injected at step 2: history stops at step 1, the marker stays, the next step refuses
 k=2; newhome B11; advance 1; install_step "$S2"; cfgset "FAIL_PUSH_VER=${FORWARD2%%_*}"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S2"
 [ $RC != 0 ] && [ "$(marker)" = IN-FLIGHT ] && receipt_of | grep -q "^UNKNOWN" && [ "$(hist_rows)" = "$before" ] && hist_is "$S2" before && [ "$(grep -c '^push' "$H/calls.log")" = 1 ] \
   && ok "FAILURE AT STEP 2: the push failed; history is still step 1's end state ($(hist_rows) rows, max $(hist_max)); receipt UNKNOWN; marker IN-FLIGHT; exactly one push attempt, no retry" || bad "B11 failure at step 2" "rc=$RC marker=$(marker) receipt=$(receipt_of) rows=$(hist_rows) $(echo "$OUT" | tail -3)"
+fi
+if multi 3 "B11 step 3 refuses at the surviving marker"; then
 install_step "$S3"; rm -f "$H/calls.log"; run_apply "$S3"
 [ $RC != 0 ] && echo "$OUT" | grep -q "STOP: a previous run left .*APPLY-STATE" && [ "$(calls)" = "" ] && [ "$CONSUMED" = 0 ] && [ "$(marker)" = IN-FLIGHT ] \
   && ok "  ... and the runner REFUSES TO CONTINUE: step 3 stops at the surviving marker, no prompt, no call" || bad "B11 step 3 after failure" "rc=$RC calls=[$(calls)] $(echo "$OUT" | tail -2)"
+fi
+if multi 2 "B11 step 2 refuses at its own marker"; then
 install_step "$S2"; rm -f "$H/calls.log"; run_apply "$S2"
 [ $RC != 0 ] && echo "$OUT" | grep -q "STOP: a previous run left .*APPLY-STATE" && [ "$(calls)" = "" ] && ok "  ... and step 2 itself cannot be re-run either (no retry path): same marker refusal" || bad "B11 step 2 rerun" "rc=$RC calls=[$(calls)]"
+fi
 # B12. a failure at each later step too
 for kk in 3 4; do
   [ $kk -le $NSTEPS ] || continue
@@ -287,8 +336,9 @@ for kk in 3 4; do
   newhome B12-$kk; advance $((kk-1)); install_step "$Sk"; cfgset "FAIL_PUSH_VER=$Vk"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$Sk"
   [ $RC != 0 ] && [ "$(marker)" = IN-FLIGHT ] && [ "$(hist_rows)" = "$before" ] && hist_is "$Sk" before && ok "FAILURE AT STEP $kk ($Sk): history stops at step $((kk-1))'s end state ($(hist_rows) rows), marker IN-FLIGHT" || bad "B12 failure at step $kk" "rc=$RC marker=$(marker) rows=$(hist_rows)"
 done
-# B13. a failed pre-push read at step 2 (a gate fails): nothing pushed, no marker
-newhome B13; advance 1; install_step "$S2"; cfgset "FAIL_QUERY=g02-history-$S2"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S2"; expect_stop "a failed history read at step 2 stops before the push" "failed" "$before"
+# B13. a failed pre-push read (a gate fails): nothing pushed, no marker. Step 2 of a multi-step plan, else the only step.
+B13S=${S2:-$S1}; B13ADV=$([ -n "$S2" ] && echo 1 || echo 0)
+newhome B13; advance $B13ADV; install_step "$B13S"; cfgset "FAIL_QUERY=g02-history-$B13S"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$B13S"; expect_stop "a failed history read at step 2 stops before the push" "failed" "$before"
 # B14. the dry run must list exactly the step: a second unapplied file the bundle does not hold cannot appear; prove the stub-level rule instead (plain push of a below-head file refuses)
 newhome B14; advance 1; mkdir -p "$T/pp/supabase/migrations"; rm -rf "$T/pp"; mkdir -p "$T/pp/supabase/migrations"; cp "$HOSTED"/*.sql "$T/pp/supabase/migrations/" 2>/dev/null
 printf 'select 1;\n' > "$T/pp/supabase/migrations/0255_late.sql"
@@ -298,6 +348,8 @@ printf 'select 1;\n' > "$T/pp/supabase/migrations/0255_late.sql"
 
 # ================================================================== D. stage-drop rules (plan validation before any stage runs)
 echo "# D. stage-drop rules"
+has_mig() { local S; for S in $STAGES; do [ "$(ex $S 'd["migration"][:4]')" = "$1" ] && return 0; done; return 1; } # is a stage of THIS plan that migration?
+if has_mig 0258 && has_mig 0272; then
 PC=$PKG/plan-check.sh
 pc_refuse() { local name="$1" pat="$2"; shift 2; out=$("$PC" "$@" 2>&1); rc=$?; if [ $rc != 0 ] && echo "$out" | grep -Eq "PLAN REFUSED: .*($pat)"; then ok "$name"; else bad "$name" "rc=$rc $out"; fi; }
 pc_accept() { local name="$1" seqname="$2"; shift 2; out=$("$PC" "$@" 2>&1); rc=$?; want=$(pj "$PKG/PLAN.json" '" ".join(d["sequences"]["'"$seqname"'"]["stages"])'); got=$(echo $out); if [ $rc = 0 ] && [ "$got" = "$want" ]; then ok "$name"; else bad "$name" "rc=$rc got=[$got] want=[$want]"; fi; }
@@ -320,6 +372,7 @@ pc_accept "RULE 4: both independent steps dropped is accepted" drop-0254+0271 02
 pc_accept "RULE 1: dropping 0258 with its closure {0272, 0266} is accepted" drop-0258+0272+0266 0254 0271
 pc_accept "only the independent steps remain (everything with 0258 dropped) is accepted" drop-0258+0272+0266+0271 0254
 
+else echo "skip - D stage-drop rules: they test the 0254..0272 dependency closure and this plan has no 0258 or no 0272"; fi
 # ================================================================== E. a 0272 failure after 0258 stops the session at 0258, history verified
 echo "# E. 0272 failure after 0258"
 idx_of() { local i=0 S; for S in $STAGES; do i=$((i+1)); [ "$(ex $S 'd["migration"][:4]')" = "$1" ] && { echo $i; return; }; done; echo 0; }
@@ -336,7 +389,8 @@ if [ "$I58" != 0 ] && [ "$I72" = $((I58+1)) ]; then
   # even with the marker cleared by hand, 0266's stage refuses the history (0258 applied, 0272 not)
   if [ "$I66" != 0 ]; then rm -f "$H/hone-s1/s1-apply/APPLY-STATE"; rm -f "$H/calls.log"; run_apply "$S66"
     expect_stop "  ... and with the marker cleared, 0266's stage still STOPs at the history gate (0258 without 0272 is not its expected set)" "(rows|max|version set|history)" "$(hist_rows)"; fi
-else bad "E: the plan has no 0258 immediately followed by 0272"; fi
+elif has_mig 0258 && has_mig 0272; then bad "E: the plan has no 0258 immediately followed by 0272"
+else echo "skip - E: this plan has no 0258 or no 0272, so a 0272-after-0258 failure cannot be staged"; fi
 
 # ================================================================== C. the REAL generated read-back check (the node program inside window-s1read), on fabricated result files
 echo "# C. generated read-back check"

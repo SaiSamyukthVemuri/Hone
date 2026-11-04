@@ -16,6 +16,17 @@ hist_json() { # hist_json VER : the generic history row
   r=$(grep -c "^$1\$" "$HIST")
   printf '[{"applied_count":%s,"hosted_max":"%s","list_md5":"%s","rows_%s":%s}]\n' "$n" "$mx" "$md" "$1" "$r"
 }
+forge_field() { # forge_field JSON: the history row with ONE field forged or dropped (knobs G02_FORGE_FIELD=<name>, G02_FORGE_MODE=value|drop); unchanged when unset
+  local f m; f=$(cfg G02_FORGE_FIELD); m=$(cfg G02_FORGE_MODE)
+  [ -z "$f" ] && { printf '%s\n' "$1"; return; }
+  printf '%s' "$1" | python3 -I -c 'import json,sys
+f, m = sys.argv[1:3]
+d = json.load(sys.stdin); r = d[0]
+if m == "drop": r.pop(f, None)
+else:
+    v = r[f]; r[f] = v + 1 if isinstance(v, (int, float)) and not isinstance(v, bool) else "forged-" + str(v)
+print(json.dumps(d))' "$f" "$m"
+}
 if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
   f=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done
   b=$(basename "$f" .sql)
@@ -30,8 +41,8 @@ if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
       [ -n "$(cfg G02_FORGE_ROWS0248)" ] && r48=$(cfg G02_FORGE_ROWS0248); [ -n "$(cfg G02_FORGE_LAST4)" ] && l4=$(cfg G02_FORGE_LAST4)
       printf '[{"applied_count":%s,"hosted_max":"%s","versions_ge_0249":%s,"rows_0257":%s,"rows_0254":%s,"versions_0249_0256":%s,"rows_0248":%s,"last4":"%s"}]\n' "$n" "$mx" \
         "$(awk '$1>="0249"' "$HIST" | grep -c .)" "$(grep -c '^0257$' "$HIST")" "$(grep -c '^0254$' "$HIST")" "$(awk '$1>="0249" && $1<="0256"' "$HIST" | grep -c .)" "$r48" "$l4" ;;
-    g02-history-*|s1-history-*) hist_json "$ver" ;;
-    g12-*) at=$(cfg G12_AT); echo "[{\"at_hosted_$at\":1,\"tables_present\":true,\"functions_present\":true,\"new_constraints_absent\":true,\"legacy_rows_violating_waitlist_email_format\":true,\"legacy_rows_violating_waitlist_field_length\":true,\"legacy_rows_violating_demo_requests_email_format\":true,\"legacy_rows_violating_demo_requests_field_length\":true,\"helpers_ok\":true,\"replaced_ok\":true,\"new_objects_absent\":true,\"columns_ok\":true,\"policies_before_equal_repo_history\":true,\"policy_cmds_before_equal_repo_history\":true,\"identity_policies_before\":true,\"realtime_present\":true,\"realtime_rls_on_no_policies\":true,\"realtime_send_grants_as_recorded\":true}]" ;;
+    g02-history-*|s1-history-*) forge_field "$(hist_json "$ver")" ;;
+    g12-*) at=$(cfg G12_AT); echo "[{\"at_hosted_$at\":1,\"tables_present\":true,\"functions_exist\":true,\"no_extra_overloads\":true,\"definers_ok\":true,\"acl_baseline_ok\":true,\"bodies_baseline_ok\":true,\"triggers_ok\":true,\"functions_present\":true,\"new_constraints_absent\":true,\"legacy_rows_violating_waitlist_email_format\":true,\"legacy_rows_violating_waitlist_field_length\":true,\"legacy_rows_violating_demo_requests_email_format\":true,\"legacy_rows_violating_demo_requests_field_length\":true,\"helpers_ok\":true,\"replaced_ok\":true,\"new_objects_absent\":true,\"columns_ok\":true,\"policies_before_equal_repo_history\":true,\"policy_cmds_before_equal_repo_history\":true,\"identity_policies_before\":true,\"realtime_present\":true,\"realtime_rls_on_no_policies\":true,\"realtime_send_grants_as_recorded\":true}]" ;;
     s1-open-transactions-*) at=$(cfg G12_AT); n=0; printf '['; for x in $(cfg S_TABLES | tr ',' ' '); do n=$((n+1)); [ $n -gt 1 ] && printf ','
         printf '{"at_hosted_%s":1,"table_name":"%s","table_present":true,"old_xact_backends":0,"old_idle_in_xact_backends":0,"waiting_backends":0,"any_xact_backends":0,"oldest_xact_age_seconds":0,"old_xact_backends_database_wide":0}' "$at" "$x"; done; echo ']' ;;
     w03-table-sizes-*) at=$(cfg G12_AT); n=0; printf '['; for x in $(cfg S_TABLES | tr ',' ' '); do n=$((n+1)); [ $n -gt 1 ] && printf ','
