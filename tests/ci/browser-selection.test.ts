@@ -240,7 +240,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // five-tap navigation case), each a seeded studio, a magic-link login and a page load or a few.
     // Now 49: the merge of production joined one more spec to this selection (production's own pin was 47 before #1308's two). The
     // number is the measured count of the merged tree, not a re-decision of any group; no executed-case cost of mine changes.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(49);
+    // Now 50: review-link-solo-owner.spec.ts (the review link hidden for a solo owner with nothing to review, #1336) joined `sessions`.
+    // RECORDED AS A DECISION per the note above. Cost: ONE spec, a seeded solo studio and two page loads.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(50);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
