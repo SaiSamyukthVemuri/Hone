@@ -13,7 +13,6 @@ import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
-import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 // PR #180. Loaded from a separate scope so the RPC call can use the
 // service role (the mark_appointment_complete RPC is SECURITY DEFINER
@@ -123,7 +122,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
   // Starting a session creates a chart: editing records (NQ-11/12, asked ahead of enforcement; the database trigger is the backstop).
   if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
-    throw new Error(EDIT_RECORDS_REFUSAL);
+    // A handled refusal, not a throw: a throw lands on the error boundary. The new-session page answers a viewer without the edit key with the explanation.
+    redirect(`/clients/${clientId}/sessions/new`);
   }
 
   // PR #156. Validate the optional appointment lineage BEFORE touching

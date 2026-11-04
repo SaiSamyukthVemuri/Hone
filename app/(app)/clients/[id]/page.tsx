@@ -1064,13 +1064,21 @@ export default async function ClientCheatSheetPage({
               is a TRUE depth-3 dependency chain (identity -> client -> last
               charted treatment), so no wave collapse is available there and
               acknowledgement is the only remedy the route admits. */}
-          <PendingLink
-            href={`/clients/${client.id}/sessions/new`}
-            pendingLabel="Opening new session…"
-            className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            + Log session
-          </PendingLink>
+          {canEditRecords ? (
+            <PendingLink
+              href={`/clients/${client.id}/sessions/new`}
+              pendingLabel="Opening new session…"
+              className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            >
+              + Log session
+            </PendingLink>
+          ) : (
+            canViewRecords && (
+              <p data-testid="log-session-read-only" className="text-sm text-neutral-600 dark:text-neutral-400">
+                {EDIT_RECORDS_REFUSAL}
+              </p>
+            )
+          )}
           {/* Collapsed: a compact "+ Book appointment" button paired
               with Log session. Expanded: the booking card grows into
               the remaining row width (full-width on phones). */}
@@ -1844,6 +1852,7 @@ export default async function ClientCheatSheetPage({
             clientId={client.id}
             rows={appointmentTimeline}
             aftercareAvailable={canViewAftercare}
+            canChart={canEditRecords}
           />
 
           {/* PR #197 (Chloe round 3): "Charted" and "Session history"

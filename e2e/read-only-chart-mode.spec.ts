@@ -91,6 +91,17 @@ test("a practitioner with clin.edit_records Off sees the chart read-only; the ow
     await expect(owner.getByTestId("chart-read-only-note")).toHaveCount(0);
   });
 
+  await test.step("practitioner (Off): no way to START a chart is offered, and the new-session URL explains instead of erroring (Codex P2)", async () => {
+    await prac.goto(`/clients/${clientId}`);
+    await expect(prac.getByTestId("log-session-read-only")).toBeVisible({ timeout: T });
+    await expect(prac.getByRole("link", { name: /log session/i })).toHaveCount(0);
+    await prac.goto(`/clients/${clientId}/sessions/new`);
+    await expect(prac.getByTestId("new-session-read-only")).toBeVisible({ timeout: T });
+    await expect(prac.getByRole("button", { name: /electrolysis/i })).toHaveCount(0);
+    await owner.goto(`/clients/${clientId}`);
+    await expect(owner.getByRole("link", { name: /log session/i })).toBeVisible({ timeout: T });
+  });
+
   await test.step("viewing is NOT withdrawn: the practitioner can still open the chart (no view refusal)", async () => {
     await expect(prac.getByText(/not available to your role/i)).toHaveCount(0);
   });

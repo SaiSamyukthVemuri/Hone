@@ -22,6 +22,7 @@ import {
 } from "@/components/last-session-summary";
 import { ModalityPicker } from "./ModalityPicker";
 import { SectionLabel } from "@/components/ui/section-label";
+import { EDIT_RECORDS_REFUSAL } from "@/lib/permissions/refusal-copy";
 
 // PR #156 (migration 0068). Sanity match for ?appointment_id=. Empty,
 // missing, or malformed values fall through to "no appointment in
@@ -45,7 +46,22 @@ export default async function NewSessionPage({
   const sp = (await searchParams) ?? {};
   const { studio } = await requirePractitionerWithStudio();
   // Charting starts from the client's treatment record (previous session, its blocks and areas): without clin.view_records there is none to read.
-  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed) notFound();
+  const permissionClient = await createClient();
+  if (!(await requirePermission(permissionClient, studio.id, "clin.view_records", { client: id })).allowed) notFound();
+  // Read-only chart mode: starting a session creates a chart, which needs clin.edit_records. Say so here (the profile and the appointment pages do not offer
+  // the way in, but a bookmark, a dashboard link or a back button can land here); no further reads, nothing to start.
+  if (!(await requirePermission(permissionClient, studio.id, "clin.edit_records", { client: id })).allowed) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Link href={`/clients/${id}`} className="text-sm text-neutral-600 hover:underline dark:text-neutral-400">
+          ← Back to client
+        </Link>
+        <p data-testid="new-session-read-only" className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+          {EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to start a session.
+        </p>
+      </div>
+    );
+  }
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 
