@@ -175,8 +175,12 @@ describe("owner page state: reviewed-active models without a published contract 
     expect(html).not.toContain("Senior 3G");
     expect(html).not.toContain("Junior 3G");
   });
-  it("a failed contract read offers nothing", async () => {
-    expect(await load(null)).toContain("machine-register-none");
+  it("a failed contract read says 'could not check, try again', not 'not available'", async () => {
+    const html = await load(null);
+    expect(html).toContain("machine-register-check-failed");
+    expect(html).toContain("couldn&#x27;t check");
+    expect(html).not.toContain("machine-register-none");
+    expect(html).not.toContain("Senior 3G");
   });
   it("a partly published model is not offered", async () => {
     expect(await load(SENIOR_MODES.slice(1))).not.toContain("Senior 3G");

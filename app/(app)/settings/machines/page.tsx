@@ -27,8 +27,10 @@ export default async function MachineSettingsPage() {
   const catalogue = catalogueForRuntime();
   const active = activeProfiles(catalogue);
   const published = new Map<string, readonly string[] | null>();
+  let checkFailed = false;
   for (const p of active) {
     const res = await publishedModesFor(db, p.profileId, p.version);
+    if (!res.ok) checkFailed = true;
     published.set(`${p.profileId}@${p.version}`, res.ok ? res.value : null);
   }
   const models = listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null).map((p) => ({
@@ -68,7 +70,7 @@ export default async function MachineSettingsPage() {
           Register a machine
         </h3>
         <div className="mt-3">
-          <MachineRegisterForm models={models} register={register} />
+          <MachineRegisterForm models={models} register={register} contractCheckFailed={checkFailed && models.length === 0} />
         </div>
       </section>
 
