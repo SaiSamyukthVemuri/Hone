@@ -10,6 +10,7 @@ Nothing here is authorized. Applying 0287 to a hosted database needs OPS's per-c
 2. **Deploy the app that asks the keys** (#1341 and what stacks on it). An app deployed before 0287 falls back to legacy checks plus one operator alert; it does not lock anyone out.
 3. **Release the keys, per key, only after step 2 is live and verified.** Operator only (no API role can execute it):
    `select public.mark_permissions_released(array['clin.view_records', ...], '<release tag>', 'full');` and the same for the narrow keys with kind `'narrow'`. A key is released once; a `narrow` release may later be upgraded to `full` under a NEW tag; anything else answers `already_released`. Release only keys whose enforcing code is deployed: releasing earlier makes an owner's Off apply to an action the app does not yet check.
+   **`clin.edit_records` is the exception to "release with the rest": release it ONLY after 0289 (edit-record protections) is applied AND its proof has passed (the 0289 DB suite green on the applied schema, the guard triggers present, and the review of #1344/#1351 cleared). Until then it stays PENDING, so an owner's Off for it has no effect and the chart stays editable. Releasing it earlier would make an owner's Off apply in the app's gates without the database backstop (the 0289 guard) behind them.**
 4. **Tell owners, then they activate.** A `narrow` key: an owner's narrowing (Off, or Own instead of Studio) applies at once on release; a widening beyond the snapshot stays at the snapshot. A `full` key: a stored choice made before release stays inert until the owner reviews the preview (`preview_activation`) and confirms (`activate_released_permissions` with the preview hash, a reason and, for sensitive keys, a confirmation). A studio created after the release gets the approved new-studio default.
 5. **Verify** on one studio before announcing: set a key Off, confirm the refusal in the app and in `get_role_permissions` (`effective` = off, `source` not `unreleased`).
 
@@ -18,6 +19,7 @@ Setting a key Off saves, bumps the version and audits the change, **and has no e
 
 ## Things that go wrong if the order is skipped
 - Releasing before the app is deployed: an Off applies at the database but not in the actions that do not yet ask the key.
+- Releasing `clin.edit_records` before 0289 is applied and proven: an owner's Off would refuse edits in the app but leave the database unguarded (a direct write or a missed action would still go through), and the page would show a protection that is only half there. Keep it pending until both are true.
 - Telling owners to "turn it Off" before step 3: nothing happens, and they may believe access is restricted when it is not. Do not announce until step 5.
 - The release step is operator-run and easy to forget: the whole product depends on it. Record each release (keys, tag, kind, time) in the migration ledger apply record.
 
