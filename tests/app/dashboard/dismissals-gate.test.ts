@@ -18,7 +18,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), red
 vi.mock("next/link", () => ({ default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never) }));
 
 const { dashboardDismissalsEnabled } = await import("@/lib/dashboard/dismissals-gate");
-const { dismissAttentionAction, restoreAttentionAction } = await import("@/app/(app)/dashboard/actions");
+const { dismissAttentionAction, restoreAttentionAction } = await import("@/app/(app)/dashboard/attention-actions");
 const { NeedsAttentionPanel } = await import("@/app/(app)/dashboard/needs-attention-panel");
 const { buildNeedsAttention } = await import("@/lib/dashboard/needs-attention-model");
 
@@ -88,7 +88,7 @@ describe("gate OFF: the panel", () => {
 });
 
 describe("source pins: gate OFF never calls the three commands", () => {
-  const actions = read("app/(app)/dashboard/actions.ts");
+  const actions = read("app/(app)/dashboard/attention-actions.ts");
   const stack = read("app/(app)/dashboard/secondary-stack.tsx");
 
   it("each command name appears only in the actions file and the store, nowhere else in app/ or lib/", () => {
@@ -96,7 +96,7 @@ describe("source pins: gate OFF never calls the three commands", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(out).toEqual(["app/(app)/dashboard/actions.ts", "lib/dashboard/attention-dismissal-store.ts"]);
+    expect(out).toEqual(["app/(app)/dashboard/attention-actions.ts", "lib/dashboard/attention-dismissal-store.ts"]);
   });
   it("both actions check the gate before anything else, before any session lookup or client", () => {
     for (const name of ["dismissAttentionAction", "restoreAttentionAction"]) {

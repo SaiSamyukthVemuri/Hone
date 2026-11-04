@@ -66,6 +66,8 @@ export function hasResolverCall(src: string): boolean {
 // Files with no gate call, and why that is acceptable. A stale entry (file gone,
 // or now gated) fails the guard, so this list can only shrink or be justified.
 const NO_GATE_EXCEPTIONS: Record<string, string> = {
+  "app/(app)/dashboard/actions.ts":
+    "signOut() only; it ends the caller's own session and reads no studio data.",
   "app/(app)/settings/waitlist/invite-actions.ts":
     "Gate lives in the database: admit_ re-derives membership and owner role from the session (see the file header); the action trusts no role field from the request.",
 };

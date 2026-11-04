@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/app/(app)/dashboard/actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
+vi.mock("@/app/(app)/dashboard/attention-actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
 vi.mock("@/lib/dashboard/attention-dismissal-store", () => ({ loadMyDismissals: vi.fn(async () => ({ ok: false })) }));
 vi.mock("next/link", () => ({
   default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never),

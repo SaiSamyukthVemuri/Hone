@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/app/(app)/dashboard/actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
+vi.mock("@/app/(app)/dashboard/attention-actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NeedsAttentionPanel } from "@/app/(app)/dashboard/needs-attention-panel";

@@ -12,7 +12,7 @@ import { cardHasReaction } from "@/lib/dashboard/attention-card";
 import type { DashboardTodoItem } from "@/lib/dashboard/todo-model";
 import { itemIdentity, studioIdentity, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
 import { formatMoney, parsePaymentCurrency } from "@/lib/billing/payment-jurisdiction";
-import { dismissAttentionAction, restoreAttentionAction } from "./actions";
+import { dismissAttentionAction, restoreAttentionAction } from "./attention-actions";
 
 // Needs Attention: ONE list, ONE card per client id. Presentational: `needs` is already grouped, ordered and filtered by the owner's
 // own dismissals (lib/dashboard/needs-attention-model.ts and needs-attention-visibility.ts, both pure). The count is NOT here: it is

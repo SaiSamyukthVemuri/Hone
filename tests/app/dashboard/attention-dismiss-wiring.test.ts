@@ -12,7 +12,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), redirect: vi.fn() }));
 vi.mock("next/link", () => ({ default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never) }));
 
-const { dismissAttentionAction, restoreAttentionAction } = await import("@/app/(app)/dashboard/actions");
+const { dismissAttentionAction, restoreAttentionAction } = await import("@/app/(app)/dashboard/attention-actions");
 const { NeedsAttentionPanel } = await import("@/app/(app)/dashboard/needs-attention-panel");
 const { buildNeedsAttention } = await import("@/lib/dashboard/needs-attention-model");
 

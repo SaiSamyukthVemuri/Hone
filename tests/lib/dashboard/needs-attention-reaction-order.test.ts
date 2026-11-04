@@ -6,7 +6,7 @@ import { buildMissingRecordsAssistant } from "@/lib/dashboard/missing-records-as
 import type { DashboardTodo, DashboardTodoItem } from "@/lib/dashboard/todo-model";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/app/(app)/dashboard/actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
+vi.mock("@/app/(app)/dashboard/attention-actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
 vi.mock("next/link", () => ({
   default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never),
 }));
