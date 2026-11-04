@@ -79,7 +79,8 @@ create table public.studio_role_permissions (
 -- no function writes it and an owner cannot read or change it.
 -- released_at means "the code that ENFORCES this key is LIVE" (Insurance AA-4). A NULL released_at is PENDING: the key resolves to today's
 -- snapshot exactly as an unreleased key does. Only the operator command mark_permissions_released sets it, AFTER the enforcing app is deployed.
--- release_kind: 'full' = an owner's stored choice takes effect once activated; 'narrow' (deny_only keys, Privacy AH1) = an owner's choice that
+-- release_kind: 'full' = an owner's stored choice that WIDENS access takes effect once activated (one that LOWERS access applies at once, Privacy AZ1,
+-- so upgrading a narrow release never re-widens what an owner withdrew); 'narrow' (deny_only keys, Privacy AH1) = an owner's choice that
 -- LOWERS access takes effect at once, a choice that widens it stays at the snapshot until a later FULL release and an owner activation.
 create table public.permission_key_release (
   key          text primary key references public.permission_catalog(key),
@@ -393,6 +394,11 @@ begin
   if v_basis = 'new_studio' and (v_active or v_basis_at >= v_rel.released_at) then
     return case p_role when 'practitioner' then c.new_practitioner else c.new_receptionist end;
   end if;
+  -- NARROWING NEVER WAITS FOR ACTIVATION (Privacy AZ1). A stored or default value that pre-dates this release and has not been activated is
+  -- inert for a WIDENING, but a value LOWER than today's snapshot keeps applying: otherwise upgrading a narrow release to full would silently
+  -- hand back access an owner had already withdrawn.
+  v_cand := coalesce(v_stored, case when v_basis = 'new_studio' then case p_role when 'practitioner' then c.new_practitioner else c.new_receptionist end end);
+  if v_cand is not null and public.perm_rank(v_cand) < public.perm_rank(v_snap) then return v_cand; end if;
   return v_snap;
 end;
 $$;
@@ -437,11 +443,13 @@ begin
     return case when v_cand = v_snap then (case when v_stored is not null then 'stored' else 'snapshot' end) else 'inactive_until_activated' end;
   end if;
   select exists (select 1 from public.permission_key_activation k where k.studio_id = p_studio and k.key = p_key and k.release_tag = v_rel.release_tag) into v_active;
+  -- Narrowing never waits for activation (Privacy AZ1): an inert value LOWER than the snapshot still applies, so it is reported as stored/default.
   if v_stored is not null then
-    return case when v_active or v_stored_at >= v_rel.released_at then 'stored' else 'inactive_until_activated' end;
+    return case when v_active or v_stored_at >= v_rel.released_at or public.perm_rank(v_stored) < public.perm_rank(v_snap) then 'stored' else 'inactive_until_activated' end;
   end if;
   if v_basis = 'new_studio' then
-    return case when v_active or v_basis_at >= v_rel.released_at then 'default' else 'inactive_until_activated' end;
+    v_cand := case p_role when 'practitioner' then c.new_practitioner else c.new_receptionist end;
+    return case when v_active or v_basis_at >= v_rel.released_at or public.perm_rank(v_cand) < public.perm_rank(v_snap) then 'default' else 'inactive_until_activated' end;
   end if;
   return 'snapshot';
 end;
