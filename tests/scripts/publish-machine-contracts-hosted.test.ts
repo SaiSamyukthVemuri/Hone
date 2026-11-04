@@ -1,14 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the runner is driven by hand-written fakes whose shapes are the point of each case */
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // HON-8 D4: the hosted publication runner, against FAKES. Nothing here reaches a network, a key or a real ledger. Design:
 // machines/HON8-D4-HOSTED-RUNNER-DESIGN.md v2; tests answer Insurance C1-C8 and Privacy F1-F7.
 
 const lib = await import("../../scripts/lib/hosted-publish.mjs");
-const { runHosted, sha256, redact, Refusal, projectPlanRow, plannedSet, makeHostedClient, KEY_VAR, URL_VAR } = lib;
+const { runHosted, sha256, redact, Refusal, projectPlanRow, plannedSet, makeHostedClient, makeFsLedger, KEY_VAR, URL_VAR } = lib;
 const root = join(__dirname, "../..");
 
 const REF = "abcdefghijklmnopqrst";
@@ -25,16 +26,16 @@ const NOW = Date.parse("2026-11-10T12:00:00Z");
 function token(over: Record<string, unknown> = {}) {
   return JSON.stringify({
     approver_name: "Sam", approved_at: "2026-11-10T10:00:00Z", expires_at: "2026-11-10T20:00:00Z", environment: "production",
-    project_ref: REF, plan_sha256: PLAN_SHA, catalogue_commit: HEAD, action: "publish_machine_contracts", scope: plannedSet(PLAN), ...over,
+    project_ref: REF, plan_sha256: PLAN_SHA, catalogue_commit: HEAD, action: "publish_machine_contracts", scope: plannedSet(PLAN), hosted_migration_max: "0274", expected_existing_rows: 0, ...over,
   });
 }
 
 /** Everything a valid run needs; each test breaks exactly one thing. */
-function deps(over: Record<string, unknown> = {}) {
+function deps(over: Record<string, unknown> = {}, tokenOver: Record<string, unknown> = {}) {
   const files = new Map<string, string>();
   const calls: string[] = [];
   const stored = new Map<string, unknown>();
-  const tok = token();
+  const tok = token(tokenOver);
   const d: any = {
     dryRun: false,
     env: { [KEY_VAR]: KEY, [URL_VAR]: `https://${REF}.supabase.co`, PATH: "/bin", HOME: "/h" } as Record<string, string | undefined>,
@@ -51,12 +52,13 @@ function deps(over: Record<string, unknown> = {}) {
     prompt: async (q: string) => (q.includes("plan") ? PLAN_SHA.slice(0, 12) : REF.slice(-4)),
     ledger: {
       exists: (n: string) => files.has(n),
+      createExclusive: (n: string, b: string) => { if (files.has(n)) throw Object.assign(new Error("exists"), { code: "EEXIST" }); calls.push(`ledger:${n}`); files.set(n, b); },
       writeAtomic: (n: string, b: string) => { calls.push(`ledger:${n}`); files.set(n, b); },
     },
     committedReceiptExists: () => false,
     writeRepoReceipt: () => { calls.push("repo-receipt"); },
     client: () => ({
-      async fingerprint() { calls.push("fingerprint"); return { migrationMax: "0274", rpcExists: true, projectKind: "production" }; },
+      async fingerprint() { calls.push("fingerprint"); return { rpcExists: true }; },
       async readContract(row: any) { calls.push(`read:${row.p_mode_key}`); return stored.get(row.p_mode_key) ?? null; },
       async rpc(_n: string, row: any) { calls.push(`rpc:${row.p_mode_key}`); stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
     }),
@@ -169,19 +171,48 @@ describe("token and inputs: every refusal, before any write (C4, C5, C6, F4)", (
   });
 });
 
-describe("hosted fingerprint (F4): a wrong target refuses before any intent or write", () => {
-  for (const [name, fp, re] of [
-    ["a migration max that is not the declared one", { migrationMax: "0273", rpcExists: true, projectKind: "production" }, /migration max/],
-    ["a missing RPC", { migrationMax: "0274", rpcExists: false, projectKind: "production" }, /not present/],
-    ["a non-production project", { migrationMax: "0274", rpcExists: true, projectKind: "branch" }, /not a production/],
-  ] as const) {
-    it(`${name}`, async () => {
-      const x = deps();
-      x.d.client = () => ({ async fingerprint() { x.calls.push("fingerprint"); return fp; }, async readContract() { return null; }, async rpc() { x.calls.push("rpc:x"); return 1; } });
-      await refused(x.d, re);
-      expect(x.calls.filter((c) => c.startsWith("rpc:") || c.startsWith("ledger:"))).toEqual([]);
-    });
-  }
+describe("hosted fingerprint (F4, BB1): no migration-schema read; the target is held to what Sam bound into the token", () => {
+  const noWrite = (x: any) => expect(x.calls.filter((c: string) => c.startsWith("rpc:") || c.startsWith("ledger:"))).toEqual([]);
+  it("a missing RPC refuses before any intent or write", async () => {
+    const x = deps();
+    x.d.client = () => ({ async fingerprint() { return { rpcExists: false }; }, async readContract() { return null; }, async rpc() { x.calls.push("rpc:x"); return 1; } });
+    await refused(x.d, /not present/);
+    noWrite(x);
+  });
+  it("a token whose hosted_migration_max is not the repo's declared one is refused before any network call", async () => {
+    const x = deps({}, { hosted_migration_max: "0273" });
+    await refused(x.d, /hosted_migration_max/);
+    noNetwork(x.calls);
+  });
+  it("a token without a whole expected_existing_rows is refused", async () => {
+    const x = deps({}, { expected_existing_rows: undefined });
+    await refused(x.d, /expected_existing_rows/);
+    noNetwork(x.calls);
+  });
+  it("more planned rows already present than the token expects refuses with no intent and no write", async () => {
+    const x = deps();
+    x.stored.set("flash", projectPlanRow(ROW("flash")));
+    await refused(x.d, /token expects 0/);
+    noWrite(x);
+  });
+  it("fewer present than the token expects refuses too", async () => {
+    const x = deps({}, { expected_existing_rows: 2 });
+    x.stored.set("flash", projectPlanRow(ROW("flash")));
+    await refused(x.d, /token expects 2/);
+    noWrite(x);
+  });
+  it("the receipt says project kind and the migration head are ASSERTED by the token, not proven", async () => {
+    const r = await runHosted(deps().d);
+    expect(String(r.target_binding)).toMatch(/ASSERTED by the token/);
+    expect(String(r.target_binding)).toMatch(/not proven/);
+  });
+  it("the real client's fingerprint reads only the OpenAPI document, never the migrations schema", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string, init: any) => { seen.push(`${url} ${JSON.stringify(init?.headers ?? {})}`); return { status: 200, ok: true, json: async () => ({ paths: { "/rpc/sync_machine_profile_contract": {} } }) }; };
+    const c = makeHostedClient({ url: `https://${REF}.supabase.co`, key: KEY, fetchImpl: fetchImpl as never });
+    expect(await c.fingerprint()).toEqual({ rpcExists: true });
+    expect(seen.join("\n")).not.toMatch(/schema_migrations|supabase_migrations|Accept-Profile/);
+  });
 });
 
 describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => {
@@ -198,7 +229,7 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
     const x = deps();
     let n = 0;
     x.d.client = () => ({
-      async fingerprint() { return { migrationMax: "0274", rpcExists: true, projectKind: "production" }; },
+      async fingerprint() { return { rpcExists: true }; },
       async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
       async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); if (++n === 2) throw new Error(`process died ${KEY}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
     });
@@ -207,7 +238,9 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
     expect(first!.message).toMatch(/token is burned/);
     const receipt = JSON.parse([...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1]);
     expect(receipt.published).toEqual(["fixture:p@3:flash"]);
-    expect(receipt.not_attempted).toEqual(["fixture:p@3:blend", "fixture:p@3:electrolysis"]);
+    expect(receipt.attempted_uncertain).toEqual([expect.objectContaining({ id: "fixture:p@3:blend", read_back: "absent" })]);
+    expect(JSON.stringify(receipt)).not.toContain(KEY);
+    expect(receipt.not_attempted).toEqual(["fixture:p@3:electrolysis"]);
     expect(receipt.status).toBe("partial_or_failed_token_burned");
     // the second run, same token: refused with no new write.
     const before = x.calls.filter((c) => c.startsWith("rpc:")).length;
@@ -237,7 +270,7 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
   });
 
   it("an identical existing row is reported UNCHANGED, not published", async () => {
-    const x = deps();
+    const x = deps({}, { expected_existing_rows: 1 });
     x.stored.set("flash", projectPlanRow(ROW("flash")));
     const r = await runHosted(x.d);
     expect(r.unchanged).toEqual(["fixture:p@3:flash"]);
@@ -247,7 +280,7 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
   it("a read-back mismatch is reported and the receipt says so", async () => {
     const x = deps();
     x.d.client = () => ({
-      async fingerprint() { return { migrationMax: "0274", rpcExists: true, projectKind: "production" }; },
+      async fingerprint() { return { rpcExists: true }; },
       async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
       async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, { channels_max: 1, requires_installed_option: null, fields: [] }); return 1; },
     });
@@ -257,11 +290,78 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
   });
 });
 
+describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (Codex P2 #2, #1)", () => {
+  it("two runs of one token over a REAL ledger directory: exactly one publishes, the other is refused", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ledger-race-"));
+    try {
+      const ledger = makeFsLedger(dir);
+      const a = deps({ ledger }); const b = deps({ ledger });
+      const results = await Promise.allSettled([runHosted(a.d), runHosted(b.d)]);
+      const ok = results.filter((r) => r.status === "fulfilled");
+      const bad = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+      expect(ok).toHaveLength(1);
+      expect(bad).toHaveLength(1);
+      expect(bad[0].reason).toBeInstanceOf(Refusal);
+      expect(bad[0].reason.message).toMatch(/claimed by another run|used or started/);
+      const rpcs = [...a.calls, ...b.calls].filter((c) => c.startsWith("rpc:"));
+      expect(rpcs, "each mode is published once, by one run").toHaveLength(3);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("the real createExclusive refuses an existing name (EEXIST) and leaves the first body in place", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ledger-ex-"));
+    try {
+      const l = makeFsLedger(dir);
+      l.createExclusive("i.json", "first");
+      expect(() => l.createExclusive("i.json", "second")).toThrow(expect.objectContaining({ code: "EEXIST" }));
+      expect(readFileSync(join(dir, "i.json"), "utf8")).toBe("first");
+      l.writeAtomic("r.json", "one"); l.writeAtomic("r.json", "two");
+      expect(readFileSync(join(dir, "r.json"), "utf8"), "the receipt stub IS replaceable").toBe("two");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("an intent that appears between the used-check and the claim refuses and writes nothing", async () => {
+    const x = deps();
+    const real = x.d.ledger.createExclusive;
+    x.d.ledger.createExclusive = (n: string, b: string) => { x.files.set(n, "someone else"); return real(n, b); };
+    await refused(x.d, /claimed by another run/);
+    expect(x.calls.filter((c) => c.startsWith("rpc:"))).toEqual([]);
+    expect(x.files.get(`${sha256(x.tok)}.intent.json`)).toBe("someone else");
+  });
+  it("a failed RPC whose write actually committed is recorded as attempted_uncertain with read_back present_equal... as 'equal'", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); throw new Error("network reset after commit"); },
+    });
+    await expect(runHosted(x.d)).rejects.toThrow(/token is burned/);
+    const receipt = JSON.parse([...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1]);
+    expect(receipt.attempted_uncertain).toEqual([expect.objectContaining({ id: "fixture:p@3:flash", read_back: "equal" })]);
+    expect(receipt.published).toEqual([]);
+    expect(receipt.not_attempted).toEqual(["fixture:p@3:blend", "fixture:p@3:electrolysis"]);
+  });
+  it("a read-back REQUEST that fails still finalizes the receipt, names the rows, and exits non-zero with the token burned", async () => {
+    const x = deps();
+    let after = false;
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { if (after) throw new Error(`503 ${KEY}`); return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") after = true; return 1; },
+    });
+    await expect(runHosted(x.d)).rejects.toThrow(/read-back could not be completed/);
+    const raw = [...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1];
+    const receipt = JSON.parse(raw);
+    expect(receipt.status).toBe("read_back_unverified_token_burned");
+    expect(receipt.read_back_unreadable).toHaveLength(3);
+    expect(raw).not.toContain(KEY);
+    expect(receipt.published).toHaveLength(3);
+  });
+});
+
 describe("receipt durability (C7)", () => {
   it("a receipt-write failure after publishing prints the body and exits non-zero", async () => {
     const x = deps();
     let n = 0;
-    x.d.ledger = { exists: () => false, writeAtomic: () => { if (++n > 2) throw new Error("disk full"); } };
+    x.d.ledger = { exists: () => false, createExclusive: () => {}, writeAtomic: () => { if (++n > 1) throw new Error("disk full"); } };
     await expect(runHosted(x.d)).rejects.toThrow(/receipt could not be written/);
     const printed = x.calls.find((c) => c.startsWith("stdout:RECEIPT WRITE FAILED"));
     expect(printed, "the body is on stdout").toBeDefined();
@@ -295,6 +395,11 @@ describe("the key never leaves the process (F1)", () => {
 describe("source guards", () => {
   const lib = readFileSync(join(root, "scripts/lib/hosted-publish.mjs"), "utf8");
   const cli = readFileSync(join(root, "scripts/publish-machine-contracts-hosted.mjs"), "utf8");
+  it("the CLI never passes the URL-check seam, and the lib never reads the migrations schema (BB3, BB1)", () => {
+    expect(cli).not.toMatch(/checkUrl/);
+    expect(lib).not.toMatch(/Accept-Profile|supabase_migrations|schema_migrations/);
+    expect(lib).not.toMatch(/projectKind/);
+  });
   it("makes no raw table write: only .rpc of the sync function and select reads", () => {
     expect(lib).not.toMatch(/method:\s*["'](PATCH|PUT|DELETE)["']/);
     expect(lib).not.toMatch(/\b(insert|update|delete|truncate)\s+(into|from|public)/i);

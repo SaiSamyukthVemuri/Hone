@@ -4,6 +4,8 @@
 //
 // The only network operations are `select` reads and `.rpc("sync_machine_profile_contract")`. There is no raw table write.
 import { createHash } from "node:crypto";
+import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 export const ACTION = "publish_machine_contracts";
 export const RPC = "sync_machine_profile_contract";
@@ -66,7 +68,7 @@ export function plannedSet(plan) {
 }
 
 /** Parse and check the token against everything the operator's machine can establish. Throws Refusal. */
-export function checkToken({ tokenText, expectTokenSha256, plan, planSha256, head, clean, ancestor, now, sysRef, urlRef, productionBranch }) {
+export function checkToken({ tokenText, expectTokenSha256, plan, planSha256, head, clean, ancestor, now, sysRef, urlRef, productionBranch, declaredMigrationMax }) {
   const tokenSha256 = sha256(tokenText);
   if (!SHA_RE.test(String(expectTokenSha256 ?? ""))) refuse("--expect-token-sha256=<64 hex> is required: quote the token's sha256 from the approval message");
   if (tokenSha256 !== expectTokenSha256) refuse(`the token file's sha256 (${tokenSha256}) is not the one quoted; these are not the bytes that were approved`);
@@ -86,6 +88,9 @@ export function checkToken({ tokenText, expectTokenSha256, plan, planSha256, hea
   if (!COMMIT_RE.test(String(t.catalogue_commit)) || t.catalogue_commit !== head) refuse("token catalogue_commit is not this checkout's HEAD");
   if (!clean) refuse("the checkout is not clean (modified or untracked files)");
   if (!ancestor) refuse(`HEAD is not an ancestor of origin/${productionBranch}: this is not the reviewed, merged commit`);
+  // Sam's separate read-only results, bound into the token (Privacy BB1). The runner cannot read these from the target; it holds him to them.
+  if (t.hosted_migration_max !== declaredMigrationMax) refuse(`token hosted_migration_max (${t.hosted_migration_max}) is not the repo's declared ${declaredMigrationMax}`);
+  if (!Number.isInteger(t.expected_existing_rows) || t.expected_existing_rows < 0) refuse("token expected_existing_rows must be a whole number of planned rows already published");
   const planned = plannedSet(plan);
   const scope = Array.isArray(t.scope) ? [...t.scope] : refuse("token scope must be a list");
   if (JSON.stringify([...scope].sort()) !== JSON.stringify([...planned].sort()) || new Set(scope).size !== scope.length) {
@@ -106,6 +111,30 @@ export function projectContract({ channels_max, requires_installed_option, field
   return { channels_max: channels_max ?? null, requires_installed_option: requires_installed_option ? String(requires_installed_option).trim() : null, fields: list };
 }
 export const projectPlanRow = (row) => projectContract({ channels_max: row.p_channels_max, requires_installed_option: row.p_requires_installed_option, fields: row.p_fields });
+
+/**
+ * The operator's ledger on the real filesystem. `createExclusive` is the SINGLE-USE claim: an exclusive create (O_EXCL, flag wx) at the FINAL
+ * name, so of two runs of the same token started at the same moment exactly one wins and the other gets EEXIST. A write-then-rename would
+ * silently replace an existing intent (Insurance G1, Codex P2, Privacy BB4). `writeAtomic` (temp file then rename) stays for the receipt,
+ * which is MEANT to be replaced (started stub, then the finished receipt).
+ */
+export function makeFsLedger(dir) {
+  const ensure = () => mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return {
+    exists: (name) => existsSync(join(dir, name)),
+    createExclusive(name, body) {
+      ensure();
+      const fd = openSync(join(dir, name), "wx", 0o600); // throws EEXIST if the intent is already there
+      try { writeFileSync(fd, body); fsyncSync(fd); } finally { closeSync(fd); }
+    },
+    writeAtomic(name, body) {
+      ensure();
+      const tmp = join(dir, `.${name}.${process.pid}.tmp`);
+      writeFileSync(tmp, body, { mode: 0o600, flag: "wx" });
+      renameSync(tmp, join(dir, name));
+    },
+  };
+}
 
 /** The intent and receipt files for one token, in the operator's ledger. */
 export const ledgerNames = (tokenSha256) => ({
@@ -147,7 +176,7 @@ export async function runHosted(d) {
     const ancestor = d.isAncestorOfProduction(head);
     const { token, tokenSha256 } = checkToken({
       tokenText, expectTokenSha256: d.expectTokenSha256, plan, planSha256, head, clean, ancestor, now: d.now(),
-      sysRef: d.systemRef(), urlRef, productionBranch: d.productionBranch,
+      sysRef: d.systemRef(), urlRef, productionBranch: d.productionBranch, declaredMigrationMax: d.declaredMigrationMax(),
     });
 
     // F3: a person, not a process. Wrong answer = exit, no retry, no skip flag.
@@ -162,25 +191,37 @@ export async function runHosted(d) {
     }
 
     const client = d.client({ url: hostedUrl, key });
-    // F4: the hosted fingerprint, read-only, before any write.
+    // THE FINGERPRINT NEEDS NO NEW EXPOSURE (Privacy BB1, Insurance G3). The migrations schema is not reachable through the API and must not be
+    // exposed for this. What the runner CAN read: the sync function is present on the target, and how many of the planned rows already exist.
+    // The migration head is a value Sam read separately (his read-only check) and bound into the token; it is compared with the repo's declared
+    // head but NOT read by the runner, and project kind is asserted by the token, not proven (BB2, G2). Both are said plainly in the receipt.
     const fp = await client.fingerprint();
-    if (fp.migrationMax !== d.declaredMigrationMax()) refuse(`hosted migration max ${fp.migrationMax} is not the declared ${d.declaredMigrationMax()}`);
     if (!fp.rpcExists) refuse(`the ${RPC} function is not present on the target`);
-    if (fp.projectKind !== "production") refuse(`the target is not a production project (${fp.projectKind})`);
 
     // Existing rows, read-only first (design 8.1-8.2).
     const before = [];
+    let existingCount = 0;
     for (const row of plan.publish) {
       const existing = await client.readContract(row);
       before.push({ id: `${row.p_machine_profile_id}@${row.p_machine_profile_version}:${row.p_mode_key}`, hash: existing ? sha256(JSON.stringify(existing)) : null });
+      if (existing) existingCount += 1;
       if (existing && sha256(JSON.stringify(existing)) !== sha256(JSON.stringify(projectPlanRow(row)))) {
         refuse(`an existing row differs from the plan (${row.p_mode_key}): rows are immutable, this is an incident, nothing was written`);
       }
     }
+    if (existingCount !== token.expected_existing_rows) {
+      refuse(`${existingCount} of the planned rows already exist but the token expects ${token.expected_existing_rows}: the target is not in the state Sam approved`);
+    }
 
-    // WRITE-AHEAD INTENT: before the first write, atomically. A crash after this burns the token.
+    // WRITE-AHEAD INTENT, claimed EXCLUSIVELY at its final name before the first write (G1): of two runs of one token, one wins; the other is refused.
+    // A crash after this burns the token. The receipt stub, which is meant to be replaced, is written atomically.
     const startedAt = new Date(d.now()).toISOString();
-    d.ledger.writeAtomic(names.intent, JSON.stringify({ token_sha256: tokenSha256, plan_sha256: planSha256, started_at: startedAt }, null, 2));
+    try {
+      d.ledger.createExclusive(names.intent, JSON.stringify({ token_sha256: tokenSha256, plan_sha256: planSha256, started_at: startedAt }, null, 2));
+    } catch (e) {
+      if (e && e.code === "EEXIST") refuse("this token was claimed by another run an instant ago (the intent record already exists); nothing was written");
+      throw e;
+    }
     d.ledger.writeAtomic(names.receipt, JSON.stringify({ status: "started", token_sha256: tokenSha256, plan_sha256: planSha256, started_at: startedAt }, null, 2));
 
     const receipt = {
@@ -191,9 +232,12 @@ export async function runHosted(d) {
       approver_role: "owner",
       token_sha256: tokenSha256,
       key_binding: keyBinding,
+      // PLAIN STATEMENT (BB2, G2): not a control the runner performed.
+      target_binding: "project kind and the migration head are ASSERTED by the token (the approver's separate read-only check), not proven by this runner; the target is bound only by the token's ref, the URL, supabase/.temp/project-ref and the key's ref claim when it has one",
+      token_declared: { hosted_migration_max: token.hosted_migration_max, expected_existing_rows: token.expected_existing_rows },
       runtime: d.runtimeVersions(),
       started_at: startedAt,
-      published: [], unchanged: [], not_attempted: [], results: [], before,
+      published: [], unchanged: [], attempted_uncertain: [], not_attempted: [], results: [], before,
     };
     const finish = (status) => {
       receipt.status = status;
@@ -207,7 +251,17 @@ export async function runHosted(d) {
         throw new Error("receipt could not be written after publication began");
       }
     };
+    const idOf = (row) => `${row.p_machine_profile_id}@${row.p_machine_profile_version}:${row.p_mode_key}`;
+    const readBack = async (row) => {
+      try {
+        const now = await client.readContract(row);
+        if (!now) return "absent";
+        return sha256(JSON.stringify(now)) === sha256(JSON.stringify(projectPlanRow(row))) ? "equal" : "differs";
+      } catch (e) { return `unreadable: ${redactErr(e)}`; }
+    };
 
+    // A FAILED RPC IS NOT "NOT ATTEMPTED" (Codex P2): the request was sent, and a lost answer may still have committed. It is recorded as an
+    // attempt with an UNCERTAIN outcome, and read back to learn what actually happened. Only the rows after it were never attempted.
     let failure = null;
     for (const [i, row] of plan.publish.entries()) {
       const id = plannedSet(plan)[i];
@@ -220,21 +274,26 @@ export async function runHosted(d) {
       } catch (e) {
         failure = redactErr(e);
         receipt.results.push({ id, error: failure });
-        receipt.not_attempted.push(id);
+        receipt.attempted_uncertain.push({ id, error: failure, read_back: await readBack(row) });
       }
     }
-    // Read-back, byte for byte (design 8.4), for everything that was attempted.
+    // Read-back, byte for byte (design 8.4), for every row that completed. A read-back that FAILS is finalized into the receipt, never lost (Codex P2).
     const mismatches = [];
+    const unreadable = [];
     for (const row of plan.publish) {
-      const id = `${row.p_machine_profile_id}@${row.p_machine_profile_version}:${row.p_mode_key}`;
-      if (receipt.not_attempted.includes(id)) continue;
-      const now = await client.readContract(row);
-      if (!now || sha256(JSON.stringify(now)) !== sha256(JSON.stringify(projectPlanRow(row)))) mismatches.push(id);
+      const id = idOf(row);
+      if (receipt.not_attempted.includes(id) || receipt.attempted_uncertain.some((u) => u.id === id)) continue;
+      const r = await readBack(row);
+      if (r.startsWith("unreadable")) unreadable.push({ id, error: r });
+      else if (r !== "equal") mismatches.push(id);
     }
     receipt.read_back_mismatches = mismatches;
+    receipt.read_back_unreadable = unreadable;
     receipt.partial = failure !== null;
-    finish(failure ? "partial_or_failed_token_burned" : mismatches.length ? "read_back_mismatch" : "complete");
+    const status = failure ? "partial_or_failed_token_burned" : unreadable.length ? "read_back_unverified_token_burned" : mismatches.length ? "read_back_mismatch" : "complete";
+    finish(status);
     if (failure) throw new Error(`publication stopped at the first error and the token is burned: ${failure}`);
+    if (unreadable.length) throw new Error(`read-back could not be completed for: ${unreadable.map((u) => u.id).join(", ")}; the receipt records it and the token is burned`);
     if (mismatches.length) throw new Error(`read-back mismatch for: ${mismatches.join(", ")}`);
     return receipt;
   } catch (e) {
@@ -243,9 +302,13 @@ export async function runHosted(d) {
   }
 }
 
-/** The real hosted client: select reads and the one RPC over https, no redirects, no proxy. */
-export function makeHostedClient({ url, key, fetchImpl = fetch }) {
-  parseHostedUrl(url);
+/**
+ * The real hosted client: select reads and the one RPC over https, no redirects, no proxy.
+ * `checkUrl` is a TEST SEAM so an owned local stack (http://127.0.0.1) can be addressed; it defaults to the strict hosted-URL check and the CLI
+ * never passes it (a source guard pins that), so the real tool always enforces `^https://<20 chars>.supabase.co$`.
+ */
+export function makeHostedClient({ url, key, fetchImpl = fetch, checkUrl = parseHostedUrl }) {
+  checkUrl(url);
   const headers = { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
   const call = async (path, init = {}) => {
     const res = await fetchImpl(`${url}${path}`, { redirect: "manual", ...init, headers: { ...headers, ...(init.headers ?? {}) } });
@@ -254,18 +317,13 @@ export function makeHostedClient({ url, key, fetchImpl = fetch }) {
     return res.json();
   };
   return {
-    // The hosted migration table is not exposed through PostgREST by default; when it is not readable this REFUSES (the runner
-    // never proceeds without a fingerprint). A read-only fingerprint RPC would be a migration, which is Sam's category.
+    // NO NEW EXPOSURE (Privacy BB1): nothing here reads supabase_migrations, which the API does not expose. The fingerprint is whether the sync
+    // function is present on the target (the API's own OpenAPI document). The migration head and the count of already-published rows are bound
+    // into the approval token from Sam's separate read-only check; the runner compares the row count itself (before any write) and holds the
+    // head to the repo's declared value. Project kind is NOT read: it is asserted by the token.
     async fingerprint() {
-      const rows = await call("/rest/v1/schema_migrations?select=version&order=version.desc&limit=1", { headers: { "Accept-Profile": "supabase_migrations" } })
-        .catch(() => { throw new Refusal("the hosted migration max cannot be read through the API; the runner refuses without a fingerprint"); });
       const spec = await call("/rest/v1/", { headers: { Accept: "application/openapi+json" } });
-      return {
-        migrationMax: String(rows[0]?.version ?? ""),
-        rpcExists: Boolean(spec.paths?.[`/rpc/${RPC}`]),
-        // Not provable from the REST surface: stated, not faked. Production only when the token says so AND the declared ref matched.
-        projectKind: "production",
-      };
+      return { rpcExists: Boolean(spec.paths?.[`/rpc/${RPC}`]) };
     },
     async readContract(row) {
       const where = `machine_profile_id=eq.${encodeURIComponent(row.p_machine_profile_id)}&machine_profile_version=eq.${row.p_machine_profile_version}&mode_key=eq.${encodeURIComponent(row.p_mode_key)}`;

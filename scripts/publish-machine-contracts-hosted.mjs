@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync, mkdirSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { execFileSync } from "node:child_process";
-import { runHosted, makeHostedClient, sha256, Refusal } from "./lib/hosted-publish.mjs";
+import { runHosted, makeHostedClient, makeFsLedger, sha256, Refusal } from "./lib/hosted-publish.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
@@ -90,10 +90,7 @@ try {
     runtimeVersions: () => ({ node: process.version }),
     prompt: async (q) => { const rl = createInterface({ input: process.stdin, output: process.stdout }); try { return await rl.question(q); } finally { rl.close(); } },
     client: ({ url, key }) => makeHostedClient({ url, key }),
-    ledger: {
-      exists: (name) => existsSync(join(ledgerDir, name)),
-      writeAtomic: (name, body) => writeAtomic(ledgerDir, name, body),
-    },
+    ledger: makeFsLedger(ledgerDir),
     committedReceiptExists: (tokenSha) => existsSync(join(receiptsDir, `${tokenSha}.json`)),
     writeRepoReceipt: (tokenSha, body) => writeAtomic(receiptsDir, `${tokenSha}.json`, body),
   });

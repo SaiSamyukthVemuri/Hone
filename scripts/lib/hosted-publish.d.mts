@@ -16,6 +16,7 @@ export function projectContract(c: { channels_max?: unknown; requires_installed_
 export function ledgerNames(tokenSha256: string): { intent: string; receipt: string };
 export function checkToken(a: Record<string, unknown>): { token: Record<string, unknown>; tokenSha256: string };
 export function runHosted(d: Record<string, unknown>): Promise<Record<string, unknown>>;
-export function makeHostedClient(a: { url: string; key: string; fetchImpl?: unknown }): {
+export function makeHostedClient(a: { url: string; key: string; fetchImpl?: unknown; checkUrl?: (url: string) => unknown }): {
   fingerprint(): Promise<unknown>; readContract(row: unknown): Promise<unknown>; rpc(name: string, args: unknown): Promise<unknown>;
 };
+export function makeFsLedger(dir: string): { exists(name: string): boolean; createExclusive(name: string, body: string): void; writeAtomic(name: string, body: string): void };
