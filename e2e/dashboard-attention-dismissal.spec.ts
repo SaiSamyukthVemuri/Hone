@@ -109,9 +109,14 @@ async function moneyHashes(seed: E2eSeed) {
 // has both; the gate-OFF case and the money cases below run everywhere, which is the proof that the app ships without 0298.
 const GATE_ON = process.env.HONE_DASHBOARD_DISMISSALS_ENABLED === "true";
 const gated: typeof test = GATE_ON ? test : (test.skip as unknown as typeof test);
+// HON-65: the unpaid reminders are OFF unless HONE_DASHBOARD_UNPAID_ENABLED=true reaches the server (lib/dashboard/unpaid-gate.ts,
+// forwarded by e2e/helpers/local-env.ts only when set). Cases that assert unpaid amounts run only then; every ordinary run proves OFF.
+const UNPAID_ON = process.env.HONE_DASHBOARD_UNPAID_ENABLED === "true";
+const unpaidGated: typeof test = UNPAID_ON ? test : (test.skip as unknown as typeof test);
+const gatedWithUnpaid: typeof test = GATE_ON && UNPAID_ON ? test : (test.skip as unknown as typeof test);
 
 test.describe("Dashboard Needs attention: dismissal", () => {
-  gated("shows exact money, dismisses per owner across reload and a second device, reappears on a real change, never touches money", async ({ page, browser }) => {
+  gatedWithUnpaid("shows exact money, dismisses per owner across reload and a second device, reappears on a real change, never touches money", async ({ page, browser }) => {
     const { seed, unpaid, partial, intakeClient } = await seedStudioWithMoney();
     await page.setViewportSize({ width: 1280, height: 900 });
     await loginAsOwner(page, seed);
@@ -203,7 +208,8 @@ test.describe("Dashboard Needs attention: dismissal", () => {
 
   // Gate OFF (the default of every ordinary run, and what ships while 0298 is held): no Dismiss, no Dismissed view, no "could not read"
   // note, and nothing in the page asked the database for dismissals; the one count and the exact unpaid amounts still work.
-  (GATE_ON ? test.skip : test)("gate OFF: no Dismiss, no Dismissed view, no note; the one count and the exact amounts still work", async ({ page }) => {
+  // It asserts the unpaid amounts, so it also needs the unpaid gate ON; with it OFF the case below proves the same dismissal absence.
+  (GATE_ON || !UNPAID_ON ? test.skip : test)("gate OFF: no Dismiss, no Dismissed view, no note; the one count and the exact amounts still work", async ({ page }) => {
     const { seed, unpaid, partial } = await seedStudioWithMoney();
     await page.setViewportSize({ width: 1280, height: 900 });
     await loginAsOwner(page, seed);
@@ -220,6 +226,36 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await expect(page.locator("main")).not.toContainText(/could not read your dismissed/i);
     await expect(page.getByTestId("needs-attention-unpaid-toggle")).toBeVisible();
     await expect(page.getByTestId("dashboard-summary-strip")).not.toContainText(/clients to review/i);
+  });
+
+  // HON-65, unpaid gate OFF (the default of every ordinary run, and what ships): an owner with unpaid and partly paid visits sees no
+  // unpaid section at all (no amount, no window note, no All outstanding link, no "could not check unpaid" entry), also at ?unpaid=all,
+  // while the one count and the other reminders still render.
+  (UNPAID_ON ? test.skip : test)("unpaid gate OFF: no unpaid section, even at ?unpaid=all; the one count and other reminders still work", async ({ page }) => {
+    const { seed, unpaid, partial, intakeClient } = await seedStudioWithMoney();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    for (const path of ["/dashboard", "/dashboard?unpaid=all"]) {
+      await page.goto(path);
+      await expect(page.getByTestId("needs-attention-heading-count")).toBeVisible({ timeout: T });
+      await expect(page.getByTestId("needs-attention-heading-count")).not.toHaveText(/Unavailable/, { timeout: T });
+      await expect(page.getByTestId("needs-attention-heading-count")).toHaveText(/\d+ clients?, \d+ items?/);
+      await expect(panel(page)).toBeVisible({ timeout: T });
+      await expect(page.locator("li[data-attention-client]").filter({ hasText: intakeClient.name })).toBeVisible({ timeout: T });
+      await expect(page.getByTestId("attention-unpaid-amount")).toHaveCount(0);
+      await expect(page.locator('[data-attention-issue="unpaid"]')).toHaveCount(0);
+      await expect(page.getByTestId("needs-attention-unpaid-window")).toHaveCount(0);
+      await expect(page.getByTestId("needs-attention-unpaid-toggle")).toHaveCount(0);
+      await expect(unpaidAmountOf(page, unpaid.name)).toHaveCount(0);
+      await expect(unpaidAmountOf(page, partial.name)).toHaveCount(0);
+      const main = page.locator("main");
+      await expect(main).not.toContainText(/still owed|Amount unavailable|Show all outstanding|unpaid balances/i);
+      if (!GATE_ON) {
+        await expect(page.getByTestId("attention-dismiss")).toHaveCount(0);
+        await expect(page.getByTestId("attention-dismissed-toggle")).toHaveCount(0);
+        await expect(page.getByTestId("attention-dismissals-unavailable")).toHaveCount(0);
+      }
+    }
   });
 
   test("a non-owner sees no amounts and no Dismiss", async ({ page }) => {
@@ -281,7 +317,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     });
   }
 
-  test("a collected settlement reduces or clears the balance, and a still_owes note never creates an amount", async ({ page }) => {
+  unpaidGated("a collected settlement reduces or clears the balance, and a still_owes note never creates an amount", async ({ page }) => {
     const { seed, unpaid, partial, visit, prac } = await seedStudioWithMoney();
     const noted = await visit("Noted", 30000, 6);
     // A card payment with no recorded quote: the price at visit time cannot be proven, so no figure is claimed.
@@ -315,7 +351,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     expect(notedLine).not.toContain("777");
   });
 
-  test("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {
+  unpaidGated("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {
     const { seed, partial, visit } = await seedStudioWithMoney();
     const older = await visit("Older", 8800, 100);
     await page.setViewportSize({ width: 1280, height: 900 });
