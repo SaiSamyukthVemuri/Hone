@@ -38,7 +38,7 @@ describe("client field governance (R5, prepared)", () => {
   });
 
   it("every key it names exists in the permission catalog", () => {
-    const keys = new Set(CATALOG.map((d) => d.key));
+    const keys = new Set<string>(CATALOG.map((d) => d.key));
     for (const [col, g] of Object.entries(gov)) {
       if (g.kind !== "keyed") continue;
       expect(keys.has(g.read), `${col} read ${g.read}`).toBe(true);
