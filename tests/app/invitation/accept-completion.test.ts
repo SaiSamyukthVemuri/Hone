@@ -12,7 +12,7 @@ const ctx = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ redirect: (to: string) => { throw new Error(`REDIRECT:${to}`); } }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({ auth: {
-    getUser: async () => ({ data: { user: ctx.user } }),
+    getUser: async () => ({ data: { user: ctx.user && { identities: [], ...ctx.user } } }),
     getClaims: async () => ({ data: { claims: { amr: ctx.amr } }, error: null }),
     signInWithOtp: ctx.otp,
   } }),

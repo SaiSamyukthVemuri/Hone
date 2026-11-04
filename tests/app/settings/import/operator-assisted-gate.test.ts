@@ -102,7 +102,7 @@ vi.mock("@/lib/supabase/server", () => {
   return {
     createClient: async () => ({
       from: (t: string) => builder(t),
-      auth: { getUser: async () => ({ data: { user: authUser } }), getClaims: async () => ({ data: { claims: { amr: [{ method: "otp" }] } }, error: null }), },
+      auth: { getUser: async () => ({ data: { user: authUser && { identities: [], ...authUser } } }), getClaims: async () => ({ data: { claims: { amr: [{ method: "otp" }] } }, error: null }), },
     }),
   };
 });

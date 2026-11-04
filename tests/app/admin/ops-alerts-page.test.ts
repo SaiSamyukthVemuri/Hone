@@ -156,7 +156,7 @@ describe("PR #193 boundaries", () => {
 // SEC-002: these loaders must refuse before constructing a privileged client,
 // even when React starts their work without waiting for the parent layout.
 const authState = vi.hoisted(() => ({
-  user: null as { id: string; email: string } | null,
+  user: null as { id: string; email: string; identities?: unknown[] } | null,
   error: null as { message: string } | null,
   allowed: true,
 }));
@@ -188,13 +188,13 @@ describe("SEC-002 independently authorized privileged loaders", () => {
 
   it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member"])(
     "refuses %s without trusting studio role or layout", async (id) => {
-      authState.user = { id, email: "member@hone.example" };
+      authState.user = { id, email: "member@hone.example", identities: [] };
       await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
     },
   );
   it("refuses no session, revoked allowlist and auth error even with stale user data", async () => {
     await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
-    authState.user = { id: "operator", email: "operator@hone.example" };
+    authState.user = { id: "operator", email: "operator@hone.example", identities: [] };
     authState.allowed = false;
     await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
     authState.allowed = true;
@@ -202,12 +202,12 @@ describe("SEC-002 independently authorized privileged loaders", () => {
     await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
   });
   it("permits the currently authenticated platform operator without a studio membership", async () => {
-    authState.user = { id: "operator", email: "operator@hone.example" };
+    authState.user = { id: "operator", email: "operator@hone.example", identities: [] };
     await expect(requirePlatformAdmin()).resolves.toBe(authState.user);
   });
   it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member", "former-platform-admin"])(
     "the actual ops loader refuses %s before constructing its privileged client", async (id) => {
-      authState.user = { id, email: id === "former-platform-admin" ? "operator@hone.example" : "member@hone.example" };
+      authState.user = { id, email: id === "former-platform-admin" ? "operator@hone.example" : "member@hone.example", identities: [] };
       authState.allowed = id !== "former-platform-admin";
       const { default: Page } = await import("@/app/admin/ops-alerts/page");
       await expect(Page()).rejects.toThrow("NEXT_NOT_FOUND");
@@ -215,7 +215,7 @@ describe("SEC-002 independently authorized privileged loaders", () => {
     },
   );
   it("the actual current-operator loader reaches the privileged-client detector", async () => {
-    authState.user = { id: "operator", email: "operator@hone.example" };
+    authState.user = { id: "operator", email: "operator@hone.example", identities: [] };
     const { default: Page } = await import("@/app/admin/ops-alerts/page");
     await expect(Page()).rejects.toThrow("PRIVILEGED_CLIENT_CONSTRUCTED");
     expect(privilegedReads.clients).toBe(1);

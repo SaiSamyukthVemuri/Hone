@@ -55,7 +55,7 @@ function anonymous() {
 
 function signedIn(email: string | undefined) {
   h.getUser.mockResolvedValue({
-    data: { user: { id: "user-under-test", email } },
+    data: { user: { id: "user-under-test", email, identities: [] } },
     error: null,
   });
 }
@@ -172,7 +172,7 @@ describe("GET /api/admin/runtime — fails closed with no version metadata", () 
 
   it("getUser returned an error, even alongside an operator user", async () => {
     h.getUser.mockResolvedValue({
-      data: { user: { id: "user-under-test", email: OPERATOR } },
+      data: { user: { id: "user-under-test", email: OPERATOR, identities: [] } },
       error: { name: "AuthApiError", message: "jwt expired", status: 401 },
     });
     await expectRefusal(await GET());

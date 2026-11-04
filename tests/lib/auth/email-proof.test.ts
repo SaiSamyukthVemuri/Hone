@@ -260,6 +260,24 @@ describe("S-2b: link proof counts only on an account whose address NEVER changed
     expect(mailboxProofMethod(link(T), { email: "victim@example.com", identities: [] })).toBe("email_link_or_otp");
   });
 
+  it("EA-1: an ABSENT, null or non-array identities list is unreadable, so the account counts as changed (fail closed)", () => {
+    for (const identities of [undefined, null, "[]", {}, 0, { 0: { provider: "email" } }]) {
+      expect(emailChangeState({ email: "victim@example.com", email_change_sent_at: null, identities } as never), JSON.stringify(identities)).toBe("changed");
+    }
+    // a non-object entry inside the list is unreadable too (and must not throw)
+    expect(emailChangeState({ email: "victim@example.com", identities: [null] } as never)).toBe("changed");
+    expect(emailChangeState({ email: "victim@example.com", identities: ["email"] } as never)).toBe("changed");
+    // the EMPTY array stays never-changed (an account with no email identity row, e.g. Google-only)
+    expect(emailChangeState({ email: "victim@example.com", email_change_sent_at: null, identities: [] })).toBe("never_changed");
+  });
+
+  it.each(["otp", "magiclink", "recovery"])("EA-1: a user WITHOUT the identities key is NOT proven by the pure rule for %s (the database decides)", (m) => {
+    const noKey = { email: "victim@example.com", email_change_sent_at: null };
+    expect("identities" in noKey).toBe(false);
+    expect(mailboxProofMethod(link(T, m), noKey)).toBeNull();
+    expect(mailboxProofMethod(link(T, m), { ...noKey, identities: null } as never)).toBeNull();
+  });
+
   it("a password entry never proves, changed or not", () => {
     expect(mailboxProofMethod({ amr: [{ method: "password", timestamp: T + 50 }] }, account())).toBeNull();
     expect(mailboxProofMethod({ amr: [{ method: "password", timestamp: T + 50 }] }, account({ email_change_sent_at: new Date(T * 1000).toISOString() }))).toBeNull();
