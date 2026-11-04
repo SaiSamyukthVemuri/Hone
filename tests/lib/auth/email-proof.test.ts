@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { claimsFromAccessToken, emailChangeState, mailboxProofMethod } from "@/lib/auth/email-proof";
 import { hardenAccountAfterMailboxProof, HARDENED_MARKER, reissueProvenSession, applyProofHardening, accountHasPassword, hardeningMode } from "@/lib/auth/proof-hardening";
 
 const U = { email: "Member@Harness.local", identities: [] as never[] };
@@ -208,79 +208,67 @@ describe("applyProofHardening: what each flag value does", () => {
 
 });
 
-describe("S-2b: link proof counts only if made STRICTLY AFTER the account's last email change", () => {
-  const T = 1_793_674_853; // whole epoch seconds of the change
-  const iso = (sec: number, ms = 0) => new Date(sec * 1000 + ms).toISOString();
+describe("S-2b: link proof counts only on an account whose address NEVER changed; a changed account is the database's call", () => {
+  const T = 1_793_674_853; // whole epoch seconds
+  const created = "2026-11-04T00:27:44.65494Z"; // GoTrue trims trailing zeros of the microseconds
   const link = (ts: number | undefined, method = "magiclink") => ({ amr: [{ method, ...(ts === undefined ? {} : { timestamp: ts }) }] });
-  const account = (extra: Record<string, unknown> = {}, identityUpdated?: string) => ({
+  const account = (extra: Record<string, unknown> = {}, identity: Record<string, unknown> = { created_at: created, updated_at: created }) => ({
     email: "victim@example.com",
-    identities: [{ provider: "email", identity_data: { email: "victim@example.com" }, ...(identityUpdated ? { updated_at: identityUpdated } : {}) }],
+    identities: [{ provider: "email", identity_data: { email: "victim@example.com" }, ...identity }],
     ...extra,
   });
 
-  it("POSITIVE CONTROL: an account whose address never changed (both columns null) keeps its proof, timestamp or not", () => {
-    expect(mailboxProofMethod(link(1), account())).toBe("email_link_or_otp");
-    expect(mailboxProofMethod(link(undefined), account({ email_change_sent_at: null }))).toBe("email_link_or_otp");
+  it.each(["otp", "magiclink", "recovery"])("POSITIVE: a never-changed account (identity updated_at == created_at, no email_change_sent_at) proves by %s, whatever the amr second", (m) => {
+    // The first sign-in of a new account: the identity is written in the SAME second as the session (machines/1333-PROBE-RAW.json),
+    // which is what made a strict `>` refuse every first sign-in. No time is compared, so it is proven.
+    for (const ts of [undefined, 1, T]) expect(mailboxProofMethod(link(ts, m), account({ email_change_sent_at: null })), `${m} ts=${ts}`).toBe("email_link_or_otp");
+    expect(emailChangeState(account())).toBe("never_changed");
   });
 
-  it.each(["otp", "magiclink", "recovery"])("the attacker's earlier %s session is unproven after the change; a fresh one is proven (same fixture)", (m) => {
-    const u = account({ email_change_sent_at: iso(T) }, iso(T));
-    expect(mailboxProofMethod(link(T - 3, m), u)).toBeNull();
-    expect(mailboxProofMethod(link(T + 2, m), u)).toBe("email_link_or_otp");
+  it("the same instant in another spelling is equal (trimmed zeros, +00:00, a space separator); a 1 microsecond difference is not", () => {
+    expect(emailChangeState(account({}, { created_at: "2026-11-04T00:27:44.65494Z", updated_at: "2026-11-04T00:27:44.654940+00:00" }))).toBe("never_changed");
+    expect(emailChangeState(account({}, { created_at: "2026-11-04 00:27:44.65494+00", updated_at: "2026-11-04T00:27:44.65494Z" }))).toBe("never_changed");
+    expect(emailChangeState(account({}, { created_at: "2026-11-04T00:27:44.654940Z", updated_at: "2026-11-04T00:27:44.654941Z" }))).toBe("changed");
   });
 
-  it("an EQUAL second is refused (Codex P1): flooring makes it ambiguous, so a same-second session cannot be told from the attacker's", () => {
-    for (const method of ["otp", "magiclink", "recovery"]) {
-      // the change at T + 0.9 s and a session stamped T: the session could be 0.9 s older than the change
-      expect(mailboxProofMethod(link(T, method), account({ email_change_sent_at: iso(T, 900) })), `${method} at T`).toBeNull();
-      // the change at T + 0.0 s: still refused, the whole second is ambiguous both ways
-      expect(mailboxProofMethod(link(T, method), account({ email_change_sent_at: iso(T, 0) }, iso(T, 0))), `${method} at T (change at T.000)`).toBeNull();
+  it.each(["otp", "magiclink", "recovery"])("NEGATIVE: after an applied change (identity updated_at moved) a %s session is unproven here, before, AT or after the change second (Codex P1)", (m) => {
+    const u = account({ email_change_sent_at: new Date(T * 1000).toISOString() }, { created_at: created, updated_at: new Date(T * 1000 + 400).toISOString() });
+    for (const ts of [T - 3, T, T + 0.9, T + 1, T + 3600]) expect(mailboxProofMethod(link(ts, m), u), `${m} ts=${ts}`).toBeNull();
+  });
+
+  it("NEGATIVE: a PENDING change (email_change_sent_at set, identity untouched) already counts as change activity", () => {
+    expect(mailboxProofMethod(link(T + 10), account({ email_change_sent_at: new Date(T * 1000).toISOString() }))).toBeNull();
+    expect(mailboxProofMethod(link(T + 10), account({}, { created_at: created, updated_at: "2026-11-04T00:27:45Z" }))).toBeNull();
+  });
+
+  it("fails closed: an unreadable email_change_sent_at, or an email identity without readable created_at/updated_at, counts as changed", () => {
+    for (const ecs of ["not a date", { x: 1 }, 0]) expect(mailboxProofMethod(link(T), account({ email_change_sent_at: ecs })), JSON.stringify(ecs)).toBeNull();
+    for (const identity of [{}, { created_at: created }, { updated_at: created }, { created_at: "yesterday", updated_at: "yesterday" }, { created_at: 1, updated_at: 1 }]) {
+      expect(mailboxProofMethod(link(T), account({}, identity)), JSON.stringify(identity)).toBeNull();
     }
   });
 
-  it("the next whole second after the change IS proven (the user signs in again a second later), for either column", () => {
-    expect(mailboxProofMethod(link(T + 1), account({ email_change_sent_at: iso(T, 900) }))).toBe("email_link_or_otp");
-    expect(mailboxProofMethod(link(T + 1), account({}, iso(T, 999)))).toBe("email_link_or_otp");
-  });
-
-  it("the fractional timestamp of the session is floored too: T + 0.9 s is the equal second and is refused, T + 1.0 s is proven", () => {
-    expect(mailboxProofMethod(link(T + 0.9), account({ email_change_sent_at: iso(T) }))).toBeNull();
-    expect(mailboxProofMethod(link(T + 1.0), account({ email_change_sent_at: iso(T) }))).toBe("email_link_or_otp");
-  });
-
-  it("uses the LATER of the two columns (the request time alone, or the apply time alone, is not enough)", () => {
-    expect(mailboxProofMethod(link(T + 1), account({ email_change_sent_at: iso(T) }, iso(T + 5)))).toBeNull();
-    expect(mailboxProofMethod(link(T + 1), account({ email_change_sent_at: iso(T + 5) }, iso(T)))).toBeNull();
-    expect(mailboxProofMethod(link(T + 6), account({ email_change_sent_at: iso(T + 5) }, iso(T)))).toBe("email_link_or_otp");
-  });
-
-  it("only the `email` identity's updated_at counts; another provider's identity update does not move the floor", () => {
+  it("only `email` identities count: a changed google identity does not make the account changed; no email identity at all is never-changed", () => {
     const u = {
       email: "victim@example.com",
       identities: [
-        { provider: "email", identity_data: {}, updated_at: iso(T - 100) },
-        { provider: "google", identity_data: {}, updated_at: iso(T + 100) },
+        { provider: "email", identity_data: {}, created_at: created, updated_at: created },
+        { provider: "google", identity_data: {}, created_at: created, updated_at: "2026-11-05T00:00:00Z" },
       ],
     };
-    expect(mailboxProofMethod(link(T - 50), u)).toBe("email_link_or_otp");
+    expect(mailboxProofMethod(link(T), u)).toBe("email_link_or_otp");
+    expect(mailboxProofMethod(link(T), { email: "victim@example.com", identities: [] })).toBe("email_link_or_otp");
   });
 
-  it("fails closed: with a change time, an entry with no/invalid timestamp is unproven; an unreadable column is unproven", () => {
-    const u = account({ email_change_sent_at: iso(T) });
-    expect(mailboxProofMethod(link(undefined), u)).toBeNull();
-    expect(mailboxProofMethod({ amr: [{ method: "otp", timestamp: "1793674999" }] }, u)).toBeNull();
-    expect(mailboxProofMethod(link(T + 100), account({ email_change_sent_at: "not a date" }))).toBeNull();
-    expect(mailboxProofMethod(link(T + 100), account({ email_change_sent_at: { x: 1 } }))).toBeNull();
-  });
-
-  it("a password entry never proves, before or after the change", () => {
-    expect(mailboxProofMethod({ amr: [{ method: "password", timestamp: T + 50 }] }, account({ email_change_sent_at: iso(T) }))).toBeNull();
+  it("a password entry never proves, changed or not", () => {
+    expect(mailboxProofMethod({ amr: [{ method: "password", timestamp: T + 50 }] }, account())).toBeNull();
+    expect(mailboxProofMethod({ amr: [{ method: "password", timestamp: T + 50 }] }, account({ email_change_sent_at: new Date(T * 1000).toISOString() }))).toBeNull();
   });
 
   it("oauth is unaffected: it is bound to the address by the verified Google identity itself", () => {
     const u = {
       email: "victim@example.com",
-      email_change_sent_at: iso(T),
+      email_change_sent_at: new Date(T * 1000).toISOString(),
       identities: [{ provider: "google", identity_data: { email: "victim@example.com", email_verified: true } }],
     };
     expect(mailboxProofMethod({ amr: [{ method: "oauth", timestamp: T - 500 }] }, u)).toBe("oauth_verified");

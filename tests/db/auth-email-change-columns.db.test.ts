@@ -1,9 +1,16 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { adminQuery, closePool } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
-import { claimsFromAccessToken } from "@/lib/auth/email-proof";
+import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { applyEmailChange, fastVerifyLink, stackAuthConfig } from "./helpers/auth-email-change";
+import { listMessageIds } from "../../e2e/helpers/mail";
+
+const getUserOf = async (t: string) => (await (await fetch(`${E2E_SUPABASE_URL}/auth/v1/user`, { headers: { apikey: E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${t}` } })).json()) as Record<string, unknown>;
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // S-2b follow-up (Insurance Z-1 / G-3). The attack: an attacker who really owns a mailbox signs in by magic link (a PROVEN
 // session), asks to change the account email to the victim's address, and the victim confirms. The attacker's existing session
@@ -81,15 +88,11 @@ describe("part 1: which columns move on which event (real GoTrue, tracked config
     await probe("metadata_update", () => gotrue("PUT", "user", { data: { note: "x" } }, ANON, token));
     await probe("password_set", () => gotrue("PUT", "user", { password: `Pw-${randomUUID()}` }, ANON, token));
     const victim = addr("victim");
+    const seenA = await listMessageIds(u.email), seenV = await listMessageIds(victim);
     await probe("email_change_request", () => gotrue("PUT", "user", { email: victim }, ANON, token));
-    await probe("email_change_confirm_new_half", async () => {
-      const l = await gotrue("POST", "admin/generate_link", { type: "email_change_new", email: u.email, new_email: victim }, E2E_SERVICE_ROLE_KEY);
-      return gotrue("POST", "verify", { type: "email_change", token_hash: l.body.hashed_token as string }, ANON);
-    });
-    await probe("email_change_confirm_current_half", async () => {
-      const l = await gotrue("POST", "admin/generate_link", { type: "email_change_current", email: u.email, new_email: victim }, E2E_SERVICE_ROLE_KEY);
-      return gotrue("POST", "verify", { type: "email_change", token_hash: l.body.hashed_token as string }, ANON);
-    });
+    // Each half by its MAILED link (works with Confirm ON or OFF); with double_confirm off only the new address is mailed.
+    await probe("email_change_confirm_new_half", async () => { const l = await fastVerifyLink(victim, seenV); if (l) await fetch(l, { redirect: "manual" }); });
+    await probe("email_change_confirm_current_half", async () => { const l = await fastVerifyLink(u.email, seenA, 1500); if (l) await fetch(l, { redirect: "manual" }); });
     const final = await cols(u.id);
     // The covering pair is CLEAN: neither column moves on any routine event, only on email-change activity. users.updated_at is NOT
     // usable: it moves on an OTP request, a sign-in, a refresh and a metadata update (an hourly refresh would un-prove every session).
@@ -99,7 +102,8 @@ describe("part 1: which columns move on which event (real GoTrue, tracked config
       expect(matrix[ev], `${ev} must not move identity_updated_at`).not.toContain("identity_updated_at");
     }
     expect(matrix.refresh, "documents why users.updated_at is not used").toContain("users_updated_at");
-    expect(matrix.email_change_confirm_current_half, "the APPLY moves the email identity").toContain("identity_updated_at");
+    // Whichever half completes the change depends on double_confirm_changes: with it off the new-address half alone applies.
+    expect([...(matrix.email_change_confirm_new_half ?? []), ...(matrix.email_change_confirm_current_half ?? [])], "the APPLY moves the email identity").toContain("identity_updated_at");
     evidence.matrix = matrix;
     evidence.matrixFinalAccountEmail = final.email === victim ? "VICTIM (change applied)" : "unchanged";
     // Sanity only: the harness actually drove the change. The columns are the finding (read the evidence).
@@ -108,7 +112,7 @@ describe("part 1: which columns move on which event (real GoTrue, tracked config
 });
 
 describe("part 2: the magic-link attacker (Insurance Z-1) with the candidate rule on real values", () => {
-  it("the attacker's EARLIER session is not bound to the victim's address; a NEW session for the victim's address is", async () => {
+  it("the attacker's EARLIER session predates the change and is refused by the app rule; the app rule alone is fail-closed for the changed account", async () => {
     const attacker = await newConfirmedUser("atk");
     const victim = addr("vic");
     const old = await linkSession(attacker.email); // genuinely proven by the attacker's own mailbox
@@ -117,13 +121,10 @@ describe("part 2: the magic-link attacker (Insurance Z-1) with the candidate rul
     expect(oldTs).toBeGreaterThan(0);
     await sleep(1100);
 
-    expect((await gotrue("PUT", "user", { email: victim }, ANON, oldToken)).status).toBe(200);
     await sleep(1100);
-    // The victim confirms their half; the attacker (who owns the current address) confirms the other.
-    for (const type of ["email_change_new", "email_change_current"]) {
-      const l = await gotrue("POST", "admin/generate_link", { type, email: attacker.email, new_email: victim }, E2E_SERVICE_ROLE_KEY);
-      if (l.status === 200) await gotrue("POST", "verify", { type: "email_change", token_hash: l.body.hashed_token as string }, ANON);
-    }
+    // The victim confirms their half; the attacker (who owns the current address) confirms the other. Mailed links, so it works
+    // with confirmations ON or OFF and either double_confirm setting.
+    evidence.applyPath = await applyEmailChange(oldToken, attacker.id, attacker.email, victim);
     const after = await cols(attacker.id);
     expect(after.email, "setup: the change applied (the attack's precondition)").toBe(victim);
 
@@ -136,13 +137,16 @@ describe("part 2: the magic-link attacker (Insurance Z-1) with the candidate rul
     const fresh = await linkSession(victim);
     const freshTs = amrTs(fresh.body.access_token as string);
 
-    // Candidate rule: proof counts only if amr timestamp >= the account's last email change. The covering value is the max of the
-    // clean pair measured in part 1 (email_change_sent_at, identity_updated_at) (read from the real row here).
+    // MEASURED times (not the rule): the old session predates the change and the fresh one postdates it, at whole seconds.
     const changeTimes = [after.email_change_sent_at, after.identity_updated_at].filter((x): x is number => typeof x === "number");
-    const lastChange = Math.floor(Math.max(...changeTimes)); // amr timestamps are whole seconds: compare against the whole second of the change
+    const lastChange = Math.floor(Math.max(...changeTimes));
     evidence.magicLinkAttacker = { oldAmrTs: oldTs, oldAmrTsAfterRefresh: oldAfter, freshAmrTs: freshTs, columnsAfterChange: after, lastChangeCovering: lastChange, oldSessionStillRefreshable: refreshed.status === 200 };
-    expect(oldTs, "SECURE: the attacker's old session predates the change, so the rule refuses it").toBeLessThan(lastChange);
-    expect(freshTs, "WORKS: a new magic-link session for the victim's address postdates the change, so the rule accepts it").toBeGreaterThanOrEqual(lastChange);
+    expect(oldTs, "measured: the attacker's old session predates the change").toBeLessThan(lastChange);
+    expect(freshTs, "measured: the fresh session postdates it").toBeGreaterThan(lastChange);
+    // The app rule (lib/auth/email-proof.ts): the old session is refused, and so is the fresh one: after a change the app rule alone
+    // is fail-closed; the database rule (held 0291, #1338) decides from microsecond session and credential times.
+    if (refreshed.status === 200) expect(mailboxProofMethod(claimsFromAccessToken(refreshed.body.access_token as string), (await getUserOf(refreshed.body.access_token as string)) as never), "app rule refuses the old session").toBeNull();
+    expect(mailboxProofMethod(claimsFromAccessToken(fresh.body.access_token as string), (await getUserOf(fresh.body.access_token as string)) as never), "app rule alone is fail-closed for the changed account").toBeNull();
     if (oldAfter !== null) expect(oldAfter, "amr timestamp survives refresh, so refreshing does not launder the old proof").toBe(oldTs);
   });
 });

@@ -17,20 +17,24 @@
 
 export type AmrEntry = { method?: unknown; provider?: unknown; timestamp?: unknown };
 export type ProofClaims = { amr?: unknown } | null | undefined;
-export type ProofIdentity = { provider?: unknown; identity_data?: Record<string, unknown> | null; updated_at?: unknown };
+export type ProofIdentity = { provider?: unknown; identity_data?: Record<string, unknown> | null; created_at?: unknown; updated_at?: unknown };
 export type ProofUser =
   | { email?: string | null; email_change_sent_at?: unknown; identities?: ProofIdentity[] | null }
   | null
   | undefined;
 
 /** Methods whose credential is delivered to the account's own email address. */
-// MEASURED on real GoTrue (isolated stack, 3 Nov, Confirm email ON and OFF), per FLOW, because the amr depends on the flow:
+// The amr METHOD per flow was MEASURED on real GoTrue (isolated stack, 3 Nov, Confirm email ON and OFF); timestamp ORDERING under
+// Confirm ON was not, and is handled by emailChangeState below, not by comparing times (Insurance, 4 Nov):
 //   * implicit /verify (link redeemed by token_hash: invite, magic link, signup-confirmation, recovery, email code): `otp`;
-//   * PKCE (what the browser sign-in and /auth/callback actually use): a magic link, new or existing address, is `magiclink`
-//     and a recovery link is `recovery`; a PKCE session keeps its amr across refresh (machines/AUTH-PKCE-amr-evidence.json);
+//   * PKCE (what the browser sign-in and /auth/callback actually use): a magic link to an EXISTING address is `magiclink` and a
+//     recovery link is `recovery`; a PKCE session keeps its amr across refresh (machines/AUTH-PKCE-amr-evidence.json);
+//   * PKCE magic link to a NEW address: `magiclink` with Confirm OFF, but `email/signup` with Confirm ON (hosted), because GoTrue
+//     mails a signup confirmation for an unconfirmed user (machines/1333-PROBE-RESULTS.md section 3);
 //   * a password sign-in AND a password sign-up (Confirm OFF) are `password`.
-// So exactly `otp`, `magiclink` and `recovery` count. `email/signup` and `invite` were never observed as an amr method (the
-// first cut to `otp` alone refused every browser magic-link sign-in: CI run 41553749973), so they stay unproven until measured.
+// So exactly `otp`, `magiclink` and `recovery` count. `email/signup` stays UNPROVEN pending Insurance's decision (analysis in
+// auth-worker/1333-RULE-FIX-PACKAGE.md): with Confirm ON a brand-new user who signs in from the login form is asked for one more
+// link. `invite` was never observed as an amr method (an invite link is `otp`). Widening the set is a reviewed change, here AND in 0291.
 const MAILBOX_METHODS: ReadonlySet<string> = new Set(["otp", "magiclink", "recovery"]);
 /**
  * OAuth providers whose `email_verified` assertion Hone accepts as mailbox proof. THE SET IS CLOSED ON PURPOSE (Insurance G-1):
@@ -45,34 +49,46 @@ export type ProofMethod = "email_link_or_otp" | "oauth_verified" | null;
 
 /**
  * S-2b (Insurance Z-1/G-3): mailbox proof must be about the account's CURRENT address. An attacker with a real mailbox can sign in
- * by link, ask to change the account email to a victim's address, and keep the proven session once the victim confirms. So a
- * link-type amr entry counts only if it was made STRICTLY AFTER (a later whole second than) the account's last email-change activity:
- *   lastChange = max(auth.users.email_change_sent_at, updated_at of the account's `email` identity), whole epoch seconds.
- * Measured on real GoTrue (machines/AUTH-S2B-columns-evidence.json): email_change_sent_at moves on an email-change request and on
- * each confirm half; the email identity's updated_at moves only when the change is applied; neither moves on an OTP request, a
- * sign-in or a refresh (users.updated_at moves on all of those, so it is NOT used). Both null = the address never changed = no
- * constraint. Equal seconds are AMBIGUOUS (both are floored, so a session made in the same second as the change may have come
- * before it) and are refused (Codex P1 on db73497d0): the person signs in again a second later. A non-null value that cannot be read is treated as "changed just now" (fail closed). Cost: only an account with
- * email-change activity after the session began is asked to confirm again (a fresh link, no lockout).
+ * by link, ask to change the account email to a victim's address, and keep a proven session once the victim confirms.
+ *
+ * THIS PURE RULE COMPARES NO TIMESTAMPS. Comparing the JWT's whole-second amr timestamp to the change time cannot be made safe
+ * (machines/1333-PROBE-RESULTS.md, auth-worker/1333-RULE-FIX-PACKAGE.md): `>=` accepts a session made in the same second BEFORE the
+ * change (Codex P1); `>` refuses every first sign-in of a new account (its email identity is written in the same second); and the
+ * session GoTrue returns to whoever clicks the LAST confirm link of a double-confirm change (implicit flow: amr `otp`, created ~10 ms
+ * AFTER the change) is accepted by `>=` always and by `>` whenever the two straddle a second boundary. So instead:
+ *   * an account whose address has NEVER changed (no email_change_sent_at, and every `email` identity's updated_at EQUALS its
+ *     created_at; measured equal on every first sign-in: magic link, OTP, PKCE new/existing, recovery, signup confirmation, invite)
+ *     keeps its link proof: the address is the one the account was created with, so a link to it proves that mailbox;
+ *   * an account with ANY email-change activity gets NO link proof from this rule. Only the database can tell a session created by a
+ *     fresh credential sent to the new address from the attacker's (sessions.created_at and the credential issue times at microsecond
+ *     precision); that check is held 0291 (#1338), which the app consults for exactly these accounts. Without it they fail closed:
+ *     Google still proves, a link does not. Hone has no email-change UI, so no honest flow reaches this state.
+ * A value that is present but unreadable, or an email identity without readable created_at/updated_at, counts as CHANGED (fail
+ * closed); this also covers a GoTrue/CLI bump that stopped returning the fields.
  */
-function lastEmailChangeSeconds(user: ProofUser): number | null | "unreadable" {
-  const stamps: unknown[] = [user?.email_change_sent_at];
-  for (const identity of user?.identities ?? []) if (norm(identity.provider) === "email") stamps.push(identity.updated_at);
-  let latest: number | null = null;
-  for (const raw of stamps) {
-    if (raw === undefined || raw === null || raw === "") continue;
-    const ms = typeof raw === "string" || typeof raw === "number" ? new Date(raw).getTime() : NaN;
-    if (!Number.isFinite(ms)) return "unreadable";
-    const sec = Math.floor(ms / 1000);
-    if (latest === null || sec > latest) latest = sec;
-  }
-  return latest;
+export type EmailChangeState = "never_changed" | "changed";
+
+/** Microseconds since the epoch of a GoTrue/Postgres timestamp string, or null if it is not one. Keeps all six fraction digits. */
+function instantMicros(raw: unknown): bigint | null {
+  if (typeof raw !== "string") return null;
+  const m = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}(?::?\d{2})?)$/.exec(raw.trim());
+  if (!m) return null;
+  const zone = m[3] === "Z" ? "Z" : m[3].length === 3 ? `${m[3]}:00` : m[3].includes(":") ? m[3] : `${m[3].slice(0, 3)}:${m[3].slice(3)}`;
+  const ms = Date.parse(`${m[1].replace(" ", "T")}${zone}`);
+  if (!Number.isFinite(ms)) return null;
+  return BigInt(ms) * 1000n + BigInt((m[2] ?? "").padEnd(6, "0").slice(0, 6));
 }
 
-function madeAfterChange(entry: AmrEntry, lastChange: number | null | "unreadable"): boolean {
-  if (lastChange === null) return true;
-  if (lastChange === "unreadable") return false;
-  return typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp) && Math.floor(entry.timestamp) > lastChange;
+export function emailChangeState(user: ProofUser): EmailChangeState {
+  const sent = user?.email_change_sent_at;
+  if (sent !== undefined && sent !== null && sent !== "") return "changed";
+  for (const identity of user?.identities ?? []) {
+    if (norm(identity.provider) !== "email") continue;
+    const created = instantMicros(identity.created_at);
+    const updated = instantMicros(identity.updated_at);
+    if (created === null || updated === null || created !== updated) return "changed";
+  }
+  return "never_changed";
 }
 
 function entries(claims: ProofClaims): AmrEntry[] {
@@ -88,8 +104,7 @@ export function mailboxProofMethod(claims: ProofClaims, user: ProofUser): ProofM
   if (!email) return null;
   const amr = entries(claims);
 
-  const lastChange = lastEmailChangeSeconds(user);
-  if (amr.some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method) && madeAfterChange(e, lastChange))) {
+  if (emailChangeState(user) === "never_changed" && amr.some((e) => typeof e.method === "string" && MAILBOX_METHODS.has(e.method))) {
     return "email_link_or_otp";
   }
 

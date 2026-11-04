@@ -6,6 +6,10 @@ import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
 import { hardenAccountAfterMailboxProof, reissueProvenSession } from "@/lib/auth/proof-hardening";
+import { stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // EMAIL-TRUST (2 Nov, Machines): proof of mailbox control is read from the SESSION's amr, not from email_confirmed_at.
 // This runs against the REAL GoTrue of an owned isolated stack (no mocks) to pin (a) the actual amr strings GoTrue writes for

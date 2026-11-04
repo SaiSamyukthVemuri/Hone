@@ -1,9 +1,18 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { adminQuery, closePool } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { confirmationsAreOn, stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
+
+// This file describes the Confirm-email-OFF config. Under confirmations ON (the hosted shape) a password sign-up returns no
+// session, so its premises do not exist and it skips itself. Hosted-shape behaviour is covered by the other auth files.
+const CONFIRMATIONS_ON = await confirmationsAreOn();
+if (CONFIRMATIONS_ON) console.log("[auth-config] SKIPPED auth-email-proof-confirm-off: this stack does not auto-confirm email (mailer_autoconfirm false), so a password sign-up returns no session and the file's premises do not exist");
 
 // INSURANCE S-1 / S-2 NEGATIVE CONTROLS (#1333 review), on a stack with Confirm email OFF (GOTRUE_MAILER_AUTOCONFIRM=true), the
 // state the PR exists for. Each test states the SECURE outcome and fails if an attacker session carries a mailbox-looking amr
@@ -34,7 +43,7 @@ async function linkSession(email: string) {
   return post("verify", { type: "magiclink", token_hash: l.body.hashed_token as string }, ANON);
 }
 
-describe("S-1: password sign-up with Confirm email OFF", () => {
+describe.skipIf(CONFIRMATIONS_ON)("S-1: password sign-up with Confirm email OFF", () => {
   it("the session a password SIGN-UP returns for a victim address must NOT count as mailbox proof", async () => {
     const victim = addr("s1");
     const s = await post("signup", { email: victim, password: PW }, ANON);
@@ -58,7 +67,7 @@ describe("S-1: password sign-up with Confirm email OFF", () => {
   });
 });
 
-describe("S-1b: what a LEGITIMATE first sign-in by link carries (to know what can safely count)", () => {
+describe.skipIf(CONFIRMATIONS_ON)("S-1b: what a LEGITIMATE first sign-in by link carries (to know what can safely count)", () => {
   it("records the amr of a brand-new user's first magic-link sign-in and of a confirmed existing user's", async () => {
     const fresh = addr("new");
     const l = await post("admin/generate_link", { type: "magiclink", email: fresh }); // creates the user as the app's OTP flow does
@@ -71,7 +80,7 @@ describe("S-1b: what a LEGITIMATE first sign-in by link carries (to know what ca
   });
 });
 
-describe("S-1c: a signup CONFIRMATION link redeemed for a password account", () => {
+describe.skipIf(CONFIRMATIONS_ON)("S-1c: a signup CONFIRMATION link redeemed for a password account", () => {
   it("records the amr; a password the registrant set stays unproven by it unless the mailbox was used", async () => {
     const email = addr("conf");
     const l = await post("admin/generate_link", { type: "signup", email, password: PW });
@@ -81,7 +90,7 @@ describe("S-1c: a signup CONFIRMATION link redeemed for a password account", () 
   });
 });
 
-describe("S-2: an attacker changes the account email to the victim's address from a genuine otp session", () => {
+describe.skipIf(CONFIRMATIONS_ON)("S-2: an attacker changes the account email to the victim's address from a genuine otp session", () => {
   it("the otp session must NOT prove the VICTIM's mailbox after the change", async () => {
     const attacker = addr("atk");
     const victim = addr("vic");
@@ -105,7 +114,7 @@ describe("S-2: an attacker changes the account email to the victim's address fro
   });
 });
 
-describe("S-2b: the VICTIM themselves confirms the attacker's pending email change (Insurance residual)", () => {
+describe.skipIf(CONFIRMATIONS_ON)("S-2b: the VICTIM themselves confirms the attacker's pending email change (Insurance residual)", () => {
   it("the account now carries the victim's address; the attacker's PASSWORD session on it still proves nothing", async () => {
     const attacker = addr("atk2");
     const victim = addr("vic2");

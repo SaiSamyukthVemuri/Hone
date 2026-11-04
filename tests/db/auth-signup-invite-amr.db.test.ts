@@ -1,10 +1,14 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { closePool } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
 import { listMessageIds, waitForMagicLink } from "../../e2e/helpers/mail";
 import { claimsFromAccessToken, mailboxProofMethod } from "@/lib/auth/email-proof";
+import { stackAuthConfig } from "./helpers/auth-email-change";
+
+// The stack's effective auth config is part of every result: a pass under one config says nothing about the other.
+beforeAll(async () => { console.log(`[auth-config] ${JSON.stringify(await stackAuthConfig())} ${new URL(process.env.E2E_SUPABASE_URL ?? "http://x").host}`); });
 
 // Insurance Z-2: the amr of the mailbox flows not yet recorded, on a stack with Confirm email ON (a signup sends a confirmation):
 //   * password SIGN-UP confirmation link, PKCE (the code_challenge is sent with /signup) and implicit;
