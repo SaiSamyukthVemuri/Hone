@@ -122,7 +122,8 @@ describe("0287 activation rule: source contract", () => {
   it("releases are seeded PENDING; the six deny_only keys are narrow releases; observe keys are not released (AA-4, AH1)", () => {
     const seed = code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0];
     const rows = [...seed.matchAll(/\('([a-z_.]+)', (null|now\(\)[^,]*), '([^']+)', '(full|narrow)'\)/g)].map((m) => ({ key: m[1], at: m[2], kind: m[4] }));
-    expect(rows.length).toBe(13);
+    expect(rows.length).toBe(14);
+    expect(rows.find((r) => r.key === "clin.edit_records")).toMatchObject({ at: "null", kind: "full" }); // edit records: pending until the operator releases it
     expect(rows.every((r) => r.at === "null")).toBe(true);
     expect(rows.filter((r) => r.kind === "narrow").map((r) => r.key).sort()).toEqual(["appt.book", "appt.move", "appt.reassign", "avail.manage_others", "avail.manage_own", "avail.manage_studio_hours"]);
     expect(rows.map((r) => r.key)).not.toContain("appt.complete");
@@ -137,7 +138,11 @@ describe("0287 activation rule: source contract", () => {
     const denyOnly = keys.filter((k) => enforcementOf(k) === "deny_only").sort();
     // vacuous before the enforcement branch sets the field; the literal list above pins the six either way
     expect(denyOnly.filter((k) => !narrow.includes(k))).toEqual([]);
-    expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)))).toEqual([]);
+    // clin.edit_records is seeded PENDING ahead of the catalog flip (decision, OPS 4 Nov): its enforcement is the held 0289 guard plus the app gates,
+    // and the catalog keeps it not_yet until the 0289 proof and reviews. The flip commit removes this carve-out.
+    const RELEASED_AHEAD_OF_FLIP = ["clin.edit_records"];
+    expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)) && !RELEASED_AHEAD_OF_FLIP.includes(k))).toEqual([]);
+    for (const k of RELEASED_AHEAD_OF_FLIP) expect(all, `${k} is no longer seeded: remove it from RELEASED_AHEAD_OF_FLIP`).toContain(k);
   });
 
   it("activation requires an explicit non-empty key list and a preview hash; mark_permissions_released is granted to no API role (AA-1, AA-4)", () => {
