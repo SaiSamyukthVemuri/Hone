@@ -330,6 +330,8 @@ const pageWord = () => {
 const listed = async () => {
   const r = await loadUnpaidAttention(base);
   expect(r.ok).toBe(true);
+  // R2-1: a visit the page calls Paid is neither listed NOR counted as "no price Hone can verify".
+  if (r.ok && pageWord() === "paid") expect(r.unlisted).toBe(0);
   return r.ok ? r.items.length : -1;
 };
 

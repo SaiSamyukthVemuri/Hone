@@ -235,15 +235,15 @@ export async function loadUnpaidAttention(opts: {
   for (const a of appts) {
     const result = evaluate(a);
     if (result.kind === "paid" || result.kind === "not_applicable") continue;
-    // HON-65: list a visit only when Hone can ESTABLISH that money is still owed. An amount Hone cannot determine is not a reason to nag.
+    // HON-65: never contradict the appointment page. When it reads this visit as "Paid" (a Hone-verified card charge that was not refunded,
+    // the same reducer the page uses), the dashboard neither lists it NOR counts it as unknown, whatever today's price or any other money form says.
+    const cards = cardsByAppt.get(a.id) ?? [];
+    if (cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
+    // List a visit only when Hone can ESTABLISH that money is still owed. An amount Hone cannot determine is not a reason to nag, but it is counted.
     if (result.kind === "amount_unavailable") {
       unlisted += 1;
       continue;
     }
-    // And never contradict the appointment page: when it reads this visit as "Paid" (a Hone-verified card charge that was not refunded),
-    // the dashboard does not call it outstanding, whatever today's price says. The same reducer the page uses.
-    const cards = cardsByAppt.get(a.id) ?? [];
-    if (cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
     seen += 1;
     if (items.length >= UNPAID_ROW_CAP) continue;
     const c = Array.isArray(a.clients) ? a.clients[0] : a.clients;
