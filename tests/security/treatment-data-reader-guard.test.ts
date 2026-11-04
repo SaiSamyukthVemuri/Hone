@@ -74,6 +74,8 @@ const ALLOW: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
   "lib/dashboard/missing-records-assistant.ts": { cls: "status-only", why: "intake read is client id, status and created_at only; its records reads are gated in the loader", covers: ["intake"] },
   "app/(app)/clients/[id]/edit/page.tsx": { cls: "caller-gated", why: "calls getClientById with includeSessions:false, so no sessions or notes are read (asserted below)", covers: ["records"] },
   "lib/billing/payment-webhook-reconciliation.ts": { cls: "system-side", why: "payment webhook reconciliation, no viewer" },
+  "app/(app)/calendar/page.tsx": { cls: "attribution-only", why: "imports the solo-owner review-link check, which reads only who performed a visit and which appointment (sessions.performed_by_practitioner_id, appointment_id); no treatment content is read or rendered", covers: ["records"] },
+  "app/(app)/settings/team/page.tsx": { cls: "attribution-only", why: "imports the solo-owner review-link check, which reads only who performed a visit and which appointment (sessions.performed_by_practitioner_id, appointment_id); no treatment content is read or rendered", covers: ["records"] },
   "app/(app)/calendar/check-practitioner/page.tsx": { cls: "attribution-only", why: "reads only who performed a visit (performed_by_practitioner_id), no treatment content" },
   "lib/sessions/session-lineage.ts": { cls: "write-path", why: "asserts a session belongs to a client before a write; returns no data" },
   "lib/dashboard/intakes-awaiting-review.ts": { cls: "status-only", why: "client id, status and created_at only; never answers" },
