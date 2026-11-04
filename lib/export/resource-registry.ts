@@ -1045,6 +1045,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Payment-recovery credential material from migration 0032. The credential category is the entire ground for excluding it, and it does not depend on anything being established about which code touches the table.",
   },
+  auth_session_link_proofs: {
+    kind: "excluded",
+    category: "security",
+    reason:
+      "Internal mailbox-proof record from held migration 0291 (CODEX-P2): one row per auth session whose sign-in proved the account's current address. Auth security state keyed by session and user, with no studio_id and no studio meaning; no API role may read it.",
+  },
 
   // platform
   demo_requests: {

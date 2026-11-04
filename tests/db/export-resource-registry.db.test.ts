@@ -351,6 +351,12 @@ describe("what is excluded, and on what grounds", () => {
     }
   });
 
+  it("the auth-internal mailbox-proof stamp table (0291 CODEX-P2) is EXCLUDED on security grounds, never PENDING", () => {
+    const disposition = EXPORT_RESOURCE_REGISTRY.auth_session_link_proofs;
+    expect(disposition?.kind, "auth security state is a decision, not a backlog item").toBe("excluded");
+    expect(disposition?.kind === "excluded" && disposition.category).toBe("security");
+  });
+
   it("no exported table emits a column whose exclusion reason is security_material", () => {
     for (const { resource, disposition } of exportedResources()) {
       const secret = disposition.excludedColumns
@@ -906,7 +912,9 @@ describe("what is excluded, and on what grounds", () => {
     // Exact, not "greater than zero": a silent drift in either direction is a
     // change to what Hone tells owners it withholds.
     expect(counts).toEqual({
-      security: 5,
+      // 5 -> 6: auth_session_link_proofs (held 0291, CODEX-P2), the internal mailbox-proof stamp keyed by auth session and
+      // user. Auth security state with no studio_id; 0291 revokes every privilege from every API role.
+      security: 6,
       // 4 -> 5: email_provider_events (0212, DELIVERY-EVENTS-01), Hone's
       // intake of Resend webhooks. A studio's delivery truth stays on the
       // pending email_outbound_messages ledger.
