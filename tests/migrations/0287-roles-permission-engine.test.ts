@@ -145,6 +145,15 @@ describe("0287 activation rule: source contract", () => {
     for (const k of RELEASED_AHEAD_OF_FLIP) expect(all, `${k} is no longer seeded: remove it from RELEASED_AHEAD_OF_FLIP`).toContain(k);
   });
 
+  it("AZ1: narrowing never waits for activation; the FULL branch lets a value below the snapshot keep applying (a narrow-to-full upgrade cannot re-widen)", () => {
+    const base = code.slice(code.indexOf("create or replace function public.perm_base_scope"), code.indexOf("create or replace function public.perm_scope_source"));
+    const full = base.slice(base.indexOf("if v_stored is not null and (v_active or v_stored_at >= v_rel.released_at)"));
+    expect(full).toMatch(/if v_cand is not null and public\.perm_rank\(v_cand\) < public\.perm_rank\(v_snap\) then return v_cand; end if;\s*return v_snap;/);
+    const src = code.slice(code.indexOf("create or replace function public.perm_scope_source"), code.indexOf("-- The single resolver."));
+    expect(src).toMatch(/public\.perm_rank\(v_stored\) < public\.perm_rank\(v_snap\)/);
+    expect(src).toMatch(/public\.perm_rank\(v_cand\) < public\.perm_rank\(v_snap\) then 'default'/);
+  });
+
   it("activation requires an explicit non-empty key list and a preview hash; mark_permissions_released is granted to no API role (AA-1, AA-4)", () => {
     expect(code).toContain("perm_fail('keys_required')");
     expect(code).toContain("perm_fail('preview_required')");
