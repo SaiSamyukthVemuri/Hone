@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
+    "count": 254,
+    "last": "0278_practitioner_own_working_hours.sql",
+    "sha256": "14efb1d053240be7d23973335bef7071d92fb2ebd41781b153f51b7a03cd04f9"
   },
   "public": {
     "tables": [
@@ -176,6 +176,7 @@
       "audit_actor_is_caller",
       "audit_client_pricing_change",
       "audit_pinned_note_delete",
+      "authorize_schedule_writer",
       "begin_appointment_email_message",
       "begin_appointment_sms_message",
       "begin_waitlist_invitation_proof",
@@ -470,6 +471,7 @@
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
       "save_weekly_availability",
+      "save_weekly_availability_as",
       "service_is_bookable_by_new_client",
       "session_actor_practitioner",
       "session_block_areas_derive_studio",

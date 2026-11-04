@@ -897,6 +897,8 @@ function declaredUnhostedVersions(declared: unknown): Set<string> {
 function repoHostedShapeViolations(i: {
   repo: number; hosted: number; pending: string[]; versions: string[];
   skipped: number[]; declaredUnhosted: Set<string>;
+  /** numbers above hosted held by another lane with no file yet (reserved_unallocated_above_hosted) */
+  reserved?: number[];
 }): string[] {
   const out: string[] = [];
   if (i.hosted > i.repo) {
@@ -915,7 +917,7 @@ function repoHostedShapeViolations(i: {
   if (!(i.repo > i.hosted)) out.push("pending above hosted but the repo max is not above hosted");
   const expectedSuffix = i.versions.filter((v) => Number(v) > i.hosted);
   if (JSON.stringify(above) !== JSON.stringify(expectedSuffix)) out.push(`pending above hosted is not exactly the suffix ${expectedSuffix.join(",")}`);
-  const skipped = new Set(i.skipped);
+  const skipped = new Set([...i.skipped, ...(i.reserved ?? [])]);
   const contiguous: string[] = [];
   for (let n = i.hosted + 1; n <= i.repo; n += 1) if (!skipped.has(n)) contiguous.push(String(n).padStart(4, "0"));
   if (JSON.stringify(above) !== JSON.stringify(contiguous)) out.push("the pending suffix has a HOLE in it: a migration between the hosted head and the repo max is missing from the repository");
@@ -1052,6 +1054,7 @@ describe("canonical production docs: the ledger's current block agrees with the 
         versions: DERIVED.versions,
         skipped: DERIVED.permanently_skipped.map((v: string) => Number(v)),
         declaredUnhosted: declaredUnhostedVersions(DERIVED.hosted_out_of_order),
+        reserved: (DERIVED.reserved_above_hosted ?? []).map((v: string) => Number(v)),
       }),
     ).toEqual([]);
   });
@@ -1091,12 +1094,28 @@ describe("canonical production docs: the ledger's current block agrees with the 
         pending: ["0250", "0251"],
       }).join(" ")).toMatch(/HOLE/);
     });
+    it("a RESERVED number between hosted and the repo max (no file, held by another lane) is admitted", () => {
+      expect(shape({
+        repo: 252, hosted: 249, versions: ["0249", "0252"], skipped: [],
+        pending: ["0252"], reserved: [250, 251],
+      })).toEqual([]);
+    });
+    it("NEGATIVE CONTROL: a hole that is NOT declared reserved still fails, even when others are", () => {
+      expect(shape({
+        repo: 252, hosted: 249, versions: ["0249", "0252"], skipped: [],
+        pending: ["0252"], reserved: [250],
+      }).join(" ")).toMatch(/HOLE/);
+    });
     it("NEGATIVE CONTROL: hosted ahead of the repo fails", () => {
       expect(shape({ repo: 246, hosted: 248 }).join(" ")).toMatch(/AHEAD/);
     });
     it("NEGATIVE CONTROL: nothing pending but repo ahead of hosted fails", () => {
       expect(shape({ repo: 249, versions: ["0248", "0249"] }).join(" ")).toMatch(/PARITY/);
     });
+  });
+
+  it("every reserved_unallocated_above_hosted declaration is true (named holder, no file yet, above hosted)", () => {
+    expect(DERIVED.invalid_reserved_declarations).toEqual([]);
   });
 
   it("no UNDECLARED gap below the hosted head, and every out-of-order declaration is true", () => {
