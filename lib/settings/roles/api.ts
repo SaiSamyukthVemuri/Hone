@@ -151,7 +151,7 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   not_found: "That person was not found with that role. Their role may have just changed. Reload the page to see the current state. Nothing was changed.",
   owner_role_fixed: "The owner role is fixed and cannot be changed here.",
   self_change: "You cannot change your own role.",
-  not_active: "That person is not active.",
+  not_active: "That person is not active. Their role may have just changed. Reload the page to see the current state. Nothing was changed.",
   has_upcoming_appointments: "That practitioner still has upcoming appointments. Move them first.",
   email_required: "That person needs an email address on file first.",
   unexpected: "Something went wrong and we could not confirm the result. Reload the page to see what is saved.",

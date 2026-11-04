@@ -382,7 +382,7 @@ export function RolesEditor(props: RolesEditorProps) {
         ))}
       </div>
 
-      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} changeRole={props.changeRole} onChanged={() => router.refresh()} />}
+      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} changeRole={props.changeRole} refresh={() => router.refresh()} />}
 
       {view === "history" && <HistoryPanel load={props.loadHistory} timeZone={props.timezone} />}
 
@@ -784,15 +784,18 @@ function PeoplePanel({
   loadAccess,
   staffRoleChange,
   changeRole,
-  onChanged,
+  refresh,
 }: {
   people: PersonView[];
   loadAccess: RolesEditorProps["loadAccess"];
   staffRoleChange: boolean;
   changeRole: RolesEditorProps["changeRole"];
-  onChanged: () => void;
+  refresh: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  // A role change gives the person a NEW membership id, so their old row is gone after the refresh. The confirmation therefore lives
+  // here, above the lists, and survives the row that produced it.
+  const [notice, setNotice] = useState<string | null>(null);
   const groups: { state: PersonView["state"]; label: string; empty: string }[] = [
     { state: "active", label: "Active", empty: "" },
     { state: "invited", label: "Invitation pending", empty: "Nobody is waiting to join." },
@@ -807,6 +810,11 @@ function PeoplePanel({
         </a>
         . Ownership changes use their own protected steps.
       </p>
+      {notice && (
+        <p role="status" data-testid="change-role-ok" className="break-words rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700">
+          {notice}
+        </p>
+      )}
       {groups.map((g) => {
         const list = people.filter((p) => p.state === g.state);
         return (
@@ -848,7 +856,7 @@ function PeoplePanel({
                       </p>
                     )}
                     {p.state === "active" && p.role !== "owner" && staffRoleChange && !p.isSelf && (
-                      <ChangeRole person={p as PersonView & { role: Role }} changeRole={changeRole} onChanged={onChanged} />
+                      <ChangeRole person={p as PersonView & { role: Role }} changeRole={changeRole} onChanged={(text) => { setNotice(text); refresh(); }} />
                     )}
                     {open === p.id && <AccessSummary person={p} load={loadAccess} />}
                   </li>
@@ -864,14 +872,14 @@ function PeoplePanel({
 
 // Change one person's role. The consequences are stated before the owner confirms; the core decides everything else and its answer is
 // shown as is. Nothing is deleted: the old membership is deactivated and the person keeps their sign-in.
-function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { role: Role }; changeRole: RolesEditorProps["changeRole"]; onChanged: () => void }) {
+function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { role: Role }; changeRole: RolesEditorProps["changeRole"]; onChanged: (notice: string) => void }) {
   const copy = changeRoleCopy(person.role);
   const target = copy.to;
   const widens = target === "practitioner";
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ kind: "ok"; text: string } | { kind: "error"; text: string } | null>(null);
+  const [result, setResult] = useState<{ kind: "error"; text: string } | null>(null);
   const id = useId();
   const needsReason = copy.reasonRequired;
   const reasonOk = reasonAcceptable(widens ? "adopt" : "save", false, reason);
@@ -884,10 +892,9 @@ function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { 
     try {
       const r = await changeRole(person.id, target, person.role, reason.trim());
       if (r.ok) {
-        setResult({ kind: "ok", text: `${person.name} is now a ${ROLE_LABELS[target].toLowerCase()}. It is in the history.` });
         setOpen(false);
         setReason("");
-        onChanged();
+        onChanged(`${person.name} is now a ${ROLE_LABELS[target].toLowerCase()}. It is in the history.`);
       } else {
         setResult({ kind: "error", text: roleErrorMessage(r.error) });
       }
@@ -946,7 +953,7 @@ function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { 
         </div>
       )}
       {result && (
-        <p role={result.kind === "error" ? "alert" : "status"} data-testid={`change-role-${result.kind}`} className={`break-words text-xs ${result.kind === "error" ? "text-red-700 dark:text-red-400" : "text-neutral-600 dark:text-neutral-400"}`}>
+        <p role="alert" data-testid="change-role-error" className="break-words text-xs text-red-700 dark:text-red-400">
           {result.text}
         </p>
       )}
