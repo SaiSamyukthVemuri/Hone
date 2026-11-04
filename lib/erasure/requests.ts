@@ -8,19 +8,24 @@ export type ErasureRequestRow = {
   id: string;
   client_id: string;
   state: ErasureState;
-  reason: string;
+  /** null once the owner has cleared it */
+  reason: string | null;
   requested_at: string;
 };
 
 export const ERASURE_DELETES_NOTHING = "Recording a request deletes nothing. Erasure itself is not available yet.";
 export const ERASURE_EXECUTION_UNAVAILABLE = "Erasing a client's data is not available yet. Recording a request does not start it and does not change the client's record.";
 export const ERASURE_NOT_AVAILABLE_YET = "Erasure requests are not available yet.";
-export const ERASURE_REASON_MAX = 2000;
+export const ERASURE_REASON_MAX = 300;
+
+// Shown with the reason box and beside every reason (Privacy CL1). The earlier wording is not kept in the request history; no promise is made about backups.
+export const ERASURE_REASON_WARNING = "Do not include personal details about the client here.";
+export const ERASURE_REASON_CORRECTABLE = "You can correct or clear the reason later. The earlier wording is not kept in the request history.";
 
 export const ERASURE_STATE_LABEL: Record<ErasureState, string> = {
   requested: "Requested",
   under_review: "Under review",
-  confirmed: "Confirmed (nothing has been erased)",
+  confirmed: "Recorded as confirmed. Nothing has been erased.",
   withdrawn: "Withdrawn",
 };
 
@@ -38,6 +43,7 @@ export function describeErasureRequest(row: ErasureRequestRow) {
     clientId: row.client_id,
     stateLabel: ERASURE_STATE_LABEL[row.state],
     reason: row.reason,
+    reasonCleared: row.reason === null,
     requestedAt: row.requested_at,
     next: NEXT[row.state],
     canWithdraw: row.state !== "withdrawn",

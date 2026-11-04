@@ -9,7 +9,7 @@ const r = (over: Partial<ContactAuditRow> = {}): ContactAuditRow => ({ id: "1", 
 describe("contact audit view (R5, held 0290; prepared)", () => {
   it("words each row: field label, masked from and to, and who", () => {
     expect(describeContactAuditRow(r())).toMatchObject({ label: "Email", from: "j•••@e•••.com", to: "j•••@e•••.org", who: "Sam" });
-    expect(describeContactAuditRow(r({ actor_kind: "system", actor_name: null })).who).toBe("Hone (automatic)");
+    expect(describeContactAuditRow(r({ actor_kind: "system", actor_name: null })).who).toBe("No signed-in user (server process, import or booking)");
     expect(describeContactAuditRow(r({ actor_kind: "unknown", actor_name: null })).who).toBe("Unknown");
     expect(describeContactAuditRow(r({ actor_name: null })).who).toBe("A team member");
     expect(describeContactAuditRow(r({ field: "preferred_name" })).label).toBe("Preferred name");

@@ -22,7 +22,7 @@ export const CONTACT_AUDIT_NOTE = "Shows that a contact detail changed and rough
 export const CONTACT_AUDIT_EMPTY = "No contact changes to show.";
 
 export function describeContactAuditRow(r: ContactAuditRow) {
-  const who = r.actor_kind === "practitioner" ? (r.actor_name?.trim() || "A team member") : r.actor_kind === "system" ? "Hone (automatic)" : "Unknown";
+  const who = r.actor_kind === "practitioner" ? (r.actor_name?.trim() || "A team member") : r.actor_kind === "system" ? "No signed-in user (server process, import or booking)" : "Unknown";
   return { id: r.id, label: CONTACT_FIELD_LABEL[r.field], from: r.masked_from, to: r.masked_to, who, at: r.changed_at };
 }
 

@@ -19,7 +19,7 @@ export function erasureErrorCopy(code: string | undefined): string {
   switch (code) {
     case "42501": return REFUSED;
     case "23505": return "This client already has an open erasure request.";
-    case "23514": return "Say why this request is being recorded (up to 2000 characters).";
+    case "23514": return "Say why this request is being recorded (up to 300 characters).";
     case "55000": return "That step is not available for this request.";
     case "22023": return "That step is not available for this request.";
     case "42883":
@@ -47,6 +47,17 @@ export async function advanceErasure(ctx: ErasureCtx, input: { requestId: unknow
   if (!isOwner(ctx)) return { ok: false, error: REFUSED };
   if (!isUuid(input.requestId) || (input.to !== "under_review" && input.to !== "confirmed")) return { ok: false, error: FAILED };
   return call(ctx, "advance_client_erasure_request", { p_studio: ctx.studio.id, p_request: input.requestId, p_to: input.to });
+}
+
+/** Correct the reason, or clear it (a blank reason clears). The one exception to a request being unchangeable; the database audits that it happened, never the text. */
+export async function correctErasureReason(ctx: ErasureCtx, input: { requestId: unknown; reason: unknown }): Promise<ErasureResult> {
+  if (!isOwner(ctx)) return { ok: false, error: REFUSED };
+  if (!isUuid(input.requestId)) return { ok: false, error: FAILED };
+  const raw = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (raw === "") return call(ctx, "correct_client_erasure_reason", { p_studio: ctx.studio.id, p_request: input.requestId, p_reason: null });
+  const reason = validateErasureReason(raw);
+  if (!reason.ok) return reason;
+  return call(ctx, "correct_client_erasure_reason", { p_studio: ctx.studio.id, p_request: input.requestId, p_reason: reason.reason });
 }
 
 export async function withdrawErasure(ctx: ErasureCtx, input: { requestId: unknown }): Promise<ErasureResult> {

@@ -13,7 +13,7 @@ describe("erasure request copy and view model (R5, prepared)", () => {
     for (const t of [ERASURE_DELETES_NOTHING, ERASURE_EXECUTION_UNAVAILABLE, ERASURE_STATE_LABEL.requested, ERASURE_STATE_LABEL.under_review, ERASURE_STATE_LABEL.withdrawn]) {
       expect(t, t).not.toMatch(/\b(erased|deleted|removed)\b/i);
     }
-    expect(ERASURE_STATE_LABEL.confirmed).toContain("nothing has been erased");
+    expect(ERASURE_STATE_LABEL.confirmed).toContain("Nothing has been erased");
   });
   it("offers exactly one forward step per open state, and none from confirmed or withdrawn", () => {
     expect(describeErasureRequest(row("requested")).next).toEqual({ to: "under_review", label: "Start review" });
@@ -31,10 +31,10 @@ describe("erasure request copy and view model (R5, prepared)", () => {
     expect(erasureClientLabel({ preferred_name: "  ", name: "Joanne Legalname" })).toBe("Name on file");
     expect(erasureClientLabel(undefined)).toBe("Unknown client");
   });
-  it("reason: required, trimmed, bounded at 2000", () => {
+  it("reason: required, trimmed, bounded at 300", () => {
     expect(validateErasureReason("  why  ")).toEqual({ ok: true, reason: "why" });
-    for (const bad of ["", "   ", null, undefined, 5, "x".repeat(2001)]) expect(validateErasureReason(bad).ok, String(bad)).toBe(false);
-    expect(validateErasureReason("x".repeat(2000)).ok).toBe(true);
+    for (const bad of ["", "   ", null, undefined, 5, "x".repeat(301)]) expect(validateErasureReason(bad).ok, String(bad)).toBe(false);
+    expect(validateErasureReason("x".repeat(300)).ok).toBe(true);
   });
   it("isUuid accepts a uuid and nothing else", () => {
     expect(isUuid("11111111-1111-4111-8111-111111111111")).toBe(true);

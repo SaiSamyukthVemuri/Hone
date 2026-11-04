@@ -9,7 +9,7 @@ const noop = async () => {};
 const row = (id: string, client: string, state: ErasureRequestRow["state"]): ErasureRequestRow => ({ id, client_id: client, state, reason: "Asked in writing", requested_at: "2026-11-04T10:00:00Z" });
 const C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const render = (requests: ErasureRequestRow[], clients = {}) => renderToStaticMarkup(createElement(ErasureRequestsSection, { requests, clients, onRequest: noop, onAdvance: noop, onWithdraw: noop }));
+const render = (requests: ErasureRequestRow[], clients = {}) => renderToStaticMarkup(createElement(ErasureRequestsSection, { requests, clients, onRequest: noop, onAdvance: noop, onWithdraw: noop, onCorrect: noop }));
 
 describe("erasure requests section (R5, prepared)", () => {
   it("says, above everything else, that recording a request deletes nothing and erasure is not available", () => {
@@ -37,7 +37,7 @@ describe("erasure requests section (R5, prepared)", () => {
     expect(html("withdrawn")).not.toContain("Start review");
   });
   it("a confirmed request is labelled as not erased; no state label claims a deletion", () => {
-    expect(render([row("r1", C1, "confirmed")])).toContain("Confirmed (nothing has been erased)");
+    expect(render([row("r1", C1, "confirmed")])).toContain("Recorded as confirmed. Nothing has been erased.");
   });
   it("clients appear by preferred name or 'Name on file'; the legal name never reaches the page", () => {
     const html = render([row("r1", C1, "requested"), row("r2", C2, "requested")], {
@@ -53,7 +53,18 @@ describe("erasure requests section (R5, prepared)", () => {
     expect(html).toContain('name="client_id"');
     expect(html).toContain('name="reason"');
     expect(html).not.toMatch(/name="(studio|studio_id|requested_by|actor)"/);
-    expect(html).toContain('maxLength="2000"');
+    expect(html).toContain('maxLength="300"');
+  });
+  it("warns before the owner types, says the reason can be corrected, and offers a correct/clear form per row", () => {
+    const html = render([row("r1", C1, "under_review")]);
+    expect(html).toContain("Do not include personal details about the client here.");
+    expect(html).toContain("correct or clear the reason");
+    expect(html).toContain('data-testid="erasure-correct-form"');
+    expect(html).toContain("leave blank to clear it");
+  });
+  it("a cleared reason is shown as cleared, never as blank or null", () => {
+    const html = render([{ ...row("r1", C1, "confirmed"), reason: null }]);
+    expect(html).toContain('data-testid="erasure-reason">Reason cleared<');
   });
   it("no retention period and no statement about backups appears anywhere on the section", () => {
     const text = render([row("r1", C1, "under_review")]).replace(/<[^>]+>/g, " ");

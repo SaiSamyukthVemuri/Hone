@@ -3,7 +3,9 @@ import { SectionLabel } from "@/components/ui/section-label";
 import {
   ERASURE_DELETES_NOTHING,
   ERASURE_EXECUTION_UNAVAILABLE,
+  ERASURE_REASON_CORRECTABLE,
   ERASURE_REASON_MAX,
+  ERASURE_REASON_WARNING,
   describeErasureRequest,
   erasureClientLabel,
   type ErasureRequestRow,
@@ -25,12 +27,14 @@ export function ErasureRequestsSection({
   onRequest,
   onAdvance,
   onWithdraw,
+  onCorrect,
 }: {
   requests: ErasureRequestRow[];
   clients: ClientNames;
   onRequest: Action;
   onAdvance: Action;
   onWithdraw: Action;
+  onCorrect: Action;
 }) {
   const rows = requests.map(describeErasureRequest);
   return (
@@ -45,7 +49,8 @@ export function ErasureRequestsSection({
         <label className="text-sm" htmlFor="erasure-client">Client ID</label>
         <input id="erasure-client" name="client_id" required className="rounded border px-2 py-1 text-sm" autoComplete="off" />
         <label className="text-sm" htmlFor="erasure-reason">Why is this being recorded?</label>
-        <textarea id="erasure-reason" name="reason" required maxLength={ERASURE_REASON_MAX} rows={3} className="rounded border px-2 py-1 text-sm" />
+        <textarea id="erasure-reason" name="reason" required maxLength={ERASURE_REASON_MAX} rows={3} className="rounded border px-2 py-1 text-sm" aria-describedby="erasure-reason-help" />
+        <p id="erasure-reason-help" className="text-sm text-muted-foreground" data-testid="erasure-reason-help">{ERASURE_REASON_WARNING} {ERASURE_REASON_CORRECTABLE}</p>
         <button type="submit" className="w-fit rounded border px-3 py-1 text-sm">Record request</button>
       </form>
 
@@ -55,7 +60,13 @@ export function ErasureRequestsSection({
           <li key={r.id} className="rounded border p-3 text-sm" data-testid="erasure-row">
             <div className="font-medium">{erasureClientLabel(clients[r.clientId])}</div>
             <div data-testid="erasure-state">{r.stateLabel}</div>
-            <div className="text-muted-foreground">{r.reason}</div>
+            <div className="text-muted-foreground" data-testid="erasure-reason">{r.reasonCleared ? "Reason cleared" : r.reason}</div>
+            <form action={onCorrect} className="mt-2 grid gap-1" data-testid="erasure-correct-form">
+              <input type="hidden" name="request_id" value={r.id} />
+              <label className="text-xs" htmlFor={`erasure-correct-${r.id}`}>Correct the reason (leave blank to clear it)</label>
+              <input id={`erasure-correct-${r.id}`} name="reason" maxLength={ERASURE_REASON_MAX} className="rounded border px-2 py-1 text-sm" autoComplete="off" />
+              <button type="submit" className="w-fit rounded border px-3 py-1">Save reason</button>
+            </form>
             <div className="mt-2 flex flex-wrap gap-2">
               {r.next ? (
                 <form action={onAdvance}>

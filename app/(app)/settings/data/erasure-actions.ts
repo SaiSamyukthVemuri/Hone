@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { advanceErasure, requestErasure, withdrawErasure, type ErasureCtx } from "@/lib/erasure/commands";
+import { advanceErasure, correctErasureReason, requestErasure, withdrawErasure, type ErasureCtx } from "@/lib/erasure/commands";
 import type { ErasureRequestRow } from "@/lib/erasure/requests";
 
 // Erasure REQUESTS (R5, DN-18). Prepared, not wired: no page imports these yet and the held database commands (0295) are not applied.
@@ -49,6 +49,12 @@ export async function requestErasureAction(formData: FormData) {
 
 export async function advanceErasureAction(formData: FormData) {
   const r = await advanceErasure(await ctx(), { requestId: formData.get("request_id"), to: formData.get("to") });
+  if (r.ok) revalidatePath("/settings/data");
+  return r;
+}
+
+export async function correctErasureReasonAction(formData: FormData) {
+  const r = await correctErasureReason(await ctx(), { requestId: formData.get("request_id"), reason: formData.get("reason") });
   if (r.ok) revalidatePath("/settings/data");
   return r;
 }
