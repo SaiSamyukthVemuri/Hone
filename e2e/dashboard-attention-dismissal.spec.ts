@@ -324,7 +324,7 @@ test.describe("Dashboard Needs attention: dismissal", () => {
   unpaidGated("a collected settlement reduces or clears the balance, and a still_owes note never creates an amount", async ({ page }) => {
     const { seed, unpaid, partial, visit, prac } = await seedStudioWithMoney();
     const noted = await visit("Noted", 30000, 6);
-    // A card payment with no recorded quote: the price at visit time cannot be proven, so no figure is claimed.
+    // A card payment with no recorded quote: the page says Paid, so the dashboard says nothing.
     const cardOnly = await visit("CardOnly", 21000, 7, 6550);
     const settle = (apptId: string, method: string, cents: number, quoted: number) =>
       sql(
@@ -337,8 +337,8 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await openDashboard(page);
     await expect(unpaidAmountOf(page, partial.name)).toContainText("144.50", { timeout: T });
     await expect(unpaidAmountOf(page, noted.name)).toContainText("300.00", { timeout: T });
-    await expect(unpaidAmountOf(page, cardOnly.name)).toContainText("Amount unavailable", { timeout: T });
-    await expect(unpaidAmountOf(page, cardOnly.name)).not.toContainText(/\d\.\d\d/);
+    // HON-65: the appointment page reads this visit as "Paid" (a Hone-verified card charge), so Needs attention does not list it at all.
+    await expect(unpaidAmountOf(page, cardOnly.name)).toHaveCount(0, { timeout: T });
 
     // Cash collected on a visit with nothing else paid: 210.00 - 50.00 = 160.00. Full cash on the unpaid visit clears it.
     const cashed = await visit("Cashed", 21000, 5);
@@ -353,6 +353,23 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     console.log(`NOTED LINE: ${notedLine}`);
     expect(notedLine).toContain("300.00");
     expect(notedLine).not.toContain("777");
+  });
+
+  unpaidGated("HON-65: a visit the appointment page calls Paid is never listed, even with a price recorded on its session", async ({ page }) => {
+    const { seed, unpaid, visit } = await seedStudioWithMoney();
+    // Card = price, plus a price typed onto the session (the shape the dashboard used to list as "Amount unavailable").
+    const paid = await visit("PaidWithPrice", 21000, 3, 21000);
+    await sql(`update public.sessions set price_paid_cents = 21000 where appointment_id = $1`, [paid.apptId]);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    // The control is listed (the check is on). The paid visit may still have OTHER reminders (the fixture has no charting); it has no unpaid line.
+    await expect(unpaidAmountOf(page, unpaid.name)).toContainText("120.00", { timeout: T });
+    await expect(unpaidAmountOf(page, paid.name)).toHaveCount(0);
+    await expect(page.locator("li[data-attention-client]").filter({ hasText: paid.name }).getByText(/Unpaid|Amount unavailable|outstanding/i)).toHaveCount(0);
+    // The same visit's own page says Paid.
+    await page.goto(`/calendar/${paid.apptId}`);
+    await expect(page.getByRole("heading", { name: "Payment" }).locator("xpath=..").getByText("Paid")).toBeVisible({ timeout: T });
   });
 
   unpaidGated("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {

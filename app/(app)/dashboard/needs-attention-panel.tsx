@@ -237,7 +237,7 @@ export function NeedsAttentionPanel({
   dismissalsEnabled?: boolean;
   dismissalsUnavailable?: boolean;
   // Owner only. How far back unpaid appointments were looked for (null = every finished appointment) and how many were not returned.
-  unpaid?: { windowDays: number | null; notReturned: number } | null;
+  unpaid?: { windowDays: number | null; notReturned: number; unlisted: number } | null;
   unpaidAll?: boolean;
   // Same-page links that keep the day and period in the query.
   unpaidHrefs?: { all: string; recent: string };
@@ -272,6 +272,11 @@ export function NeedsAttentionPanel({
           ? "Unpaid appointments: all finished appointments with a balance."
           : `Unpaid appointments: finished in the last ${unpaid.windowDays} days.`}{" "}
         Amounts are what Hone can see from recorded payments.{" "}
+        {unpaid.unlisted > 0 && (
+          <span data-testid="needs-attention-unpaid-unlisted">
+            {unpaid.unlisted === 1 ? "1 finished visit has" : `${unpaid.unlisted} finished visits have`} no price or payment detail Hone can verify, so {unpaid.unlisted === 1 ? "it is" : "they are"} not listed.{" "}
+          </span>
+        )}
         {unpaid.notReturned > 0 && <span data-testid="needs-attention-unpaid-capped">Some older or additional ones are not shown, so this may not be everything. </span>}
         <Link href={unpaidAll ? unpaidHrefs.recent : unpaidHrefs.all} data-testid="needs-attention-unpaid-toggle" className="underline">
           {unpaidAll ? "Show last 90 days only" : "Show all outstanding"}

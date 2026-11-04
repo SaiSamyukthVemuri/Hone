@@ -409,3 +409,14 @@ describe("HON-45: settlementDisplayState carries part payments", () => {
   });
 });
 
+
+describe("HON-65: the attempts read has a fixed order", () => {
+  it("both surfaces read payment_charge_attempts ordered by (created_at, id), because the reducer returns on the first succeeded row", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const file of ["lib/billing/appointment-payment-state.ts", "lib/dashboard/unpaid-attention.ts"]) {
+      const src = readFileSync(file, "utf8");
+      if (file.endsWith("appointment-payment-state.ts")) expect(src).toMatch(/\.order\("created_at", \{ ascending: true \}\)\s*\.order\("id", \{ ascending: true \}\)/);
+      else expect(src).toMatch(/localeCompare\(y\.created_at[\s\S]{0,40}localeCompare\(y\.id/);
+    }
+  });
+});
