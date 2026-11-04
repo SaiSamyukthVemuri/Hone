@@ -128,3 +128,27 @@ on one device lost proof when another device asked for a link. It failed closed:
 Proven by `tests/db/auth-0291-stamp-rollback.db.test.ts` (refusal, opt-in, empty table, all rolled back) and
 `tests/migrations/0291-stamp-rollback.test.ts` (source contract). Effect after rollback: changed accounts fall back to the window
 rule (fail closed); the callback's stamp call then errors and counts as "not proven".
+
+### Follow-up proposal, NOT built: stamp retention (Insurance S-2, Privacy BC2)
+**The issue.** `auth_session_link_proofs` keeps one row per stamped sign-in on a changed account, and nothing deletes it:
+- rows of signed-out sessions and of deleted accounts stay (`user_id`, `session_id`, `anchor`, `stamped_at`; no address);
+- they are inert, because the check also needs the live session row;
+- but they are unbounded.
+
+**Options, in order of preference:**
+1. **Prune inside the recorder (no scheduler, no new privilege).** At the end of `stamp_session_link_proof()`:
+   `delete from public.auth_session_link_proofs p where p.user_id = v_uid and not exists (select 1 from auth.sessions s where s.id = p.session_id)`.
+   - It bounds each account's rows to its live sessions, and runs only for changed accounts.
+   - It reads `auth.sessions` (already required on that path).
+   - It does not cover deleted accounts.
+2. **A scheduled sweep.** A SECURITY DEFINER `prune_session_link_proofs()`, called by the existing cron/admin path (service role only), deleting rows:
+   - whose session no longer exists, or
+   - older than the longest session lifetime, or
+   - whose `user_id` has no `auth.users` row.
+   - Needs a cron entry, its own grants and a test.
+3. **A foreign key `on delete cascade` to `auth.users(id)`** for account deletion. Hosted support for FKs from `public` to `auth`
+   tables is common for `auth.users`, but it adds a DDL dependency on the auth schema. An FK to `auth.sessions` was deliberately
+   not used.
+
+**Recommendation:** 1 together with 2's account-deletion clause, as a separate reviewed change before or with the 0291 apply.
+Until then, accept the growth: there is one row per changed-account sign-in, and Hone has no email-change UI.
