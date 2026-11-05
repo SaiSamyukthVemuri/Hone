@@ -161,7 +161,7 @@ describe("a saved area whose native unit is no longer selectable is still a nati
 
   it("reports native (so the host keeps the legacy fields hidden) and shows the unit read-only as the saved machine", () => {
     const kinds: string[] = [];
-    mount({ devices: [RETIRED], blockId: "b1", initialDeviceId: "room-9", initialModeKey: "galvanic", legacyMachine: null, unitNames: { "room-9": "Room 9 unit" }, onKindChange: (k: string) => kinds.push(k) });
+    mount({ devices: [RETIRED], blockId: "b1", savedDeviceId: "room-9", initialDeviceId: "room-9", initialModeKey: "galvanic", legacyMachine: null, unitNames: { "room-9": "Room 9 unit" }, onKindChange: (k: string) => kinds.push(k) });
     expect(kinds.at(-1)).toBe("native");
     const note = host!.querySelector('[data-testid="machine-saved-unavailable"]');
     expect(note?.textContent).toContain("Room 9 unit");
@@ -169,6 +169,14 @@ describe("a saved area whose native unit is no longer selectable is still a nati
     const saved = [...sel.options].find((o) => o.value === "room-9")!;
     expect(saved.disabled).toBe(true);
     expect(sel.value).toBe("room-9");
+  });
+
+  it("NEGATIVE CONTROL (Insurance W-1): an identity-less SAVED legacy area with a retired REMEMBERED unit keeps its legacy form: kind none, no unavailable note", () => {
+    const kinds: string[] = [];
+    // A pre-0301 saved area: blockId set, NO saved unit on its record, while the practitioner's remembered preference names a retired unit.
+    mount({ devices: [RETIRED], blockId: "b1", savedDeviceId: null, initialDeviceId: "room-9", initialModeKey: "galvanic", legacyMachine: null, onKindChange: (k: string) => kinds.push(k) });
+    expect(kinds.at(-1), "no saved native unit, so the host keeps the existing fields").toBe("none");
+    expect(host!.querySelector('[data-testid="machine-saved-unavailable"]')).toBeNull();
   });
 
   it("NEGATIVE CONTROL: a NEW area with an unavailable remembered unit is not a saved native area (reports none)", () => {

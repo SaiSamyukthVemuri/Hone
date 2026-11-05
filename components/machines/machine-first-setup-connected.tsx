@@ -518,6 +518,9 @@ export function MachineFirstSetupConnected({
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
+      // THE SAVED UNIT, from the area's own record (Insurance W-1): not from the panel's current pick, which can be a remembered
+      // preference on an area that never saved an identity.
+      savedDeviceId={blockId ? (savedIdentity?.deviceId ?? null) : null}
       initialLegacyChosen={
         (savedIdentity?.deviceId == null && savedIdentity?.profileId != null) ||
         Boolean(newAreaLast?.legacy)

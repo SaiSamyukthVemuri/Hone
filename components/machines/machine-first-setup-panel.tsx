@@ -229,6 +229,11 @@ export type MachineFirstSetupPanelProps = {
   /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
   nativeLocked?: boolean;
   /**
+   * The unit stored on the area's own record (its studio_machine_id), or null. This, not the panel's current pick, decides that a saved
+   * area is native when its unit is no longer selectable (Codex #1369 4485874041; Insurance W-1).
+   */
+  savedDeviceId?: string | null;
+  /**
    * What kind of machine is in force, so the host form can show ONLY that
    * machine's fields: the existing fields for `legacy` and `none`, none of the
    * overlapping legacy ones for `native`.
@@ -337,6 +342,7 @@ export function MachineFirstSetupPanel({
   legacyMachine = null,
   initialLegacyChosen = false,
   nativeLocked = false,
+  savedDeviceId = null,
   onKindChange,
   onResolvedChoice,
   onRecord,
@@ -620,7 +626,7 @@ export function MachineFirstSetupPanel({
   // been retired (or is otherwise no longer selectable) has no `chosen`, but it is still a native area: reporting "none" exposed the
   // existing legacy fields on it, and a Save could write legacy values onto an area that holds a native identity. The unit stays
   // shown, read-only, as the saved machine, and the legacy fields stay hidden.
-  const savedUnavailable = Boolean(blockId) && !legacyChosen && deviceId !== null && chosen === null;
+  const savedUnavailable = Boolean(blockId) && savedDeviceId !== null && !legacyChosen && chosen === null;
   const machineKind: "none" | "legacy" | "native" = legacyChosen
     ? "legacy"
     : (chosen && mode) || savedUnavailable
@@ -723,7 +729,7 @@ export function MachineFirstSetupPanel({
           <select
             className={fieldControlClass()}
             ref={selectRef}
-            value={legacyChosen ? LEGACY_MACHINE_OPTION_VALUE : (deviceId ?? "")}
+            value={legacyChosen ? LEGACY_MACHINE_OPTION_VALUE : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")}
             onChange={(e) =>
               e.target.value === LEGACY_MACHINE_OPTION_VALUE
                 ? void chooseDevice(null, true)
@@ -765,9 +771,9 @@ export function MachineFirstSetupPanel({
                 {profile.variant ? ` (${profile.variant})` : ""}
               </option>
             ))}
-            {savedUnavailable && deviceId !== null && (
-              <option value={deviceId} disabled>
-                {(unitNames[deviceId] ?? "Saved machine") + " (saved on this area, no longer available)"}
+            {savedUnavailable && savedDeviceId !== null && (
+              <option value={savedDeviceId} disabled>
+                {(unitNames[savedDeviceId] ?? "Saved machine") + " (saved on this area, no longer available)"}
               </option>
             )}
             {legacyMachine && (
@@ -780,7 +786,7 @@ export function MachineFirstSetupPanel({
       )}
       {savedUnavailable && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-saved-unavailable">
-          {unitNames[deviceId as string] ?? "This area's machine"} is saved on this area but is no longer available. Its settings stay as recorded.
+          {unitNames[savedDeviceId as string] ?? "This area's machine"} is saved on this area but is no longer available. Its settings stay as recorded.
         </p>
       )}
       {scope && nativeLocked && (
