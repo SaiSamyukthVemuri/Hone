@@ -65,6 +65,38 @@ const keyOf = async (blockId: string) =>
   (await sql<{ k: string | null }>(`select machine_mode_key as k from public.session_blocks where id=$1`, [blockId]))[0]!.k;
 const CONFLICT = /changed elsewhere/i;
 
+/**
+ * Run `action`, then wait until every server-action POST it caused has FINISHED (and at least one was seen).
+ * Waiting on one response can match the wrong request (a prefetch, the remembered-selection write) and let an
+ * assertion read the database BEFORE the write under test has landed, which passes whether or not the write was
+ * refused (Insurance V-1). Settled = at least one action POST seen, none in flight, quiet for 400ms.
+ */
+async function settleServerActions(page: import("@playwright/test").Page, action: () => Promise<unknown>): Promise<number> {
+  let seen = 0;
+  let inflight = 0;
+  let lastActivity = Date.now();
+  const isAction = (r: import("@playwright/test").Request) => r.method() === "POST" && r.headers()["next-action"] !== undefined;
+  const onReq = (r: import("@playwright/test").Request) => { if (isAction(r)) { seen++; inflight++; lastActivity = Date.now(); } };
+  const onDone = (r: import("@playwright/test").Request) => { if (isAction(r)) { inflight = Math.max(0, inflight - 1); lastActivity = Date.now(); } };
+  page.on("request", onReq);
+  page.on("requestfinished", onDone);
+  page.on("requestfailed", onDone);
+  try {
+    await action();
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      if (seen > 0 && inflight === 0 && Date.now() - lastActivity > 400) return seen;
+      await page.waitForTimeout(100);
+    }
+    throw new Error(`no settled server action after the click (seen ${seen}, in flight ${inflight})`);
+  } finally {
+    page.off("request", onReq);
+    page.off("requestfinished", onDone);
+    page.off("requestfailed", onDone);
+  }
+}
+
+
 for (const which of ["senior", "junior"] as const) {
   const [first, second] = which === "senior" ? ["flash", "microflash"] : ["flash", "blend"];
   test.describe(`mode change then block save, ${which} 3G, 1280`, () => {
@@ -150,17 +182,13 @@ for (const which of ["senior", "junior"] as const) {
       // so the click is itself refused as changed-elsewhere: the stored mode is NOT overwritten from a tab that has not seen the other edit, and no new version is adopted.
       //
       // WAIT FOR THE CLICK'S OWN OUTCOME before asserting anything (Insurance V-1). The conflict text is ALREADY on screen from the Save above, so waiting for it
-      // proves nothing about the click; the identity write is a server action POST, so wait for ITS response, and only then read the stored mode. Asserting before
+      // proves nothing about the click; the identity write is a server action POST, so wait until the server actions the click caused have all finished, and only then read the stored mode. Asserting before
       // that response would pass whether or not the write was refused.
-      const identityWrite = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/sessions/${sessionId}`), { timeout: T });
-      await page.getByTestId(`machine-mode-${second}`).click({ timeout: T });
-      await identityWrite;
+      await settleServerActions(page, () => page.getByTestId(`machine-mode-${second}`).click({ timeout: T }));
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
       expect(await keyOf(blockId), "the stale tab's mode click was refused, not written").toBe(first);
       await page.getByLabel("Hairs treated", { exact: true }).fill("333");
-      const finalSave = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/sessions/${sessionId}`), { timeout: T });
-      await page.getByTestId("save-treatment-area").click({ timeout: T });
-      await finalSave;
+      await settleServerActions(page, () => page.getByTestId("save-treatment-area").click({ timeout: T }));
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
       // RE-READ AFTER THE FINAL CONFLICT (Insurance V-1): neither the mode nor the other tab's value moved.
       expect(await keyOf(blockId), "the stored mode after the final conflict").toBe(first);
