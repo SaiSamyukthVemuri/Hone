@@ -1,0 +1,30 @@
+{
+  "migration": "0255",
+  "tables": [
+    "waitlist",
+    "demo_requests"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "tables_present",
+      "functions_present",
+      "new_constraints_absent",
+      "legacy_rows_violating_waitlist_email_format",
+      "legacy_rows_violating_waitlist_field_length",
+      "legacy_rows_violating_demo_requests_email_format",
+      "legacy_rows_violating_demo_requests_field_length"
+    ]
+  },
+  "verify_sql": [
+    "c01_browser_privs.sql",
+    "c02_service_role.sql",
+    "c03_policies.sql",
+    "c04_constraints.sql",
+    "c05_invoker_fns.sql",
+    "c06_exec.sql",
+    "c07_anon_predicate_policies.sql"
+  ],
+  "verify_label": "history, the browser-role privileges on the two form tables, their one bounded INSERT policy, the four NOT VALID CHECKs, the pinned search_paths and the revoked executes",
+  "notes": "Insurance PEER-0255-SQL A1: PRE-apply, the hosted count of legacy rows violating each new CHECK must be 0 (the preflight reads it per constraint). VALIDATE CONSTRAINT is NOT in the stage; the read-back asserts the constraints are NOT VALID. Counts are rows, never row contents."
+}
