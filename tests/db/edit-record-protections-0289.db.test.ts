@@ -331,6 +331,30 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
     expect(row.studio_id).toBe(x.b.studioId);
   });
 
+  // Privacy EQ-1: a stage takes its studio from its own studio_id column but its client from the plan. Moving ONLY studio_id leaves plan_id on the plan in
+  // studio A. MEASURED (fresh 255|0289 stack): with edit OFF in the destination the GUARD refuses it (42501 edit_records_required); there is no other
+  // constraint behind it. With edit ON in both studios nothing refuses it, as the table owner or as the API role (no composite FK or RLS check ties a stage's
+  // studio_id to its plan's), so a member of both studios can leave a stage whose studio differs from its plan's. That is not caused by this guard and is not
+  // closed by it; it is reported separately (STATUS) for a decision, so this test asserts only the part that is proven.
+  it("EQ-1: a stage moved by its studio_id column ALONE (plan_id unchanged) is refused by the edit guard when edit is OFF in the destination", async () => {
+    const off = await twoStudios("e89mv3", "off");
+    const offRows = await rowsInA(off.a);
+    await expect(
+      asMember(off.a.m.userId, async (q) => { await q("update public.treatment_plan_stages set studio_id=$2 where id=$1", [offRows.ids.treatment_plan_stages, off.b.studioId]); }),
+    ).rejects.toMatchObject({ code: "42501", message: expect.stringContaining("edit_records_required") });
+    // the same move through the API role (RLS) is refused by the same guard
+    const api = await twoStudios("e89mv6", "off");
+    const apiRows = await rowsInA(api.a);
+    await expect(
+      asUser(api.a.m.userId, (q) => q("update public.treatment_plan_stages set studio_id=$2 where id=$1", [apiRows.ids.treatment_plan_stages, api.b.studioId])),
+    ).rejects.toMatchObject({ code: "42501", message: expect.stringContaining("edit_records_required") });
+    for (const [x, ids] of [[off, offRows.ids], [api, apiRows.ids]] as const) {
+      const row = (await adminQuery("select plan_id, studio_id from public.treatment_plan_stages where id=$1", [ids.treatment_plan_stages])).rows[0];
+      expect(row.studio_id).toBe(x.a.s.studioId);
+      expect(row.plan_id).toBe(ids.treatment_plans);
+    }
+  });
+
   it("every other chart table: a move into the edit-OFF studio is refused wherever the same move is possible with edit ON", async () => {
     const MOVES: Record<string, (x: Awaited<ReturnType<typeof twoStudios>>, ids: Record<string, string>) => readonly [string, unknown[]]> = {
       sessions: (x, ids) => ["update public.sessions set studio_id=$2, client_id=$3 where id=$1", [ids.sessions, x.b.studioId, x.b.clientId]],

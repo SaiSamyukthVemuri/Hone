@@ -158,6 +158,7 @@ export function SessionPerformerLine({
             maxLength={500}
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />
+          <p className="w-full text-xs text-neutral-500">Do not include health or personal details about anyone here.</p>
           <button
             type="button"
             onClick={() => submit(performerId)}
