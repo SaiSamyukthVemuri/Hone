@@ -629,6 +629,15 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     expect(host!.textContent).toContain("already holds xCell Pur readings");
   });
 
+  it("Insurance V-3: when the PREFERENCE write fails after the RECORD was written, the record stands and the panel keeps the pick, saying so", async () => {
+    actions.rememberMachineSelectionAction.mockResolvedValueOnce({ ok: false, error: "The preference did not save." } as never);
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
+    const sel = await choose("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledWith(expect.objectContaining({ blockId: "b1", deviceId: "room-9" }));
+    expect(sel.value, "the area's own record was written, so the panel is on that machine").toBe("room-9");
+    expect(host!.textContent).toContain("The preference did not save.");
+  });
+
   it("NEGATIVE CONTROL: a NEW area (no block) is never locked, whatever the flag says", async () => {
     await mount({ blockId: null, legacyReadingsLocked: true });
     await open();

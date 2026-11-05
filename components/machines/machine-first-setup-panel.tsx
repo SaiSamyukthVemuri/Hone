@@ -615,9 +615,15 @@ export function MachineFirstSetupPanel({
   // that machine's fields. A chosen native unit with a mode hides the
   // overlapping legacy fields; nothing chosen, or the existing workflow, keeps
   // them exactly as they were.
+  //
+  // THE KIND COMES FROM THE SAVED IDENTITY, NOT FROM SELECTABILITY (Codex, #1369 4485874041). A saved area whose native unit has since
+  // been retired (or is otherwise no longer selectable) has no `chosen`, but it is still a native area: reporting "none" exposed the
+  // existing legacy fields on it, and a Save could write legacy values onto an area that holds a native identity. The unit stays
+  // shown, read-only, as the saved machine, and the legacy fields stay hidden.
+  const savedUnavailable = Boolean(blockId) && !legacyChosen && deviceId !== null && chosen === null;
   const machineKind: "none" | "legacy" | "native" = legacyChosen
     ? "legacy"
-    : chosen && mode
+    : (chosen && mode) || savedUnavailable
       ? "native"
       : "none";
   useEffect(() => {
@@ -759,6 +765,11 @@ export function MachineFirstSetupPanel({
                 {profile.variant ? ` (${profile.variant})` : ""}
               </option>
             ))}
+            {savedUnavailable && deviceId !== null && (
+              <option value={deviceId} disabled>
+                {(unitNames[deviceId] ?? "Saved machine") + " (saved on this area, no longer available)"}
+              </option>
+            )}
             {legacyMachine && (
               <option value={LEGACY_MACHINE_OPTION_VALUE}>
                 {legacyMachine.label}
@@ -766,6 +777,11 @@ export function MachineFirstSetupPanel({
             )}
           </select>
         </FieldLabel>
+      )}
+      {savedUnavailable && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-saved-unavailable">
+          {unitNames[deviceId as string] ?? "This area's machine"} is saved on this area but is no longer available. Its settings stay as recorded.
+        </p>
       )}
       {scope && nativeLocked && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">

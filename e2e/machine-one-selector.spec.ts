@@ -550,5 +550,31 @@ for (const device of [
       expect((await blocksOf(sessionId))[0]).toMatchObject({ machine_profile_id: "dectro-apilus:xcell", studio_machine_id: null, mode: "thermo", energy_level: "5" });
       await noOverflow(page);
     });
+
+    // Codex #1369 4485874041: the kind comes from the SAVED identity. A saved native area whose unit has since been retired stays a native
+    // area: the unit shows read-only as the saved machine, the legacy fields stay hidden, and a Save writes no legacy value onto it.
+    test("a saved native area whose unit was later retired keeps the legacy fields hidden and takes no legacy value on Save", async ({ page }) => {
+      const s = await seedStudio();
+      const mode = (await sql<{ mode_key: string }>(`select mode_key from public.machine_profile_mode_contract where machine_profile_id='dectro-apilus:senior-3g' order by mode_key limit 1`))[0]!.mode_key;
+      const sessionId = randomUUID();
+      const blockId = randomUUID();
+      await sql(`insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at) values ($1,$2,$3,(select id from public.practitioners where studio_id=$2 limit 1),'electrolysis', now())`, [sessionId, s.seed.studioId, s.clientId]);
+      await sql(`insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, machine_profile_id, studio_machine_id, machine_mode_key) values ($1,$2,$3,1,'Upper lip','dectro-apilus:senior-3g',$4,$5)`, [blockId, s.seed.studioId, sessionId, s.senior, mode]);
+      await sql(`update public.studio_machines set retired_at = now() where id = $1`, [s.senior]);
+      await loginByMagicLink(page, s.member.email);
+      await page.goto(`/clients/${s.clientId}/sessions/${sessionId}`);
+      await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+      await expect(page.getByTestId("machine-saved-unavailable")).toBeVisible({ timeout: T });
+      for (const legacy of ["Machine frequency", "Energy level (EL)", "Units of lye (UL)"]) {
+        await expect(page.getByText(legacy)).toHaveCount(0);
+      }
+      await noOverflow(page);
+      await page.getByLabel("Hairs treated", { exact: true }).fill("12");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(async () => (await sql<{ n: number | null }>(`select (select hairs_treated from public.electrolysis_entries where block_id=$1 and deleted_at is null limit 1) as n`, [blockId]))[0]?.n, { timeout: T }).toBe(12);
+      expect((await blocksOf(sessionId))[0], "no legacy value on the native area, identity unchanged").toMatchObject({ mode: null, energy_level: null, machine_profile_id: "dectro-apilus:senior-3g", studio_machine_id: s.senior, machine_mode_key: mode });
+      const f = await sql<{ machine_frequency: string | null }>(`select machine_frequency from public.session_blocks where id=$1`, [blockId]);
+      expect(f[0]!.machine_frequency).toBeNull();
+    });
   });
 }

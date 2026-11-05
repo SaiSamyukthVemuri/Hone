@@ -154,3 +154,39 @@ describe("one selector for the units and the existing workflow", () => {
     expect(document.activeElement).toBe(host!.querySelector('[data-testid="machine-select"]'));
   });
 });
+
+// Codex #1369 4485874041: the kind comes from the SAVED identity, not from selectability.
+describe("a saved area whose native unit is no longer selectable is still a native area", () => {
+  const RETIRED = { ...DEVICE, retiredAt: "2026-10-01T00:00:00Z" };
+
+  it("reports native (so the host keeps the legacy fields hidden) and shows the unit read-only as the saved machine", () => {
+    const kinds: string[] = [];
+    mount({ devices: [RETIRED], blockId: "b1", initialDeviceId: "room-9", initialModeKey: "galvanic", legacyMachine: null, unitNames: { "room-9": "Room 9 unit" }, onKindChange: (k: string) => kinds.push(k) });
+    expect(kinds.at(-1)).toBe("native");
+    const note = host!.querySelector('[data-testid="machine-saved-unavailable"]');
+    expect(note?.textContent).toContain("Room 9 unit");
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const saved = [...sel.options].find((o) => o.value === "room-9")!;
+    expect(saved.disabled).toBe(true);
+    expect(sel.value).toBe("room-9");
+  });
+
+  it("NEGATIVE CONTROL: a NEW area with an unavailable remembered unit is not a saved native area (reports none)", () => {
+    const kinds: string[] = [];
+    mount({ devices: [RETIRED], blockId: null, initialDeviceId: "room-9", initialModeKey: "galvanic", legacyMachine: null, onKindChange: (k: string) => kinds.push(k) });
+    expect(kinds.at(-1)).toBe("none");
+    expect(host!.querySelector('[data-testid="machine-saved-unavailable"]')).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: an area saved as the existing workflow still reports legacy", () => {
+    const kinds: string[] = [];
+    mount({ devices: [RETIRED], blockId: "b1", initialLegacyChosen: true, onKindChange: (k: string) => kinds.push(k) });
+    expect(kinds.at(-1)).toBe("legacy");
+    expect(host!.querySelector('[data-testid="machine-saved-unavailable"]')).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: a saved area whose unit IS selectable shows no unavailable note", () => {
+    mount({ blockId: "b1", initialDeviceId: "room-9", initialModeKey: "galvanic" });
+    expect(host!.querySelector('[data-testid="machine-saved-unavailable"]')).toBeNull();
+  });
+});
