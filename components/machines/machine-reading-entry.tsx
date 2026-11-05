@@ -359,9 +359,13 @@ export function MachineReadingEntry({
    */
   const transportHold = pending || save.unresolved;
 
-  const hasDraft = groups.some((g) =>
-    Object.values(g.values).some((v) => String(v ?? "").trim() !== ""),
-  );
+  // NOT AFTER AN ACKNOWLEDGED SAVE (Codex, #1369 4477412918). The typed values stay in `groups`
+  // until the practitioner starts a new capture, but they are RECORDED by then: the page must
+  // stop saying Unsaved and stop warning on leave. A save still in flight or of unknown outcome
+  // is not recorded, so it keeps counting.
+  const hasDraft =
+    !save.recorded &&
+    groups.some((g) => Object.values(g.values).some((v) => String(v ?? "").trim() !== ""));
   const reportedDraft = useRef<boolean | null>(null);
   useEffect(() => {
     if (reportedDraft.current === hasDraft) return;

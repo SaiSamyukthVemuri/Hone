@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actions = vi.hoisted(() => ({
   recordSetupSubmissionAction: vi.fn(async () => ({ ok: true })),
+  readingsForBlockAction: vi.fn(async () => ({ ok: true, readings: [], unitNames: {} })),
   recordBlockMachineIdentityAction: vi.fn(async () => ({ ok: true })),
   rememberMachineSelectionAction: vi.fn(async () => ({ ok: true })),
   clearMachineSelectionAction: vi.fn(async () => ({ ok: true })),
@@ -365,6 +366,33 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     const onRevisionDraft = vi.fn();
     await mountExisting(onRevisionDraft);
     expect(onRevisionDraft).not.toHaveBeenCalledWith(true);
+  });
+
+  const fields = () => [...host!.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')];
+  const saveEntry = async () =>
+    act(async () => {
+      host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!.click();
+    });
+
+  it("Codex P2 4477412918: after an ACKNOWLEDGED save the draft is released, so the page stops saying Unsaved", async () => {
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    const onRevisionDraft = vi.fn();
+    await mountExisting(onRevisionDraft);
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the saved view is showing").not.toBeNull();
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+  });
+
+  it("NEGATIVE CONTROL: a REFUSED save keeps the draft (it is still unsaved)", async () => {
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: "Refused." } as never);
+    const onRevisionDraft = vi.fn();
+    await mountExisting(onRevisionDraft);
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]')).toBeNull();
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
   });
 
   it("the draft is released when the entry unmounts", async () => {
