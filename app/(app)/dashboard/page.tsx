@@ -580,6 +580,8 @@ export default async function DashboardPage({
   >();
   // Roles R4: which visits are charted is treatment data; without clin.view_records the lookup is not issued.
   const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
+  // Starting a chart needs clin.edit_records (read-only chart mode): withdraw every start-a-chart link without it.
+  const canEditRecords = canViewRecords && (await requirePermission(supabase, studio.id, "clin.edit_records")).allowed;
   if (apptIds.length > 0 && canViewRecords) {
     const { data: linkedSessions, error: linkedError } = await supabase
       .from("sessions")
@@ -1007,6 +1009,7 @@ export default async function DashboardPage({
                   isOwner={isOwner}
                   portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
                   historyAsked={viewingToday && canViewRecords}
+                  canEditRecords={canEditRecords}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,
@@ -1147,6 +1150,7 @@ function AppointmentRow({
   portalEnabled,
   prepSummary,
   historyAsked,
+  canEditRecords,
   isCurrent,
   cardOnFile,
   tz,
@@ -1177,6 +1181,8 @@ function AppointmentRow({
   // `workflow === null`, so "we did not ask" stays a stated fact rather than a
   // side effect of another decision.
   historyAsked: boolean;
+  // clin.edit_records: without it the row offers no start-a-chart link (read-only chart mode).
+  canEditRecords: boolean;
   // Resolved ONCE for the whole page against one instant (see `renderNow`), not
   // re-derived per row from its own clock read.
   isCurrent: boolean;
@@ -1198,6 +1204,7 @@ function AppointmentRow({
   // being handed a fabricated `hasHistory: false` — which would quietly claim
   // that a ten-year client is new.
   const nextAction = resolveDayNextAction({
+    canEditRecords,
     status: appt.status,
     clientId: appt.client_id,
     appointmentId: appt.id,

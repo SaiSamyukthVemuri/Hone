@@ -9,6 +9,7 @@ import { resolveNextAction } from "@/lib/dashboard/next-action";
 // one.
 
 const base = {
+  canEditRecords: true,
   clientId: "c1",
   appointmentId: "a1",
   sessionId: null as string | null,

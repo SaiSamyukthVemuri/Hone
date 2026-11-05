@@ -43,7 +43,7 @@ function intake(over: Partial<IncompleteIntake> = {}): IncompleteIntake {
 }
 
 function build(over: Partial<MissingRecordsInput> = {}) {
-  return buildMissingRecordsAssistant({
+  return buildMissingRecordsAssistant({ canEditRecords: true,
     unchartedAppointments: [],
     sessions: [],
     incompleteIntakes: [],
@@ -106,7 +106,7 @@ describe("buildMissingRecordsAssistant item types", () => {
   // the builder cannot express a plan, so it cannot manufacture a task from one
   // and cannot transport the text.
   it("P2 a plan for the next visit cannot even reach this builder", () => {
-    const built = buildMissingRecordsAssistant({
+    const built = buildMissingRecordsAssistant({ canEditRecords: true,
       unchartedAppointments: [],
       sessions: [session({})],
       incompleteIntakes: [],
