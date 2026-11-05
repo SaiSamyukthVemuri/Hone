@@ -653,3 +653,92 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     expect(await identity(out.block_id)).toEqual({ machine_profile_id: PROFILE, studio_machine_id: machine, machine_mode_key: "galvanic" });
   });
 });
+
+// Codex 4486745915: assert_session_writable (0166, frozen) never looks at sessions.deleted_at, and soft_delete_session leaves the
+// blocks alone, so a direct call could change the identity of a block in a REMOVED session. Every identity command now refuses.
+describe("0301: a soft-deleted session takes no identity (Codex 4486745915)", () => {
+  const GONE = /Session not found or not writable/;
+  async function retire(sessionId: string) {
+    await adminTx(async (q) => {
+      await q("set local session_replication_role = replica");
+      await q(`update public.sessions set deleted_at = now() where id = $1`, [sessionId]);
+    });
+  }
+  const identityCall = (studio: SeededStudio, sessionId: string, blockId: string, machine: string) =>
+    asUser(studio.userId, (q) =>
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, null, machine, "galvanic"]),
+    );
+
+  it("record_block_machine_identity refuses a deleted session and changes nothing", async () => {
+    const studio = await seedStudio("identity-gone-record");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await retire(sessionId);
+    await expect(identityCall(studio, sessionId, blockId, machine)).rejects.toThrow(GONE);
+    expect((await identity(blockId)).machine_profile_id).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: the same call on a LIVE session is allowed", async () => {
+    const studio = await seedStudio("identity-live-record");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await identityCall(studio, sessionId, blockId, machine);
+    expect((await identity(blockId)).studio_machine_id).toBe(machine);
+  });
+
+  it("record_setup_submission_with_identity refuses a deleted session and writes no readings", async () => {
+    const studio = await seedStudio("identity-gone-submit");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await retire(sessionId);
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7)`, [
+          blockId, machine, "galvanic", "identity-gone-0001", JSON.stringify(groups("9")), sessionId, studio.clientId,
+        ]),
+      ),
+    ).rejects.toThrow(GONE);
+    expect(await readings(blockId)).toBe(0);
+    expect((await identity(blockId)).machine_profile_id).toBeNull();
+  });
+
+  it("the create wrapper with an identity refuses a deleted session and creates NO block", async () => {
+    const studio = await seedStudio("identity-gone-create");
+    const { sessionId } = await seedSession(studio);
+    const machine = await register(studio);
+    const count = async () =>
+      (await adminQuery(`select count(*)::int as n from public.session_blocks where session_id = $1`, [sessionId])).rows[0].n as number;
+    const before = await count();
+    await retire(sessionId);
+    await expect(save(studio, sessionId, { machine, mode: "galvanic", key: "gone-create-01" })).rejects.toThrow(GONE);
+    expect(await count()).toBe(before);
+  });
+
+  it("the internal writer refuses a block whose session is deleted even when reached directly (postgres role)", async () => {
+    const studio = await seedStudio("identity-gone-internal");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await retire(sessionId);
+    await expect(
+      adminQuery(`select public.apply_block_machine_identity($1,$2,$3,$4,$5)`, [blockId, studio.studioId, null, machine, "galvanic"]),
+    ).rejects.toThrow(GONE);
+    expect((await identity(blockId)).machine_profile_id).toBeNull();
+  });
+
+  it("source order: every command takes the LIVE session lock before the block lock", () => {
+    const sql = readFileSync("supabase/migrations/0301_session_block_machine_identity.sql", "utf8");
+    const fn = (name: string) => {
+      const i = sql.indexOf(`create or replace function public.${name}(`);
+      const j = sql.indexOf("create or replace function", i + 10);
+      return sql.slice(i, j === -1 ? undefined : j);
+    };
+    for (const name of ["apply_block_machine_identity", "record_block_machine_identity", "record_setup_submission_with_identity", "create_block_with_initial_setup_and_identity"]) {
+      const body = fn(name).replace(/--[^\n]*/g, "");
+      const session = body.search(/s\.deleted_at is null\s+for share/);
+      expect(session, `${name} locks a live session`).toBeGreaterThan(-1);
+      const block = body.search(/assert_block_in_session|\bfor update\b|create_block_with_initial_setup\(/);
+      expect(block, `${name} touches the block`).toBeGreaterThan(-1);
+      expect(session, `${name}: session before block`).toBeLessThan(block);
+    }
+  });
+});

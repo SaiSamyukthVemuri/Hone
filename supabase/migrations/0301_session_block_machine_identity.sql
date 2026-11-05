@@ -68,6 +68,7 @@ declare
   v_profile text := nullif(btrim(coalesce(p_profile_id, '')), '');
   v_mode text := nullif(btrim(coalesce(p_mode_key, '')), '');
   v_unit_profile text;
+  v_session_id uuid;
 begin
   if p_studio_machine_id is not null then
     select m.machine_profile_id into v_unit_profile
@@ -102,10 +103,39 @@ begin
   -- this call is detected, never overwritten. The NEW updated_at comes back from
   -- the same UPDATE ... RETURNING, so the caller adopts exactly the version its
   -- own write produced and no separate read can race it.
+  --
+  -- THE SESSION MUST BE LIVE, AND IS LOCKED BEFORE THE BLOCK (Codex 4486745915).
+  -- assert_session_writable (0166, frozen) does not look at sessions.deleted_at, and
+  -- soft_delete_session (0167) stamps the session and leaves its blocks alone, so a direct
+  -- call could change the machine identity of a block in a removed session. The session is
+  -- read from the block (a plain read, no lock), then locked FOR SHARE with the liveness
+  -- test in the same statement, then the block is locked FOR UPDATE and must still belong
+  -- to it. That is the documented order: SESSION, then BLOCK (0166 assert_block_in_session,
+  -- 0223 assert_setup_scope; copy_session_setup and correct_finalized_session hold the
+  -- session FOR UPDATE and then want its blocks). FOR SHARE is the same mode the
+  -- record_setup_submission_with_identity wrapper already holds, so it is a no-op there.
+  select b.session_id into v_session_id
+    from public.session_blocks b
+   where b.id = p_block_id
+     and b.studio_id = p_studio_id
+     and b.deleted_at is null;
+  if not found then
+    raise exception 'Block not found.' using errcode = 'check_violation';
+  end if;
+  perform 1
+    from public.sessions s
+   where s.id = v_session_id
+     and s.studio_id = p_studio_id
+     and s.deleted_at is null
+     for share;
+  if not found then
+    raise exception '%', 'Session not found or not writable by this practitioner.' using errcode = 'check_violation';
+  end if;
   select b.updated_at into v_current
     from public.session_blocks b
    where b.id = p_block_id
      and b.studio_id = p_studio_id
+     and b.session_id = v_session_id
      and b.deleted_at is null
      for update;
   if not found then
@@ -181,6 +211,17 @@ declare
   v_studio uuid;
 begin
   v_studio := public.assert_session_writable(p_session_id, p_client_id);
+  -- Session FIRST, live, then the block (Codex 4486745915): assert_block_in_session below
+  -- locks the block, so the session lock has to be taken before it to keep the order.
+  perform 1
+    from public.sessions s
+   where s.id = p_session_id
+     and s.studio_id = v_studio
+     and s.deleted_at is null
+     for share;
+  if not found then
+    raise exception '%', 'Session not found or not writable by this practitioner.' using errcode = 'check_violation';
+  end if;
   perform public.assert_block_in_session(p_block_id, p_session_id, v_studio);
   -- Returns the block's new updated_at (from the UPDATE ... RETURNING).
   return public.apply_block_machine_identity(
@@ -246,6 +287,24 @@ declare
   v_result jsonb;
   v_studio uuid;
 begin
+  -- A save that carries an identity needs a LIVE session (Codex 4486745915). It is locked
+  -- FOR SHARE here, BEFORE the area is created, so the order stays session, then block (the
+  -- new block is written by this transaction and nobody else can hold it). A save with no
+  -- identity is the unchanged legacy path and takes no extra lock.
+  if p_studio_machine_id is not null
+     or nullif(btrim(coalesce(p_machine_profile_id, '')), '') is not null then
+    v_studio := public.assert_session_writable(p_session_id, p_client_id);
+    perform 1
+      from public.sessions s
+     where s.id = p_session_id
+       and s.studio_id = v_studio
+       and s.deleted_at is null
+       for share;
+    if not found then
+      raise exception 'Session not found or not writable by this practitioner.'
+        using errcode = 'check_violation';
+    end if;
+  end if;
   v_result := public.create_block_with_initial_setup(
       p_session_id => p_session_id,
       p_client_id => p_client_id,
@@ -345,7 +404,11 @@ begin
     from public.sessions s
    where s.id = p_session_id
      and s.studio_id = v_studio
+     and s.deleted_at is null
      for share;
+  if not found then
+    raise exception '%', 'Session not found or not writable by this practitioner.' using errcode = 'check_violation';
+  end if;
   perform 1
     from public.session_blocks b
    where b.id = p_block_id
