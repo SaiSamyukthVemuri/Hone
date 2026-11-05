@@ -1326,13 +1326,13 @@ describe("the module stays out of the clinical record", () => {
     }
   });
 
-  it("performs no raw DML, and invalidates the cache in exactly one place: a stored identity write", () => {
+  it("performs no raw DML, and invalidates the cache only after a stored identity write or settings submission", () => {
     expect(CODE).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    const calls = CODE.match(/revalidatePath\(/g) ?? [];
-    expect(calls).toHaveLength(1);
-    const at = CODE.indexOf("revalidatePath(");
-    const fn = CODE.lastIndexOf("export async function ", at);
-    expect(CODE.slice(fn, fn + 80)).toContain("recordBlockMachineIdentityAction");
+    const owners = [...CODE.matchAll(/revalidatePath\(/g)].map((m) => {
+      const fn = CODE.lastIndexOf("export async function ", m.index);
+      return CODE.slice(fn, fn + 80).match(/function (\w+)/)![1];
+    });
+    expect(owners).toEqual(["recordSetupSubmissionAction", "recordBlockMachineIdentityAction"].sort((a, b) => CODE.indexOf(a) - CODE.indexOf(b)));
   });
 
   it("reaches the database only through 0223's named commands", () => {
@@ -2114,6 +2114,19 @@ describe("recordSetupSubmissionAction hands back the new block version", () => {
     expect(out.ok).toBe(true);
     expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
     expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
+  });
+  // Codex 4481814168: Cancel then reopen after "Save these settings" must not hold the pre-submission version.
+  it("a successful submission revalidates the session page (replay included); a refused one does not", async () => {
+    revalidatePathMock.mockClear();
+    ok({ block_updated_at: "v2" });
+    expect((await call("v1")).ok).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
+    revalidatePathMock.mockClear();
+    synthDevice();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    expect((await call("v1")).ok).toBe(false);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
   it("without a held version no token is expected back", async () => {
     ok();

@@ -192,6 +192,30 @@ for (const which of ["senior", "junior"] as const) {
       expect(await keyOf(blockId)).toBe(second);
     });
 
+    // Codex 4481814168: "Save these settings", Cancel, reopen: the reopened editor must hold the CURRENT version, so its Save is not "changed elsewhere".
+    test("a settings submission, then Cancel and reopen, then the block Save, shows no conflict", async ({ page }) => {
+      const s = await seedStudio();
+      const { blockId } = await savedArea(page, s);
+      const controls = page.locator('[data-testid^="reading-"]');
+      await expect(controls.first()).toBeVisible({ timeout: T });
+      for (let i = 0; i < (await controls.count()); i++) {
+        const c = controls.nth(i);
+        if ((await c.evaluate((el) => el.tagName)) === "SELECT") {
+          const v = await c.locator("option").evaluateAll((os) => (os as HTMLOptionElement[]).map((o) => o.value).find((x) => x !== ""));
+          if (v) await c.selectOption(v);
+        } else await c.fill("5");
+      }
+      await page.getByTestId("machine-reading-save").click({ timeout: T });
+      await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+      await page.getByTestId("cancel-treatment-area").click({ timeout: T });
+      await expect(page.getByTestId("cancel-treatment-area")).toHaveCount(0, { timeout: T });
+      await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+      await page.getByLabel("Hairs treated", { exact: true }).fill("321");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(() => entryHairs(blockId), { timeout: T }).toBe(321);
+      await expect(page.getByText(CONFLICT)).toHaveCount(0);
+    });
+
     test("P-1 NEGATIVE CONTROL: a genuine edit from a second tab BETWEEN the reading and the block Save is still refused", async ({ page, context }) => {
       const s = await seedStudio();
       const { blockId, sessionId } = await savedArea(page, s);

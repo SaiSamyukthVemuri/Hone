@@ -538,13 +538,15 @@ describe("historical values are untouched by anything here", () => {
     }
   });
 
-  it("performs no raw DML, and invalidates the cache in exactly one place: a stored identity write", () => {
+  it("performs no raw DML, and invalidates the cache only after a stored identity write or settings submission", () => {
     // It legitimately builds a Supabase client now that the storage exists, so
     // the claim is about what it DOES with one: named commands only.
     expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    expect(code.match(/revalidatePath\(/g) ?? []).toHaveLength(1);
-    const at = code.indexOf("revalidatePath(");
-    expect(code.slice(code.lastIndexOf("export async function ", at))).toMatch(/^export async function recordBlockMachineIdentityAction/);
+    const owners = [...code.matchAll(/revalidatePath\(/g)].map((m) => {
+      const fn = code.lastIndexOf("export async function ", m.index);
+      return code.slice(fn, fn + 80).match(/function (\w+)/)![1];
+    });
+    expect(owners.sort()).toEqual(["recordBlockMachineIdentityAction", "recordSetupSubmissionAction"]);
   });
 
   it("renders NO entry control until there is a block to record against", () => {

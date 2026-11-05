@@ -1163,6 +1163,8 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
+  // Like the identity write and Save (Codex 4481814168): the submission bumped the block, and a reopened editor must not hold the old version.
+  revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   return {
     ok: true,
     submissionId: out.value.submissionId,
