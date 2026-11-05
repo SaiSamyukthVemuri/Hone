@@ -32,4 +32,14 @@ describe("session performer line: the draft never stands in for the saved perfor
     expect(src).toMatch(/const needsReason = Boolean\(savedPerformerId\)/);
     expect(src).toMatch(/performerId === savedPerformerId/);
   });
+  it("the correction reason box warns that the reason is kept (Privacy EQ-2)", () => {
+    expect(src).toContain("Do not include health or personal details about anyone here.");
+    // the line sits in the correction block, after the reason input and before the Save button
+    const reason = src.indexOf('aria-label="Reason for the correction"');
+    const line = src.indexOf("Do not include health or personal details about anyone here.");
+    const save = src.indexOf("Save correction");
+    expect(reason).toBeGreaterThan(-1);
+    expect(line).toBeGreaterThan(reason);
+    expect(line).toBeLessThan(save);
+  });
 });
