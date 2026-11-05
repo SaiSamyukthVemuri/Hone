@@ -22,7 +22,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => { throw new Error("legal identity must never use the service role"); },
 }));
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1" }, studio: { id: "studio-A" } }),
+  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1", role: "owner" }, studio: { id: "studio-A" } }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({

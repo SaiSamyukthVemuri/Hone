@@ -15,6 +15,7 @@ import {
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
+import { isStaffRole } from "@/lib/clients/directory-rules";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -214,7 +215,10 @@ export async function updateClientAction(
 ): Promise<ClientSaveResult | void> {
   // Who is asking comes first: nothing about the submission (validation messages, baseline checks) is
   // answered to a caller who is not an active owner or practitioner of a studio.
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Staff only, stated here and not left to the membership-wide policies: a refused save echoes the CURRENT stored
+  // values, so a member who is neither owner nor practitioner is refused before anything is read (Privacy EO-1).
+  if (!isStaffRole(practitioner.role)) return { ok: false, error: GENERIC_SAVE_ERROR };
 
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId) {

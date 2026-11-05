@@ -172,44 +172,6 @@ export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline)
   return { ok: true, patch, conditions };
 }
 
-/**
- * PostgREST carries every `.eq` condition in the URL, and the API gateway refuses a long URL (measured on the local
- * stack: a filter value of 8,000 characters is accepted, 12,000 is refused with 414). A client whose stored allergies
- * or address text is long could therefore never be edited in that field: the save failed at transport and was
- * reported as not saved.
- *
- * So a condition travels in the URL only while its ENCODED value is at most URL_CONDITION_MAX_VALUE_CHARS and the
- * encoded conditions together stay within URL_CONDITION_TOTAL_CHARS. A changed field whose baseline is over the
- * threshold has NO equality condition on the write. The caller reads that field's current value just before the write
- * and refuses with a conflict if it differs from the baseline, so the residual is only the gap between that read and the
- * write. Every short changed field and the identity guards keep their conditions in the URL.
- * The atomic fix for a long field is a JSON-body database function (held, with M1); it is not part of this change.
- */
-export const URL_CONDITION_MAX_VALUE_CHARS = 2_000;
-export const URL_CONDITION_TOTAL_CHARS = 6_000;
-
-const encodedLength = (value: BaselineValue): number => encodeURIComponent(value === null ? "null" : String(value)).length;
-
-export function splitConditions<T extends { key: ProfileKey; value: BaselineValue }>(
-  conditions: ReadonlyArray<T>,
-): { inUrl: T[]; unconditioned: T[] } {
-  const bySize = conditions
-    .map((c, index) => ({ index, size: encodedLength(c.value) }))
-    .sort((a, b) => a.size - b.size);
-  const keep = new Set<number>();
-  let used = 0;
-  for (const item of bySize) {
-    if (item.size > URL_CONDITION_MAX_VALUE_CHARS) continue;
-    if (used + item.size > URL_CONDITION_TOTAL_CHARS) continue;
-    used += item.size;
-    keep.add(item.index);
-  }
-  return {
-    inUrl: conditions.filter((_, i) => keep.has(i)),
-    unconditioned: conditions.filter((_, i) => !keep.has(i)),
-  };
-}
-
 export type ProfileConflict = {
   key: ProfileKey;
   label: string;

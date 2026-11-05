@@ -20,9 +20,6 @@ import {
   CONFLICT_FULL_CHARS,
   CONFLICT_REGION_MAX_CHARS,
   CONFLICT_CONTEXT_CHARS,
-  splitConditions,
-  URL_CONDITION_MAX_VALUE_CHARS,
-  URL_CONDITION_TOTAL_CHARS,
   type ProfileBaseline,
 } from "@/lib/clients/profile-baseline";
 
@@ -184,54 +181,6 @@ describe("a large stored profile stays editable (Codex P2: the old 20,000-charac
   });
 });
 
-describe("only URL-safe conditions travel in the URL (Insurance K-1, option E)", () => {
-  const size = (v: unknown) => encodeURIComponent(String(v ?? "null")).length;
-  it("a small edit keeps every condition in the URL", () => {
-    const plan = planProfileUpdate(fd({ phone: "604-555-0199" }), LOADED);
-    if (!plan.ok) throw new Error("plan");
-    const { inUrl, unconditioned } = splitConditions(plan.conditions);
-    expect(unconditioned).toEqual([]);
-    expect(inUrl).toEqual(plan.conditions);
-  });
-  it("a changed 25k allergies field is written without its own condition; the short guards keep theirs", () => {
-    const big = { ...LOADED, allergies: "a".repeat(25_000), address: "b".repeat(30_000) };
-    const plan = planProfileUpdate(fd({ allergies: big.allergies + "Y", name: "Dana R. Reyes" }), big);
-    if (!plan.ok) throw new Error("plan");
-    const { inUrl, unconditioned } = splitConditions(plan.conditions);
-    expect(unconditioned.map((c) => c.key)).toEqual(["allergies"]);
-    expect(inUrl.map((c) => c.key).sort()).toEqual(["date_of_birth", "name", "phone"]);
-    expect(plan.patch.allergies).toBe(big.allergies + "Y"); // the new value is still written
-  });
-  it("both large fields changed: neither has a condition, the small stale guard still applies", () => {
-    const big = { ...LOADED, allergies: "a".repeat(25_000), address: "b".repeat(30_000) };
-    const plan = planProfileUpdate(fd({ allergies: big.allergies + "Y", address: big.address + "X", pronouns: "they/them" }), big);
-    if (!plan.ok) throw new Error("plan");
-    const { inUrl, unconditioned } = splitConditions(plan.conditions);
-    expect(unconditioned.map((c) => c.key).sort()).toEqual(["address", "allergies"]);
-    expect(inUrl).toEqual([{ key: "pronouns", value: "she/her" }]);
-  });
-  it("the per-value threshold is on the ENCODED length", () => {
-    const justUnder = "a".repeat(URL_CONDITION_MAX_VALUE_CHARS);
-    const encodedOver = "é".repeat(URL_CONDITION_MAX_VALUE_CHARS / 2 + 1); // 2 bytes each, 6 chars encoded in total over the cap
-    expect(splitConditions([{ key: "address" as const, value: justUnder }]).inUrl).toHaveLength(1);
-    expect(size(encodedOver)).toBeGreaterThan(URL_CONDITION_MAX_VALUE_CHARS);
-    expect(splitConditions([{ key: "address" as const, value: encodedOver }]).unconditioned).toHaveLength(1);
-  });
-  it("the TOTAL cap drops the largest remaining conditions, never a small one first, and never exceeds the cap", () => {
-    const value = "m".repeat(1_500);
-    const conds = (["name", "pronouns", "email", "address", "allergies"] as const).map((key) => ({ key, value }));
-    const { inUrl, unconditioned } = splitConditions(conds);
-    expect(inUrl.length + unconditioned.length).toBe(conds.length);
-    expect(inUrl.reduce((n, c) => n + size(c.value), 0)).toBeLessThanOrEqual(URL_CONDITION_TOTAL_CHARS);
-    expect(unconditioned.length).toBeGreaterThan(0);
-    const mixed = [{ key: "address" as const, value }, { key: "pronouns" as const, value: "she/her" }, { key: "email" as const, value }, { key: "allergies" as const, value }, { key: "name" as const, value }];
-    expect(splitConditions(mixed).inUrl.map((c) => c.key)).toContain("pronouns");
-  });
-  it("a null baseline costs almost nothing and is always kept", () => {
-    expect(splitConditions([{ key: "allergies" as const, value: null }]).inUrl).toHaveLength(1);
-  });
-});
-
 describe("a long field changed underneath is a conflict, not a silent overwrite (Privacy R1)", () => {
   const big = { ...LOADED, allergies: "a".repeat(25_000) };
   const plan = (() => {
@@ -239,7 +188,8 @@ describe("a long field changed underneath is a conflict, not a silent overwrite 
     if (!p.ok) throw new Error("plan");
     return p;
   })();
-  const { unconditioned } = splitConditions(plan.conditions);
+  // The long field is compared by value (inside the 0281 function in production); here only the conflict wording.
+  const unconditioned = plan.conditions.filter((c) => c.key === "allergies");
   const check = (stored: Record<string, unknown>) => describeConflicts({ ...plan, conditions: unconditioned }, stored);
   it("only the long field is checked by reading; the short field keeps its URL condition", () => {
     expect(unconditioned.map((c) => c.key)).toEqual(["allergies"]);

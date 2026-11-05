@@ -21,7 +21,7 @@ vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => {
     // A receptionist is not a practitioners row, so the resolver refuses them before any write.
     if (db.practitionerFails) throw new Error("not a practitioner");
-    return { practitioner: { id: "prac-1" }, studio: { id: "studio-A" } };
+    return { practitioner: { id: "prac-1", role: "owner" }, studio: { id: "studio-A" } };
   },
 }));
 vi.mock("@/lib/supabase/server", () => ({

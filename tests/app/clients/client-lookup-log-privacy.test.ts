@@ -57,7 +57,7 @@ beforeEach(() => {
   h.getUser.mockResolvedValue({ data: { user: { id: "user-A" } }, error: null });
   h.member.mockResolvedValue({ data: { id: ACTOR, user_id: "user-A", studio_id: STUDIO, active: true, role: "practitioner" }, error: null });
   h.audit.mockReset(); h.redirect.mockReset(); h.revalidate.mockReset();
-  h.identity.mockResolvedValue({ studio: { id: STUDIO } });
+  h.identity.mockResolvedValue({ practitioner: { id: ACTOR, active: true, role: "practitioner" }, studio: { id: STUDIO } });
 });
 afterEach(() => vi.restoreAllMocks());
 

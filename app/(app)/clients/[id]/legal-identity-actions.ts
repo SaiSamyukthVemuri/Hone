@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { parseLegalIdentity } from "@/lib/clients/identity";
+import { isStaffRole } from "@/lib/clients/directory-rules";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 // HON-58: staff record a client's LEGAL identity (clinical and insurer output).
@@ -61,6 +62,9 @@ const toParts = (r: StoredRow): LegalNameParts => ({
 export async function saveLegalIdentityAction(formData: FormData): Promise<LegalIdentitySaveResult> {
   // Session first: no validation or staleness message is returned to a caller who is not a practitioner.
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Staff only, stated here: write authority is owner or practitioner, and a refused save echoes the CURRENT stored
+  // names, so any other member is refused before anything is read (Privacy EO-1, EO-2).
+  if (!isStaffRole(practitioner.role)) return { ok: false, error: GENERIC };
 
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId) return { ok: false, error: "Missing client id." };

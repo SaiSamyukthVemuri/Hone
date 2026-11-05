@@ -27,7 +27,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1" }, studio: { id: "studio-A" } }),
+  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1", role: "owner" }, studio: { id: "studio-A" } }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
