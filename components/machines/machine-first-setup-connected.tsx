@@ -74,6 +74,12 @@ export type MachineFirstSetupConnectedProps = {
   /** Forwarded straight through: see the panel's own prop. */
   onRevisionUnresolved?: (unresolved: boolean) => void;
   onRevisionDraft?: (hasDraft: boolean) => void;
+  /**
+   * True while a SAVED area's machine choice is being written (Codex, #1369 4477716784). The host holds its
+   * own Save for that long: if the block save committed first, the identity write would be refused as stale
+   * and the machine choice lost without a word.
+   */
+  onIdentityWritePending?: (pending: boolean) => void;
   onSettingDraft?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
   >;
@@ -163,6 +169,7 @@ export function MachineFirstSetupConnected({
   settingDraftFrozen = false,
   onRevisionUnresolved,
   onRevisionDraft,
+  onIdentityWritePending,
   savedIdentity: savedIdentityProp = null,
   onKindChange,
   onIdentityDraft,
@@ -369,7 +376,7 @@ export function MachineFirstSetupConnected({
   // The selection action the panel calls on every pick and on "Change
   // machine". Previously absent, which is why a choice never survived a
   // reload even though the store and the action were both correct.
-  const onSelectMachine = async (choice: {
+  const selectMachineInner = async (choice: {
     deviceId: string | null;
     modeKey: string | null;
     legacy?: boolean;
@@ -433,6 +440,18 @@ export function MachineFirstSetupConnected({
       if (saved.updatedAt) onBlockVersion?.(saved.updatedAt);
     }
     return saved.ok ? pref : { ok: false, error: saved.error };
+  };
+
+  // A SAVED AREA'S PICK IS A WRITE AGAINST THE BLOCK'S VERSION: hold the host's Save for its whole duration,
+  // including the preference write before it. A new area writes nothing here (its pick rides the host's Save).
+  const onSelectMachine = async (choice: { deviceId: string | null; modeKey: string | null; legacy?: boolean }) => {
+    if (!blockId) return selectMachineInner(choice);
+    onIdentityWritePending?.(true);
+    try {
+      return await selectMachineInner(choice);
+    } finally {
+      onIdentityWritePending?.(false);
+    }
   };
 
   // A NEW AREA STARTS ON THIS CLIENT's LAST MACHINE when there is one (Photos R2): the previous machine is

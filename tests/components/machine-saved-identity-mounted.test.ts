@@ -406,3 +406,47 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     root = null;
   });
 });
+
+// Codex P2 4477716784 (#1369): while a SAVED area's machine choice is being written, the host's Save is held, so a block save cannot commit first
+// and turn the choice into a silent stale refusal.
+describe("a saved area's machine write holds the host's Save while it is pending", () => {
+  const pickValue = async (value: string) => {
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+  const legacySaved = { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null };
+
+  it("pending is reported true while the write is in flight and false once it settles", async () => {
+    let release!: (v: { ok: boolean; updatedAt?: string }) => void;
+    actions.recordBlockMachineIdentityAction.mockImplementationOnce(
+      () => new Promise((res) => { release = res as typeof release; }) as never,
+    );
+    const onIdentityWritePending = vi.fn();
+    await mount({ blockId: "b1", savedIdentity: legacySaved, blockVersion: "v1", onIdentityWritePending });
+    await pickValue("room-9");
+    expect(onIdentityWritePending).toHaveBeenLastCalledWith(true);
+    await act(async () => release({ ok: true, updatedAt: "v2" }));
+    expect(onIdentityWritePending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("a REFUSED write also releases the hold", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, error: "changed elsewhere" } as never);
+    const onIdentityWritePending = vi.fn();
+    await mount({ blockId: "b1", savedIdentity: legacySaved, blockVersion: "v1", onIdentityWritePending });
+    await pickValue("room-9");
+    expect(onIdentityWritePending).toHaveBeenCalledWith(true);
+    expect(onIdentityWritePending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("NEGATIVE CONTROL: a NEW area writes nothing here, so it never holds the host's Save", async () => {
+    const onIdentityWritePending = vi.fn();
+    await mount({ blockId: undefined, savedIdentity: null, onIdentityWritePending });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    await pickValue("room-9");
+    expect(onIdentityWritePending).not.toHaveBeenCalled();
+  });
+});

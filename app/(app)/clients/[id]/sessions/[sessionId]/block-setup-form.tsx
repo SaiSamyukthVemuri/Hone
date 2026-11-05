@@ -113,6 +113,7 @@ import {
   RESUME_CHOICE_RESUME,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
+  machineDraftHasEntries,
   type PendingSetupIdentity,
 } from "@/lib/machines/pending-setup";
 import {
@@ -723,6 +724,8 @@ export function BlockSetupForm({
   const [revisionUnresolved, setRevisionUnresolved] = useState(false);
   // Values typed into an EXISTING area's reading entry and not yet saved.
   const [revisionDraft, setRevisionDraft] = useState(false);
+  // A saved area's machine choice is being written; the block save waits (Codex, #1369 4477716784).
+  const [identityWritePending, setIdentityWritePending] = useState(false);
 
   /**
    * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
@@ -993,7 +996,7 @@ export function BlockSetupForm({
   }
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
-    machineDraft !== null ||
+    machineDraftHasEntries(machineDraft) ||
     revisionDraft ||
     identityDirty;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
@@ -1335,7 +1338,10 @@ export function BlockSetupForm({
     // save - the entry's own "Try saving again" is - so freezing it
     // does not strand her. The create-mode flag is deliberately NOT
     // here: there, pressing Save again unchanged IS the recovery.
-    revisionUnresolved;
+    revisionUnresolved ||
+    // HELD WHILE A SAVED AREA'S MACHINE CHOICE IS BEING WRITTEN (Codex, #1369 4477716784): the block save would
+    // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
+    identityWritePending;
 
   function submit() {
     if (saveBlocked) return;
@@ -1879,6 +1885,7 @@ export function BlockSetupForm({
         // below can be frozen by it (Codex, #860 4302176844).
         onRevisionUnresolved={setRevisionUnresolved}
         onRevisionDraft={setRevisionDraft}
+        onIdentityWritePending={setIdentityWritePending}
         // THE SAVED CHOICE of this area (the record), not a preference.
         savedIdentity={
           block
@@ -2475,7 +2482,9 @@ export function BlockSetupForm({
             // save - the entry's own "Try saving again" is - so freezing it
             // does not strand her. The create-mode flag is deliberately NOT
             // here: there, pressing Save again unchanged IS the recovery.
-            revisionUnresolved
+            revisionUnresolved ||
+            // And while a saved area's machine choice is being written (Codex, #1369 4477716784).
+            identityWritePending
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"

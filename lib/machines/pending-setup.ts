@@ -371,3 +371,18 @@ export function pinToBlock(pending: PendingSetup, blockId: string): PendingSetup
   if (pending.appliedToBlockId === blockId) return pending;
   return { ...pending, appliedToBlockId: blockId };
 }
+
+/**
+ * WHETHER THE PANEL'S REPORTED DRAFT HOLDS ANYTHING THE PRACTITIONER DID (Codex, #1369 4477716790).
+ *
+ * The panel reports `{ groups: [], blocking: null }` the moment it opens on a machine it chose by itself (the
+ * client's last machine, or the remembered preference). That is the panel being ready, not a draft: counting it made
+ * a brand-new area say Unsaved and prompt on leave with nothing entered. A draft is values entered (groups) or a
+ * half-finished entry (a blocking reason, which only exists once something was typed). An EXPLICIT machine pick is
+ * tracked separately by the host (`identityDirty`), so it still counts there.
+ */
+export function machineDraftHasEntries(
+  draft: { groups: readonly unknown[]; blocking: string | null } | null,
+): boolean {
+  return draft !== null && (draft.groups.length > 0 || draft.blocking !== null);
+}

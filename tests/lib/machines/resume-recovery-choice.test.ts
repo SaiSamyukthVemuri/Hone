@@ -334,6 +334,7 @@ describe("submit() enforces the recovery gates for every caller", () => {
       "resumedNeedsSettings",
       "resumedUnconfirmed",
       "revisionUnresolved",
+      "identityWritePending",
     ]) {
       expect(gates, g).toContain(g);
     }
@@ -346,7 +347,7 @@ describe("submit() enforces the recovery gates for every caller", () => {
   it("the Save button lists the same flags, and Try again is withheld by the predicate", () => {
     // The Save button keeps its own literal list (other pins read it); the two must name the same flags.
     const btn = FORM.slice(FORM.indexOf('data-testid="save-treatment-area"') - 3000, FORM.indexOf('data-testid="save-treatment-area"'));
-    for (const g of ["pending", 'resume.state === "checking"', 'resume.state === "saved"', "resumeChoicePending", "resumedNeedsSettings", "resumedUnconfirmed", "revisionUnresolved"]) {
+    for (const g of ["pending", 'resume.state === "checking"', 'resume.state === "saved"', "resumeChoicePending", "resumedNeedsSettings", "resumedUnconfirmed", "revisionUnresolved", "identityWritePending"]) {
       expect(btn, `button: ${g}`).toContain(g);
     }
     expect(FORM).toContain("onRetry={saveBlocked ? undefined : () => submit()}");
