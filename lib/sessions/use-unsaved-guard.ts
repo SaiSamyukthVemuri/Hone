@@ -139,13 +139,16 @@ export function useUnsavedGuard(
     // a flag left set would let the NEXT real navigation through unguarded. So it also lapses on a timer.
     let ownMove = false;
     let ownMoveTimer: ReturnType<typeof setTimeout> | undefined;
-    function moveHistory(delta: number) {
-      if (delta === 0) return;
+    function armOwnMove() {
       ownMove = true;
       clearTimeout(ownMoveTimer);
       ownMoveTimer = setTimeout(() => {
         ownMove = false;
       }, 500);
+    }
+    function moveHistory(delta: number) {
+      if (delta === 0) return;
+      armOwnMove();
       window.history.go(delta);
     }
     function onPopState() {
@@ -199,6 +202,8 @@ export function useUnsavedGuard(
       attemptRef.current(() => {
         confirmDeparture();
         confirmedTraverse = true;
+        // The replayed traversal raises popstate too: it is the guard's own move, not a second departure.
+        armOwnMove();
         clearTimeout(confirmedTraverseTimer);
         confirmedTraverseTimer = setTimeout(() => {
           confirmedTraverse = false;

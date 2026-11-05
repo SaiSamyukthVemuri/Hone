@@ -55,6 +55,7 @@ describe("the reads and the use are scoped", () => {
     expect(READ).toMatch(/\.is\("deleted_at", null\)/);
   });
   it("N-7: only a NEW area (no block yet) takes the client's last machine; an existing identity-less area opens as before", () => {
-    expect(CONNECTED).toMatch(/const newAreaLast = !hasSaved && !blockId \?/);
+    // Still new-area-only; it is also withheld while she has typed legacy values (Codex, #1369 4479490063).
+    expect(CONNECTED).toMatch(/const newAreaLast = !hasSaved && !blockId && !hold \?/);
   });
 });

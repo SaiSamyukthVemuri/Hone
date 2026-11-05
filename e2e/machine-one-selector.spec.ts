@@ -64,6 +64,14 @@ async function seedStudio() {
   return { seed, member, clientId, senior, junior };
 }
 
+/**
+ * The toolbar's Back/Forward (a CDP traversal, as a real press does). Playwright waits for the navigation to load, which never
+ * happens when the page cancels it, so the wait is bounded and its outcome is judged by the assertions that follow.
+ */
+async function traverse(page: Page, dir: "back" | "forward") {
+  await (dir === "back" ? page.goBack({ timeout: 3000 }) : page.goForward({ timeout: 3000 })).catch(() => undefined);
+}
+
 for (const device of [
   { name: "desktop 1280", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false },
   { name: "mobile 390", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
@@ -229,27 +237,103 @@ for (const device of [
         await expect(page.getByLabel("Energy level (EL)")).toHaveValue("4");
         await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "unsaved");
       };
+      // The browser's own Back/Forward (CDP traversal, as the toolbar does), after a real click in the form: Chromium only lets a page
+      // cancel a traversal when the page has had a user gesture since the last one, which typing in the form provides.
+      const touch = () => page.getByLabel("Energy level (EL)").click();
       // BACK -> prompt -> Stay.
-      await page.evaluate(() => history.back());
+      await touch();
+      await traverse(page, "back");
       await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
       await page.getByRole("button", { name: "Stay" }).click();
       await stillHere();
       // FORWARD -> prompt -> Stay (the case that used to leave the browser on the destination).
-      await page.evaluate(() => history.forward());
+      await touch();
+      await traverse(page, "forward");
       await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
       await page.getByRole("button", { name: "Stay" }).click();
       await stillHere();
       // Back again: the guard is still armed after both Stays (the own-move flag did not swallow it).
-      await page.evaluate(() => history.back());
+      await touch();
+      await traverse(page, "back");
       await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
       await page.getByRole("button", { name: "Stay" }).click();
       await stillHere();
       // LEAVE: confirm, and arrive where Back was going.
-      await page.evaluate(() => history.back());
+      await touch();
+      await traverse(page, "back");
       await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
       await page.getByRole("button", { name: "Leave" }).click();
       await at("/dashboard");
+      // Leave replays the traversal, which raises popstate again: it must not ask a second time (Insurance H-1).
+      await page.waitForTimeout(1500);
       await expect(page.getByText("Leave without saving?")).toHaveCount(0);
+      await at("/dashboard");
+    });
+
+    // Codex #1369 4479490063: values typed BEFORE the panel opens are never erased by a machine the panel resolves on its own.
+    test("legacy values typed before opening the panel survive an auto-resolved native machine", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      // The client's last machine is Senior (a saved area), so the next new area WOULD auto-select it.
+      const first = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await page.getByTestId("machine-select").selectOption(s.senior);
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(async () => (await blocksOf(first)).length, { timeout: T }).toBe(1);
+      await sql("update public.sessions set started_at=now()-interval '2 hours' where id=$1", [first]);
+      await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await page.getByLabel("Energy level (EL)").fill("4");
+      await openPanel(page);
+      await expect(page.getByLabel("Energy level (EL)")).toHaveValue("4");
+      await expect(page.getByTestId("machine-select")).toHaveValue("");
+    });
+
+    // Codex #1369 4479490071: a refused "Choose machine…" on a saved native area leaves the panel on the stored machine.
+    test("clearing a saved native area's machine is refused and the panel stays on it", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await page.getByTestId("machine-select").selectOption(s.senior);
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
+      await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      await page.reload();
+      await page.getByTestId(`edit-area-${blocks[0]!.id}`).click({ timeout: T });
+      await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
+      await page.getByTestId("machine-select").selectOption("");
+      await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
+      await expect(page.getByText("Machine frequency")).toHaveCount(0);
+      expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: s.senior });
+    });
+
+    // OPS/Photos R2: a client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.
+    test("a client last charted on xCell Pur starts the next session on xCell Pur (saved identity, and the older no-identity record)", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      // (1) The seed's only record for this client is the OLD style: a legacy mode, no machine identity.
+      let next = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
+      await expect(page.getByTestId("machine-legacy-chosen")).toBeVisible();
+      await expect(page.getByLabel("Energy level (EL)")).toHaveValue("");
+      expect((await blocksOf(next)).length, "nothing is written until she saves").toBe(0);
+      // (2) Save one as xCell Pur (identity stamped), then the next session again starts on it, still nothing prefilled or written.
+      await page.getByRole("button", { name: "Thermolysis", exact: true }).click();
+      await page.getByLabel("Energy level (EL)").fill("5");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(async () => (await blocksOf(next)).length, { timeout: T }).toBe(1);
+      await sql("update public.sessions set started_at=now()-interval '2 hours' where id=$1", [next]);
+      next = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
+      await expect(page.getByLabel("Energy level (EL)")).toHaveValue("");
+      expect((await blocksOf(next)).length).toBe(0);
     });
   });
 }

@@ -196,13 +196,23 @@ describe("where the Navigation API exists the traversal is cancelled before it h
   it("a Back/Forward traversal is cancelled, asked about, and Leave replays it by key", async () => {
     const nav = install();
     let proceed: (() => void) | null = null;
-    await mount((p) => (proceed = p));
+    let onLeaveCalls = 0;
+    await mount((p) => {
+      onLeaveCalls++;
+      proceed = p;
+    });
     const ev = traverse(nav);
     expect(ev.defaultPrevented, "nothing moved, so Stay needs no restore").toBe(true);
     expect(proceed).not.toBeNull();
     expect(nav.traverseTo).not.toHaveBeenCalled();
     proceed!();
     expect(nav.traverseTo).toHaveBeenCalledWith("k4");
+    // The replay raises popstate too: it is the guard's own move, so it is NOT asked about a second time (Insurance H-1).
+    nav.currentEntry.index = 4; // the replayed traversal landed
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(onLeaveCalls, "Leave reaches the destination with no second prompt").toBe(1);
     // The replayed traversal itself is let through, once.
     expect(traverse(nav).defaultPrevented).toBe(false);
     expect(traverse(nav).defaultPrevented, "and only once").toBe(true);

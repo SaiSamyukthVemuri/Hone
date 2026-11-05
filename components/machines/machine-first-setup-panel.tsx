@@ -212,7 +212,12 @@ export type MachineFirstSetupPanelProps = {
     modeKey: string | null;
     /** The existing charting workflow was chosen: no unit, no mode. */
     legacy?: boolean;
-  }) => Promise<{ ok: boolean; error?: string }>;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    /** The AREA'S OWN identity write was refused: the stored machine is unchanged, so the pick must be undone. */
+    reverted?: boolean;
+  }>;
   /**
    * The existing charting workflow (the studio's xCell) as one more choice in
    * THE selector, so there is one control for one decision. Offered only when
@@ -448,6 +453,8 @@ export function MachineFirstSetupPanel({
    * behaviour look like it had worked.
    */
   const chooseDevice = async (next: string | null, legacy = false) => {
+    // What was in force before this pick, for a refusal that leaves the stored machine unchanged (Codex, #1369 4479490071).
+    const before = { deviceId, legacy: legacyChosen, modeKey };
     setLegacyChosen(legacy);
     // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
     // previous one over would persist a key from a different profile, which
@@ -502,6 +509,17 @@ export function MachineFirstSetupPanel({
       setSelectionPending(false);
     }
     if (token !== selectionRequestRef.current) return;
+    if (write && write.ok === false && write.reverted) {
+      // The record still holds the previous machine: put the panel back on it, with the reason said.
+      setLegacyChosen(before.legacy);
+      setModeKey(before.modeKey);
+      setSelection((prev) => ({
+        selected: before.deviceId,
+        persisted: prev.persisted,
+        note: write.error ?? "That did not save.",
+      }));
+      return;
+    }
     setSelection((prev) => selectionSettled(prev, next, write));
   };
 

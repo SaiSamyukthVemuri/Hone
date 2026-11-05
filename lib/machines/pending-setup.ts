@@ -1,3 +1,4 @@
+import { PULSE_COUNT_DEFAULT, PULSE_DELAY_DEFAULT } from "@/lib/constants";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 
 /**
@@ -403,4 +404,60 @@ export function copySourceMatchesMachine(
   if (kind === "native") return sourceNative;
   if (kind === "legacy") return !sourceNative;
   return true;
+}
+
+/**
+ * The copy patch as it may be applied under `kind`. With a native machine in force only the shared fields (probe and
+ * lot) survive: the hidden legacy fields are forced back to blank, so nothing legacy is ever submitted.
+ */
+export function copyPatchForMachine<P extends Record<string, unknown>>(
+  kind: "none" | "legacy" | "native",
+  patch: P,
+): P {
+  if (kind !== "native") return patch;
+  return {
+    ...patch,
+    mode: "",
+    apilusModality: "",
+    energyLevel: "",
+    machineFrequency: "",
+    thermolysisIntensityPercent: "",
+    thermolysisDurationSeconds: "",
+    galvanicMa: "",
+    galvanicDurationSeconds: "",
+    unitsOfLye: "",
+    pulseCount: String(PULSE_COUNT_DEFAULT),
+    pulseDelay: String(PULSE_DELAY_DEFAULT),
+  };
+}
+
+/**
+ * WHETHER THE DRAFT ALREADY HOLDS LEGACY CHARTING VALUES the practitioner typed (Codex, #1369 4479490063).
+ *
+ * Choosing a native machine clears these (settings are never mixed). That is right for a pick she made, and wrong for
+ * a machine the panel resolved ON ITS OWN when it opened: it would erase work she had already entered. While this is
+ * true, the host keeps the panel from auto-selecting anything; an explicit pick still applies and clears as before.
+ */
+export function legacySettingsEntered(draft: {
+  mode: string;
+  apilusModality: string;
+  energyLevel: string;
+  machineFrequency: string;
+  thermolysisIntensityPercent: string;
+  thermolysisDurationSeconds: string;
+  galvanicMa: string;
+  galvanicDurationSeconds: string;
+  unitsOfLye: string;
+}): boolean {
+  return [
+    draft.mode,
+    draft.apilusModality,
+    draft.energyLevel,
+    draft.machineFrequency,
+    draft.thermolysisIntensityPercent,
+    draft.thermolysisDurationSeconds,
+    draft.galvanicMa,
+    draft.galvanicDurationSeconds,
+    draft.unitsOfLye,
+  ].some((v) => v.trim() !== "");
 }

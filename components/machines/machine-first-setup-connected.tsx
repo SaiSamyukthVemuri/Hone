@@ -80,6 +80,11 @@ export type MachineFirstSetupConnectedProps = {
    * and the machine choice lost without a word.
    */
   onIdentityWritePending?: (pending: boolean) => void;
+  /**
+   * The practitioner already typed charting values on this NEW area. The panel then selects nothing by itself (no client-last,
+   * remembered or restored machine), because a native pick clears those values (Codex, #1369 4479490063).
+   */
+  holdAutoSelect?: boolean;
   onSettingDraft?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
   >;
@@ -170,6 +175,7 @@ export function MachineFirstSetupConnected({
   onRevisionUnresolved,
   onRevisionDraft,
   onIdentityWritePending,
+  holdAutoSelect = false,
   savedIdentity: savedIdentityProp = null,
   onKindChange,
   onIdentityDraft,
@@ -392,7 +398,7 @@ export function MachineFirstSetupConnected({
       savedIdentity &&
       (savedIdentity.deviceId || savedIdentity.profileId)
     ) {
-      return { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED };
+      return { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED, reverted: true };
     }
     const mod = await import(
       "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
@@ -423,7 +429,7 @@ export function MachineFirstSetupConnected({
     }
     if (chosen === null) {
       return savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId)
-        ? { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED }
+        ? { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED, reverted: true }
         : pref;
     }
     const saved = await mod.recordBlockMachineIdentityAction({
@@ -439,7 +445,7 @@ export function MachineFirstSetupConnected({
       setWritten({ profileId: chosen.profileId, deviceId: chosen.deviceId, modeKey: chosen.modeKey });
       if (saved.updatedAt) onBlockVersion?.(saved.updatedAt);
     }
-    return saved.ok ? pref : { ok: false, error: saved.error };
+    return saved.ok ? pref : { ok: false, error: saved.error, reverted: true };
   };
 
   // A SAVED AREA'S PICK IS A WRITE AGAINST THE BLOCK'S VERSION: hold the host's Save for its whole duration,
@@ -459,17 +465,19 @@ export function MachineFirstSetupConnected({
   // an area that already has a saved identity is never touched.
   const hasSaved = Boolean(savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId));
   // NEW AREAS ONLY (Insurance N-7): an existing identity-less area (pre-0301 data) opens exactly as before.
-  const newAreaLast = !hasSaved && !blockId ? (ctx.clientLastMachine ?? null) : null;
+  const hold = holdAutoSelect && !blockId;
+  const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;
+  const autoRemembered = hold ? null : (ctx.remembered ?? null);
 
   return (
     <MachineFirstSetupPanel
       scope={ctx.scope}
       devices={ctx.devices}
-      initialDeviceId={newAreaLast ? newAreaLast.deviceId : (ctx.remembered?.deviceId ?? null)}
+      initialDeviceId={newAreaLast ? newAreaLast.deviceId : (autoRemembered?.deviceId ?? null)}
       // The remembered MODE, which the loader has always resolved and which
       // nothing forwarded - so the panel silently used each profile's first
       // active mode and recorded against the wrong field contract.
-      initialModeKey={newAreaLast ? newAreaLast.modeKey : (ctx.remembered?.modeKey ?? null)}
+      initialModeKey={newAreaLast ? newAreaLast.modeKey : (autoRemembered?.modeKey ?? null)}
       // The server resolved the stored selection; when it is not usable the
       // panel shows nothing chosen and states the reason, rather than an
       // empty picker beside a claim that a machine is remembered.
@@ -484,7 +492,9 @@ export function MachineFirstSetupConnected({
       restoredSelection={
         savedIdentity?.deviceId && savedIdentity.modeKey
           ? { deviceId: savedIdentity.deviceId, modeKey: savedIdentity.modeKey }
-          : ctx.restoredSelection
+          : hold
+            ? null
+            : ctx.restoredSelection
       }
       // The existing workflow as a choice in THE selector, and whether this
       // area was saved as it.
