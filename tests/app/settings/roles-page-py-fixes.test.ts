@@ -83,3 +83,24 @@ describe("Codex P2 4476375641: a reset or adoption preview does not outlive an e
     expect(editor).toContain("canConfirm={props.writable && !dirty && reasonAcceptable(preview.kind, false, reason)");
   });
 });
+
+// Codex P2 4477378035: edits made while a save or its read-back is in flight were silently replaced by the saved policy.
+describe("editing is disabled while a save, reset, adopt or read-back is in flight", () => {
+  const SRC = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+  it("the busy window is the whole 'saving' feedback state and turns every row read-only", () => {
+    expect(SRC).toContain('const busy = feedback.state.kind === "saving";');
+    expect(SRC).toContain("const readOnly = !props.writable || busy;");
+  });
+  it("the edit entry points refuse while busy", () => {
+    for (const fn of ["function choose(", "function stageBasisChoice(", "function discard(", "async function openPreview("]) {
+      const at = SRC.indexOf(fn);
+      expect(at).toBeGreaterThan(-1);
+      expect(SRC.slice(at, SRC.indexOf("\n", SRC.indexOf("\n", at) + 1))).toContain("if (busy) return;");
+    }
+  });
+  it("the saving state outlasts the read-back (it ends only at feedback.saved/failed after reload)", () => {
+    const save = SRC.slice(SRC.indexOf("async function onSave()"), SRC.indexOf("async function resolveUnexpected"));
+    expect(save.indexOf("feedback.saving()")).toBeLessThan(save.indexOf("props.reload()"));
+    expect(save.indexOf("props.reload()")).toBeLessThan(save.indexOf("feedback.saved()"));
+  });
+});

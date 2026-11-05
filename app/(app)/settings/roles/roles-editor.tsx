@@ -127,7 +127,11 @@ export function RolesEditor(props: RolesEditorProps) {
   const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
   const dirty = dirtyRoles.length > 0;
   useUnsavedChangesGuard("roles-draft", dirty);
-  const readOnly = !props.writable;
+  // Codex P2 4477378035: while a save, reset, adopt or the read-back after it is in flight, the draft must not change: the read-back replaces
+  // it with the saved policy, so an edit made in that window would be silently lost. Editing is disabled for the whole window (feedback
+  // stays "saving" until the read-back has been applied), and the edit entry points refuse as well.
+  const busy = feedback.state.kind === "saving";
+  const readOnly = !props.writable || busy;
 
   const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
   const savedRows = useMemo(
@@ -142,6 +146,7 @@ export function RolesEditor(props: RolesEditorProps) {
   const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
 
   function choose(key: string, scope: Scope) {
+    if (busy) return;
     const result = applyEdit(role, drafts[role], key, scope);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
@@ -160,6 +165,7 @@ export function RolesEditor(props: RolesEditorProps) {
   // Discard a saved choice that is waiting on a release: stage the key back on the studio's basis in the draft. Nothing is written
   // until the owner goes through the usual Review and Save, so the core previews it and records who did it.
   function stageBasisChoice(forRole: Role, key: string, basis: Scope) {
+    if (busy) return;
     const result = applyEdit(forRole, drafts[forRole], key, basis);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
@@ -286,6 +292,7 @@ export function RolesEditor(props: RolesEditorProps) {
   }
 
   function discard() {
+    if (busy) return;
     reviewSeq.current += 1;
     setDrafts(saved);
     setReviewing(false);
@@ -297,6 +304,7 @@ export function RolesEditor(props: RolesEditorProps) {
   }
 
   async function openPreview(kind: Preview["kind"]) {
+    if (busy) return;
     // PY-4. Reset and adopt replace the page with the saved state and would drop every unsaved choice, on both roles, without a
     // warning. They are refused while there are unsaved choices.
     if (dirty) {
@@ -386,7 +394,7 @@ export function RolesEditor(props: RolesEditorProps) {
         </section>
       )}
 
-      {readOnly && props.notWritableReason && (
+      {!props.writable && props.notWritableReason && (
         <p data-testid="roles-read-only" className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           {props.notWritableReason}
         </p>
@@ -522,7 +530,7 @@ export function RolesEditor(props: RolesEditorProps) {
               <button
                 type="button"
                 onClick={onReview}
-                disabled={!dirty}
+                disabled={!dirty || busy}
                 className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
                 Review changes{dirty ? ` (${dirtyRoles.length === 1 ? "1 role" : "2 roles"})` : ""}
@@ -537,7 +545,7 @@ export function RolesEditor(props: RolesEditorProps) {
                 Save changes
               </button>
             )}
-            <button type="button" onClick={discard} disabled={!dirty} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-neutral-700">
+            <button type="button" onClick={discard} disabled={!dirty || busy} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-neutral-700">
               Discard changes
             </button>
             <button
