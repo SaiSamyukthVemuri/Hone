@@ -249,6 +249,61 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)"
     }
   }, 60_000);
 
+  // V-2 / EZ-2: an EXECUTED negative control on the OLD lock order, in the suite so it runs every time. The lock
+  // sequence is the wrapper's own, on a raw connection, against a writer holding the SESSION FOR UPDATE and then
+  // asking for the BLOCK (what copy_session_setup does). Block-then-session (the c8ff4cc16 order) must deadlock;
+  // session-then-block (the shipped order) must not. The pair proves the harness CAN see the cycle, so the green
+  // on the shipped order is not a blind spot.
+  const lockSequence = async (order: "block-first" | "session-first") => {
+    const studio = await seedStudio(`lockorder-variant-${order}`);
+    const { sessionId, blockId } = await seedSource(studio, false);
+    const writer = new Client({ connectionString: resolveLocalDbUrl() });
+    const saver = new Client({ connectionString: resolveLocalDbUrl() });
+    await writer.connect();
+    await saver.connect();
+    try {
+      await writer.query("set statement_timeout = '30s'");
+      await saver.query("set statement_timeout = '30s'");
+      await writer.query("begin");
+      await writer.query(`select 1 from public.sessions where id = $1 for update`, [sessionId]);
+      const saverP = Promise.allSettled([
+        (async () => {
+          await saver.query("begin");
+          if (order === "block-first") {
+            await saver.query(`select 1 from public.session_blocks where id = $1 for update`, [blockId]);
+            await saver.query(`select 1 from public.sessions where id = $1 for share`, [sessionId]);
+          } else {
+            await saver.query(`select 1 from public.sessions where id = $1 for share`, [sessionId]);
+            await saver.query(`select 1 from public.session_blocks where id = $1 for update`, [blockId]);
+          }
+          await saver.query("commit");
+        })(),
+      ]);
+      await new Promise((res) => setTimeout(res, 600));
+      const writerR = await Promise.allSettled([
+        writer.query(`select 1 from public.session_blocks where id = $1 for update`, [blockId]),
+      ]);
+      await writer.query("commit").catch(() => undefined);
+      const [saverR] = await saverP;
+      await saver.query("rollback").catch(() => undefined);
+      return { writerDeadlocked: deadlocked(writerR[0]), saverDeadlocked: deadlocked(saverR) };
+    } finally {
+      await writer.query("rollback").catch(() => undefined);
+      await writer.end();
+      await saver.end();
+    }
+  };
+
+  it("NEGATIVE CONTROL (executed): the OLD order, block before session, DEADLOCKS against a session-then-block writer", async () => {
+    const r = await lockSequence("block-first");
+    expect(r.writerDeadlocked || r.saverDeadlocked, JSON.stringify(r)).toBe(true);
+  }, 60_000);
+
+  it("the SHIPPED order, session before block, does not deadlock against the same writer", async () => {
+    const r = await lockSequence("session-first");
+    expect(r, JSON.stringify(r)).toEqual({ writerDeadlocked: false, saverDeadlocked: false });
+  }, 60_000);
+
   it("(source order) the wrapper takes the session before the block, and both before the inner command", () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
     const sql = readFileSync("supabase/migrations/0301_session_block_machine_identity.sql", "utf8");

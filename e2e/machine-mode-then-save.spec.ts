@@ -148,12 +148,22 @@ for (const which of ["senior", "junior"] as const) {
       expect(await entryHairs(blockId)).toBe(111);
       // The mode click on the STALE tab must not launder the conflict. The held version is checked INSIDE the identity write's transaction (Codex 4476240827),
       // so the click is itself refused as changed-elsewhere: the stored mode is NOT overwritten from a tab that has not seen the other edit, and no new version is adopted.
+      //
+      // WAIT FOR THE CLICK'S OWN OUTCOME before asserting anything (Insurance V-1). The conflict text is ALREADY on screen from the Save above, so waiting for it
+      // proves nothing about the click; the identity write is a server action POST, so wait for ITS response, and only then read the stored mode. Asserting before
+      // that response would pass whether or not the write was refused.
+      const identityWrite = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/sessions/${sessionId}`), { timeout: T });
       await page.getByTestId(`machine-mode-${second}`).click({ timeout: T });
+      await identityWrite;
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
-      expect(await keyOf(blockId)).toBe(first);
+      expect(await keyOf(blockId), "the stale tab's mode click was refused, not written").toBe(first);
       await page.getByLabel("Hairs treated", { exact: true }).fill("333");
+      const finalSave = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/sessions/${sessionId}`), { timeout: T });
       await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await finalSave;
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
+      // RE-READ AFTER THE FINAL CONFLICT (Insurance V-1): neither the mode nor the other tab's value moved.
+      expect(await keyOf(blockId), "the stored mode after the final conflict").toBe(first);
       expect(await entryHairs(blockId)).toBe(111);
     });
   });
