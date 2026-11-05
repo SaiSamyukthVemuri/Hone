@@ -5,7 +5,7 @@ import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { parsePreferredName } from "@/lib/clients/identity";
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG, parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -269,6 +269,10 @@ export async function updateClientAction(
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
   if (!stored) return { ok: false, error: "Client not found." };
+  // The length rule is about a name being WRITTEN: a stored name that is already over the limit (older data) must not
+  // block an unrelated edit, so it applies only when the submitted name differs from the stored one (the same test the
+  // database trigger uses: `new.name is distinct from old.name`).
+  if (name !== stored.name && name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
   const identityChanged =
     normalizeName(name) !== normalizeName(stored.name) ||
     normalizePhoneForSms(phone) !== normalizePhoneForSms(stored.phone) ||

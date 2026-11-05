@@ -190,3 +190,33 @@ describe("HON-58 I1: the edit page's 'save anyway' wording", () => {
     expect(form).toContain("{saveAnywayLabel}");
   });
 });
+
+// Codex P2 on #1358 (0281): a stored name that is ALREADY over 200 characters (older data) must not block an edit of
+// another field. The length rule applies when the submitted name differs from the stored one.
+describe("legacy over-length stored name", () => {
+  const LONG = "L".repeat(250);
+  const LEGACY: Row = { id: "client-legacy", studio_id: "studio-A", name: LONG, phone: "250-555-0111", sms_phone: "+12505550111", date_of_birth: "1975-05-06", archived_at: null };
+  const legacyAs = (over: Record<string, string>) => ({ client_id: "client-legacy", name: LONG, phone: "250-555-0111", date_of_birth: "1975-05-06", ...over });
+
+  it("saves another field while the unchanged long name is re-submitted", async () => {
+    db.rows = [LEGACY];
+    const { result, redirected } = await edit(legacyAs({ pronouns: "they/them" }));
+    expect(result).toBeUndefined();
+    expect(redirected).toBe("/clients/client-legacy");
+    expect(db.updates).toHaveLength(1);
+  });
+
+  it("still refuses a CHANGED name that is over 200 characters, and writes nothing", async () => {
+    db.rows = [LEGACY];
+    const { result } = await edit(legacyAs({ name: "M".repeat(251) }));
+    expect(result).toEqual({ ok: false, error: "Name must be 200 characters or fewer." });
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it("saves a changed name that is within the limit", async () => {
+    db.rows = [LEGACY];
+    const { redirected } = await edit(legacyAs({ name: "Short Synthetic" }));
+    expect(redirected).toBe("/clients/client-legacy");
+    expect(db.updates).toHaveLength(1);
+  });
+});
