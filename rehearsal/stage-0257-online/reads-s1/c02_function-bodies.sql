@@ -1,0 +1,1 @@
+select p.proname, md5(p.prosrc) as md5 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace where (n.nspname, p.proname) in (('public', 'initialize_studio_payment_jurisdiction_from_history_v2')) order by p.proname, md5(p.prosrc)
