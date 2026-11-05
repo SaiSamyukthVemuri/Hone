@@ -96,10 +96,14 @@ describe("0167 — authorized same-studio writes succeed", () => {
     expect((await readSession(sessionA)).next_session_note).toBeNull();
   });
 
-  it("3. performer sets and clears", async () => {
+  it("3. performer is set once; changing or clearing it is a CORRECTION (0289), never an overwrite", async () => {
     await userQuery(A.userId, PERF, [sessionA, A.clientId, A.practitionerId]);
     expect((await readSession(sessionA)).performed_by_practitioner_id).toBe(A.practitionerId);
-    await userQuery(A.userId, PERF, [sessionA, A.clientId, null]);
+    // clearing an existing performer through the overwrite command is refused and changes nothing
+    await expect(userQuery(A.userId, PERF, [sessionA, A.clientId, null])).rejects.toMatchObject({ code: "23514" });
+    expect((await readSession(sessionA)).performed_by_practitioner_id).toBe(A.practitionerId);
+    // the correction command clears it, keeping the original in history with who/when/why
+    await userQuery(A.userId, "select public.correct_session_performer($1,$2,$3,$4)", [sessionA, A.clientId, null, "Cleared: charted under the wrong person"]);
     expect((await readSession(sessionA)).performed_by_practitioner_id).toBeNull();
   });
 

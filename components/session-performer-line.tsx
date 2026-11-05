@@ -21,7 +21,7 @@ type Props = {
 // "Performed by" card with a dropdown. This inline line is now the
 // single performer surface. It reads as plain text with a small Edit
 // affordance; Edit swaps in the same practitioner select, saving
-// through the unchanged updateSessionPerformerAction.
+// through updateSessionPerformerAction. Changing an existing performer is a CORRECTION: it asks for a reason and the original stays in history.
 export function SessionPerformerLine({
   sessionId,
   clientId,
@@ -31,23 +31,47 @@ export function SessionPerformerLine({
   recordedByName = null,
   updatePerformerAction,
 }: Props) {
+  // The SAVED performer is what the line displays and what decides whether a change is a correction. The select edits a separate DRAFT, so
+  // Cancel (or an error) can never leave an unsaved choice on screen as if it were the record (Codex P2 on 4476158119).
+  const [savedPerformerId, setSavedPerformerId] = useState(initialPerformerId ?? "");
   const [performerId, setPerformerId] = useState(initialPerformerId ?? "");
   const [editing, setEditing] = useState(false);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
   );
   const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  // An existing performer can only be corrected (with a reason); the first attribution saves on selection as before.
+  const needsReason = Boolean(savedPerformerId);
   const [, startTransition] = useTransition();
 
-  const current = practitioners.find((p) => p.id === performerId);
+  const current = practitioners.find((p) => p.id === savedPerformerId);
   const performerName = current
     ? current.display_name?.trim() || current.email
-    : performerId && performerId === initialPerformerId
+    : savedPerformerId && savedPerformerId === initialPerformerId
       ? initialPerformerName
       : null;
 
+  function cancelEditing() {
+    setPerformerId(savedPerformerId);
+    setReason("");
+    setError(null);
+    setState("idle");
+    setEditing(false);
+  }
+
   function handlePerformerChange(next: string) {
     setPerformerId(next);
+    if (needsReason) return;
+    submit(next);
+  }
+
+  function submit(next: string) {
+    if (needsReason && !reason.trim()) {
+      setState("error");
+      setError("Give a reason for the correction.");
+      return;
+    }
     setState("saving");
     setError(null);
 
@@ -55,10 +79,14 @@ export function SessionPerformerLine({
     fd.set("session_id", sessionId);
     fd.set("client_id", clientId);
     fd.set("performer_id", next);
+    if (needsReason) fd.set("reason", reason.trim());
 
     startTransition(async () => {
       try {
         await updatePerformerAction(fd);
+        setSavedPerformerId(next);
+        setPerformerId(next);
+        setReason("");
         setState("saved");
         setEditing(false);
         setTimeout(() => setState("idle"), 1500);
@@ -114,9 +142,31 @@ export function SessionPerformerLine({
           </option>
         ))}
       </select>
+      {needsReason && (
+        <>
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason for the correction"
+            aria-label="Reason for the correction"
+            maxLength={500}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          />
+          <p className="w-full text-xs text-neutral-500">Do not include health or personal details about anyone here.</p>
+          <button
+            type="button"
+            onClick={() => submit(performerId)}
+            disabled={state === "saving" || performerId === savedPerformerId}
+            className="rounded-md border border-neutral-300 px-3 py-2 text-xs disabled:opacity-50 dark:border-neutral-700"
+          >
+            Save correction
+          </button>
+        </>
+      )}
       <button
         type="button"
-        onClick={() => setEditing(false)}
+        onClick={cancelEditing}
         disabled={state === "saving"}
         className="text-xs text-neutral-500 underline hover:text-neutral-900 disabled:opacity-50 dark:hover:text-neutral-100"
       >

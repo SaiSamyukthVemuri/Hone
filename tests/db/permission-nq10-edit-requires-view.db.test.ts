@@ -1,5 +1,6 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CATALOG, type PermissionDef } from "@/lib/permissions/catalog";
+import { releaseAllKeys } from "./helpers/permission-release";
 import { adminQuery, asUser, closePool, seedMember, seedStudio } from "./helpers/harness";
 
 // NQ-10 (Sam, 3 Nov): record editing REQUIRES record viewing. A saved clin.edit_records value is PRESERVED but INACTIVE while
@@ -17,6 +18,7 @@ const can = async (u: string, s: string, key: string) =>
   asUser(u, async (q) => (await q("select public.has_studio_permission($1,$2,null,null,null) as r", [s, key])).rows[0].r as boolean);
 const rowCount = async (sql: string, p: unknown[]) => Number((await adminQuery(sql, p)).rows[0].n);
 
+beforeAll(async () => releaseAllKeys());
 afterAll(async () => closePool());
 
 describe("NQ-10: record editing requires record viewing (stored, but inactive while view is off)", () => {
