@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0287 (held): the permission engine. Source contract only; behaviour is proved by tests/db/permission-engine.db.test.ts
 // (NOT RUN until an owned isolated stack and the heavy slot exist).
@@ -15,7 +15,7 @@ describe("0287 permission engine: shape", () => {
     expect(code.trim()).toMatch(/^begin;/);
     expect(code).toContain("set local lock_timeout = '5s';");
     expect(code.trim()).toMatch(/commit;$/);
-    expect(isRepoMax("0287")).toBe(true);
+    // Not the repo max any more: production has applied 0297 and 0300 above it (migrations are append-only; only the CURRENT maximum asserts isRepoMax, CLAUDE.md section 2).
   });
 
   it("is additive: it drops no column or table and edits no earlier migration", () => {

@@ -96,7 +96,8 @@ describe("the profile page wires the ruling", () => {
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
   it("the owner decision gates both loaders", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
-    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate \};/);
+    // clinicalFields: the SAME clin.view_records decision also governs skin type and legacy skin notes on the client row (Codex P1 4476375636).
+    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate, clinicalFields: recordsGate \};/);
     expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
     expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
   });

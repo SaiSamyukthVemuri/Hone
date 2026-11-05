@@ -68,6 +68,7 @@ const ALLOW: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
   "lib/billing/appointment-payment-state.ts": { cls: "billing-owner", why: "payment state is owner-only (HON-44)" },
   "lib/billing/authoritative-session-payment.ts": { cls: "billing-owner", why: "payment ledger path, owner-only" },
   "lib/billing/quick-checkout.ts": { cls: "billing-owner", why: "checkout is owner-only (HON-44)" },
+  "lib/dashboard/unpaid-attention.ts": { cls: "billing-owner", why: "unpaid reminders read only price_paid_cents and settlement amounts, for the OWNER (viewerIsOwner is passed true; the gate is default OFF); no treatment content is read" },
   "lib/billing/session-payment-eligibility.ts": { cls: "billing-owner", why: "payment eligibility, owner-only" },
   "lib/billing/session-payment-charge.ts": { cls: "billing-owner", why: "claim_session_payment_charge_attempt RPC, payment path, owner-only" },
   "lib/billing/payment-refund.ts": { cls: "billing-owner", why: "reconcile_bound_payment_event RPC, payment path" },
