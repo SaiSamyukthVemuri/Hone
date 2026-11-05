@@ -14,6 +14,7 @@ import {
   planProfileUpdate,
   type ProfileConflict,
 } from "@/lib/clients/profile-baseline";
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -257,6 +258,12 @@ export async function updateClientAction(
   // edit changes the name, phone or date of birth (compared with what the page loaded), never count this
   // client, save only when every match was confirmed by id. A failed read refuses rather than implying "none".
   const identityChanged = "name" in plan.patch || "phone" in plan.patch || "date_of_birth" in plan.patch;
+  // The length rule is about a name being WRITTEN: `name` is in the patch only when it differs from what the page loaded,
+  // so a stored name that is already over the limit (older data) never blocks an unrelated edit (the same test the
+  // database trigger uses: `new.name is distinct from old.name`).
+  if (typeof plan.patch.name === "string" && plan.patch.name.length > CLIENT_NAME_MAX) {
+    return { ok: false, error: CLIENT_NAME_TOO_LONG };
+  }
   if (identityChanged) {
     const check = await findPossibleDuplicateClient(supabase, studio.id, {
       name: typeof plan.patch.name === "string" ? plan.patch.name : (baseline.name as string | null) ?? "",

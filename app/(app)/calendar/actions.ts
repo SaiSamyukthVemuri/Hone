@@ -1,5 +1,6 @@
 "use server";
 
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -769,6 +770,7 @@ export async function createClientForCalendarBookingAction(
 ): Promise<CreateClientFromCalendarResult> {
   const name = formDataStr(formData, "name");
   if (!name) return { ok: false, error: "Name is required." };
+  if (name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
   const email = formDataStrOrNull(formData, "email");
   const phone = formDataStrOrNull(formData, "phone");
   const pronouns = formDataStrOrNull(formData, "pronouns");
