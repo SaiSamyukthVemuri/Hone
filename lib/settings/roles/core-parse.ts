@@ -147,12 +147,21 @@ export function parseChangeRole(raw: unknown): ChangeRoleResult {
 const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed", "permissions_activated"];
 const scopeWord = (v: unknown): string => (v === "studio" ? "Whole studio" : v === "own" ? "Own assigned" : v === "off" ? "Off" : typeof v === "string" ? v : "unset");
 
+// A stored choice the audit row recorded as null is a choice that was REMOVED (a reset deletes it): say so, rather than "unset".
+const storedWord = (v: unknown): string => (v === null ? "no saved choice" : scopeWord(v));
+
 /** Display strings for what changed in one audit row. Saved rows carry {key:{stored,effective}}; reset and adopt carry effective maps. */
-function auditChanges(kind: AuditKind, before: unknown, after: unknown): { before: Record<string, string>; after: Record<string, string> } {
+function auditChanges(
+  kind: AuditKind,
+  before: unknown,
+  after: unknown,
+): { before: Record<string, string>; after: Record<string, string>; storedBefore: Record<string, string>; storedAfter: Record<string, string> } {
   const b: Record<string, string> = {};
   const a: Record<string, string> = {};
+  const sb: Record<string, string> = {};
+  const sa: Record<string, string> = {};
   const label = (k: string) => byKey.get(k)?.label ?? k;
-  if (!isObj(after)) return { before: b, after: a };
+  if (!isObj(after)) return { before: b, after: a, storedBefore: sb, storedAfter: sa };
   const pre = isObj(before) ? before : {};
   if (kind === "permissions_activated") {
     // {keys, effective:{key:scope}} on both sides: show only the keys whose effective value moved when the release was activated.
@@ -163,7 +172,7 @@ function auditChanges(kind: AuditKind, before: unknown, after: unknown): { befor
       b[label(k)] = scopeWord(bEff[k]);
       a[label(k)] = scopeWord(aEff[k]);
     }
-    return { before: b, after: a };
+    return { before: b, after: a, storedBefore: sb, storedAfter: sa };
   }
   for (const k of Object.keys(after)) {
     if (kind === "staff_role_changed") {
@@ -175,13 +184,20 @@ function auditChanges(kind: AuditKind, before: unknown, after: unknown): { befor
     }
     const av = after[k];
     const bv = pre[k];
+    // A per-key {stored, effective} entry carries the owner's saved choice AND what was in force; a flat value is effective only.
     const aEff = isObj(av) ? av.effective : av;
     const bEff = isObj(bv) ? bv.effective : bv;
-    if (kind !== "role_permissions_saved" && aEff === bEff) continue;
+    const aSt = isObj(av) && "stored" in av ? av.stored : undefined;
+    const bSt = isObj(bv) && "stored" in bv ? bv.stored : undefined;
+    if (kind !== "role_permissions_saved" && aEff === bEff && aSt === bSt) continue;
     b[label(k)] = scopeWord(bEff);
     a[label(k)] = scopeWord(aEff);
+    if (aSt !== undefined || bSt !== undefined) {
+      sb[label(k)] = storedWord(bSt);
+      sa[label(k)] = storedWord(aSt);
+    }
   }
-  return { before: b, after: a };
+  return { before: b, after: a, storedBefore: sb, storedAfter: sa };
 }
 
 export function parseHistory(raw: unknown, limit: number): HistoryResult {
@@ -204,6 +220,8 @@ export function parseHistory(raw: unknown, limit: number): HistoryResult {
       reason: str(r.reason),
       before: changes.before,
       after: changes.after,
+      storedBefore: changes.storedBefore,
+      storedAfter: changes.storedAfter,
     });
   }
   // The cursor follows the RAW page: a row of a kind this page does not know is dropped from the list but must not end the paging.

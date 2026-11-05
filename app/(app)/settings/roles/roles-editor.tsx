@@ -745,11 +745,29 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
               </p>
               {r.reason && <p className="mt-1">Reason: {r.reason}</p>}
               <ul className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                {Object.keys(r.after).map((k) => (
-                  <li key={k}>
-                    {k}: {r.before[k] ?? "unset"} to {r.after[k]}
-                  </li>
-                ))}
+                {Object.keys(r.after).map((k) => {
+                  const hasStored = r.storedAfter[k] !== undefined || r.storedBefore[k] !== undefined;
+                  // The saved choice and what is in force are shown SEPARATELY only when they differ: a setting not released or activated
+                  // yet, or held inactive by a prerequisite, can be saved Off while access stays where it was.
+                  const differs = hasStored && (r.storedBefore[k] !== r.before[k] || r.storedAfter[k] !== r.after[k]);
+                  if (!differs) {
+                    return (
+                      <li key={k}>
+                        {k}: {r.before[k] ?? "unset"} to {r.after[k]}
+                      </li>
+                    );
+                  }
+                  return (
+                    <li key={k}>
+                      <span data-testid="history-stored">
+                        {k}: saved choice {r.storedBefore[k] ?? "unset"} to {r.storedAfter[k] ?? "unset"}
+                      </span>
+                      <span data-testid="history-in-force" className="block pl-3">
+                        {r.before[k] === r.after[k] ? `in force: stays ${r.after[k]}` : `in force: ${r.before[k] ?? "unset"} to ${r.after[k]}`}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </li>
           ))}

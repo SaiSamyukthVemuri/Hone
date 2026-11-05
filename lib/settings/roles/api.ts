@@ -72,8 +72,13 @@ export type AuditRow = {
   personState: "active" | "deactivated" | null;
   reason: string | null;
   // Only what changed, as display strings keyed by permission key (or "role" for a staff role change).
+  // What was IN FORCE (the effective scope).
   before: Record<string, string>;
   after: Record<string, string>;
+  // The owner's SAVED choice, where the audit row recorded one. It differs from the effective scope while a setting is not released or not
+  // activated yet, or is held inactive by a prerequisite; History shows both so "Studio to Off" is never printed as "Studio to Studio".
+  storedBefore: Record<string, string>;
+  storedAfter: Record<string, string>;
 };
 
 /** One row of effective_access: the scope in force, where it came from, and what capped it. */
