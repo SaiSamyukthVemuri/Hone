@@ -63,6 +63,8 @@ type Props = {
   profileHref?: string;
   // Deep link to the print/export view.
   printHref?: string;
+  // Read-only chart mode: notes are shown, none can be added or revised.
+  readOnly?: boolean;
 };
 
 const AREA_ENABLED_KINDS: ReadonlyArray<ClinicalNoteKind> = ["skin_hair_analysis"];
@@ -119,6 +121,7 @@ export function ClinicalNotesSection({
   reviseAction,
   profileHref,
   printHref,
+  readOnly = false,
 }: Props) {
   const compact = variant === "compact";
   return (
@@ -151,6 +154,7 @@ export function ClinicalNotesSection({
           compact={compact}
           addAction={addAction}
           reviseAction={reviseAction}
+          readOnly={readOnly}
         />
       ))}
     </div>
@@ -168,7 +172,9 @@ function KindCard({
   compact,
   addAction,
   reviseAction,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   clientId: string;
   section: ClinicalNoteSectionData;
   compact: boolean;
@@ -218,7 +224,7 @@ function KindCard({
         </p>
       )}
 
-      {openForm === null && (
+      {openForm === null && !readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -239,7 +245,7 @@ function KindCard({
         </div>
       )}
 
-      {openForm !== null && (
+      {openForm !== null && !readOnly && (
         <NoteForm
           key={openForm.mode === "revise" ? openForm.note.id : "add"}
           clientId={clientId}

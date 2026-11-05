@@ -47,6 +47,10 @@ export const BROWSER_GROUPS = {
       // the same surface conditional-numbing-notes and
       // repeat-client-fast-charting drive.
       "machine-first-charting.spec.ts",
+      // Roles R4 read-only chart mode (Privacy BA2): drives the session chart and the client profile treatment tab, local stack only.
+      "read-only-chart-mode.spec.ts",
+      // Roles R4 (Privacy DW1, Insurance I-5): the no-view appointment cards and the failed-permission-read state, local stack only.
+      "read-only-states.spec.ts",
       // MPX-03: the CREATE-mode journey through the same surface — the panel
       // before a block exists, then the one atomic save that follows. Same
       // group as its sibling for the same reason.

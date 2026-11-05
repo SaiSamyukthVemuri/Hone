@@ -14,6 +14,8 @@ type Props = {
   // The session's original author, when someone else performed it.
   recordedByName?: string | null;
   updatePerformerAction: (formData: FormData) => Promise<void>;
+  // Read-only chart mode: the line is shown, the Edit affordance is not.
+  readOnly?: boolean;
 };
 
 // PR #199 (Chloe iPad retest): the session page showed the performer
@@ -30,6 +32,7 @@ export function SessionPerformerLine({
   performerName: initialPerformerName = null,
   recordedByName = null,
   updatePerformerAction,
+  readOnly = false,
 }: Props) {
   // The SAVED performer is what the line displays and what decides whether a change is a correction. The select edits a separate DRAFT, so
   // Cancel (or an error) can never leave an unsaved choice on screen as if it were the record (Codex P2 on 4476158119).
@@ -107,13 +110,15 @@ export function SessionPerformerLine({
           </span>
           {recordedByName && ` · recorded by ${recordedByName}`}
         </span>
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-        >
-          Edit
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            Edit
+          </button>
+        )}
         {state === "saved" && (
           <span className="text-xs text-green-600 dark:text-green-400">
             Saved

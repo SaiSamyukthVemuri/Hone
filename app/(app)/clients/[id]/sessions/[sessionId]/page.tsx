@@ -1,4 +1,5 @@
 import { requirePermission } from "@/lib/permissions/require-permission";
+import { EDIT_RECORDS_REFUSAL, PERMISSION_CHECK_FAILED, permissionCheckFailed } from "@/lib/permissions/refusal-copy";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -44,6 +45,7 @@ import {
 import { TreatmentPlanAttachment } from "@/components/treatment-plan-attachment";
 import { TreatmentPlanBanner } from "@/components/treatment-plan-banner";
 import type { LaserEntry } from "@/lib/types/database";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { EditSessionStartedAt } from "./EditSessionStartedAt";
 import { SessionEditHistory } from "./SessionEditHistory";
 import { DeleteSessionForm } from "./DeleteSessionForm";
@@ -127,6 +129,9 @@ export default async function SessionDetailPage({
   if (!(await requirePermission(permissionClient, studio.id, "clin.view_records", { client: id })).allowed) notFound();
   // The aftercare send panel also needs clin.view_aftercare (same key the calendar appointment page asks).
   const canViewAftercare = (await requirePermission(permissionClient, studio.id, "clin.view_aftercare", { client: id })).allowed;
+  // Read-only chart mode: viewing is allowed here, so a missing clin.edit_records only locks the controls (every action asks the key again).
+  const editDecision = await requirePermission(permissionClient, studio.id, "clin.edit_records", { client: id });
+  const canEditRecords = editDecision.allowed;
 
 
   // ------------------------------------------------------------------
@@ -606,12 +611,27 @@ export default async function SessionDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight capitalize">
             {session.modality} session
           </h1>
-          <EditSessionStartedAt
-            sessionId={session.id}
-            clientId={id}
-            startedAtIso={session.started_at}
-          />
+          {canEditRecords ? (
+            <EditSessionStartedAt
+              sessionId={session.id}
+              clientId={id}
+              startedAtIso={session.started_at}
+            />
+          ) : (
+            // Codex P2 (#1351): read-only mode still shows WHEN the session started, as plain text (the editor is withdrawn, the fact is not).
+            <p data-testid="session-started-at-static" className="text-sm text-neutral-500">
+              Started <FormattedDateTime iso={session.started_at} />
+            </p>
+          )}
         </div>
+        {!canEditRecords && (
+          <p
+            data-testid="chart-read-only-note"
+            className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          >
+            {permissionCheckFailed(editDecision) ? PERMISSION_CHECK_FAILED : `${EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to make a change.`}
+          </p>
+        )}
         {/* PR #199 (Chloe iPad retest): the inline line under the
             title is the ONLY performer surface. The separate
             "Performed by" card/dropdown is gone; this line carries a
@@ -627,6 +647,7 @@ export default async function SessionDetailPage({
           performerName={sessionPerformerName(session, clientData.attributionRoster)}
           recordedByName={sessionRecordedByName(session, clientData.attributionRoster)}
           updatePerformerAction={updateSessionPerformerAction}
+          readOnly={!canEditRecords}
         />
         {/* PR #194 (Chloe retest): when a treatment plan is attached,
             the green plan card already carries the visit-progress
@@ -658,6 +679,7 @@ export default async function SessionDetailPage({
                   status: attachedPlan.status,
                 }}
                 activePlans={[]}
+                canEdit={canEditRecords}
                 attachAction={attachChartEntryToPlanAction}
                 detachAction={detachChartEntryFromPlanAction}
               />
@@ -672,6 +694,7 @@ export default async function SessionDetailPage({
               id: p.id,
               name: p.name,
             }))}
+            canEdit={canEditRecords}
             attachAction={attachChartEntryToPlanAction}
             detachAction={detachChartEntryFromPlanAction}
           />
@@ -753,6 +776,7 @@ export default async function SessionDetailPage({
           refuses a non-empty target (HN003), so today's chart can never be
           destructively replaced. */}
       {!isFinalized &&
+        canEditRecords &&
         session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
@@ -784,6 +808,7 @@ export default async function SessionDetailPage({
             reviseAction={reviseClinicalNoteAction}
             profileHref={`/clients/${id}?tab=treatment`}
             printHref={`/clients/${id}/clinical-notes/print`}
+            readOnly={!canEditRecords}
           />
         </div>
       </details>
@@ -792,6 +817,7 @@ export default async function SessionDetailPage({
         <SessionBlocksView
           sessionId={session.id}
           clientId={id}
+          readOnly={!canEditRecords}
           blocks={blockData.blocks}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
@@ -812,7 +838,7 @@ export default async function SessionDetailPage({
         />
       ) : (
         <>
-          {!isFinalized && (
+          {!isFinalized && canEditRecords && (
             <LogLaserEntryForm
               sessionId={session.id}
               clientId={id}
@@ -832,6 +858,7 @@ export default async function SessionDetailPage({
               clientId={id}
               sessionId={session.id}
               entries={session.laser_entries}
+              readOnly={!canEditRecords}
             />
           </section>
         </>
@@ -853,7 +880,7 @@ export default async function SessionDetailPage({
             you when {clientFirstName} comes back.
           </p>
         </div>
-        {isFinalized ? (
+        {isFinalized || !canEditRecords ? (
           <p className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">
             {session.next_session_note?.trim()
               ? session.next_session_note
@@ -930,7 +957,7 @@ export default async function SessionDetailPage({
               aftercare provided" once marked, and can still be un-marked if she
               taps it by mistake. Gating it on "not marked" would have removed
               both, which is a behaviour change nobody asked for. */}
-          {!isFinalized && (
+          {!isFinalized && canEditRecords && (
             <AftercareExplainedToggle
               sessionId={session.id}
               explainedAt={session.aftercare_and_risks_explained_at ?? null}
@@ -1042,7 +1069,7 @@ export default async function SessionDetailPage({
             without writing anything. Nothing above navigates automatically,
             she must be able to SEE the updated statuses before leaving. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 sm:flex-row sm:items-center dark:border-neutral-800">
-          {isFinalized ? (
+          {isFinalized || !canEditRecords ? (
             <Link
               href={`/clients/${id}?tab=sessions`}
               className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
@@ -1115,7 +1142,7 @@ export default async function SessionDetailPage({
       {/* An archived (legacy finalized) record cannot be soft-deleted, the DB
           guard from 0119 still enforces that, so the destructive control is
           withdrawn for it. Ordinary sessions keep it. */}
-      {!isFinalized && (
+      {!isFinalized && canEditRecords && (
         <div className="pt-6">
           <DeleteSessionForm sessionId={session.id} clientId={id} />
         </div>
@@ -1128,10 +1155,13 @@ function LaserEntriesSection({
   clientId,
   sessionId,
   entries,
+  readOnly = false,
 }: {
   clientId: string;
   sessionId: string;
   entries: LaserEntry[];
+  // Read-only chart mode (clin.view_records without clin.edit_records): the passes are shown, the remove control is not.
+  readOnly?: boolean;
 }) {
   if (entries.length === 0) {
     return (
@@ -1150,6 +1180,7 @@ function LaserEntriesSection({
           <LaserEntryRow
             entry={e}
             action={
+              readOnly ? undefined : (
               <RemovePassButton
                 action={deleteLaserEntryAction}
                 entryId={e.id}
@@ -1157,6 +1188,7 @@ function LaserEntriesSection({
                 clientId={clientId}
                 ariaLabel={sorted.length > 1 ? "Remove laser pass" : "Remove pass"}
               />
+              )
             }
           />
         </li>
