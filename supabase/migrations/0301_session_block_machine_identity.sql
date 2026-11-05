@@ -292,15 +292,31 @@ declare
   v_studio uuid;
   v_new timestamptz;
 begin
-  -- THE BLOCK IS LOCKED FOR UPDATE FIRST, HERE, AND ONLY HERE (Insurance Z-1).
+  -- LOCK ORDER: SESSION (FOR SHARE), THEN BLOCK (FOR UPDATE) - the order 0223 fixes in
+  -- assert_setup_scope, and the order copy_session_setup and correct_finalized_session
+  -- already follow (they hold the session FOR UPDATE and then want its blocks).
+  --
+  -- WHY THE BLOCK IS TAKEN FOR UPDATE HERE AT ALL (Insurance Z-1):
   -- record_treatment_setup_submission takes FOR SHARE on the block and
-  -- apply_block_machine_identity takes FOR UPDATE later in the same transaction;
-  -- two concurrent submissions on one block would each hold SHARE and wait on the
-  -- other's UPGRADE, which is a deadlock. Taking the stronger lock before either
-  -- makes the second submission wait for the first to finish instead. Scoped to
-  -- the caller's own studio and session AFTER the writability check, so an id from
-  -- another studio is never locked.
+  -- apply_block_machine_identity takes FOR UPDATE later in the same transaction; two
+  -- concurrent submissions on one block would each hold SHARE and wait on the other's
+  -- UPGRADE, which is a deadlock. Taking the stronger lock first makes the second
+  -- submission wait for the first.
+  --
+  -- WHY THE SESSION COMES FIRST (Insurance Z-3): the first version of this fix took the
+  -- block before the session, which inverted the order against those two writers and
+  -- could deadlock with them. Two submissions' session SHARE locks are compatible, so
+  -- they still queue on the block with no upgrade; a writer holding the session FOR
+  -- UPDATE just makes this call wait while it holds nothing.
+  --
+  -- Both are scoped to the caller's own studio (and the block to its session) AFTER the
+  -- writability check, so an id from another studio is never locked.
   v_studio := public.assert_session_writable(p_session_id, p_client_id);
+  perform 1
+    from public.sessions s
+   where s.id = p_session_id
+     and s.studio_id = v_studio
+     for share;
   perform 1
     from public.session_blocks b
    where b.id = p_block_id
