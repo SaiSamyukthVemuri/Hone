@@ -1,6 +1,7 @@
-// The Client Profile's price-free reads (Sam's ruling: no client price, session price or service price
-// may be in a NON-OWNER's server payload for the profile; the loader must not fetch it, not just hide
-// it). A non-owner's reads name their columns instead of selecting "*", so a price column cannot ride
+// The Client Profile's price-free reads (Sam's ruling: no client price or session price may be in a
+// NON-OWNER's server payload for the profile; the loader must not fetch it, not just hide it. Decision
+// 2 exception: the studio's PUBLISHED service-list price stays visible to a practitioner when booking,
+// so the profile does not pass `includePrices:false` to the services read). A non-owner's reads name their columns instead of selecting "*", so a price column cannot ride
 // along. The lists are kept in step with the row types by tests/lib/clients/profile-pricing.test.ts.
 
 /** sessions columns, every column of `Session` except `price_paid_cents`. */

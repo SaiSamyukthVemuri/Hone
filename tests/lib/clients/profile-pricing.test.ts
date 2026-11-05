@@ -91,11 +91,13 @@ describe("the loaders do not fetch a price for a non-owner (Sam's ruling)", () =
 
 describe("the profile page wires the ruling", () => {
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
-  it("the owner decision gates both loaders", () => {
+  it("the owner decision gates the client loader (services are not price-gated)", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
     expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner \};/);
     expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
-    expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
+    // Decision 2: the published service-list price stays visible to a practitioner when booking.
+    expect(PAGE).toContain("getActiveServices(studio.id),");
+    expect(PAGE).not.toContain("getActiveServices(studio.id, priceReads)");
   });
   it("the Pricing card is owner-only", () => {
     expect(PAGE).toMatch(/\{isOwner && \(\s*<section[^>]*>\s*<h2[^>]*>\s*Pricing\s*<\/h2>/);
