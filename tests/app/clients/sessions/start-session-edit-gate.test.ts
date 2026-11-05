@@ -31,6 +31,24 @@ describe("startSessionAction asks the edit key first", () => {
     expect(rt.from).not.toHaveBeenCalled();
     expect(rt.rpc).not.toHaveBeenCalled();
   });
+  // Codex P2 4476392081: the refusal redirect keeps the visit being charted, so a retry cannot start a session that is no longer tied to it.
+  const APPT = "9d1c2b3a-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
+  const refusal = async (appt: string | null) => {
+    rt.allowed = false;
+    const f = form();
+    if (appt !== null) f.set("appointment_id", appt);
+    return ((await startSessionAction(f).catch((e: Error) => e)) as Error).message;
+  };
+  it("a refusal carries a valid appointment id into the redirect", async () => {
+    expect(await refusal(APPT)).toBe(`REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/new?appointment_id=${APPT}`);
+    expect(rt.from).not.toHaveBeenCalled(); // still before any read or write
+  });
+  it("a malformed appointment id is dropped, not echoed into the URL", async () => {
+    expect(await refusal("not-a-uuid&x=1")).toBe("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/new");
+  });
+  it("no appointment id gives the plain redirect", async () => {
+    expect(await refusal(null)).toBe("REDIRECT:/clients/3f2b8c1e-7a4d-4e6b-9c10-5d2f8a7b6e11/sessions/new");
+  });
   it("asks for the client being charted", async () => {
     rt.allowed = false;
     await expect(startSessionAction(form())).rejects.toBeTruthy();

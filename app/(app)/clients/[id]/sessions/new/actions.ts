@@ -127,7 +127,10 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // Starting a session creates a chart: editing records (NQ-11/12, asked ahead of enforcement; the database trigger is the backstop).
   if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
     // A handled refusal, not a throw: a throw lands on the error boundary. The new-session page answers a viewer without the edit key with the explanation.
-    redirect(`/clients/${clientId}/sessions/new`);
+    // The appointment being charted is carried through (UUID-validated only; anything else is dropped, as the page does with a stale search param), so a
+    // retry after access returns or a transient permission-check failure cannot start a session that is no longer tied to that visit (Codex P2).
+    const refusedAppointment = typeof appointmentIdRaw === "string" && UUID_RE.test(appointmentIdRaw) ? appointmentIdRaw : null;
+    redirect(`/clients/${clientId}/sessions/new${refusedAppointment ? `?appointment_id=${refusedAppointment}` : ""}`);
   }
 
   // PR #156. Validate the optional appointment lineage BEFORE touching

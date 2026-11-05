@@ -11,7 +11,7 @@ const C = "app/(app)/clients/[id]";
 describe("new session / start session", () => {
   it("the action asks the edit key and answers a refusal with a handled redirect, not a throw", () => {
     const a = strip(read(`${C}/sessions/new/actions.ts`));
-    expect(a).toMatch(/requirePermission\(supabase, studio\.id, "clin\.edit_records", \{ client: clientId \}\)\)\.allowed\) \{\s*redirect\(`\/clients\/\$\{clientId\}\/sessions\/new`\);/);
+    expect(a).toMatch(/requirePermission\(supabase, studio\.id, "clin\.edit_records", \{ client: clientId \}\)\)\.allowed\) \{[\s\S]*?redirect\(`\/clients\/\$\{clientId\}\/sessions\/new\$\{refusedAppointment \? `\?appointment_id=\$\{refusedAppointment\}` : ""\}`\);/);
     expect(a).not.toMatch(/throw new Error\(EDIT_RECORDS_REFUSAL\)/);
   });
   it("the page asks the edit key after the view key and explains instead of rendering the modality picker", () => {
@@ -92,6 +92,6 @@ describe("failed permission read (Insurance I-5) and client id validation (Priva
   it("startSessionAction checks the client id is a UUID before it builds the refusal redirect", () => {
     const a = strip(read(`${C}/sessions/new/actions.ts`));
     expect(a.indexOf("UUID_RE.test(clientId)")).toBeGreaterThan(-1);
-    expect(a.indexOf("UUID_RE.test(clientId)")).toBeLessThan(a.indexOf("redirect(`/clients/${clientId}/sessions/new`)"));
+    expect(a.indexOf("UUID_RE.test(clientId)")).toBeLessThan(a.indexOf("redirect(`/clients/${clientId}/sessions/new${refusedAppointment"));
   });
 });
