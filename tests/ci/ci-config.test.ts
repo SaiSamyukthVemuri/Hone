@@ -2972,3 +2972,25 @@ describe("NODE-HEAP-01: typecheck and the webServer build keep a 4 GB Node heap"
     expect(heap(build)).toBeGreaterThanOrEqual(4096);
   });
 });
+
+describe("runner image is explicit", () => {
+  // `ubuntu-latest` moved to Ubuntu 26.04 between two runs on 2026-11-03: the
+  // playwright-system-deps CONTROL case failed on every branch and Playwright
+  // refused webkit ("does not support webkit on ubuntu26.04-x64"). An image that
+  // moves under the repo is the same class of problem as a mutable action tag,
+  // so every job names its image, like the SHA-pinned actions. Moving to a new
+  // image is a deliberate change of this constant, with its own proof.
+  const RUNNER = "ubuntu-24.04";
+
+  it("every job in every workflow runs on the pinned image, never a -latest label", () => {
+    const bad: string[] = [];
+    const workflows = readWorkflowDir();
+    expect(workflows.length, "no workflow found").toBeGreaterThan(0);
+    for (const [name, body] of workflows) {
+      for (const m of body.matchAll(/^\s*runs-on:\s*(.+?)\s*$/gm)) {
+        if (m[1] !== RUNNER) bad.push(`${name}: runs-on: ${m[1]}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});

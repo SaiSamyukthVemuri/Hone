@@ -1053,6 +1053,38 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Inbound Hone sales enquiries. Hone's records, not any studio's, and the table carries no studio_id.",
   },
+  permission_catalog: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "The catalog of permission keys, scopes and shipped defaults (migration 0287, ROLES R1). Hone's own reference data, seeded from lib/permissions/catalog.ts and identical for every studio; it carries no studio_id and no studio content.",
+  },
+  permission_narrowings: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "The list of decided changes that narrow what existing staff can do, with the notice text (migration 0287, ROLES R1). Hone's own reference data, identical for every studio; no studio_id and no studio content.",
+  },
+  permission_key_release: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "When each permission key's enforcement became real (migration 0287, ROLES R1, activation rule). Hone's own release state, identical for every studio, written only by a migration or the operator; it carries no studio_id and no studio content.",
+  },
+  permission_key_activation: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Which released permission keys a studio's owner has explicitly activated, with who, when, the reason given and the policy version (migration 0287, ROLES R1, activation rule). Studio-owned decision history, so PENDING under TRUTH-01B; field review first because it carries the activating user's auth id and a free-text reason.",
+  },
+  permission_ship_gates: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Operator-only release flags that keep an unreleased capability off for a studio (migration 0287, ROLES R1). Platform release state, not studio content, and an owner cannot read or change it.",
+  },
   waitlist: {
     kind: "excluded",
     category: "platform",
@@ -1789,6 +1821,28 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     reason:
       "PAY-CCY-02 (0214): the studio's payment country and charge currency. Payment configuration, not studio content; the currency of every exported amount is the deciding reader, so decide deliberately.",
+  },
+  permission_audit: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The append-only history of who changed which role permissions, adopted new defaults, reset a role or moved a person between roles, with before and after values and the reason given (migration 0287, ROLES R1). Studio-scoped and owner-visible, but the payloads are free-form JSON and carry actor and membership ids, so a field review comes before any raw export.",
+  },
+  studio_permission_policy: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Which permission basis a studio is on (existing snapshot or new-studio defaults), the version of its saved role permissions and when new defaults were adopted (migration 0287, ROLES R1). Studio-owned configuration, so this is PENDING under TRUTH-01B rather than exported or excluded.",
+  },
+  studio_role_permissions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The owner's explicit per-role permission choices for a studio (migration 0287, ROLES R1). Studio-owned configuration, so this is PENDING under TRUTH-01B rather than exported or excluded.",
   },
   studio_receptionists: {
     kind: "pending",

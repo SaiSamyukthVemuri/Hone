@@ -280,3 +280,85 @@ describe("buildNeedsAttention truncation warning (Codex P2)", () => {
     expect(src).toContain("clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length");
   });
 });
+
+describe("buildNeedsAttention one card per client id", () => {
+  const empty = () =>
+    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+  const memory = (clientId: string, name: string, reason: string, detail: string | null) => ({
+    ...todoItem("treatment_memory", `treatment_memory:${clientId}`),
+    subject: { kind: "client", id: clientId, label: name } as DashboardTodoItem["subject"],
+    reason,
+    detail,
+  });
+
+  it("folds a client's sessions, intake and reaction into ONE card", () => {
+    const out = buildNeedsAttention({
+      assistant: buildMissingRecordsAssistant({
+        unchartedAppointments: [],
+        incompleteIntakes: [],
+        sessions: [
+          session({ sessionId: "s1", aftercareMarked: false }),
+          session({ sessionId: "s2", aftercareMarked: false }),
+        ],
+      }),
+      intakesAwaitingReview: [{ clientId: "c1", clientName: "Client One", submittedAt: "2026-10-12T10:00:00Z" }],
+      todo: {
+        hasItems: true,
+        moreCount: 0,
+        items: [memory("c1", "Client One", "Latest recorded reaction: Redness", null)],
+      },
+    });
+    expect(out.clients).toHaveLength(1);
+    expect(out.clients[0].items.map((i) => i.kind).sort()).toEqual([
+      "aftercare",
+      "aftercare",
+      "intake_review",
+      "treatment_memory",
+    ]);
+    expect(out.itemCount).toBe(4);
+  });
+
+  it("same name with different ids stays two cards, flagged and never merged", () => {
+    const out = buildNeedsAttention({
+      assistant: empty(),
+      intakesAwaitingReview: [
+        { clientId: "c1", clientName: "Sam Same", submittedAt: "2026-10-01T10:00:00Z" },
+        { clientId: "c2", clientName: "Sam Same", submittedAt: "2026-10-02T10:00:00Z" },
+        { clientId: "c3", clientName: "Other Person", submittedAt: "2026-10-03T10:00:00Z" },
+      ],
+      todo: NO_TODO,
+    });
+    expect(out.clients).toHaveLength(3);
+    const flagged = out.clients.filter((c) => c.sharesNameWithAnotherClient).map((c) => c.clientId).sort();
+    expect(flagged).toEqual(["c1", "c2"]);
+  });
+
+  it("a reaction row no longer prints the same clause twice", () => {
+    const out = buildNeedsAttention({
+      assistant: empty(),
+      intakesAwaitingReview: [],
+      todo: {
+        hasItems: true,
+        moreCount: 0,
+        items: [memory("c1", "Client One", "Latest recorded reaction: Redness", "Latest recorded reaction: Redness · Latest tolerance: 3/5")],
+      },
+    });
+    expect(out.clients[0].items[0].label).toBe("Latest recorded reaction: Redness");
+    expect(out.clients[0].items[0].detail).toBe("Latest tolerance: 3/5");
+  });
+
+  it("studio items stay reachable and every line is counted exactly once", () => {
+    const studio = {
+      ...todoItem("supply_expiry", "supply_expiry:x"),
+      subject: { kind: "supply", id: "x", label: "Probes" } as DashboardTodoItem["subject"],
+    };
+    const out = buildNeedsAttention({
+      assistant: empty(),
+      intakesAwaitingReview: [{ clientId: "c1", clientName: "Client One", submittedAt: "2026-10-01T10:00:00Z" }],
+      todo: { hasItems: true, moreCount: 0, items: [studio, memory("c9", "Client Nine", "Watch note", null)] },
+    });
+    expect(out.studioItems.map((i) => i.id)).toEqual(["supply_expiry:x"]);
+    expect(out.clients.map((c) => c.clientId).sort()).toEqual(["c1", "c9"]);
+    expect(out.itemCount).toBe(out.issueCount + out.others.length);
+  });
+});
