@@ -85,7 +85,7 @@ const save = (studio: SeededStudio, sessionId: string, blockId: string, machine:
     ]),
   );
 
-async function seedSource(studio: SeededStudio, finalized: boolean) {
+async function seedSource(studio: SeededStudio, finalized: boolean, startedAt = "2026-01-01T10:00:00Z") {
   const sessionId = randomUUID();
   const blockId = randomUUID();
   const c = new Client({ connectionString: resolveLocalDbUrl() });
@@ -96,8 +96,8 @@ async function seedSource(studio: SeededStudio, finalized: boolean) {
     await c.query("set session_replication_role = replica");
     await c.query(
       `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, record_status, record_origin, record_version, started_at)
-       values ($1,$2,$3,$4,'electrolysis',$5,'native',1,'2026-01-01T10:00:00Z')`,
-      [sessionId, studio.studioId, studio.clientId, studio.practitionerId, finalized ? "finalized" : "draft"],
+       values ($1,$2,$3,$4,'electrolysis',$5,'native',1,$6)`,
+      [sessionId, studio.studioId, studio.clientId, studio.practitionerId, finalized ? "finalized" : "draft", startedAt],
     );
     await c.query(
       // NO LEGACY READINGS on the block: this file saves a NATIVE setup on it, and 0301 refuses a native identity on an area that holds
@@ -105,6 +105,12 @@ async function seedSource(studio: SeededStudio, finalized: boolean) {
       `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side)
        values ($1,$2,$3,1,'Chin','left')`,
       [blockId, studio.studioId, sessionId],
+    );
+    // copy_session_setup only accepts a source whose block has a valid electrolysis MODE, on the block or on its earliest live entry. The
+    // mode goes on an ENTRY with no reading: a block-level mode IS a legacy reading and 0301 would refuse the native identity.
+    await c.query(
+      `insert into public.electrolysis_entries (session_id, block_id, area, mode, pulse_count) values ($1,$2,'Chin','blend',1)`,
+      [sessionId, blockId],
     );
     await c.query(
       `insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order)
@@ -135,9 +141,12 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)"
       },
     ];
     let bothCommitted = 0;
+    let copied = 0;
     for (let round = 0; round < ROUNDS; round++) {
-      const { sessionId: source, blockId } = await seedSource(studio, false);
-      const target = (await seedSource(studio, false)).sessionId;
+      // Source earlier than target, and later than every earlier round's source, so it is THE source copy_session_setup derives.
+      const { sessionId: source, blockId } = await seedSource(studio, false, `2026-01-02T10:${String(round).padStart(2, "0")}:00Z`);
+      const target = (await seedSource(studio, false, "2026-02-01T10:00:00Z")).sessionId;
+      await adminQuery(`delete from public.electrolysis_entries where session_id = $1`, [target]);
       await adminQuery(`delete from public.session_blocks where session_id = $1`, [target]);
       const fp = (await adminQuery("select public._whole_session_copy_fingerprint($1) as fp", [source])).rows[0].fp as string;
       const copier = new Client({ connectionString: resolveLocalDbUrl() });
@@ -159,11 +168,14 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)"
         expect(settled.filter(deadlocked).length, `round ${round}: ${JSON.stringify(settled.map((s) => s.status))}`).toBe(0);
         // Both commit, or one is refused cleanly: never both refused.
         expect(settled.some((s) => s.status === "fulfilled"), `round ${round}`).toBe(true);
+        if (settled[0].status === "fulfilled") copied++;
         if (settled.every((s) => s.status === "fulfilled")) bothCommitted++;
       } finally {
         await copier.end();
       }
     }
+    // The copy must really run (it used to be refused as "no eligible source" for want of a mode, which made this round vacuous).
+    expect(copied, "copy_session_setup actually ran in the rounds").toBeGreaterThan(0);
     expect(bothCommitted).toBeGreaterThanOrEqual(0);
   }, 900_000);
 
@@ -304,6 +316,72 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)"
   it("the SHIPPED order, session before block, does not deadlock against the same writer", async () => {
     const r = await lockSequence("session-first");
     expect(r, JSON.stringify(r)).toEqual({ writerDeadlocked: false, saverDeadlocked: false });
+  }, 60_000);
+
+  // Insurance LM-2 / Y2-4: the source-order pin is not evidence of behaviour. This is the real thing on two connections: copy_session_setup
+  // RUNS INSIDE AN OPEN TRANSACTION and so holds the source session FOR UPDATE; an identity command on one of that session's blocks is
+  // started while it is held, must WAIT (not fail, not skip the lock), and completes once the copy commits, with no deadlock.
+  const waitsBehindCopy = async (
+    label: string,
+    command: (studio: SeededStudio, sessionId: string, blockId: string, machine: string) => Promise<unknown>,
+  ) => {
+    const studio = await seedStudio(`lockorder-wait-${label}`);
+    const machine = await register(studio);
+    const { sessionId: source, blockId } = await seedSource(studio, false, "2026-01-02T10:00:00Z");
+    const target = (await seedSource(studio, false, "2026-02-01T10:00:00Z")).sessionId;
+    await adminQuery(`delete from public.electrolysis_entries where session_id = $1`, [target]);
+    await adminQuery(`delete from public.session_blocks where session_id = $1`, [target]);
+    const fp = (await adminQuery("select public._whole_session_copy_fingerprint($1) as fp", [source])).rows[0].fp as string;
+    const spec = [
+      {
+        block: { mode: "blend", energy_level: 12, machine_frequency: "13.56 MHz", primary_area: "Chin", side: "left" },
+        areas: [{ area: "Chin", laterality: "left", display_order: 0 }],
+        entry: { area: "Chin", areas: ["Chin"], mode: "blend", thermolysis_intensity_percent: 40 },
+      },
+    ];
+    const copier = new Client({ connectionString: resolveLocalDbUrl() });
+    await copier.connect();
+    try {
+      await copier.query("set statement_timeout = '30s'");
+      await copier.query("begin");
+      await copier.query(`select public.copy_session_setup($1,$2,$3,$4::jsonb,$5,$6,$7)`, [
+        studio.studioId, target, studio.practitionerId, JSON.stringify(spec), randomUUID(), fp, source,
+      ]);
+      const held = await adminQuery(
+        `select count(*)::int as n from pg_locks l join pg_class c on c.oid = l.relation
+          where c.relname = 'sessions' and l.pid = $1 and l.mode in ('RowShareLock','RowExclusiveLock') and l.granted`,
+        [(await copier.query("select pg_backend_pid() as pid")).rows[0].pid],
+      );
+      expect(held.rows[0].n, "the copy holds a lock on sessions").toBeGreaterThan(0);
+      let settledEarly = false;
+      const cmd = Promise.allSettled([command(studio, source, blockId, machine)]).then((r) => {
+        settledEarly = true;
+        return r[0];
+      });
+      await new Promise((res) => setTimeout(res, 1500)); // past deadlock_timeout (1s)
+      expect(settledEarly, `${label}: the identity command WAITED behind the copy`).toBe(false);
+      await copier.query("commit");
+      const result = await cmd;
+      expect(deadlocked(result), `${label}: no deadlock`).toBe(false);
+      expect(result.status, `${label}: ${result.status === "rejected" ? String((result.reason as Error).message) : ""}`).toBe("fulfilled");
+      const id = await adminQuery(`select studio_machine_id from public.session_blocks where id = $1`, [blockId]);
+      expect(id.rows[0].studio_machine_id, `${label}: the identity was written after the wait`).toBe(machine);
+    } finally {
+      await copier.query("rollback").catch(() => undefined);
+      await copier.end();
+    }
+  };
+
+  it("(4) record_setup_submission_with_identity waits behind a copy_session_setup holding the session FOR UPDATE, then completes: no deadlock (LM-2)", async () => {
+    await waitsBehindCopy("submit", (studio, s, b, m) => save(studio, s, b, m, "lockorder-wait-submit"));
+  }, 60_000);
+
+  it("(4) record_block_machine_identity waits behind the same copy, then completes: no deadlock (LM-2)", async () => {
+    await waitsBehindCopy("record", (studio, s, b, m) =>
+      asUser(studio.userId, (q) =>
+        q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [b, s, studio.clientId, null, m, "galvanic"]),
+      ),
+    );
   }, 60_000);
 
   it("(source order) the wrapper takes the session before the block, and both before the inner command", () => {
