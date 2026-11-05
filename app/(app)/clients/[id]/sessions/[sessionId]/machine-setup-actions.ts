@@ -1,5 +1,6 @@
 "use server";
 
+import { readBlockVersion } from "@/lib/sessions/block-version";
 import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
@@ -578,7 +579,9 @@ export async function recordBlockMachineIdentityAction(input: {
   deviceId: string | null;
   modeKey: string | null;
   profileId: string | null;
-}): Promise<ActionResult> {
+  /** The block version the host form is holding (its optimistic-concurrency token). */
+  expectedUpdatedAt?: string | null;
+}): Promise<ActionResult & { updatedAt?: string }> {
   const scope = await identity();
   if (!scope) {
     return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
@@ -589,6 +592,16 @@ export async function recordBlockMachineIdentityAction(input: {
   const db = await machineDb();
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+    // THE FORM'S OWN WRITE MUST NOT COUNT AS "CHANGED ELSEWHERE" (Photos R2,
+    // #1369). This command bumps the block's updated_at, which is the version
+    // token the host form's block save sends. The form kept the old token, so
+    // its next save was refused as a concurrent edit - and the typed value was
+    // lost. So the new version is handed back, but ONLY when the block was still
+    // at the version the form holds BEFORE this write: if anyone else had
+    // already changed it, no new token is returned and the real conflict still
+    // surfaces on the next block save. (The only edit this cannot tell from our
+    // own is one landing inside this command's own round trip.)
+    const versionBefore = input.expectedUpdatedAt ? await readBlockVersion(input.blockId) : null;
     const out = await recordBlockMachineIdentity(db, {
       blockId: input.blockId,
       sessionId: input.sessionId,
@@ -605,6 +618,10 @@ export async function recordBlockMachineIdentityAction(input: {
       return isDefinitiveDatabaseAnswer(out.error)
         ? { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." }
         : { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
+    }
+    if (input.expectedUpdatedAt && versionBefore === input.expectedUpdatedAt) {
+      const versionAfter = await readBlockVersion(input.blockId);
+      if (versionAfter) return { ok: true, updatedAt: versionAfter };
     }
     return { ok: true };
   } catch {

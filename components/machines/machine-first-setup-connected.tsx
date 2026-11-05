@@ -50,6 +50,10 @@ export type MachineFirstSetupConnectedProps = {
    */
   clientId: string;
   sessionId: string;
+  /** The block version the host form holds, sent with a saved-area identity write. */
+  blockVersion?: string | null;
+  /** Called with the block's new version after THIS panel's own identity write. */
+  onBlockVersion?: (updatedAt: string) => void;
   /** Injected by tests; production uses the server action. */
   load?: () => Promise<MachineSetupContext>;
   /** Injected by tests; production uses the server action. */
@@ -153,10 +157,19 @@ export function MachineFirstSetupConnected({
   onSettingDraft,
   settingDraftFrozen = false,
   onRevisionUnresolved,
-  savedIdentity = null,
+  savedIdentity: savedIdentityProp = null,
   onKindChange,
   onIdentityDraft,
+  blockVersion,
+  onBlockVersion,
 }: MachineFirstSetupConnectedProps) {
+  // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
+  // identity writes (Codex, #1369 4475581937). The prop is the identity the page
+  // loaded; an area that started with none and then recorded one here kept
+  // reporting "none", so a later clear took the preference-only branch, said it
+  // had worked, and left the saved identity in place.
+  const [written, setWritten] = useState<NonNullable<MachineFirstSetupConnectedProps["savedIdentity"]> | null>(null);
+  const savedIdentity = written ?? savedIdentityProp;
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
 
@@ -353,6 +366,19 @@ export function MachineFirstSetupConnected({
     modeKey: string | null;
     legacy?: boolean;
   }) => {
+    // A SAVED IDENTITY IS CHANGED TO ANOTHER MACHINE, NOT CLEARED: there is no
+    // command that clears one. Refused up front and consistently, before the
+    // preference is touched, so nothing reports success for a clear that did not
+    // happen.
+    if (
+      blockId &&
+      choice.deviceId === null &&
+      !choice.legacy &&
+      savedIdentity &&
+      (savedIdentity.deviceId || savedIdentity.profileId)
+    ) {
+      return { ok: false, error: "Choose another machine to change this one. A saved machine cannot be cleared." };
+    }
     const mod = await import(
       "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
     );
@@ -392,7 +418,12 @@ export function MachineFirstSetupConnected({
       deviceId: chosen.deviceId,
       modeKey: chosen.modeKey,
       profileId: chosen.profileId,
+      expectedUpdatedAt: blockVersion ?? null,
     });
+    if (saved.ok) {
+      setWritten({ profileId: chosen.profileId, deviceId: chosen.deviceId, modeKey: chosen.modeKey });
+      if (saved.updatedAt) onBlockVersion?.(saved.updatedAt);
+    }
     return saved.ok ? pref : { ok: false, error: saved.error };
   };
 

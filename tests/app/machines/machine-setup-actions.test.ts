@@ -41,6 +41,8 @@ const DB = vi.hoisted(() => ({
   rowsFor: {} as Record<string, unknown[]>,
   errorFor: {} as Record<string, { message: string }>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** Successive answers to the session_blocks updated_at read (the block version token). */
+  versions: [] as string[],
 }));
 
 vi.mock("@/lib/supabase/queries", () => ({
@@ -71,6 +73,7 @@ vi.mock("@/lib/sessions/session-lineage", () => ({
 /** The route values every loader call needs. */
 const ROUTE = { clientId: "client-ana", sessionId: "session-1" };
 
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
@@ -95,6 +98,15 @@ vi.mock("@/lib/supabase/server", () => ({
       return { data: DB.rpcResult, error: DB.rpcError };
     },
     from: (table: string) => {
+      if (table === "session_blocks" && DB.versions.length > 0) {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { updated_at: DB.versions.shift() }, error: null }),
+            }),
+          }),
+        };
+      }
       // THE RETRY-KEY LOOKUP (`setupSubmissionExists`): `.eq(block).eq(session)
       // .eq(key).limit(1)`, answered from this table's own rows - empty unless a case
       // says a submission already committed under the key.
@@ -175,6 +187,7 @@ beforeEach(() => {
   DB.rpcResult = null;
   DB.rpcError = null;
   DB.selectError = null;
+  DB.versions = [];
   DB.rowsFor = {};
   DB.errorFor = {};
   DB.calls = [];
@@ -2018,5 +2031,48 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
     DB.rpcResult = null;
     const out = await actions.recordBlockMachineIdentityAction(args);
     expect(out.ok).toBe(true);
+  });
+});
+
+// ===========================================================================
+// THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE" (Photos R2, #1369 c0d7b3ddc)
+// ===========================================================================
+describe("recordBlockMachineIdentityAction hands back the new block version", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: "11111111-1111-4111-8111-111111111111",
+    modeKey: "flash",
+    profileId: null,
+  };
+  it("returns the post-write version when the block was still at the version the form holds", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = null;
+    DB.versions = ["v1", "v2"];
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out).toEqual({ ok: true, updatedAt: "v2" });
+  });
+  it("NEGATIVE CONTROL: if the block had ALREADY changed elsewhere, no token is handed back, so the real conflict still surfaces", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = null;
+    DB.versions = ["v-other-tab", "v-after"];
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out).toEqual({ ok: true });
+  });
+  it("without a held version it behaves as before (no token)", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = null;
+    DB.versions = [];
+    expect(await actions.recordBlockMachineIdentityAction(args)).toEqual({ ok: true });
+  });
+  it("a refused write returns no token", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    DB.versions = ["v1", "v2"];
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out.ok).toBe(false);
+    expect("updatedAt" in out).toBe(false);
+    DB.versions = [];
   });
 });

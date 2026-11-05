@@ -1304,6 +1304,18 @@ export function BlockSetupForm({
    * Save button keeps its own literal list (source pins read it); a test asserts
    * the two lists name the same flags.
    */
+  /**
+   * THE BLOCK VERSION THIS FORM SAVES AGAINST. The machine panel's identity
+   * write bumps the row, so it hands back the new version (only when the row was
+   * still at ours) and it is adopted here; a version from a stale prop is
+   * ignored, so a refreshed page wins. A real concurrent edit is untouched: it
+   * never produces an adopted token, and the block save still refuses it.
+   */
+  const [adoptedVersion, setAdoptedVersion] = useState<{ base: string; token: string } | null>(null);
+  const blockVersion =
+    block && adoptedVersion && adoptedVersion.base === block.updated_at
+      ? adoptedVersion.token
+      : (block?.updated_at ?? null);
   const saveBlocked =
     pending ||
     resume.state === "checking" ||
@@ -1483,7 +1495,7 @@ export function BlockSetupForm({
           blockId: block.id,
           firstEntryId: firstEntry?.id ?? null,
           // Optimistic concurrency: the version this form loaded (0129).
-          expectedUpdatedAt: block.updated_at,
+          expectedUpdatedAt: blockVersion,
           mode: (draft.mode || null) as SessionMode | null,
           apilusModality: (draft.apilusModality || null) as
             | ApilusModality
@@ -1875,6 +1887,10 @@ export function BlockSetupForm({
         }
         onKindChange={onKindChange}
         onIdentityDraft={block ? undefined : onIdentityDraft}
+        blockVersion={blockVersion}
+        onBlockVersion={(token) => {
+          if (block) setAdoptedVersion({ base: block.updated_at, token });
+        }}
       />
 
       {copyMessage && (

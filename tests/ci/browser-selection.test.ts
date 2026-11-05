@@ -254,7 +254,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // roles x two widths), each a seeded studio, a magic-link login and one page load: about 90 seconds.
     // Now 54 after merging production (which took 53 with dashboard-last-treatment-closed.spec.ts, below): HON-8 adds machine-one-selector.spec.ts (HON-8, one selector for xCell/Junior/Senior, save/reopen, leave guard) joined `sessions`
     // beside machine-switch-discards-draft.spec.ts. RECORDED AS A DECISION per the note above: it is the only lane its subject can regress in.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(54);
+    // Now 55: machine-mode-then-save.spec.ts (HON-8, Photos R2: a mode click then a block save must not conflict with the user's own write; a genuine
+    // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
+    // seeded studio, a magic-link login and a few page loads: about 2 minutes.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(55);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

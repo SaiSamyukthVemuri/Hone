@@ -210,3 +210,69 @@ describe("a saved machine identity, through the connected wrapper", () => {
     expect(onIdentityDraft.mock.calls.at(-1)?.[0]).toEqual({ deviceId: null, modeKey: null, profileId: "dectro-apilus:xcell" });
   });
 });
+
+// ===========================================================================
+// THE PANEL TRACKS ITS OWN SUCCESSFUL IDENTITY WRITES (Codex, #1369 4475581937; Photos R2)
+// ===========================================================================
+describe("the component follows its own identity writes", () => {
+  const pick = async (value: string) => {
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+
+  it("an area that started with NO identity cannot be 'cleared' once it recorded one: refused, nothing cleared, nothing claimed saved", async () => {
+    await mount({ blockId: "b1", savedIdentity: null });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    await pick("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    actions.clearMachineSelectionAction.mockClear();
+    actions.rememberMachineSelectionAction.mockClear();
+    await pick("");
+    // No new write, the preference is untouched, and the refusal is visible.
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect(actions.clearMachineSelectionAction).not.toHaveBeenCalled();
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+    expect(host!.textContent).toMatch(/cannot be cleared/i);
+  });
+
+  it("NEGATIVE CONTROL: an area that never recorded an identity can still clear its (preference-only) choice", async () => {
+    await mount({ blockId: "b1", savedIdentity: null });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    // Nothing was written for this area, so clearing is only the remembered preference.
+    await pick("");
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+    expect(host!.textContent).not.toMatch(/cannot be cleared/i);
+  });
+
+  it("the write's new block version reaches the host, and the held version goes out with the write", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2" } as never);
+    const onBlockVersion = vi.fn();
+    await mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null },
+      blockVersion: "v1",
+      onBlockVersion,
+    });
+    await pick("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledWith(
+      expect.objectContaining({ blockId: "b1", expectedUpdatedAt: "v1" }),
+    );
+    expect(onBlockVersion).toHaveBeenCalledWith("v2");
+  });
+
+  it("NEGATIVE CONTROL: a write that returns no version (the block had changed elsewhere) hands the host nothing", async () => {
+    const onBlockVersion = vi.fn();
+    await mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null },
+      blockVersion: "v1",
+      onBlockVersion,
+    });
+    await pick("room-9");
+    expect(onBlockVersion).not.toHaveBeenCalled();
+  });
+});
