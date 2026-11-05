@@ -1222,6 +1222,9 @@ describe("switching machine or mode clears the collected draft", () => {
     "resumedNeedsSettings",
     "resumedUnconfirmed",
     "revisionUnresolved",
+    // A saved area's machine write in flight (Codex, #1369 4477716784). Not a create-mode flag: it is released in a
+    // `finally` the moment the write settles, success or refusal, so it can never strand Save.
+    "identityWritePending",
   ];
   const saveDisabledIdentifiers = (expr: string) =>
     [
