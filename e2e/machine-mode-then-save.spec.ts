@@ -146,9 +146,11 @@ for (const which of ["senior", "junior"] as const) {
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
       expect(await entryHairs(blockId)).toBe(111);
-      // The mode click on the STALE tab must not launder the conflict: the block had already changed, so no new version is adopted.
+      // The mode click on the STALE tab must not launder the conflict. The held version is checked INSIDE the identity write's transaction (Codex 4476240827),
+      // so the click is itself refused as changed-elsewhere: the stored mode is NOT overwritten from a tab that has not seen the other edit, and no new version is adopted.
       await page.getByTestId(`machine-mode-${second}`).click({ timeout: T });
-      await expect.poll(() => keyOf(blockId), { timeout: T }).toBe(second);
+      await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
+      expect(await keyOf(blockId)).toBe(first);
       await page.getByLabel("Hairs treated", { exact: true }).fill("333");
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
