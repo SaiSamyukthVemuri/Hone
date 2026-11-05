@@ -3,6 +3,10 @@ import "server-only";
 import { LEGACY_MACHINE_PROFILE_ID } from "@/lib/machines/legacy-machine";
 import { createClient } from "@/lib/supabase/server";
 
+/** The existing workflow's modes (session_blocks.mode is unconstrained text, so only these count as xCell Pur history). */
+const LEGACY_MODE_VALUES = ["thermo", "galv", "blend"] as const;
+const LEGACY_MODES = LEGACY_MODE_VALUES.join(",");
+
 export type ClientLastMachine = {
   profileId: string | null;
   deviceId: string | null;
@@ -27,10 +31,11 @@ export async function readClientLastMachine(clientId: string): Promise<ClientLas
     .neq("sessions.record_status", "void")
     .is("deleted_at", null)
     // A saved identity, OR the existing xCell workflow charted without choosing it (a legacy mode, no identity).
-    .or("machine_profile_id.not.is.null,mode.not.is.null")
+    .or(`machine_profile_id.not.is.null,mode.in.(${LEGACY_MODES})`)
     .order("created_at", { ascending: false })
     .limit(1);
-  if (error) return readLegacyOnlyLastMachine(clientId);
+  // Only a MISSING COLUMN (0301 unapplied) falls back; any other failure offers nothing rather than guessing.
+  if (error) return error.code === "42703" ? readLegacyOnlyLastMachine(clientId) : null;
   if (!Array.isArray(data) || data.length === 0) return null;
   const r = data[0] as {
     machine_profile_id: string | null;
@@ -57,7 +62,8 @@ async function readLegacyOnlyLastMachine(clientId: string): Promise<ClientLastMa
     .is("sessions.deleted_at", null)
     .neq("sessions.record_status", "void")
     .is("deleted_at", null)
-    .not("mode", "is", null)
+    .in("mode", [...LEGACY_MODE_VALUES])
+    .order("created_at", { ascending: false })
     .limit(1);
   if (error || !Array.isArray(data) || data.length === 0) return null;
   return legacyLast();

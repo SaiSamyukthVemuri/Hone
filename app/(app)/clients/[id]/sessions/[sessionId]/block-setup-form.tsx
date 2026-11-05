@@ -114,6 +114,8 @@ import {
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
   copyPatchForMachine,
+  takeLegacyFields,
+  type LegacyDraftFields,
   copySourceMatchesMachine,
   legacySettingsEntered,
   machineDraftHasEntries,
@@ -467,9 +469,27 @@ export function BlockSetupForm({
   // The FROZEN setter, reached through a ref because it is declared further
   // down and this callback has to keep one identity.
   const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
+  // WHAT A NATIVE PICK CLEARED, kept until its identity write settles: a refused write puts the machine back and the
+  // practitioner's typed values with it (Insurance J-1 / Privacy FG-1). Dropped when the write is acknowledged.
+  const machineKindRef = useRef(machineKind);
+  const draftNowRef = useRef(draft);
+  draftNowRef.current = draft;
+  const clearedLegacyRef = useRef<LegacyDraftFields | null>(null);
+  const restoreClearedLegacy = useCallback(() => {
+    const cleared = clearedLegacyRef.current;
+    clearedLegacyRef.current = null;
+    if (cleared) setDraftRef.current((d) => ({ ...d, ...cleared }));
+  }, []);
+  const onIdentityWritePending = useCallback((pending: boolean, outcome?: "ok" | "refused") => {
+    setIdentityWritePending(pending);
+    if (!pending && outcome === "ok") clearedLegacyRef.current = null;
+  }, []);
   const onKindChange = useCallback(
     (kind: "none" | "legacy" | "native") => {
       if (kind === "native" && legacyDataLocked) return;
+      const prevKind = machineKindRef.current;
+      machineKindRef.current = kind;
+      if (kind === "native" && prevKind !== "native") clearedLegacyRef.current = takeLegacyFields(draftNowRef.current);
       setMachineKind(kind);
       if (kind === "native") {
         // Switching never mixes settings: the overlapping legacy fields are
@@ -1898,7 +1918,8 @@ export function BlockSetupForm({
         // below can be frozen by it (Codex, #860 4302176844).
         onRevisionUnresolved={setRevisionUnresolved}
         onRevisionDraft={setRevisionDraft}
-        onIdentityWritePending={setIdentityWritePending}
+        onIdentityWritePending={onIdentityWritePending}
+        onPickReverted={restoreClearedLegacy}
         // A studio-default frequency is prefilled, not typed: it does not count as entered work.
         holdAutoSelect={legacySettingsEntered({
           ...draft,

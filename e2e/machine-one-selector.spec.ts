@@ -310,6 +310,29 @@ for (const device of [
       expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: s.senior });
     });
 
+    // Insurance J-1 / Privacy FG-1: a refused native pick gives back the values the pick had cleared.
+    test("a refused native pick on a saved area restores the typed legacy values", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await page.getByTestId("machine-select").selectOption("legacy:xcell");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
+      await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      await page.reload();
+      await page.getByTestId(`edit-area-${blocks[0]!.id}`).click({ timeout: T });
+      await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
+      await page.getByLabel("Energy level (EL)").fill("4");
+      // Another tab changes the block: this tab's version is now stale, so the pick below is refused.
+      await sql("update public.session_blocks set updated_at = now() + interval '1 second' where id=$1", [blocks[0]!.id]);
+      await page.getByTestId("machine-select").selectOption(s.senior);
+      await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
+      await expect(page.getByLabel("Energy level (EL)")).toHaveValue("4");
+      expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: null });
+    });
+
     // OPS/Photos R2: a client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.
     test("a client last charted on xCell Pur starts the next session on xCell Pur (saved identity, and the older no-identity record)", async ({ page }) => {
       const s = await seedStudio();

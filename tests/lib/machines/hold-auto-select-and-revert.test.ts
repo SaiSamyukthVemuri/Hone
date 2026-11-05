@@ -52,3 +52,28 @@ describe("a refused identity write puts the panel back on the stored machine", (
     expect(body).toContain("return;");
   });
 });
+
+import { takeLegacyFields, LEGACY_DRAFT_KEYS } from "@/lib/machines/pending-setup";
+
+describe("J-1: what a native pick clears is kept and can be given back", () => {
+  const typed = { mode: "thermo", apilusModality: "blend", energyLevel: "4", machineFrequency: "13", thermolysisIntensityPercent: "40", thermolysisDurationSeconds: "2", galvanicMa: "1", galvanicDurationSeconds: "9", unitsOfLye: "2", pulseCount: "3", pulseDelay: "1" };
+  it("takeLegacyFields copies exactly the fields the native pick clears (and not later edits)", () => {
+    const draft = { ...typed, comments: "x" } as typeof typed & { comments: string };
+    const kept = takeLegacyFields(draft);
+    expect(Object.keys(kept).sort()).toEqual([...LEGACY_DRAFT_KEYS].sort());
+    draft.energyLevel = "";
+    expect(kept.energyLevel).toBe("4");
+  });
+  it("every key the host's native clear blanks is one of them", () => {
+    const form2 = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
+    const at = form2.indexOf('if (kind === "native") {\n        // Switching never mixes');
+    const clear = form2.slice(at, at + 900);
+    for (const k of LEGACY_DRAFT_KEYS) expect(clear, k).toContain(`${k}:`);
+  });
+  it("the host keeps the cleared values, restores them on a reverted pick and drops them on an acknowledged write", () => {
+    expect(form).toContain("clearedLegacyRef.current = takeLegacyFields(draftNowRef.current)");
+    expect(form).toMatch(/if \(cleared\) setDraftRef\.current\(\(d\) => \(\{ \.\.\.d, \.\.\.cleared \}\)\)/);
+    expect(form).toMatch(/if \(!pending && outcome === "ok"\) clearedLegacyRef\.current = null/);
+    expect(form).toContain("onPickReverted={restoreClearedLegacy}");
+  });
+});

@@ -461,3 +461,27 @@ export function legacySettingsEntered(draft: {
     draft.unitsOfLye,
   ].some((v) => v.trim() !== "");
 }
+
+/** The draft's legacy charting fields: what a native pick clears and a refused pick must give back. */
+export const LEGACY_DRAFT_KEYS = [
+  "mode",
+  "apilusModality",
+  "energyLevel",
+  "machineFrequency",
+  "thermolysisIntensityPercent",
+  "thermolysisDurationSeconds",
+  "galvanicMa",
+  "galvanicDurationSeconds",
+  "unitsOfLye",
+  "pulseCount",
+  "pulseDelay",
+] as const;
+
+export type LegacyDraftFields = Record<(typeof LEGACY_DRAFT_KEYS)[number], string>;
+
+/** A copy of the legacy fields as they stand (Insurance J-1 / Privacy FG-1). */
+export function takeLegacyFields(draft: LegacyDraftFields): LegacyDraftFields {
+  const out = {} as LegacyDraftFields;
+  for (const k of LEGACY_DRAFT_KEYS) out[k] = draft[k];
+  return out;
+}
