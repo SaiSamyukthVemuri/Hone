@@ -368,6 +368,56 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(onRevisionDraft).not.toHaveBeenCalledWith(true);
   });
 
+  // Codex 4480035425: a refused pick on a saved native area must not unmount the reading entry (its typed readings would be lost).
+  it("a REFUSED 'Choose machine…' leaves the typed readings in place (no unmount, no remount)", async () => {
+    const onRevisionDraft = vi.fn();
+    await mountExisting(onRevisionDraft);
+    const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+    await type(input, "120");
+    const pickEmpty = async (value: string) => {
+      const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+      const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      await act(async () => {
+        set.call(sel, value);
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await pickEmpty("");
+    const after = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+    expect(after, "the same field node is still mounted").toBe(input);
+    expect(after.value).toBe("120");
+    expect(host!.textContent).toMatch(/cannot be cleared/i);
+  });
+
+  it("a REFUSED pick of ANOTHER machine (stale tab) also keeps the typed readings", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, error: "changed elsewhere" } as never);
+    await mountExisting(vi.fn());
+    const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+    await type(input, "120");
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const other = [...sel.options].map((o) => o.value).find((v) => v && v !== "room-9" && v !== "legacy:xcell");
+    if (other) {
+      const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      await act(async () => {
+        set.call(sel, other);
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const after = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+      expect(after).toBe(input);
+      expect(after.value).toBe("120");
+    } else {
+      // Only the existing-workflow option exists besides the saved unit in this fixture: it is the same refusal path.
+      const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      await act(async () => {
+        set.call(sel, "legacy:xcell");
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const after = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+      expect(after).toBe(input);
+      expect(after.value).toBe("120");
+    }
+  });
+
   const fields = () => [...host!.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')];
   const saveEntry = async () =>
     act(async () => {

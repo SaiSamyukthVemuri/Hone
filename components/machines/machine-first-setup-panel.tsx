@@ -456,9 +456,13 @@ export function MachineFirstSetupPanel({
    * behaviour look like it had worked.
    */
   const chooseDevice = async (next: string | null, legacy = false) => {
+    // A SAVED AREA'S PICK IS WRITTEN FIRST AND APPLIED AFTER (Codex, #1369 4480035425). The record can refuse it (a clear,
+    // a stale tab), and moving the panel first unmounts the reading entry, so a refusal remounted it EMPTY and the typed
+    // readings were gone. Nothing a refusal could undo is changed, cleared or unmounted until the write settles. A new
+    // area writes nothing here, so its pick stays immediate.
+    const writeFirst = Boolean(blockId && onSelectMachine);
     // What was in force before this pick, for a refusal that leaves the stored machine unchanged (Codex, #1369 4479490071).
     const before = { deviceId, legacy: legacyChosen, modeKey };
-    setLegacyChosen(legacy);
     // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
     // previous one over would persist a key from a different profile, which
     // means nothing - a mode exists only within the profile that declares it.
@@ -467,9 +471,12 @@ export function MachineFirstSetupPanel({
     const nextMode = nextPick
       ? (supportedModes(nextPick.device, nextPick.profile)[0]?.key ?? null)
       : null;
-    setModeKey(nextMode);
-    // Step 1: the optimistic move, so the form stays responsive.
-    setSelection((prev) => selectionRequested(prev, next));
+    if (!writeFirst) {
+      setLegacyChosen(legacy);
+      setModeKey(nextMode);
+      // Step 1: the optimistic move, so the form stays responsive.
+      setSelection((prev) => selectionRequested(prev, next));
+    }
     // Step 2: the acknowledged outcome. `null` means no persister is wired,
     // which is NOT the same as a successful write and must not be reported as
     // one - `selectionSettled` is what keeps those apart.
@@ -513,17 +520,23 @@ export function MachineFirstSetupPanel({
     }
     if (token !== selectionRequestRef.current) return;
     if (write && write.ok === false && write.reverted) {
-      // The record still holds the previous machine: put the panel back on it, with the reason said, and give the host
-      // back anything the optimistic pick cleared (Insurance J-1).
+      // The record still holds the previous machine: the panel stays on it (or goes back to it), with the reason said,
+      // and the host gives back anything the pick cleared (Insurance J-1).
       onPickReverted?.();
-      setLegacyChosen(before.legacy);
-      setModeKey(before.modeKey);
+      if (!writeFirst) {
+        setLegacyChosen(before.legacy);
+        setModeKey(before.modeKey);
+      }
       setSelection((prev) => ({
         selected: before.deviceId,
         persisted: prev.persisted,
         note: write.error ?? "That did not save.",
       }));
       return;
+    }
+    if (writeFirst) {
+      setLegacyChosen(legacy);
+      setModeKey(nextMode);
     }
     setSelection((prev) => selectionSettled(prev, next, write));
   };

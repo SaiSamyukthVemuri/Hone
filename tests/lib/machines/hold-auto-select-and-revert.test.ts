@@ -43,13 +43,24 @@ describe("a refused identity write puts the panel back on the stored machine", (
   it("every refusal of the area's own identity write is marked reverted", () => {
     expect(conn.match(/reverted: true/g)?.length).toBe(3);
   });
-  it("the panel restores device, legacy flag and mode, keeps the reason, and does not settle the optimistic pick", () => {
+  it("the panel keeps the reason, restores what an optimistic (new-area) pick moved, and never settles a refused pick", () => {
     const i = panel.indexOf("write.reverted");
-    const body = panel.slice(i, i + 500);
+    const body = panel.slice(i, i + 700);
+    expect(body).toContain("if (!writeFirst)");
     expect(body).toContain("setLegacyChosen(before.legacy)");
     expect(body).toContain("setModeKey(before.modeKey)");
     expect(body).toContain("selected: before.deviceId");
     expect(body).toContain("return;");
+  });
+  it("Codex 4480035425: a saved area's pick is written first and applied after, so nothing a refusal could undo is unmounted", () => {
+    const at = panel.indexOf("const chooseDevice = async");
+    const fn = panel.slice(at, panel.indexOf("const chooseMode = async"));
+    expect(fn).toContain("const writeFirst = Boolean(blockId && onSelectMachine);");
+    expect(fn.indexOf("if (!writeFirst) {")).toBeLessThan(fn.indexOf("await onSelectMachine"));
+    // The optimistic moves sit only inside the new-area branch, before the await.
+    const pre = fn.slice(0, fn.indexOf("await onSelectMachine"));
+    expect(pre.match(/setLegacyChosen\(legacy\)/g)?.length).toBe(1);
+    expect(pre.match(/setModeKey\(nextMode\)/g)?.length).toBe(1);
   });
 });
 
