@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import type {
   ImportBatch,
@@ -81,6 +82,8 @@ export type ImportedMemoryList = {
   hasItems: boolean;
   // Count after void-filtering, before the display cap.
   totalFound: number;
+  // True when the viewer lacks clin.view_records: nothing was read, so an empty list is not a fact.
+  notAvailable?: true;
 };
 
 export type ImportBatchView = {
@@ -203,6 +206,8 @@ export async function getImportedTreatmentMemoriesForClient(
     return { items: [], hasItems: false, totalFound: 0 };
   }
   const supabase = await createClient();
+  // Roles R4: treatment data. Without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { items: [], hasItems: false, totalFound: 0, notAvailable: true };
   let query = supabase
     .from("imported_treatment_memories")
     .select(MEMORY_COLUMNS)

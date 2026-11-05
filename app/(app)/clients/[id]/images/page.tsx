@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -52,6 +53,28 @@ export default async function ClientImagesPage({
   if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
 
+  // Roles engine (0287), the STORAGE plane. Without clin.view_photos nothing about the photos is listed: no rows, dates, counts or
+  // consent label (Insurance RC-4), and no URL is signed. One neutral line instead.
+  const canViewPhotos = (await requirePermission(supabase, studio.id, "clin.view_photos", { client: id })).allowed;
+  if (!canViewPhotos) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Link
+          href={`/clients/${id}`}
+          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          ← {client.name}
+        </Link>
+        <header>
+          <h1 className="text-3xl font-semibold tracking-tight">Treatment Photos</h1>
+        </header>
+        <p role="status" data-testid="photos-not-available" className="text-sm text-neutral-500">
+          Photos are not available to your role.
+        </p>
+      </div>
+    );
+  }
+
   // PR #274: also select the existing context links (session_id /
   // session_block_id) and embed the attached session block's structured area
   // fields (primary_area / side / custom_area_detail) so each card can show
@@ -105,7 +128,7 @@ export default async function ClientImagesPage({
       // Trust boundary (PR #276): only sign a path that binds to this studio +
       // client; a forged/malformed row yields previewUrl=null ("Image not
       // available") instead of being signed.
-      const pathOk = validateTreatmentImagePath({
+      const pathOk = canViewPhotos && validateTreatmentImagePath({
         expectedStudioId: studio.id,
         rowStudioId: studio.id,
         rowClientId: id,

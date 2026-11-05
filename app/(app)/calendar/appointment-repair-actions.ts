@@ -31,6 +31,8 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 // Constants and types live in a plain module: a `"use server"` file may export
 // ONLY async functions, so `export const` here is a build error.
 import {
@@ -284,6 +286,10 @@ export async function setAppointmentNotesAction(
   if (!actorUserId) return { ok: false, error: GENERIC_FAILURE };
 
   if (!UUID_RE.test(input?.appointmentId ?? "")) {
+    return { ok: false, error: GENERIC_FAILURE };
+  }
+  // Roles engine (0287): editing scheduling notes. Existing-snapshot basis is every active practitioner (unchanged).
+  if (!(await requirePermission(await createClient(), studioId, "appt.edit_notes", { appointment: input.appointmentId })).allowed) {
     return { ok: false, error: GENERIC_FAILURE };
   }
   const notes = typeof input?.notes === "string" ? input.notes : "";

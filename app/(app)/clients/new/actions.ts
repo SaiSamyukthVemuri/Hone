@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { parsePreferredName } from "@/lib/clients/identity";
+import { requirePermission } from "@/lib/permissions/require-permission";
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG, parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
@@ -83,6 +84,7 @@ export async function createClientAction(
   if (!name) {
     return { ok: false, error: "Name is required." };
   }
+  if (name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
 
   const preferred = parsePreferredName(formData.get("preferred_name"));
   if (!preferred.ok) return { ok: false, error: preferred.error };
@@ -161,6 +163,7 @@ export async function createClientAction(
     }
   }
 
+  const skinTypeWritable = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
   const { data, error } = await supabase
     .from("clients")
     .insert({
@@ -173,7 +176,8 @@ export async function createClientAction(
       email,
       address: nullableString(formData.get("address")),
       date_of_birth: dateOfBirth,
-      fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
+      // Skin type is a clinical-record field (clin.view_records): not written for a viewer who may not see records.
+      fitzpatrick_type: skinTypeWritable ? nullableInt(formData.get("fitzpatrick_type")) : null,
       // Chloe Session 1A: `clients.skin_notes` is RETIRED as a practitioner
       // editor. It is no longer submitted by the client form and is no longer
       // written here, so an ordinary client edit can never overwrite historical

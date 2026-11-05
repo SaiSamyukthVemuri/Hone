@@ -1,0 +1,6 @@
+{
+  "pr": 1340,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0287_roles_permission_engine.sql"],
+  "release_receipt": "01-ops/1340-release-receipt.json"
+}

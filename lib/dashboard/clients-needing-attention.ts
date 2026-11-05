@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
@@ -81,6 +82,10 @@ export type ClientNeedingAttention = {
   // limit A's stale caution could displace B's newer genuine one. Leaving a
   // second name in place would leave that leak available.
   attentionDate: string;
+  // An opaque fingerprint of the clinical STATE this row reports (which session carries the caution and its text, which session the
+  // reaction is on, the reaction label, the tolerance). The Needs-attention dismissal token is built from it, so a new reaction or
+  // caution on the SAME session shows the reminder again. It carries no readable clinical content.
+  stateStamp?: string;
   hasWatch: boolean;
   hasPlan: boolean;
   notableReactionLabel: string | null;
@@ -94,7 +99,22 @@ export type ClientsNeedingAttention = {
   // True when the underlying scan hit its cap; counts are then "of
   // the most recent scanned sessions", documented in the UI helper.
   scanCapped: boolean;
+  // True when the viewer lacks clin.view_records: nothing was read, so this is NOT an all-clear and the UI must say so.
+  notAvailable?: true;
 };
+
+/** Two 32-bit FNV-1a passes -> 16 hex chars. A change detector, not a security hash; the output carries no readable content. */
+function stateFingerprint(parts: ReadonlyArray<unknown>): string {
+  const text = JSON.stringify(parts);
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ (c + i), 0x85ebca6b) >>> 0;
+  }
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
 
 // Pure: fold the batched rows into the per-client attention list.
 // Sessions must be ordered newest-first.
@@ -124,6 +144,10 @@ export function buildClientsNeedingAttention(
     latestToleranceRating: number | null;
     watchSourceFound: boolean;
     latestChartedSeen: boolean;
+    // What the dismissal fingerprint is made of (see ClientNeedingAttention.stateStamp).
+    watchSessionId: string | null;
+    chartedSessionId: string | null;
+    chartedState: string;
   };
   const byClient = new Map<string, Acc>();
 
@@ -139,12 +163,20 @@ export function buildClientsNeedingAttention(
       latestToleranceRating: null,
       watchSourceFound: false,
       latestChartedSeen: false,
+      watchSessionId: null,
+      chartedSessionId: null,
+      chartedState: "",
     };
     const sessionBlocks = blocksBySession.get(s.id) ?? [];
 
     // Newest charted session only: notable reaction + latest tolerance.
     if (!acc.latestChartedSeen && sessionBlocks.length > 0) {
       acc.latestChartedSeen = true;
+      acc.chartedSessionId = s.id;
+      // Every block of the newest charted session, so a reaction or caution ADDED to the same session changes the fingerprint.
+      acc.chartedState = JSON.stringify(
+        sessionBlocks.map((b) => [b.caution_for_next_session, b.caution_note, b.reaction_type, b.tolerance_rating, b.observation_chips_list ?? []]),
+      );
       for (const b of sessionBlocks) {
         if (!acc.notableReactionLabel) {
           // Unified: notable reaction from legacy reaction_type OR reaction chips
@@ -189,6 +221,7 @@ export function buildClientsNeedingAttention(
         acc.watchSourceFound = true;
         acc.hasWatch = true;
         acc.watchDate = s.started_at;
+        acc.watchSessionId = s.id;
         acc.watchText =
           cautionBlock.caution_note?.trim() || "Previously noted";
       }
@@ -231,6 +264,7 @@ export function buildClientsNeedingAttention(
             ? a.watchDate
             : a.reactionDate
           : (a.watchDate ?? a.reactionDate ?? ""),
+      stateStamp: stateFingerprint([a.watchSessionId, a.watchText, a.chartedSessionId, a.chartedState]),
       hasWatch: a.hasWatch,
       hasPlan: a.hasPlan,
       notableReactionLabel: a.notableReactionLabel,
@@ -284,6 +318,8 @@ export async function getClientsNeedingAttention(
   studioId: string,
 ): Promise<ClientsNeedingAttention> {
   const supabase = await createClient();
+  // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { ...buildClientsNeedingAttention([], []), notAvailable: true };
   // HON-58: staff see the display name; the read still works before 0258 exists.
   const { data: sessionRows, error: sessionsError } = await readWithPreferredName((withPreferred) =>
     supabase

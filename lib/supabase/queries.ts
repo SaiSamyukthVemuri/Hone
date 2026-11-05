@@ -400,6 +400,8 @@ export type ClientCheatSheet = {
   // naming who recorded or performed a historical session. `practitioners`
   // stays active-only because it feeds pickers.
   attributionRoster: AttributionPractitioner[];
+  // The answer the sessions gate gave (clin.view_records on the Client Profile). True for every caller that passes no gate.
+  sessionsAllowed: boolean;
 };
 
 export type AttributionPractitioner = Pick<Practitioner, "id" | "display_name" | "email">;
@@ -482,6 +484,8 @@ export async function getClientById(
 ): Promise<ClientCheatSheet | null> {
   const includePrices = options.includePrices !== false;
   const supabase = await createClient();
+  // What the sessions gate answered (true when no gate was passed). Returned so the page needs no second await for the same decision.
+  let sessionsAllowed = true;
 
   const { data: client, error: clientErr } = await supabase
     .from("clients")
@@ -492,6 +496,10 @@ export async function getClientById(
 
   if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) return null;
+  // Roles (clin.view_records, Codex P1 4476375636): skin type and legacy skin notes are clinical-record fields on the client row. A viewer
+  // the gate refuses gets them as null from here on, so no page, form or payload downstream can render or forward them.
+  const clinicalFieldsAllowed =
+    typeof options.clinicalFields === "function" ? await options.clinicalFields() : options.clinicalFields === true;
 
   const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     includePrices
@@ -502,15 +510,20 @@ export async function getClientById(
           .eq("client_id", clientId)
           .order("effective_from", { ascending: false })
       : Promise.resolve({ data: [] as ClientPricing[], error: null }),
-    supabase
-      .from("sessions")
-      .select(
-        `${includePrices ? "*" : SESSION_COLUMNS_WITHOUT_PRICE}, electrolysis_entries(*), laser_entries(*)`,
-      )
-      .eq("studio_id", studioId)
-      .eq("client_id", clientId)
-      .is("deleted_at", null)
-      .order("started_at", { ascending: false }),
+    (async () => {
+      const wanted = typeof options.includeSessions === "function" ? await options.includeSessions() : options.includeSessions !== false;
+      sessionsAllowed = wanted;
+      if (!wanted) return { data: [] as unknown[], error: null };
+      return supabase
+        .from("sessions")
+        .select(
+          `${includePrices ? "*" : SESSION_COLUMNS_WITHOUT_PRICE}, electrolysis_entries(*), laser_entries(*)`,
+        )
+        .eq("studio_id", studioId)
+        .eq("client_id", clientId)
+        .is("deleted_at", null)
+        .order("started_at", { ascending: false });
+    })(),
     getStudioRosters(studioId),
   ]);
 
@@ -520,13 +533,14 @@ export async function getClientById(
     throw new Error(`Failed to load sessions: ${dbErrorCode(sessionsRes.error)}`);
 
   return {
-    client: client as Client,
+    client: (clinicalFieldsAllowed ? client : { ...client, fitzpatrick_type: null, skin_notes: null }) as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
     sessions: ((sessionsRes.data ?? []) as unknown as SessionWithEntries[]).map(
       stripDeletedEntries,
     ),
     practitioners,
     attributionRoster,
+    sessionsAllowed,
   };
 }
 
@@ -680,12 +694,17 @@ const CLIENT_APPOINTMENT_TIMELINE_LIMIT = 100;
 export async function getAppointmentsForClientProfile(
   studioId: string,
   clientId: string,
+  // Postcare send times and attempt counts are aftercare detail: they are not even selected unless the viewer holds clin.view_aftercare
+  // (Codex, #1341 5b7d431e2). Required, so a new caller must decide.
+  opts: { includeAftercare: boolean },
 ): Promise<ClientAppointmentTimelineRow[]> {
   const supabase = await createClient();
   const { data: rawAppts, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, postcare_email_sent_at, postcare_email_send_attempts, service:services(name, modality)",
+      opts.includeAftercare
+        ? "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, postcare_email_sent_at, postcare_email_send_attempts, service:services(name, modality)"
+        : "id, starts_at, ends_at, status, service_id, cancelled_at, cancellation_reason, service:services(name, modality)",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -696,7 +715,7 @@ export async function getAppointmentsForClientProfile(
       `Failed to load client appointments: ${dbErrorCode(apptErr)}`,
     );
   }
-  const appts = (rawAppts ?? []) as Array<{
+  const appts = (rawAppts ?? []) as unknown as Array<{
     id: string;
     starts_at: string;
     ends_at: string;
@@ -704,8 +723,8 @@ export async function getAppointmentsForClientProfile(
     service_id: string | null;
     cancelled_at: string | null;
     cancellation_reason: string | null;
-    postcare_email_sent_at: string | null;
-    postcare_email_send_attempts: number | null;
+    postcare_email_sent_at?: string | null;
+    postcare_email_send_attempts?: number | null;
     service:
       | { name: string; modality: string | null }
       | Array<{ name: string; modality: string | null }>
@@ -765,7 +784,7 @@ export async function getAppointmentsForClientProfile(
       service_modality: svc?.modality ?? null,
       cancelled_at: a.cancelled_at,
       cancellation_reason: a.cancellation_reason,
-      postcare_email_sent_at: a.postcare_email_sent_at,
+      postcare_email_sent_at: a.postcare_email_sent_at ?? null,
       postcare_email_send_attempts: a.postcare_email_send_attempts ?? 0,
       linked_session: latestByAppointment.get(a.id) ?? null,
     };
@@ -917,40 +936,8 @@ export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> 
   return (data ?? []) as ProbeLot[];
 }
 
-// Returns clients with a session that started today (in the studio's timezone, naive: server time).
-export async function getTodayRosterForStudio(studioId: string): Promise<
-  Array<{ client: Client; sessions: Session[] }>
-> {
-  const supabase = await createClient();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .select("*, client:clients(*)")
-    .eq("studio_id", studioId)
-    .is("deleted_at", null)
-    .gte("started_at", start.toISOString())
-    .lte("started_at", end.toISOString())
-    .order("started_at", { ascending: true });
-
-  if (error) throw new Error(`Failed to load today's roster: ${dbErrorCode(error)}`);
-
-  const grouped = new Map<string, { client: Client; sessions: Session[] }>();
-  for (const row of data ?? []) {
-    const { client, ...session } = row as Session & { client: Client };
-    if (!client) continue;
-    const existing = grouped.get(client.id);
-    if (existing) {
-      existing.sessions.push(session as Session);
-    } else {
-      grouped.set(client.id, { client, sessions: [session as Session] });
-    }
-  }
-  return Array.from(grouped.values());
-}
+// getTodayRosterForStudio (a wildcard client read with no caller) was deleted: a client row carries skin type and legacy skin notes, which
+// need the clin.view_records gate (Privacy EW-2). New client-row readers go through getClientById with `clinicalFields`.
 
 // Migration 0019: session block helpers.
 // 17.5b.2 will use these to render blocks in the UI. They exist now so the

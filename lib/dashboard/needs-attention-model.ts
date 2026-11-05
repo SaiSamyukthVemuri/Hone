@@ -2,6 +2,7 @@ import type { IntakeAwaitingReview } from "./intakes-awaiting-review";
 import type { MissingRecordsAssistant } from "./missing-records-assistant";
 import type { DashboardTodo, DashboardTodoItem } from "./todo-model";
 import { practitionerIntakeReviewHref } from "./today-intake";
+import { cardHasReaction } from "./attention-card";
 
 // ===========================================================================
 // Needs Attention: ONE entry per client + session, with the issues inside it.
@@ -63,7 +64,58 @@ export type AttentionEntry = {
   issues: AttentionIssue[];
 };
 
+// One line inside a client's card. Every row the panel shows is one of these, so a
+// client with a session gap, an intake gap and a reaction on record reads as ONE
+// card with three badged lines instead of three rows in two lists.
+export type AttentionItemKind = AttentionIssueKind | "treatment_memory" | "unpaid";
+
+/**
+ * An unpaid finished appointment, as the owner-only loader hands it over. `owed` carries the AUTHORITATIVE outstanding balance;
+ * `unavailable` means the balance could not be determined and is shown as "Amount unavailable", never as 0.
+ */
+export type UnpaidAttention = {
+  appointmentId: string;
+  clientId: string;
+  clientName: string;
+  endsAt: string;
+  balance: { kind: "owed"; outstandingCents: number; currency: string } | { kind: "unavailable" };
+};
+
+export type AttentionItem = {
+  // Stable React key.
+  id: string;
+  kind: AttentionItemKind;
+  label: string;
+  detail: string | null;
+  href: string;
+  actionLabel: string;
+  // The source row's own instance marker, for the kinds whose instance changes (a new intake submission, a new reaction). Dismissal
+  // only hides an item while this still matches (lib/dashboard/attention-identity.ts). Absent for kinds with one instance.
+  stamp?: string | null;
+  // Unpaid items only: the authoritative balance. Absent for every other kind.
+  balance?: UnpaidAttention["balance"];
+};
+
+export type AttentionClient = {
+  // The grouping key. A client id from the loader, never a rendered name.
+  clientId: string;
+  clientName: string;
+  tier: "preparation" | "documentation";
+  occurredAt: string | null;
+  items: AttentionItem[];
+  // Another card in this list carries the same display name for a DIFFERENT client
+  // id. They are never merged; the panel says so, so two similar cards are not
+  // read as a duplicate.
+  sharesNameWithAnotherClient: boolean;
+};
+
 export type NeedsAttention = {
+  // ONE card per client: the list the panel renders.
+  clients: AttentionClient[];
+  // Items that belong to no client (supplies, owner setup, the records roll-up).
+  studioItems: DashboardTodoItem[];
+  // Every line in `clients` plus `studioItems`: the "items" in the heading.
+  itemCount: number;
   entries: AttentionEntry[];
   // Total issues across all entries, so the heading can state both counts.
   issueCount: number;
@@ -76,6 +128,8 @@ export type NeedsAttention = {
   // Names of checks that could not be read, in plain words. When non-empty the
   // panel says the list may be incomplete and never shows the all-clear.
   unavailableChecks: string[];
+  // True when the viewer's role cannot see treatment records: the panel says "Not available to your role", never an all-clear or a zero.
+  notAvailableToRole: boolean;
   // When the per-session details check ran, how many recent sessions it covers;
   // null when it did not run. The panel prints it (Insurance N3).
   detailsWindow: number | null;
@@ -90,6 +144,19 @@ const GROUPED_TODO_KINDS: ReadonlySet<DashboardTodoItem["kind"]> = new Set([
   "intake_review",
 ]);
 
+// A to-do's detail line sometimes repeats a clause already printed in its reason
+// (a reaction-only client printed "Latest recorded reaction: X" twice). Drop only
+// a clause that is already in the reason, so no distinct text is lost.
+function detailWithoutRepeats(reason: string, detail: string | null): string | null {
+  if (!detail) return null;
+  const printed = new Set(reason.split(" · ").map((c) => c.trim().toLowerCase()));
+  const kept = detail
+    .split(" · ")
+    .map((c) => c.trim())
+    .filter((c) => c !== "" && !printed.has(c.toLowerCase()));
+  return kept.length > 0 ? kept.join(" · ") : null;
+}
+
 function newerFirst(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (!a) return 1;
@@ -102,6 +169,7 @@ export function buildNeedsAttention(input: {
   intakesAwaitingReview: ReadonlyArray<IntakeAwaitingReview>;
   todo: DashboardTodo;
   unavailableChecks?: ReadonlyArray<string>;
+  notAvailableToRole?: boolean;
   // Clients with a confirmed visit coming up. An intake gap for one of them is
   // PREPARATION (listed first); for anyone else it sorts with the general
   // follow-up work. Omitted when the read failed: every intake gap stays in the
@@ -116,6 +184,8 @@ export function buildNeedsAttention(input: {
   // To-do list counted these in `moreCount`; dropping them would let a studio
   // with more capped clients read as complete (Codex P2).
   treatmentMemoryNotReturned?: number;
+  // Owner-only. Finished appointments with an outstanding balance; omitted for everyone else, who never receive a figure.
+  unpaid?: ReadonlyArray<UnpaidAttention>;
   recordDetailGaps?: ReadonlyArray<{
     sessionId: string;
     clientId: string;
@@ -250,16 +320,104 @@ export function buildNeedsAttention(input: {
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 
+  const others = input.todo.items.filter(
+    (i) =>
+      !GROUPED_TODO_KINDS.has(i.kind) &&
+      // Replaced by per-session entries when those were supplied.
+      !(input.recordDetailGaps && i.kind === "records_details"),
+  );
+  const studioItems = others.filter((i) => i.subject.kind !== "client");
+
+  // One card per client id. Entries are already keyed by client + record; here
+  // they fold by client alone, and a client-subject to-do (treatment memory) joins
+  // the card of the SAME client id.
+  const cards = new Map<string, AttentionClient>();
+  const touch = (clientId: string, clientName: string, occurredAt: string | null) => {
+    let card = cards.get(clientId);
+    if (!card) {
+      card = {
+        clientId,
+        clientName,
+        tier: "documentation",
+        occurredAt,
+        items: [],
+        sharesNameWithAnotherClient: false,
+      };
+      cards.set(clientId, card);
+    } else if (newerFirst(occurredAt, card.occurredAt) < 0) {
+      card.occurredAt = occurredAt;
+    }
+    return card;
+  };
+  for (const e of entries) {
+    const card = touch(e.clientId, e.clientName, e.occurredAt);
+    if (e.tier === "preparation") card.tier = "preparation";
+    for (const issue of e.issues) {
+      card.items.push({
+        id: `${e.id}:${issue.kind}`,
+        kind: issue.kind,
+        label: issue.label,
+        detail: null,
+        href: issue.href,
+        actionLabel: issue.actionLabel,
+        ...(issue.kind === "intake_review" || issue.kind === "intake_incomplete" ? { stamp: e.occurredAt } : {}),
+      });
+    }
+  }
+  for (const item of others) {
+    if (item.subject.kind !== "client") continue;
+    touch(item.subject.id, item.subject.label, item.occurredAt || null).items.push({
+      id: item.id,
+      kind: "treatment_memory",
+      label: item.reason,
+      detail: detailWithoutRepeats(item.reason, item.detail),
+      href: item.action.href,
+      actionLabel: item.action.label,
+      // The reported clinical state when the source supplies one; its date only as a fallback.
+      stamp: item.state || item.occurredAt || null,
+    });
+  }
+  for (const u of input.unpaid ?? []) {
+    touch(u.clientId, u.clientName, u.endsAt).items.push({
+      id: `unpaid:${u.appointmentId}`,
+      kind: "unpaid",
+      label: "Appointment finished, payment outstanding",
+      detail: null,
+      href: `/calendar/${u.appointmentId}`,
+      actionLabel: "Open appointment",
+      balance: u.balance,
+    });
+  }
+  // Order: before-visit cards, then cards carrying a reaction/watch item (a clinical signal that must
+  // not sit behind the compact cut), then documentation-tier cards. Newest first within each rank.
+  const rank = (c: AttentionClient) =>
+    c.tier === "preparation" ? 0 : cardHasReaction(c) ? 1 : 2;
+  const clients = [...cards.values()].sort((a, b) => {
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    const byDate = newerFirst(a.occurredAt, b.occurredAt);
+    if (byDate !== 0) return byDate;
+    return a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0;
+  });
+  const idsByName = new Map<string, Set<string>>();
+  for (const c of clients) {
+    const key = c.clientName.trim().toLocaleLowerCase();
+    (idsByName.get(key) ?? idsByName.set(key, new Set()).get(key)!).add(c.clientId);
+  }
+  for (const c of clients) {
+    c.sharesNameWithAnotherClient =
+      (idsByName.get(c.clientName.trim().toLocaleLowerCase())?.size ?? 0) > 1;
+  }
+
   return {
+    clients,
+    studioItems,
+    itemCount:
+      clients.reduce((n, c) => n + c.items.length, 0) + studioItems.length,
     entries,
     issueCount: entries.reduce((n, e) => n + e.issues.length, 0),
-    others: input.todo.items.filter(
-      (i) =>
-        !GROUPED_TODO_KINDS.has(i.kind) &&
-        // Replaced by per-session entries when those were supplied.
-        !(input.recordDetailGaps && i.kind === "records_details"),
-    ),
+    others,
     unavailableChecks: [...(input.unavailableChecks ?? [])],
+    notAvailableToRole: input.notAvailableToRole === true,
     detailsWindow: input.detailsWindow ?? null,
     notReturnedCount:
       Math.max(0, (input.assistant.allTotal ?? allItems.length) - allItems.length) +
