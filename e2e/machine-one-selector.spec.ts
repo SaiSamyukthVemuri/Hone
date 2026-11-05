@@ -310,7 +310,7 @@ for (const device of [
       expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: s.senior });
     });
 
-    // Insurance J-1 / Privacy FG-1: a refused native pick gives back the values the pick had cleared.
+    // Insurance J-1 / Privacy FG-1 (K-1): a refused native pick on a saved area clears nothing, so the typed values are simply still there.
     test("a refused native pick on a saved area keeps the typed legacy values", async ({ page }) => {
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
@@ -333,8 +333,14 @@ for (const device of [
       expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: null });
     });
 
-    // Insurance K-2: a successful native pick and then a REFUSED one never bring the cleared legacy values back under the native machine.
-    test("native pick succeeds, then a refused clear: no legacy value is saved under the native machine", async ({ page }) => {
+    // Insurance K-2 / L-1 / L-2: a successful native pick, a REFUSED clear, a REAL save, then a REFUSED second native pick from a stale tab:
+    // no legacy value is ever submitted or stored under the native machine.
+    test("native pick succeeds, a clear is refused, the area is saved, a stale second pick is refused: nothing legacy is submitted or stored", async ({ page }) => {
+      const MARK = "9.87";
+      const posts: string[] = [];
+      page.on("request", (r) => {
+        if (r.method() === "POST" && r.headers()["next-action"]) posts.push(r.postData() ?? "");
+      });
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
       const sessionId = await startSession(page, s.clientId);
@@ -344,22 +350,46 @@ for (const device of [
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
       await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      const blockId = blocks[0]!.id;
+      const row = async () =>
+        (await sql<{ updated_at: string; minutes: string | null; energy: string | null; mode: string | null; unit: string | null }>(
+          `select updated_at::text as updated_at, minutes_performed::text as minutes, energy_level::text as energy, mode, studio_machine_id as unit from public.session_blocks where id=$1`,
+          [blockId],
+        ))[0]!;
       await page.reload();
-      await page.getByTestId(`edit-area-${blocks[0]!.id}`).click({ timeout: T });
+      await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
       await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
-      await page.getByLabel("Energy level (EL)").fill("4");
+      await page.getByLabel("Energy level (EL)").fill(MARK);
       // (1) the pick is written: legacy fields are cleared and hidden.
       await page.getByTestId("machine-select").selectOption(s.senior);
-      await expect.poll(async () => (await blocksOf(sessionId))[0]!.studio_machine_id, { timeout: T }).toBe(s.senior);
+      await expect.poll(async () => (await row()).unit, { timeout: T }).toBe(s.senior);
       await expect(page.getByText("Machine frequency")).toHaveCount(0);
-      // (2) a clear is refused.
+      // (2) a clear is refused: nothing moves.
       await page.getByTestId("machine-select").selectOption("");
       await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
       await expect(page.getByText("Machine frequency")).toHaveCount(0);
-      // (3) saving the area stores nothing legacy under the native machine.
-      await page.getByTestId("save-treatment-area").click({ timeout: T }).catch(() => undefined);
-      await page.waitForTimeout(2000);
-      expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: s.senior, energy_level: null, mode: null });
+      // (3) a REAL save: make the form dirty with a field that has nothing to do with the machine, press Save (not swallowed), and
+      // wait for it to be acknowledged before reading anything.
+      const before = await row();
+      await page.getByLabel("Minutes performed (optional)").fill("12");
+      await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "unsaved");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      // An acknowledged save closes the editor; the row's version moves and the minutes are stored.
+      await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+      await expect.poll(async () => (await row()).updated_at, { timeout: T }).not.toBe(before.updated_at);
+      expect(await row()).toMatchObject({ unit: s.senior, minutes: "12", energy: null, mode: null });
+      // (4) a second native pick from a STALE tab is refused: still Senior, still no legacy fields, nothing stored.
+      await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+      await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
+      await sql("update public.session_blocks set updated_at = now() + interval '1 second' where id=$1", [blockId]);
+      await page.getByTestId("machine-select").selectOption(s.junior);
+      await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
+      await expect(page.getByText("Machine frequency")).toHaveCount(0);
+      expect(await row()).toMatchObject({ unit: s.senior, minutes: "12", energy: null, mode: null });
+      // The typed legacy value was never part of anything submitted.
+      expect(posts.length, "server actions were observed").toBeGreaterThan(0);
+      expect(posts.some((b) => b.includes(blockId)), "the bodies are readable: the save's own request names the block").toBe(true);
+      for (const body of posts) expect(body).not.toContain(MARK);
     });
 
     // OPS/Photos R2: a client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.
