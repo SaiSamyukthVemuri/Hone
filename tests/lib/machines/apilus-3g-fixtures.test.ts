@@ -27,7 +27,8 @@ describe("native synthetic fixtures behind the existing gate", () => {
   it("offers fixtures only for an explicitly enabled local undeployed runtime", () => {
     const offered = catalogueForRuntime(local);
     for (const fixture of APILUS_3G_NATIVE_FIXTURES) expect(offered).toContain(fixture);
-    expect(offered.filter((p) => APILUS_3G_PROFILES.some((real) => real.profileId === p.profileId)).every((p) => p.availability === "blocked")).toBe(true);
+    // Real v1/v2 contracts stay blocked; only the first-slice v3 text/choice contracts are active.
+    expect(offered.filter((p) => APILUS_3G_PROFILES.some((real) => real.profileId === p.profileId) && p.version < 3).every((p) => p.availability === "blocked")).toBe(true);
   });
   it.each([
     { NODE_ENV: "test" as const }, { ...local, HONE_SYNTHETIC_MACHINE_PROFILE: undefined },

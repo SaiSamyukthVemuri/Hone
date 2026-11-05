@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0298_dashboard_attention_dismissals.sql",
-    "sha256": "131c72069ed75973bdd9518e1218ebbe6cf9360992bb0e90c65f880a5a360a83"
+    "count": 256,
+    "last": "0300_card_setup_legacy_event_order_bound.sql",
+    "sha256": "72865dd596abe1348d6223f251c9590550ad90023377b3ec27766be971f9388d"
   },
   "public": {
     "tables": [

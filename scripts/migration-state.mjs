@@ -202,6 +202,42 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
 }
 
 /**
+ * RESERVED-UNALLOCATED NUMBERS ABOVE THE HOSTED MAX. Several numbers between the hosted max and a pending migration can be held by
+ * work that is not in this tree yet (a claimed but unmerged migration). The canonical record declares them once:
+ *
+ *   "reserved_unallocated_above_hosted": ["0275", "0276"]
+ *
+ * meaning: those numbers are deliberately absent from the repo (not a hole), and are neither hosted nor available. A declaration is valid
+ * only when it is a strictly ascending list of four-digit strings, every one STRICTLY between the hosted max and the repo max, and none has
+ * a repo file (a number that has a file is pending, not reserved). Anything else is invalid, and the pending-suffix shape rule is not
+ * relaxed for it. Pure on its inputs.
+ */
+export function evaluateReserved({ numbers, hostedMaxNumber, repoMaxNumber, declared }) {
+  const invalid = [];
+  if (declared === undefined) return { reserved: [], invalid };
+  if (!Array.isArray(declared)) {
+    return { reserved: [], invalid: ["reserved_unallocated_above_hosted must be an array"] };
+  }
+  const present = new Set(numbers);
+  const reserved = [];
+  let prev = -1;
+  for (const v of declared) {
+    if (!(typeof v === "string" && /^\d{4}$/.test(v))) {
+      invalid.push(`${JSON.stringify(v)} is not a four-digit string`);
+      continue;
+    }
+    const n = Number.parseInt(v, 10);
+    if (n <= prev) invalid.push(`${v} is not strictly ascending (duplicate or out of order)`);
+    prev = Math.max(prev, n);
+    if (n <= hostedMaxNumber) invalid.push(`${v} is at or below the hosted max ${pad(hostedMaxNumber)}; use hosted_out_of_order for that`);
+    else if (n >= repoMaxNumber) invalid.push(`${v} is not below the repo max ${pad(repoMaxNumber)}, so it cannot be a hole under it`);
+    if (present.has(n)) invalid.push(`${v} is declared reserved but has a repo file (it is pending, not reserved)`);
+    reserved.push(v);
+  }
+  return { reserved: invalid.length ? [] : reserved, invalid };
+}
+
+/**
  * Repo migration files that hosted has NOT applied. Everything above the hosted
  * max, PLUS every version a declaration lists as unhosted_below that has a repo
  * file (F-OOO-1): a stage that put 0248 ahead of 0247 leaves 0247 BELOW the
@@ -249,6 +285,13 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     declared: record.hosted_out_of_order ?? [],
   });
 
+  const reservedEval = evaluateReserved({
+    numbers,
+    hostedMaxNumber,
+    repoMaxNumber,
+    declared: record.reserved_unallocated_above_hosted,
+  });
+
   return {
     repo_migration_max: pad(repoMaxNumber),
     repo_migration_max_number: repoMaxNumber,
@@ -270,6 +313,8 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     repo_equals_hosted: repoMaxNumber === hostedMaxNumber,
     pending_migrations: pending,
     hosted_out_of_order: record.hosted_out_of_order ?? [],
+    reserved_unallocated_above_hosted: reservedEval.reserved,
+    invalid_reserved_declarations: reservedEval.invalid,
     undeclared_gaps: outOfOrder.undeclared_gaps,
     invalid_out_of_order_declarations: outOfOrder.invalid_declarations,
     versions: entries.map((e) => e.version),
