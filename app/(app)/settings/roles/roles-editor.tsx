@@ -112,6 +112,13 @@ export function RolesEditor(props: RolesEditorProps) {
   const baseId = useId();
   // Bumped whenever a pending preview stops being wanted (tab switch, cancel), so a late response is ignored.
   const previewSeq = useRef(0);
+  // Codex P2 4476375641: a reset or adoption preview describes the SAVED state and its confirm replaces the page with the result, so it must not
+  // outlive an edit. Any edit drops it (and ignores a preview response still in flight); confirm also refuses while the draft is dirty.
+  function dropPreview() {
+    previewSeq.current += 1;
+    setPreview(null);
+    setPreviewConfirmed(false);
+  }
   // PY-3. The review is sequenced the same way: a late preview from an earlier click is ignored, and Save sends the edits that were
   // PREVIEWED (not whatever the draft has become), so the owner cannot confirm a consequence list that is not the one being saved.
   const reviewSeq = useRef(0);
@@ -146,6 +153,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    dropPreview();
     setDrafts((d) => ({ ...d, [role]: result.policy }));
   }
 
@@ -164,6 +172,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    dropPreview();
     setDrafts((d) => ({ ...d, [forRole]: result.policy }));
   }
 
@@ -307,6 +316,12 @@ export function RolesEditor(props: RolesEditorProps) {
 
   async function confirmPreview() {
     if (!preview) return;
+    // Defence in depth: the preview is dropped on every edit, but a confirm that still arrives with unsaved choices is refused, never run.
+    if (dirty) {
+      dropPreview();
+      feedback.failed("You have unsaved changes. Save or discard them first; resetting or adopting would replace them.");
+      return;
+    }
     feedback.saving();
     const boundVersion = preview.data.version;
     const result =
@@ -459,7 +474,7 @@ export function RolesEditor(props: RolesEditorProps) {
               sensitiveCount={preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0)}
               confirmed={previewConfirmed}
               onConfirmed={setPreviewConfirmed}
-              canConfirm={props.writable && reasonAcceptable(preview.kind, false, reason) && (preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0) === 0 || previewConfirmed)}
+              canConfirm={props.writable && !dirty && reasonAcceptable(preview.kind, false, reason) && (preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0) === 0 || previewConfirmed)}
               blockedReason={props.writable ? null : props.notWritableReason}
               reason={reason}
               onReason={setReason}

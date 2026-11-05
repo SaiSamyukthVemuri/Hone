@@ -62,3 +62,24 @@ describe("PY-6 'unexpected' does not claim nothing changed", () => {
 it("the page knows every code the core returns", () => {
   for (const c of ["keys_required", "preview_required", "stale_preview", "not_released"]) expect(ROLE_ERROR_CODES as readonly string[]).toContain(c);
 });
+
+describe("Codex P2 4476375641: a reset or adoption preview does not outlive an edit", () => {
+  it("every edit drops the preview first, so a late response is ignored too", () => {
+    const drop = fn("function dropPreview");
+    expect(drop).toContain("previewSeq.current += 1;");
+    expect(drop).toContain("setPreview(null);");
+    expect(drop).toContain("setPreviewConfirmed(false);");
+    // The two places that stage an edit into the draft each drop it before writing the draft.
+    for (const m of editor.matchAll(/dropPreview\(\);\n\s+setDrafts\(\(d\) => \(\{ \.\.\.d, \[(role|forRole)\]: result\.policy \}\)\);/g)) expect(m[0]).toBeTruthy();
+    expect([...editor.matchAll(/dropPreview\(\);\n\s+setDrafts\(\(d\) => \(\{ \.\.\.d, \[(role|forRole)\]: result\.policy \}\)\);/g)]).toHaveLength(2);
+  });
+  it("confirm refuses while the draft is dirty, before calling the core", () => {
+    const body = fn("async function confirmPreview");
+    expect(body.indexOf("if (dirty)")).toBeGreaterThan(-1);
+    expect(body.indexOf("if (dirty)")).toBeLessThan(body.indexOf("props.adopt("));
+    expect(body.indexOf("if (dirty)")).toBeLessThan(body.indexOf("props.reset("));
+  });
+  it("the confirm button is not enabled while the draft is dirty", () => {
+    expect(editor).toContain("canConfirm={props.writable && !dirty && reasonAcceptable(preview.kind, false, reason)");
+  });
+});

@@ -280,7 +280,8 @@ export default async function ClientCheatSheetPage({
         .then((d) => d.allowed),
     ),
   );
-  const priceReads = { includePrices: isOwner, includeSessions: recordsGate };
+  // The same clin.view_records decision also governs the clinical-record fields on the client row (skin type, legacy skin notes).
+  const priceReads = { includePrices: isOwner, includeSessions: recordsGate, clinicalFields: recordsGate };
   const data = await getClientById(studio.id, id, priceReads);
 
   if (!data) {
@@ -1135,7 +1136,7 @@ export default async function ClientCheatSheetPage({
                   Fitzpatrick · practitioner confirmed
                 </dt>
                 <dd className="font-medium">
-                  {fitzpatrickLabel(client.fitzpatrick_type)}
+                  {canViewRecords ? fitzpatrickLabel(client.fitzpatrick_type) : "Not available to your role"}
                 </dd>
               </div>
               <div className="flex items-baseline justify-between gap-3">
@@ -1191,7 +1192,7 @@ export default async function ClientCheatSheetPage({
                 helper copy both once did) sends a practitioner scrolling for
                 a form that is not here, and the legacy text is then the
                 nearest editable thing. */}
-            {client.skin_notes && (
+            {canViewRecords && client.skin_notes && (
               <div className="mt-4 border-t border-neutral-200 pt-3 dark:border-neutral-800">
                 <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
                   Legacy skin notes

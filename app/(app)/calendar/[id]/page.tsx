@@ -75,6 +75,7 @@ type ClientBriefing = Pick<
   | "fitzpatrick_type"
   | "skin_notes"
 >;
+// Without clin.view_records the two clinical-record columns are not selected, so they are absent at runtime.
 
 type Joined = Appointment & {
   client: ClientBriefing | null;
@@ -121,7 +122,7 @@ export default async function AppointmentDetailPage({
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
+      `*, client:clients(id, name, email, phone, pronouns, allergies${canViewRecords ? ", fitzpatrick_type, skin_notes" : ""}), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
     )
     .eq("id", id)
     .eq("studio_id", studio.id)
@@ -409,7 +410,8 @@ export default async function AppointmentDetailPage({
   }
 
   const activePlans = treatmentPlans.filter((p) => p.status === "active");
-  const fitzpatrick = fitzpatrickLabel(data.client?.fitzpatrick_type ?? null);
+  // Clinical-record fields on the client row: not selected without clin.view_records, so there is nothing to label.
+  const fitzpatrick = canViewRecords ? fitzpatrickLabel(data.client?.fitzpatrick_type ?? null) : null;
 
   return (
     <div className="flex flex-col gap-6">

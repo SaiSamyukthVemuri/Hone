@@ -496,6 +496,10 @@ export async function getClientById(
 
   if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) return null;
+  // Roles (clin.view_records, Codex P1 4476375636): skin type and legacy skin notes are clinical-record fields on the client row. A viewer
+  // the gate refuses gets them as null from here on, so no page, form or payload downstream can render or forward them.
+  const clinicalFieldsAllowed =
+    typeof options.clinicalFields === "function" ? await options.clinicalFields() : options.clinicalFields !== false;
 
   const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     includePrices
@@ -529,7 +533,7 @@ export async function getClientById(
     throw new Error(`Failed to load sessions: ${dbErrorCode(sessionsRes.error)}`);
 
   return {
-    client: client as Client,
+    client: (clinicalFieldsAllowed ? client : { ...client, fitzpatrick_type: null, skin_notes: null }) as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
     sessions: ((sessionsRes.data ?? []) as unknown as SessionWithEntries[]).map(
       stripDeletedEntries,

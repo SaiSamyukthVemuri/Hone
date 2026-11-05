@@ -56,6 +56,11 @@ export type ProfileReadOptions = {
   // A thunk is asked only AFTER the client has resolved for the studio (the Roles gate, clin.view_records): no gate and no session read happens
   // for a client the viewer must not serve.
   includeSessions?: boolean | (() => Promise<boolean>);
+  /**
+   * Skin type and legacy skin notes live on the client row but are part of the clinical record (clin.view_records, catalog DN-5). Absent or
+   * true: carried as before. false, or a thunk that answers false: both arrive as null, so no surface can render or pass them on.
+   */
+  clinicalFields?: boolean | (() => Promise<boolean>);
 };
 
 /** The services column list for a read: "*" unless the caller must not carry the price. */

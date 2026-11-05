@@ -68,6 +68,9 @@ type Props = {
   // HON-58: the probable-duplicate "save anyway" button. Create saves a new
   // record; the edit page saves the existing one and says so.
   saveAnywayLabel?: string;
+  // Skin type is part of the clinical record (clin.view_records). False: the field is not shown and is not sent, so a save can never
+  // overwrite a value the viewer could not see. Default true: every other caller is unchanged.
+  showSkinType?: boolean;
   action: (formData: FormData) => Promise<ClientFormActionResult | void>;
 };
 
@@ -96,6 +99,7 @@ export function ClientForm({
   cancelHref,
   hiddenFields,
   saveAnywayLabel = "Save as a new client anyway",
+  showSkinType = true,
   action,
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
@@ -120,6 +124,7 @@ export function ClientForm({
       return;
     }
     const fd = buildClientFormData(values, hiddenFields, confirmPossibleDuplicateIds);
+    if (!showSkinType) fd.delete("fitzpatrick_type");
     startTransition(async () => {
       try {
         const result = await action(fd);
@@ -211,6 +216,7 @@ export function ClientForm({
         />
       </label>
 
+      {showSkinType && (
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Fitzpatrick type</span>
         <select
@@ -226,6 +232,7 @@ export function ClientForm({
           ))}
         </select>
       </label>
+      )}
 
       {/* RETIRED EDITOR (Chloe Session 1A). `clients.skin_notes` used to be an
           editable textarea with quick-tap condition chips, and it visually

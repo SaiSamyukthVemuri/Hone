@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ClientForm } from "@/components/client-form";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClientAction } from "./actions";
 
 export default async function NewClientPage() {
@@ -8,7 +10,9 @@ export default async function NewClientPage() {
   // (SENTRY-IDENTITY-01): the shell layout's guard does not run on a soft
   // navigation, so without this a practitioner removed after the middleware
   // admitted the request would be handed the form instead of /no-access.
-  await requirePractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
+  // Skin type is part of the clinical record: the field is offered only to a viewer who may see records (clin.view_records).
+  const canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records")).allowed;
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8">
       <div>
@@ -26,6 +30,7 @@ export default async function NewClientPage() {
         submitLabel="Save client"
         pendingLabel="Saving…"
         cancelHref="/clients"
+        showSkinType={canViewRecords}
       />
     </div>
   );
