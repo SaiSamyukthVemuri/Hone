@@ -99,6 +99,8 @@ declare
   v_row jsonb;
   v_studio uuid;
   v_client uuid;
+  v_studio_new uuid;
+  v_client_new uuid;
 begin
   if auth.uid() is not null then
     -- Pricing is its own key (not_yet): a sessions UPDATE that changes only the price is not a chart edit.
@@ -106,7 +108,8 @@ begin
        and (to_jsonb(new) - 'price_paid_cents') = (to_jsonb(old) - 'price_paid_cents') then
       return new;
     end if;
-    -- An update or delete is authorised against the row AS IT STANDS (a move into another studio is refused by the lineage triggers).
+    -- An update or delete is authorised against the row AS IT STANDS; an UPDATE is ALSO authorised against the row AS IT WOULD BECOME (below), so a
+    -- row cannot be moved into a studio or client where the caller may not edit (Codex P1 on 4476158115: no lineage trigger refuses that move).
     v_row := case when tg_op = 'INSERT' then to_jsonb(new) else to_jsonb(old) end;
     select c.studio_id, c.client_id into v_studio, v_client from public.chart_scope(tg_table_name, v_row) c;
     if v_studio is null then
@@ -117,6 +120,18 @@ begin
       end if;
     elsif not public.has_studio_permission(v_studio, 'clin.edit_records', v_client) then
       raise exception 'edit_records_required' using errcode = '42501';
+    end if;
+    if tg_op = 'UPDATE' then
+      -- Destination scope. chart_scope reads the NEW row (its studio/client columns, or the parent it now points at), so every table is covered:
+      -- sessions, plans and notes by their own columns; blocks, areas and entries by the session or block they now belong to; stages by the plan.
+      -- A destination that cannot be resolved is refused (fail closed). An unchanged scope needs no second check.
+      select c.studio_id, c.client_id into v_studio_new, v_client_new from public.chart_scope(tg_table_name, to_jsonb(new)) c;
+      if v_studio_new is null then
+        raise exception 'edit_records_required' using errcode = '42501';
+      elsif (v_studio_new, v_client_new) is distinct from (v_studio, v_client)
+            and not public.has_studio_permission(v_studio_new, 'clin.edit_records', v_client_new) then
+        raise exception 'edit_records_required' using errcode = '42501';
+      end if;
     end if;
   end if;
   if tg_op = 'DELETE' then return old; end if;

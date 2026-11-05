@@ -829,6 +829,10 @@ declare
   v_result jsonb;
   v_any boolean := false;
   v_sens jsonb := '[]'::jsonb;
+  v_stored_before jsonb := '{}'::jsonb;
+  v_stored_removed jsonb := '{}'::jsonb;
+  v_audit_b jsonb := '{}'::jsonb;
+  v_audit_a jsonb := '{}'::jsonb;
 begin
   select * into a from public.perm_actor(p_studio);
   if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
@@ -851,6 +855,10 @@ begin
 
     foreach v_role in array v_roles loop
       v_before := v_before || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
+      -- The STORED choices are captured before anything is deleted (Codex P2 on reset): a stored denial on a key that is pending or
+      -- unreleased changes no effective scope, so the effective maps alone cannot show that it was removed.
+      v_stored_before := v_stored_before || jsonb_build_object(v_role,
+        (select coalesce(jsonb_object_agg(s.key, s.scope), '{}'::jsonb) from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_role));
     end loop;
 
     if p_mode = 'adopt' then
@@ -870,6 +878,23 @@ begin
       v_after := v_after || jsonb_build_object(v_role, public.perm_effective_map(p_studio, v_role));
       v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before -> v_role, v_after -> v_role));
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
+      -- Stored choices a reset removes, including those that change no effective scope (inert keys), for the preview.
+      v_stored_removed := v_stored_removed || jsonb_build_object(v_role,
+        case when p_mode = 'reset' then
+          (select coalesce(jsonb_agg(jsonb_build_object('key', k.key, 'stored', v_stored_before -> v_role ->> k.key,
+                                                        'effective_before', v_before -> v_role ->> k.key, 'effective_after', v_after -> v_role ->> k.key) order by k.key), '[]'::jsonb)
+             from jsonb_object_keys(v_stored_before -> v_role) as k(key))
+        else '[]'::jsonb end);
+      -- Audit images in the same per-key shape a save writes ({key: {stored, effective}}), for every key whose stored OR effective value changed.
+      with ks as (
+        select k.key from jsonb_object_keys(case when p_mode = 'reset' then v_stored_before -> v_role else '{}'::jsonb end) as k(key)
+        union
+        select e.key from jsonb_each_text(v_after -> v_role) e where (v_before -> v_role ->> e.key) is distinct from e.value
+      )
+      select v_audit_b || jsonb_build_object(v_role, coalesce((select jsonb_object_agg(ks.key, jsonb_build_object('stored', v_stored_before -> v_role ->> ks.key, 'effective', v_before -> v_role ->> ks.key)) from ks), '{}'::jsonb)),
+             v_audit_a || jsonb_build_object(v_role, coalesce((select jsonb_object_agg(ks.key, jsonb_build_object(
+                 'stored', case when p_mode = 'reset' then null else v_stored_before -> v_role ->> ks.key end, 'effective', v_after -> v_role ->> ks.key)) from ks), '{}'::jsonb))
+        into v_audit_b, v_audit_a;
       -- Same rule as save (Insurance PY-1): a SENSITIVE or financial key whose EFFECTIVE scope newly rises needs an explicit confirmation.
       select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
         from jsonb_each_text(v_after -> v_role) e
@@ -877,7 +902,7 @@ begin
        where pc.sensitive and public.perm_rank(e.value) > public.perm_rank(v_before -> v_role ->> e.key);
     end loop;
 
-    v_result := jsonb_build_object('ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected, 'reason_required', true, 'sensitive_keys', v_sens, 'confirmation_required', jsonb_array_length(v_sens) > 0);
+    v_result := jsonb_build_object('ok', true, 'version', v_version, 'changes', v_changes, 'affected', v_affected, 'reason_required', true, 'sensitive_keys', v_sens, 'confirmation_required', jsonb_array_length(v_sens) > 0, 'stored_removed', v_stored_removed);
     if p_mode = 'adopt' then
       v_result := v_result || jsonb_build_object(
         'fixed_narrowings',
@@ -897,7 +922,7 @@ begin
       insert into public.permission_audit (studio_id, actor_user_id, actor_membership_id, kind, role, before, after, reason, policy_version_before, policy_version_after)
       values (p_studio, auth.uid(), a.membership_id,
               case when p_mode = 'adopt' then 'defaults_adopted' else 'role_reset' end,
-              v_role, v_before -> v_role, v_after -> v_role, v_reason, v_version, v_new_version);
+              v_role, v_audit_b -> v_role, v_audit_a -> v_role, v_reason, v_version, v_new_version);
     end loop;
     return v_result || jsonb_build_object('new_version', v_new_version);
   exception
