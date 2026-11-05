@@ -58,7 +58,8 @@ export type ProfileReadOptions = {
   includeSessions?: boolean | (() => Promise<boolean>);
   /**
    * Skin type and legacy skin notes live on the client row but are part of the clinical record (clin.view_records, catalog DN-5). Absent or
-   * true: carried as before. false, or a thunk that answers false: both arrive as null, so no surface can render or pass them on.
+   * false (DENY by default), or a thunk that answers false: both arrive as null, so no surface can render or pass them on. Only true, or a thunk
+   * that answers true, carries them.
    */
   clinicalFields?: boolean | (() => Promise<boolean>);
 };

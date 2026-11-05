@@ -499,7 +499,7 @@ export async function getClientById(
   // Roles (clin.view_records, Codex P1 4476375636): skin type and legacy skin notes are clinical-record fields on the client row. A viewer
   // the gate refuses gets them as null from here on, so no page, form or payload downstream can render or forward them.
   const clinicalFieldsAllowed =
-    typeof options.clinicalFields === "function" ? await options.clinicalFields() : options.clinicalFields !== false;
+    typeof options.clinicalFields === "function" ? await options.clinicalFields() : options.clinicalFields === true;
 
   const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     includePrices
@@ -936,40 +936,8 @@ export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> 
   return (data ?? []) as ProbeLot[];
 }
 
-// Returns clients with a session that started today (in the studio's timezone, naive: server time).
-export async function getTodayRosterForStudio(studioId: string): Promise<
-  Array<{ client: Client; sessions: Session[] }>
-> {
-  const supabase = await createClient();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .select("*, client:clients(*)")
-    .eq("studio_id", studioId)
-    .is("deleted_at", null)
-    .gte("started_at", start.toISOString())
-    .lte("started_at", end.toISOString())
-    .order("started_at", { ascending: true });
-
-  if (error) throw new Error(`Failed to load today's roster: ${dbErrorCode(error)}`);
-
-  const grouped = new Map<string, { client: Client; sessions: Session[] }>();
-  for (const row of data ?? []) {
-    const { client, ...session } = row as Session & { client: Client };
-    if (!client) continue;
-    const existing = grouped.get(client.id);
-    if (existing) {
-      existing.sessions.push(session as Session);
-    } else {
-      grouped.set(client.id, { client, sessions: [session as Session] });
-    }
-  }
-  return Array.from(grouped.values());
-}
+// getTodayRosterForStudio (a wildcard client read with no caller) was deleted: a client row carries skin type and legacy skin notes, which
+// need the clin.view_records gate (Privacy EW-2). New client-row readers go through getClientById with `clinicalFields`.
 
 // Migration 0019: session block helpers.
 // 17.5b.2 will use these to render blocks in the UI. They exist now so the

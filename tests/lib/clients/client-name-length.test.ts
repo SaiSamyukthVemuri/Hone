@@ -25,10 +25,12 @@ describe("client name length (database limit 200)", () => {
 
   it("the client profile save refuses an over-long name only when the name CHANGES (a legacy over-length name does not block other edits)", () => {
     const src = read("app/(app)/clients/[id]/actions.ts");
-    expect(src).toMatch(/name !== stored\.name && name\.length > CLIENT_NAME_MAX\) return \{ ok: false, error: CLIENT_NAME_TOO_LONG \}/);
-    // and no unconditional check remains before the stored name is read
-    const before = src.slice(src.indexOf("export async function updateClientAction"), src.indexOf("name !== stored.name"));
-    expect(before).not.toMatch(/\n\s*if \(name\.length > CLIENT_NAME_MAX\)/);
+    // #1328: the profile baseline puts `name` in the patch only when it differs from what the page loaded, so the
+    // length rule keys off the patch (the same `is distinct from old.name` test the database trigger uses).
+    expect(src).toMatch(/typeof plan\.patch\.name === "string" && plan\.patch\.name\.length > CLIENT_NAME_MAX\) \{\s*return \{ ok: false, error: CLIENT_NAME_TOO_LONG \}/);
+    // and no unconditional check on the raw submitted name remains
+    const body = src.slice(src.indexOf("export async function updateClientAction"));
+    expect(body).not.toMatch(/\n\s*if \(name\.length > CLIENT_NAME_MAX\)/);
   });
 
   it("quick import turns an over-long name into a row error and never an insert", () => {

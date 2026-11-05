@@ -1,13 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   COMMON_ALLERGIES,
   FITZPATRICK_TYPES,
 } from "@/lib/constants";
 import { appendComment } from "@/lib/comments";
 import { buildClientFormData } from "@/lib/clients/client-form-payload";
+import {
+  SAVE_CONFIRM_TIMEOUT_MS,
+  SAVE_UNCONFIRMED_MESSAGE,
+  runClientSave,
+} from "@/lib/clients/client-form-submit";
+import {
+  adoptCurrent,
+  applyMineAllowed,
+  CONFLICT_REGION_TRUNCATED_NOTE,
+  CONFLICT_WHITESPACE_ONLY_NOTE,
+  CONFLICT_MORE_CHANGES_NOTE,
+  conflictOpenedKey,
+  scrollTopForMark,
+  previewFor,
+  type ConflictSide,
+  type ConflictSideName,
+  type ProfileBaseline,
+  type ProfileConflict,
+} from "@/lib/clients/profile-baseline";
 
 export type ClientFormValues = {
   name: string;
@@ -57,6 +76,8 @@ export type ClientFormActionResult = {
     clientName: string;
     archived: boolean;
   }>;
+  /** Edit only: a changed field was changed by someone else after this page loaded (current vs yours). */
+  conflicts?: ReadonlyArray<ProfileConflict>;
 };
 
 type Props = {
@@ -65,6 +86,8 @@ type Props = {
   pendingLabel: string;
   cancelHref: string;
   hiddenFields?: Record<string, string>;
+  /** Edit only: the stored values this page loaded. Sent back so only real changes are written, conditionally. */
+  baseline?: ProfileBaseline;
   // HON-58: the probable-duplicate "save anyway" button. Create saves a new
   // record; the edit page saves the existing one and says so.
   saveAnywayLabel?: string;
@@ -92,21 +115,129 @@ function blockEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>) {
   }
 }
 
+function ConflictSideText({
+  label,
+  side,
+  showToggle,
+  onOpened,
+}: {
+  label: string;
+  side: ConflictSide;
+  showToggle: boolean;
+  onOpened?: () => void;
+}) {
+  const boxRef = useRef<HTMLPreElement>(null);
+  const markRef = useRef<HTMLElement>(null);
+  const marked = side.clipped;
+  return (
+    <span className="inline-flex flex-col">
+      <span className="font-medium whitespace-pre-wrap [overflow-wrap:anywhere]">{side.text}</span>
+      {showToggle && (
+        <details
+          className="mt-1"
+          onToggle={(e) => {
+            if (!(e.currentTarget as HTMLDetailsElement).open) return;
+            onOpened?.();
+            // Bring the differing region into view inside the box (the box itself scrolls; the page does not).
+            const box = boxRef.current;
+            const mark = markRef.current;
+            if (box && mark) box.scrollTop = scrollTopForMark(mark.offsetTop);
+          }}
+        >
+          <summary className="cursor-pointer text-xs underline">Show full text ({label})</summary>
+          <pre
+            ref={boxRef}
+            className="relative mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-amber-300 bg-white p-2 text-xs [overflow-wrap:anywhere] dark:border-amber-800 dark:bg-neutral-950"
+          >
+            {marked ? (
+              <>
+                {side.full.slice(0, side.diffStart)}
+                <mark ref={markRef} className="bg-amber-200 dark:bg-amber-800">
+                  {side.full.slice(side.diffStart, side.diffEnd)}
+                </mark>
+                {side.full.slice(side.diffEnd)}
+              </>
+            ) : (
+              side.full
+            )}
+          </pre>
+        </details>
+      )}
+    </span>
+  );
+}
+
+function ConflictRow({ conflict, onOpened }: { conflict: ProfileConflict; onOpened: (key: string, side: ConflictSideName) => void }) {
+  const preview = previewFor(conflict);
+  const truncated = preview.current.regionTruncated || preview.yours.regionTruncated;
+  // Both sides get a toggle whenever either is clipped, so neither is a dead end.
+  const anyClipped = preview.current.clipped || preview.yours.clipped;
+  return (
+    <li className="flex flex-col gap-1 [overflow-wrap:anywhere]">
+      <span>
+        <span className="font-medium">{conflict.label}:</span>
+        {anyClipped ? " only the part that differs is shown." : ""}
+      </span>
+      {preview.whitespaceOnly && (
+        <span role="status" data-testid="conflict-whitespace-only" className="font-medium">
+          {CONFLICT_WHITESPACE_ONLY_NOTE}
+        </span>
+      )}
+      {anyClipped && preview.moreChanges && (
+        <span role="status" data-testid="conflict-more-changes" className="font-medium">
+          {CONFLICT_MORE_CHANGES_NOTE}
+        </span>
+      )}
+      {truncated && (
+        <span role="status" data-testid="conflict-region-truncated" className="font-medium">
+          {CONFLICT_REGION_TRUNCATED_NOTE}
+        </span>
+      )}
+      <span>
+        Now: <ConflictSideText label="now" side={preview.current} showToggle={anyClipped} onOpened={() => onOpened(conflict.key, "current")} />
+      </span>
+      <span>
+        Your change: <ConflictSideText label="your change" side={preview.yours} showToggle={anyClipped} onOpened={() => onOpened(conflict.key, "yours")} />
+      </span>
+    </li>
+  );
+}
+
 export function ClientForm({
   initialValues = EMPTY_CLIENT_FORM,
   submitLabel,
   pendingLabel,
   cancelHref,
   hiddenFields,
+  baseline: initialBaseline,
   saveAnywayLabel = "Save as a new client anyway",
   showSkinType = true,
   action,
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
+  // "Apply my change" stays a deliberate click and is only offered once the review panel has actually rendered.
+  const [panelRendered, setPanelRendered] = useState(false);
+  // Conflicts whose FULL current text the person has actually expanded (the details toggle opened).
+  const [openedFull, setOpenedFull] = useState<ReadonlySet<string>>(new Set());
   const [possibleDuplicates, setPossibleDuplicates] =
     useState<ClientFormActionResult["possibleDuplicates"]>(undefined);
   const [pending, startTransition] = useTransition();
+  const [baseline, setBaseline] = useState<ProfileBaseline | undefined>(initialBaseline);
+  const [conflicts, setConflicts] = useState<ReadonlyArray<ProfileConflict> | undefined>(undefined);
+  const [clearPreferred, setClearPreferred] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+
+  // Bounded pending state: if the save never reports back (offline, navigation never commits), leave a neutral
+  // line, never a success and never a false failure.
+  useEffect(() => {
+    if (!pending) {
+      setUnconfirmed(false);
+      return;
+    }
+    const t = setTimeout(() => setUnconfirmed(true), SAVE_CONFIRM_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [pending]);
 
   function update<K extends keyof ClientFormValues>(
     key: K,
@@ -117,32 +248,88 @@ export function ClientForm({
     setPossibleDuplicates(undefined);
   }
 
-  function submit(confirmPossibleDuplicateIds: ReadonlyArray<string> | null) {
+  function submit(
+    confirmPossibleDuplicateIds: ReadonlyArray<string> | null,
+    override?: { baseline?: ProfileBaseline },
+  ) {
     setError(null);
+    setConflicts(undefined);
     if (!values.name.trim()) {
       setError("Name is required.");
       return;
     }
-    const fd = buildClientFormData(values, hiddenFields, confirmPossibleDuplicateIds);
+    if (baseline && baseline.preferred_name && !values.preferred_name.trim() && !clearPreferred) {
+      setError("To remove the preferred name, press Remove preferred name. Otherwise type a name.");
+      return;
+    }
+    const sent = override?.baseline ?? baseline;
+    const fd = buildClientFormData(
+      values,
+      {
+        ...hiddenFields,
+        ...(sent ? { baseline: JSON.stringify(sent) } : {}),
+        ...(clearPreferred ? { clear_preferred_name: "yes" } : {}),
+      },
+      confirmPossibleDuplicateIds,
+    );
+    // A viewer without clin.view_records never saw the skin type: do not send it, so it cannot be blanked.
     if (!showSkinType) fd.delete("fitzpatrick_type");
     startTransition(async () => {
-      try {
-        const result = await action(fd);
-        if (result && result.ok === false) {
-          setError(result.error);
-          setPossibleDuplicates(result.possibleDuplicates);
-        }
-        // On success the action calls redirect() which throws a
-        // NEXT_REDIRECT internally; the framework handles that
-        // transparently and we never reach the post-await statements.
-      } catch (err) {
-        // Fallback for any unexpected throw. Server actions redact
-        // thrown errors in production, so the message here is rarely
-        // useful; surface a generic line and log for triage.
-        console.error("Client form action threw:", err);
+      const outcome = await runClientSave(action, fd);
+      if (outcome.kind === "redirect") {
+        // The server confirmed the save and asked the router to move on. Hand the redirect back to the
+        // router untouched: showing an error here is the false "could not save" flash.
+        throw outcome.redirect;
+      }
+      if (outcome.kind === "refused") {
+        setError(outcome.result.error);
+        setPossibleDuplicates(outcome.result.possibleDuplicates);
+        setConflicts(outcome.result.conflicts);
+        return;
+      }
+      if (outcome.kind === "failed") {
+        // Server actions redact thrown errors in production; a genuine failure shows a generic line and
+        // keeps every typed value.
         setError("Couldn't save the client. Please try again.");
       }
     });
+  }
+
+  // Review of a conflict: keep what is stored now for the conflicting fields, or apply my change on top of it.
+  useEffect(() => {
+    setPanelRendered(Boolean(conflicts && conflicts.length > 0));
+    setOpenedFull(new Set());
+  }, [conflicts]);
+
+  function keepCurrent() {
+    if (!conflicts || !baseline) return;
+    setValues((v) => {
+      const next = { ...v } as Record<string, string>;
+      for (const c of conflicts) next[c.key] = c.current;
+      return next as unknown as ClientFormValues;
+    });
+    setBaseline(adoptCurrent(baseline, conflicts));
+    setConflicts(undefined);
+    setError(null);
+  }
+  function applyMine() {
+    if (!conflicts || !baseline || !panelRendered || !applyMineAllowed(conflicts, openedFull)) return;
+    const next = adoptCurrent(baseline, conflicts);
+    setBaseline(next);
+    const guards = conflicts.filter((c) => c.guard);
+    if (guards.length > 0) {
+      // A field this page did not change moved underneath it (it feeds the duplicate check). Show the new
+      // value and let the staff member look again before saving; never write the old one back.
+      setValues((v) => {
+        const nv = { ...v } as Record<string, string>;
+        for (const c of guards) nv[c.key] = c.current;
+        return nv as unknown as ClientFormValues;
+      });
+      setConflicts(undefined);
+      setError("A field you did not change was updated by someone else. Check it, then press Save again.");
+      return;
+    }
+    submit(null, { baseline: next });
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -165,9 +352,25 @@ export function ClientForm({
         label="Preferred name"
         placeholder="Optional: the name the client goes by"
         value={values.preferred_name}
-        onChange={(v) => update("preferred_name", v)}
+        onChange={(v) => {
+          update("preferred_name", v);
+          if (v.trim()) setClearPreferred(false);
+        }}
         onKeyDown={blockEnterSubmit}
       />
+      {baseline?.preferred_name ? (
+        <button
+          type="button"
+          data-testid="remove-preferred-name"
+          onClick={() => {
+            update("preferred_name", "");
+            setClearPreferred(true);
+          }}
+          className="-mt-3 self-start text-sm text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+        >
+          Remove preferred name
+        </button>
+      ) : null}
 
       <div className="grid gap-5 md:grid-cols-2">
         <Field
@@ -295,8 +498,54 @@ export function ClientForm({
         </div>
       </fieldset>
 
-      {error && !possibleDuplicates?.length && (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      {error && !possibleDuplicates?.length && !conflicts?.length && (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      )}
+      {conflicts && conflicts.length > 0 && (
+        <div
+          role="alert"
+          data-testid="client-save-conflict"
+          className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <p>{error}</p>
+          <ul className="flex flex-col gap-1">
+            {conflicts.map((c) => (
+              <ConflictRow
+                key={c.key}
+                conflict={c}
+                onOpened={(key, side) =>
+                  setOpenedFull((prev) => {
+                    const k = conflictOpenedKey(key, side);
+                    return prev.has(k) ? prev : new Set(prev).add(k);
+                  })
+                }
+              />
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={keepCurrent}
+              className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+            >
+              Keep what is saved now
+            </button>
+            <button
+              type="button"
+              disabled={pending || !panelRendered || !applyMineAllowed(conflicts, openedFull)}
+              onClick={applyMine}
+              className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+            >
+              Apply my change
+            </button>
+          </div>
+        </div>
+      )}
+      {pending && unconfirmed && (
+        <p role="status" data-testid="client-save-unconfirmed" className="text-sm text-neutral-600 dark:text-neutral-400">
+          {SAVE_UNCONFIRMED_MESSAGE}
+        </p>
       )}
       {error && possibleDuplicates && possibleDuplicates.length > 0 && (
         <div

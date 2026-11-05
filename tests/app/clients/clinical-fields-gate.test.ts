@@ -11,6 +11,15 @@ import { ClientForm } from "@/components/client-form";
 // goals are part of the clinical record.
 
 const read = (p: string) => readFileSync(p, "utf8");
+const walkFiles = (dir: string, out: string[] = []): string[] => {
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === ".next") continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkFiles(p, out);
+    else if (/\.(ts|tsx)$/.test(name)) out.push(p);
+  }
+  return out;
+};
 
 vi.mock("@/lib/permissions/require-permission", () => ({
   requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
@@ -40,13 +49,22 @@ describe("getClientById: the clinical-record fields follow the gate", () => {
     expect(data?.client.skin_notes).toBeNull();
     expect(data?.client.name).toBe("Synthetic Client");
   });
-  it("NEGATIVE CONTROL: an allowed gate, or no gate, carries both unchanged", async () => {
+  it("NEGATIVE CONTROL: an allowed gate carries both unchanged", async () => {
     const { getClientById } = await import("@/lib/supabase/queries");
     const allowed = await getClientById("s1", "c1", { includePrices: false, includeSessions: false, clinicalFields: async () => true });
     expect(allowed?.client.fitzpatrick_type).toBe(3);
     expect(allowed?.client.skin_notes).toBe("SYNTHETIC-SKIN-NOTE");
-    const ungated = await getClientById("s1", "c1", { includePrices: false, includeSessions: false });
-    expect(ungated?.client.fitzpatrick_type).toBe(3);
+    const plain = await getClientById("s1", "c1", { includePrices: false, includeSessions: false, clinicalFields: true });
+    expect(plain?.client.fitzpatrick_type).toBe(3);
+  });
+  it("DENY by default (Insurance S-1): a caller that does not pass clinicalFields gets both as null", async () => {
+    const { getClientById } = await import("@/lib/supabase/queries");
+    const none = await getClientById("s1", "c1", { includePrices: false, includeSessions: false });
+    expect(none?.client.fitzpatrick_type).toBeNull();
+    expect(none?.client.skin_notes).toBeNull();
+    const bare = await getClientById("s1", "c1");
+    expect(bare?.client.fitzpatrick_type).toBeNull();
+    expect(bare?.client.skin_notes).toBeNull();
   });
 });
 
@@ -94,14 +112,39 @@ describe("the edit page and form", () => {
 });
 
 describe("the write path cannot blank or set a value the viewer may not see", () => {
-  it("edit: written only when submitted AND clin.view_records allows", () => {
+  it("edit: the field is dropped from the patch and the compare-and-write condition unless clin.view_records allows", () => {
     const SRC = read("app/(app)/clients/[id]/actions.ts");
-    expect(SRC).toContain('formData.has("fitzpatrick_type") && (await requirePermission(supabase, studio.id, "clin.view_records", { client: clientId })).allowed');
-    expect(SRC).toContain('...(skinTypeWritable ? { fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")) } : {})');
+    expect(SRC).toContain('if ("fitzpatrick_type" in plan.patch) {');
+    expect(SRC).toContain('"clin.view_records", { client: clientId })).allowed');
+    expect(SRC).toContain("delete plan.patch.fitzpatrick_type;");
+    expect(SRC).toContain('plan.conditions.findIndex((c) => c.key === "fitzpatrick_type")');
+    // the drop happens before the conditional write and before the conflict echo, so a refused viewer's conflict panel never carries it
+    expect(SRC.indexOf("delete plan.patch.fitzpatrick_type;")).toBeLessThan(SRC.indexOf('supabase.rpc("update_client_profile_if_unchanged"'));
+    // a changed-fields-only plan never selects a key the form did not submit, so a form that omits the field cannot blank it
+    expect(read("lib/clients/profile-baseline.ts")).toContain("if (!formData.has(key)) continue;");
   });
   it("create: skin type is not written for a viewer who may not see records", () => {
     const SRC = read("app/(app)/clients/new/actions.ts");
     expect(SRC).toContain("fitzpatrick_type: skinTypeWritable ? nullableInt(formData.get(\"fitzpatrick_type\")) : null");
+  });
+});
+
+describe("source guard: every client-row reader is gated (Insurance S-1, Privacy EW-2)", () => {
+  const QUERIES = read("lib/supabase/queries.ts");
+  it("getClientById defaults to DENY", () => {
+    expect(QUERIES).toContain("options.clinicalFields === true");
+    expect(QUERIES).not.toContain("options.clinicalFields !== false");
+  });
+  it("the wildcard roster reader with no caller stays deleted", () => {
+    expect(QUERIES).not.toContain("export async function getTodayRosterForStudio");
+  });
+  it("no wildcard client embed or client select(\"*\") exists outside getClientById", () => {
+    const hits = ["app", "lib", "components"]
+      .flatMap((d) => walkFiles(d))
+      .filter((f) => /client:clients\(\*\)|clients\(\*\)/.test(read(f)));
+    expect(hits).toEqual([]);
+    const beforeGetClientById = QUERIES.slice(0, QUERIES.indexOf("export async function getClientById"));
+    expect(beforeGetClientById).not.toMatch(/from\("clients"\)[\s\S]{0,80}select\("\*"\)/);
   });
 });
 
@@ -124,19 +167,11 @@ describe("no unreviewed surface reads or renders the two columns", () => {
     "app/(app)/clients/[id]/intake/page.tsx", // self-reported intake estimate: governed by clin.view_intake
     "lib/search/navigation-registry.ts", // a search keyword, no data
     "lib/supabase/queries.ts", // the gate itself
+    "lib/clients/profile-baseline.ts", // the edit form's compare baseline: changed fields only, and the action drops the key without the gate
   ]);
-  const walk = (dir: string, out: string[] = []): string[] => {
-    for (const name of readdirSync(dir)) {
-      if (name === "node_modules" || name === ".next") continue;
-      const p = join(dir, name);
-      if (statSync(p).isDirectory()) walk(p, out);
-      else if (/\.(ts|tsx)$/.test(name)) out.push(p);
-    }
-    return out;
-  };
   it("lists every file naming skin_notes or fitzpatrick_type", () => {
     const hits = ["app", "lib", "components"]
-      .flatMap((d) => walk(d))
+      .flatMap((d) => walkFiles(d))
       .filter((f) => /skin_notes|fitzpatrick_type/.test(read(f)))
       .sort();
     expect(hits.filter((f) => !REVIEWED.has(f))).toEqual([]);

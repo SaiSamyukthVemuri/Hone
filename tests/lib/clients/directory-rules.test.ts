@@ -65,7 +65,23 @@ describe("directory rules: roles default-deny (S7)", () => {
     expect(projectRowForRole("receptionist", c)).toEqual(projectReceptionistRow(c));
     expect(projectRowForRole("who-knows", c)).toEqual(projectReceptionistRow(c));
     expect(projectRowForRole(undefined, c)).toEqual(projectReceptionistRow(c));
-    // The receptionist fallback is the stored name, labelled.
-    expect(projectRowForRole(undefined, base())).toMatchObject({ displayName: "Stored Name", nameOnFile: true });
+    // The receptionist fallback is the literal label, never the stored name (Sam, 2 Nov).
+    expect(projectRowForRole(undefined, base())).toMatchObject({ displayName: "Name on file", nameOnFile: true });
+    expect(JSON.stringify(projectRowForRole(undefined, base()))).not.toContain("Stored Name");
+  });
+});
+
+describe("directory rules: the receptionist never sees the stored name (identity readiness, R3)", () => {
+  it("shows the preferred name, else the literal Name on file; the stored name appears nowhere in the row", () => {
+    const withPreferred = projectReceptionistRow(base({ name: "Legal Looking Name", preferred_name: "Janie" }));
+    expect(withPreferred).toMatchObject({ displayName: "Janie", nameOnFile: false });
+    const without = projectReceptionistRow(base({ name: "Legal Looking Name", preferred_name: null }));
+    expect(without).toMatchObject({ displayName: "Name on file", nameOnFile: true });
+    for (const row of [withPreferred, without]) expect(JSON.stringify(row)).not.toContain("Legal Looking");
+  });
+  it("staff still see the stored name captioned Name on file", () => {
+    expect(projectStaffRow(base({ name: "Legal Looking Name", preferred_name: null }))).toMatchObject({
+      displayName: "Legal Looking Name", nameOnFile: true,
+    });
   });
 });
