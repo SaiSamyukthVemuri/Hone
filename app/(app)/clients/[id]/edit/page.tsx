@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase/queries";
 import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
+import { baselineFromRow } from "@/lib/clients/profile-baseline";
 import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 import { readLegalIdentity } from "@/lib/clients/legal-identity";
 import { LegalIdentityForm } from "@/components/legal-identity-form";
@@ -67,6 +68,7 @@ export default async function EditClientPage({
         pendingLabel="Saving…"
         cancelHref={`/clients/${id}`}
         hiddenFields={{ client_id: id }}
+        baseline={baselineFromRow(c as unknown as Record<string, unknown>)}
         saveAnywayLabel="Save changes anyway"
       />
 
@@ -78,6 +80,15 @@ export default async function EditClientPage({
             middle: legal.value?.legal_middle_name ?? "",
             family: legal.value?.legal_family_name ?? "",
           }}
+          stored={
+            legal.value
+              ? {
+                  given: legal.value.legal_given_name ?? null,
+                  middle: legal.value.legal_middle_name ?? null,
+                  family: legal.value.legal_family_name ?? null,
+                }
+              : null
+          }
         />
       ) : (
         <p className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-neutral-800">

@@ -1,5 +1,6 @@
 "use server";
 
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -539,6 +540,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!slug || !serviceId || !startsAtRaw)
     return { ok: false, error: "Missing booking details." };
   if (!name) return { ok: false, error: "Your name is required." };
+  if (name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
   if (!EMAIL_RE.test(email))
     return { ok: false, error: "Enter a valid email address." };
   // Phone required for new public booking submissions. The existing-

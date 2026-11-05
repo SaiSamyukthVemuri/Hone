@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 256,
+    "count": 257,
     "last": "0301_session_block_machine_identity.sql",
-    "sha256": "b8d07dadbdc09975adef780fe076eb1d83a6edb0f3033e923a492f3bd7578c30"
+    "sha256": "65fa550f78846f307935186a3b833f8328036c8f2296193538eb0f03a5efebbd"
   },
   "public": {
     "tables": [
@@ -24,6 +24,7 @@
       "client_budget_context",
       "client_clinical_notes",
       "client_consent_signatures",
+      "client_identity_audit",
       "client_intake_forms",
       "client_legal_identities",
       "client_legal_name_access_audit",
@@ -216,8 +217,10 @@
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
       "client_legal_identities_guard",
+      "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
+      "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
       "close_delivery_concern",
@@ -554,6 +557,7 @@
       "treatment_images_clear_stage_without_session",
       "treatment_plan_stages_set_studio_id",
       "update_block_with_entry",
+      "update_client_profile_if_unchanged",
       "update_own_practitioner_profile",
       "update_recurring_break_rule_and_rematerialize",
       "update_session_block_with_areas",

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -423,6 +424,44 @@ describe("0301: the block version token is checked and returned in the write tra
     const replay = await submit(studio, sessionId, blockId, machine, "token-replay-0001", "2001-01-01 00:00:00+00");
     expect(replay.reused).toBe(true);
     expect(replay.block_updated_at).toBeUndefined();
+  });
+});
+
+// Insurance Z-1: record_treatment_setup_submission takes FOR SHARE on the block and the identity write takes
+// FOR UPDATE later in the same transaction, so two concurrent submissions on one block could each hold SHARE
+// and wait on the other's upgrade (deadlock 40P01). The wrapper now takes FOR UPDATE first.
+describe("0301: two concurrent submissions on one block do not deadlock (Insurance Z-1)", () => {
+  const ROUNDS = 12;
+  it("both submissions commit, in either order, round after round", async () => {
+    const studio = await seedStudio("concurrent-submit");
+    const machine = await register(studio);
+    const withChannel = (channel: number) => [
+      {
+        new_group_ref: `g${channel}`,
+        channels: [channel],
+        readings: [{ field_key: "current", value: String(channel), observation_source: "practitioner-entered" }],
+      },
+    ];
+    for (let round = 0; round < ROUNDS; round++) {
+      const { sessionId, blockId } = await seedSession(studio);
+      const go = (channel: number) =>
+        asUser(studio.userId, (q) =>
+          q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7) as r`, [
+            blockId, machine, "galvanic", `concurrent-${round}-${channel}`, JSON.stringify(withChannel(channel)), sessionId, studio.clientId,
+          ]),
+        );
+      const settled = await Promise.allSettled([go(1), go(2)]);
+      const failed = settled.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+      expect(failed.map((f) => String(f.reason?.message ?? f.reason)), `round ${round}`).toEqual([]);
+      expect(await readings(blockId)).toBe(2);
+    }
+  }, 120_000);
+
+  it("the wrapper takes the block lock before the inner command (source order)", () => {
+    const sql = readFileSync("supabase/migrations/0301_session_block_machine_identity.sql", "utf8");
+    const body = sql.slice(sql.indexOf("function public.record_setup_submission_with_identity"));
+    expect(body.indexOf("for update;")).toBeGreaterThan(-1);
+    expect(body.indexOf("for update;")).toBeLessThan(body.indexOf("public.record_treatment_setup_submission("));
   });
 });
 

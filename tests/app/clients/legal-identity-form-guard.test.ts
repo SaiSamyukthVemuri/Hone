@@ -17,7 +17,7 @@ describe("LegalIdentityForm unsaved-change guard", () => {
     expect(src).toMatch(/\}, \[dirty\]\)/);
   });
   it("a successful save clears the dirty state; a failed one does not", () => {
-    expect(src).toMatch(/if \(result\.ok\) setSaved\(values\)/);
+    expect(src).toMatch(/setSaved\(result\.value\)/);
   });
   it("shows a visible notice while dirty and not saving", () => {
     expect(src).toMatch(/\{dirty && !pending && \(\s*<span data-testid="legal-name-unsaved"/);

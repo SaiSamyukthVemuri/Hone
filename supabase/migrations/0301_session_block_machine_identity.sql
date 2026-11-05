@@ -292,6 +292,21 @@ declare
   v_studio uuid;
   v_new timestamptz;
 begin
+  -- THE BLOCK IS LOCKED FOR UPDATE FIRST, HERE, AND ONLY HERE (Insurance Z-1).
+  -- record_treatment_setup_submission takes FOR SHARE on the block and
+  -- apply_block_machine_identity takes FOR UPDATE later in the same transaction;
+  -- two concurrent submissions on one block would each hold SHARE and wait on the
+  -- other's UPGRADE, which is a deadlock. Taking the stronger lock before either
+  -- makes the second submission wait for the first to finish instead. Scoped to
+  -- the caller's own studio and session AFTER the writability check, so an id from
+  -- another studio is never locked.
+  v_studio := public.assert_session_writable(p_session_id, p_client_id);
+  perform 1
+    from public.session_blocks b
+   where b.id = p_block_id
+     and b.studio_id = v_studio
+     and b.session_id = p_session_id
+     for update;
   v_result := public.record_treatment_setup_submission(
     p_block_id => p_block_id,
     p_studio_machine_id => p_studio_machine_id,
@@ -305,7 +320,6 @@ begin
   -- replay after the area moved to another unit must not put the earlier unit
   -- back (Privacy F-2). Same rule as the create wrapper above.
   if coalesce((v_result->>'reused')::boolean, false) is not true then
-    v_studio := public.assert_session_writable(p_session_id, p_client_id);
     -- The held version is checked here, in this transaction: a mismatch raises
     -- and rolls back the readings just written too. The new updated_at comes back
     -- in the result as block_updated_at. A REPLAY returns none and checks nothing

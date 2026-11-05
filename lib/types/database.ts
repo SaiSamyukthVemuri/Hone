@@ -815,6 +815,10 @@ export type Client = {
   // Migration 0258 (HON-58): the name the client goes by. Optional here so a row
   // read before the migration (or a fixture) need not carry it; null/absent means none.
   preferred_name?: string | null;
+  // Migration 0281: per-concept revisions stamped by the clients_identity_guard trigger (never written by the app). Optional
+  // so a row read before the migration (or a fixture) need not carry them.
+  name_revision?: number;
+  preferred_name_revision?: number;
   pronouns: string | null;
   date_of_birth: string | null;
   phone: string | null;
