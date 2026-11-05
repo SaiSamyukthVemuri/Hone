@@ -3,7 +3,7 @@
   "migrations": {
     "count": 255,
     "last": "0289_roles_edit_record_protections.sql",
-    "sha256": "48553f0f6a939b604692cba4aea791d35734b33db02e2af5b85a351a4f739a0d"
+    "sha256": "990bdd4aa639d8f37c66580a437c735b2afbf0df8ce5cbde7b8a79799a824eb6"
   },
   "public": {
     "tables": [
@@ -202,6 +202,7 @@
       "capture_treatment_reading_change",
       "change_staff_role",
       "chart_attribution_guard",
+      "chart_lineage_guard",
       "chart_revision_image",
       "chart_revision_write",
       "chart_revisions_append_only",

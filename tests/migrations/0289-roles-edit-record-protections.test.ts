@@ -44,8 +44,7 @@ describe("0289 edit-record protections: shape", () => {
   it("refuses a stage or area whose studio differs from its parent's, before the edit-key guard runs", () => {
     for (const t of ["treatment_plan_stages", "session_block_areas"])
       expect(code).toContain(`create trigger zz_chart_lineage_guard_trg before insert or update on public.${t}`);
-    for (const t of ["treatment_plans", "session_blocks"])
-      expect(code).toContain(`create trigger zz_chart_lineage_guard_trg before update of studio_id on public.${t}`);
+    expect(code).toContain("create trigger zz_chart_lineage_guard_trg before update of studio_id on public.treatment_plans");
     expect("zz_chart_lineage_guard_trg" < "zz_chart_write_guard_trg").toBe(true); // BEFORE triggers fire in name order
     expect(down).toContain("zz_chart_lineage_guard_trg");
   });

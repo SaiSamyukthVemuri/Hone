@@ -158,9 +158,6 @@ describe("0289: every covered table, parity (Privacy AI7)", () => {
     await adminQuery("insert into public.laser_entries (id, session_id, zone) values ($1,$2,'upper lip')", [ids.laser_entries, laserSession]);
     ids.treatment_plans = randomUUID();
     await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan',4)", [ids.treatment_plans, c.s.clientId, c.s.studioId]);
-    // a plan WITHOUT stages, for the plan-move case (a plan that has stages cannot change studio at all: see the lineage tests)
-    ids.treatment_plans_bare = randomUUID();
-    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic bare plan',4)", [ids.treatment_plans_bare, a.s.clientId, a.s.studioId]);
     ids.treatment_plan_stages = randomUUID();
     await adminQuery("insert into public.treatment_plan_stages (id, plan_id, studio_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,$2,$3,'weekly',30,4,'weeks')", [ids.treatment_plan_stages, ids.treatment_plans, c.s.studioId]);
     ids.client_clinical_notes = randomUUID();
@@ -297,6 +294,9 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
     await adminQuery("insert into public.laser_entries (id, session_id, zone) values ($1,$2,'upper lip')", [ids.laser_entries, laserSession]);
     ids.treatment_plans = randomUUID();
     await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan',4)", [ids.treatment_plans, a.s.clientId, a.s.studioId]);
+    // a plan WITHOUT stages, for the plan-move case (a plan that has stages cannot change studio at all: see the lineage tests)
+    ids.treatment_plans_bare = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic bare plan',4)", [ids.treatment_plans_bare, a.s.clientId, a.s.studioId]);
     ids.treatment_plan_stages = randomUUID();
     await adminQuery("insert into public.treatment_plan_stages (id, plan_id, studio_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,$2,$3,'weekly',30,4,'weeks')", [ids.treatment_plan_stages, ids.treatment_plans, a.s.studioId]);
     return { ids, laserSession };
@@ -340,7 +340,7 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
   // caller, on INSERT and UPDATE, whatever the edit key says.
   const LINEAGE = { code: "23514", message: expect.stringContaining("chart_lineage_mismatch") };
   for (const editB of ["off", "studio"] as const) {
-    it(`LINEAGE (edit ${editB === "off" ? "OFF" : "ON"} in the destination): a stage or an area moved by its studio_id ALONE is refused, as the table owner and as the API role`, async () => {
+    it(`LINEAGE (edit ${editB === "off" ? "OFF" : "ON"} in the destination): a stage moved by its studio_id ALONE is refused; an area is kept in its block's studio`, async () => {
       const x = await twoStudios(`e89ln${editB === "off" ? "0" : "1"}`, editB);
       const { ids } = await rowsInA(x.a);
       await expect(
@@ -349,26 +349,20 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
       await expect(
         asUser(x.a.m.userId, (q) => q("update public.treatment_plan_stages set studio_id=$2 where id=$1", [ids.treatment_plan_stages, x.b.studioId])),
       ).rejects.toMatchObject(LINEAGE);
-      await expect(
-        asMember(x.a.m.userId, async (q) => { await q("update public.session_block_areas set studio_id=$2 where id=$1", [ids.session_block_areas, x.b.studioId]); }),
-      ).rejects.toMatchObject(LINEAGE);
-      await expect(
-        asUser(x.a.m.userId, (q) => q("update public.session_block_areas set studio_id=$2 where id=$1", [ids.session_block_areas, x.b.studioId])),
-      ).rejects.toMatchObject(LINEAGE);
+      // An area is protected twice: 0159 re-derives its studio on `update of studio_id` (so the write is corrected to the block's studio rather than refused),
+      // and the lineage guard refuses any mismatch that gets past it. Either way the area cannot end up in another studio than its block.
+      await asMember(x.a.m.userId, async (q) => { await q("update public.session_block_areas set studio_id=$2 where id=$1", [ids.session_block_areas, x.b.studioId]); });
       const st = (await adminQuery("select studio_id, plan_id from public.treatment_plan_stages where id=$1", [ids.treatment_plan_stages])).rows[0];
       expect(st).toMatchObject({ studio_id: x.a.s.studioId, plan_id: ids.treatment_plans });
       const ar = (await adminQuery("select studio_id, session_block_id from public.session_block_areas where id=$1", [ids.session_block_areas])).rows[0];
       expect(ar).toMatchObject({ studio_id: x.a.s.studioId, session_block_id: x.a.blockId });
     });
 
-    it(`LINEAGE (edit ${editB === "off" ? "OFF" : "ON"}): the parent side, a plan that has stages or a block that has areas cannot change studio and leave them behind`, async () => {
+    it(`LINEAGE (edit ${editB === "off" ? "OFF" : "ON"}): the parent side, a plan that has stages cannot change studio and leave them behind (a block is already fixed by 0160)`, async () => {
       const x = await twoStudios(`e89lp${editB === "off" ? "0" : "1"}`, editB);
       const { ids } = await rowsInA(x.a);
       await expect(
         asMember(x.a.m.userId, async (q) => { await q("update public.treatment_plans set studio_id=$2, client_id=$3 where id=$1", [ids.treatment_plans, x.b.studioId, x.b.clientId]); }),
-      ).rejects.toMatchObject(LINEAGE);
-      await expect(
-        asMember(x.a.m.userId, async (q) => { await q("update public.session_blocks set studio_id=$2 where id=$1", [x.a.blockId, x.b.studioId]); }),
       ).rejects.toMatchObject(LINEAGE);
       expect((await adminQuery("select studio_id from public.treatment_plans where id=$1", [ids.treatment_plans])).rows[0].studio_id).toBe(x.a.s.studioId);
     });
@@ -389,7 +383,7 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
     await asUser(x.a.m.userId, (q) => q("insert into public.treatment_plan_stages (id, plan_id, studio_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,$2,$3,'weekly',30,4,'weeks')", [sid, ids.treatment_plans, x.b.studioId]));
     expect((await adminQuery("select studio_id from public.treatment_plan_stages where id=$1", [sid])).rows[0].studio_id).toBe(x.a.s.studioId);
     const aid = randomUUID();
-    await asUser(x.a.m.userId, (q) => q("insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order) values ($1,$2,$3,'Lip','right',1)", [aid, x.b.studioId, x.a.blockId]));
+    await asMember(x.a.m.userId, async (q) => { await q("insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order) values ($1,$2,$3,'Lip','right',1)", [aid, x.b.studioId, x.a.blockId]); }); // areas: direct DML is revoked from the API roles (0169)
     expect((await adminQuery("select studio_id from public.session_block_areas where id=$1", [aid])).rows[0].studio_id).toBe(x.a.s.studioId);
   });
 
