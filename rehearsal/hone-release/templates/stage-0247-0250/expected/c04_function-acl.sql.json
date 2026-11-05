@@ -1,0 +1,182 @@
+[
+ {
+  "fn": "public.authorize_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,jsonb)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.authorize_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,jsonb)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.authorize_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,jsonb)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.authorize_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,jsonb)",
+  "ok": true,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.claim_email_send(uuid,text)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.claim_email_send(uuid,text)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.claim_email_send(uuid,text)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.claim_email_send(uuid,text)",
+  "ok": false,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.claim_session_payment_charge_attempt(uuid,uuid,text)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.claim_session_payment_charge_attempt(uuid,uuid,text)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.claim_session_payment_charge_attempt(uuid,uuid,text)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.claim_session_payment_charge_attempt(uuid,uuid,text)",
+  "ok": true,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.inspect_appointment_email_operation(uuid,uuid,text)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.inspect_appointment_email_operation(uuid,uuid,text)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.inspect_appointment_email_operation(uuid,uuid,text)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.inspect_appointment_email_operation(uuid,uuid,text)",
+  "ok": true,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.observe_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,text,text,jsonb)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.observe_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,text,text,jsonb)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.observe_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,text,text,jsonb)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.observe_appointment_email_operation(uuid,uuid,jsonb,text,uuid,text,text,text,text,jsonb)",
+  "ok": true,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.prepare_appointment_email_operation(uuid,uuid,text,text,jsonb)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.prepare_appointment_email_operation(uuid,uuid,text,text,jsonb)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.prepare_appointment_email_operation(uuid,uuid,text,text,jsonb)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.prepare_appointment_email_operation(uuid,uuid,text,text,jsonb)",
+  "ok": true,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.record_email_attempt(uuid,text,boolean)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.record_email_attempt(uuid,text,boolean)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.record_email_attempt(uuid,text,boolean)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.record_email_attempt(uuid,text,boolean)",
+  "ok": true,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.record_email_result(uuid,text,boolean)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.record_email_result(uuid,text,boolean)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.record_email_result(uuid,text,boolean)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.record_email_result(uuid,text,boolean)",
+  "ok": false,
+  "r": "service_role"
+ },
+ {
+  "fn": "public.retire_unattempted_appointment_email_operation(uuid,uuid)",
+  "ok": false,
+  "r": "anon"
+ },
+ {
+  "fn": "public.retire_unattempted_appointment_email_operation(uuid,uuid)",
+  "ok": false,
+  "r": "authenticated"
+ },
+ {
+  "fn": "public.retire_unattempted_appointment_email_operation(uuid,uuid)",
+  "ok": false,
+  "r": "public"
+ },
+ {
+  "fn": "public.retire_unattempted_appointment_email_operation(uuid,uuid)",
+  "ok": true,
+  "r": "service_role"
+ }
+]

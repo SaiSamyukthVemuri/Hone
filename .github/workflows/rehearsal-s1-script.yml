@@ -1,0 +1,369 @@
+# REHEARSAL - NEVER MERGE. S1-SCRIPT: runs the real s1-apply.sh (a) on a stock macOS arm64 runner (/bin/bash 3.2, BSD tools) with the real
+# darwin supabase-go against a real local PostgreSQL holding a SYNTHETIC history and bundle, and (b) on Linux with the REAL 34 migration files
+# through the LOCAL Supavisor session pooler (behind a TLS relay) on a SYNTHETIC database built through production's migration prefix 0212,
+# NOT a verified copy of production data or configuration. No hosted call, no customer data, canary credentials only.
+name: rehearsal-s1-script
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/s1-script/**"
+      - "rehearsal/hone-release/**"
+      - ".github/workflows/rehearsal-s1-script.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: which rehearsal evidence is already green for this head (no unchanged reruns)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      s1apply: ${{ steps.d.outputs.s1apply }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Did s1-apply.sh or its own harness change since the previous head of this PR?
+        id: d
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # s1-apply.sh, its cases and the macOS/zsh harnesses are byte-identical since the last green run (40571681931); only the hone-release package, the
+          # additive fixture options and this workflow changed, so the macOS and s1-apply Supavisor jobs are skipped rather than rerun.
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then echo "s1apply=true" >> "$GITHUB_OUTPUT"; echo "no previous head: run everything"; exit 0; fi
+          if git diff --name-only "$BEFORE" "$AFTER" | grep -Eq '^rehearsal/s1-script/(s1-apply\.sh|test-|cases\.sh|driver\.py|drive-sheet\.py|tlsfront-count\.py|c4/|WATCHDOG|DOWNLOAD|MIGRATIONS|migrations-|G3-)'; then echo "s1apply=true" >> "$GITHUB_OUTPUT"; else echo "s1apply=false" >> "$GITHUB_OUTPUT"; fi
+          git diff --name-only "$BEFORE" "$AFTER"; cat "$GITHUB_OUTPUT"
+
+  s1-script-macos:
+    name: s1-apply.sh on macOS arm64 (bash 3.2, real supabase-go, real Postgres, synthetic bundle)
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts and file pins
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          python3 --version
+          shasum -a 256 rehearsal/s1-script/s1-apply.sh rehearsal/s1-script/migrations-d189768b.tar rehearsal/s1-script/MIGRATIONS-d189768b.sha256
+      - name: Install PostgreSQL 16 (the database the script's CLI connects to)
+        run: brew install postgresql@16 2>&1 | tail -n 3
+      - name: Script cases under /bin/bash 3.2, launched from zsh like the operator's terminal
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/test-macos.sh 2>&1 | tee "$RUNNER_TEMP/macos-cases.txt"; exit ${pipestatus[1]}
+
+  s1-script-supavisor:
+    name: s1-apply.sh with the REAL 34 files through the local Supavisor session pooler (Linux)
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Keep only migrations 0001-0212 (the hosted chain before S1)
+        run: |
+          for f in supabase/migrations/02*.sql; do n="$(basename "$f" | cut -c1-4)"; [ "$((10#$n))" -gt 212 ] && rm -- "$f"; done
+          ls supabase/migrations | tail -1
+      - name: Enable the local session pooler (CI workspace only, not committed)
+        run: |
+          sed -i '/^\[db.pooler\]/,/^\[/ { s/^enabled = false/enabled = true/; s/^pool_mode = .*/pool_mode = "session"/ }' supabase/config.toml
+          git diff -U0 supabase/config.toml
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+      - name: Set up Supabase CLI (only to start the synthetic stack)
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull the stack images (bounded back-off; ghcr, then the same tag from ECR or Docker Hub, re-tagged locally)
+        shell: bash
+        run: |
+          imgs="postgres:17.6.1.131 realtime:v2.100.0 $(supabase services 2>/dev/null | awk -F'|' '/supabase\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*supabase\//,"",n); print n ":" $2 }}' | tr '\n' ' ')"
+          echo "images: $imgs"
+          for IMG in $(printf '%s\n' $imgs | sort -u); do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done
+      - name: Start the synthetic stack (applies 0001-0212)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta \
+              || supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
+      - name: Script cases with the real bundle through Supavisor
+        shell: bash
+        run: |
+          set -o pipefail
+          export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          echo "db container: $DB"
+          bash rehearsal/s1-script/test-linux.sh 2>&1 | tee "$RUNNER_TEMP/linux-cases.txt"
+
+  refhash:
+    name: HON66-REFHASH - fresh CI database with the chain 0001-0246 plus the sealed 0247-0250; function-body hashes for verify.tar (CI only, no hosted access)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Add the sealed 0247-0250 to the CI workspace chain (copied read-only from the template fixtures; nothing committed under supabase/migrations)
+        run: |
+          cp rehearsal/hone-release/templates/stage-0247-0250/sealed/*.sql supabase/migrations/
+          ls supabase/migrations | tail -5
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+      - name: Set up Supabase CLI (only to start the synthetic stack)
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull the stack images (bounded back-off; ghcr, then the same tag from ECR or Docker Hub, re-tagged locally)
+        shell: bash
+        run: |
+          imgs="postgres:17.6.1.131 realtime:v2.100.0 $(supabase services 2>/dev/null | awk -F'|' '/supabase\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*supabase\//,"",n); print n ":" $2 }}' | tr '\n' ' ')"
+          echo "images: $imgs"
+          for IMG in $(printf '%s\n' $imgs | sort -u); do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done
+      - name: Start the synthetic stack (applies 0001-0250)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta \
+              || supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
+      - name: Compute the function-body hashes and run every bundle check against the database
+        shell: bash
+        run: |
+          set -o pipefail
+          DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          echo "db container: $DB"
+          bash rehearsal/hone-release/ci/refhash.sh "$DB" 2>&1 | tee "$RUNNER_TEMP/refhash.txt"; exit ${PIPESTATUS[0]}
+      - name: HON66 stage 0248 alone - 0248-only verify bundle with body hash (same database; later files proven not to redefine its function)
+        run: |
+          set -o pipefail
+          DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          BASE_ROWS=245 BASE_MAX=0246 bash rehearsal/hone-release/ci/refhash-stage.sh "$DB" templates/stage-0248 0248 0248 1 1 2 2>&1 | tee "$RUNNER_TEMP/refhash-0248.txt"; exit ${PIPESTATUS[0]}
+      - name: HON66 stage 0248 apply variant - s1-apply-0248.sh with the MAC-GATES (S0a age, single flight) and s1-reconcile-0248.sh; accepts and refuses cases plus a mutation run (no database)
+        run: bash rehearsal/s1-script/stage-0248/check.sh 2>&1 | tee "$RUNNER_TEMP/stage0248-check.txt"; exit ${PIPESTATUS[0]}
+      - name: HON66 pinned CLI on a synthetic target - a 0248-only push, then a later --include-all resumption of 0247/0249/0250 (no hosted access)
+        run: |
+          set -o pipefail
+          bash rehearsal/hone-release/ci/cli-resume-0248.sh 2>&1 | tee "$RUNNER_TEMP/cli-resume.txt"; exit ${PIPESTATUS[0]}
+
+  download-line:
+    name: the one-line download command under bash 3.2 and zsh (fake scp) on macOS
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Line under /bin/bash (3.2)
+        run: /bin/bash rehearsal/s1-script/test-download.sh /bin/bash rehearsal/s1-script rehearsal/s1-script/DOWNLOAD-COMMAND.txt
+      - name: Line under zsh, started from zsh
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/test-download.sh /bin/zsh rehearsal/s1-script rehearsal/s1-script/DOWNLOAD-COMMAND.txt
+
+  watchdog-sheet:
+    name: watchdog sheet lines pasted into interactive bash 3.2 and zsh (fake scp, stub watchdog) on macOS
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sheet sha256 and shells
+        run: |
+          shasum -a 256 rehearsal/s1-script/WATCHDOG-OPERATOR.txt
+          /bin/bash --version | head -1
+          /bin/zsh --version
+      - name: Sheet lines in an interactive /bin/bash (3.2)
+        run: /bin/bash rehearsal/s1-script/test-sheet.sh /bin/bash rehearsal/s1-script
+      - name: Sheet lines in an interactive /bin/zsh
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/test-sheet.sh /bin/zsh rehearsal/s1-script
+
+  release-custody:
+    name: hone-release custody on a VM with real users, sudo and the exact sudoers line (stub CLI, canary secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -a; sudo -V | head -1; id; getent group docker sudo | cut -c1-80
+      - name: Custody proof (as root on the disposable runner)
+        run: sudo bash rehearsal/hone-release/ci/custody-test.sh 2>&1 | tee "$RUNNER_TEMP/custody.txt"; exit ${PIPESTATUS[0]}
+      - name: WAL-evidence evaluator unit tests (pure Python, no database)
+        run: python3 -I rehearsal/hone-release/ci/wal-evidence-test.py
+
+  release-apply-e2e:
+    name: hone-release apply with the REAL CLI and REAL 34 files through the launcher and Supavisor (Linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Keep only migrations 0001-0212 (the hosted chain before S1)
+        run: |
+          for f in supabase/migrations/02*.sql; do n="$(basename "$f" | cut -c1-4)"; [ "$((10#$n))" -gt 212 ] && rm -- "$f"; done
+          ls supabase/migrations | tail -1
+      - name: Enable the local session pooler (CI workspace only, not committed)
+        run: |
+          sed -i '/^\[db.pooler\]/,/^\[/ { s/^enabled = false/enabled = true/; s/^pool_mode = .*/pool_mode = "session"/ }' supabase/config.toml
+          git diff -U0 supabase/config.toml
+      - name: Set up Supabase CLI (only to start the synthetic stack)
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull the stack images (bounded back-off; ghcr, then the same tag from ECR or Docker Hub, re-tagged locally)
+        shell: bash
+        run: |
+          imgs="postgres:17.6.1.131 realtime:v2.100.0 $(supabase services 2>/dev/null | awk -F'|' '/supabase\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*supabase\//,"",n); print n ":" $2 }}' | tr '\n' ' ')"
+          echo "images: $imgs"
+          for IMG in $(printf '%s\n' $imgs | sort -u); do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done
+      - name: Start the synthetic stack (applies 0001-0212)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta \
+              || supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
+      - name: Apply the real package through the launcher
+        shell: bash
+        run: |
+          export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          echo "db container: $DB"
+          sudo -E env "DB=$DB" bash rehearsal/hone-release/ci/e2e-test.sh supavisor 2>&1 | tee "$RUNNER_TEMP/e2e.txt"; exit ${PIPESTATUS[0]}
+
+  release-apply-pg:
+    name: hone-release apply with the REAL CLI through the launcher against a plain PostgreSQL with TLS (no docker pull)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Apply a synthetic package through the launcher
+        run: sudo bash rehearsal/hone-release/ci/e2e-test.sh pg 2>&1 | tee "$RUNNER_TEMP/e2e-pg.txt"; exit ${PIPESTATUS[0]}
+
+  h6-real-cli:
+    name: Insurance H6 - what the REAL CLI does for db query --linked and backups list, recorded by a local fake Management API (no database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record the real binary's requests
+        run: sudo bash rehearsal/hone-release/ci/h6-real-cli.sh 2>&1 | tee "$RUNNER_TEMP/h6.txt"; exit ${PIPESTATUS[0]}

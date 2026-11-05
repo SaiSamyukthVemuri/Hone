@@ -1,0 +1,1 @@
+select count(*)::int as n from (values ('appointment_email_private.cohorts'), ('appointment_email_private.intake_epochs'), ('appointment_email_private.operations')) v(r) where to_regclass(v.r) is not null

@@ -1,0 +1,1 @@
+select count(*)::int as n from (values ('public', 'advance_intake_revision')) v(s, f) where exists (select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace where n.nspname = v.s and p.proname = v.f)

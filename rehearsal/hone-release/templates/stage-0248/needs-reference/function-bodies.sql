@@ -1,0 +1,1 @@
+select p.proname, md5(p.prosrc) as md5 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace where (n.nspname, p.proname) in (('public', 'advance_intake_revision')) order by p.proname, md5(p.prosrc)

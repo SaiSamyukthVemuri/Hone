@@ -1,0 +1,72 @@
+#!/bin/bash -p
+# hone-release launcher. Installed root-owned at /usr/local/libexec/hone-release/launcher and run ONLY as the system user
+# hone-release, through one exact sudoers line per action. It runs a script ONLY if the script's sha256 is in the root-owned
+# manifest, with a sanitised environment, and hands the one secret that action needs over on file descriptor 3 (never argv,
+# never the environment, never printed). It reads no argument but the action name.
+set -u
+umask 077
+PATH=/usr/bin:/bin
+export PATH
+IFS=$' \t\n'
+unset BASH_ENV ENV CDPATH GLOBIGNORE LD_PRELOAD LD_LIBRARY_PATH 2>/dev/null
+LIBEXEC=/usr/local/libexec/hone-release
+MANIFEST="$LIBEXEC/manifest"
+SECRETS=/var/lib/hone-release/secrets
+RUNAS=hone-release
+die() { echo "launcher: REFUSED: $*" >&2; exit 1; }
+
+[ "$(id -un)" = "$RUNAS" ] || die "must run as $RUNAS (through the sudoers line)"
+[ "$(id -u)" != 0 ] || die "must not run as root"
+[ $# -eq 1 ] || die "exactly one argument (the action name)"
+action=$1
+case "$action" in ''|*[!a-z0-9-]*) die "the action name is not [a-z0-9-]+" ;; esac
+[ "${#action}" -le 32 ] || die "the action name is too long"
+
+# root-owned, non-symlink, not group/other writable, for the file and EVERY parent directory
+root_chain() {
+  local p="$1" m
+  while :; do
+    [ -e "$p" ] || return 1
+    [ ! -L "$p" ] || return 1
+    [ "$(stat -c %u "$p")" = 0 ] || return 1
+    m=$(stat -c %a "$p")
+    [ $(( 8#$m & 8#022 )) = 0 ] || return 1
+    [ "$p" != / ] || break
+    p=$(dirname "$p")
+  done
+}
+root_chain "$MANIFEST" || die "the manifest or a parent directory is not root-owned and private to root"
+[ -f "$MANIFEST" ] || die "the manifest is not a regular file"
+n=$(awk -v a="$action" '$1 == a {c++} END {print c+0}' "$MANIFEST")
+[ "$n" = 1 ] || die "the action is not listed exactly once in the manifest"
+line=$(awk -v a="$action" '$1 == a {print; exit}' "$MANIFEST")
+set -- $line
+[ $# = 4 ] || die "the manifest line is malformed"
+want_sha=$2; path=$3; secret=$4
+printf '%s' "$want_sha" | grep -Eq '^[0-9a-f]{64}$' || die "the manifest sha256 is malformed"
+case "$path" in "$LIBEXEC"/scripts/*) ;; *) die "the script path is outside $LIBEXEC/scripts" ;; esac
+case "$path" in *..*|*//*) die "the script path is not canonical" ;; esac
+root_chain "$path" || die "the script or a parent directory is not root-owned and private to root, or is a symlink"
+[ -f "$path" ] || die "the script is not a regular file"
+[ "$(realpath -e -- "$path")" = "$path" ] || die "the script path is not canonical (a symlink in it)"
+content=$(cat -- "$path"; printf x) || die "cannot read the script"
+content=${content%x}
+got_sha=$(printf '%s' "$content" | sha256sum | cut -d' ' -f1)
+[ "$got_sha" = "$want_sha" ] || die "the script sha256 is not the manifest's (the script was changed or is not listed)"
+
+# the one secret this action needs, as fd 3 (or /dev/null)
+if [ "$secret" = - ]; then
+  exec 3</dev/null
+else
+  case "$secret" in *[!a-z0-9-]*|'') die "bad secret name in the manifest" ;; esac
+  [ ! -L "$SECRETS" ] && [ -d "$SECRETS" ] || die "the secrets directory is missing or a symlink"
+  [ "$(stat -c '%U %a' "$SECRETS")" = "$RUNAS 700" ] || die "the secrets directory is not owned by $RUNAS with mode 700"
+  f="$SECRETS/$secret"
+  [ ! -L "$f" ] && [ -f "$f" ] || die "the secret file is missing or a symlink"
+  [ "$(stat -c '%U %a' "$f")" = "$RUNAS 600" ] || die "the secret file is not owned by $RUNAS with mode 600"
+  sz=$(stat -c %s "$f"); [ "$sz" -gt 0 ] && [ "$sz" -le 4096 ] || die "the secret file is empty or too large"
+  exec 3<"$f" || die "cannot open the secret file"
+fi
+
+exec env -i PATH=/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=dumb HOME=/var/lib/hone-release/home \
+  HONE_RELEASE_ACTION="$action" HONE_RELEASE_SCRIPT_SHA="$got_sha" /bin/bash -p /dev/fd/5 5<<<"$content"
