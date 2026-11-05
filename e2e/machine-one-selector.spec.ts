@@ -378,6 +378,10 @@ for (const device of [
       await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
       await expect.poll(async () => (await row()).updated_at, { timeout: T }).not.toBe(before.updated_at);
       expect(await row()).toMatchObject({ unit: s.senior, minutes: "12", energy: null, mode: null });
+      // The typed legacy value was never part of anything submitted. Asserted BEFORE the reopen, so a failure there cannot hide it.
+      expect(posts.length, "server actions were observed").toBeGreaterThan(0);
+      expect(posts.some((b) => b.includes(blockId)), "the bodies are readable: the save's own request names the block").toBe(true);
+      for (const body of posts) expect(body).not.toContain(MARK);
       // (4) a second native pick from a STALE tab is refused: still Senior, still no legacy fields, nothing stored.
       await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
       await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
@@ -386,11 +390,47 @@ for (const device of [
       await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
       await expect(page.getByText("Machine frequency")).toHaveCount(0);
       expect(await row()).toMatchObject({ unit: s.senior, minutes: "12", energy: null, mode: null });
-      // The typed legacy value was never part of anything submitted.
-      expect(posts.length, "server actions were observed").toBeGreaterThan(0);
-      expect(posts.some((b) => b.includes(blockId)), "the bodies are readable: the save's own request names the block").toBe(true);
+      // And still nothing legacy went out, including the stale pick's request.
       for (const body of posts) expect(body).not.toContain(MARK);
     });
+
+    // Photos R2 (data integrity, also on production before #1369): a lost answer to a BARE area save, then Save again, was a SECOND area.
+    for (const variant of ["bare (nothing chosen)", "xCell Pur chosen, no values"] as const) {
+      test(`${variant}: the answer to the area save is lost, Save again gives exactly ONE area`, async ({ page }) => {
+        const s = await seedStudio();
+        await loginByMagicLink(page, s.member.email);
+        const sessionId = await startSession(page, s.clientId);
+        await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+        if (variant !== "bare (nothing chosen)") {
+          await openPanel(page);
+          await page.getByTestId("machine-select").selectOption("legacy:xcell");
+        }
+        // The server PROCESSES the first server action (the create) and the browser never receives the answer.
+        let lost = 0;
+        await page.route("**/*", async (route) => {
+          const r = route.request();
+          if (lost === 0 && r.method() === "POST" && r.headers()["next-action"]) {
+            lost++;
+            await route.fetch();
+            await route.abort("connectionreset");
+            return;
+          }
+          await route.continue();
+        });
+        await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect.poll(() => lost, { timeout: T }).toBe(1);
+        await expect(page.getByText(/whether this treatment area was saved is not known/i)).toBeVisible({ timeout: T });
+        await expect.poll(async () => (await blocksOf(sessionId)).length, { timeout: T }, ).toBe(1);
+        // Save again, unchanged: answered with the original area.
+        await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+        const after = await blocksOf(sessionId);
+        expect(after.length, "exactly one area").toBe(1);
+        if (variant !== "bare (nothing chosen)") expect(after[0]).toMatchObject({ machine_profile_id: "dectro-apilus:xcell" });
+        await page.reload();
+        expect((await blocksOf(sessionId)).length).toBe(1);
+      });
+    }
 
     // OPS/Photos R2: a client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.
     test("a client last charted on xCell Pur starts the next session on xCell Pur (saved identity, and the older no-identity record)", async ({ page }) => {

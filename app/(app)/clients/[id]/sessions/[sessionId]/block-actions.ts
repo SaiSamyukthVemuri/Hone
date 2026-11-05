@@ -1117,6 +1117,8 @@ export type CreateAreaWithEntryInput = {
   // 0156: optional free-text numbing note (kept only when status is 'used').
   numbingNotes?: string | null;
   probeLotConfirmed?: boolean;
+  /** Retry key of a settings-free create (see `bareKey` in the action). */
+  createKey?: string | null;
 };
 
 // L18 Phase 2: the block/entry atomicity exception that used to sit here is
@@ -1419,6 +1421,12 @@ export async function createTreatmentAreaWithEntryAction(
   // and nothing reaches here without settings.
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
+  // A SETTINGS-FREE CREATE CARRIES A KEY TOO. 0223's command takes a key with no groups (its settings half is nullable
+  // and it still writes the claim), so a retry of a bare save whose answer was lost is answered with the original area.
+  const bareKey =
+    !withSetup && typeof input.createKey === "string" && input.createKey.trim().length >= 8
+      ? input.createKey.trim()
+      : null;
 
   // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
   // validator the other two recording paths use.
@@ -1499,7 +1507,7 @@ export async function createTreatmentAreaWithEntryAction(
           : (identity?.modeKey ?? null),
         p_setup_idempotency_key: withSetup
           ? input.initialSetup!.idempotencyKey
-          : null,
+          : bareKey,
         // THE DERIVED ROWS, never the caller's: unit and precision come from
         // the contract the validator resolved.
         p_setup_groups: setupGroups.map((g) => ({
@@ -1539,7 +1547,7 @@ export async function createTreatmentAreaWithEntryAction(
       };
   let createdRows: unknown;
   let cmdErr: { code?: string | null; message?: string } | null;
-  if (withSetup || identityOnly) {
+  if (withSetup || identityOnly || bareKey) {
     ({ data: createdRows, error: cmdErr } = await supabase.rpc(
       "create_block_with_initial_setup_and_identity",
       identityArgs,
@@ -1578,7 +1586,7 @@ export async function createTreatmentAreaWithEntryAction(
     // binds a retry key, so pressing Save again unchanged is answered with
     // the original result. `create_block_with_entry` binds none, so there is
     // no safe retry to offer.
-    if (withSetup && !isDefinitiveDatabaseAnswer(cmdErr)) {
+    if ((withSetup || bareKey) && !isDefinitiveDatabaseAnswer(cmdErr)) {
       return {
         ok: false as const,
         error: INITIAL_SAVE_UNRESOLVED,
@@ -1610,7 +1618,7 @@ export async function createTreatmentAreaWithEntryAction(
    * and it keeps the plain failure it had.
    */
   const unresolvableResponse = (): BlockResult =>
-    withSetup
+    withSetup || bareKey
       ? {
           ok: false as const,
           error: INITIAL_SAVE_UNRESOLVED,

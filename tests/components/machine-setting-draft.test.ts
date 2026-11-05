@@ -281,7 +281,9 @@ describe("the handoff's shape, pinned on source", () => {
     // computed once per attempt - see the case above. Asserting the inline
     // call here would contradict that.
     expect(src).toMatch(/initialSetup: attachedSetup/);
-    expect((src.match(/randomUUID/g) ?? []).length).toBe(1);
+    // One for the settings handoff, one for a SETTINGS-FREE create's own retry key (bareCreateKeyRef, never mirrored to the URL).
+    expect((src.match(/randomUUID/g) ?? []).length).toBe(2);
+    expect(src).toMatch(/bareCreateKeyRef\.current \?\?= crypto\.randomUUID\(\)/);
   });
 });
 // ---------------------------------------------------------------------------
@@ -1100,16 +1102,16 @@ describe("switching machine or mode clears the collected draft", () => {
     // two are indistinguishable to the practitioner and must behave alike.
     const src = read(ACTIONS_SRC);
     expect(src).toMatch(
-      /if \(withSetup && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{/,
+      /if \(\(withSetup \|\| bareKey\) && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{/,
     );
     // WITHSETUP ONLY, and that condition is load-bearing rather than
     // defensive: `create_block_with_entry` binds no retry key, so there is
     // no safe retry to offer and freezing would strand her.
     expect(
       src,
-      "the unresolved path must stay behind withSetup",
+      "the unresolved path must stay behind a retry key (withSetup or bareKey)",
     ).toMatch(
-      /if \(withSetup && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{[\s\S]{0,400}?unresolved: true as const/,
+      /if \(\(withSetup \|\| bareKey\) && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{[\s\S]{0,400}?unresolved: true as const/,
     );
   });
 

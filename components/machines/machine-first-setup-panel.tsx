@@ -509,6 +509,9 @@ export function MachineFirstSetupPanel({
       write = {
         ok: false,
         error: "That did not save.",
+        // A saved area's pick is applied only after its write: a THROWN write (a server failure, not a refusal) left
+        // the record unchanged as far as this panel knows, so the panel must not move (Privacy FH-2).
+        ...(writeFirst ? { reverted: true } : {}),
       };
     } finally {
       // CLEARED EVEN ON A THROW, or one failed write leaves the picker dead
@@ -546,8 +549,13 @@ export function MachineFirstSetupPanel({
    * block either way, but it will not survive a reload.
    */
   const chooseMode = async (key: string) => {
-    setModeKey(key);
-    setSelection((prev) => selectionRequested(prev, deviceId));
+    // WRITE FIRST, APPLY AFTER, as for the device (Codex, #1369 4480784741): the mode is part of the entry's key, so moving
+    // it before the write settles remounts the reading entry and a refusal then throws the typed readings away.
+    const writeFirst = Boolean(blockId && onSelectMachine);
+    if (!writeFirst) {
+      setModeKey(key);
+      setSelection((prev) => selectionRequested(prev, deviceId));
+    }
     // SAME TOKEN AS THE DEVICE PICK, deliberately: a mode change and a device
     // change are both writes to one stored selection, so a stale mode
     // completion must not land after a newer device pick either. Two counters
@@ -560,15 +568,26 @@ export function MachineFirstSetupPanel({
         ? await onSelectMachine({ deviceId, modeKey: key })
         : null;
     } catch {
-      // Same rule as the device pick: a rejection is a failed write.
+      // Same rule as the device pick: a rejection is a failed write, and on a saved area it changed nothing here.
       write = {
         ok: false,
         error: "That did not save.",
+        ...(writeFirst ? { reverted: true } : {}),
       };
     } finally {
       setSelectionPending(false);
     }
     if (token !== selectionRequestRef.current) return;
+    if (write && write.ok === false && write.reverted) {
+      if (!writeFirst) setModeKey(modeKey);
+      setSelection((prev) => ({
+        selected: prev.selected,
+        persisted: prev.persisted,
+        note: write.error ?? "That did not save.",
+      }));
+      return;
+    }
+    if (writeFirst) setModeKey(key);
     setSelection((prev) => selectionSettled(prev, deviceId, write));
   };
 

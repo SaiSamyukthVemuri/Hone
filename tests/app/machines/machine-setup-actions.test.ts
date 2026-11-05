@@ -72,6 +72,8 @@ vi.mock("@/lib/sessions/session-lineage", () => ({
 const ROUTE = { clientId: "client-ana", sessionId: "session-1" };
 
 vi.mock("server-only", () => ({}));
+const revalidatePathMock = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
@@ -1324,9 +1326,13 @@ describe("the module stays out of the clinical record", () => {
     }
   });
 
-  it("performs no raw DML and no cache invalidation of its own", () => {
+  it("performs no raw DML, and invalidates the cache in exactly one place: a stored identity write", () => {
     expect(CODE).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    expect(CODE).not.toContain("revalidatePath");
+    const calls = CODE.match(/revalidatePath\(/g) ?? [];
+    expect(calls).toHaveLength(1);
+    const at = CODE.indexOf("revalidatePath(");
+    const fn = CODE.lastIndexOf("export async function ", at);
+    expect(CODE.slice(fn, fn + 80)).toContain("recordBlockMachineIdentityAction");
   });
 
   it("reaches the database only through 0223's named commands", () => {
@@ -2063,6 +2069,22 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
     expect(out.ok).toBe(false);
     expect("updatedAt" in out).toBe(false);
+  });
+  // OPS decision (K-2 CI red): a stored pick must reach the session page data, like Save, so a reopened editor is never stale.
+  it("a stored identity write revalidates the session page, and a refused or failed one does not", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    revalidatePathMock.mockClear();
+    DB.rpcResult = "v2";
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
+
+    revalidatePathMock.mockClear();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(false);
+    DB.rpcError = { code: "23514", message: "check violation" };
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(false);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
   it("the action reads session_blocks itself no more (no before/after race)", () => {
     const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts", "utf8");

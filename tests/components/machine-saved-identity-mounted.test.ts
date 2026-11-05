@@ -56,6 +56,19 @@ const PROFILE: MachineProfile = {
         { key: "duration", nativeLabel: "Time", quantity: "duration", unit: "s", decimals: 1, optional: false, expectedSource: "practitioner-entered", editable: true, verification: "device-confirmed", evidence: ["p"] },
       ],
     },
+    {
+      key: "second",
+      nativeLabel: "Second",
+      family: "galvanic",
+      availability: "active",
+      verification: "device-confirmed",
+      evidence: ["p"],
+      stages: [],
+      fields: [
+        { key: "current", nativeLabel: "Current", quantity: "current", unit: "µA", decimals: 0, optional: false, expectedSource: "practitioner-entered", editable: true, verification: "device-confirmed", evidence: ["p"] },
+        { key: "duration", nativeLabel: "Time", quantity: "duration", unit: "s", decimals: 1, optional: false, expectedSource: "practitioner-entered", editable: true, verification: "device-confirmed", evidence: ["p"] },
+      ],
+    },
   ],
 };
 
@@ -387,6 +400,52 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(after, "the same field node is still mounted").toBe(input);
     expect(after.value).toBe("120");
     expect(host!.textContent).toMatch(/cannot be cleared/i);
+  });
+
+  // Privacy FH-2: a write that THROWS (server failure), not one that is refused, must not move the panel either.
+  it("a THROWN identity write leaves the panel on the saved machine, keeps the typed readings, and says so", async () => {
+    actions.recordBlockMachineIdentityAction.mockRejectedValueOnce(new Error("network") as never);
+    await mountExisting(vi.fn());
+    const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+    await type(input, "120");
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(sel, "legacy:xcell");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(sel.value).toBe("room-9");
+    const after = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+    expect(after).toBe(input);
+    expect(after.value).toBe("120");
+    expect(host!.textContent).toMatch(/did not save/i);
+  });
+
+  // Codex 4480784741: a MODE change on a saved area is written first too. A refusal leaves the mode and the readings alone.
+  const clickMode = async (label: string) => {
+    const btn = [...host!.querySelectorAll<HTMLButtonElement>('[data-testid="machine-mode-picker"] button')].find((b) => b.textContent === label)!;
+    await act(async () => btn.click());
+  };
+  const entryField = () => host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+  it("a REFUSED mode change keeps the mode and the typed readings (same field node, same value)", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, error: "changed elsewhere" } as never);
+    await mountExisting(vi.fn());
+    const input = entryField();
+    await type(input, "120");
+    await clickMode("Second");
+    expect(entryField(), "not remounted").toBe(input);
+    expect(entryField().value).toBe("120");
+    const active = [...host!.querySelectorAll('[data-testid="machine-mode-picker"] button')].map((b) => b.textContent);
+    expect(active).toContain("Second");
+    expect(host!.textContent).toMatch(/changed elsewhere/);
+  });
+  it("NEGATIVE CONTROL: an ACKNOWLEDGED mode change applies (the entry is for the new mode)", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2" } as never);
+    await mountExisting(vi.fn());
+    const input = entryField();
+    await type(input, "120");
+    await clickMode("Second");
+    expect(entryField(), "remounted for the new mode").not.toBe(input);
   });
 
   it("a REFUSED pick of ANOTHER machine (stale tab) also keeps the typed readings", async () => {

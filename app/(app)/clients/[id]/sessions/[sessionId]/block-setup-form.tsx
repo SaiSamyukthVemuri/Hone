@@ -968,6 +968,12 @@ export function BlockSetupForm({
    */
   const [pendingSaveKey, setPendingSaveKeyRaw] = useState<string | null>(null);
   /**
+   * THE RETRY KEY OF A SETTINGS-FREE CREATE, held for this form's life and NOT mirrored to the URL (a bare save has no
+   * settings to resume). Minted at the first attempt; kept while the answer is unknown so Save again is absorbed by the
+   * create claim instead of making a second area; dropped on success and on a definitive refusal (nothing committed).
+   */
+  const bareCreateKeyRef = useRef<string | null>(null);
+  /**
    * MIRRORED AT THE SETTER, not at the call sites.
    *
    * The key is dropped in two places and minted in a third, and the whole
@@ -1551,9 +1557,11 @@ export function BlockSetupForm({
       // Create: one save → treatment area + first entry. block_name omitted
       // (null), the section title falls back to the area, then a muted
       // placeholder.
+      const bareKey = attachedSetup ? null : (bareCreateKeyRef.current ??= crypto.randomUUID());
       const res = await createTreatmentAreaWithEntryAction({
         clientId,
         sessionId,
+        createKey: bareKey,
         mode: (draft.mode || null) as ElectrolysisMode | null,
         apilusModality: (draft.apilusModality || null) as ApilusModality | null,
         energyLevel: elNum,
@@ -1604,15 +1612,18 @@ export function BlockSetupForm({
         // being offered a retry that duplicates her treatment.
         return {
           ok: false as const,
-          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : "That did not save. Try again.",
-          unresolved: Boolean(attachedSetup),
+          // EVERY create is keyed now, so a lost answer is retryable for a bare save too.
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true,
         };
       });
       if (!res.ok) {
         setError(res.error);
         if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
+        else bareCreateKeyRef.current = null;
         return;
       }
+      bareCreateKeyRef.current = null;
       // THE SAVE IS CLOSED. The next one is a different save and mints its own
       // key; keeping this one would make a deliberate second area look like a
       // retry of the first and be answered with it.

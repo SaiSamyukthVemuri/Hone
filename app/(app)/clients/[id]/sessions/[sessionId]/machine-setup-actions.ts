@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
 import { createClient } from "@/lib/supabase/server";
@@ -643,6 +644,8 @@ export async function recordBlockMachineIdentityAction(input: {
         ? { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." }
         : { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
     }
+    // Like Save: a stored pick must reach the session page data, or a reopened editor shows the pre-pick identity.
+    revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
     return out.updatedAt ? { ok: true, updatedAt: out.updatedAt } : { ok: true };
   } catch {
     return { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
