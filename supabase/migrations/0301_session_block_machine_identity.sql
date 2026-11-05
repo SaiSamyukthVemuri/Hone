@@ -115,6 +115,33 @@ begin
     raise exception 'stale_block_version: this settings block was changed elsewhere';
   end if;
 
+  -- AN AREA THAT ALREADY HOLDS xCell Pur READINGS NEVER GETS A NATIVE IDENTITY (Codex 4471593271, decided by OPS; protects
+  -- the studio's existing records). Two machines' settings on one area, or the second overwriting the first, is the harm.
+  -- The same list the app's lock uses: the legacy columns on the block and the legacy reading columns on its entries.
+  -- Choosing the legacy xCell Pur machine itself stays allowed. The block row is already locked above, so this read is
+  -- consistent with the write below. A new area (create wrapper) has no readings at this point.
+  if v_profile <> 'dectro-apilus:xcell' and (
+       exists (
+         select 1
+           from public.session_blocks b
+          where b.id = p_block_id
+            and (nullif(btrim(b.mode::text), '') is not null
+                 or nullif(btrim(b.apilus_modality::text), '') is not null
+                 or b.energy_level is not null
+                 or nullif(btrim(b.machine_frequency::text), '') is not null))
+       or exists (
+         select 1
+           from public.electrolysis_entries e
+          where e.block_id = p_block_id
+            and (e.thermolysis_intensity_percent is not null
+                 or e.thermolysis_duration_seconds is not null
+                 or e.galvanic_ma is not null
+                 or e.galvanic_duration_seconds is not null
+                 or e.units_of_lye is not null))) then
+    raise exception 'This area already holds xCell Pur readings; add a new area for another machine.'
+      using errcode = 'check_violation';
+  end if;
+
   update public.session_blocks b
      set machine_profile_id = v_profile,
          studio_machine_id = p_studio_machine_id,

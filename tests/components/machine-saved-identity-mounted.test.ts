@@ -559,3 +559,87 @@ describe("a saved area's machine write holds the host's Save while it is pending
     expect(onIdentityWritePending).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Codex #1369 4471593271 (P1) and 4471593277 (P2).
+// ---------------------------------------------------------------------------
+describe("a saved area that already holds xCell Pur readings takes no native machine", () => {
+  const SAVED_LEGACY = { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null };
+  const open = async () => {
+    const btn = host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]');
+    if (btn) await act(async () => btn.click());
+  };
+  const choose = async (value: string) => {
+    await open();
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    return sel;
+  };
+
+  it("the native unit is listed but cannot be chosen, and the area says why", async () => {
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: true });
+    await open();
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const unit = [...sel.options].find((o) => o.value === "room-9")!;
+    expect(unit.disabled).toBe(true);
+    expect([...sel.options].find((o) => o.value === "legacy:xcell")!.disabled).toBe(false);
+    expect(host!.querySelector('[data-testid="machine-native-locked"]')).not.toBeNull();
+  });
+
+  it("a native pick that gets through anyway (keyboard, script) is refused BEFORE anything is written, and the selector does not move", async () => {
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: true });
+    const sel = await choose("room-9");
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+    expect(actions.recordSetupSubmissionAction).not.toHaveBeenCalled();
+    expect(sel.value).toBe("legacy:xcell");
+    expect(host!.textContent).toContain("This area already has xCell Pur readings");
+  });
+
+  it("NEGATIVE CONTROL: the same pick on an area WITHOUT legacy readings is written", async () => {
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
+    await choose("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledWith(
+      expect.objectContaining({ blockId: "b1", deviceId: "room-9" }),
+    );
+  });
+
+  it("NEGATIVE CONTROL: choosing the existing workflow itself on a locked area is still written", async () => {
+    await mount({ blockId: "b1", savedIdentity: { profileId: null, deviceId: null, modeKey: null }, legacyReadingsLocked: true });
+    await choose("legacy:xcell");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledWith(
+      expect.objectContaining({ blockId: "b1", profileId: "dectro-apilus:xcell", deviceId: null }),
+    );
+  });
+
+  it("NEGATIVE CONTROL: a NEW area (no block) is never locked, whatever the flag says", async () => {
+    await mount({ blockId: null, legacyReadingsLocked: true });
+    await open();
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    expect([...sel.options].find((o) => o.value === "room-9")!.disabled).toBe(false);
+    expect(host!.querySelector('[data-testid="machine-native-locked"]')).toBeNull();
+  });
+});
+
+describe("a studio with xCell Pur history and no registered native unit can still choose xCell", () => {
+  it("the selector is ENABLED when only the existing workflow is available (it used to be disabled)", async () => {
+    await mount({ blockId: null, ctx: { devices: [] } });
+    const btn = host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]');
+    if (btn) await act(async () => btn.click());
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    expect(sel.disabled).toBe(false);
+    expect([...sel.options].map((o) => o.value)).toContain("legacy:xcell");
+  });
+
+  it("NEGATIVE CONTROL: with no unit and no history the selector stays disabled", async () => {
+    await mount({ blockId: null, ctx: { devices: [], legacyMachine: null } });
+    const btn = host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]');
+    if (btn) await act(async () => btn.click());
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    expect(sel.disabled).toBe(true);
+  });
+});

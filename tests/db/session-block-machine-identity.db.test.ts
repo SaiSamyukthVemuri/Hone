@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   adminQuery,
+  adminTx,
   asUser,
   closePool,
   seedSession,
@@ -501,5 +502,113 @@ describe("0301: legacy rows", () => {
     const { blockId } = await seedSession(studio);
     expect(await identity(blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
     expect(await readings(blockId)).toBe(0);
+  });
+});
+
+// ===========================================================================
+// An area that already holds xCell Pur readings never gets a NATIVE identity
+// (Codex, #1369 4471593271; decided by OPS). The refusal is in the one writer, so every command reaches it.
+// ===========================================================================
+describe("0301: a saved area with xCell Pur readings takes no native machine", () => {
+  const REFUSED = /already holds xCell Pur readings/;
+  const record = (studio: SeededStudio, sessionId: string, blockId: string, profile: string | null, machine: string | null, mode: string | null) =>
+    asUser(studio.userId, (q) =>
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, profile, machine, mode]),
+    );
+  // The legacy columns are written by the older block commands, and a direct UPDATE needs an authenticated practitioner with column
+  // rights this fixture does not need to reproduce: set the value as the owner, in one transaction, with the row triggers off.
+  const setBlock = (_studio: SeededStudio, blockId: string, sets: string, params: unknown[] = []) =>
+    adminTx(async (q) => {
+      await q("set local session_replication_role = replica");
+      await q(`update public.session_blocks set ${sets} where id = $1`, [blockId, ...params]);
+    });
+  const blockColumns: Array<[string, string, unknown]> = [
+    ["mode", "mode", "thermo"],
+    ["apilus_modality", "apilus_modality", "blend"],
+    ["energy_level", "energy_level", 3],
+    ["machine_frequency", "machine_frequency", "13.56 MHz"],
+  ];
+  const entryColumns: Array<[string, unknown]> = [
+    ["thermolysis_intensity_percent", 40],
+    ["thermolysis_duration_seconds", "0.7"],
+    ["galvanic_ma", "0.8"],
+    ["galvanic_duration_seconds", 90],
+    ["units_of_lye", "2.5"],
+  ];
+  const addEntry = async (studio: SeededStudio, sessionId: string, blockId: string, col: string | null, value: unknown) =>
+    adminQuery(
+      col
+        ? `insert into public.electrolysis_entries (session_id, block_id, area, pulse_count, ${col}) values ($1, $2, 'Upper lip', 1, $3)`
+        : `insert into public.electrolysis_entries (session_id, block_id, area, pulse_count) values ($1, $2, 'Upper lip', 1)`,
+      col ? [sessionId, blockId, value] : [sessionId, blockId],
+    );
+
+  it.each(blockColumns)("a block-level legacy reading (%s) refuses a native unit and writes nothing", async (_n, col, value) => {
+    const studio = await seedStudio("identity-lock-block");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await setBlock(studio, blockId, `${col} = $2`, [value]);
+    await expect(record(studio, sessionId, blockId, null, machine, "galvanic")).rejects.toThrow(REFUSED);
+    expect(await identity(blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+  });
+
+  it.each(entryColumns)("an entry-level legacy reading (%s) refuses a native unit and writes nothing", async (col, value) => {
+    const studio = await seedStudio("identity-lock-entry");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await addEntry(studio, sessionId, blockId, col, value);
+    await expect(record(studio, sessionId, blockId, null, machine, "galvanic")).rejects.toThrow(REFUSED);
+    expect(await identity(blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+  });
+
+  it("a NATIVE-profile call without a unit is refused the same way (the profile is what is native)", async () => {
+    const studio = await seedStudio("identity-lock-profile");
+    const { sessionId, blockId } = await seedSession(studio);
+    await setBlock(studio, blockId, `energy_level = 3`);
+    await expect(record(studio, sessionId, blockId, PROFILE, null, null)).rejects.toThrow(REFUSED);
+    expect((await identity(blockId)).machine_profile_id).toBeNull();
+  });
+
+  it("record_setup_submission_with_identity refuses too, and its readings roll back with it", async () => {
+    const studio = await seedStudio("identity-lock-submission");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await setBlock(studio, blockId, `energy_level = 3`);
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7)`, [
+          blockId, machine, "galvanic", "lock-submission-1", JSON.stringify(groups("25")), sessionId, studio.clientId,
+        ]),
+      ),
+    ).rejects.toThrow(REFUSED);
+    expect(await readings(blockId)).toBe(0);
+    expect((await identity(blockId)).studio_machine_id).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: the legacy xCell Pur machine itself is still recorded on a legacy-readings area", async () => {
+    const studio = await seedStudio("identity-lock-allow-legacy");
+    const { sessionId, blockId } = await seedSession(studio);
+    await setBlock(studio, blockId, `energy_level = 3, mode = 'thermo'`);
+    await addEntry(studio, sessionId, blockId, "galvanic_ma", "0.8");
+    await record(studio, sessionId, blockId, XCELL, null, null);
+    expect(await identity(blockId)).toEqual({ machine_profile_id: XCELL, studio_machine_id: null, machine_mode_key: null });
+  });
+
+  it("NEGATIVE CONTROL: an area with no legacy readings (even with an empty entry row) still takes a native unit", async () => {
+    const studio = await seedStudio("identity-lock-allow-native");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await addEntry(studio, sessionId, blockId, null, null);
+    await record(studio, sessionId, blockId, null, machine, "galvanic");
+    expect(await identity(blockId)).toEqual({ machine_profile_id: PROFILE, studio_machine_id: machine, machine_mode_key: "galvanic" });
+  });
+
+  it("NEGATIVE CONTROL: a blank-string legacy column is not a reading", async () => {
+    const studio = await seedStudio("identity-lock-blank");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await setBlock(studio, blockId, `machine_frequency = '  '`);
+    await record(studio, sessionId, blockId, null, machine, "galvanic");
+    expect((await identity(blockId)).studio_machine_id).toBe(machine);
   });
 });

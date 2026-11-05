@@ -482,5 +482,73 @@ for (const device of [
       await expect(page.getByLabel("Energy level (EL)")).toHaveValue("");
       expect((await blocksOf(next)).length).toBe(0);
     });
+
+    // Codex #1369 4471593271 (P1): a SAVED xCell Pur area that holds readings never gets a native machine. Refused in the app before
+    // the selector moves or anything is written (and in the database, 0301); the existing record and readings are untouched.
+    test("a SAVED xCell area with readings takes no native machine: the unit cannot be chosen, a forced pick writes nothing, the record is untouched", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      const old = await sql<{ id: string; session_id: string }>(`select id, session_id from public.session_blocks where studio_id=$1 and machine_profile_id is null limit 1`, [s.seed.studioId]);
+      const before = (await blocksOf(old[0]!.session_id))[0]!;
+      expect(before).toMatchObject({ mode: "thermo", energy_level: "7", machine_profile_id: null, studio_machine_id: null });
+      await page.goto(`/clients/${s.clientId}/sessions/${old[0]!.session_id}`);
+      await page.getByTestId(`edit-area-${old[0]!.id}`).click({ timeout: T });
+      await expect(page.getByLabel("Energy level (EL)")).toHaveValue("7", { timeout: T });
+      await openPanel(page);
+      const select = page.getByTestId("machine-select");
+      // Both units are listed but cannot be chosen; xCell Pur can; the area says why.
+      // (Read from the option's own property: Playwright's toBeDisabled does not judge an <option>.)
+      const optionDisabled = (value: string) => select.locator(`option[value="${value}"]`).evaluate((o) => (o as HTMLOptionElement).disabled);
+      for (const unit of [s.senior, s.junior]) {
+        expect(await optionDisabled(unit), "a native unit cannot be chosen on this area").toBe(true);
+      }
+      expect(await optionDisabled("legacy:xcell"), "xCell Pur can").toBe(false);
+      await expect(page.getByTestId("machine-native-locked")).toBeVisible();
+      await noOverflow(page);
+
+      // A pick that gets past the disabled option (keyboard, script) is refused BEFORE anything is written.
+      await page.evaluate((id) => {
+        const el = document.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(el, id);
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }, s.senior);
+      await expect(page.getByText("This area already has xCell Pur readings").first()).toBeVisible({ timeout: T });
+      await page.waitForTimeout(1500);
+      const after = (await blocksOf(old[0]!.session_id))[0]!;
+      expect(after, "no identity, no change to the record").toMatchObject({ mode: "thermo", energy_level: "7", machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+      expect(await readingCount(old[0]!.id)).toBe(0);
+      await expect(select).not.toHaveValue(s.senior);
+      await expect(page.getByLabel("Energy level (EL)")).toHaveValue("7");
+      await expect(page.getByText("Machine frequency")).toBeVisible();
+
+      // Choosing xCell Pur itself is still allowed and saves only the model; the readings stay.
+      await select.selectOption("legacy:xcell");
+      await expect.poll(async () => (await blocksOf(old[0]!.session_id))[0]!.machine_profile_id, { timeout: T }).toBe("dectro-apilus:xcell");
+      expect((await blocksOf(old[0]!.session_id))[0]).toMatchObject({ mode: "thermo", energy_level: "7", studio_machine_id: null });
+    });
+
+    // Codex #1369 4471593277 (P2): xCell history and NO registered native unit: the selector is usable, and xCell Pur saves as before.
+    test("a studio with xCell history and no registered native unit can choose and save xCell Pur", async ({ page }) => {
+      const s = await seedStudio();
+      await sql(`delete from public.studio_machines where studio_id=$1`, [s.seed.studioId]);
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      const select = page.getByTestId("machine-select");
+      await expect(select).toBeEnabled();
+      const options = await select.locator("option").evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
+      expect(options).toContain("legacy:xcell");
+      expect(options.filter((v) => v && v !== "legacy:xcell"), "no native unit is registered").toEqual([]);
+      await select.selectOption("legacy:xcell");
+      await expect(page.getByTestId("machine-legacy-chosen")).toBeVisible({ timeout: T });
+      await expect(page.getByText("Machine frequency")).toBeVisible();
+      await page.getByRole("button", { name: "Thermolysis", exact: true }).click();
+      await page.getByLabel("Energy level (EL)").fill("5");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(async () => (await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      expect((await blocksOf(sessionId))[0]).toMatchObject({ machine_profile_id: "dectro-apilus:xcell", studio_machine_id: null, mode: "thermo", energy_level: "5" });
+      await noOverflow(page);
+    });
   });
 }

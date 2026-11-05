@@ -226,6 +226,8 @@ export type MachineFirstSetupPanelProps = {
   legacyMachine?: { profileId: string; label: string } | null;
   /** The area was saved as that workflow: open on it. */
   initialLegacyChosen?: boolean;
+  /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
+  nativeLocked?: boolean;
   /**
    * What kind of machine is in force, so the host form can show ONLY that
    * machine's fields: the existing fields for `legacy` and `none`, none of the
@@ -334,6 +336,7 @@ export function MachineFirstSetupPanel({
   onSelectMachine,
   legacyMachine = null,
   initialLegacyChosen = false,
+  nativeLocked = false,
   onKindChange,
   onResolvedChoice,
   onRecord,
@@ -735,8 +738,12 @@ export function MachineFirstSetupPanel({
             // The machine and the mode are PART OF THE PAYLOAD the retry
             // key is bound to. A freeze that covers the readings and not
             // the identity is not a freeze.
+            // The legacy option is a choice too: a studio with xCell Pur history and no registered native unit still
+            // has something to select (Codex, #1369 4471593277).
             disabled={
-              selectable.length === 0 || selectionPending || identityFrozen
+              (selectable.length === 0 && !legacyMachine) ||
+              selectionPending ||
+              identityFrozen
             }
             data-testid="machine-select"
           >
@@ -747,7 +754,7 @@ export function MachineFirstSetupPanel({
             */}
             <option value="">Choose machine…</option>
             {selectable.map(({ device, profile }) => (
-              <option key={device.deviceId} value={device.deviceId}>
+              <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
                 {device.displayName} — {profile.manufacturer} {profile.model}
                 {profile.variant ? ` (${profile.variant})` : ""}
               </option>
@@ -759,6 +766,11 @@ export function MachineFirstSetupPanel({
             )}
           </select>
         </FieldLabel>
+      )}
+      {scope && nativeLocked && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">
+          This area already has xCell Pur readings. Add a new area to chart another machine.
+        </p>
       )}
 
       {/*

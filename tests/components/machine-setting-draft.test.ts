@@ -1472,7 +1472,9 @@ describe("switching machine or mode clears the collected draft", () => {
       src,
       "the freeze must come from EITHER save path",
     ).toMatch(/const identityFrozen = settingDraftFrozen \|\| revisionUnresolved/);
-    expect(src).toMatch(/selectable\.length === 0 \|\| selectionPending \|\| identityFrozen/);
+    // The selector is dead only when NOTHING can be chosen (no native unit AND no existing-workflow option), or while a write or an
+    // unresolved save holds it (Codex #1369 4471593277: it used to be dead whenever no native unit was registered).
+    expect(src).toMatch(/\(selectable\.length === 0 && !legacyMachine\) \|\|\s*selectionPending \|\|\s*identityFrozen/);
     expect(src).toMatch(/disabled=\{selectionPending \|\| identityFrozen\}/);
   });
 

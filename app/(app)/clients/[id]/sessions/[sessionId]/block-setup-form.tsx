@@ -1929,6 +1929,7 @@ export function BlockSetupForm({
         onKindChange={onKindChange}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         blockVersion={blockVersion}
+        legacyReadingsLocked={legacyDataLocked}
         onBlockVersion={(token) => {
           if (block) setHeldVersion(token);
         }}

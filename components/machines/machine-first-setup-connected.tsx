@@ -44,6 +44,10 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 export const SAVED_MACHINE_CANNOT_BE_CLEARED =
   "Choose another machine to change this one. A saved machine cannot be cleared.";
 
+/** ONE refusal text for a native machine on an area that already holds xCell Pur readings (Codex, #1369 4471593271). */
+export const LEGACY_AREA_NATIVE_MACHINE_REFUSED =
+  "This area already has xCell Pur readings. Add a new area to chart another machine.";
+
 export type MachineFirstSetupConnectedProps = {
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
@@ -58,6 +62,11 @@ export type MachineFirstSetupConnectedProps = {
   blockVersion?: string | null;
   /** Called with the block's new version after THIS panel's own identity write. */
   onBlockVersion?: (updatedAt: string) => void;
+  /**
+   * The saved area already holds xCell Pur readings (the host's own test). A native machine is refused BEFORE the selector
+   * moves or anything is written; the database refuses it too (0301). The legacy machine itself stays choosable.
+   */
+  legacyReadingsLocked?: boolean;
   /** Injected by tests; production uses the server action. */
   load?: () => Promise<MachineSetupContext>;
   /** Injected by tests; production uses the server action. */
@@ -181,6 +190,7 @@ export function MachineFirstSetupConnected({
   onIdentityDraft,
   blockVersion,
   onBlockVersion,
+  legacyReadingsLocked = false,
 }: MachineFirstSetupConnectedProps) {
   // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
   // identity writes (Codex, #1369 4475581937). The prop is the identity the page
@@ -400,6 +410,11 @@ export function MachineFirstSetupConnected({
     ) {
       return { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED, reverted: true };
     }
+    // A SAVED AREA WITH xCell Pur READINGS TAKES NO NATIVE MACHINE: refused here, before the preference or the record is
+    // touched (the panel does not move on a reverted refusal), and again by the database.
+    if (blockId && legacyReadingsLocked && !choice.legacy && choice.deviceId !== null) {
+      return { ok: false, error: LEGACY_AREA_NATIVE_MACHINE_REFUSED, reverted: true };
+    }
     const mod = await import(
       "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
     );
@@ -499,6 +514,7 @@ export function MachineFirstSetupConnected({
       // The existing workflow as a choice in THE selector, and whether this
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
+      nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       initialLegacyChosen={
         (savedIdentity?.deviceId == null && savedIdentity?.profileId != null) ||
         Boolean(newAreaLast?.legacy)

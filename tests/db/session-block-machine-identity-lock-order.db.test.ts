@@ -100,8 +100,10 @@ async function seedSource(studio: SeededStudio, finalized: boolean) {
       [sessionId, studio.studioId, studio.clientId, studio.practitionerId, finalized ? "finalized" : "draft"],
     );
     await c.query(
-      `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level)
-       values ($1,$2,$3,1,'Chin','left','blend',10)`,
+      // NO LEGACY READINGS on the block: this file saves a NATIVE setup on it, and 0301 refuses a native identity on an area that holds
+      // xCell Pur readings (Codex 4471593271). The lock order is what is under test here, not that refusal.
+      `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side)
+       values ($1,$2,$3,1,'Chin','left')`,
       [blockId, studio.studioId, sessionId],
     );
     await c.query(
