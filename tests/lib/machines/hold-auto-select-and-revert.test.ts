@@ -41,7 +41,8 @@ describe("auto-resolution is held while legacy values are entered", () => {
 
 describe("a refused identity write puts the panel back on the stored machine", () => {
   it("every refusal of the area's own identity write is marked reverted", () => {
-    expect(conn.match(/reverted: true/g)?.length).toBe(3);
+    // The clear refusal (twice), the legacy-readings refusal (#1369 4471593271) and the record's own refusal.
+    expect(conn.match(/reverted: true/g)?.length).toBe(4);
   });
   it("the panel keeps the reason, restores what an optimistic (new-area) pick moved, and never settles a refused pick", () => {
     const i = panel.indexOf("write.reverted");

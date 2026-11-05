@@ -419,6 +419,28 @@ export function MachineFirstSetupConnected({
       "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
     );
     const legacyProfile = choice.legacy ? (ctx.legacyMachine?.profileId ?? null) : null;
+    const chosen =
+      choice.deviceId !== null || legacyProfile !== null
+        ? { deviceId: choice.deviceId, modeKey: choice.modeKey, profileId: legacyProfile }
+        : null;
+    // THE RECORD FIRST, FOR A SAVED AREA (Insurance LK-3): this area's own machine is written now, and a refusal (the database
+    // refuses a native machine on an area with xCell Pur readings the page did not know about, or a stale tab) must leave the
+    // remembered preference where it was, not move it to a machine this area cannot take. A new area carries the choice into
+    // the host's Save instead (one transaction).
+    if (blockId && chosen !== null) {
+      const saved = await mod.recordBlockMachineIdentityAction({
+        clientId,
+        sessionId,
+        blockId,
+        deviceId: chosen.deviceId,
+        modeKey: chosen.modeKey,
+        profileId: chosen.profileId,
+        expectedUpdatedAt: blockVersion ?? null,
+      });
+      if (!saved.ok) return { ok: false, error: saved.error, reverted: true };
+      setWritten({ profileId: chosen.profileId, deviceId: chosen.deviceId, modeKey: chosen.modeKey });
+      if (saved.updatedAt) onBlockVersion?.(saved.updatedAt);
+    }
     // THE PREFERENCE (a suggestion for the next visit) is written only for a
     // native unit; choosing the existing workflow leaves it alone.
     let pref: { ok: boolean; error?: string } = { ok: true };
@@ -432,12 +454,6 @@ export function MachineFirstSetupConnected({
             });
       pref = out.ok ? { ok: true } : { ok: false, error: out.error };
     }
-    const chosen =
-      choice.deviceId !== null || legacyProfile !== null
-        ? { deviceId: choice.deviceId, modeKey: choice.modeKey, profileId: legacyProfile }
-        : null;
-    // THE RECORD: this area's own machine. A new area carries it into the
-    // host's Save (one transaction); a saved area writes it now.
     if (!blockId) {
       onIdentityDraft?.(chosen, true);
       return pref;
@@ -447,20 +463,7 @@ export function MachineFirstSetupConnected({
         ? { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED, reverted: true }
         : pref;
     }
-    const saved = await mod.recordBlockMachineIdentityAction({
-      clientId,
-      sessionId,
-      blockId,
-      deviceId: chosen.deviceId,
-      modeKey: chosen.modeKey,
-      profileId: chosen.profileId,
-      expectedUpdatedAt: blockVersion ?? null,
-    });
-    if (saved.ok) {
-      setWritten({ profileId: chosen.profileId, deviceId: chosen.deviceId, modeKey: chosen.modeKey });
-      if (saved.updatedAt) onBlockVersion?.(saved.updatedAt);
-    }
-    return saved.ok ? pref : { ok: false, error: saved.error, reverted: true };
+    return pref;
   };
 
   // A SAVED AREA'S PICK IS A WRITE AGAINST THE BLOCK'S VERSION: hold the host's Save for its whole duration,

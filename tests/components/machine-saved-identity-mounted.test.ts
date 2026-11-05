@@ -616,6 +616,19 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     );
   });
 
+  it("Insurance LK-3: a DATABASE refusal (readings the page did not know about) is a reverted pick: the selector stays, nothing is remembered", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({
+      ok: false,
+      error: "This area already holds xCell Pur readings; add a new area for another machine.",
+    } as never);
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
+    const sel = await choose("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+    expect(sel.value).toBe("legacy:xcell");
+    expect(host!.textContent).toContain("already holds xCell Pur readings");
+  });
+
   it("NEGATIVE CONTROL: a NEW area (no block) is never locked, whatever the flag says", async () => {
     await mount({ blockId: null, legacyReadingsLocked: true });
     await open();

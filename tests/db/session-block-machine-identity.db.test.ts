@@ -77,7 +77,7 @@ const SQL = `select public.create_block_with_initial_setup_and_identity(
 async function save(
   studio: SeededStudio,
   sessionId: string,
-  over: { machine?: string | null; mode?: string | null; key?: string | null; groups?: unknown; profile?: string | null; userId?: string } = {},
+  over: { legacyEntry?: boolean; thermolysisIntensity?: number; machine?: string | null; mode?: string | null; key?: string | null; groups?: unknown; profile?: string | null; userId?: string } = {},
 ) {
   return asUser(over.userId ?? studio.userId, async (q) => {
     const r = await q(SQL, [
@@ -112,7 +112,16 @@ async function save(
       over.key ?? null,
       over.groups === undefined ? null : JSON.stringify(over.groups),
       over.profile ?? null,
-    ]);
+    ].map((v, i) => {
+      // A legacy-style entry (an area with a mode, plus a thermolysis reading when given) rides the same call.
+      if (over.legacyEntry) {
+        if (i === 5) return true;
+        if (i === 6) return "Upper lip";
+        if (i === 10) return "thermo";
+        if (i === 11) return 1;
+      }
+      return i === 23 && over.thermolysisIntensity != null ? over.thermolysisIntensity : v;
+    }));
     return r.rows[0].r as { block_id: string; reused: boolean; setup: unknown };
   });
 }
@@ -610,5 +619,37 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     await setBlock(studio, blockId, `machine_frequency = '  '`);
     await record(studio, sessionId, blockId, null, machine, "galvanic");
     expect((await identity(blockId)).studio_machine_id).toBe(machine);
+  });
+
+  it("NEGATIVE CONTROL: a SOFT-DELETED legacy entry is not a reading (OPS decision on Insurance LK-1)", async () => {
+    const studio = await seedStudio("identity-lock-deleted-entry");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await addEntry(studio, sessionId, blockId, "galvanic_ma", "0.8");
+    await adminTx(async (q) => {
+      await q("set local session_replication_role = replica");
+      await q(`update public.electrolysis_entries set deleted_at = now() where block_id = $1`, [blockId]);
+    });
+    await record(studio, sessionId, blockId, null, machine, "galvanic");
+    expect((await identity(blockId)).studio_machine_id).toBe(machine);
+  });
+
+  it("the create wrapper with a native unit AND one legacy parameter refuses and creates NO block (Insurance LK-2)", async () => {
+    const studio = await seedStudio("identity-lock-wrapper");
+    const { sessionId } = await seedSession(studio);
+    const machine = await register(studio);
+    const count = async () =>
+      (await adminQuery(`select count(*)::int as n from public.session_blocks where session_id = $1`, [sessionId])).rows[0].n as number;
+    const before = await count();
+    await expect(save(studio, sessionId, { machine, mode: "galvanic", key: "lk2-refused-1", legacyEntry: true, thermolysisIntensity: 40 })).rejects.toThrow(REFUSED);
+    expect(await count(), "the whole save rolled back, the area included").toBe(before);
+  });
+
+  it("NEGATIVE CONTROL: the same wrapper call with the native unit and NO legacy parameter succeeds", async () => {
+    const studio = await seedStudio("identity-lock-wrapper-ok");
+    const { sessionId } = await seedSession(studio);
+    const machine = await register(studio);
+    const out = await save(studio, sessionId, { machine, mode: "galvanic", key: "lk2-ok-key-1" });
+    expect(await identity(out.block_id)).toEqual({ machine_profile_id: PROFILE, studio_machine_id: machine, machine_mode_key: "galvanic" });
   });
 });

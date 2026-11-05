@@ -118,6 +118,7 @@ begin
   -- AN AREA THAT ALREADY HOLDS xCell Pur READINGS NEVER GETS A NATIVE IDENTITY (Codex 4471593271, decided by OPS; protects
   -- the studio's existing records). Two machines' settings on one area, or the second overwriting the first, is the harm.
   -- The same list the app's lock uses: the legacy columns on the block and the legacy reading columns on its entries.
+  -- A soft-deleted entry is not a reading (OPS decision on Insurance LK-1).
   -- Choosing the legacy xCell Pur machine itself stays allowed. The block row is already locked above, so this read is
   -- consistent with the write below. A new area (create wrapper) has no readings at this point.
   if v_profile <> 'dectro-apilus:xcell' and (
@@ -133,6 +134,7 @@ begin
          select 1
            from public.electrolysis_entries e
           where e.block_id = p_block_id
+            and e.deleted_at is null
             and (e.thermolysis_intensity_percent is not null
                  or e.thermolysis_duration_seconds is not null
                  or e.galvanic_ma is not null
