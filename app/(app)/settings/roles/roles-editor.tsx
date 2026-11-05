@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
@@ -106,6 +106,10 @@ export function RolesEditor(props: RolesEditorProps) {
   const [reviewData, setReviewData] = useState<ServerPreview | null>(null);
   const [reason, setReason] = useState("");
   const router = useRouter();
+  // router.refresh() returns void, not a promise, so awaiting it would not hold anything. A transition is pending until the refreshed server
+  // payload has been applied: busy covers that tail too, so the draft cannot be edited between "saved" and the page showing the new state.
+  const [refreshing, startRefresh] = useTransition();
+  const refreshNow = () => startRefresh(() => router.refresh());
   const [confirmed, setConfirmed] = useState(false);
   const [reviewed, setReviewed] = useState(props.reviewed);
   const feedback = useSaveFeedback();
@@ -130,7 +134,7 @@ export function RolesEditor(props: RolesEditorProps) {
   // Codex P2 4477378035: while a save, reset, adopt or the read-back after it is in flight, the draft must not change: the read-back replaces
   // it with the saved policy, so an edit made in that window would be silently lost. Editing is disabled for the whole window (feedback
   // stays "saving" until the read-back has been applied), and the edit entry points refuse as well.
-  const busy = feedback.state.kind === "saving";
+  const busy = feedback.state.kind === "saving" || refreshing;
   const readOnly = !props.writable || busy;
 
   const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
@@ -228,31 +232,52 @@ export function RolesEditor(props: RolesEditorProps) {
   const needsReason = reviewing && reasonRequired("save", sensitiveCount > 0);
   const reasonOk = reasonAcceptable("save", sensitiveCount > 0, reason);
 
+  const LOST_MESSAGE = "We could not confirm whether that was saved. Reload the page to check before trying again.";
+  // A rejected promise from the server action (network drop, thrown error) must never leave the editor in "saving", which is read-only.
+  const readBack = async () => {
+    try {
+      return await props.reload();
+    } catch {
+      return { ok: false as const };
+    }
+  };
+
   async function onSave() {
     if (!reviewData || !reviewedEdits.current) return;
     feedback.saving();
     const boundVersion = reviewData.version;
-    const result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim());
-    if (result.ok) {
-      // The core owns what was saved: read it back rather than assume the draft became the saved state.
-      const fresh = await props.reload();
-      if (fresh.ok) {
-        setSaved(fresh.state.policies);
-        setDrafts(fresh.state.policies);
-        setReviewed(fresh.state.reviewed);
-      } else {
-        // Could not read it back: do not claim a state we have not seen. Refresh the page from the server.
-        router.refresh();
+    try {
+      let result: Awaited<ReturnType<typeof props.save>>;
+      try {
+        result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim());
+      } catch {
+        // The request may or may not have committed: read it back and say which, exactly as for an unexpected core answer.
+        await resolveUnexpected(boundVersion, reviewedEdits.current);
+        return;
       }
-      setReviewing(false);
-      setReviewData(null);
-      setConfirmed(false);
-      setReason("");
-      feedback.saved();
-    } else if (result.error.code === "unexpected") {
-      await resolveUnexpected(boundVersion, reviewedEdits.current);
-    } else {
-      handleError(result.error);
+      if (result.ok) {
+        // The core owns what was saved: read it back rather than assume the draft became the saved state.
+        const fresh = await readBack();
+        if (fresh.ok) {
+          setSaved(fresh.state.policies);
+          setDrafts(fresh.state.policies);
+          setReviewed(fresh.state.reviewed);
+        } else {
+          // Could not read it back: do not claim a state we have not seen. Refresh the page from the server.
+          refreshNow();
+        }
+        setReviewing(false);
+        setReviewData(null);
+        setConfirmed(false);
+        setReason("");
+        feedback.saved();
+      } else if (result.error.code === "unexpected") {
+        await resolveUnexpected(boundVersion, reviewedEdits.current);
+      } else {
+        handleError(result.error);
+      }
+    } catch {
+      feedback.failed(LOST_MESSAGE);
     }
   }
 
@@ -261,7 +286,7 @@ export function RolesEditor(props: RolesEditorProps) {
   // A moved version alone is never proof (another writer may have committed): success is claimed only when the reloaded choices equal
   // the exact set this operation attempted. Otherwise the draft is kept and the outcome is said to be uncertain.
   async function resolveUnexpected(boundVersion: number, attempted: AttemptedEdits | null) {
-    const fresh = await props.reload();
+    const fresh = await readBack();
     const outcome = classifyUnexpected({
       boundVersion,
       attempted,
@@ -332,20 +357,31 @@ export function RolesEditor(props: RolesEditorProps) {
     }
     feedback.saving();
     const boundVersion = preview.data.version;
-    const result =
-      preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim(), previewConfirmed) : await props.reset(preview.role, boundVersion, reason.trim(), previewConfirmed);
-    if (!result.ok && result.error.code === "unexpected") {
-      await resolveUnexpected(boundVersion, null);
-      return;
-    }
-    if (result.ok) {
-      // The core owns the resulting policy; reload to read it rather than guess it here.
-      setPreview(null);
-      setReason("");
-      feedback.saved();
-      router.refresh();
-    } else {
-      handleError(result.error);
+    try {
+      let result: Awaited<ReturnType<typeof props.reset>>;
+      try {
+        result =
+          preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim(), previewConfirmed) : await props.reset(preview.role, boundVersion, reason.trim(), previewConfirmed);
+      } catch {
+        await resolveUnexpected(boundVersion, null);
+        return;
+      }
+      if (!result.ok && result.error.code === "unexpected") {
+        await resolveUnexpected(boundVersion, null);
+        return;
+      }
+      if (result.ok) {
+        // The core owns the resulting policy; refresh to read it rather than guess it here. The refresh transition keeps the editor busy until
+        // the new state has been applied.
+        setPreview(null);
+        setReason("");
+        feedback.saved();
+        refreshNow();
+      } else {
+        handleError(result.error);
+      }
+    } catch {
+      feedback.failed(LOST_MESSAGE);
     }
   }
 
@@ -434,7 +470,7 @@ export function RolesEditor(props: RolesEditorProps) {
             blockedByDraft={dirty}
             previewActivation={props.previewActivation}
             activate={props.activate}
-            onActivated={() => router.refresh()}
+            onActivated={() => refreshNow()}
             onDiscard={stageBasisChoice}
           />
           <div role="tablist" aria-label="Role" className="flex gap-2">
@@ -539,7 +575,7 @@ export function RolesEditor(props: RolesEditorProps) {
               <button
                 type="button"
                 onClick={onSave}
-                disabled={!props.writable || !reviewData || feedback.state.kind === "saving" || (sensitiveCount > 0 && !confirmed) || !reasonOk}
+                disabled={!props.writable || !reviewData || busy || (sensitiveCount > 0 && !confirmed) || !reasonOk}
                 className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
                 Save changes

@@ -52,7 +52,7 @@ describe("PY-6 'unexpected' does not claim nothing changed", () => {
     expect(fn("async function onSave")).toContain("resolveUnexpected(boundVersion, reviewedEdits.current)");
     expect(fn("async function confirmPreview")).toContain("resolveUnexpected(boundVersion, null)");
     const body = fn("async function resolveUnexpected");
-    expect(body).toContain("props.reload()");
+    expect(body).toContain("readBack()"); // wraps props.reload() (B-2)
     expect(body).toContain("classifyUnexpected(");
     expect(body).not.toContain("fresh.state.version === boundVersion");
     expect(body).toContain("UNCERTAIN_SAVE_MESSAGE");
@@ -88,7 +88,7 @@ describe("Codex P2 4476375641: a reset or adoption preview does not outlive an e
 describe("editing is disabled while a save, reset, adopt or read-back is in flight", () => {
   const SRC = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
   it("the busy window is the whole 'saving' feedback state and turns every row read-only", () => {
-    expect(SRC).toContain('const busy = feedback.state.kind === "saving";');
+    expect(SRC).toContain('const busy = feedback.state.kind === "saving" || refreshing;');
     expect(SRC).toContain("const readOnly = !props.writable || busy;");
   });
   it("the edit entry points refuse while busy", () => {
@@ -100,7 +100,25 @@ describe("editing is disabled while a save, reset, adopt or read-back is in flig
   });
   it("the saving state outlasts the read-back (it ends only at feedback.saved/failed after reload)", () => {
     const save = SRC.slice(SRC.indexOf("async function onSave()"), SRC.indexOf("async function resolveUnexpected"));
-    expect(save.indexOf("feedback.saving()")).toBeLessThan(save.indexOf("props.reload()"));
-    expect(save.indexOf("props.reload()")).toBeLessThan(save.indexOf("feedback.saved()"));
+    expect(save.indexOf("feedback.saving()")).toBeLessThan(save.indexOf("readBack()"));
+    expect(save.indexOf("readBack()")).toBeLessThan(save.indexOf("feedback.saved()"));
+  });
+});
+
+// Insurance/Privacy B-1, B-2 on #1335.
+describe("the busy window outlasts the refresh and a rejected promise ends it", () => {
+  const SRC = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+  it("B-1: router.refresh runs inside a transition and busy includes it (refresh() returns void, so awaiting it would hold nothing)", () => {
+    expect(SRC).toContain("const [refreshing, startRefresh] = useTransition();");
+    expect(SRC).toContain("const refreshNow = () => startRefresh(() => router.refresh());");
+    expect(SRC).toContain('const busy = feedback.state.kind === "saving" || refreshing;');
+    // the reset/adopt, the reload-failure and the activation paths all go through it; the people panel's own refresh is unrelated to the draft
+    expect(SRC.match(/router\.refresh\(\)/g)?.length).toBe(3); // refreshNow + the People panel + a comment
+  });
+  it("B-2: save, reload, reset and adopt are each guarded, so a rejection reaches a visible error", () => {
+    expect(SRC).toContain("return await props.reload();");
+    expect(SRC).toMatch(/result = await props\.save\([^;]*;\s*\} catch \{[\s\S]{0,200}resolveUnexpected\(boundVersion, reviewedEdits\.current\)/);
+    expect(SRC).toMatch(/await props\.adopt\([^]*?\} catch \{\s*await resolveUnexpected\(boundVersion, null\)/);
+    expect(SRC.match(/feedback\.failed\(LOST_MESSAGE\)/g)?.length).toBe(2);
   });
 });

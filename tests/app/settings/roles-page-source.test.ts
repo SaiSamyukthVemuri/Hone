@@ -83,12 +83,12 @@ describe("Codex 3 Nov on #1335: a reset is confirmed for the role that was previ
     expect(editor).toMatch(/onCancel=\{\(\) => \{\s*\n\s*previewSeq\.current \+= 1;/);
   });
   it("after a successful save the saved and draft policies come from the core, not from the draft", () => {
-    expect(save).toMatch(/await props\.reload\(\)/);
+    expect(save).toMatch(/await readBack\(\)/); // readBack wraps props.reload() so a rejection is a failed read, not a stuck editor (B-2)
     expect(save).not.toMatch(/setSaved\(drafts\)/);
     expect(save).toMatch(/setSaved\(fresh\.state\.policies\)/);
     expect(save).toMatch(/setDrafts\(fresh\.state\.policies\)/);
     // If the read-back fails nothing is claimed: the page is refreshed from the server.
-    expect(save).toMatch(/router\.refresh\(\)/);
+    expect(save).toMatch(/refreshNow\(\)/);
   });
   it("reloadPolicyAction is owner-only and refuses to hand back the read-only snapshot as if it were authoritative", () => {
     const b = actions.slice(actions.indexOf("export async function reloadPolicyAction"), actions.indexOf("export async function previewRoleChangesAction"));
