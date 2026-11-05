@@ -1,0 +1,24 @@
+{
+  "migration": "0278",
+  "requires_before_max": "0277",
+  "note": "Declared position: after 0277 (Sam's sequence). A different hosted max stops the read.",
+  "tables": [
+    "studios",
+    "practitioners",
+    "studio_availability_default",
+    "studio_availability_overrides"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "four_bodies_are_0150",
+      "two_new_absent",
+      "acl_four_service_role_only",
+      "helpers_present"
+    ]
+  },
+  "verify_sql": [
+    "c01_function-state.sql"
+  ],
+  "verify_label": "history, six function read-back (bodies = sealed 0278, definer, search_path, service_role-only)"
+}

@@ -1,0 +1,23 @@
+{
+  "migration": "0258",
+  "tables": [
+    "clients"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "tables_present",
+      "helpers_ok",
+      "new_objects_absent",
+      "columns_ok"
+    ]
+  },
+  "verify_sql": [
+    "c01_table_privileges.sql",
+    "c02_policies.sql",
+    "c03_functions.sql",
+    "c04_trigger.sql"
+  ],
+  "verify_label": "history, the privileges by role on client_legal_identities, its policies, the function grants and the guard trigger",
+  "notes": "Privacy PEER-0258-0266-SQL C4. search_path is NOT asserted for the two invoker functions: Privacy F3 asks to move it to pg_catalog, pg_temp; add it to c03 once the reviewed body lands."
+}

@@ -1,0 +1,9 @@
+const c1 = rows("c01_function-state");
+if (c1.length !== 1) fail(`c01: expected exactly one mark_appointment_complete, got ${c1.length}`);
+const f = c1[0];
+if (Number(f.overloads) !== 1) fail("c01: more than one overload");
+if (f.md5 !== EXPECT_BODY_MD5) fail(`c01: body md5 ${f.md5} is not the sealed 0277 value ${EXPECT_BODY_MD5}`);
+if (!isTrue(f.definer)) fail("c01: not security definer");
+if (f.search_path !== "search_path=pg_catalog, pg_temp") fail(`c01: search_path is ${f.search_path}`);
+if (isTrue(f.anon_exec) || isTrue(f.authenticated_exec) || !isTrue(f.service_role_exec)) fail("c01: ACL is not service_role-only");
+console.log("PASS function-state: one definer function, body md5 equals the sealed 0277, pinned search_path, anon and authenticated cannot execute, service_role can");

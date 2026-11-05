@@ -1,0 +1,10 @@
+const c1 = rows("c01_function-state");
+if (c1.length !== 6) fail(`c01: expected six functions, got ${c1.length}`);
+for (const f of c1) {
+  if (Number(f.overloads) !== 1) fail(`c01: ${f.proname} has ${f.overloads} overloads`);
+  if (BODY_MD5[f.proname] !== f.md5) fail(`c01: ${f.proname} body md5 ${f.md5} is not the sealed 0278 value`);
+  if (!isTrue(f.definer)) fail(`c01: ${f.proname} is not security definer`);
+  if (f.search_path !== "search_path=pg_catalog, pg_temp") fail(`c01: ${f.proname} search_path is ${f.search_path}`);
+  if (isTrue(f.anon_exec) || isTrue(f.authenticated_exec) || !isTrue(f.service_role_exec)) fail(`c01: ${f.proname} ACL is not service_role-only`);
+}
+console.log("PASS function-state: six definer functions, bodies equal the sealed 0278, pinned search_path, service_role-only");
