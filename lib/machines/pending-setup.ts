@@ -386,3 +386,21 @@ export function machineDraftHasEntries(
 ): boolean {
   return draft !== null && (draft.groups.length > 0 || draft.blocking !== null);
 }
+
+/**
+ * WHETHER "Copy settings from another area" may use this source for the draft's machine (Codex, #1369 4478497428).
+ *
+ * The copy patch fills the LEGACY charting fields (mode, modality, energy, readings). With a native machine selected
+ * those fields are hidden but still submitted, so a legacy source would silently record legacy settings against a
+ * native machine. A native source copied onto a legacy draft would instead blank what was typed. Copying across the
+ * two kinds is therefore refused; "none" (no machine chosen yet) takes either.
+ */
+export function copySourceMatchesMachine(
+  kind: "none" | "legacy" | "native",
+  source: { studio_machine_id?: string | null },
+): boolean {
+  const sourceNative = Boolean(source.studio_machine_id);
+  if (kind === "native") return sourceNative;
+  if (kind === "legacy") return !sourceNative;
+  return true;
+}

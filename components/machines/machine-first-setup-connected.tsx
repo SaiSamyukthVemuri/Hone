@@ -473,7 +473,9 @@ export function MachineFirstSetupConnected({
       // The server resolved the stored selection; when it is not usable the
       // panel shows nothing chosen and states the reason, rather than an
       // empty picker beside a claim that a machine is remembered.
-      unavailableSelection={ctx.rememberedUnavailable}
+      // A valid client-last machine WINS over an unavailable remembered preference (Codex, #1369 4478497436):
+      // the stale preference is only stated when nothing better was chosen for this new area.
+      unavailableSelection={newAreaLast ? null : ctx.rememberedUnavailable}
       // The unit this client's last setup used, offered (not selected) when
       // nothing is remembered. Forwarded here or it is inert in the real route.
       suggestedMachine={ctx.suggestedMachine}

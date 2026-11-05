@@ -199,5 +199,57 @@ for (const device of [
       await page.getByRole("button", { name: "Stay" }).click();
       await expect(page.getByText("Leave without saving?")).toHaveCount(0);
     });
+
+    // Codex #1369 4478075121 / Insurance FE-1 / Privacy FD-1: the browser's own Back and Forward, not a click. popstate carries no direction;
+    // the guard reads the history entry index, puts the entry back by the distance travelled, and asks. Entries are made with the app's own
+    // router so they are SAME-DOCUMENT (the only kind that raises popstate); a hard page load would raise beforeunload instead.
+    test("Back and Forward with unsaved work: the prompt appears, Stay keeps the page, URL and typed data, and Leave arrives", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      await startSession(page, s.clientId);
+      const form = new URL(page.url()).pathname;
+      const go = (path: string) => page.evaluate((p) => (window as unknown as { next: { router: { push(p: string): void } } }).next.router.push(p), path);
+      const at = async (path: string) => expect.poll(() => new URL(page.url()).pathname, { timeout: T }).toBe(path);
+      // History: [new-session (hard load)] [form] [dashboard] [form] [dashboard]; rewind one so the form has an entry on BOTH sides.
+      await go("/dashboard");
+      await at("/dashboard");
+      await go(form);
+      await at(form);
+      await go("/dashboard");
+      await at("/dashboard");
+      await page.evaluate(() => history.back());
+      await at(form);
+      // Dirty the form.
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await page.getByLabel("Energy level (EL)").fill("4");
+      await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "unsaved");
+      const stillHere = async () => {
+        await expect(page.getByText("Leave without saving?")).toHaveCount(0);
+        await at(form);
+        await expect(page.getByLabel("Energy level (EL)")).toHaveValue("4");
+        await expect(page.getByTestId("save-status")).toHaveAttribute("data-state", "unsaved");
+      };
+      // BACK -> prompt -> Stay.
+      await page.evaluate(() => history.back());
+      await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
+      await page.getByRole("button", { name: "Stay" }).click();
+      await stillHere();
+      // FORWARD -> prompt -> Stay (the case that used to leave the browser on the destination).
+      await page.evaluate(() => history.forward());
+      await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
+      await page.getByRole("button", { name: "Stay" }).click();
+      await stillHere();
+      // Back again: the guard is still armed after both Stays (the own-move flag did not swallow it).
+      await page.evaluate(() => history.back());
+      await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
+      await page.getByRole("button", { name: "Stay" }).click();
+      await stillHere();
+      // LEAVE: confirm, and arrive where Back was going.
+      await page.evaluate(() => history.back());
+      await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
+      await page.getByRole("button", { name: "Leave" }).click();
+      await at("/dashboard");
+      await expect(page.getByText("Leave without saving?")).toHaveCount(0);
+    });
   });
 }

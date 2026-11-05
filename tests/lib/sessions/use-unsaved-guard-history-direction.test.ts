@@ -173,3 +173,52 @@ describe("the own-move flag cannot stay set after a move that raised no popstate
     expect(onLeave).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("where the Navigation API exists the traversal is cancelled before it happens", () => {
+  type Fake = EventTarget & { currentEntry: { index: number }; traverseTo: ReturnType<typeof vi.fn> };
+  function install(): Fake {
+    const nav = Object.assign(new EventTarget(), { currentEntry: { index: 5 }, traverseTo: vi.fn() }) as Fake;
+    (window as unknown as { navigation: unknown }).navigation = nav;
+    return nav;
+  }
+  const traverse = (nav: Fake, over: Record<string, unknown> = {}) => {
+    const ev = Object.assign(new Event("navigate", { cancelable: true }), {
+      navigationType: "traverse",
+      destination: { key: "k4" },
+      ...over,
+    });
+    act(() => {
+      nav.dispatchEvent(ev);
+    });
+    return ev;
+  };
+
+  it("a Back/Forward traversal is cancelled, asked about, and Leave replays it by key", async () => {
+    const nav = install();
+    let proceed: (() => void) | null = null;
+    await mount((p) => (proceed = p));
+    const ev = traverse(nav);
+    expect(ev.defaultPrevented, "nothing moved, so Stay needs no restore").toBe(true);
+    expect(proceed).not.toBeNull();
+    expect(nav.traverseTo).not.toHaveBeenCalled();
+    proceed!();
+    expect(nav.traverseTo).toHaveBeenCalledWith("k4");
+    // The replayed traversal itself is let through, once.
+    expect(traverse(nav).defaultPrevented).toBe(false);
+    expect(traverse(nav).defaultPrevented, "and only once").toBe(true);
+  });
+
+  it("NEGATIVE CONTROLS: a push, a non-cancelable traversal and a hash change are not held", async () => {
+    const nav = install();
+    const onLeave = vi.fn();
+    await mount(onLeave);
+    expect(traverse(nav, { navigationType: "push" }).defaultPrevented).toBe(false);
+    expect(traverse(nav, { hashChange: true }).defaultPrevented).toBe(false);
+    const nonCancelable = Object.assign(new Event("navigate", { cancelable: false }), { navigationType: "traverse", destination: { key: "k4" } });
+    act(() => {
+      nav.dispatchEvent(nonCancelable);
+    });
+    expect(nonCancelable.defaultPrevented).toBe(false);
+    expect(onLeave).not.toHaveBeenCalled();
+  });
+});

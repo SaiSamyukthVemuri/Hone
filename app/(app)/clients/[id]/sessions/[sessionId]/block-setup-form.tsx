@@ -113,6 +113,7 @@ import {
   RESUME_CHOICE_RESUME,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
+  copySourceMatchesMachine,
   machineDraftHasEntries,
   type PendingSetupIdentity,
 } from "@/lib/machines/pending-setup";
@@ -1245,6 +1246,12 @@ export function BlockSetupForm({
           .find((b) => (b.primary_area ?? "").trim().toLowerCase() === wantedArea)
       : undefined;
     const source = areaMatch ?? candidates[candidates.length - 1];
+    if (!copySourceMatchesMachine(machineKind, source)) {
+      setCopyMessage(
+        "Those settings are from a different machine, so they were not copied. Enter this area's settings directly.",
+      );
+      return;
+    }
     // Full reusable setup via the shared snapshot contract: block machine
     // settings PLUS the primary (earliest live) entry's mode-gated machine
     // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas,
@@ -1273,7 +1280,22 @@ export function BlockSetupForm({
       ).map((o) => o.id),
     );
     const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable);
-    setDraft((d) => ({ ...d, ...patch }));
+    // With a native machine in force only the SHARED fields (probe and lot) are copied; the hidden legacy fields stay
+    // cleared, so nothing legacy is ever submitted.
+    const legacyBlank = {
+      mode: "",
+      apilusModality: "",
+      energyLevel: "",
+      machineFrequency: "",
+      thermolysisIntensityPercent: "",
+      thermolysisDurationSeconds: "",
+      galvanicMa: "",
+      galvanicDurationSeconds: "",
+      unitsOfLye: "",
+      pulseCount: String(PULSE_COUNT_DEFAULT),
+      pulseDelay: String(PULSE_DELAY_DEFAULT),
+    };
+    setDraft((d) => ({ ...d, ...patch, ...(machineKind === "native" ? legacyBlank : {}) }));
     // Bind the copied lot to the copied probe, so the probe-change effect does
     // NOT then overwrite it with an unrelated historical suggestion. Selecting a
     // different probe afterwards still runs the normal resolver for that probe.

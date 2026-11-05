@@ -50,6 +50,18 @@ export function historyDelta(previous: number | null, next: number | null): numb
 
 type NavigationLike = { currentEntry?: { index?: number } | null };
 
+/** The slice of the Navigation API the traversal guard uses (Chromium, Safari). */
+type NavigationApiLike = NavigationLike & {
+  addEventListener?: (type: "navigate", listener: (e: Event) => void) => void;
+  removeEventListener?: (type: "navigate", listener: (e: Event) => void) => void;
+  traverseTo?: (key: string) => unknown;
+};
+type NavigateEventLike = Event & {
+  navigationType?: string;
+  hashChange?: boolean;
+  destination?: { key?: string };
+};
+
 /** The current history entry's index, or null when the browser does not tell us. */
 export function currentHistoryIndex(win: {
   navigation?: NavigationLike;
@@ -165,11 +177,43 @@ export function useUnsavedGuard(
         /* a sandboxed frame: the guard degrades to one step Back */
       }
     }
+    // WHERE THE NAVIGATION API EXISTS, THE TRAVERSAL IS CANCELLED BEFORE IT HAPPENS. The app router's own popstate
+    // listener is registered before any component's, so it renders the destination (and unmounts this form, with its
+    // typed data) before a popstate guard is reached; a held move cannot be put back from there. A cancelled
+    // traversal changes nothing, so Stay needs no restore and Leave replays the same traversal by its key. Where a
+    // browser will not let the traversal be cancelled (no Navigation API, or no recent user activation) the
+    // popstate path below is the best-effort fallback.
+    const nav = (window as unknown as { navigation?: NavigationApiLike }).navigation;
+    let confirmedTraverse = false;
+    let confirmedTraverseTimer: ReturnType<typeof setTimeout> | undefined;
+    function onNavigate(e: Event) {
+      const ev = e as NavigateEventLike;
+      if (ev.navigationType !== "traverse" || !ev.cancelable || ev.hashChange) return;
+      if (confirmedTraverse) {
+        confirmedTraverse = false;
+        return;
+      }
+      const key = ev.destination?.key;
+      if (!key || !nav?.traverseTo) return;
+      ev.preventDefault();
+      attemptRef.current(() => {
+        confirmDeparture();
+        confirmedTraverse = true;
+        clearTimeout(confirmedTraverseTimer);
+        confirmedTraverseTimer = setTimeout(() => {
+          confirmedTraverse = false;
+        }, 500);
+        nav.traverseTo?.(key);
+      });
+    }
+    nav?.addEventListener?.("navigate", onNavigate);
     window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("click", onClick, true);
     window.addEventListener("popstate", onPopState);
     return () => {
       clearTimeout(ownMoveTimer);
+      clearTimeout(confirmedTraverseTimer);
+      nav?.removeEventListener?.("navigate", onNavigate);
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("click", onClick, true);
       window.removeEventListener("popstate", onPopState);
