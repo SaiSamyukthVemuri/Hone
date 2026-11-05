@@ -67,7 +67,19 @@ export type AttentionEntry = {
 // One line inside a client's card. Every row the panel shows is one of these, so a
 // client with a session gap, an intake gap and a reaction on record reads as ONE
 // card with three badged lines instead of three rows in two lists.
-export type AttentionItemKind = AttentionIssueKind | "treatment_memory";
+export type AttentionItemKind = AttentionIssueKind | "treatment_memory" | "unpaid";
+
+/**
+ * An unpaid finished appointment, as the owner-only loader hands it over. `owed` carries the AUTHORITATIVE outstanding balance;
+ * `unavailable` means the balance could not be determined and is shown as "Amount unavailable", never as 0.
+ */
+export type UnpaidAttention = {
+  appointmentId: string;
+  clientId: string;
+  clientName: string;
+  endsAt: string;
+  balance: { kind: "owed"; outstandingCents: number; currency: string } | { kind: "unavailable" };
+};
 
 export type AttentionItem = {
   // Stable React key.
@@ -77,6 +89,11 @@ export type AttentionItem = {
   detail: string | null;
   href: string;
   actionLabel: string;
+  // The source row's own instance marker, for the kinds whose instance changes (a new intake submission, a new reaction). Dismissal
+  // only hides an item while this still matches (lib/dashboard/attention-identity.ts). Absent for kinds with one instance.
+  stamp?: string | null;
+  // Unpaid items only: the authoritative balance. Absent for every other kind.
+  balance?: UnpaidAttention["balance"];
 };
 
 export type AttentionClient = {
@@ -167,6 +184,8 @@ export function buildNeedsAttention(input: {
   // To-do list counted these in `moreCount`; dropping them would let a studio
   // with more capped clients read as complete (Codex P2).
   treatmentMemoryNotReturned?: number;
+  // Owner-only. Finished appointments with an outstanding balance; omitted for everyone else, who never receive a figure.
+  unpaid?: ReadonlyArray<UnpaidAttention>;
   recordDetailGaps?: ReadonlyArray<{
     sessionId: string;
     clientId: string;
@@ -341,6 +360,7 @@ export function buildNeedsAttention(input: {
         detail: null,
         href: issue.href,
         actionLabel: issue.actionLabel,
+        ...(issue.kind === "intake_review" || issue.kind === "intake_incomplete" ? { stamp: e.occurredAt } : {}),
       });
     }
   }
@@ -353,6 +373,19 @@ export function buildNeedsAttention(input: {
       detail: detailWithoutRepeats(item.reason, item.detail),
       href: item.action.href,
       actionLabel: item.action.label,
+      // The reported clinical state when the source supplies one; its date only as a fallback.
+      stamp: item.state || item.occurredAt || null,
+    });
+  }
+  for (const u of input.unpaid ?? []) {
+    touch(u.clientId, u.clientName, u.endsAt).items.push({
+      id: `unpaid:${u.appointmentId}`,
+      kind: "unpaid",
+      label: "Appointment finished, payment outstanding",
+      detail: null,
+      href: `/calendar/${u.appointmentId}`,
+      actionLabel: "Open appointment",
+      balance: u.balance,
     });
   }
   // Order: before-visit cards, then cards carrying a reaction/watch item (a clinical signal that must

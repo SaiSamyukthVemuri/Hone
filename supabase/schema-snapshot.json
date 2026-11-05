@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0287_roles_permission_engine.sql",
-    "sha256": "7a4713dd6f43ee20b70bc4bb3249d58c1f1922dd0b1ef661b5bce28751be6e45"
+    "count": 257,
+    "last": "0300_card_setup_legacy_event_order_bound.sql",
+    "sha256": "933d1bc98592a3f2409ab933ed7b82190145aaf0a86ce321987cca2ba284c79a"
   },
   "public": {
     "tables": [
@@ -24,6 +24,7 @@
       "client_budget_context",
       "client_clinical_notes",
       "client_consent_signatures",
+      "client_identity_audit",
       "client_intake_forms",
       "client_legal_identities",
       "client_legal_name_access_audit",
@@ -226,8 +227,10 @@
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
       "client_legal_identities_guard",
+      "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
+      "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
       "close_delivery_concern",
@@ -588,6 +591,7 @@
       "treatment_images_clear_stage_without_session",
       "treatment_plan_stages_set_studio_id",
       "update_block_with_entry",
+      "update_client_profile_if_unchanged",
       "update_own_practitioner_profile",
       "update_recurring_break_rule_and_rematerialize",
       "update_session_block_with_areas",

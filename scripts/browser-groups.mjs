@@ -51,6 +51,8 @@ export const BROWSER_GROUPS = {
       // before a block exists, then the one atomic save that follows. Same
       // group as its sibling for the same reason.
       "machine-create-mode-journey.spec.ts",
+      // HON-8: the same journey on the REAL Senior and Junior 3G contracts (the sibling uses synthetic ids only).
+      "machine-real-3g.spec.ts",
       // MPX-03: changing the machine or the mode UNDER a typed draft, and the
       // unit going out of service mid-draft. Same surface again - the panel
       // inside the settings-block form - so the same group: a diff to that
@@ -114,8 +116,13 @@ export const BROWSER_GROUPS = {
       // Insurance PEER-1308 D-4: the CLOSED compact row (pinned notes, allergy flag, caution line,
       // intake pill visible) proved without the helper that opens the row details.
       "dashboard-closed-row.spec.ts",
+      // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
+      "dashboard-last-treatment-closed.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
+      // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
+      // (no Dismiss while 0298 is held), and the gate-ON dismissal cases on a stack that has the migration.
+      "dashboard-attention-dismissal.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be

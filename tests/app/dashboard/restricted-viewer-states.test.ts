@@ -10,9 +10,10 @@ const panel = readFileSync("app/(app)/dashboard/needs-attention-panel.tsx", "utf
 const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
 
 describe("restricted viewer states survive the dashboard restructure", () => {
-  it("the summary strip and the header pill never show a number for a restricted viewer", () => {
-    expect(stack).toContain('if (model.notAvailableToRole) return "restricted";');
-    expect(stack.match(/Not available to your role/g)!.length).toBeGreaterThanOrEqual(2);
+  it("the heading count never shows a number for a restricted viewer", () => {
+    // #1356 moved the count out of the summary strip into the ONE heading count; the restricted state follows it there.
+    expect(stack).toContain('if (v.shown.notAvailableToRole) text = "Not available to your role";');
+    expect(stack.indexOf('if (v.shown.notAvailableToRole)')).toBeGreaterThan(stack.indexOf("v.countKnown ?"));
   });
   it("the model input carries the restriction and the panel states it before any all-clear", () => {
     expect(stack).toContain("notAvailableToRole: followUpAssistant.notAvailable === true || clientsNeedingAttention.notAvailable === true");
