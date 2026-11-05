@@ -199,6 +199,37 @@ begin
 end;
 $$;
 
+-- Lineage: a stage or a treated area carries its OWN studio_id, trigger-derived from its parent only when plan_id / session_block_id is written
+-- (0034, 0128), so an UPDATE of studio_id alone left the child in one studio under a parent in another. Refused here on INSERT and UPDATE, for every
+-- caller and whatever the edit key says. (An area's derive trigger was extended to `update of studio_id` by 0159, so for areas this is a second line;
+-- blocks are fixed by 0160 and sessions, plans and notes are tied to their client by the 0094 / 0126 same-studio keys.)
+create or replace function public.chart_lineage_guard()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare
+  v_parent uuid;
+begin
+  if tg_table_name = 'treatment_plans' then
+    -- the parent side of the same rule: a plan that has stages cannot change studio, or they would be left behind in the old one
+    if exists (select 1 from public.treatment_plan_stages x where x.plan_id = new.id and x.studio_id is distinct from new.studio_id) then
+      raise exception 'chart_lineage_mismatch' using errcode = '23514';
+    end if;
+    return new;
+  elsif tg_table_name = 'treatment_plan_stages' then
+    select p.studio_id into v_parent from public.treatment_plans p where p.id = new.plan_id;
+  elsif tg_table_name = 'session_block_areas' then
+    select b.studio_id into v_parent from public.session_blocks b where b.id = new.session_block_id;
+  end if;
+  if v_parent is null or new.studio_id is distinct from v_parent then
+    raise exception 'chart_lineage_mismatch' using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.chart_lineage_guard() from public, anon, authenticated, service_role;
+create trigger zz_chart_lineage_guard_trg before insert or update on public.treatment_plan_stages for each row execute function public.chart_lineage_guard();
+create trigger zz_chart_lineage_guard_trg before insert or update on public.session_block_areas for each row execute function public.chart_lineage_guard();
+create trigger zz_chart_lineage_guard_trg before update of studio_id on public.treatment_plans for each row execute function public.chart_lineage_guard();
+
 do $$
 declare t text;
 begin
