@@ -1291,7 +1291,39 @@ export function BlockSetupForm({
     }
   }
 
+  /**
+   * EVERY GATE THAT HOLDS THE SAVE, NAMED ONCE (Codex, #1369 4475351367, P1).
+   * The Save button was disabled by these but `submit()` was not, and other
+   * callers reach it directly - the save-status "Try again" button is enabled
+   * whenever `error` is set. A FAILED CLAIM LOOKUP sets `error` while
+   * `resumeChoicePending` holds Save, so "Try again" ran the create past every
+   * recovery gate; with the machine settings not yet rebuilt
+   * `machineSetupForSave()` returns null, the create carried NO idempotency key,
+   * and a retry after a save that HAD committed made a duplicate treatment area.
+   * So the gates live here and `submit()` enforces them for every caller. The
+   * Save button keeps its own literal list (source pins read it); a test asserts
+   * the two lists name the same flags.
+   */
+  const saveBlocked =
+    pending ||
+    resume.state === "checking" ||
+    resume.state === "saved" ||
+    resumeChoicePending ||
+    resumedNeedsSettings ||
+    resumedUnconfirmed ||
+    // HELD WHILE A MACHINE REVISION IS UNRESOLVED (Codex, #1205
+    // 4401466832). On an existing block this button saves the AREA and
+    // closes the form, which unmounts the entry and discards the
+    // retained retry key of a machine save whose answer was lost; if
+    // that save had committed, re-entering the settings appends a
+    // duplicate immutable capture. It is NOT the recovery for that
+    // save - the entry's own "Try saving again" is - so freezing it
+    // does not strand her. The create-mode flag is deliberately NOT
+    // here: there, pressing Save again unchanged IS the recovery.
+    revisionUnresolved;
+
   function submit() {
+    if (saveBlocked) return;
     setError(null);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
@@ -1775,7 +1807,10 @@ export function BlockSetupForm({
                 ? { status: "saved" }
                 : null;
         return state ? (
-          <SaveStatus state={state} onRetry={() => submit()} />
+          <SaveStatus
+            state={state}
+            onRetry={saveBlocked ? undefined : () => submit()}
+          />
         ) : null;
       })()}
       <div className="flex items-center justify-between gap-3">
