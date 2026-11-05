@@ -44,7 +44,10 @@ export type RoleError = { code: RoleErrorCode; key?: string; role?: Role; curren
 
 export type PersonRef = { id: string; name: string; state: "active" | "invited" | "deactivated" };
 
-export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; count: number };
+/** A stored choice a reset would delete (0287 stored_removed). When access in force does not move, the choice was held inactive: not released, not activated, or blocked by a prerequisite. */
+export type StoredRemoval = { key: string; label: string; stored: string; effectiveBefore: string; effectiveAfter: string };
+
+export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; count: number; storedRemoved: StoredRemoval[] };
 
 /** What every preview returns: the diff per role AND the policy version it was computed against. A save binds to that version. */
 export type ServerPreview = { version: number; roles: RolePreview[] };

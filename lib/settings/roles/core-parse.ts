@@ -22,6 +22,7 @@ import {
   type RoleError,
   type RoleErrorCode,
   type RolePreview,
+  type StoredRemoval,
 } from "./api";
 
 // Pure parsers for what the permission core (0287) returns. The core computes every diff, refusal and affected person; these only
@@ -96,6 +97,25 @@ function toDiff(entries: unknown, sensitiveKeys: Set<string> | null, narrowings:
   };
 }
 
+/** The stored choices a reset deletes for one role. Absent or malformed means none: the diff itself is still the core's. */
+function parseStoredRemoved(raw: unknown, role: Role): StoredRemoval[] {
+  const list = isObj(raw) && Array.isArray(raw[role]) ? (raw[role] as unknown[]) : [];
+  const out: StoredRemoval[] = [];
+  for (const e of list) {
+    if (!isObj(e)) continue;
+    const key = str(e.key);
+    if (!key) continue;
+    out.push({
+      key,
+      label: byKey.get(key)?.label ?? key,
+      stored: scopeWord(e.stored),
+      effectiveBefore: scopeWord(e.effective_before),
+      effectiveAfter: scopeWord(e.effective_after),
+    });
+  }
+  return out;
+}
+
 export function parsePreview(raw: unknown): PreviewResult {
   if (!isObj(raw)) return { ok: false, error: UNEXPECTED };
   if (raw.ok !== true) return { ok: false, error: parseError(raw) };
@@ -112,7 +132,7 @@ export function parsePreview(raw: unknown): PreviewResult {
     if (!isRole(role)) continue;
     const people = parsePeople(affected[role]);
     const count = isObj(affected[role]) ? (num((affected[role] as Json).count) ?? people.length) : people.length;
-    roles.push({ role, diff: toDiff(raw.changes[role], sensitive, role === "practitioner" ? narrowings : []), people, count });
+    roles.push({ role, diff: toDiff(raw.changes[role], sensitive, role === "practitioner" ? narrowings : []), people, count, storedRemoved: parseStoredRemoved(raw.stored_removed, role) });
   }
   return { ok: true, preview: { version, roles } };
 }

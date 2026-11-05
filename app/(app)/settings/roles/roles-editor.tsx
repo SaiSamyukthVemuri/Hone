@@ -1330,7 +1330,7 @@ function PreviewPanel({
   onCancel: () => void;
 }) {
   const id = useId();
-  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0);
+  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0 && r.storedRemoved.length === 0);
   return (
     <section data-testid="roles-preview" aria-label={kind === "adopt" ? "Review new defaults" : "Reset to defaults"} className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
       <h3 className="text-base font-medium">
@@ -1343,6 +1343,21 @@ function PreviewPanel({
           <div key={item.role} data-preview-role={item.role} className="flex min-w-0 flex-col gap-2">
             {data.roles.length > 1 && <h4 className="font-medium">{ROLE_LABELS[item.role]}s</h4>}
             <DiffList item={item} testPrefix="preview" />
+            {item.storedRemoved.length > 0 && (
+              <div data-testid="preview-stored-removed" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
+                <p className="font-medium">Removes your saved choices:</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {item.storedRemoved.map((r) => (
+                    <li key={r.key} data-stored-removed={r.key} className="break-words">
+                      {/* Access in force did not move: the choice was held inactive, so say that rather than imply a change in access. */}
+                      {r.effectiveBefore === r.effectiveAfter
+                        ? `${r.label}: removes your saved ${r.stored}, not in force yet. Access stays ${r.effectiveAfter}.`
+                        : `${r.label}: removes your saved ${r.stored}. Access in force: ${r.effectiveBefore} to ${r.effectiveAfter}.`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         ))
       )}

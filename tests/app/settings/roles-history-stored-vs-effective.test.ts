@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseHistory } from "@/lib/settings/roles/core-parse";
+import { parseHistory, parsePreview } from "@/lib/settings/roles/core-parse";
 
 // Codex P2 4476177056 (core-parse.ts:182): History discarded the stored values, so a pending-key change Studio -> Off printed
 // "Whole studio to Whole studio". The audit row records both; History now carries the saved choice beside what was in force and shows
@@ -54,5 +54,33 @@ describe("the page shows them separately only when they differ", () => {
     expect(SRC).toContain("saved choice ");
     expect(SRC).toMatch(/in force: stays /);
     expect(SRC).toMatch(/const differs = hasStored && \(r\.storedBefore\[k\] !== r\.before\[k\] \|\| r\.storedAfter\[k\] !== r\.after\[k\]\)/);
+  });
+});
+
+describe("the reset preview lists the stored choices it deletes (0287 stored_removed, Team 4 Nov)", () => {
+  const preview = (storedRemoved: unknown) =>
+    parsePreview({
+      ok: true,
+      version: 4,
+      changes: { practitioner: [], receptionist: [] },
+      affected: {},
+      stored_removed: storedRemoved,
+    });
+  it("an inert saved Off (effective does not move) is carried per role, and absent means none", () => {
+    const r = preview({ practitioner: [{ key: "clin.view_records", stored: "off", effective_before: "studio", effective_after: "studio" }], receptionist: [] });
+    if (!r.ok) throw new Error("expected ok");
+    const prac = r.preview.roles.find((x) => x.role === "practitioner");
+    expect(prac?.storedRemoved).toEqual([{ key: "clin.view_records", label: K, stored: "Off", effectiveBefore: "Whole studio", effectiveAfter: "Whole studio" }]);
+    expect(r.preview.roles.find((x) => x.role === "receptionist")?.storedRemoved).toEqual([]);
+    const none = preview(undefined);
+    if (!none.ok) throw new Error("expected ok");
+    expect(none.preview.roles.every((x) => x.storedRemoved.length === 0)).toBe(true);
+  });
+  it("the page no longer says 'Nothing would change' while a saved choice would be removed", () => {
+    const SRC = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(SRC).toMatch(/r\.diff\.fixedNarrowings\.length === 0 && r\.storedRemoved\.length === 0/);
+    expect(SRC).toContain('data-testid="preview-stored-removed"');
+    expect(SRC).toContain("removes your saved ");
+    expect(SRC).toContain("not in force yet. Access stays ");
   });
 });
