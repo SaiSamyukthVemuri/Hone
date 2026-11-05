@@ -364,4 +364,6 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
     expect(movable.sort()).toEqual(EXPECTED_MOVABLE);
   });
 });
-const EXPECTED_MOVABLE: string[] = [];
+// The moves the schema allows at all with edit ON in both studios (measured on a fresh 255|0289 stack). The others (sessions, session_blocks, entries)
+// are refused by other constraints even then, so there is nothing for the guard to add; a schema change that moves this set must be a decision.
+const EXPECTED_MOVABLE: string[] = ["session_block_areas", "treatment_plans"];
