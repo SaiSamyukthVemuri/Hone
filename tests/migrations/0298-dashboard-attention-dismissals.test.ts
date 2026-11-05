@@ -51,7 +51,9 @@ describe("0298 source contract", () => {
     expect([...tables].sort()).toEqual(["dashboard_attention_events", "is_studio_owner", "studios"]);
     expect(code).not.toMatch(/payment|settlement|jurisdiction|stripe|permission_|practitioners/i);
   });
-  it("stores ids and opaque tokens only: no name, amount or message column", () => {
+  // Privacy ET-1: item_key holds record identifiers (client, appointment, session ids) and the instance token of an unpaid reminder holds the
+  // dismissed outstanding amount, so the TABLE has no name, free-text, message or amount COLUMN, but its two text keys are not "opaque".
+  it("has no name, free-text, message or amount column (record identifiers and one token only)", () => {
     const table = code.slice(code.indexOf("create table"), code.indexOf(");", code.indexOf("create table")));
     expect(table).not.toMatch(/\b(name|email|amount|cents|message|body|note)\b/i);
   });
