@@ -163,6 +163,51 @@ for (const which of ["senior", "junior"] as const) {
       await expect(page.getByText(CONFLICT)).toHaveCount(0);
     });
 
+    // Insurance P-1 (#1369 4f484772e): every own write in ONE open editor hands back its token, so a pick, a reading submission and the block Save
+    // chain without a conflict; and a genuine edit between the reading and the Save is still refused.
+    async function pickThenRecordReading(page: Page, blockId: string) {
+      await page.getByTestId(`machine-mode-${second}`).click({ timeout: T });
+      await expect.poll(() => keyOf(blockId), { timeout: T }).toBe(second);
+      const controls = page.locator('[data-testid^="reading-"]');
+      await expect(controls.first()).toBeVisible({ timeout: T });
+      for (let i = 0; i < (await controls.count()); i++) {
+        const c = controls.nth(i);
+        if ((await c.evaluate((el) => el.tagName)) === "SELECT") {
+          const v = await c.locator("option").evaluateAll((os) => (os as HTMLOptionElement[]).map((o) => o.value).find((x) => x !== ""));
+          if (v) await c.selectOption(v);
+        } else await c.fill("5");
+      }
+      await page.getByTestId("machine-reading-save").click({ timeout: T });
+      await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+    }
+
+    test("P-1: a pick, then a reading submission, then the block Save, in the SAME open editor, is accepted with no conflict", async ({ page }) => {
+      const s = await seedStudio();
+      const { blockId } = await savedArea(page, s);
+      await pickThenRecordReading(page, blockId);
+      await page.getByLabel("Hairs treated", { exact: true }).fill("321");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(() => entryHairs(blockId), { timeout: T }).toBe(321);
+      await expect(page.getByText(CONFLICT)).toHaveCount(0);
+      expect(await keyOf(blockId)).toBe(second);
+    });
+
+    test("P-1 NEGATIVE CONTROL: a genuine edit from a second tab BETWEEN the reading and the block Save is still refused", async ({ page, context }) => {
+      const s = await seedStudio();
+      const { blockId, sessionId } = await savedArea(page, s);
+      await pickThenRecordReading(page, blockId);
+      const other = await context.newPage();
+      await other.goto(`/clients/${s.clientId}/sessions/${sessionId}`);
+      await other.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+      await other.getByLabel("Hairs treated", { exact: true }).fill("111");
+      await other.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(() => entryHairs(blockId), { timeout: T }).toBe(111);
+      await page.getByLabel("Hairs treated", { exact: true }).fill("222");
+      await settleServerActions(page, () => page.getByTestId("save-treatment-area").click({ timeout: T }));
+      await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
+      expect(await entryHairs(blockId), "the other tab's value stands").toBe(111);
+    });
+
     test("NEGATIVE CONTROL: a genuine edit from a second tab still conflicts, with or without a mode click in between", async ({ page, context }) => {
       const s = await seedStudio();
       const { blockId, sessionId } = await savedArea(page, s);

@@ -313,6 +313,25 @@ describe("0301 not applied yet: the app degrades safely", () => {
     expect(fallbackArgs.p_setup_idempotency_key).toBe(input.initialSetup.idempotencyKey);
   });
 
+  // Insurance LB-1b: a keyed BARE create (no settings) takes the same fallback with its retry key and empty groups intact.
+  it("a keyed bare create falls back to create_block_with_initial_setup carrying p_setup_idempotency_key and no groups", async () => {
+    rpc.mockImplementation(async (name: string) =>
+      name === "create_block_with_initial_setup_and_identity"
+        ? { data: null, error: missing }
+        : { data: { block_id: "block-1" }, error: null },
+    );
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    await createTreatmentAreaWithEntryAction({ clientId: "client-1", sessionId: "session-1", createKey: "bare-retry-key-0001" });
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual([
+      "create_block_with_initial_setup_and_identity",
+      "create_block_with_initial_setup",
+    ]);
+    const fallbackArgs = rpc.mock.calls[1][1] as Record<string, unknown>;
+    expect(fallbackArgs).not.toHaveProperty("p_machine_profile_id");
+    expect(fallbackArgs.p_setup_idempotency_key).toBe("bare-retry-key-0001");
+    expect(fallbackArgs.p_setup_groups).toEqual([]);
+  });
+
   it("42883 (undefined_function) falls back the same way", async () => {
     rpc.mockImplementation(async (name: string) =>
       name === "create_block_with_initial_setup_and_identity"
