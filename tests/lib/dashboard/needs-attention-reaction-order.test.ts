@@ -44,6 +44,7 @@ function build(opts: { docClients: number; prepClients?: number; studio?: boolea
     clientName: `Prep Client ${i}`,
     submittedAt: `2026-10-${String(1 + i).padStart(2, "0")}T00:00:00Z`,
   }));
+  // A stored reaction/watch record is present in the feed but must create no card (HON-65).
   const items: DashboardTodoItem[] = [todoItem({})];
   if (opts.studio) {
     items.push(
@@ -64,26 +65,25 @@ function build(opts: { docClients: number; prepClients?: number; studio?: boolea
   });
 }
 
-describe("reaction/watch cards sort ahead of documentation-tier cards", () => {
-  it("a reaction-only client that is OLDER than seven documentation clients still sorts before them", () => {
+describe("an old reaction/watch record creates no card (HON-65)", () => {
+  it("a reaction-only client gets no card; documentation clients are unaffected", () => {
     const out = build({ docClients: 7 });
-    expect(out.clients.length).toBe(8);
-    expect(out.clients[0].clientId).toBe("r1");
-    expect(out.clients[0].items.map((i) => i.kind)).toEqual(["treatment_memory"]);
-    expect(out.clients.slice(1).every((c) => c.clientId.startsWith("d"))).toBe(true);
+    expect(out.clients.length).toBe(7);
+    expect(out.clients.some((c) => c.clientId === "r1")).toBe(false);
+    expect(out.clients.every((c) => c.clientId.startsWith("d"))).toBe(true);
   });
   it("before-visit cards still come first", () => {
     const out = build({ docClients: 2, prepClients: 2 });
     expect(out.clients.slice(0, 2).every((c) => c.tier === "preparation")).toBe(true);
-    expect(out.clients[2].clientId).toBe("r1");
+    expect(out.clients.some((c) => c.clientId === "r1")).toBe(false);
   });
 });
 
 describe("the compact cut: studio card exempt, button names what it hides", () => {
-  it("with 7+ cards the reaction-only client is inside the visible six", () => {
+  it("with 7 cards the cut shows six and the button names the one hidden", () => {
     const html = renderToStaticMarkup(createElement(NeedsAttentionPanel, { needs: build({ docClients: 7 }) }));
-    expect(html).toContain('data-attention-client="r1"');
-    expect(html).toContain("Show 2 more clients");
+    expect(html).not.toContain('data-attention-client="r1"');
+    expect(html).toContain("Show 1 more client");
     expect(html).not.toContain("including");
     expect((html.match(/data-attention-client=/g) ?? []).length).toBe(NEEDS_ATTENTION_COMPACT_COUNT);
   });
@@ -92,13 +92,8 @@ describe("the compact cut: studio card exempt, button names what it hides", () =
     expect(html).toContain("data-attention-studio");
     expect((html.match(/data-attention-client=/g) ?? []).length).toBe(NEEDS_ATTENTION_COMPACT_COUNT);
     // the studio card is not counted as a hidden client
-    expect(html).toContain("Show 4 more clients");
+    expect(html).toContain("Show 3 more clients");
     expect(html).not.toContain("studio items");
-  });
-  it("a reaction/watch card pushed behind the cut by before-visit cards is named on the button", () => {
-    const html = renderToStaticMarkup(createElement(NeedsAttentionPanel, { needs: build({ docClients: 1, prepClients: 7 }) }));
-    expect(html).not.toContain('data-attention-client="r1"');
-    expect(html).toContain("Show 3 more clients, including 1 reaction/watch");
   });
   it("label wording", () => {
     expect(hiddenCardsLabel(1, 0)).toBe("Show 1 more client");

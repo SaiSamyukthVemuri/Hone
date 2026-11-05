@@ -50,7 +50,7 @@ describe("Needs attention honest states", () => {
           occurredAt: null,
           sharesNameWithAnotherClient: false,
           items: [
-            { id: "intake:c1:intake_review", kind: "intake_review", label: "Intake awaiting review", detail: null, href: "/clients/c1", actionLabel: "Review intake" },
+            { id: "intake:c1:intake_review", kind: "intake_review", label: "Intake awaiting review", detail: null, href: "/clients/c1", actionLabel: "Review intake", occurredAt: null },
           ],
         },
       ],

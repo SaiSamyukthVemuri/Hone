@@ -110,7 +110,7 @@ describe("buildNeedsAttention grouping", () => {
     expect(out.entries[0].issues).toHaveLength(2);
   });
 
-  it("keeps non-grouped to-do items reachable as 'others' and drops grouped kinds", () => {
+  it("drops treatment_memory (an old reaction or watch is not a task) and grouped kinds from 'others'", () => {
     const out = buildNeedsAttention({
       assistant: buildMissingRecordsAssistant({
         unchartedAppointments: [],
@@ -128,7 +128,9 @@ describe("buildNeedsAttention grouping", () => {
         ],
       },
     });
-    expect(out.others.map((i) => i.id)).toEqual(["tm1"]);
+    expect(out.others).toEqual([]);
+    expect(out.clients).toEqual([]);
+    expect(out.itemCount).toBe(0);
   });
 
   it("reports a source cap instead of implying the list is complete", () => {
@@ -291,7 +293,7 @@ describe("buildNeedsAttention one card per client id", () => {
     detail,
   });
 
-  it("folds a client's sessions, intake and reaction into ONE card", () => {
+  it("folds a client's sessions and intake into ONE card; a recorded reaction adds no task", () => {
     const out = buildNeedsAttention({
       assistant: buildMissingRecordsAssistant({
         unchartedAppointments: [],
@@ -309,13 +311,8 @@ describe("buildNeedsAttention one card per client id", () => {
       },
     });
     expect(out.clients).toHaveLength(1);
-    expect(out.clients[0].items.map((i) => i.kind).sort()).toEqual([
-      "aftercare",
-      "aftercare",
-      "intake_review",
-      "treatment_memory",
-    ]);
-    expect(out.itemCount).toBe(4);
+    expect(out.clients[0].items.map((i) => i.kind).sort()).toEqual(["aftercare", "aftercare", "intake_review"]);
+    expect(out.itemCount).toBe(3);
   });
 
   it("same name with different ids stays two cards, flagged and never merged", () => {
@@ -333,7 +330,7 @@ describe("buildNeedsAttention one card per client id", () => {
     expect(flagged).toEqual(["c1", "c2"]);
   });
 
-  it("a reaction row no longer prints the same clause twice", () => {
+  it("a reaction or watch record alone creates no card and no count (HON-65)", () => {
     const out = buildNeedsAttention({
       assistant: empty(),
       intakesAwaitingReview: [],
@@ -343,8 +340,8 @@ describe("buildNeedsAttention one card per client id", () => {
         items: [memory("c1", "Client One", "Latest recorded reaction: Redness", "Latest recorded reaction: Redness · Latest tolerance: 3/5")],
       },
     });
-    expect(out.clients[0].items[0].label).toBe("Latest recorded reaction: Redness");
-    expect(out.clients[0].items[0].detail).toBe("Latest tolerance: 3/5");
+    expect(out.clients).toEqual([]);
+    expect(out.itemCount).toBe(0);
   });
 
   it("studio items stay reachable and every line is counted exactly once", () => {
@@ -355,10 +352,10 @@ describe("buildNeedsAttention one card per client id", () => {
     const out = buildNeedsAttention({
       assistant: empty(),
       intakesAwaitingReview: [{ clientId: "c1", clientName: "Client One", submittedAt: "2026-10-01T10:00:00Z" }],
-      todo: { hasItems: true, moreCount: 0, items: [studio, memory("c9", "Client Nine", "Watch note", null)] },
+      todo: { hasItems: true, moreCount: 0, items: [studio] },
     });
     expect(out.studioItems.map((i) => i.id)).toEqual(["supply_expiry:x"]);
-    expect(out.clients.map((c) => c.clientId).sort()).toEqual(["c1", "c9"]);
+    expect(out.clients.map((c) => c.clientId)).toEqual(["c1"]);
     expect(out.itemCount).toBe(out.issueCount + out.others.length);
   });
 });
