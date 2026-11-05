@@ -850,7 +850,7 @@ describe("the connected wrapper forwards the whole SAVE", () => {
     // enumerates nothing from the form — so the rule this test exists for is
     // unchanged and only its spelling moved.
     expect(CONNECTED).toMatch(
-      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/,
+      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,(\s*expectedUpdatedAt: blockVersion \?\? null,)?\s*\}\)/,
     );
     // AND IT STILL DOES NOT REBUILD: naming any of the form's own fields here
     // is how one of them gets dropped on the next change.
@@ -2074,5 +2074,44 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     expect(out.ok).toBe(false);
     expect("updatedAt" in out).toBe(false);
     DB.versions = [];
+  });
+});
+
+// Insurance F-1 / Codex 4475784164: a non-replayed submission stamps the block identity (bumps updated_at) too, so it follows the same held-version rule.
+describe("recordSetupSubmissionAction hands back the new block version", () => {
+  const call = (expectedUpdatedAt?: string) =>
+    actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
+      ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    });
+  const ok = () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false };
+  };
+  it("returns the post-write version when the block was still at the version the form holds", async () => {
+    ok();
+    DB.versions = ["v1", "v2"];
+    const out = await call("v1");
+    expect(out.ok).toBe(true);
+    expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
+  });
+  it("NEGATIVE CONTROL: a block that had already changed elsewhere yields no token", async () => {
+    ok();
+    DB.versions = ["v-other-tab", "v-after"];
+    const out = await call("v1");
+    expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
+  });
+  it("without a held version nothing is read and no token is returned", async () => {
+    ok();
+    DB.versions = [];
+    const out = await call();
+    expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
   });
 });

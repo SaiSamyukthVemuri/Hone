@@ -276,3 +276,43 @@ describe("the component follows its own identity writes", () => {
     expect(onBlockVersion).not.toHaveBeenCalled();
   });
 });
+
+// Photos R2 finding 2 (#1369): a NEW area starts on THIS CLIENT's last machine, ahead of the practitioner's remembered preference.
+describe("a new area starts on the client's own last machine", () => {
+  it("the client's last machine outranks the remembered preference; the existing workflow is pre-chosen when that was the client's last", async () => {
+    await mount({
+      blockId: null,
+      savedIdentity: null,
+      onIdentityDraft: vi.fn(),
+      onSettingDraft: vi.fn(),
+      ctx: {
+        remembered: { deviceId: "room-9", modeKey: "galvanic" },
+        clientLastMachine: { deviceId: null, modeKey: null, legacy: true },
+      },
+    });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("legacy:xcell");
+  });
+  it("NEGATIVE CONTROL: a client with no last machine falls back to the remembered preference", async () => {
+    await mount({
+      blockId: null,
+      savedIdentity: null,
+      onIdentityDraft: vi.fn(),
+      onSettingDraft: vi.fn(),
+      ctx: { remembered: { deviceId: "room-9", modeKey: "galvanic" }, clientLastMachine: null },
+    });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("room-9");
+  });
+  it("a client's last native unit is pre-chosen over a different remembered one", async () => {
+    await mount({
+      blockId: null,
+      savedIdentity: null,
+      onIdentityDraft: vi.fn(),
+      onSettingDraft: vi.fn(),
+      ctx: { remembered: null, clientLastMachine: { deviceId: "room-9", modeKey: "galvanic", legacy: false } },
+    });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("room-9");
+  });
+});

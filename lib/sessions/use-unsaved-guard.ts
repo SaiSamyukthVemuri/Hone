@@ -53,9 +53,23 @@ export function useUnsavedGuard(
   const attemptRef = useRef(onLeaveAttempt);
   attemptRef.current = onLeaveAttempt;
 
+  // A DEPARTURE THE PRACTITIONER ALREADY CONFIRMED in the app's dialog must not
+  // be asked about again by the browser (Codex, #1369 4475784173): the confirmed
+  // navigation is a full document load, which fires beforeunload. The flag is
+  // set only by the confirmed callbacks below and lapses on its own, so a
+  // navigation that does not happen leaves the guard armed.
+  const confirmedRef = useRef(false);
+  function confirmDeparture() {
+    confirmedRef.current = true;
+    setTimeout(() => {
+      confirmedRef.current = false;
+    }, 2000);
+  }
+
   useEffect(() => {
     if (!dirty) return;
     function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (confirmedRef.current) return;
       e.preventDefault();
       e.returnValue = "";
     }
@@ -67,7 +81,10 @@ export function useUnsavedGuard(
       e.preventDefault();
       e.stopPropagation();
       const href = anchor!.href;
-      attemptRef.current(() => window.location.assign(href));
+      attemptRef.current(() => {
+        confirmDeparture();
+        window.location.assign(href);
+      });
     }
     // Our own history.go() raises popstate again; those are not the user's.
     let ownMove = false;
@@ -80,6 +97,7 @@ export function useUnsavedGuard(
       ownMove = true;
       window.history.go(1);
       attemptRef.current(() => {
+        confirmDeparture();
         ownMove = true;
         window.history.go(-1);
       });

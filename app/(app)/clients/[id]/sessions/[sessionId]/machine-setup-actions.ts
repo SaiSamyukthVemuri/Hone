@@ -1,6 +1,7 @@
 "use server";
 
 import { readBlockVersion } from "@/lib/sessions/block-version";
+import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
@@ -206,6 +207,14 @@ export type MachineSetupContext = {
    */
   suggestedMachine: SuggestedMachine | null;
   /**
+   * THIS CLIENT's most recent machine (their last treatment area's saved identity),
+   * validated against the inventory: a unit the picker would refuse, or a model that
+   * is not the existing workflow, is dropped. It outranks the practitioner's
+   * remembered preference for a NEW area (Photos R2, #1369): the previous machine
+   * means this client's last machine, not the practitioner's last pick anywhere.
+   */
+  clientLastMachine: { deviceId: string | null; modeKey: string | null; legacy: boolean } | null;
+  /**
    * The unit and mode the block's LAST SAVED capture used, so a reopened visit
    * comes back as it was saved. Selection only: it is never written to the
    * remembered default. Null when there is no block or the rule in
@@ -236,6 +245,7 @@ const ANONYMOUS: MachineSetupContext = {
   recordedSetupUnavailable: false,
   unitNames: {},
   suggestedMachine: null,
+  clientLastMachine: null,
   restoredSelection: null,
   legacyMachine: null,
 };
@@ -443,6 +453,24 @@ export async function loadMachineSetupContext(input: {
     legacyMachine = null;
   }
 
+  // THE CLIENT'S OWN LAST MACHINE (Photos R2, #1369), validated like any other choice.
+  let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
+  try {
+    const last = await readClientLastMachine(input.clientId);
+    if (last) {
+      if (last.deviceId) {
+        const usable = selectableDevices(scope, inventory.devices, catalogue).some(
+          (s) => s.device.deviceId === last.deviceId,
+        );
+        if (usable) clientLastMachine = { deviceId: last.deviceId, modeKey: last.modeKey, legacy: false };
+      } else if (legacyMachine && last.profileId === legacyMachine.profileId) {
+        clientLastMachine = { deviceId: null, modeKey: null, legacy: true };
+      }
+    }
+  } catch {
+    clientLastMachine = null;
+  }
+
   const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
@@ -488,6 +516,7 @@ export async function loadMachineSetupContext(input: {
     suggestedMachine,
     restoredSelection,
     legacyMachine,
+    clientLastMachine,
   };
 }
 
@@ -930,12 +959,15 @@ export async function recordSetupSubmissionAction(input: {
    */
   clientId: string;
   sessionId: string;
+  /** The block version the host form holds; see recordBlockMachineIdentityAction. */
+  expectedUpdatedAt?: string | null;
 }): Promise<
   ActionResult & {
     submissionId?: string;
     captures?: number;
     written?: number;
     reused?: boolean;
+    updatedAt?: string;
   }
 > {
   // AN IDENTITY REFUSAL IS DEFINITIVE, NOT UNKNOWN (Codex, #860 4308620487).
@@ -1115,6 +1147,10 @@ export async function recordSetupSubmissionAction(input: {
     }
   }
 
+  // THE SAME HELD-VERSION RULE AS THE IDENTITY WRITE (Insurance F-1, Codex 4475784164):
+  // a non-replayed submission stamps the block's identity, which bumps updated_at,
+  // and the host form's next block save would be refused as "changed elsewhere".
+  const versionBefore = input.expectedUpdatedAt ? await readBlockVersion(input.blockId) : null;
   const out = await recordSetupSubmission(db, {
     blockId: input.blockId,
     machineId: input.machineId,
@@ -1133,12 +1169,17 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
+  const versionAfter =
+    input.expectedUpdatedAt && versionBefore === input.expectedUpdatedAt
+      ? await readBlockVersion(input.blockId)
+      : null;
   return {
     ok: true,
     submissionId: out.value.submissionId,
     captures: out.value.groups,
     written: out.value.readings,
     reused: out.value.reused,
+    ...(versionAfter ? { updatedAt: versionAfter } : {}),
   };
 }
 

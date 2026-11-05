@@ -1345,7 +1345,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // The panel knows which block it is charting; it does not get to say
     // whose chart that is. The ids come from the page's props.
     const conn = read(CONN_SRC);
-    expect(conn).toMatch(/recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/);
+    expect(conn).toMatch(/recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,(\s*expectedUpdatedAt: blockVersion \?\? null,)?\s*\}\)/);
   });
 
   it("selection writes are SERIALISED, not just de-duplicated on return", () => {

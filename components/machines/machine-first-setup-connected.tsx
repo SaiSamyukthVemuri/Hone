@@ -40,6 +40,10 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // client in scope the prior-setup read fell back to the whole studio and could
 // show another client's settings (Codex, 9c6fbbe5).
 
+/** ONE refusal text for clearing a saved machine, wherever it is reached (Insurance N-3). */
+export const SAVED_MACHINE_CANNOT_BE_CLEARED =
+  "Choose another machine to change this one. A saved machine cannot be cleared.";
+
 export type MachineFirstSetupConnectedProps = {
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
@@ -270,7 +274,9 @@ export function MachineFirstSetupConnected({
         ...input,
         clientId,
         sessionId,
+        expectedUpdatedAt: blockVersion ?? null,
       });
+      if (out.ok && out.updatedAt) onBlockVersion?.(out.updatedAt);
       // WHAT IS RECORDED HAS CHANGED, SO RE-READ IT.
       //
       // `recordedSetup` was loaded once when this panel opened and never
@@ -377,7 +383,7 @@ export function MachineFirstSetupConnected({
       savedIdentity &&
       (savedIdentity.deviceId || savedIdentity.profileId)
     ) {
-      return { ok: false, error: "Choose another machine to change this one. A saved machine cannot be cleared." };
+      return { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED };
     }
     const mod = await import(
       "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
@@ -408,7 +414,7 @@ export function MachineFirstSetupConnected({
     }
     if (chosen === null) {
       return savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId)
-        ? { ok: false, error: "Choose another machine to change this one." }
+        ? { ok: false, error: SAVED_MACHINE_CANNOT_BE_CLEARED }
         : pref;
     }
     const saved = await mod.recordBlockMachineIdentityAction({
@@ -427,15 +433,21 @@ export function MachineFirstSetupConnected({
     return saved.ok ? pref : { ok: false, error: saved.error };
   };
 
+  // A NEW AREA STARTS ON THIS CLIENT's LAST MACHINE when there is one (Photos R2): the previous machine is
+  // the client's, not the practitioner's last pick anywhere. The remembered preference is the fallback, and
+  // an area that already has a saved identity is never touched.
+  const hasSaved = Boolean(savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId));
+  const newAreaLast = !hasSaved ? (ctx.clientLastMachine ?? null) : null;
+
   return (
     <MachineFirstSetupPanel
       scope={ctx.scope}
       devices={ctx.devices}
-      initialDeviceId={ctx.remembered?.deviceId ?? null}
+      initialDeviceId={newAreaLast ? newAreaLast.deviceId : (ctx.remembered?.deviceId ?? null)}
       // The remembered MODE, which the loader has always resolved and which
       // nothing forwarded - so the panel silently used each profile's first
       // active mode and recorded against the wrong field contract.
-      initialModeKey={ctx.remembered?.modeKey ?? null}
+      initialModeKey={newAreaLast ? newAreaLast.modeKey : (ctx.remembered?.modeKey ?? null)}
       // The server resolved the stored selection; when it is not usable the
       // panel shows nothing chosen and states the reason, rather than an
       // empty picker beside a claim that a machine is remembered.
@@ -454,7 +466,8 @@ export function MachineFirstSetupConnected({
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
       initialLegacyChosen={
-        savedIdentity?.deviceId == null && savedIdentity?.profileId != null
+        (savedIdentity?.deviceId == null && savedIdentity?.profileId != null) ||
+        Boolean(newAreaLast?.legacy)
       }
       onKindChange={onKindChange}
       // A machine the panel resolves on its own is carried too (create mode),

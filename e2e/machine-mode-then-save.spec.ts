@@ -79,6 +79,8 @@ for (const which of ["senior", "junior"] as const) {
       await page.getByTestId("machine-select").selectOption(unitId);
       await expect(page.getByTestId("machine-chosen")).toBeVisible({ timeout: T });
       await page.getByTestId(`machine-mode-${first}`).click({ timeout: T });
+      // Photos' repro chooses an area; without one, treatment details (Hairs treated) are refused.
+      await page.getByRole("button", { name: "Chin", exact: true }).first().click({ timeout: T });
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
       await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
@@ -108,6 +110,20 @@ for (const which of ["senior", "junior"] as const) {
       expect(await entryHairs(blockId)).toBe(321);
     });
 
+    test("F-1: recording a setting value on the saved area, then Save settings block, shows no conflict and keeps the typed value", async ({ page }) => {
+      const s = await seedStudio();
+      const { blockId } = await savedArea(page, s);
+      const reading = page.locator('[data-testid^="reading-"]').first();
+      await expect(reading).toBeVisible({ timeout: T });
+      await reading.fill("5");
+      await page.getByTestId("machine-reading-save").click({ timeout: T });
+      await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+      await page.getByLabel("Hairs treated", { exact: true }).fill("321");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(() => entryHairs(blockId), { timeout: T }).toBe(321);
+      await expect(page.getByText(CONFLICT)).toHaveCount(0);
+    });
+
     test("NEGATIVE CONTROL: a genuine edit from a second tab still conflicts, with or without a mode click in between", async ({ page, context }) => {
       const s = await seedStudio();
       const { blockId, sessionId } = await savedArea(page, s);
@@ -133,3 +149,38 @@ for (const which of ["senior", "junior"] as const) {
     });
   });
 }
+
+// Photos R2 finding 2 (#1369): a NEW session suggests THIS CLIENT's last machine, not the practitioner's last pick anywhere. Repro: chart client B on
+// Junior, then client X on the existing workflow (xCell), open a new session for X: xCell is pre-chosen, not Junior.
+test.describe("a new session starts on the client's own last machine, 1280", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+  test("client B on Junior, client X on xCell: X's next session is xCell, B's is Junior", async ({ page }) => {
+    const s = await seedStudio();
+    await loginByMagicLink(page, s.member.email);
+    const clientX = s.clientId;
+    const clientB = randomUUID();
+    await sql(`insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`, [clientB, s.seed.studioId, "Synthetic Client B", `b-${clientB.slice(0, 6)}@harness.local`]);
+    const chart = async (clientId: string, choose: string) => {
+      const sessionId = await startSession(page, clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await page.getByTestId("machine-select").selectOption(choose);
+      await page.getByRole("button", { name: "Chin", exact: true }).first().click({ timeout: T });
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(async () => (await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      await sql("update public.sessions set started_at=now()-interval '2 hours' where id=$1", [sessionId]);
+    };
+    await chart(clientB, s.junior);
+    await chart(clientX, "legacy:xcell");
+    // X's new session: the existing workflow, never Junior.
+    await startSession(page, clientX);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openPanel(page);
+    await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
+    // B's new session: Junior (control: the rule is per client, not "always xCell").
+    await startSession(page, clientB);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openPanel(page);
+    await expect(page.getByTestId("machine-select")).toHaveValue(s.junior, { timeout: T });
+  });
+});
