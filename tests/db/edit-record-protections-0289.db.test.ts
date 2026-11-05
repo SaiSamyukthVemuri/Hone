@@ -262,3 +262,106 @@ describe("0289: privileges (anon, authenticated and service_role named explicitl
         expect((await adminQuery("select has_table_privilege($1, $2, $3) ok", [role, `public.${t}`, priv])).rows[0].ok, `${role} ${priv} ${t}`).toBe(want);
   });
 });
+
+// Codex P1 4476158115: the edit guard authorised only the OLD row, so a practitioner who may edit studio A but not studio B could UPDATE a row from A
+// into B (a plan stage to a plan in B, a session to B, ...) while changing clinical fields. The guard now also authorises the NEW scope.
+describe("0289: a row cannot be moved into a studio where the caller may not edit (Codex 4476158115)", () => {
+  // One signed-in user who is a practitioner in BOTH studios: edit ON in A, `editB` in B.
+  async function twoStudios(label: string, editB: string) {
+    const a = await setup(`${label}a`, "studio", "studio");
+    const b = await seedStudio(`${label}b`);
+    const bPractitioner = randomUUID();
+    await adminQuery(
+      "insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'Synthetic dual member',$4,'practitioner',true)",
+      [bPractitioner, b.studioId, a.m.userId, `${label}-dual-${bPractitioner.slice(0, 8)}@harness.local`],
+    );
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [b.studioId]);
+    await store(b, "clin.view_records", "studio");
+    await store(b, "clin.edit_records", editB);
+    const bSession = await seedSession(b);
+    return { a, b, bSession, bPractitioner };
+  }
+  // Rows in studio A on the tables a user may UPDATE (client_clinical_notes is append-only: its own trigger refuses any UPDATE).
+  async function rowsInA(a: Awaited<ReturnType<typeof setup>>) {
+    const ids: Record<string, string> = { sessions: a.sessionId, session_blocks: a.blockId };
+    ids.session_block_areas = randomUUID();
+    await adminQuery("insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order) values ($1,$2,$3,'Chin','left',0)", [ids.session_block_areas, a.s.studioId, a.blockId]);
+    ids.electrolysis_entries = randomUUID();
+    await adminQuery("insert into public.electrolysis_entries (id, session_id, block_id, area) values ($1,$2,$3,'Chin')", [ids.electrolysis_entries, a.sessionId, a.blockId]);
+    const laserSession = randomUUID();
+    await adminQuery("insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values ($1,$2,$3,$4,'laser')", [laserSession, a.s.studioId, a.s.clientId, a.s.practitionerId]);
+    ids.laser_entries = randomUUID();
+    await adminQuery("insert into public.laser_entries (id, session_id, zone) values ($1,$2,'upper lip')", [ids.laser_entries, laserSession]);
+    ids.treatment_plans = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan',4)", [ids.treatment_plans, a.s.clientId, a.s.studioId]);
+    ids.treatment_plan_stages = randomUUID();
+    await adminQuery("insert into public.treatment_plan_stages (id, plan_id, studio_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,$2,$3,'weekly',30,4,'weeks')", [ids.treatment_plan_stages, ids.treatment_plans, a.s.studioId]);
+    return { ids, laserSession };
+  }
+  // Runs as the signed-in dual member (auth.uid() set), as the table owner so the triggers are the layer under test (see the parity test above).
+  const asMember = (userId: string, fn: (q: (t: string, p?: unknown[]) => Promise<unknown>) => Promise<void>) =>
+    adminTx(async (q) => {
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+      await fn((t, p = []) => q(t, p));
+    });
+
+  it("a plan stage moved to a plan in a studio with edit OFF is refused, with a clinical change in the same UPDATE (the reported case)", async () => {
+    const x = await twoStudios("e89mv1", "off");
+    const { ids } = await rowsInA(x.a);
+    const planB = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan B',4)", [planB, x.b.clientId, x.b.studioId]);
+    // through the real API role and RLS: the policy only needs membership in both studios
+    await expect(
+      asUser(x.a.m.userId, (q) => q("update public.treatment_plan_stages set plan_id=$2, stage_length_value=9 where id=$1", [ids.treatment_plan_stages, planB])),
+    ).rejects.toMatchObject({ code: "42501", message: expect.stringContaining("edit_records_required") });
+    const row = (await adminQuery("select plan_id, studio_id, stage_length_value from public.treatment_plan_stages where id=$1", [ids.treatment_plan_stages])).rows[0];
+    expect(row.studio_id).toBe(x.a.s.studioId);
+    expect(row.stage_length_value).toBe(4);
+    expect(row.plan_id).toBe(ids.treatment_plans);
+  });
+
+  it("NEGATIVE CONTROL: with edit ON in both studios the same move is allowed, so the refusal above is the guard and not some other constraint", async () => {
+    const x = await twoStudios("e89mv2", "studio");
+    const { ids } = await rowsInA(x.a);
+    const planB = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan B',4)", [planB, x.b.clientId, x.b.studioId]);
+    await asUser(x.a.m.userId, (q) => q("update public.treatment_plan_stages set plan_id=$2, stage_length_value=9 where id=$1", [ids.treatment_plan_stages, planB]));
+    const row = (await adminQuery("select plan_id, studio_id, stage_length_value from public.treatment_plan_stages where id=$1", [ids.treatment_plan_stages])).rows[0];
+    expect(row.plan_id).toBe(planB);
+    expect(row.studio_id).toBe(x.b.studioId);
+  });
+
+  it("every other chart table: a move into the edit-OFF studio is refused wherever the same move is possible with edit ON", async () => {
+    const MOVES: Record<string, (x: Awaited<ReturnType<typeof twoStudios>>, ids: Record<string, string>) => readonly [string, unknown[]]> = {
+      sessions: (x, ids) => ["update public.sessions set studio_id=$2, client_id=$3 where id=$1", [ids.sessions, x.b.studioId, x.b.clientId]],
+      session_blocks: (x, ids) => ["update public.session_blocks set session_id=$2 where id=$1", [ids.session_blocks, x.bSession.sessionId]],
+      session_block_areas: (x, ids) => ["update public.session_block_areas set session_block_id=$2, studio_id=$3 where id=$1", [ids.session_block_areas, x.bSession.blockId, x.b.studioId]],
+      electrolysis_entries: (x, ids) => ["update public.electrolysis_entries set session_id=$2, block_id=$3 where id=$1", [ids.electrolysis_entries, x.bSession.sessionId, x.bSession.blockId]],
+      laser_entries: (x, ids) => ["update public.laser_entries set session_id=$2 where id=$1", [ids.laser_entries, x.bSession.sessionId]],
+      treatment_plans: (x, ids) => ["update public.treatment_plans set studio_id=$2, client_id=$3 where id=$1", [ids.treatment_plans, x.b.studioId, x.b.clientId]],
+    };
+    const movable: string[] = [];
+    // CONTROL first: edit ON in both studios, each move on its own fresh rows. Record which moves the schema allows at all.
+    for (const [t, move] of Object.entries(MOVES)) {
+      const x = await twoStudios(`e89mc${t.slice(0, 4)}`, "studio");
+      const { ids } = await rowsInA(x.a);
+      const [sql, params] = move(x, ids);
+      try {
+        await asMember(x.a.m.userId, async (q) => { await q(sql, params); });
+        movable.push(t);
+      } catch {
+        /* this move is refused by another constraint even with edit ON: nothing for the guard to add */
+      }
+    }
+    // The destination-scope check must hold on every move the schema allows.
+    for (const t of movable) {
+      const x = await twoStudios(`e89mr${t.slice(0, 4)}`, "off");
+      const { ids } = await rowsInA(x.a);
+      const [sql, params] = MOVES[t](x, ids);
+      await expect(asMember(x.a.m.userId, async (q) => { await q(sql, params); }), t).rejects.toMatchObject({ code: "42501", message: expect.stringContaining("edit_records_required") });
+    }
+    // Pin the set, so a schema change that makes a table movable (or not) is a visible decision, not a silent gap.
+    expect(movable.sort()).toEqual(EXPECTED_MOVABLE);
+  });
+});
+const EXPECTED_MOVABLE: string[] = [];

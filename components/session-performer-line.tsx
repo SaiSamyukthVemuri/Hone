@@ -31,6 +31,9 @@ export function SessionPerformerLine({
   recordedByName = null,
   updatePerformerAction,
 }: Props) {
+  // The SAVED performer is what the line displays and what decides whether a change is a correction. The select edits a separate DRAFT, so
+  // Cancel (or an error) can never leave an unsaved choice on screen as if it were the record (Codex P2 on 4476158119).
+  const [savedPerformerId, setSavedPerformerId] = useState(initialPerformerId ?? "");
   const [performerId, setPerformerId] = useState(initialPerformerId ?? "");
   const [editing, setEditing] = useState(false);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
@@ -39,15 +42,23 @@ export function SessionPerformerLine({
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   // An existing performer can only be corrected (with a reason); the first attribution saves on selection as before.
-  const needsReason = Boolean(initialPerformerId);
+  const needsReason = Boolean(savedPerformerId);
   const [, startTransition] = useTransition();
 
-  const current = practitioners.find((p) => p.id === performerId);
+  const current = practitioners.find((p) => p.id === savedPerformerId);
   const performerName = current
     ? current.display_name?.trim() || current.email
-    : performerId && performerId === initialPerformerId
+    : savedPerformerId && savedPerformerId === initialPerformerId
       ? initialPerformerName
       : null;
+
+  function cancelEditing() {
+    setPerformerId(savedPerformerId);
+    setReason("");
+    setError(null);
+    setState("idle");
+    setEditing(false);
+  }
 
   function handlePerformerChange(next: string) {
     setPerformerId(next);
@@ -73,6 +84,9 @@ export function SessionPerformerLine({
     startTransition(async () => {
       try {
         await updatePerformerAction(fd);
+        setSavedPerformerId(next);
+        setPerformerId(next);
+        setReason("");
         setState("saved");
         setEditing(false);
         setTimeout(() => setState("idle"), 1500);
@@ -142,7 +156,7 @@ export function SessionPerformerLine({
           <button
             type="button"
             onClick={() => submit(performerId)}
-            disabled={state === "saving" || performerId === (initialPerformerId ?? "")}
+            disabled={state === "saving" || performerId === savedPerformerId}
             className="rounded-md border border-neutral-300 px-3 py-2 text-xs disabled:opacity-50 dark:border-neutral-700"
           >
             Save correction
@@ -151,7 +165,7 @@ export function SessionPerformerLine({
       )}
       <button
         type="button"
-        onClick={() => setEditing(false)}
+        onClick={cancelEditing}
         disabled={state === "saving"}
         className="text-xs text-neutral-500 underline hover:text-neutral-900 disabled:opacity-50 dark:hover:text-neutral-100"
       >
