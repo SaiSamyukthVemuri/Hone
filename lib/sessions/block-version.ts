@@ -16,3 +16,14 @@ export async function readBlockVersion(blockId: string): Promise<string | null> 
     .maybeSingle();
   return error || !data ? null : ((data as { updated_at: string }).updated_at ?? null);
 }
+
+/** When a recorded setup submission was committed (`recorded_at`), as the database prints it; null if unreadable. */
+export async function readSubmissionRecordedAt(submissionId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("treatment_setup_submissions")
+    .select("recorded_at")
+    .eq("id", submissionId)
+    .maybeSingle();
+  return error || !data ? null : ((data as { recorded_at: string }).recorded_at ?? null);
+}

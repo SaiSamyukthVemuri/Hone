@@ -437,7 +437,8 @@ export function MachineFirstSetupConnected({
   // the client's, not the practitioner's last pick anywhere. The remembered preference is the fallback, and
   // an area that already has a saved identity is never touched.
   const hasSaved = Boolean(savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId));
-  const newAreaLast = !hasSaved ? (ctx.clientLastMachine ?? null) : null;
+  // NEW AREAS ONLY (Insurance N-7): an existing identity-less area (pre-0301 data) opens exactly as before.
+  const newAreaLast = !hasSaved && !blockId ? (ctx.clientLastMachine ?? null) : null;
 
   return (
     <MachineFirstSetupPanel

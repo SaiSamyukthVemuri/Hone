@@ -113,9 +113,16 @@ for (const which of ["senior", "junior"] as const) {
     test("F-1: recording a setting value on the saved area, then Save settings block, shows no conflict and keeps the typed value", async ({ page }) => {
       const s = await seedStudio();
       const { blockId } = await savedArea(page, s);
-      const reading = page.locator('[data-testid^="reading-"]').first();
-      await expect(reading).toBeVisible({ timeout: T });
-      await reading.fill("5");
+      const controls = page.locator('[data-testid^="reading-"]');
+      await expect(controls.first()).toBeVisible({ timeout: T });
+      // Every required reading must be entered before the entry's own Save is enabled.
+      for (let i = 0; i < (await controls.count()); i++) {
+        const c = controls.nth(i);
+        if ((await c.evaluate((el) => el.tagName)) === "SELECT") {
+          const v = await c.locator("option").evaluateAll((os) => (os as HTMLOptionElement[]).map((o) => o.value).find((x) => x !== ""));
+          if (v) await c.selectOption(v);
+        } else await c.fill("5");
+      }
       await page.getByTestId("machine-reading-save").click({ timeout: T });
       await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
       await page.getByLabel("Hairs treated", { exact: true }).fill("321");

@@ -1,7 +1,8 @@
 "use server";
 
-import { readBlockVersion } from "@/lib/sessions/block-version";
+import { readBlockVersion, readSubmissionRecordedAt } from "@/lib/sessions/block-version";
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
+import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
 import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
@@ -456,17 +457,13 @@ export async function loadMachineSetupContext(input: {
   // THE CLIENT'S OWN LAST MACHINE (Photos R2, #1369), validated like any other choice.
   let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
   try {
-    const last = await readClientLastMachine(input.clientId);
-    if (last) {
-      if (last.deviceId) {
-        const usable = selectableDevices(scope, inventory.devices, catalogue).some(
-          (s) => s.device.deviceId === last.deviceId,
-        );
-        if (usable) clientLastMachine = { deviceId: last.deviceId, modeKey: last.modeKey, legacy: false };
-      } else if (legacyMachine && last.profileId === legacyMachine.profileId) {
-        clientLastMachine = { deviceId: null, modeKey: null, legacy: true };
-      }
-    }
+    clientLastMachine = validateClientLastMachine({
+      last: await readClientLastMachine(input.clientId),
+      scope,
+      devices: inventory.devices,
+      catalogue,
+      legacyProfileId: legacyMachine?.profileId ?? null,
+    });
   } catch {
     clientLastMachine = null;
   }
@@ -1169,10 +1166,23 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
-  const versionAfter =
+  let versionAfter =
     input.expectedUpdatedAt && versionBefore === input.expectedUpdatedAt
       ? await readBlockVersion(input.blockId)
       : null;
+  // A SAME-KEY REPLAY AFTER A LOST RESPONSE (Insurance N-4): the first attempt
+  // committed and bumped the block, so the held version is older and the rule
+  // above hands back nothing. The bump is still the user's own write if the block
+  // has not moved since: the submission row and the trigger's updated_at are
+  // stamped by the same transaction's now(), so they are equal exactly when
+  // nothing else has touched the block after our commit.
+  if (!versionAfter && out.value.reused && input.expectedUpdatedAt) {
+    const [now, stamp] = await Promise.all([
+      readBlockVersion(input.blockId),
+      readSubmissionRecordedAt(out.value.submissionId),
+    ]);
+    if (now && stamp && now === stamp && now !== input.expectedUpdatedAt) versionAfter = now;
+  }
   return {
     ok: true,
     submissionId: out.value.submissionId,

@@ -316,3 +316,18 @@ describe("a new area starts on the client's own last machine", () => {
     expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("room-9");
   });
 });
+
+describe("Insurance N-7: an existing area without a saved identity opens exactly as before", () => {
+  it("the client's last machine is NOT pre-chosen on an existing (pre-0301) area", async () => {
+    await mount({
+      blockId: "b-old",
+      savedIdentity: null,
+      ctx: { remembered: null, clientLastMachine: { deviceId: "room-9", modeKey: "galvanic", legacy: false } },
+    });
+    // No saved identity: the panel stays closed behind its trigger and nothing is pre-chosen or written.
+    expect(host!.querySelector('[data-testid="machine-first-open"]')).not.toBeNull();
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("");
+  });
+});

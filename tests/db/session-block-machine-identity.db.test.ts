@@ -301,6 +301,31 @@ describe("0301: an existing area", () => {
     expect((await identity(blockId)).machine_mode_key).toBe("galvanic");
   });
 
+  it("the block's updated_at and the submission's recorded_at are the SAME instant, which is how a replay proves the bump was its own (Insurance N-4)", async () => {
+    const studio = await seedStudio("identity-stamp");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7)`, [
+        blockId, machine, "galvanic", "identity-stamp-0001", JSON.stringify(groups("9")), sessionId, studio.clientId,
+      ]),
+    );
+    const r = await adminQuery(
+      `select b.updated_at = s.recorded_at as same
+         from public.session_blocks b join public.treatment_setup_submissions s on s.session_block_id = b.id
+        where b.id = $1`,
+      [blockId],
+    );
+    expect(r.rows[0].same).toBe(true);
+    // CONTROL: any later edit moves updated_at away from it.
+    await adminQuery(`update public.session_blocks set block_notes = 'later' where id = $1`, [blockId]);
+    const after = await adminQuery(
+      `select b.updated_at = s.recorded_at as same from public.session_blocks b join public.treatment_setup_submissions s on s.session_block_id = b.id where b.id = $1`,
+      [blockId],
+    );
+    expect(after.rows[0].same).toBe(false);
+  });
+
   it("a LATE REPLAY of an earlier submission does not put the earlier unit back (Privacy F-2)", async () => {
     const studio = await seedStudio("identity-replay");
     const { sessionId, blockId } = await seedSession(studio);

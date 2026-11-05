@@ -43,6 +43,8 @@ const DB = vi.hoisted(() => ({
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   /** Successive answers to the session_blocks updated_at read (the block version token). */
   versions: [] as string[],
+  /** The submission's recorded_at, for the replay check (null = the table answers as before). */
+  stamp: null as string | null,
 }));
 
 vi.mock("@/lib/supabase/queries", () => ({
@@ -110,6 +112,13 @@ vi.mock("@/lib/supabase/server", () => ({
       // THE RETRY-KEY LOOKUP (`setupSubmissionExists`): `.eq(block).eq(session)
       // .eq(key).limit(1)`, answered from this table's own rows - empty unless a case
       // says a submission already committed under the key.
+      if (table === "treatment_setup_submissions" && DB.stamp !== null) {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { recorded_at: DB.stamp }, error: null }) }),
+          }),
+        };
+      }
       if (table === "treatment_setup_submissions") {
         const err = DB.errorFor[table] ?? null;
         return {
@@ -188,6 +197,7 @@ beforeEach(() => {
   DB.rpcError = null;
   DB.selectError = null;
   DB.versions = [];
+  DB.stamp = null;
   DB.rowsFor = {};
   DB.errorFor = {};
   DB.calls = [];
@@ -2112,6 +2122,38 @@ describe("recordSetupSubmissionAction hands back the new block version", () => {
     DB.versions = [];
     const out = await call();
     expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
+  });
+});
+
+// Insurance N-4: a same-key replay after a lost response returns the version its own committed write produced.
+describe("a replayed submission hands back its own write's version", () => {
+  const call = () =>
+    actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
+      expectedUpdatedAt: "v1",
+    });
+  const replay = () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: true };
+  };
+  it("the block still carries the instant the submission committed: that bump was ours, so its version is returned", async () => {
+    replay();
+    DB.versions = ["v2", "v2"]; // before (already bumped by the lost first attempt), then the post-call read
+    DB.stamp = "v2";
+    const out = await call();
+    expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
+  });
+  it("NEGATIVE CONTROL: something edited the block after our commit (its version is not the submission's instant): no token", async () => {
+    replay();
+    DB.versions = ["v3", "v3"];
+    DB.stamp = "v2";
+    const out = await call();
     expect("updatedAt" in out).toBe(false);
   });
 });
