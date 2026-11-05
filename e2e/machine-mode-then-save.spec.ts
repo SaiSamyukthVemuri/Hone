@@ -168,6 +168,9 @@ for (const which of ["senior", "junior"] as const) {
     async function pickThenRecordReading(page: Page, blockId: string) {
       await page.getByTestId(`machine-mode-${second}`).click({ timeout: T });
       await expect.poll(() => keyOf(blockId), { timeout: T }).toBe(second);
+      // A saved area writes its record FIRST and applies the pick after (Insurance LK-3), so the database changes before the panel
+      // does: wait for the PANEL to show the new mode before typing, or the readings go into the entry that is about to be replaced.
+      await expect(page.getByTestId(`machine-mode-${second}`)).toHaveAttribute("aria-pressed", "true", { timeout: T });
       const controls = page.locator('[data-testid^="reading-"]');
       await expect(controls.first()).toBeVisible({ timeout: T });
       for (let i = 0; i < (await controls.count()); i++) {
