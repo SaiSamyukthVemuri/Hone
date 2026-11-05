@@ -1,0 +1,17 @@
+
+const cmp = (got, want, what) => { if (JSON.stringify([...got].sort()) !== JSON.stringify([...want].sort())) fail(`${what}: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`); };
+const tb = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}|${isTrue(x.rls)}`);
+const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
+const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const sq = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}`);
+const kv = (name) => rows(name).map((x) => `${x.k}=${x.v}`);
+const fnr3 = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}`);
+const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
+cmp(kv("c01_guard_trigger"), ["client_legal_identities_guard.row=true", "client_legal_identities_guard.before=true", "client_legal_identities_guard.enabled=O", "client_legal_identities_guard.events=insert,update", "client_legal_identities_guard.function=client_legal_identities_guard"], "the guard trigger exists, row-level, BEFORE, on INSERT and UPDATE (and not DELETE), enabled, running the guard function (Privacy C1)");
+console.log("PASS the guard trigger exists, row-level, BEFORE, on INSERT and UPDATE (and not DELETE), enabled, running the guard function (Privacy C1)");
+cmp(fnr("c02_functions"), ["can_use_client_legal_identity(uuid)|definer=false|sp=pg_catalog, pg_temp|exec=authenticated|public=false", "client_legal_identities_guard()|definer=false|sp=pg_catalog, pg_temp|exec=|public=false"], "can_use_client_legal_identity and the guard function pin search_path to pg_catalog, pg_temp (Privacy C2); grants unchanged: the predicate executable by authenticated only, the guard function by nobody, no PUBLIC grant");
+console.log("PASS can_use_client_legal_identity and the guard function pin search_path to pg_catalog, pg_temp (Privacy C2); grants unchanged: the predicate executable by authenticated only, the guard function by nobody, no PUBLIC grant");
+cmp(tb("c03_identity_table"), ["client_legal_identities|anon||true", "client_legal_identities|authenticated|select,insert,update|true", "client_legal_identities|service_role||true"], "client_legal_identities privileges unchanged: authenticated select, insert, update; anon and service_role nothing; RLS on");
+console.log("PASS client_legal_identities privileges unchanged: authenticated select, insert, update; anon and service_role nothing; RLS on");

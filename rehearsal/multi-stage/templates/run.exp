@@ -1,0 +1,162 @@
+#!/usr/bin/expect -f
+# REHEARSAL - NEVER MERGE. Hone ONE-COMMAND STAGE driver: plays the person at the terminal for ONE pinned, unmodified child (the stage apply script), through a pty.
+# The child reads every answer from /dev/tty, so it cannot be changed; this driver answers each prompt by EXACT TEXT and in the manifest's ORDER.
+#   approve          the child's confirmation prompt: the driver asks the person ONCE (the word must equal APPROVE_WORD), then collects the credentials ONCE
+#   secret-token     the access token, sent only after the child has turned terminal echo OFF
+#   secret-password  the database password, same rule
+# A prompt that is not the next one in the table is never answered: the child stalls, the idle timer ends the run (STOP) and the child is told to stop.
+# The credentials exist only in this process's memory and on the child's pty; they are masked out of everything written. This file makes no database statement.
+#   usage: run.exp CFG       CFG: KEY=VALUE lines (APPLY IDLE_S HARD_S RUN PROMPTS ROOT APPROVE_WORD VERIFIED_LINE)
+#   writes RUN/driver.transcript (masked) and RUN/driver.result (STOP_REASON, VERIFIED_SEEN, CHILD_RC)
+#   exit: 0 the child exited 0 and every prompt was answered | 2 driver STOP | 3 the child exited non-zero | 5 the person did not approve | 130 interrupted
+log_user 0
+set cfgf [lindex $argv 0]
+array set C {}
+set fh [open $cfgf r]; while {[gets $fh l] >= 0} { if {[regexp {^([A-Z0-9_]+)=(.*)$} $l -> k val]} { set C($k) $val } }; close $fh
+set tok ""; set pw ""; set transcript ""; array set R {}; set R(VERIFIED_SEEN) 0; set R(CHILD_RC) ""; set done_prompts 0; set t0 [clock seconds]
+set kinds {}; set texts {}
+set ph [open $C(PROMPTS) r]; while {[gets $ph l] >= 0} { if {[regexp {^([a-z-]+)\|(.*)$} $l -> k t]} { lappend kinds $k; lappend texts $t } }; close $ph
+proc dbg {m} { global C; catch { set f [open "$C(RUN)/driver.debug" a 0600]; puts $f "[clock format [clock seconds] -format %H:%M:%S] $m"; close $f } }
+proc mask {s} { global tok pw; set m $s; if {$tok ne ""} { set m [string map [list $tok "<secret>"] $m] }; if {$pw ne ""} { set m [string map [list $pw "<secret>"] $m] }; return $m }
+proc show {s} { set m [mask $s]; global transcript; append transcript $m; send_user -- [string map [list "\r\n" "\n"] $m] }
+proc note {s} { global transcript; append transcript [mask $s] }
+proc finish {code} {
+  global transcript R C tok pw
+  set tok ""; set pw ""
+  set f [open "$C(RUN)/driver.transcript" w 0600]; puts -nonewline $f $transcript; close $f
+  set f [open "$C(RUN)/driver.result" w 0600]; foreach k [lsort [array names R]] { puts $f "$k=$R($k)" }; close $f
+  exit $code
+}
+proc tail_of {s} { set m [mask $s]; set n [string length $m]; if {$n > 160} { set m [string range $m [expr {$n - 160}] end] }; return [string map [list "\r" " " "\n" " "] $m] }
+# stop the child politely (its own trap prints its receipt and keeps the marker if the push began), then hard
+proc stop_child {} {
+  global spawn_id timeout expect_out
+  set pid [exp_pid]
+  catch {exec kill -TERM -- -$pid}
+  catch {exec kill -TERM $pid}
+  set timeout 25
+  catch { expect { -re {.+} { show $expect_out(buffer); exp_continue } eof {} timeout { catch {exec kill -KILL -- -$pid}; catch {exec kill -KILL $pid} } } }
+  catch {close}; catch {wait}
+}
+proc pending_tail {} { ;# whatever the child printed that no pattern consumed (an unflushed prompt)
+  global timeout expect_out spawn_id
+  set timeout 1; set p ""
+  catch { expect { -re {.+} { set p $expect_out(0,string) } timeout {} eof {} } }
+  return [tail_of $p]
+}
+proc fail {msg} {
+  global R
+  set R(STOP_REASON) $msg; note "\n\[driver STOP\] $msg\n"; send_user "\nSTOP: $msg\n"
+  stop_child
+  finish 2
+}
+proc on_signal {name} {
+  global R
+  set R(STOP_REASON) "interrupted by $name"; note "\n\[driver\] interrupted by $name\n"
+  stop_child
+  finish 130
+}
+trap {on_signal INT} SIGINT
+trap {on_signal TERM} SIGTERM
+trap {on_signal HUP} SIGHUP
+proc echo_off {} {
+  global spawn_out
+  for {set i 0} {$i < 50} {incr i} {
+    if {![catch {exec stty -a < $spawn_out(slave,name)} s] && [regexp {(^|[ \t;])-echo([ \t;]|$)} $s]} { return 1 }
+    after 100
+  }
+  return 0
+}
+# one line from the person's terminal (a hidden one is never echoed, never in an argument or the environment)
+proc read_line {label} {
+  set v ""
+  if {[gets stdin v] < 0} { catch {stty echo}; fail "the terminal closed at: $label" }
+  dbg "read a line at: $label (length [string length $v])"
+  return [string trimright $v "\r"]
+}
+proc ask_hidden {label} {
+  send_user -- $label
+  stty -echo
+  set v [read_line $label]
+  stty echo
+  send_user "\n"
+  return $v
+}
+proc ask_plain {label} {
+  send_user -- $label
+  return [read_line $label]
+}
+
+set env(LC_ALL) C
+spawn -noecho /bin/bash $C(APPLY)
+set sid $spawn_id
+dbg "spawned"
+set creds 0
+set vline $C(VERIFIED_LINE)
+while {1} {
+  if {[clock seconds] - $t0 > $C(HARD_S)} { fail "the run exceeded the hard limit of $C(HARD_S) s" }
+  set idx $done_prompts
+  if {$idx < [llength $texts]} { set want [lindex $texts $idx]; set wk [lindex $kinds $idx] } else { set want ""; set wk "" }
+  set timeout $C(IDLE_S)
+  if {$want ne ""} {
+    expect {
+      -exact $want {
+        show $expect_out(buffer)
+        dbg "matched prompt $idx kind $wk"
+        if {$wk eq "approve"} {
+          if {!$creds} {
+            set w [ask_plain "\n>>> To run this stage now, type exactly $C(APPROVE_WORD) (anything else cancels, nothing has connected): "]
+          } else {
+            set w [ask_plain "\n>>> Second confirmation. Read what the stage showed above. Type exactly $C(APPROVE_WORD) to continue (anything else cancels): "]
+          }
+          dbg "approval typed (length [string length $w])"
+          if {$w ne $C(APPROVE_WORD)} {
+            send -- "no\r"; set R(STOP_REASON) "not approved (the person typed something other than $C(APPROVE_WORD))"
+            set timeout 30; expect { -re {.+} { show $expect_out(buffer); exp_continue } eof {} timeout {} }
+            catch {close}; catch {wait}; finish 5
+          }
+          if {!$creds} {
+            set tok [ask_hidden ">>> Supabase access token (typed ONCE, not shown): "]
+            set pw [ask_hidden ">>> Database password (typed ONCE, not shown): "]
+            if {$tok eq "" || $pw eq ""} { fail "an empty credential was typed; nothing was sent" }
+            set creds 1
+            dbg "credentials collected"
+          }
+          # the child may have given up waiting (a stage can bound its own second prompt): a late answer is not an error
+          catch { send -- "$w\r" }
+          dbg "approval sent to child"
+        } else {
+          if {!$creds} { fail "a secret prompt arrived before the approval" }
+          if {![echo_off]} { fail "terminal echo did not turn off at: $want (the secret was NOT sent)" }
+          send -- "[expr {$wk eq "secret-token" ? $tok : $pw}]\r"
+        }
+        incr done_prompts
+      }
+      -re "(\[^\r\n\]*)\[\r\n\]+" {
+        set b $expect_out(buffer); show $b
+        if {[string first $vline $b] >= 0} { set R(VERIFIED_SEEN) 1 }
+        exp_continue
+      }
+      timeout { fail "no output for $C(IDLE_S) s while waiting for the prompt: $want (last output: [pending_tail]). An unexpected prompt or a stall; nothing was answered." }
+      eof { show $expect_out(buffer); fail "the child ended before the prompt: $want (last output: [tail_of $expect_out(buffer)])" }
+    }
+  } else {
+    expect {
+      -re "(\[^\r\n\]*)\[\r\n\]+" {
+        set b $expect_out(buffer); show $b
+        if {[string first $vline $b] >= 0} { set R(VERIFIED_SEEN) 1 }
+        exp_continue
+      }
+      timeout { fail "no output for $C(IDLE_S) s after the last expected prompt (last output: [pending_tail]). An unexpected prompt or a stall; nothing was answered." }
+      eof { show $expect_out(buffer); break }
+    }
+  }
+  if {$idx >= [llength $texts]} { break }
+}
+set w [wait]
+set rc [lindex $w 3]
+set R(CHILD_RC) $rc
+if {[string first $vline $transcript] >= 0} { set R(VERIFIED_SEEN) 1 }
+if {$done_prompts < [llength $texts]} { set R(STOP_REASON) "the child ended after $done_prompts of [llength $texts] prompts" ; finish [expr {$rc == 0 ? 2 : 3}] }
+if {$rc != 0} { finish 3 }
+finish 0

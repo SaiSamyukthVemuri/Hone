@@ -1,0 +1,18 @@
+{
+  "migration": "0258+0266+0272",
+  "tables": [
+    "clients"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "tables_present",
+      "helpers_ok",
+      "new_objects_absent",
+      "columns_ok"
+    ]
+  },
+  "verify_sql": [],
+  "verify_label": "history (252 rows, max 0272, the three versions once); the content read-back is the separate S1 read-back set",
+  "notes": "Group pack for Sam's option A (0258, 0266, 0272 in ONE plain push). Only 0258's preflight can be read before the apply: 0266 and 0272 depend on objects 0258 creates, so their own preconditions are enforced by the files themselves and rehearsed on a fresh stack. Content verification is the separate S1 read-back files (window-reads-s1), reviewed at sealed bytes."
+}

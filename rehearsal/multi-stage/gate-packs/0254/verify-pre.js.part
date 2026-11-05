@@ -1,0 +1,2 @@
+const EXPECT = { functions_exist: "908cd21ea57731ceda686e6869a7bb2d0aebca209130c52eba38771309ce2d5b", function_bodies: "e6dada97faf9ec4f33b90d4bb225b269c8078815a15818b31be25a6173af35a4" };
+const BODY_MD5 = { audit_client_pricing_change: "f9d991d58d0c161d397d929518092d65", audit_pinned_note_delete: "2b804d4af96425de2ce9f17fffe6f805", edit_client_pinned_note: "95f0e465380e0d9a8c2c7fd030554b81", record_appointment_settlement: "141b14dafd9989618258e1f6d4af352a", set_session_price: "8b381d74783d96e896338f1f44e02aee" };

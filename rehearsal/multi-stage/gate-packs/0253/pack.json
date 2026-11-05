@@ -1,0 +1,23 @@
+{
+  "migration": "0253",
+  "tables": [
+    "studio_timed_blocks",
+    "studio_blockouts"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "tables_present",
+      "policies_before_equal_repo_history",
+      "policy_cmds_before_equal_repo_history",
+      "helpers_ok",
+      "new_objects_absent"
+    ]
+  },
+  "verify_sql": [
+    "c01_policies.sql",
+    "c02_function.sql"
+  ],
+  "verify_label": "history, the exact policy set on studio_timed_blocks and studio_blockouts, and the grants of the new function",
+  "notes": "Insurance PEER-0253-SQL: policy set before = repository history, after = the named set."
+}
