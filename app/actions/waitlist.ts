@@ -35,7 +35,10 @@ export async function submitWaitlistEntry(
   const supabase = await createClient();
   const { error } = await supabase
     .from("waitlist")
-    .insert({ email: normalized, source: "landing" });
+    // Email only: the column default ('landing', migration 0004) fills `source`
+    // wherever that column exists, and an insert that names it fails outright
+    // on a database that lacks it.
+    .insert({ email: normalized });
 
   if (error) {
     // Treat duplicate as success: the email is on the list either way.
