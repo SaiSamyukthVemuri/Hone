@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { isRecordUuid } from "@/lib/record-keeping/disinfectant-focus";
 import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
@@ -202,6 +203,8 @@ export async function getLatestProbeLotByProbeKey(
   studioId: string,
 ): Promise<Record<string, string>> {
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return {};
   const { data } = await supabase
     .from("session_blocks")
     .select("probe_key, probe_lot_number, probe_lot_confirmed, created_at")
@@ -238,6 +241,8 @@ export async function getProbeLotSuggestions(
   studioId: string,
 ): Promise<ProbeLotSuggestions> {
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { byKey: {}, byLabel: {} };
   const { data } = await supabase
     .from("session_blocks")
     .select(
@@ -586,6 +591,8 @@ export async function getClientProcedureRecords(
       ? FILTERED_PROCEDURE_RECORD_LIMIT
       : UNFILTERED_PROCEDURE_RECORD_LIMIT);
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return [];
   let query = supabase
     .from("sessions")
     .select(
@@ -963,6 +970,9 @@ export type LotTraceability = {
   lot: string;
   sterileItems: RecordKeepingSterileItem[];
   usages: LotUsage[];
+  // True when the viewer lacks clin.view_records: usages were NOT read, so an empty list is not "never used". Sterile items are
+  // operational records and are still returned.
+  usagesNotAvailable?: true;
 };
 
 export async function getLotTraceability(
@@ -974,6 +984,18 @@ export async function getLotTraceability(
   const pattern = escapeIlikeExact(lot);
 
   const supabase = await createClient();
+  // Roles R4: reads treatment sessions/blocks; without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) {
+    const { data: items, error } = await supabase
+      .from("record_keeping_sterile_items")
+      .select("*")
+      .eq("studio_id", studioId)
+      .ilike("lot_number", pattern)
+      .order("date_purchased", { ascending: false })
+      .limit(50);
+    if (error) throw new Error("Failed to load lot traceability");
+    return { lot, sterileItems: (items ?? []) as RecordKeepingSterileItem[], usages: [], usagesNotAvailable: true };
+  }
   const [
     { data: items, error: itemsError },
     { data: blockRows, error: blockRowsError },

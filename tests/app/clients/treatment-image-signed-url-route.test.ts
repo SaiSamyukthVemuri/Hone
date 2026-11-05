@@ -37,6 +37,10 @@ let practitioner = true;
 const signed: string[] = [];
 
 const alerts = vi.hoisted(() => ({ calls: [] as unknown[] }));
+// The Roles engine has its own tests; this file is about the code around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: vi.fn(async (a: unknown) => {
     alerts.calls.push(a);

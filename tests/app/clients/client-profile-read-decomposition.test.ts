@@ -114,6 +114,9 @@ describe("independent reads run in one parallel wave", () => {
     //
     // Keep this ceiling equal to the measured count, never slack: a ceiling
     // with headroom stops catching the drift it exists to catch.
+    //
+    // Roles R4: stays 9. The clin.view_records check is asked INSIDE getClientById (after the client resolves, in the same parallel wave as
+    // pricing and rosters, before the sessions read), and its answer comes back on the result, so it adds no serial stage in the page.
     const waves = serialWaves();
     expect(waves.length).toBeLessThanOrEqual(9);
   });
@@ -195,6 +198,8 @@ describe("independent reads run in one parallel wave", () => {
       "searchParams",
       "client-profile.identity",
       "getClientById",
+      // Roles R4: the clin.view_records gate that decides whether getClientById may read sessions.
+      "requirePermission",
       "Promise.all",
       "buildClinicalNoteSections",
       "getClientBudgetContext",

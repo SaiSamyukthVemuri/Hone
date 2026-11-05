@@ -37,6 +37,9 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 
 beforeEach(() => { fixture.fail = ""; fixture.empty = false; fixture.studios = []; });
 

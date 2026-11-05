@@ -29,6 +29,10 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { getPersonalChartedWithin24h } from "@/lib/dashboard/personal-charting";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 const NOW = "2026-11-01T12:00:00.000Z";
 beforeEach(() => {
   fx.eqs = []; fx.cols = []; fx.fail = null;

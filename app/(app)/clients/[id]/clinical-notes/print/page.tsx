@@ -8,6 +8,8 @@
 // optimised for print. No mutations; read-only.
 
 import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getClientById } from "@/lib/supabase/queries";
@@ -49,7 +51,9 @@ export default async function ClinicalNotesPrintPage({
 }) {
   const { id } = await params;
   const { studio } = await requirePractitionerWithStudio();
-  const data = await getClientById(studio.id, id);
+  // Printing the clinical notes is reading the treatment record: clin.view_records, before any note is read.
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed) notFound();
+  const data = await getClientById(studio.id, id, { includePrices: true, includeSessions: false });
   if (!data) notFound();
   const { client } = data;
 
