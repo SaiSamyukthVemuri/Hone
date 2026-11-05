@@ -1393,6 +1393,7 @@ function AppointmentRow({
               pinnedNotes={pinnedNotes}
               unavailable={workflow ? workflow.unavailable : prepSummary.unavailable}
               caution={workflow && !workflow.unavailable && workflow.hasHistory ? workflow.caution : null}
+              lastTreatment={prepSummary.hasTreatment ? prepSummary.compactSummary : null}
             />
           </div>
         </PendingContainerLink>
