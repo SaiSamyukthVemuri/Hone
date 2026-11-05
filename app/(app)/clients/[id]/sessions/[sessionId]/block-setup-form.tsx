@@ -465,6 +465,8 @@ export function BlockSetupForm({
         firstEntry?.galvanic_duration_seconds != null ||
         firstEntry?.units_of_lye != null),
   );
+  // The dirty baseline (set on first render, below). Declared here so the native switch can rebase it.
+  const initialDraftJson = useRef<string | null>(null);
   // The FROZEN setter, reached through a ref because it is declared further
   // down and this callback has to keep one identity.
   const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
@@ -475,7 +477,7 @@ export function BlockSetupForm({
       if (kind === "native") {
         // Switching never mixes settings: the overlapping legacy fields are
         // cleared with the switch, and the area saves them as NOT RECORDED.
-        setDraftRef.current((d) => ({
+        const cleared = (d: Draft): Draft => ({
           ...d,
           mode: "",
           apilusModality: "",
@@ -488,7 +490,14 @@ export function BlockSetupForm({
           unitsOfLye: "",
           pulseCount: String(PULSE_COUNT_DEFAULT),
           pulseDelay: String(PULSE_DELAY_DEFAULT),
-        }));
+        });
+        setDraftRef.current(cleared);
+        // REBASE THE DIRTY BASELINE (Codex 4482278089): the switch is not the practitioner's edit. An automatically resolved
+        // machine clears a prefilled studio-default frequency, and comparing against the pre-switch draft showed "Unsaved"
+        // (and a leave prompt) on an untouched form.
+        if (initialDraftJson.current !== null) {
+          initialDraftJson.current = JSON.stringify(cleared(JSON.parse(initialDraftJson.current) as Draft));
+        }
       }
     },
     [legacyDataLocked],
@@ -1000,7 +1009,6 @@ export function BlockSetupForm({
   // has not been saved, and Saved only for an existing area with nothing
   // pending. A new area with nothing entered shows no status, because there is
   // nothing to lose.
-  const initialDraftJson = useRef<string | null>(null);
   if (initialDraftJson.current === null) {
     initialDraftJson.current = JSON.stringify(draft);
   }

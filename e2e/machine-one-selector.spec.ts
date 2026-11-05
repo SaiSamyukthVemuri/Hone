@@ -394,6 +394,31 @@ for (const device of [
       for (const body of posts) expect(body).not.toContain(MARK);
     });
 
+    // Codex 4482278089: an AUTOMATICALLY resolved native machine clears a prefilled studio-default frequency; that is not the practitioner's edit.
+    test("an automatically resolved machine clears the prefilled default frequency without calling the untouched form Unsaved", async ({ page }) => {
+      const s = await seedStudio();
+      await sql("update public.practitioners set default_machine_frequency='13.56 MHz' where studio_id=(select studio_id from public.clients where id=$1)", [s.clientId]);
+      await loginByMagicLink(page, s.member.email);
+      // (1) A first session on a native unit, saved, so this client's last machine is native.
+      const first = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await page.getByTestId("machine-select").selectOption(s.senior);
+      await expect(page.getByTestId("machine-chosen")).toBeVisible({ timeout: T });
+      await page.getByRole("button", { name: "Chin", exact: true }).first().click({ timeout: T });
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect.poll(async () => (await blocksOf(first)).length, { timeout: T }).toBe(1);
+      await sql("update public.sessions set started_at=now()-interval '2 hours' where id=$1", [first]);
+      // (2) The next session opens on that unit by itself, with the default frequency cleared, and nothing typed.
+      const next = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
+      await expect(page.getByText("Machine frequency")).toHaveCount(0);
+      await expect(page.getByTestId("save-status"), "an untouched form has nothing to lose").toHaveCount(0);
+      expect((await blocksOf(next)).length).toBe(0);
+    });
+
     // Photos R2 (data integrity, also on production before #1369): a lost answer to a BARE area save, then Save again, was a SECOND area.
     for (const variant of ["bare (nothing chosen)", "xCell Pur chosen, no values"] as const) {
       test(`${variant}: the answer to the area save is lost, Save again gives exactly ONE area`, async ({ page }) => {
