@@ -232,8 +232,6 @@ export type MachineFirstSetupPanelProps = {
    * overlapping legacy ones for `native`.
    */
   onKindChange?: (kind: "none" | "legacy" | "native") => void;
-  /** A pick was undone because the area's identity write was refused (the host restores what the pick cleared). */
-  onPickReverted?: () => void;
   /**
    * The machine and mode IN FORCE after every resolution, including the one
    * the panel makes on its own from a remembered, restored or suggested
@@ -337,7 +335,6 @@ export function MachineFirstSetupPanel({
   legacyMachine = null,
   initialLegacyChosen = false,
   onKindChange,
-  onPickReverted,
   onResolvedChoice,
   onRecord,
 }: MachineFirstSetupPanelProps) {
@@ -520,9 +517,9 @@ export function MachineFirstSetupPanel({
     }
     if (token !== selectionRequestRef.current) return;
     if (write && write.ok === false && write.reverted) {
-      // The record still holds the previous machine: the panel stays on it (or goes back to it), with the reason said,
-      // and the host gives back anything the pick cleared (Insurance J-1).
-      onPickReverted?.();
+      // The record still holds the previous machine: the panel stays on it (or goes back to it), with the reason said.
+      // A saved area's pick is written BEFORE anything moves (writeFirst), so a refusal has cleared nothing and there is
+      // nothing to give back; restoring typed values here would put hidden legacy fields under a native machine (Insurance K-1).
       if (!writeFirst) {
         setLegacyChosen(before.legacy);
         setModeKey(before.modeKey);

@@ -79,9 +79,7 @@ export type MachineFirstSetupConnectedProps = {
    * own Save for that long: if the block save committed first, the identity write would be refused as stale
    * and the machine choice lost without a word.
    */
-  onIdentityWritePending?: (pending: boolean, outcome?: "ok" | "refused") => void;
-  /** Forwarded to the panel: a pick was undone, so what it cleared goes back (Insurance J-1). */
-  onPickReverted?: () => void;
+  onIdentityWritePending?: (pending: boolean) => void;
   /**
    * The practitioner already typed charting values on this NEW area. The panel then selects nothing by itself (no client-last,
    * remembered or restored machine), because a native pick clears those values (Codex, #1369 4479490063).
@@ -177,7 +175,6 @@ export function MachineFirstSetupConnected({
   onRevisionUnresolved,
   onRevisionDraft,
   onIdentityWritePending,
-  onPickReverted,
   holdAutoSelect = false,
   savedIdentity: savedIdentityProp = null,
   onKindChange,
@@ -456,13 +453,10 @@ export function MachineFirstSetupConnected({
   const onSelectMachine = async (choice: { deviceId: string | null; modeKey: string | null; legacy?: boolean }) => {
     if (!blockId) return selectMachineInner(choice);
     onIdentityWritePending?.(true);
-    let outcome: "ok" | "refused" = "refused";
     try {
-      const out = await selectMachineInner(choice);
-      outcome = out.ok ? "ok" : "refused";
-      return out;
+      return await selectMachineInner(choice);
     } finally {
-      onIdentityWritePending?.(false, outcome);
+      onIdentityWritePending?.(false);
     }
   };
 
@@ -510,7 +504,6 @@ export function MachineFirstSetupConnected({
         Boolean(newAreaLast?.legacy)
       }
       onKindChange={onKindChange}
-      onPickReverted={onPickReverted}
       // A machine the panel resolves on its own is carried too (create mode),
       // so what is shown is what Save records. Not marked as an edit.
       onResolvedChoice={

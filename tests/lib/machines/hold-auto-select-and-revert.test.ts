@@ -64,27 +64,16 @@ describe("a refused identity write puts the panel back on the stored machine", (
   });
 });
 
-import { takeLegacyFields, LEGACY_DRAFT_KEYS } from "@/lib/machines/pending-setup";
-
-describe("J-1: what a native pick clears is kept and can be given back", () => {
-  const typed = { mode: "thermo", apilusModality: "blend", energyLevel: "4", machineFrequency: "13", thermolysisIntensityPercent: "40", thermolysisDurationSeconds: "2", galvanicMa: "1", galvanicDurationSeconds: "9", unitsOfLye: "2", pulseCount: "3", pulseDelay: "1" };
-  it("takeLegacyFields copies exactly the fields the native pick clears (and not later edits)", () => {
-    const draft = { ...typed, comments: "x" } as typeof typed & { comments: string };
-    const kept = takeLegacyFields(draft);
-    expect(Object.keys(kept).sort()).toEqual([...LEGACY_DRAFT_KEYS].sort());
-    draft.energyLevel = "";
-    expect(kept.energyLevel).toBe("4");
+describe("Insurance K-1: a refusal on a saved area clears nothing and restores nothing", () => {
+  it("there is no restore path left: no kept snapshot, no revert callback, no write outcome plumbing", () => {
+    for (const src of [form, conn, panel]) {
+      expect(src).not.toContain("clearedLegacyRef");
+      expect(src).not.toContain("onPickReverted");
+      expect(src).not.toContain("takeLegacyFields");
+    }
+    expect(conn).not.toMatch(/outcome: "ok" \| "refused"/);
   });
-  it("every key the host's native clear blanks is one of them", () => {
-    const form2 = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
-    const at = form2.indexOf('if (kind === "native") {\n        // Switching never mixes');
-    const clear = form2.slice(at, at + 900);
-    for (const k of LEGACY_DRAFT_KEYS) expect(clear, k).toContain(`${k}:`);
-  });
-  it("the host keeps the cleared values, restores them on a reverted pick and drops them on an acknowledged write", () => {
-    expect(form).toContain("clearedLegacyRef.current = takeLegacyFields(draftNowRef.current)");
-    expect(form).toMatch(/if \(cleared\) setDraftRef\.current\(\(d\) => \(\{ \.\.\.d, \.\.\.cleared \}\)\)/);
-    expect(form).toMatch(/if \(!pending && outcome === "ok"\) clearedLegacyRef\.current = null/);
-    expect(form).toContain("onPickReverted={restoreClearedLegacy}");
+  it("NEGATIVE CONTROL: the clearing branch is still the explicit-pick path (a native pick on a NEW area clears)", () => {
+    expect(form).toContain("Switching never mixes settings: the overlapping legacy fields are");
   });
 });

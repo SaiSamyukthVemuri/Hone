@@ -311,7 +311,7 @@ for (const device of [
     });
 
     // Insurance J-1 / Privacy FG-1: a refused native pick gives back the values the pick had cleared.
-    test("a refused native pick on a saved area restores the typed legacy values", async ({ page }) => {
+    test("a refused native pick on a saved area keeps the typed legacy values", async ({ page }) => {
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
       const sessionId = await startSession(page, s.clientId);
@@ -331,6 +331,35 @@ for (const device of [
       await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
       await expect(page.getByLabel("Energy level (EL)")).toHaveValue("4");
       expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: null });
+    });
+
+    // Insurance K-2: a successful native pick and then a REFUSED one never bring the cleared legacy values back under the native machine.
+    test("native pick succeeds, then a refused clear: no legacy value is saved under the native machine", async ({ page }) => {
+      const s = await seedStudio();
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await openPanel(page);
+      await page.getByTestId("machine-select").selectOption("legacy:xcell");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
+      await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      await page.reload();
+      await page.getByTestId(`edit-area-${blocks[0]!.id}`).click({ timeout: T });
+      await expect(page.getByTestId("machine-select")).toHaveValue("legacy:xcell", { timeout: T });
+      await page.getByLabel("Energy level (EL)").fill("4");
+      // (1) the pick is written: legacy fields are cleared and hidden.
+      await page.getByTestId("machine-select").selectOption(s.senior);
+      await expect.poll(async () => (await blocksOf(sessionId))[0]!.studio_machine_id, { timeout: T }).toBe(s.senior);
+      await expect(page.getByText("Machine frequency")).toHaveCount(0);
+      // (2) a clear is refused.
+      await page.getByTestId("machine-select").selectOption("");
+      await expect(page.getByTestId("machine-select")).toHaveValue(s.senior, { timeout: T });
+      await expect(page.getByText("Machine frequency")).toHaveCount(0);
+      // (3) saving the area stores nothing legacy under the native machine.
+      await page.getByTestId("save-treatment-area").click({ timeout: T }).catch(() => undefined);
+      await page.waitForTimeout(2000);
+      expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: s.senior, energy_level: null, mode: null });
     });
 
     // OPS/Photos R2: a client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.

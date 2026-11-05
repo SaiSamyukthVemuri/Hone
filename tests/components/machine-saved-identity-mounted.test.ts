@@ -480,7 +480,7 @@ describe("a saved area's machine write holds the host's Save while it is pending
     await pickValue("room-9");
     expect(onIdentityWritePending).toHaveBeenLastCalledWith(true);
     await act(async () => release({ ok: true, updatedAt: "v2" }));
-    expect(onIdentityWritePending).toHaveBeenLastCalledWith(false, "ok");
+    expect(onIdentityWritePending).toHaveBeenLastCalledWith(false);
   });
 
   it("a REFUSED write also releases the hold", async () => {
@@ -489,25 +489,7 @@ describe("a saved area's machine write holds the host's Save while it is pending
     await mount({ blockId: "b1", savedIdentity: legacySaved, blockVersion: "v1", onIdentityWritePending });
     await pickValue("room-9");
     expect(onIdentityWritePending).toHaveBeenCalledWith(true);
-    expect(onIdentityWritePending).toHaveBeenLastCalledWith(false, "refused");
-  });
-
-  // Insurance J-1 / Privacy FG-1: what the optimistic pick cleared is given back when the area's identity write is refused.
-  it("J-1: a REFUSED pick tells the host to restore what it cleared; an ACKNOWLEDGED one does not", async () => {
-    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, error: "changed elsewhere" } as never);
-    const onPickReverted = vi.fn();
-    await mount({ blockId: "b1", savedIdentity: legacySaved, blockVersion: "v1", onPickReverted });
-    await pickValue("room-9");
-    expect(onPickReverted).toHaveBeenCalledTimes(1);
-    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("legacy:xcell");
-
-    await act(async () => root!.unmount());
-    host!.remove();
-    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2" } as never);
-    const onPickReverted2 = vi.fn();
-    await mount({ blockId: "b1", savedIdentity: legacySaved, blockVersion: "v1", onPickReverted: onPickReverted2 });
-    await pickValue("room-9");
-    expect(onPickReverted2, "NEGATIVE CONTROL: a pick that was written is kept").not.toHaveBeenCalled();
+    expect(onIdentityWritePending).toHaveBeenLastCalledWith(false);
   });
 
   it("NEGATIVE CONTROL: a NEW area writes nothing here, so it never holds the host's Save", async () => {
