@@ -98,3 +98,67 @@ describe("a bare area save carries a retry key", () => {
     expect((await count(sessionId)) - base).toBe(2);
   });
 });
+
+// ===========================================================================
+// INSURANCE N-1: THE 0223 FALLBACK (0301 NOT APPLIED, or rolled back).
+//
+// The action falls back to 0223's create_block_with_initial_setup, the SAME command the 0301 wrapper delegates to, when the
+// wrapper does not exist. That 0223 takes a key with an EMPTY settings half was only asserted in a comment. These cases call the
+// 0223 command directly with exactly the fallback's arguments (the wrapper's, minus p_machine_profile_id), so they prove it for the
+// no-0301 path: this local chain has 0301, but nothing here touches a 0301 object, column or the wrapper.
+// ===========================================================================
+const SQL_0223 = `select public.create_block_with_initial_setup(
+  $1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9,$10,$11,$12,$13,$14,
+  $15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+  $27,$28,$29,$30::jsonb) as r`;
+
+async function bare0223(studio: SeededStudio, sessionId: string, key: string | null, area = "jaw") {
+  return asUser(studio.userId, async (q) => {
+    const args: unknown[] = [
+      sessionId,
+      studio.clientId,
+      JSON.stringify({ block_name: "Bare", primary_area: area }),
+      JSON.stringify({}),
+      JSON.stringify([]),
+      false,
+      ...Array(20).fill(null),
+      null,
+      null,
+      key,
+      JSON.stringify([]),
+    ];
+    return (await q(SQL_0223, args)).rows[0].r as { block_id: string; reused?: boolean };
+  });
+}
+
+describe("the 0223 fallback takes a key with no settings (no 0301 object involved)", () => {
+  it("a keyed bare create works, and a same-key retry returns the same area (no duplicate)", async () => {
+    const studio = await seedStudio("bare-0223");
+    const { sessionId } = await seedSession(studio);
+    const base = await count(sessionId);
+    const key = randomUUID();
+    const first = await bare0223(studio, sessionId, key);
+    expect(first.block_id).toBeTruthy();
+    const second = await bare0223(studio, sessionId, key);
+    expect(second.block_id).toBe(first.block_id);
+    expect(second.reused).toBe(true);
+    expect((await count(sessionId)) - base).toBe(1);
+  });
+
+  it("NEGATIVE CONTROL: with no key the same retry makes a second area", async () => {
+    const studio = await seedStudio("bare-0223-nokey");
+    const { sessionId } = await seedSession(studio);
+    const base = await count(sessionId);
+    await bare0223(studio, sessionId, null);
+    await bare0223(studio, sessionId, null);
+    expect((await count(sessionId)) - base).toBe(2);
+  });
+
+  it("the same key with a different payload is refused, not merged", async () => {
+    const studio = await seedStudio("bare-0223-diff");
+    const { sessionId } = await seedSession(studio);
+    const key = randomUUID();
+    await bare0223(studio, sessionId, key, "jaw");
+    await expect(bare0223(studio, sessionId, key, "chin")).rejects.toThrow(/different treatment area/);
+  });
+});

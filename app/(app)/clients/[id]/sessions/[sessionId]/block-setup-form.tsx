@@ -25,6 +25,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SaveStatus } from "@/components/sessions/save-status";
 import type { SaveState } from "@/lib/sessions/save-state";
+import { useHeldBlockVersion } from "@/lib/sessions/use-held-block-version";
 import { useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 import {
   APILUS_MODALITIES_BY_MODE,
@@ -1329,18 +1330,9 @@ export function BlockSetupForm({
    * Save button keeps its own literal list (source pins read it); a test asserts
    * the two lists name the same flags.
    */
-  /**
-   * THE BLOCK VERSION THIS FORM SAVES AGAINST. The machine panel's identity
-   * write bumps the row, so it hands back the new version (only when the row was
-   * still at ours) and it is adopted here; a version from a stale prop is
-   * ignored, so a refreshed page wins. A real concurrent edit is untouched: it
-   * never produces an adopted token, and the block save still refuses it.
-   */
-  const [adoptedVersion, setAdoptedVersion] = useState<{ base: string; token: string } | null>(null);
-  const blockVersion =
-    block && adoptedVersion && adoptedVersion.base === block.updated_at
-      ? adoptedVersion.token
-      : (block?.updated_at ?? null);
+  // The version this editor saves against: fixed at open, moved only by its own identity write (see the hook).
+  const [heldVersion, setHeldVersion] = useHeldBlockVersion(block?.updated_at ?? null);
+  const blockVersion = block ? heldVersion : null;
   const saveBlocked =
     pending ||
     resume.state === "checking" ||
@@ -1930,7 +1922,7 @@ export function BlockSetupForm({
         onIdentityDraft={block ? undefined : onIdentityDraft}
         blockVersion={blockVersion}
         onBlockVersion={(token) => {
-          if (block) setAdoptedVersion({ base: block.updated_at, token });
+          if (block) setHeldVersion(token);
         }}
       />
 
