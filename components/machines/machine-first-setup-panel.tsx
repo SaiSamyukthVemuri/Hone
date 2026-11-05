@@ -151,6 +151,8 @@ export type MachineFirstSetupPanelProps = {
    * the entry (Codex, #860 4302176844).
    */
   onRevisionUnresolved?: (unresolved: boolean) => void;
+  /** An existing area's reading entry holds typed values that are not saved. */
+  onRevisionDraft?: (hasDraft: boolean) => void;
   onSettingDraft?: (
     draft: {
       groups: GroupSubmission[];
@@ -319,6 +321,7 @@ export function MachineFirstSetupPanel({
   onSettingDraft,
   settingDraftFrozen = false,
   onRevisionUnresolved,
+  onRevisionDraft,
   unavailableSelection = null,
   suggestedMachine = null,
   restoredSelection: restored = null,
@@ -975,6 +978,7 @@ export function MachineFirstSetupPanel({
               // save's state, and the controls that can discard its retry
               // key are out here.
               onUnresolvedChange={setRevisionUnresolved}
+              onDraftChange={onRevisionDraft}
               onRecord={recordAndCount!}
             />
           ) : (

@@ -68,7 +68,10 @@ describe("recordSetupSubmission without 0301", () => {
       "record_setup_submission_with_identity",
       "record_treatment_setup_submission",
     ]);
-    expect(rpc.mock.calls[1][1]).toEqual(rpc.mock.calls[0][1]);
+    // The 0223 command does not accept the held version, so the fallback omits it - and ONLY it.
+    const { p_expected_updated_at: _held, ...withoutHeld } = rpc.mock.calls[0][1] as Record<string, unknown>;
+    expect(rpc.mock.calls[1][1]).toEqual(withoutHeld);
+    expect(rpc.mock.calls[1][1]).not.toHaveProperty("p_expected_updated_at");
   });
 
   it("NEGATIVE CONTROL: an ordinary refusal is returned, never retried on the older command", async () => {

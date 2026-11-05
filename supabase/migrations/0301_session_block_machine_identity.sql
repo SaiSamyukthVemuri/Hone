@@ -54,14 +54,17 @@ create or replace function public.apply_block_machine_identity(
   p_studio_id          uuid,
   p_profile_id         text,
   p_studio_machine_id  uuid,
-  p_mode_key           text
+  p_mode_key           text,
+  p_expected_updated_at timestamptz default null
 )
-returns void
+returns timestamptz
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
+  v_new timestamptz;
+  v_current timestamptz;
   v_profile text := nullif(btrim(coalesce(p_profile_id, '')), '');
   v_mode text := nullif(btrim(coalesce(p_mode_key, '')), '');
   v_unit_profile text;
@@ -92,23 +95,40 @@ begin
     end if;
   end if;
 
+  -- THE HELD VERSION IS CHECKED INSIDE THIS TRANSACTION, under the row lock
+  -- (Codex 4476240827, decided by OPS). A caller that holds the block's
+  -- updated_at passes it; a mismatch is the same refusal as the block commands'
+  -- own stale check, so a write by another tab between the caller's read and
+  -- this call is detected, never overwritten. The NEW updated_at comes back from
+  -- the same UPDATE ... RETURNING, so the caller adopts exactly the version its
+  -- own write produced and no separate read can race it.
+  select b.updated_at into v_current
+    from public.session_blocks b
+   where b.id = p_block_id
+     and b.studio_id = p_studio_id
+     and b.deleted_at is null
+     for update;
+  if not found then
+    raise exception 'Block not found.' using errcode = 'check_violation';
+  end if;
+  if p_expected_updated_at is not null and v_current <> p_expected_updated_at then
+    raise exception 'stale_block_version: this settings block was changed elsewhere';
+  end if;
+
   update public.session_blocks b
      set machine_profile_id = v_profile,
          studio_machine_id = p_studio_machine_id,
          machine_mode_key = v_mode
    where b.id = p_block_id
-     and b.studio_id = p_studio_id
-     and b.deleted_at is null;
-  if not found then
-    raise exception 'Block not found.' using errcode = 'check_violation';
-  end if;
+   returning b.updated_at into v_new;
+  return v_new;
 end;
 $$;
 
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text) from public;
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text) from anon;
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text) from authenticated;
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text) from service_role;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from public;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from anon;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from authenticated;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from service_role;
 
 -- ---------------------------------------------------------------------------
 -- COMMAND 1: record the identity of an EXISTING area (machine and mode chosen,
@@ -120,9 +140,10 @@ create or replace function public.record_block_machine_identity(
   p_client_id          uuid,
   p_profile_id         text,
   p_studio_machine_id  uuid,
-  p_mode_key           text
+  p_mode_key           text,
+  p_expected_updated_at timestamptz default null
 )
-returns void
+returns timestamptz
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
@@ -132,16 +153,18 @@ declare
 begin
   v_studio := public.assert_session_writable(p_session_id, p_client_id);
   perform public.assert_block_in_session(p_block_id, p_session_id, v_studio);
-  perform public.apply_block_machine_identity(
-    p_block_id, v_studio, p_profile_id, p_studio_machine_id, p_mode_key);
+  -- Returns the block's new updated_at (from the UPDATE ... RETURNING).
+  return public.apply_block_machine_identity(
+    p_block_id, v_studio, p_profile_id, p_studio_machine_id, p_mode_key,
+    p_expected_updated_at);
 end;
 $$;
 
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text) from public;
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text) from anon;
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text) from authenticated;
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text) from service_role;
-grant execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text) to authenticated;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from public;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from anon;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from authenticated;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from service_role;
+grant execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- COMMAND 2: the initial save WITH identity, in ONE transaction.
@@ -256,7 +279,8 @@ create or replace function public.record_setup_submission_with_identity(
   p_idempotency_key text,
   p_groups jsonb,
   p_session_id uuid,
-  p_client_id uuid
+  p_client_id uuid,
+  p_expected_updated_at timestamptz default null
 )
 returns jsonb
 language plpgsql
@@ -266,6 +290,7 @@ as $$
 declare
   v_result jsonb;
   v_studio uuid;
+  v_new timestamptz;
 begin
   v_result := public.record_treatment_setup_submission(
     p_block_id => p_block_id,
@@ -281,17 +306,23 @@ begin
   -- back (Privacy F-2). Same rule as the create wrapper above.
   if coalesce((v_result->>'reused')::boolean, false) is not true then
     v_studio := public.assert_session_writable(p_session_id, p_client_id);
-    perform public.apply_block_machine_identity(
-      p_block_id, v_studio, null, p_studio_machine_id, p_mode_key);
+    -- The held version is checked here, in this transaction: a mismatch raises
+    -- and rolls back the readings just written too. The new updated_at comes back
+    -- in the result as block_updated_at. A REPLAY returns none and checks nothing
+    -- (it writes nothing; decided by OPS, Insurance N-8).
+    v_new := public.apply_block_machine_identity(
+      p_block_id, v_studio, null, p_studio_machine_id, p_mode_key,
+      p_expected_updated_at);
+    v_result := v_result || jsonb_build_object('block_updated_at', v_new);
   end if;
   return v_result;
 end;
 $$;
 
-revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid) from public;
-revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid) from anon;
-revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid) from authenticated;
-revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid) from service_role;
-grant execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid) to authenticated;
+revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz) from public;
+revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz) from anon;
+revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz) from authenticated;
+revoke execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz) from service_role;
+grant execute on function public.record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz) to authenticated;
 
 commit;

@@ -55,10 +55,10 @@ describe("0301: grants", () => {
     ["public", "anon", "authenticated", "service_role"].every((r) =>
       new RegExp(`revoke execute on function public\\.${sig.replace(/[()]/g, "\\$&")}[^;]*from ${r};`).test(code),
     );
-  const internal = "apply_block_machine_identity(uuid, uuid, text, uuid, text)";
+  const internal = "apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz)";
   const commands = [
-    "record_block_machine_identity(uuid, uuid, uuid, text, uuid, text)",
-    "record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid)",
+    "record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz)",
+    "record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz)",
   ];
   it("the internal writer is granted to no API role", () => {
     expect(revoked(internal)).toBe(true);

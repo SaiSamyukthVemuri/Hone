@@ -1,6 +1,5 @@
 "use server";
 
-import { readBlockVersion } from "@/lib/sessions/block-version";
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
 import { createClient } from "@/lib/supabase/server";
@@ -517,6 +516,9 @@ export async function loadMachineSetupContext(input: {
   };
 }
 
+const BLOCK_CHANGED_ELSEWHERE =
+  "This settings block was changed elsewhere. Reload the session and re-apply your edit.";
+
 export type ActionResult =
   | { ok: true }
   | {
@@ -618,16 +620,6 @@ export async function recordBlockMachineIdentityAction(input: {
   const db = await machineDb();
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
-    // THE FORM'S OWN WRITE MUST NOT COUNT AS "CHANGED ELSEWHERE" (Photos R2,
-    // #1369). This command bumps the block's updated_at, which is the version
-    // token the host form's block save sends. The form kept the old token, so
-    // its next save was refused as a concurrent edit - and the typed value was
-    // lost. So the new version is handed back, but ONLY when the block was still
-    // at the version the form holds BEFORE this write: if anyone else had
-    // already changed it, no new token is returned and the real conflict still
-    // surfaces on the next block save. (The only edit this cannot tell from our
-    // own is one landing inside this command's own round trip.)
-    const versionBefore = input.expectedUpdatedAt ? await readBlockVersion(input.blockId) : null;
     const out = await recordBlockMachineIdentity(db, {
       blockId: input.blockId,
       sessionId: input.sessionId,
@@ -635,8 +627,14 @@ export async function recordBlockMachineIdentityAction(input: {
       deviceId: input.deviceId,
       modeKey: input.modeKey,
       profileId: input.profileId,
+      // CHECKED INSIDE THE COMMAND'S TRANSACTION, and the new version comes back from
+      // the same UPDATE ... RETURNING (Codex 4476240827): no separate read can race it.
+      expectedUpdatedAt: input.expectedUpdatedAt ?? null,
     });
     if (!out.ok) {
+      if (out.stale) {
+        return { ok: false, code: "rejected", error: BLOCK_CHANGED_ELSEWHERE };
+      }
       // 0301 not applied yet: say so, never "saved".
       if (isMissingCommand(out.error)) {
         return { ok: false, code: "rejected", error: MACHINE_CHOICE_NOT_STORABLE_YET };
@@ -645,11 +643,7 @@ export async function recordBlockMachineIdentityAction(input: {
         ? { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." }
         : { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
     }
-    if (input.expectedUpdatedAt && versionBefore === input.expectedUpdatedAt) {
-      const versionAfter = await readBlockVersion(input.blockId);
-      if (versionAfter) return { ok: true, updatedAt: versionAfter };
-    }
-    return { ok: true };
+    return out.updatedAt ? { ok: true, updatedAt: out.updatedAt } : { ok: true };
   } catch {
     return { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
   }
@@ -1144,10 +1138,6 @@ export async function recordSetupSubmissionAction(input: {
     }
   }
 
-  // THE SAME HELD-VERSION RULE AS THE IDENTITY WRITE (Insurance F-1, Codex 4475784164):
-  // a non-replayed submission stamps the block's identity, which bumps updated_at,
-  // and the host form's next block save would be refused as "changed elsewhere".
-  const versionBefore = input.expectedUpdatedAt ? await readBlockVersion(input.blockId) : null;
   const out = await recordSetupSubmission(db, {
     blockId: input.blockId,
     machineId: input.machineId,
@@ -1156,7 +1146,11 @@ export async function recordSetupSubmissionAction(input: {
     sessionId: input.sessionId,
     clientId: input.clientId,
     groups,
+    expectedUpdatedAt: input.expectedUpdatedAt ?? null,
   });
+  if (!out.ok && /stale_block_version/.test(out.error)) {
+    return { ok: false, code: "rejected", error: BLOCK_CHANGED_ELSEWHERE };
+  }
   if (!out.ok) {
     // UNKNOWN IS NOT REJECTED. Collapsing the two here would discard the
     // distinction the query just preserved, one layer above it.
@@ -1166,22 +1160,14 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
-  const versionAfter =
-    input.expectedUpdatedAt && versionBefore === input.expectedUpdatedAt
-      ? await readBlockVersion(input.blockId)
-      : null;
-  // A SAME-KEY REPLAY AFTER A LOST RESPONSE HANDS BACK NO TOKEN (Insurance N-8, decided by
-  // OPS): nothing proves the block did not change between the held version and the first
-  // attempt's commit, so adopting the current version could silently overwrite a second
-  // tab's edit. The next block save refuses as "changed elsewhere", as before; the typed
-  // values stay in the form to be re-applied after a reload, never auto-overwritten.
   return {
     ok: true,
     submissionId: out.value.submissionId,
     captures: out.value.groups,
     written: out.value.readings,
     reused: out.value.reused,
-    ...(versionAfter ? { updatedAt: versionAfter } : {}),
+    // From the command's own UPDATE ... RETURNING; none on a replay (Insurance N-8).
+    ...(out.value.blockUpdatedAt ? { updatedAt: out.value.blockUpdatedAt } : {}),
   };
 }
 

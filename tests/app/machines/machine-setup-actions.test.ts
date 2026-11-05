@@ -41,8 +41,6 @@ const DB = vi.hoisted(() => ({
   rowsFor: {} as Record<string, unknown[]>,
   errorFor: {} as Record<string, { message: string }>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
-  /** Successive answers to the session_blocks updated_at read (the block version token). */
-  versions: [] as string[],
 }));
 
 vi.mock("@/lib/supabase/queries", () => ({
@@ -98,15 +96,6 @@ vi.mock("@/lib/supabase/server", () => ({
       return { data: DB.rpcResult, error: DB.rpcError };
     },
     from: (table: string) => {
-      if (table === "session_blocks" && DB.versions.length > 0) {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({ data: { updated_at: DB.versions.shift() }, error: null }),
-            }),
-          }),
-        };
-      }
       // THE RETRY-KEY LOOKUP (`setupSubmissionExists`): `.eq(block).eq(session)
       // .eq(key).limit(1)`, answered from this table's own rows - empty unless a case
       // says a submission already committed under the key.
@@ -187,7 +176,6 @@ beforeEach(() => {
   DB.rpcResult = null;
   DB.rpcError = null;
   DB.selectError = null;
-  DB.versions = [];
   DB.rowsFor = {};
   DB.errorFor = {};
   DB.calls = [];
@@ -2036,6 +2024,8 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
 
 // ===========================================================================
 // THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE" (Photos R2, #1369 c0d7b3ddc)
+// The held version is checked INSIDE the command's transaction and the new one comes back from
+// the same UPDATE ... RETURNING (Codex 4476240827), so the action reads nothing itself.
 // ===========================================================================
 describe("recordBlockMachineIdentityAction hands back the new block version", () => {
   const args = {
@@ -2046,38 +2036,41 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     modeKey: "flash",
     profileId: null,
   };
-  it("returns the post-write version when the block was still at the version the form holds", async () => {
+  it("passes the held version to the command and returns the version the command returned", async () => {
     signIn("studio-1", "prac-1", "practitioner");
-    DB.rpcResult = null;
-    DB.versions = ["v1", "v2"];
+    DB.rpcResult = "v2";
     const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
     expect(out).toEqual({ ok: true, updatedAt: "v2" });
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
   });
-  it("NEGATIVE CONTROL: if the block had ALREADY changed elsewhere, no token is handed back, so the real conflict still surfaces", async () => {
+  it("without a held version it sends null and returns whatever the command returned", async () => {
     signIn("studio-1", "prac-1", "practitioner");
     DB.rpcResult = null;
-    DB.versions = ["v-other-tab", "v-after"];
-    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
-    expect(out).toEqual({ ok: true });
-  });
-  it("without a held version it behaves as before (no token)", async () => {
-    signIn("studio-1", "prac-1", "practitioner");
-    DB.rpcResult = null;
-    DB.versions = [];
     expect(await actions.recordBlockMachineIdentityAction(args)).toEqual({ ok: true });
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: null });
+  });
+  it("NEGATIVE CONTROL: a stale_block_version refusal from the command is the changed-elsewhere conflict, with no token", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out.ok).toBe(false);
+    expect((out as { error?: string }).error).toMatch(/changed elsewhere/);
+    expect("updatedAt" in out).toBe(false);
   });
   it("a refused write returns no token", async () => {
     signIn("studio-1", "prac-1", "practitioner");
     DB.rpcError = { code: "23514", message: "check violation" };
-    DB.versions = ["v1", "v2"];
     const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
     expect(out.ok).toBe(false);
     expect("updatedAt" in out).toBe(false);
-    DB.versions = [];
+  });
+  it("the action reads session_blocks itself no more (no before/after race)", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts", "utf8");
+    expect(src).not.toMatch(/readBlockVersion|block-version/);
   });
 });
 
-// Insurance F-1 / Codex 4475784164: a non-replayed submission stamps the block identity (bumps updated_at) too, so it follows the same held-version rule.
+// Insurance F-1 / Codex 4475784164: a non-replayed submission stamps the block identity (bumps updated_at) too.
 describe("recordSetupSubmissionAction hands back the new block version", () => {
   const call = (expectedUpdatedAt?: string) =>
     actions.recordSetupSubmissionAction({
@@ -2089,38 +2082,39 @@ describe("recordSetupSubmissionAction hands back the new block version", () => {
       groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
       ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
     });
-  const ok = () => {
+  const ok = (extra: Record<string, unknown> = {}) => {
     synthDevice();
-    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false };
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false, ...extra };
   };
-  it("returns the post-write version when the block was still at the version the form holds", async () => {
-    ok();
-    DB.versions = ["v1", "v2"];
+  it("sends the held version and returns the version the command returned", async () => {
+    ok({ block_updated_at: "v2" });
     const out = await call("v1");
     expect(out.ok).toBe(true);
     expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
   });
-  it("NEGATIVE CONTROL: a block that had already changed elsewhere yields no token", async () => {
+  it("without a held version no token is expected back", async () => {
     ok();
-    DB.versions = ["v-other-tab", "v-after"];
-    const out = await call("v1");
-    expect(out.ok).toBe(true);
-    expect("updatedAt" in out).toBe(false);
-  });
-  it("without a held version nothing is read and no token is returned", async () => {
-    ok();
-    DB.versions = [];
     const out = await call();
     expect(out.ok).toBe(true);
     expect("updatedAt" in out).toBe(false);
   });
+  it("NEGATIVE CONTROL: a stale_block_version refusal rolls the save back and reads as changed-elsewhere", async () => {
+    synthDevice();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    const out = await call("v1");
+    expect(out.ok).toBe(false);
+    expect((out as { code?: string }).code).toBe("rejected");
+    expect((out as { error?: string }).error).toMatch(/changed elsewhere/);
+  });
 });
 
-// Insurance N-8 (decided by OPS, replaces N-4): a same-key replay after a lost response hands back NO token. It cannot prove nothing changed
-// between the held version and the first attempt's commit, so adopting one could overwrite a second tab's edit.
+// Insurance N-8: a same-key replay hands back NO token (the command returns none when reused).
 describe("a replayed submission hands back no token", () => {
-  const call = () =>
-    actions.recordSetupSubmissionAction({
+  it("NEGATIVE CONTROL: reused=true carries no block_updated_at, so no token and the next block save still conflicts", async () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: true };
+    const out = await actions.recordSetupSubmissionAction({
       ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
@@ -2129,19 +2123,7 @@ describe("a replayed submission hands back no token", () => {
       groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
       expectedUpdatedAt: "v1",
     });
-  it("NEGATIVE CONTROL: a second tab edited the block, then the lost-response replay arrives: no token, so the next block save still conflicts", async () => {
-    synthDevice();
-    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: true };
-    DB.versions = ["v-second-tab", "v-second-tab"];
-    const out = await call();
     expect(out.ok).toBe(true);
-    expect("updatedAt" in out).toBe(false);
-  });
-  it("even when the block still carries the committed instant (nothing visibly changed), a replay returns no token", async () => {
-    synthDevice();
-    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: true };
-    DB.versions = ["v2", "v2"];
-    const out = await call();
     expect("updatedAt" in out).toBe(false);
   });
 });

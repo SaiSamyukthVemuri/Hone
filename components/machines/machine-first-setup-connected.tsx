@@ -73,6 +73,7 @@ export type MachineFirstSetupConnectedProps = {
   settingDraftFrozen?: boolean;
   /** Forwarded straight through: see the panel's own prop. */
   onRevisionUnresolved?: (unresolved: boolean) => void;
+  onRevisionDraft?: (hasDraft: boolean) => void;
   onSettingDraft?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
   >;
@@ -161,6 +162,7 @@ export function MachineFirstSetupConnected({
   onSettingDraft,
   settingDraftFrozen = false,
   onRevisionUnresolved,
+  onRevisionDraft,
   savedIdentity: savedIdentityProp = null,
   onKindChange,
   onIdentityDraft,
@@ -535,6 +537,7 @@ export function MachineFirstSetupConnected({
       // FORWARDED. Five values in this lane have been computed correctly and
       // dropped at a hop exactly like this one.
       onRevisionUnresolved={onRevisionUnresolved}
+      onRevisionDraft={onRevisionDraft}
       settingDraftFrozen={settingDraftFrozen}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}

@@ -721,6 +721,8 @@ export function BlockSetupForm({
    * combined only where a control has to be frozen.
    */
   const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+  // Values typed into an EXISTING area's reading entry and not yet saved.
+  const [revisionDraft, setRevisionDraft] = useState(false);
 
   /**
    * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
@@ -992,6 +994,7 @@ export function BlockSetupForm({
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
     machineDraft !== null ||
+    revisionDraft ||
     identityDirty;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void } | null>(null);
@@ -1875,6 +1878,7 @@ export function BlockSetupForm({
         // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
         // below can be frozen by it (Codex, #860 4302176844).
         onRevisionUnresolved={setRevisionUnresolved}
+        onRevisionDraft={setRevisionDraft}
         // THE SAVED CHOICE of this area (the record), not a preference.
         savedIdentity={
           block

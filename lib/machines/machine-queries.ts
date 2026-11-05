@@ -498,6 +498,7 @@ export type SetupSubmissionResult = {
    * because "saved" and "already saved" are different facts about the record.
    */
   reused: boolean;
+  blockUpdatedAt: string | null;
 };
 
 /**
@@ -534,6 +535,8 @@ export async function recordSetupSubmission(
    */
   sessionId: string;
   clientId: string;
+  /** The block version the host form holds, checked inside the command's transaction (0301). */
+  expectedUpdatedAt?: string | null;
   },
 ): Promise<MachineOutcome<SetupSubmissionResult>> {
   const submissionArgs = {
@@ -569,7 +572,10 @@ export async function recordSetupSubmission(
   // tried first; if the database does not have it yet (PGRST202 / 42883, so
   // nothing ran), the SAME arguments go to the 0223 command, which records the
   // readings exactly as before and simply does not stamp the identity.
-  let { data, error } = await db.rpc("record_setup_submission_with_identity", submissionArgs);
+  let { data, error } = await db.rpc("record_setup_submission_with_identity", {
+    ...submissionArgs,
+    p_expected_updated_at: input.expectedUpdatedAt ?? null,
+  });
   if (isMissingCommand(error)) {
     ({ data, error } = await db.rpc("record_treatment_setup_submission", submissionArgs));
   }
@@ -618,6 +624,8 @@ export async function recordSetupSubmission(
       groups: Number(row?.groups ?? 0),
       readings: Number(row?.readings ?? 0),
       reused: row?.reused === true,
+      // The block's new updated_at, from the same UPDATE ... RETURNING inside the command (none on a replay).
+      blockUpdatedAt: typeof row?.block_updated_at === "string" ? row.block_updated_at : null,
     },
   };
 }
@@ -1096,17 +1104,25 @@ export async function recordBlockMachineIdentity(
     deviceId: string | null;
     modeKey: string | null;
     profileId: string | null;
+    /** The block version the form holds; checked inside the command (stale_block_version on a mismatch). */
+    expectedUpdatedAt?: string | null;
   },
-): Promise<{ ok: true } | { ok: false; error: { code: string } }> {
-  const { error } = await db.rpc("record_block_machine_identity", {
+): Promise<{ ok: true; updatedAt: string | null } | { ok: false; error: { code: string }; stale: boolean }> {
+  const { data, error } = await db.rpc("record_block_machine_identity", {
     p_block_id: input.blockId,
     p_session_id: input.sessionId,
     p_client_id: input.clientId,
     p_profile_id: input.deviceId === null ? input.profileId : null,
     p_studio_machine_id: input.deviceId,
     p_mode_key: input.deviceId === null ? null : input.modeKey,
+    p_expected_updated_at: input.expectedUpdatedAt ?? null,
   });
   return error
-    ? { ok: false, error: { code: dbErrorCode(error) } }
-    : { ok: true };
+    ? {
+        ok: false,
+        error: { code: dbErrorCode(error) },
+        // The held version no longer matched inside the transaction; only the fact, never the message.
+        stale: /stale_block_version/.test(error.message ?? ""),
+      }
+    : { ok: true, updatedAt: typeof data === "string" ? data : null };
 }

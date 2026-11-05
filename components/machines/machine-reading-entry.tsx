@@ -150,6 +150,16 @@ export type MachineReadingEntryProps = {
    * that gap.
    */
   onUnresolvedChange?: (unresolved: boolean) => void;
+  /**
+   * WHETHER ANYTHING TYPED HAS NOT BEEN SAVED (Codex, #1369 4476240831).
+   *
+   * The create form reports its draft to the host; this form, on an EXISTING
+   * area, kept its values to itself, so the host's status kept saying Saved
+   * and the leave guard stayed disarmed over numbers that were never recorded.
+   * True while any group holds a non-empty value; false again once a save
+   * clears them.
+   */
+  onDraftChange?: (hasDraft: boolean) => void;
 };
 
 /**
@@ -174,6 +184,7 @@ export function MachineReadingEntry({
   onRecord,
   mintKey,
   onUnresolvedChange,
+  onDraftChange,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   // SETTING GROUPS - probes sharing one set of values. One to begin with, which
@@ -347,6 +358,18 @@ export function MachineReadingEntry({
    * one in the record.
    */
   const transportHold = pending || save.unresolved;
+
+  const hasDraft = groups.some((g) =>
+    Object.values(g.values).some((v) => String(v ?? "").trim() !== ""),
+  );
+  const reportedDraft = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (reportedDraft.current === hasDraft) return;
+    reportedDraft.current = hasDraft;
+    onDraftChange?.(hasDraft);
+  }, [hasDraft, onDraftChange]);
+  // GONE WITH THE ENTRY: an unmounted form holds nothing unsaved.
+  useEffect(() => () => onDraftChange?.(false), [onDraftChange]);
 
   const reportedUnresolved = useRef<boolean | null>(null);
   useEffect(() => {

@@ -328,6 +328,104 @@ describe("0301: an existing area", () => {
   });
 });
 
+// ===========================================================================
+// THE HELD VERSION IS CHECKED, AND THE NEW ONE RETURNED, INSIDE THE WRITE'S OWN
+// TRANSACTION (Codex #1369 4476240827). A read taken around the write could be
+// overtaken by a second tab; the command's own `UPDATE ... RETURNING` cannot.
+// ===========================================================================
+describe("0301: the block version token is checked and returned in the write transaction", () => {
+  const version = async (blockId: string) =>
+    (await adminQuery(`select updated_at::text as t from public.session_blocks where id = $1`, [blockId])).rows[0].t as string;
+  const stamp = (studio: SeededStudio, sessionId: string, blockId: string, machine: string, held: string | null) =>
+    asUser(studio.userId, async (q) => {
+      const r = await q(
+        `select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7::timestamptz)::text as t`,
+        [blockId, sessionId, studio.clientId, null, machine, "galvanic", held],
+      );
+      return r.rows[0].t as string;
+    });
+  const submit = (studio: SeededStudio, sessionId: string, blockId: string, machine: string, key: string, held: string | null) =>
+    asUser(studio.userId, async (q) => {
+      const r = await q(
+        `select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7,$8::timestamptz) as r`,
+        [blockId, machine, "galvanic", key, JSON.stringify(groups("9")), sessionId, studio.clientId, held],
+      );
+      return r.rows[0].r as { reused: boolean; block_updated_at?: string };
+    });
+
+  it("returns the very version the UPDATE left on the row", async () => {
+    const studio = await seedStudio("token-return");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    const held = await version(blockId);
+    const returned = await stamp(studio, sessionId, blockId, machine, held);
+    expect(returned).toBe(await version(blockId));
+    expect(returned).not.toBe(held);
+  });
+
+  it("NEGATIVE CONTROL: a held version that no longer matches is refused as stale_block_version and nothing is written", async () => {
+    const studio = await seedStudio("token-stale");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    const before = await version(blockId);
+    await expect(stamp(studio, sessionId, blockId, machine, "2001-01-01 00:00:00+00")).rejects.toThrow(/stale_block_version/);
+    expect(await version(blockId)).toBe(before);
+    expect((await identity(blockId)).studio_machine_id).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: a second tab's write BETWEEN two calls is detected by the second call", async () => {
+    const studio = await seedStudio("token-second-tab");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    const t1 = await stamp(studio, sessionId, blockId, machine, await version(blockId));
+    await adminQuery(`update public.session_blocks set block_notes = 'edited in another tab' where id = $1`, [blockId]);
+    expect(await version(blockId)).not.toBe(t1);
+    await expect(stamp(studio, sessionId, blockId, machine, t1)).rejects.toThrow(/stale_block_version/);
+    // POSITIVE CONTROL: with the version the other tab left, the same write goes through.
+    const t2 = await stamp(studio, sessionId, blockId, machine, await version(blockId));
+    expect(t2).toBe(await version(blockId));
+  });
+
+  it("no held version keeps the older behaviour: the write is not checked", async () => {
+    const studio = await seedStudio("token-none");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await stamp(studio, sessionId, blockId, machine, null);
+    expect((await identity(blockId)).machine_mode_key).toBe("galvanic");
+  });
+
+  it("a submission returns the new version", async () => {
+    const studio = await seedStudio("token-submit");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    const ok = await submit(studio, sessionId, blockId, machine, "token-submit-0001", await version(blockId));
+    expect(ok.reused).toBe(false);
+    expect(ok.block_updated_at).toBeDefined();
+    expect(new Date(ok.block_updated_at as string).getTime()).toBe(new Date(await version(blockId)).getTime());
+  });
+
+  it("NEGATIVE CONTROL: a stale held version refuses the submission and rolls its readings back too", async () => {
+    const studio = await seedStudio("token-submit-stale");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await expect(
+      submit(studio, sessionId, blockId, machine, "token-submit-0002", "2001-01-01 00:00:00+00"),
+    ).rejects.toThrow(/stale_block_version/);
+    expect(await readings(blockId)).toBe(0);
+    expect((await identity(blockId)).studio_machine_id).toBeNull();
+  });
+
+  it("a same-key replay returns NO version and checks nothing (Insurance N-8)", async () => {
+    const studio = await seedStudio("token-replay");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await submit(studio, sessionId, blockId, machine, "token-replay-0001", await version(blockId));
+    const replay = await submit(studio, sessionId, blockId, machine, "token-replay-0001", "2001-01-01 00:00:00+00");
+    expect(replay.reused).toBe(true);
+    expect(replay.block_updated_at).toBeUndefined();
+  });
+});
+
 describe("0301: no direct write path to the new columns (Privacy EH-3)", () => {
   const COLS = ["machine_profile_id", "studio_machine_id", "machine_mode_key"];
 

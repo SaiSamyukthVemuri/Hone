@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actions = vi.hoisted(() => ({
+  recordSetupSubmissionAction: vi.fn(async () => ({ ok: true })),
   recordBlockMachineIdentityAction: vi.fn(async () => ({ ok: true })),
   rememberMachineSelectionAction: vi.fn(async () => ({ ok: true })),
   clearMachineSelectionAction: vi.fn(async () => ({ ok: true })),
@@ -329,5 +330,51 @@ describe("Insurance N-7: an existing area without a saved identity opens exactly
     expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
     await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
     expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("");
+  });
+});
+
+// Codex P2 4476240831 (#1369): an EXISTING area's reading entry reports its unsaved values to the host, so the status stops saying Saved and the leave guard arms.
+describe("an existing area's reading entry reports its unsaved draft to the host", () => {
+  const type = async (el: HTMLInputElement, value: string) => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const mountExisting = async (onRevisionDraft: (d: boolean) => void) =>
+    mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
+      onRevisionDraft,
+    });
+
+  it("typing a value reports a draft; clearing it reports none", async () => {
+    const onRevisionDraft = vi.fn();
+    await mountExisting(onRevisionDraft);
+    const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]');
+    expect(input, "the entry's first field is mounted").not.toBeNull();
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+    await type(input!, "120");
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
+    await type(input!, "");
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+  });
+
+  it("NEGATIVE CONTROL: nothing typed never reports a draft", async () => {
+    const onRevisionDraft = vi.fn();
+    await mountExisting(onRevisionDraft);
+    expect(onRevisionDraft).not.toHaveBeenCalledWith(true);
+  });
+
+  it("the draft is released when the entry unmounts", async () => {
+    const onRevisionDraft = vi.fn();
+    await mountExisting(onRevisionDraft);
+    const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
+    await type(input, "7");
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
+    await act(async () => root!.unmount());
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+    root = null;
   });
 });
