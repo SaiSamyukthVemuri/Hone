@@ -199,10 +199,19 @@ begin
 end;
 $$;
 
--- Lineage: a stage or a treated area carries its OWN studio_id, trigger-derived from its parent only when plan_id / session_block_id is written
--- (0034, 0128), so an UPDATE of studio_id alone left the child in one studio under a parent in another. Refused here on INSERT and UPDATE, for every
--- caller and whatever the edit key says. (An area's derive trigger was extended to `update of studio_id` by 0159, so for areas this is a second line;
--- blocks are fixed by 0160 and sessions, plans and notes are tied to their client by the 0094 / 0126 same-studio keys.)
+-- Lineage: a stage carries its OWN studio_id, trigger-derived from its plan only when plan_id is written (0034), so an UPDATE of studio_id alone left the
+-- stage in one studio under a plan in another (a real gap: nothing else refused it). This guard REFUSES that on INSERT and UPDATE, for every caller and
+-- whatever the edit key says. A treated area is different: 0159 re-derives its studio_id from the block on `update of session_block_id, studio_id`, so an
+-- area write is CORRECTED to the block's studio, not refused; the guard on areas is a backstop that only fires if that derive trigger is ever dropped.
+-- On the plan side it refuses a studio change while the plan still has stages in the old one. What holds the other covered tables, table by table:
+--   sessions              sessions_immutable_lineage (0160) pins client_id and studio_id
+--   session_blocks        session_blocks_immutable_lineage (0160) pins session_id and studio_id
+--   electrolysis_entries, laser_entries   no studio_id of their own; session_id is pinned by 0160
+--   treatment_plans       treatment_plans_client_same_studio_fk (0094) ties (studio_id, client_id) to one client, so a plan WITHOUT stages can move only together
+--                         with its client, and that move is authorised against the destination by chart_write_guard above
+--   client_clinical_notes client_clinical_notes_no_update (0126) refuses every UPDATE; its (client_id, studio_id) key is a composite foreign key
+-- Repair note: because this applies to every caller, a deliberate administrative move of a stage or plan between studios (a bad import, say) is refused too.
+-- That would need a recorded procedure that disables zz_chart_lineage_guard_trg for one transaction, under the owner's written approval.
 create or replace function public.chart_lineage_guard()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare

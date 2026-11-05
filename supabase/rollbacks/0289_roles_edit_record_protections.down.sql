@@ -6,6 +6,8 @@
 -- why). The triggers refuse UPDATE, DELETE and TRUNCATE but a DROP is not one of them. EXPORT BOTH TABLES FIRST if the history must be kept.
 -- WHAT IT RESTORES: the 0167 body of set_session_performer (direct performer overwrite); no edit-key check at the database (the app check, if any, remains).
 -- It touches no source column and no existing command body: 0289 changed none.
+-- REPAIR NOTE: while 0289 is in place, zz_chart_lineage_guard_trg refuses ANY caller's move of a stage (or of a plan that has stages) between studios, so a
+-- deliberate administrative repair of that kind needs a recorded procedure that disables the trigger for that one transaction, under the owner's written approval.
 begin;
 set local lock_timeout = '5s';
 
