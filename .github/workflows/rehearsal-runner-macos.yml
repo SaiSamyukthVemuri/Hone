@@ -1,0 +1,175 @@
+# REHEARSAL - NEVER MERGE. RUNNER-MACOS: runs the macOS window-read runner variant's
+# shell tests on a stock macOS arm64 runner (/bin/bash 3.2, BSD tools, no sha256sum),
+# against a stub CLI. No hosted call, no database, no secrets, no Supabase.
+name: rehearsal-runner-macos
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/runner-macos/**"
+      - ".github/workflows/rehearsal-runner-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-runner:
+    name: runner variant on macOS (bash 3.2)
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          if command -v sha256sum >/dev/null 2>&1; then echo "sha256sum: present"; else echo "sha256sum: absent"; fi
+          command -v shasum
+          command -v zsh
+      - name: Variant tests under /bin/bash (3.2)
+        run: /bin/bash rehearsal/runner-macos/run-window-read-macos.test.sh
+      - name: Variant tests under zsh invoking the script by its shebang
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          bash_version="$(/bin/bash -c 'echo $BASH_VERSION')"
+          case "$bash_version" in 3.2*) ;; *) echo "expected bash 3.2, got $bash_version"; exit 1 ;; esac
+          chmod +x rehearsal/runner-macos/run-window-read-macos.test.sh
+          rehearsal/runner-macos/run-window-read-macos.test.sh
+
+  installer-macos:
+    name: installer and real binary on macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Installer sha256 must be the OPS-recorded one (the file is a byte-for-byte copy)
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          got="$(shasum -a 256 rehearsal/runner-macos/hone-s1-install.sh | cut -d' ' -f1)"
+          echo "installer sha256: $got"
+          [ "$got" = "c5e15ed01e71ce424e3261ac7ed3e5e364f0de952be56fb06497d772ca3702a1" ] || { echo "installer sha256 differs from the recorded one"; exit 1; }
+          echo "INSTALLER SHA OK"
+      - name: Positive run, exactly as the operator runs it (zsh, /bin/sh, fresh HOME)
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          export HOME="$(mktemp -d "$RUNNER_TEMP/fresh-home.XXXXXX")"
+          echo "HOME=$HOME"
+          echo "login shell for this step: $ZSH_VERSION (zsh)"
+          cd rehearsal/runner-macos
+          set +e
+          /bin/sh hone-s1-install.sh > "$RUNNER_TEMP/install.out" 2>&1
+          rc=$?
+          set -e
+          echo "----- full installer output"; cat "$RUNNER_TEMP/install.out"; echo "----- end output"
+          echo "installer exit: $rc"
+          echo "final line: $(tail -1 "$RUNNER_TEMP/install.out")"
+          echo "INSTALL_HOME=$HOME" >> "$GITHUB_ENV"
+          [ "$rc" = 0 ] || exit 1
+          tail -1 "$RUNNER_TEMP/install.out" | grep -q '^OK: ' || { echo "no OK line"; exit 1; }
+      - name: Installed binary - file, xattr, codesign, Gatekeeper
+        shell: /bin/zsh {0}
+        run: |
+          B="$INSTALL_HOME/hone-s1/supabase-cli/supabase"
+          echo "--- ls -l@"; ls -l@ "$INSTALL_HOME/hone-s1/supabase-cli/"
+          echo "--- file"; file "$B" "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+          echo "--- xattr -l (supabase)"; xattr -l "$B"; echo "(xattr exit $?; empty output above means no attributes, in particular no com.apple.quarantine)"
+          echo "--- xattr -l (supabase-go)"; xattr -l "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+          echo "--- quarantine attribute present?"; if xattr -p com.apple.quarantine "$B" >/dev/null 2>&1; then echo yes; else echo no; fi
+          echo "--- codesign -dv"; codesign -dv --verbose=2 "$B" 2>&1 || true
+          echo "--- codesign --verify"; codesign --verify --verbose=2 "$B" 2>&1; echo "(exit $?)"
+          echo "--- spctl --assess --type execute -vv (informational: Gatekeeper assesses quarantined launches, not a plain exec)"; spctl --assess --type execute -vv "$B" 2>&1; echo "(spctl exit $?)"
+          echo "--- direct run (no hosted call: --version only)"; "$B" --version; echo "(exit $?)"
+          echo "GATEKEEPER: the install and the --version run completed with no prompt or kill (exit above)"
+      - name: Negative cases (one expected-sha constant changed per copy, existing destination, tampered downloads)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/installer-negatives.sh
+
+  installer-v2-signature:
+    name: installer v2 (supabase-go only), signatures, vendor copies
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Signature evidence on both binaries exactly as extracted, and the npm copies
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/codesign-evidence.sh
+      - name: Installer v2 sha256 must be the OPS-recorded one (byte-for-byte copy)
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          got="$(shasum -a 256 rehearsal/runner-macos/hone-s1-install-v2.sh | cut -d' ' -f1)"
+          echo "installer v2 sha256: $got"
+          [ "$got" = "91efc6ff9cb5b3011edb2bacf3ec89ee8bf439c6a281f2bc3bad30f0f4d884e5" ] || { echo "installer v2 sha256 differs from the recorded one"; exit 1; }
+          echo "INSTALLER V2 SHA OK"
+      - name: Positive v2 run, exactly as the operator runs it (zsh, /bin/sh, fresh HOME)
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          export HOME="$(mktemp -d "$RUNNER_TEMP/fresh-home.XXXXXX")"
+          echo "HOME=$HOME"
+          cd rehearsal/runner-macos
+          set +e
+          /bin/sh hone-s1-install-v2.sh > "$RUNNER_TEMP/install2.out" 2>&1
+          rc=$?
+          set -e
+          echo "----- full installer output"; cat "$RUNNER_TEMP/install2.out"; echo "----- end output"
+          echo "installer exit: $rc"
+          echo "INSTALL_HOME=$HOME" >> "$GITHUB_ENV"
+          [ "$rc" = 0 ] || exit 1
+          tail -1 "$RUNNER_TEMP/install2.out" | grep -q '^OK: ' || { echo "no OK line"; exit 1; }
+      - name: What v2 installed, and the exact supabase-go version string
+        shell: /bin/zsh {0}
+        run: |
+          D="$INSTALL_HOME/hone-s1/supabase-cli"; B="$D/supabase-go"
+          echo "--- ls -l@ (only supabase-go expected)"; ls -l@ "$D"
+          [ "$(ls "$D")" = "supabase-go" ] && echo "ONLY supabase-go INSTALLED" || { echo "unexpected contents"; exit 1; }
+          echo "--- file"; file "$B"
+          echo "--- xattr -l: [$(xattr -l "$B")]"
+          echo "--- codesign -dv --verbose=4"; codesign -dv --verbose=4 "$B" 2>&1; echo "(exit $?)"
+          echo "--- codesign --verify --verbose=2"; codesign --verify --verbose=2 "$B" 2>&1; echo "(exit $?)"
+          echo "--- codesign --verify --strict --verbose=2"; codesign --verify --strict --verbose=2 "$B" 2>&1; echo "(exit $?)"
+          echo "--- spctl --assess --type execute -vv"; spctl --assess --type execute -vv "$B" 2>&1; echo "(exit $?)"
+          v="$("$B" --version)"; echo "supabase-go --version exact: [$v]"
+          [ "$v" = "2.102.0" ] || { echo "STOP: version is not exactly 2.102.0"; exit 1; }
+      - name: Negative cases for v2 (constants, existing destination, tampered downloads, codesign failure via a stub path in a copy)
+        shell: /bin/zsh {0}
+        run: INSTALLER="$PWD/rehearsal/runner-macos/hone-s1-install-v2.sh" EVIDENCE_SUFFIX=-v2 STUB_CODESIGN=1 /bin/bash rehearsal/runner-macos/installer-negatives.sh
+      - name: R5 - variant sha256 gate against the REAL installed supabase-go (hashed, never executed)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/real-bin-gate.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+      - name: R4 - does supabase-go make a network call for --version? (refusing local proxy sink, no hosted call)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/version-network-probe.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+
+  comparator-macos:
+    name: comparator and re-pin proof on macOS (Node version, 126 + proof)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node on this runner, and the pinned comparator hashes
+        shell: /bin/zsh {0}
+        run: |
+          echo "node: $(node --version) at $(command -v node)"; echo "uname: $(uname -sm)"
+          cd rehearsal/runner-macos/comparator
+          shasum -a 256 compare-preflight.mjs compare-preflight-lib.mjs compare-preflight.test.mjs run-window-read.sh MANIFEST.sha256 run-window-read-macos.sh | cut -c1-72
+      - name: The 126 comparator tests, unchanged
+        shell: /bin/zsh {0}
+        run: cd rehearsal/runner-macos/comparator && node --test compare-preflight.test.mjs 2>&1 | tail -12
+      - name: The re-pin proof, including the macOS-written sidecar parity test (bash 3.2)
+        shell: /bin/zsh {0}
+        run: cd rehearsal/runner-macos/comparator && node --test baseline-repin-proof.test.mjs 2>&1 | tail -12

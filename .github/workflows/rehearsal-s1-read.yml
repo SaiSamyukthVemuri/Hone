@@ -1,0 +1,132 @@
+# REHEARSAL - NEVER MERGE. S1-READBACK: (1) an ubuntu job builds a SYNTHETIC local database from the d189768b migration
+# chain (0212, then 0246), runs the REAL S1 read-back gate files against it with psql and keeps their JSON results;
+# (2) a macOS arm64 job runs window-s1read.sh (/bin/bash 3.2, BSD tools) against a STUB supabase-go that serves those
+# results. No hosted call, no hosted database, no secrets; the only credential is the job's own read-only ghcr.io pull
+# token, held across the one `supabase start` step exactly as in ci.yml (D7b).
+name: rehearsal-s1-read
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/s1-read/**"
+      - ".github/workflows/rehearsal-s1-read.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  s1-db-fixtures:
+    name: real S1 gate files on a synthetic 0212 then 0246 database
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout the rehearsal branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checkout the #1035 chain at the frozen head d189768b (read-only, separate path)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: d189768b86fe1c53e330c65078f3a9f2949f8e59
+          path: chain
+          persist-credentials: false
+          sparse-checkout: supabase/migrations
+      - name: The chain is exactly the 245 pinned files, and the branch holds the first 211 unchanged
+        run: |
+          set -eu
+          cd chain/supabase/migrations
+          [ "$(ls | wc -l | tr -d ' ')" = 245 ]
+          sha256sum -c "$GITHUB_WORKSPACE/rehearsal/s1-read/MIGRATIONS-d189768b.sha256" | grep -vc ': OK$' | grep -qx 0
+          cd "$GITHUB_WORKSPACE"
+          [ "$(ls supabase/migrations | wc -l | tr -d ' ')" = 211 ]
+          for f in supabase/migrations/*.sql; do cmp "$f" "chain/supabase/migrations/$(basename "$f")"; done
+          ls supabase/migrations | tail -n 1
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start local Supabase at 0212 (DB only; the branch's own migrations 0001..0212)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+      - name: Real gate files at 0212 (history stops, guarded files refuse)
+        run: bash rehearsal/s1-read/db-fixtures.sh rehearsal/s1-read/window-reads-s1 "$RUNNER_TEMP/fixtures" before
+      - name: Apply 0213..0246 from the pinned chain (supabase migration up --local)
+        run: |
+          set -eu
+          for f in chain/supabase/migrations/02[1-4]?_*.sql; do
+            v=$(basename "$f" | cut -c1-4)
+            [ "$v" -ge 0213 ] && cp "$f" supabase/migrations/
+          done
+          [ "$(ls supabase/migrations | wc -l | tr -d ' ')" = 245 ]
+          supabase migration up --local 2>&1 | tail -n 5
+      - name: Real gate files at 0246 (ok, one closure wrong, one body wrong)
+        run: bash rehearsal/s1-read/db-fixtures.sh rehearsal/s1-read/window-reads-s1 "$RUNNER_TEMP/fixtures" after
+      - name: What the real database returned (names, flags, md5 and counts only)
+        run: |
+          cd "$RUNNER_TEMP/fixtures"
+          for s in at0212 ok; do for f in $s/*; do echo "--- $f"; head -c 3000 "$f"; echo; done; done 2>&1 | cut -c1-1500
+          for s in closure_bad body_bad; do echo "=== $s"; ls $s; done
+      - name: Keep the results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s1-fixtures
+          path: ${{ runner.temp }}/fixtures
+          retention-days: 3
+
+  s1read-macos:
+    name: window-s1read.sh on macOS arm64 (bash 3.2, stub supabase-go)
+    needs: s1-db-fixtures
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Real-database results from the first job
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: s1-fixtures
+          path: ${{ runner.temp }}/fixtures
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          node --version
+          python3 --version
+          shasum -a 256 rehearsal/s1-read/window-reads-s1/window-s1read.sh rehearsal/s1-read/window-reads-s1/MANIFEST.sha256
+      - name: The one-line download from the document, under bash and zsh (fake scp)
+        run: |
+          /bin/bash rehearsal/s1-read/test-download-s1.sh bash
+          /bin/bash rehearsal/s1-read/test-download-s1.sh zsh
+      - name: Script and tests under /bin/bash (3.2), synthetic results then REAL-database results
+        env:
+          S1_REAL_FIXTURES: ${{ runner.temp }}/fixtures
+        run: /bin/bash rehearsal/s1-read/test-s1read.sh
+      - name: The same tests launched from zsh (how the operator's shell starts it)
+        shell: /bin/zsh {0}
+        env:
+          S1_REAL_FIXTURES: ${{ runner.temp }}/fixtures
+        run: |
+          /bin/bash rehearsal/s1-read/test-s1read.sh > "$RUNNER_TEMP/zsh-run.txt" 2>&1
+          rc=$?
+          grep -A40 -E '^FAIL' "$RUNNER_TEMP/zsh-run.txt" | head -80
+          tail -n 3 "$RUNNER_TEMP/zsh-run.txt"
+          exit $rc
