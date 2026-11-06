@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import nodePath from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { readingsForBlock, type MachineDb } from "@/lib/machines/machine-queries";
 
@@ -166,6 +166,47 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.error).toContain("connection reset");
+  });
+
+  it("LOGS only the validated database CODE on a failed read (no message, no ids, no values)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { db } = fakeDb([], { error: { code: "57014", message: "canceling statement due to statement timeout" } });
+      await readingsForBlock(db, "block-secret-1", "session-secret-1");
+      expect(spy).toHaveBeenCalledTimes(1);
+      const line = String(spy.mock.calls[0][0]);
+      const logged = JSON.parse(line);
+      expect(logged).toMatchObject({ event: "machine_readings_read_failed", code: "57014" });
+      expect(line, "free text from the database never reaches the log").not.toContain("statement timeout");
+      expect(line).not.toContain("block-secret-1");
+      expect(line).not.toContain("session-secret-1");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a failure with no usable code logs 'unknown', or 'fetch_failed' for a transport failure", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await readingsForBlock(fakeDb([], { error: { message: "connection reset by peer 10.0.0.7" } }).db, "b", "s");
+      await readingsForBlock(fakeDb([], { error: { message: "TypeError: fetch failed" } }).db, "b", "s");
+      const codes = spy.mock.calls.map((c) => JSON.parse(String(c[0])).code);
+      expect(codes).toEqual(["unknown", "fetch_failed"]);
+      expect(spy.mock.calls.map((c) => String(c[0])).join("")).not.toContain("10.0.0.7");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("NEGATIVE CONTROL: a successful read logs nothing", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { db } = fakeDb([]);
+      await readingsForBlock(db, "block-1", "session-1");
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("uses the fallback sentence when the failure carries no message", async () => {

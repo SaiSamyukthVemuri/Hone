@@ -494,6 +494,42 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
   });
 
+  it("OPS (shard 1): after a CONFIRMED save a FAILED refresh keeps 'Saved', adds the plain note, and repeats nothing", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the saved confirmation stays").not.toBeNull();
+    const note = host!.querySelector('[data-testid="machine-saved-refresh-note"]');
+    expect(note?.textContent).toBe("Saved. The latest readings couldn't be refreshed; reload to see them.");
+    expect(host!.textContent).not.toContain("could not be read just now");
+    expect(actions.recordSetupSubmissionAction, "the save was not repeated").toHaveBeenCalledTimes(1);
+    expect(actions.readingsForBlockAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("the same, when the refresh THROWS", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockRejectedValueOnce(new Error("network down") as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="machine-saved-refresh-note"]')).not.toBeNull();
+    expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("NEGATIVE CONTROL: a refresh that SUCCEEDS shows Saved and no note", async () => {
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="machine-saved-refresh-note"]')).toBeNull();
+  });
+
   it("NEGATIVE CONTROL: a REFUSED save keeps the draft (it is still unsaved)", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: "Refused." } as never);
     const onRevisionDraft = vi.fn();

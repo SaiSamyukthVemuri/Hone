@@ -1557,7 +1557,11 @@ describe("switching machine or mode clears the collected draft", () => {
     // guard reported the protection as present (Codex, #860 4300759932).
     // Asserting the FAILURE BRANCH is what the claim actually needs.
     const src = read(CONN_SRC);
-    expect(src).toMatch(/: \{ \.\.\.prev, recordedSetupUnavailable: true \}/);
+    // (OPS, after #1369 shard 1 at 6dc30fdd3: the failure no longer marks the surface unavailable, which replaced the saved entry; the
+    // snapshot is kept as it was and a "Saved. The latest readings couldn't be refreshed" note is shown. The mounted tests in
+    // machine-saved-identity-mounted.test.ts prove that behaviour.)
+    expect(src).toMatch(/: prev\s*: prev,\s*\);[\s\S]{0,900}?setRefreshFailedAfterSave\(!fresh\.ok\);/);
+    expect(src, "a failed refresh must not mark the surface unavailable any more").not.toMatch(/\.\.\.prev, recordedSetupUnavailable: true/);
     expect(
       src,
       "a thrown refresh must also become a failure, not an exception",

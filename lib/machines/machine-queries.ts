@@ -1,5 +1,5 @@
 import { isDefinitiveDatabaseAnswer, isMissingCommand } from "./save-attempt";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
 import type { ReadingValue } from "./profile-contract";
 import type { StudioDevice } from "./selection";
 
@@ -140,6 +140,27 @@ export type MachineOutcome<T> =
        */
       unresolved?: boolean;
     };
+
+/**
+ * A FAILED READ OF A BLOCK'S RECORDED SETTINGS IS SILENT TO THE PRACTITIONER BY DESIGN ("could not be read just now"), which left a CI
+ * failure with no cause on record (#1369, shard 1 at 6dc30fdd3). The server now logs the failure's CLASS: the validated database code
+ * (a SQLSTATE or PostgREST code, or "fetch_failed" for a transport failure, or "unknown"). Not the message: the repository's log
+ * contract (MSG-LOG-RAW-ERROR-2) forbids free text from a database in a log line, and the code is what names the cause. No block,
+ * session or client id and no reading value.
+ */
+function logReadingsReadFailure(code: string): void {
+  try {
+    console.error(
+      JSON.stringify({
+        event: "machine_readings_read_failed",
+        code,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    // Logging must never change the outcome of the read.
+  }
+}
 
 function fail(error: MachineDbError, fallback: string): string {
   return error?.message?.trim() || fallback;
@@ -996,6 +1017,7 @@ export async function readingsForBlock(
     p_session_id: sessionId,
   });
   if (error) {
+    logReadingsReadFailure(dbFailureCode(error));
     // A BLOCK WE WILL NOT SHOW GETS THE SAME SENTENCE AS A FAILED READ, and
     // that is a deliberate choice rather than laziness: the practitioner
     // cannot tell "not yours" from "the database is unhappy", so neither can
@@ -1016,6 +1038,7 @@ export async function readingsForBlock(
     return { ok: false, error: fail(error, "Could not read settings.") };
   }
   if (!Array.isArray(data)) {
+    logReadingsReadFailure("shape");
     // A SHAPE THE CLIENT SHOULD NEVER PRODUCE, so it fails closed rather than
     // being coerced. It is NOT the not-yours case: the function RAISES for a
     // block it cannot see or that is not in the given session, so that arrives

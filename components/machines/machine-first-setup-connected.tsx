@@ -41,6 +41,7 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // show another client's settings (Codex, 9c6fbbe5).
 
 /** ONE refusal text for clearing a saved machine, wherever it is reached (Insurance N-3). */
+export const SAVED_REFRESH_FAILED_NOTE = "Saved. The latest readings couldn't be refreshed; reload to see them.";
 export const PREFERENCE_NOT_REMEMBERED = "That machine was not remembered for your next visit.";
 export const SAVED_MACHINE_CANNOT_BE_CLEARED =
   "Choose another machine to change this one. A saved machine cannot be cleared.";
@@ -201,6 +202,8 @@ export function MachineFirstSetupConnected({
   const [written, setWritten] = useState<NonNullable<MachineFirstSetupConnectedProps["savedIdentity"]> | null>(null);
   const savedIdentity = written ?? savedIdentityProp;
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
+  // A CONFIRMED SAVE whose follow-up refresh of the recorded settings failed: the save stands, only the list is out of date.
+  const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
 
   const open = useCallback(async () => {
@@ -296,6 +299,7 @@ export function MachineFirstSetupConnected({
       // whose chart that is. These come from this wrapper's props, which the
       // page supplied, and the server re-checks them against the studio it
       // derives for itself (Codex, #860 4297032712).
+      setRefreshFailedAfterSave(false);
       const out = await mod.recordSetupSubmissionAction({
         ...input,
         clientId,
@@ -383,9 +387,14 @@ export function MachineFirstSetupConnected({
                   // repairs went.
                   unitNames: { ...prev.unitNames, ...fresh.unitNames },
                 }
-              : { ...prev, recordedSetupUnavailable: true }
+              : prev
             : prev,
         );
+        // A CONFIRMED SAVE KEEPS ITS "SAVED" (OPS decision after #1369 shard 1 at 6dc30fdd3). The refresh runs only after the
+        // save was confirmed, so a failed refresh used to replace the whole entry, the saved confirmation included, with "could not
+        // be read just now", which is the notice for a failure when the panel OPENS and still is. Here the snapshot is kept
+        // (still true, one capture out of date) and a plain note says so. Nothing is re-sent: the entry stays on its saved view.
+        setRefreshFailedAfterSave(!fresh.ok);
       }
       return relayRecordResult(out);
     });
@@ -495,6 +504,7 @@ export function MachineFirstSetupConnected({
   const autoRemembered = hold ? null : (ctx.remembered ?? null);
 
   return (
+    <>
     <MachineFirstSetupPanel
       scope={ctx.scope}
       devices={ctx.devices}
@@ -602,5 +612,11 @@ export function MachineFirstSetupConnected({
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}
     />
+    {refreshFailedAfterSave ? (
+      <p className="text-sm text-amber-800" role="status" data-testid="machine-saved-refresh-note">
+        {SAVED_REFRESH_FAILED_NOTE}
+      </p>
+    ) : null}
+    </>
   );
 }
