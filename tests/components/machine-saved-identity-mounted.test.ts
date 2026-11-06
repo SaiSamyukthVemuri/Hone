@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actions = vi.hoisted(() => ({
@@ -602,6 +604,77 @@ describe("an existing area's reading entry reports its unsaved draft to the host
       expect(onRevisionDraft, "the draft hold is released").toHaveBeenLastCalledWith(false);
     });
   }
+
+  it("Codex 4488223260: unmounting the wrapper by ANY path releases the holds", async () => {
+    const onRevisionUnresolved = vi.fn();
+    const onRevisionDraft = vi.fn();
+    actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("lost") as never);
+    await mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
+      onRevisionUnresolved,
+      onRevisionDraft,
+    });
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(onRevisionUnresolved).toHaveBeenLastCalledWith(true);
+    await act(async () => root!.unmount());
+    root = null;
+    expect(onRevisionUnresolved).toHaveBeenLastCalledWith(false);
+    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+  });
+
+  // THE HOST'S REAL CONTRACT, mounted: block-setup-form disables "Save settings block" and Cancel while `revisionUnresolved` is set (pinned
+  // against its source below) and passes setRevisionUnresolved to this wrapper. A harness with the same wiring proves that a refused refresh
+  // after a successful save leaves BOTH enabled.
+  it("Codex 4488223260 REGRESSION: a refused refresh after a successful save leaves the host's Save and Cancel ENABLED", async () => {
+    const form = readFileSync(path.resolve(__dirname, "../../app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"), "utf8");
+    expect(form).toMatch(/onRevisionUnresolved=\{setRevisionUnresolved\}/);
+    for (const testid of ["save-treatment-area", "cancel-treatment-area"]) {
+      const at = form.indexOf(`data-testid="${testid}"`);
+      expect(at, testid).toBeGreaterThan(0);
+      expect(form.slice(Math.max(0, at - 1600), at + 200), `${testid} is disabled by revisionUnresolved`).toContain("revisionUnresolved ||");
+    }
+    const { useState } = await import("react");
+    function Host(props: Record<string, unknown>) {
+      const [unresolved, setUnresolved] = useState(false);
+      return createElement(
+        "div",
+        null,
+        createElement(MachineFirstSetupConnected, { ...props, onRevisionUnresolved: setUnresolved } as never),
+        createElement("button", { "data-testid": "save-treatment-area", disabled: unresolved }, "Save settings block"),
+        createElement("button", { "data-testid": "cancel-treatment-area", disabled: unresolved }, "Cancel"),
+      );
+    }
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction
+      .mockRejectedValueOnce(new Error("lost") as never)
+      .mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: "unavailable" } as never);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const load = vi.fn(async () => ({ ...CTX }));
+    await act(async () => {
+      root!.render(
+        createElement(Host, {
+          clientId: "c",
+          sessionId: "s",
+          load,
+          blockId: "b1",
+          savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
+        }),
+      );
+    });
+    const btn = (id: string) => host!.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!;
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(btn("save-treatment-area").disabled && btn("cancel-treatment-area").disabled, "held while the answer is unknown").toBe(true);
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-record-unavailable"]')).not.toBeNull();
+    expect(btn("save-treatment-area").disabled, "Save is enabled").toBe(false);
+    expect(btn("cancel-treatment-area").disabled, "Cancel is enabled").toBe(false);
+  });
 
   it("Codex 4488223260 NEGATIVE CONTROL: with no refusal the holds follow the entry (a lost answer still holds)", async () => {
     const onRevisionUnresolved = vi.fn();

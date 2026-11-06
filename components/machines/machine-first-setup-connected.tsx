@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -237,8 +237,18 @@ export function MachineFirstSetupConnected({
   const hasSavedIdentity = Boolean(
     savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId),
   );
+  // THE HOLDS THE ENTRY REPORTED TO THE HOST ARE RELEASED ON EVERY CLOSE PATH (Codex #1369 4488223260, Sam's overnight direction). A refused
+  // refresh releases them inline (below); this cleanup covers every other way the panel goes: the host closing the form, a re-render that
+  // swaps the wrapper out, the effect's own dependency changing. Reported through a ref so the LATEST callbacks are used, and kept in the
+  // wrapper's ONE existing effect (a guard pins exactly one).
+  const holdsRef = useRef({ onRevisionUnresolved, onRevisionDraft });
+  holdsRef.current = { onRevisionUnresolved, onRevisionDraft };
   useEffect(() => {
     if (hasSavedIdentity && state === "idle" && ctx === null) void open();
+    return () => {
+      holdsRef.current.onRevisionUnresolved?.(false);
+      holdsRef.current.onRevisionDraft?.(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedIdentity]);
 
