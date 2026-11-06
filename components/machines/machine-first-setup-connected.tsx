@@ -147,6 +147,19 @@ type IdentityWriteOutcome =
 /** Same-key replays after an unconfirmed identity write, before the pick is reported as unconfirmed. */
 export const IDENTITY_REPLAYS = 2;
 export const IDENTITY_REPLAY_DELAY_MS = 300;
+/**
+ * Is the machine the database holds the one that was asked for? A registered unit is identified by DEVICE + MODE: the pick carries no
+ * profile id (the unit's profile is derived on the server), so the record's reply always names one the pick did not, and comparing it
+ * read every successful native change as a different choice (Codex #1369 4494175930). Only the existing workflow (no unit) is
+ * identified by its profile.
+ */
+export function sameIdentityChoice(stored: IdentityChoice, asked: IdentityChoice): boolean {
+  if (stored.deviceId !== null || asked.deviceId !== null) {
+    return stored.deviceId === asked.deviceId && (stored.modeKey ?? null) === (asked.modeKey ?? null);
+  }
+  return (stored.profileId ?? null) === (asked.profileId ?? null);
+}
+
 const IDENTITY_SETTLED_DIFFERENTLY =
   "That choice was already settled as a different machine. The machine shown is the one that is saved.";
 const IDENTITY_UNCONFIRMED =
@@ -552,7 +565,7 @@ export function MachineFirstSetupConnected({
       // THE ANSWER IS FOR A DIFFERENT MACHINE THAN WAS ASKED (a replay answered from another pick's receipt): the panel must show what
       // the database holds, not what was clicked.
       const got = adopted as IdentityChoice | null;
-      if (got && `${got.deviceId ?? ""}|${got.modeKey ?? ""}|${got.profileId ?? ""}` !== sig) {
+      if (got && !sameIdentityChoice(got, chosen)) {
         return revertedTo(IDENTITY_SETTLED_DIFFERENTLY);
       }
     }

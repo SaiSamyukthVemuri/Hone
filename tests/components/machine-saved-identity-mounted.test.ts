@@ -1139,6 +1139,76 @@ describe("a lost identity-write answer is recovered by its key", () => {
     expect(shown()).toBe("legacy:xcell");
   });
 
+  // Codex #1369 4494175930: the FAKES MUST ANSWER AS THE PRODUCTION RPC DOES. A native pick carries no profile id (the unit's profile is derived
+  // server-side) and the record's reply names the unit's REAL profile id, so a comparison that included the profile read every successful
+  // native change as "a different machine" and returned before the remembered preference was written.
+  const REAL_NATIVE = (modeKey: string) => ({ profileId: "fixture:mounted", deviceId: "room-9", modeKey });
+  const SETTLED_DIFFERENT = /already settled as a different machine/i;
+
+  it("REALISTIC REPLY: a native unit change succeeds, says nothing about a different machine, and remembers the unit once", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2", identity: REAL_NATIVE("galvanic") } as never);
+    actions.rememberMachineSelectionAction.mockClear();
+    await mount({ blockId: "b1", savedIdentity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null }, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await pickValue("room-9");
+    expect(host!.textContent).not.toMatch(SETTLED_DIFFERENT);
+    expect(shown()).toBe("room-9");
+    expect(actions.rememberMachineSelectionAction).toHaveBeenCalledTimes(1);
+    expect(actions.rememberMachineSelectionAction).toHaveBeenCalledWith(expect.objectContaining({ deviceId: "room-9" }));
+  });
+
+  it("REALISTIC REPLY: a native MODE change succeeds, says nothing about a different machine, and remembers the mode once", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2", identity: REAL_NATIVE("second") } as never);
+    actions.rememberMachineSelectionAction.mockClear();
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await act(async () => {
+      host!.querySelector<HTMLButtonElement>('[data-testid="machine-mode-second"]')!.click();
+    });
+    expect(host!.textContent).not.toMatch(SETTLED_DIFFERENT);
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect(actions.rememberMachineSelectionAction).toHaveBeenCalledTimes(1);
+    expect(actions.rememberMachineSelectionAction).toHaveBeenCalledWith(expect.objectContaining({ deviceId: "room-9", modeKey: "second" }));
+  });
+
+  it("REALISTIC REPLY on the lost-answer recovery: B recovered with its real profile, then C picked and succeeds with no message", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(settledB)
+      .mockResolvedValueOnce({ ok: true, updatedAt: "v3", identity: REAL_NATIVE("galvanic") } as never);
+    actions.rememberMachineSelectionAction.mockClear();
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await pickValue("legacy:xcell");
+    await pickValue("room-9");
+    expect(host!.textContent).not.toMatch(SETTLED_DIFFERENT);
+    expect(shown()).toBe("room-9");
+    expect(actions.rememberMachineSelectionAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("a GENUINELY different settled identity still shows the message, shows what is saved, and does not remember the unasked unit", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2", identity: XCELL } as never);
+    actions.rememberMachineSelectionAction.mockClear();
+    await mount({ blockId: "b1", savedIdentity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null }, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await pickValue("room-9");
+    expect(host!.textContent).toMatch(SETTLED_DIFFERENT);
+    expect(shown()).toBe("legacy:xcell");
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+  });
+
+  it("a different MODE of the same unit is also a different settled identity", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2", identity: REAL_NATIVE("galvanic") } as never);
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await act(async () => {
+      host!.querySelector<HTMLButtonElement>('[data-testid="machine-mode-second"]')!.click();
+    });
+    expect(host!.textContent).toMatch(SETTLED_DIFFERENT);
+  });
+
   it("NEGATIVE CONTROL: with no earlier recovery, a refused pick still leaves the panel on the saved machine A", async () => {
     actions.recordBlockMachineIdentityAction.mockReset();
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: "That machine was retired." } as never);
