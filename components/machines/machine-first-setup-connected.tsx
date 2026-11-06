@@ -283,7 +283,7 @@ export function MachineFirstSetupConnected({
           size="sm"
           className="self-start"
           onClick={open}
-          disabled={state === "loading"}
+          disabled={state === "loading" || settingDraftFrozen}
           data-testid="machine-first-open"
         >
           {state === "loading" ? "Loading…" : "Choose machine"}

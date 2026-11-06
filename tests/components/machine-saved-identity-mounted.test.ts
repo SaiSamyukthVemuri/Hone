@@ -947,3 +947,14 @@ describe("a studio with xCell Pur history and no registered native unit can stil
     expect(sel.disabled).toBe(true);
   });
 });
+
+describe("Codex 4488516837: the panel cannot be opened while a create is unresolved", () => {
+  it("'Choose machine' is disabled while the host's draft is frozen, and enabled otherwise (negative control)", async () => {
+    await mount({ blockId: null, settingDraftFrozen: true, onIdentityDraft: vi.fn(), onSettingDraft: vi.fn() });
+    expect(host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.disabled).toBe(true);
+    await act(async () => root!.unmount());
+    host!.remove();
+    await mount({ blockId: null, settingDraftFrozen: false, onIdentityDraft: vi.fn(), onSettingDraft: vi.fn() });
+    expect(host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.disabled).toBe(false);
+  });
+});

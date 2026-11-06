@@ -134,6 +134,8 @@ import { SectionLabel } from "@/components/ui/section-label";
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
 const MINUTES_MAX = 1440;
+const CREATE_REFUSED_AFTER_LOST_ANSWER =
+  "This area may already be saved. Reload the page to see it before saving again.";
 
 // Parses an optional numeric reading with range checks. Empty → null.
 // Mirrors the server-side validation; the action re-validates regardless.
@@ -511,6 +513,9 @@ export function BlockSetupForm({
       } | null,
       explicit: boolean,
     ) => {
+      // NOT WHILE A CREATE IS UNRESOLVED (Codex 4488516837): the attempt's identity is snapshotted, and a remembered machine
+      // auto-resolving in a panel opened afterwards must not become the live draft the retry could read.
+      if (createAttemptRef.current !== null) return;
       identityDraftRef.current = choice;
       // Only a pick the practitioner made counts as an unsaved edit.
       if (explicit) setIdentityDirty(choice !== null);
@@ -983,6 +988,16 @@ export function BlockSetupForm({
    * create claim instead of making a second area; dropped on success and on a definitive refusal (nothing committed).
    */
   const bareCreateKeyRef = useRef<string | null>(null);
+  /**
+   * THE IDENTITY THE FIRST CREATE ATTEMPT WAS MADE WITH, held with its key until the attempt is resolved (Codex 4488516837).
+   * A retry sends this, never the live draft: a lost answer plus a machine panel opened afterwards used to send a different
+   * identity under the original key, which 0223 refuses as a payload mismatch. `unresolved` records that an answer was lost,
+   * so a later refusal is read as "already saved", not as "nothing committed".
+   */
+  const createAttemptRef = useRef<{
+    identity: { deviceId: string | null; modeKey: string | null; profileId: string | null } | null;
+    unresolved: boolean;
+  } | null>(null);
   /**
    * MIRRORED AT THE SETTER, not at the call sites.
    *
@@ -1558,6 +1573,8 @@ export function BlockSetupForm({
       // (null), the section title falls back to the area, then a muted
       // placeholder.
       const bareKey = attachedSetup ? null : (bareCreateKeyRef.current ??= crypto.randomUUID());
+      createAttemptRef.current ??= { identity: identityDraftRef.current, unresolved: false };
+      const attemptIdentity = createAttemptRef.current.identity;
       const res = await createTreatmentAreaWithEntryAction({
         clientId,
         sessionId,
@@ -1589,11 +1606,11 @@ export function BlockSetupForm({
         initialSetup: attachedSetup,
         // THE CHOSEN MACHINE, saved with the area in the same transaction. Null
         // when none was chosen, which saves exactly as before.
-        machineIdentity: identityDraftRef.current
+        machineIdentity: attemptIdentity
           ? {
-              machineId: identityDraftRef.current.deviceId,
-              modeKey: identityDraftRef.current.modeKey,
-              profileId: identityDraftRef.current.profileId,
+              machineId: attemptIdentity.deviceId,
+              modeKey: attemptIdentity.modeKey,
+              profileId: attemptIdentity.profileId,
             }
           : null,
       }).catch(() => {
@@ -1618,12 +1635,24 @@ export function BlockSetupForm({
         };
       });
       if (!res.ok) {
-        setError(res.error);
-        if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
-        else bareCreateKeyRef.current = null;
+        if ("unresolved" in res && res.unresolved) {
+          createAttemptRef.current.unresolved = true;
+          setError(res.error);
+          setSaveUnresolved(true);
+        } else if (createAttemptRef.current.unresolved) {
+          // A REFUSAL AFTER A LOST ANSWER IS NOT "NOTHING COMMITTED". The first attempt may have saved; the key stays so the
+          // next retry cannot mint a second area, and the practitioner is told to reload and look.
+          setError(CREATE_REFUSED_AFTER_LOST_ANSWER);
+          setSaveUnresolved(true);
+        } else {
+          setError(res.error);
+          bareCreateKeyRef.current = null;
+          createAttemptRef.current = null;
+        }
         return;
       }
       bareCreateKeyRef.current = null;
+      createAttemptRef.current = null;
       // THE SAVE IS CLOSED. The next one is a different save and mints its own
       // key; keeping this one would make a deliberate second area look like a
       // retry of the first and be answered with it.

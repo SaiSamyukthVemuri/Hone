@@ -650,7 +650,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // the two cases now behave identically — they are indistinguishable to
     // the practitioner and must be.
     const src = read(FORM_SRC);
-    expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) setSaveUnresolved\(true\)/);
+    expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) \{[\s\S]*?setSaveUnresolved\(true\)/);
     expect(assignedExpression(src, "draftFrozen")).toContain("saveUnresolved");
   });
 
@@ -1805,7 +1805,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // CONTROL_COMPACT_FINE_POINTER: 44px on every coarse pointer, 32px only
     // behind the explicit pointer-fine gate.
     const src = read(CONN_SRC);
-    expect(src).toMatch(/<Button[\s\S]{0,200}data-testid="machine-first-open"/);
+    expect(src).toMatch(/<Button[\s\S]{0,260}data-testid="machine-first-open"/);
     expect(
       src,
       "a hand-rolled className is how the floor was lost the first two times",
@@ -1965,5 +1965,33 @@ describe("every block/capture consumer is bound to the authorized route", () => 
       unbound,
       "a function takes a block or capture id without binding it to the route",
     ).toEqual([]);
+  });
+});
+
+describe("Codex 4488516837: a lost create answer keeps its key AND its identity", () => {
+  const src = readFileSync(
+    nodePath.join(process.cwd(), "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"),
+    "utf8",
+  );
+  it("the identity is snapshotted with the first attempt and the retry sends the snapshot, not the live draft", () => {
+    expect(src).toMatch(/createAttemptRef\.current \?\?= \{ identity: identityDraftRef\.current, unresolved: false \}/);
+    expect(src).toMatch(/const attemptIdentity = createAttemptRef\.current\.identity/);
+    expect(src).toMatch(/machineIdentity: attemptIdentity/);
+    expect(src).not.toMatch(/machineId: identityDraftRef\.current/);
+  });
+  it("a panel opened after the lost answer cannot overwrite the draft", () => {
+    expect(src).toMatch(/if \(createAttemptRef\.current !== null\) return;\s*identityDraftRef\.current = choice;/);
+  });
+  it("a refusal after a lost answer keeps the key, freezes the form and says reload; only a first-attempt refusal drops it", () => {
+    const m = src.match(/if \("unresolved" in res && res\.unresolved\) \{[\s\S]*?return;\n      \}/)!;
+    expect(m).not.toBeNull();
+    const body = m[0];
+    expect(body).toMatch(/else if \(createAttemptRef\.current\.unresolved\) \{[\s\S]*?CREATE_REFUSED_AFTER_LOST_ANSWER[\s\S]*?setSaveUnresolved\(true\)/);
+    const keep = body.match(/else if \(createAttemptRef\.current\.unresolved\) \{[\s\S]*?\n        \} else \{/)![0];
+    expect(keep).not.toMatch(/bareCreateKeyRef\.current = null/);
+    expect(body).toMatch(/\} else \{[\s\S]*?bareCreateKeyRef\.current = null;[\s\S]*?createAttemptRef\.current = null/);
+  });
+  it("success drops both the key and the snapshot", () => {
+    expect(src).toMatch(/bareCreateKeyRef\.current = null;\n      createAttemptRef\.current = null;/);
   });
 });
