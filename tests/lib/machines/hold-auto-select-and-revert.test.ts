@@ -42,16 +42,18 @@ describe("auto-resolution is held while legacy values are entered", () => {
 describe("a refused identity write puts the panel back on the stored machine", () => {
   it("every refusal of the area's own identity write is marked reverted", () => {
     // The clear refusal (twice), the legacy-readings refusal (#1369 4471593271), the record's own refusal, and a pick whose EARLIER
-    // unconfirmed write could not be settled first (0301 receipts, Codex 4488743493).
-    expect(conn.match(/reverted: true/g)?.length).toBe(5);
+    // unconfirmed write could not be settled first (0301 receipts, Codex 4488743493). Three call sites now share `revertedTo`, which also
+    // hands the panel a machine this call already adopted (Codex 4493827101), so there is ONE place that builds a refusal after a write.
+    expect(conn.match(/reverted: true/g)?.length).toBe(4);
+    expect(conn.match(/revertedTo\(/g)?.length).toBe(3);
   });
   it("the panel keeps the reason, restores what an optimistic (new-area) pick moved, and never settles a refused pick", () => {
     const i = panel.indexOf("write.reverted");
-    const body = panel.slice(i, i + 700);
+    const body = panel.slice(i, i + 1100);
     expect(body).toContain("if (!writeFirst)");
     expect(body).toContain("setLegacyChosen(before.legacy)");
     expect(body).toContain("setModeKey(before.modeKey)");
-    expect(body).toContain("selected: before.deviceId");
+    expect(body).toContain("write.fallback ? write.fallback.deviceId : before.deviceId");
     expect(body).toContain("return;");
   });
   it("Codex 4480035425: a saved area's pick is written first and applied after, so nothing a refusal could undo is unmounted", () => {

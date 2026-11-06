@@ -223,6 +223,12 @@ export type MachineFirstSetupPanelProps = {
     error?: string;
     /** The AREA'S OWN identity write was refused: the stored machine is unchanged, so the pick must be undone. */
     reverted?: boolean;
+    /**
+     * A refusal that FOLLOWED an adoption: an earlier unconfirmed pick was settled (the database holds it) before this one was refused,
+     * so "the previous machine" this panel remembers is no longer the stored one. The panel moves to THIS machine instead (Codex #1369
+     * 4493827101); without it the picker and the readings form disagreed with the confirmed identity.
+     */
+    fallback?: { deviceId: string | null; modeKey: string | null; legacy: boolean };
   }>;
   /**
    * The existing charting workflow (the studio's xCell) as one more choice in
@@ -539,12 +545,15 @@ export function MachineFirstSetupPanel({
       // The record still holds the previous machine: the panel stays on it (or goes back to it), with the reason said.
       // A saved area's pick is written BEFORE anything moves (writeFirst), so a refusal has cleared nothing and there is
       // nothing to give back; restoring typed values here would put hidden legacy fields under a native machine (Insurance K-1).
-      if (!writeFirst) {
+      if (write.fallback) {
+        setLegacyChosen(write.fallback.legacy);
+        setModeKey(write.fallback.modeKey);
+      } else if (!writeFirst) {
         setLegacyChosen(before.legacy);
         setModeKey(before.modeKey);
       }
       setSelection((prev) => ({
-        selected: before.deviceId,
+        selected: write.fallback ? write.fallback.deviceId : before.deviceId,
         persisted: prev.persisted,
         note: write.error ?? "That did not save.",
       }));
@@ -595,9 +604,12 @@ export function MachineFirstSetupPanel({
     }
     if (token !== selectionRequestRef.current) return;
     if (write && write.ok === false && write.reverted) {
-      if (!writeFirst) setModeKey(modeKey);
+      if (write.fallback) {
+        setLegacyChosen(write.fallback.legacy);
+        setModeKey(write.fallback.modeKey);
+      } else if (!writeFirst) setModeKey(modeKey);
       setSelection((prev) => ({
-        selected: prev.selected,
+        selected: write.fallback ? write.fallback.deviceId : prev.selected,
         persisted: prev.persisted,
         note: write.error ?? "That did not save.",
       }));

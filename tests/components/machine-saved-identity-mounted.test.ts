@@ -1092,6 +1092,60 @@ describe("a lost identity-write answer is recovered by its key", () => {
     expect(calls[4].idempotencyKey).not.toBe(calls[0].idempotencyKey);
     expect(calls[4].expectedUpdatedAt, "the new pick goes against the version the earlier write produced").toBe("v2-own");
   });
+
+  // Codex #1369 4493827101: A->B committed with every reply lost; C is picked; B is recovered and adopted; C is then REFUSED. The
+  // panel used to go back to A (the machine from before the call) while the database and the host's version held B.
+  const XCELL = { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null };
+  const settledB = { ok: true, reused: true, updatedAt: "v2-own", identity: XCELL } as never;
+  async function lostThenRefused(...afterB: unknown[]) {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown) // B unconfirmed after its replays
+      .mockResolvedValueOnce(settledB); // C's pick settles B first
+    for (const a of afterB) actions.recordBlockMachineIdentityAction.mockResolvedValueOnce(a as never); // then C
+    // The host adopts whatever version is reported, as block-setup-form does.
+    let rerender: (v: string) => void = () => undefined;
+    const onBlockVersion = vi.fn((v: string) => rerender(v));
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion });
+    rerender = (v) =>
+      act(() => {
+        root!.render(
+          createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", load: vi.fn(async () => CTX), blockId: "b1", savedIdentity: STORED, blockVersion: v, onBlockVersion } as never),
+        );
+      }) as unknown as void;
+    await pickValue("legacy:xcell"); // B
+    await pickValue("room-9"); // C (the unit A was)
+    return onBlockVersion;
+  }
+  const shown = () => host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value;
+
+  it("A->B lost, pick C, C REFUSED: the panel shows B (not A), holds B's version, says why, and the next save is written against B's version", async () => {
+    const onBlockVersion = await lostThenRefused({ ok: false, code: "rejected", error: "That machine was retired." });
+    expect(shown(), "the confirmed identity is B").toBe("legacy:xcell");
+    expect(host!.textContent).toMatch(/retired/i);
+    expect(onBlockVersion).toHaveBeenLastCalledWith("v2-own");
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v3", identity: STORED } as never);
+    await pickValue("room-9");
+    const calls = (actions.recordBlockMachineIdentityAction.mock.calls as unknown as [{ expectedUpdatedAt: string | null }][]).map((c) => c[0]);
+    expect(calls[calls.length - 1].expectedUpdatedAt).toBe("v2-own");
+    expect(shown()).toBe("room-9");
+  });
+
+  it("A->B lost, pick C, C itself UNCONFIRMED: the panel still shows B, the machine already confirmed", async () => {
+    const onBlockVersion = await lostThenRefused(unknown, unknown, unknown); // C's own write is unconfirmed after its replays
+    expect(onBlockVersion).toHaveBeenCalledWith("v2-own");
+    expect(shown()).toBe("legacy:xcell");
+  });
+
+  it("NEGATIVE CONTROL: with no earlier recovery, a refused pick still leaves the panel on the saved machine A", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: "That machine was retired." } as never);
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await pickValue("legacy:xcell");
+    expect(shown()).toBe("room-9");
+  });
 });
 
 describe("(b) a lost readings answer: the replay's stored version reaches the host, and a replay with none is not adopted", () => {

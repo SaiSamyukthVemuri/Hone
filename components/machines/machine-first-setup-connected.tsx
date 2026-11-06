@@ -147,6 +147,8 @@ type IdentityWriteOutcome =
 /** Same-key replays after an unconfirmed identity write, before the pick is reported as unconfirmed. */
 export const IDENTITY_REPLAYS = 2;
 export const IDENTITY_REPLAY_DELAY_MS = 300;
+const IDENTITY_SETTLED_DIFFERENTLY =
+  "That choice was already settled as a different machine. The machine shown is the one that is saved.";
 const IDENTITY_UNCONFIRMED =
   "We could not confirm that your machine choice was saved. The machine shown is the last one confirmed. Choose it again to settle it, or reload the page to see what is saved.";
 
@@ -481,9 +483,27 @@ export function MachineFirstSetupConnected({
       // reused by every retry of it; the database answers a same-key retry from its receipt with the version THAT write produced
       // and the identity it recorded (never the block's current version: a colleague's later edit must still conflict, N-8).
       let version = blockVersion ?? null;
+      // WHAT THIS CALL HAS ADOPTED: the machine the database now holds because of a write settled here. Any refusal that follows it must
+      // hand it to the panel as the fallback, or the panel keeps showing the machine from BEFORE the call (Codex #1369 4493827101).
+      let adopted: IdentityChoice | null = null;
+      const revertedTo = (error: string) => ({
+        ok: false as const,
+        error,
+        reverted: true as const,
+        ...(adopted
+          ? {
+              fallback: {
+                deviceId: adopted.deviceId,
+                modeKey: adopted.modeKey,
+                legacy: adopted.deviceId === null && adopted.profileId !== null,
+              },
+            }
+          : {}),
+      });
       const adopt = (out: Extract<IdentityWriteOutcome, { ok: true }>, fallback: IdentityChoice) => {
         const stored = out.identity ?? fallback;
         setWritten({ profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey });
+        adopted = { profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey };
         if (out.updatedAt) {
           version = out.updatedAt;
           onBlockVersion?.(out.updatedAt);
@@ -518,7 +538,7 @@ export function MachineFirstSetupConnected({
       if (earlier && earlier.sig !== sig) {
         const settled = await write(earlier.choice, earlier.key);
         if (settled.ok) adopt(settled, earlier.choice);
-        else if (settled.code === "unknown") return { ok: false, error: IDENTITY_UNCONFIRMED, reverted: true };
+        else if (settled.code === "unknown") return revertedTo(IDENTITY_UNCONFIRMED);
         else identityAttemptRef.current = null;
       }
       const attempt = identityAttemptRef.current ?? { sig, key: globalThis.crypto.randomUUID(), choice: chosen };
@@ -526,9 +546,15 @@ export function MachineFirstSetupConnected({
       if (!saved.ok) {
         // Unconfirmed: keep the key, so asking again is answered from the receipt (or writes once). Definitive: nothing was written.
         identityAttemptRef.current = saved.code === "unknown" ? attempt : null;
-        return { ok: false, error: saved.code === "unknown" ? IDENTITY_UNCONFIRMED : saved.error, reverted: true };
+        return revertedTo(saved.code === "unknown" ? IDENTITY_UNCONFIRMED : saved.error);
       }
       adopt(saved, chosen);
+      // THE ANSWER IS FOR A DIFFERENT MACHINE THAN WAS ASKED (a replay answered from another pick's receipt): the panel must show what
+      // the database holds, not what was clicked.
+      const got = adopted as IdentityChoice | null;
+      if (got && `${got.deviceId ?? ""}|${got.modeKey ?? ""}|${got.profileId ?? ""}` !== sig) {
+        return revertedTo(IDENTITY_SETTLED_DIFFERENTLY);
+      }
     }
     // THE PREFERENCE (a suggestion for the next visit) is written only for a
     // native unit; choosing the existing workflow leaves it alone.
