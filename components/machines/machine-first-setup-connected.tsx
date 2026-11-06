@@ -147,7 +147,8 @@ type IdentityWriteOutcome =
 /** Same-key replays after an unconfirmed identity write, before the pick is reported as unconfirmed. */
 export const IDENTITY_REPLAYS = 2;
 export const IDENTITY_REPLAY_DELAY_MS = 300;
-const IDENTITY_UNCONFIRMED = "We could not confirm that your machine choice was saved. Choose it again to settle it.";
+const IDENTITY_UNCONFIRMED =
+  "We could not confirm that your machine choice was saved. The machine shown is the last one confirmed. Choose it again to settle it, or reload the page to see what is saved.";
 
 /**
  * One recorder result, relayed to the entry.
@@ -525,7 +526,7 @@ export function MachineFirstSetupConnected({
       if (!saved.ok) {
         // Unconfirmed: keep the key, so asking again is answered from the receipt (or writes once). Definitive: nothing was written.
         identityAttemptRef.current = saved.code === "unknown" ? attempt : null;
-        return { ok: false, error: saved.error, reverted: true };
+        return { ok: false, error: saved.code === "unknown" ? IDENTITY_UNCONFIRMED : saved.error, reverted: true };
       }
       adopt(saved, chosen);
     }

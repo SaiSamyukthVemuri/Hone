@@ -2288,3 +2288,26 @@ describe("a replayed submission hands back no token", () => {
     expect("updatedAt" in out).toBe(false);
   });
 });
+
+// RC-3 (Insurance, 0301 receipts): every caller of the identity write outside the tests. The write needs a per-pick retry key and
+// a caller that settles an unconfirmed answer by it, so only the panel's wrapper may call the action, and only the action the query.
+describe("callers of the area identity write", () => {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.name === "node_modules" || e.name === ".next" ? [] : e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.(ts|tsx)$/.test(e.name) ? [`${dir}/${e.name}`] : [],
+    );
+  const files = ["app", "components", "lib"].flatMap(walk);
+  const callers = (needle: RegExp) => files.filter((f) => needle.test(readFileSync(f, "utf8"))).sort();
+  it("recordBlockMachineIdentityAction is referenced by the action module and the panel's wrapper only", () => {
+    expect(callers(/recordBlockMachineIdentityAction/)).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      "components/machines/machine-first-setup-connected.tsx",
+    ]);
+  });
+  it("the query function and the RPC are referenced by the action module and the query module only", () => {
+    expect(callers(/\brecordBlockMachineIdentity\b|record_block_machine_identity/)).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      "lib/machines/machine-queries.ts",
+    ]);
+  });
+});

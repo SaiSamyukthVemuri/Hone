@@ -113,3 +113,24 @@ describe("0301: the write receipts table (Codex 4488743493 and 4488743496)", () 
     expect(wrap).not.toMatch(/select b\.updated_at/);
   });
 });
+
+describe("0301: a create replay must ask for the identity the original save recorded (Codex 4492927325)", () => {
+  const wrap = code.slice(
+    code.indexOf("create or replace function public.create_block_with_initial_setup_and_identity"),
+    code.indexOf("create or replace function public.record_setup_submission_with_identity"),
+  );
+  it("a fresh create stores a 'create' receipt under the create key", () => {
+    expect(wrap).toMatch(/p_machine_profile_id, p_studio_machine_id, p_setup_mode_key,\s*null, 'create', p_setup_idempotency_key/);
+    expect(code).toMatch(/check \(kind in \('identity', 'readings', 'create'\)\)/);
+  });
+  it("a replay compares the identity asked for with the receipt (or the empty identity when none) and refuses a difference", () => {
+    expect(wrap).toMatch(/elsif coalesce\(\(v_result->>'reused'\)::boolean, false\) is true then/);
+    expect(wrap).toMatch(/r\.kind = 'create'/);
+    expect(wrap).toMatch(/coalesce\(v_stored, md5\('\|\|'\)\) <> v_digest/);
+    expect(wrap).toMatch(/errcode = 'unique_violation'/);
+  });
+  it("the digest is computed the same way in the writer and in the replay check", () => {
+    const expr = /md5\(\s*coalesce\(nullif\(btrim\(coalesce\(p_(?:machine_)?profile_id, ''\)\), ''\), ''\) \|\| '\|' \|\|\s*coalesce\(p_studio_machine_id::text, ''\) \|\| '\|' \|\|\s*coalesce\(nullif\(btrim\(coalesce\(p_(?:setup_)?mode_key, ''\)\), ''\), ''\)\)/g;
+    expect(code.match(expr)).toHaveLength(2);
+  });
+});

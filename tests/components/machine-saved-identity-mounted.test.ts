@@ -961,6 +961,23 @@ describe("Codex 4488516837: the panel cannot be opened while a create is unresol
     await mount({ blockId: null, settingDraftFrozen: false, onIdentityDraft: vi.fn(), onSettingDraft: vi.fn() });
     expect(host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.disabled).toBe(false);
   });
+
+  // Codex 4492927325: a DIFFERENT identity under the same create key is refused by the database. Here is the app's half: while the
+  // create is unresolved nothing can change the identity the retry will send, so the same key can only ever carry the same identity.
+  it("a click on a disabled 'Choose machine' neither loads the panel nor reports any identity draft (the retry keeps its identity)", async () => {
+    const onIdentityDraft = vi.fn();
+    const load = await mount({ blockId: null, settingDraftFrozen: true, onIdentityDraft, onSettingDraft: vi.fn() });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(load).not.toHaveBeenCalled();
+    expect(onIdentityDraft).not.toHaveBeenCalled();
+    expect(host!.querySelector('[data-testid="machine-select"]')).toBeNull();
+  });
+  it("the host sends only the snapshotted identity on every attempt of one key, and a refusal after a lost answer keeps the key", () => {
+    const src = readFileSync(path.join(process.cwd(), "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"), "utf8");
+    expect(src).toMatch(/machineIdentity: attemptIdentity/);
+    expect(src).toMatch(/if \(createAttemptRef\.current !== null\) return;\s*identityDraftRef\.current = choice;/);
+    expect(src).toMatch(/CREATE_REFUSED_AFTER_LOST_ANSWER/);
+  });
 });
 
 // ===========================================================================
@@ -1033,6 +1050,9 @@ describe("a lost identity-write answer is recovered by its key", () => {
     await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion });
     await pickValue("legacy:xcell");
     expect(host!.textContent).toMatch(/could not confirm/i);
+    // RC-1: the screen says the shown machine is only the last CONFIRMED one and offers the reload, never presents it as current.
+    expect(host!.textContent).toMatch(/last one confirmed/i);
+    expect(host!.textContent).toMatch(/reload the page/i);
     expect(onBlockVersion).not.toHaveBeenCalled();
     await pickValue("legacy:xcell");
     const keys = keysOf();

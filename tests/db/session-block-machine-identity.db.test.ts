@@ -225,6 +225,64 @@ describe("0301: the identity is saved with the area", () => {
   });
 });
 
+// Codex 4492927325: 0223's create claim hashes only its own arguments, and a profile id with no registered unit is not one of
+// them. The same key with the profile changed from nothing to xCell used to be answered as a successful replay while the
+// choice was never recorded. The identity of the original save is its receipt; a different identity under the key is refused.
+describe("0301: a create replay must ask for the identity the original save recorded (Codex 4492927325)", () => {
+  const areas = (studioId: string) =>
+    adminQuery(`select count(*)::int as n from public.session_blocks where studio_id = $1 and deleted_at is null`, [studioId]).then((r) => r.rows[0].n as number);
+
+  it("settings-free create with NO identity, replayed under the same key with the xCell profile, is REFUSED and records nothing", async () => {
+    const studio = await seedStudio("create-replay-null-to-xcell");
+    const { sessionId } = await seedSession(studio);
+    const first = await save(studio, sessionId, { key: "create-key-0001" });
+    expect((await identity(first.block_id)).machine_profile_id).toBeNull();
+    const before = await areas(studio.studioId);
+    await expect(save(studio, sessionId, { profile: XCELL, key: "create-key-0001" })).rejects.toThrow(/already used for a different machine choice/);
+    expect((await identity(first.block_id)).machine_profile_id, "nothing was recorded by the refused replay").toBeNull();
+    expect(await areas(studio.studioId), "no second area").toBe(before);
+  });
+
+  it("the same xCell profile under the same key replays fine, answered with the original and rewriting nothing", async () => {
+    const studio = await seedStudio("create-replay-xcell-same");
+    const { sessionId } = await seedSession(studio);
+    const first = await save(studio, sessionId, { profile: XCELL, key: "create-key-0002" });
+    const again = await save(studio, sessionId, { profile: XCELL, key: "create-key-0002" });
+    expect(again.reused).toBe(true);
+    expect(again.block_id).toBe(first.block_id);
+    expect(await identity(first.block_id)).toMatchObject({ machine_profile_id: XCELL });
+  });
+
+  it("an xCell original replayed WITHOUT the profile is refused too (the identity asked for is different)", async () => {
+    const studio = await seedStudio("create-replay-xcell-dropped");
+    const { sessionId } = await seedSession(studio);
+    await save(studio, sessionId, { profile: XCELL, key: "create-key-0003" });
+    await expect(save(studio, sessionId, { key: "create-key-0003" })).rejects.toThrow(/already used for a different machine choice/);
+  });
+
+  it("a native unit original replays fine with the same unit and mode, and a replay naming no unit is refused", async () => {
+    const studio = await seedStudio("create-replay-unit");
+    const { sessionId } = await seedSession(studio);
+    const machine = await register(studio);
+    const first = await save(studio, sessionId, { machine, mode: "galvanic", key: "create-key-0004", groups: groups("7") });
+    const again = await save(studio, sessionId, { machine, mode: "galvanic", key: "create-key-0004", groups: groups("7") });
+    expect(again.reused).toBe(true);
+    expect(again.block_id).toBe(first.block_id);
+    await expect(save(studio, sessionId, { profile: XCELL, key: "create-key-0004", groups: groups("7") })).rejects.toThrow();
+  });
+
+  it("the receipt for a create is kind 'create' and a create with no identity leaves none", async () => {
+    const studio = await seedStudio("create-replay-receipt");
+    const { sessionId } = await seedSession(studio);
+    const withId = await save(studio, sessionId, { profile: XCELL, key: "create-key-0005" });
+    const without = await save(studio, sessionId, { key: "create-key-0006" });
+    const n = async (blockId: string) =>
+      (await adminQuery(`select count(*)::int as n from public.block_write_receipts where session_block_id = $1 and kind = 'create'`, [blockId])).rows[0].n as number;
+    expect(await n(withId.block_id)).toBe(1);
+    expect(await n(without.block_id)).toBe(0);
+  });
+});
+
 describe("0301: refusals", () => {
   it("another studio's unit is refused", async () => {
     const mine = await seedStudio("identity-mine");

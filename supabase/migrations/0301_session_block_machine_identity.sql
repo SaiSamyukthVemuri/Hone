@@ -59,7 +59,7 @@ create table if not exists public.block_write_receipts (
   id uuid primary key default gen_random_uuid(),
   studio_id uuid not null references public.studios (id) on delete cascade,
   session_block_id uuid not null references public.session_blocks (id) on delete cascade,
-  kind text not null check (kind in ('identity', 'readings')),
+  kind text not null check (kind in ('identity', 'readings', 'create')),
   idempotency_key text not null
     check (length(btrim(idempotency_key)) between 8 and 100),
   payload_digest text not null check (length(payload_digest) = 32),
@@ -166,7 +166,7 @@ begin
   -- produced (never the current one, Insurance N-8), so the caller adopts it and any later edit still conflicts on
   -- its next save. The same key with a different identity is refused, never answered with the original.
   if v_key is not null then
-    if p_receipt_kind is null or p_receipt_kind not in ('identity', 'readings') then
+    if p_receipt_kind is null or p_receipt_kind not in ('identity', 'readings', 'create') then
       raise exception 'A receipt kind is required with a retry key.' using errcode = 'check_violation';
     end if;
     if length(v_key) not between 8 and 100 then
@@ -176,13 +176,19 @@ begin
       coalesce(nullif(btrim(coalesce(p_profile_id, '')), ''), '') || '|' ||
       coalesce(p_studio_machine_id::text, '') || '|' ||
       coalesce(nullif(btrim(coalesce(p_mode_key, '')), ''), ''));
-    select r.* into v_receipt
-      from public.block_write_receipts r
-     where r.session_block_id = p_block_id
-       and r.studio_id = p_studio_id
-       and r.kind = p_receipt_kind
-       and r.idempotency_key = v_key;
-    if found then
+    -- THE READINGS KIND NEVER REPLAYS FROM HERE (Privacy RV-1). A readings replay is decided by 0223's own submission claim
+    -- (record_treatment_setup_submission, in the wrapper): this function is reached only for a submission the wrapper judged NEW.
+    -- If the claim were ever gone while this key's receipt remained, answering from the receipt would hand back a stale version for
+    -- readings that were just written; a new submission instead writes a fresh receipt over the stale one (below).
+    if p_receipt_kind <> 'readings' then
+      select r.* into v_receipt
+        from public.block_write_receipts r
+       where r.session_block_id = p_block_id
+         and r.studio_id = p_studio_id
+         and r.kind = p_receipt_kind
+         and r.idempotency_key = v_key;
+    end if;
+    if found and p_receipt_kind <> 'readings' then
       if v_receipt.payload_digest <> v_digest then
         raise exception 'That save key was already used for a different machine choice.'
           using errcode = 'unique_violation';
@@ -267,7 +273,13 @@ begin
       resulting_updated_at, machine_profile_id, studio_machine_id, machine_mode_key)
     values (
       p_block_id, p_studio_id, p_receipt_kind, v_key, v_digest,
-      v_new, v_profile, p_studio_machine_id, v_mode);
+      v_new, v_profile, p_studio_machine_id, v_mode)
+    on conflict (session_block_id, kind, idempotency_key) do update
+      set payload_digest = excluded.payload_digest,
+          resulting_updated_at = excluded.resulting_updated_at,
+          machine_profile_id = excluded.machine_profile_id,
+          studio_machine_id = excluded.studio_machine_id,
+          machine_mode_key = excluded.machine_mode_key;
   end if;
   return jsonb_build_object(
     'updated_at', v_new,
@@ -305,6 +317,10 @@ as $$
 declare
   v_studio uuid;
 begin
+  -- A RETRY KEY IS REQUIRED (Privacy RV-2): a null or blank key would write no receipt and make a lost answer unrecoverable.
+  if nullif(btrim(coalesce(p_idempotency_key, '')), '') is null then
+    raise exception 'A retry key is required.' using errcode = 'check_violation';
+  end if;
   v_studio := public.assert_session_writable(p_session_id, p_client_id);
   -- Session FIRST, live, then the block (Codex 4486745915): assert_block_in_session below
   -- locks the block, so the session lock has to be taken before it to keep the order.
@@ -383,6 +399,8 @@ as $$
 declare
   v_result jsonb;
   v_studio uuid;
+  v_digest text;
+  v_stored text;
 begin
   -- A save that carries an identity needs a LIVE session (Codex 4486745915). It is locked
   -- FOR SHARE here, BEFORE the area is created, so the order stays session, then block (the
@@ -441,7 +459,29 @@ begin
     v_studio := public.assert_session_writable(p_session_id, p_client_id);
     perform public.apply_block_machine_identity(
       (v_result->>'block_id')::uuid, v_studio,
-      p_machine_profile_id, p_studio_machine_id, p_setup_mode_key);
+      p_machine_profile_id, p_studio_machine_id, p_setup_mode_key,
+      null, 'create', p_setup_idempotency_key);
+  elsif coalesce((v_result->>'reused')::boolean, false) is true then
+    -- A REPLAY MUST ASK FOR THE IDENTITY THE ORIGINAL SAVE RECORDED (Codex 4492927325). 0223's claim hashes only its own
+    -- arguments, and a profile id with no registered unit is not one of them, so the same key with the profile changed from
+    -- nothing to the xCell profile was answered as a successful replay and the caller heard "saved" for a choice that was never
+    -- recorded. The identity of the original save is its receipt (kind 'create'); a save that carried none left no receipt and
+    -- stands for the empty identity. A different identity under an existing key is REFUSED, never answered with the original.
+    v_studio := public.assert_session_writable(p_session_id, p_client_id);
+    v_digest := md5(
+      coalesce(nullif(btrim(coalesce(p_machine_profile_id, '')), ''), '') || '|' ||
+      coalesce(p_studio_machine_id::text, '') || '|' ||
+      coalesce(nullif(btrim(coalesce(p_setup_mode_key, '')), ''), ''));
+    select r.payload_digest into v_stored
+      from public.block_write_receipts r
+     where r.session_block_id = (v_result->>'block_id')::uuid
+       and r.studio_id = v_studio
+       and r.kind = 'create'
+       and r.idempotency_key = btrim(coalesce(p_setup_idempotency_key, ''));
+    if coalesce(v_stored, md5('||')) <> v_digest then
+      raise exception 'That save key was already used for a different machine choice.'
+        using errcode = 'unique_violation';
+    end if;
   end if;
 
   return v_result;

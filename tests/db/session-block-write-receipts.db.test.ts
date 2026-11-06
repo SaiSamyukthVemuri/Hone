@@ -181,6 +181,50 @@ describe("(b) readings replay: commit, lose the reply, recover", () => {
   });
 });
 
+describe("RV-1 (Privacy): the readings replay does not depend on a surviving receipt for a NEW submission", () => {
+  it("claim removed, key reused: the submission is judged NEW, written once more, and the stale receipt is replaced (no stale version handed back)", async () => {
+    const s = await seedStudio("rcpt-rv1");
+    const { sessionId, blockId } = await seedSession(s);
+    const machine = await register(s);
+    const key = `rcpt-rv1-${randomUUID()}`;
+    await submit(s, sessionId, blockId, machine, key, await version(blockId));
+    const firstVersion = await version(blockId);
+    // The 0223 submission claim vanishes (its captures with it) while the receipt for the key remains.
+    await adminQuery(`delete from public.treatment_setup_captures where session_block_id = $1`, [blockId]);
+    await adminQuery(`delete from public.treatment_setup_submissions where session_block_id = $1`, [blockId]);
+    expect(await count(`select count(*)::int n from public.block_write_receipts where session_block_id=$1 and kind='readings'`, [blockId])).toBe(1);
+
+    const again = await submit(s, sessionId, blockId, machine, key, firstVersion, "8");
+    expect(again.reused, "0223 no longer knows the key: this is a new submission").toBe(false);
+    const after = await version(blockId);
+    expect(after, "the identity stamp ran and moved the version").not.toBe(firstVersion);
+    expect(new Date(again.block_updated_at!).getTime(), "the version returned is the one THIS write produced, not the stale receipt's").toBe(new Date(after).getTime());
+    expect(await count(`select count(*)::int n from public.treatment_setup_submissions where session_block_id=$1`, [blockId])).toBe(1);
+    const stored = await adminQuery(`select resulting_updated_at::text as t from public.block_write_receipts where session_block_id=$1 and kind='readings'`, [blockId]);
+    expect(new Date(stored.rows[0].t).getTime(), "the receipt now describes the new write").toBe(new Date(after).getTime());
+    // and a true replay of it is answered from the replaced receipt
+    const replay = await submit(s, sessionId, blockId, machine, key, firstVersion, "8");
+    expect(replay.reused).toBe(true);
+    expect(new Date(replay.block_updated_at!).getTime()).toBe(new Date(after).getTime());
+  });
+});
+
+describe("RV-2 (Privacy): record_block_machine_identity requires a retry key", () => {
+  it.each([[null], [""], ["   "]])("a %j key is refused and nothing is written", async (key) => {
+    const s = await seedStudio("rcpt-rv2");
+    const { sessionId, blockId } = await seedSession(s);
+    const machine = await register(s);
+    const before = await version(blockId);
+    await expect(
+      asUser(s.userId, (q) =>
+        q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [blockId, sessionId, s.clientId, null, machine, "galvanic", key]),
+      ),
+    ).rejects.toThrow(/retry key is required/);
+    expect(await version(blockId)).toBe(before);
+    expect(await count(`select count(*)::int n from public.block_write_receipts where session_block_id=$1`, [blockId])).toBe(0);
+  });
+});
+
 describe("(d) a submission with no stored version (made before the receipts) fails closed", () => {
   it("the replay returns no version, and the next save with the old held version is refused as stale: no crash, no blind token", async () => {
     const s = await seedStudio("rcpt-legacy");
