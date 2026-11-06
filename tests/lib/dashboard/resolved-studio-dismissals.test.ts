@@ -27,6 +27,9 @@ describe("resolvedStudioDismissalKeys", () => {
   it("NEGATIVE CONTROL: a studio reminder still live keeps its dismissal", () => {
     expect(resolvedStudioDismissalKeys(needs({}, ["payment_setup:studio"]), [d("payment_setup:studio")])).toEqual([]);
   });
+  it("AP2-2: only reminders that are always in studioItems when live are cleared (not intake_review:studio or records_details:studio)", () => {
+    expect(resolvedStudioDismissalKeys(needs(), [d("intake_review:studio"), d("records_details:studio"), d("no_services:studio"), d("payment_setup:studio")])).toEqual(["no_services:studio", "payment_setup:studio"]);
+  });
   it("supply reminders are studio reminders too", () => {
     expect(resolvedStudioDismissalKeys(needs(), [d("supply_expiry:abc-1", "2026-12-01")])).toEqual(["supply_expiry:abc-1"]);
   });
@@ -67,6 +70,10 @@ describe("the clear path is wired, owner-and-gate scoped, and touches nothing el
     expect(at).toBeGreaterThan(STACK.indexOf("if (!dashboardDismissalsEnabled())"));
     expect(at).toBeGreaterThan(STACK.indexOf("if (!props.isOwner)"));
     expect(at).toBeGreaterThan(STACK.indexOf("if (!read.ok)"));
+  });
+  it("AP2-3: the restore calls run in after(), not on the render path, with results unread", () => {
+    expect(STORE).toMatch(/import \{ after \} from "next\/server"/);
+    expect(STORE).toMatch(/after\(async \(\) => \{[\s\S]*restore_attention_item/);
   });
   it("uses only the existing restore command: no balance, payment, setup or access table", () => {
     const fn = STORE.slice(STORE.indexOf("export async function restoreResolvedDismissals"));

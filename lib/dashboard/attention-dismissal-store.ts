@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
@@ -30,12 +31,20 @@ export async function loadMyDismissals(studioId: string): Promise<DismissalRead>
 // Privacy AP2: restore the dismissals of studio reminders that have resolved (see resolvedStudioDismissalKeys). Uses ONLY the existing restore
 // command (an appended `restore` event for the caller's own dismissal); it touches no balance, payment, setup status, message or access.
 // Best effort: a failure leaves the dismissal in place, which is exactly the state before this ran.
+// NOT on the render path (AP2-3): the client is built here (it needs the request's cookies), but the restore calls run in after(), once the
+// response is sent, and their results are not read, so a slow or failing restore can never delay or break the dashboard.
 export async function restoreResolvedDismissals(studioId: string, itemKeys: ReadonlyArray<string>): Promise<void> {
   if (itemKeys.length === 0) return;
   try {
     const supabase = await createClient();
-    await Promise.all(itemKeys.map((k) => supabase.rpc("restore_attention_item", { p_studio: studioId, p_item_key: k })));
+    after(async () => {
+      try {
+        await Promise.all(itemKeys.map((k) => supabase.rpc("restore_attention_item", { p_studio: studioId, p_item_key: k })));
+      } catch {
+        // intentionally silent: nothing to report to the owner, and no raw error leaves this function
+      }
+    });
   } catch {
-    // intentionally silent: nothing to report to the owner, and no raw error leaves this function
+    // intentionally silent: the dismissal simply stays until the next load
   }
 }
