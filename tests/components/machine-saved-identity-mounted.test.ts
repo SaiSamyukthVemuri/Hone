@@ -638,6 +638,23 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     expect(host!.textContent).toContain("The preference did not save.");
   });
 
+  it("Codex 4487384231: a preference request that THROWS after the record was committed keeps the committed choice and shows a quiet note", async () => {
+    actions.rememberMachineSelectionAction.mockRejectedValueOnce(new Error("network down") as never);
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
+    const sel = await choose("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect(sel.value, "the record was committed, so the panel stays on that machine").toBe("room-9");
+    expect(host!.textContent).toContain("not remembered for your next visit");
+  });
+
+  it("NEGATIVE CONTROL: a throw from the RECORD itself (nothing committed) still does not leave the panel on the new machine", async () => {
+    actions.recordBlockMachineIdentityAction.mockRejectedValueOnce(new Error("network down") as never);
+    await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
+    const sel = await choose("room-9").catch(() => host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!);
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+    expect(sel.value).not.toBe("room-9");
+  });
+
   it("NEGATIVE CONTROL: a NEW area (no block) is never locked, whatever the flag says", async () => {
     await mount({ blockId: null, legacyReadingsLocked: true });
     await open();

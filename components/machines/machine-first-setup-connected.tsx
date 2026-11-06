@@ -41,6 +41,7 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // show another client's settings (Codex, 9c6fbbe5).
 
 /** ONE refusal text for clearing a saved machine, wherever it is reached (Insurance N-3). */
+export const PREFERENCE_NOT_REMEMBERED = "That machine was not remembered for your next visit.";
 export const SAVED_MACHINE_CANNOT_BE_CLEARED =
   "Choose another machine to change this one. A saved machine cannot be cleared.";
 
@@ -445,14 +446,20 @@ export function MachineFirstSetupConnected({
     // native unit; choosing the existing workflow leaves it alone.
     let pref: { ok: boolean; error?: string } = { ok: true };
     if (!choice.legacy) {
-      const out =
-        choice.deviceId === null
-          ? await mod.clearMachineSelectionAction()
-          : await mod.rememberMachineSelectionAction({
-              deviceId: choice.deviceId,
-              modeKey: choice.modeKey,
-            });
-      pref = out.ok ? { ok: true } : { ok: false, error: out.error };
+      // A THROW IS NOT A REVERT (Codex 4487384231). For a saved area the record was committed above; a preference request that
+      // throws (a transport error) says nothing about it, so the committed choice stays and only a quiet note is shown.
+      try {
+        const out =
+          choice.deviceId === null
+            ? await mod.clearMachineSelectionAction()
+            : await mod.rememberMachineSelectionAction({
+                deviceId: choice.deviceId,
+                modeKey: choice.modeKey,
+              });
+        pref = out.ok ? { ok: true } : { ok: false, error: out.error };
+      } catch {
+        pref = { ok: false, error: PREFERENCE_NOT_REMEMBERED };
+      }
     }
     if (!blockId) {
       onIdentityDraft?.(chosen, true);
