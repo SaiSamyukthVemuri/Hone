@@ -143,14 +143,22 @@ export const RESOLVED_CLEAR_CAP = 25;
  * same expiry). These are the stored studio-reminder keys that no live studio item carries, to be restored (the existing restore command).
  *
  * Fail safe: nothing is returned unless every check was readable and nothing was capped away, because a reminder missing from an incomplete
- * list has not resolved, it is unknown. Client and unpaid dismissals are never touched here.
+ * list has not resolved, it is unknown. The expiring-supplies read is capped and its cut is not counted in notReturnedCount, so when it
+ * may have been cut (`suppliesMayBeCapped`) no supply dismissal is cleared: a supply beyond the cap is not provably resolved.
+ * Client and unpaid dismissals are never touched here.
  */
-export function resolvedStudioDismissalKeys(needs: NeedsAttention, dismissals: ReadonlyArray<StoredDismissal>): string[] {
+export function resolvedStudioDismissalKeys(
+  needs: NeedsAttention,
+  dismissals: ReadonlyArray<StoredDismissal>,
+  options: { suppliesMayBeCapped?: boolean } = {},
+): string[] {
   if (needs.unavailableChecks.length > 0 || needs.notReturnedCount > 0) return [];
   const live = new Set(needs.studioItems.map((i) => i.id));
   const keys = new Set<string>();
   for (const d of dismissals) {
-    if (STUDIO_REMINDER_KEY.test(d.itemKey) && !live.has(d.itemKey)) keys.add(d.itemKey);
+    if (!STUDIO_REMINDER_KEY.test(d.itemKey) || live.has(d.itemKey)) continue;
+    if (options.suppliesMayBeCapped && d.itemKey.startsWith("supply_expiry:")) continue;
+    keys.add(d.itemKey);
   }
   return [...keys].sort().slice(0, RESOLVED_CLEAR_CAP);
 }

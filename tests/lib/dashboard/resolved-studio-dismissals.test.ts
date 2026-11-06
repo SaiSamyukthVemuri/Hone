@@ -37,6 +37,19 @@ describe("resolvedStudioDismissalKeys", () => {
     expect(resolvedStudioDismissalKeys(needs({ unavailableChecks: ["payment setup"] }), [d("payment_setup:studio")])).toEqual([]);
     expect(resolvedStudioDismissalKeys(needs({ notReturnedCount: 3 }), [d("payment_setup:studio")])).toEqual([]);
   });
+  it("Codex P2: with 51+ expiring supplies the read was cut, so a supply dismissal beyond the cap is NOT cleared (other studio keys still are)", () => {
+    const live = Array.from({ length: 50 }, (_, i) => `supply_expiry:s${String(i).padStart(2, "0")}`);
+    const dismissals = [d("supply_expiry:s50", "2026-12-01"), d("supply_expiry:s00", "2026-12-01"), d("payment_setup:studio", "no_connect")];
+    // The 51st supply is beyond the cap; it is missing from the live list but has not resolved.
+    expect(resolvedStudioDismissalKeys(needs({}, live), dismissals, { suppliesMayBeCapped: true })).toEqual(["payment_setup:studio"]);
+    // NEGATIVE CONTROL: with a complete supply list the same missing supply IS provably resolved.
+    expect(resolvedStudioDismissalKeys(needs({}, live), dismissals, { suppliesMayBeCapped: false })).toEqual(["payment_setup:studio", "supply_expiry:s50"]);
+  });
+  it("the page passes the cap signal from the supplies read and the read exports its limit", () => {
+    const STACK = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
+    expect(STACK).toMatch(/suppliesMayBeCapped: input\.supplies\.length >= EXPIRING_SUPPLIES_LIMIT/);
+    expect(readFileSync("lib/record-keeping/queries.ts", "utf8")).toMatch(/export const EXPIRING_SUPPLIES_LIMIT = 50;[\s\S]*\.limit\(options\.limit \?\? EXPIRING_SUPPLIES_LIMIT\)/);
+  });
   it("is bounded and deterministic", () => {
     const many = Array.from({ length: 40 }, (_, i) => d(`supply_expiry:s${String(i).padStart(2, "0")}`));
     const out = resolvedStudioDismissalKeys(needs(), many);
@@ -49,7 +62,7 @@ describe("the clear path is wired, owner-and-gate scoped, and touches nothing el
   const STACK = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
   const STORE = readFileSync("lib/dashboard/attention-dismissal-store.ts", "utf8");
   it("runs only after the dismissals were read, for an owner, with the gate ON", () => {
-    const at = STACK.indexOf("restoreResolvedDismissals(props.studioId");
+    const at = STACK.indexOf("restoreResolvedDismissals(");
     expect(at).toBeGreaterThan(STACK.indexOf("if (!dashboardDismissalsEnabled())"));
     expect(at).toBeGreaterThan(STACK.indexOf("if (!props.isOwner)"));
     expect(at).toBeGreaterThan(STACK.indexOf("if (!read.ok)"));
