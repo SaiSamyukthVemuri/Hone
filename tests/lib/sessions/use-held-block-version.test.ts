@@ -58,8 +58,8 @@ describe("the held block version", () => {
   // Privacy NB-1: every successful block save closes the editor, so the next open starts from the fresh prop and nothing needs adopting.
   it("a successful update save and a successful create save both close the form, and both mount sites close on it", () => {
     const form = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
-    expect(form).toMatch(/if \(!res\.ok\) \{\s*setError\(res\.error\);\s*return;\s*\}\s*closeForm\(\);/);
-    expect(form).toMatch(/setSaveUnresolved\(false\);\s*closeForm\(\);/);
+    expect(form).toMatch(/if \(!res\.ok\) \{\s*setError\(res\.error\);\s*return;\s*\}\s*setSaveConfirmed\(true\);\s*closeForm\(\);/);
+    expect(form).toMatch(/setSaveUnresolved\(false\);\s*setSaveConfirmed\(true\);\s*closeForm\(\);/);
     expect(form).toMatch(/const closeForm = \(\) => \{[\s\S]*?\n {4}onCancel\(\);\n {2}\};/);
     const view = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx", "utf8");
     expect(view).toMatch(/onCancel=\{\(\) => setAdding\(false\)\}/);

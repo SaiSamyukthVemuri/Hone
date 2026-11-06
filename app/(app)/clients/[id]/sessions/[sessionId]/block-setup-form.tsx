@@ -131,6 +131,14 @@ import {
 } from "./block-actions";
 import { SectionLabel } from "@/components/ui/section-label";
 
+/** Whether the leave guard is armed: anything unsaved arms it, whether or not a request is in flight; only a CONFIRMED save releases it. */
+export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean {
+  return dirty && !saveConfirmed;
+}
+
+const EDIT_SAVE_UNCONFIRMED =
+  "The connection failed, so whether your changes were saved is not known. Your edits are still here: press Save to try again, or reload the page to see what is saved.";
+
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
 const MINUTES_MAX = 1440;
@@ -1034,7 +1042,13 @@ export function BlockSetupForm({
     identityDirty;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void } | null>(null);
-  useUnsavedGuard(dirty && !pending, (proceed) => setLeaveAttempt({ proceed }));
+  // ARMED UNTIL A SAVE IS CONFIRMED (Codex #1369 4493497730). It used to be disarmed while "Saving…" was pending, so closing, reloading or
+  // following a link mid-save could lose the unconfirmed draft and, for a create, the retry key that keeps a lost answer from becoming a
+  // second area. The request is in flight, its outcome is not known, and the draft is not saved: the guard stays armed through the request,
+  // through an unknown or lost reply, and through a definitive refusal (the draft is still unsaved). It is bypassed only here, after a
+  // CONFIRMED success (`saveConfirmed`, set just before the form closes).
+  const [saveConfirmed, setSaveConfirmed] = useState(false);
+  useUnsavedGuard(leaveGuardArmed(dirty, saveConfirmed), (proceed) => setLeaveAttempt({ proceed }));
 
   /**
    * The collector's report, plus the key's lifetime rule.
@@ -1561,11 +1575,17 @@ export function BlockSetupForm({
           areas: draft.areas,
           readings,
           ...clinicalResponse,
-        });
+        }).catch(() => ({
+          // A LOST ANSWER IS NOT A REFUSAL and must not throw out of the transition (that tears the form down with the draft in it). The
+          // draft stays, the leave guard stays armed, and she is told the result is unknown.
+          ok: false as const,
+          error: EDIT_SAVE_UNCONFIRMED,
+        }));
         if (!res.ok) {
           setError(res.error);
           return;
         }
+        setSaveConfirmed(true);
         closeForm();
         return;
       }
@@ -1658,6 +1678,7 @@ export function BlockSetupForm({
       // retry of the first and be answered with it.
       setPendingSaveKey(null);
       setSaveUnresolved(false);
+      setSaveConfirmed(true);
       closeForm();
     });
   }
