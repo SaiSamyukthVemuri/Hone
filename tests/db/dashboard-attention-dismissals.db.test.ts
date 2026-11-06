@@ -65,6 +65,28 @@ describe("dismiss and restore", () => {
     expect(await restore(secondOwnerUser, a.studioId, "session:c1:s1:aftercare")).toEqual({ ok: true, changed: false });
     expect(keys(await list(a.userId, a.studioId))).toContain("session:c1:s1:aftercare");
   });
+  it("AP2: clearing a resolved studio reminder is one restore; the same state returning later is a fresh item, and no other dismissal moves", async () => {
+    const studioKey = "intake_review:studio";
+    const clientKey = "intake:c7:intake_review";
+    expect(await dismiss(a.userId, a.studioId, studioKey, "2026-11-02")).toEqual({ ok: true, changed: true });
+    expect(await dismiss(a.userId, a.studioId, clientKey, "2026-11-02")).toEqual({ ok: true, changed: true });
+    // The reminder resolves: the page clears ONLY that key with the existing restore command.
+    expect(await restore(a.userId, a.studioId, studioKey)).toEqual({ ok: true, changed: true });
+    const cleared = keys(await list(a.userId, a.studioId));
+    expect(cleared).not.toContain(studioKey);
+    expect(cleared).toContain(clientKey);
+    // A second clear is a quiet no-op (a page reload before it recurs).
+    expect(await restore(a.userId, a.studioId, studioKey)).toEqual({ ok: true, changed: false });
+    // It recurs with the same token: it is no longer dismissed, so it shows again.
+    expect(keys(await list(a.userId, a.studioId))).not.toContain(studioKey);
+    // The history is append-only: dismiss, restore, then a deliberate dismiss again all stand.
+    expect(await dismiss(a.userId, a.studioId, studioKey, "2026-11-02")).toEqual({ ok: true, changed: true });
+    const events = await adminQuery(
+      `select action from public.dashboard_attention_events where studio_id = $1 and item_key = $2 order by seq`,
+      [a.studioId, studioKey],
+    );
+    expect(events.rows.map((r: { action: string }) => r.action)).toEqual(["dismiss", "restore", "dismiss"]);
+  });
 });
 
 describe("owner-only, enforced by the database", () => {
