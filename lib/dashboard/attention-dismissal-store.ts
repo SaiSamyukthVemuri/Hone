@@ -26,3 +26,16 @@ export async function loadMyDismissals(studioId: string): Promise<DismissalRead>
     return { ok: false };
   }
 }
+
+// Privacy AP2: restore the dismissals of studio reminders that have resolved (see resolvedStudioDismissalKeys). Uses ONLY the existing restore
+// command (an appended `restore` event for the caller's own dismissal); it touches no balance, payment, setup status, message or access.
+// Best effort: a failure leaves the dismissal in place, which is exactly the state before this ran.
+export async function restoreResolvedDismissals(studioId: string, itemKeys: ReadonlyArray<string>): Promise<void> {
+  if (itemKeys.length === 0) return;
+  try {
+    const supabase = await createClient();
+    await Promise.all(itemKeys.map((k) => supabase.rpc("restore_attention_item", { p_studio: studioId, p_item_key: k })));
+  } catch {
+    // intentionally silent: nothing to report to the owner, and no raw error leaves this function
+  }
+}

@@ -27,8 +27,8 @@ import {
   CHECK_UNAVAILABLE,
   type NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
-import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
-import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
+import { applyDismissals, headingCount, resolvedStudioDismissalKeys, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
+import { loadMyDismissals, restoreResolvedDismissals } from "@/lib/dashboard/attention-dismissal-store";
 import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
 import { dashboardUnpaidEnabled } from "@/lib/dashboard/unpaid-gate";
 import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
@@ -711,6 +711,8 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     const read = await loadMyDismissals(props.studioId);
     if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: true, dismissalsUnavailable: true, countKnown };
     const { shown, dismissed } = applyDismissals(model, read.rows);
+    // AP2: a studio reminder that has resolved no longer holds its dismissal, so the same state returning later shows again.
+    await restoreResolvedDismissals(props.studioId, resolvedStudioDismissalKeys(model, read.rows));
     return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
   })();
   visibleMemo.set(props.attentionSources, run);

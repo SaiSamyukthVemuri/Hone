@@ -131,3 +131,26 @@ export function applyDismissals(
 export function headingCount(needs: NeedsAttention): { clients: number; items: number } {
   return { clients: needs.clients.length, items: needs.itemCount };
 }
+
+/** Keys of the studio-level reminders (setup, supplies, roll-ups): `<kind>:studio`, or `supply_expiry:<supply id>`. Client and unpaid keys are never here. */
+const STUDIO_REMINDER_KEY = /^(?:[a-z_]+:studio|supply_expiry:[A-Za-z0-9_.-]+)$/;
+/** At most this many stored dismissals are cleared in one page load. */
+export const RESOLVED_CLEAR_CAP = 25;
+
+/**
+ * Privacy AP2. A studio reminder's dismissal is keyed by the reminder and the state it reported. When the reminder RESOLVES (it is no longer
+ * live) the stored dismissal is dead weight that would hide the SAME state if it came back later (setup undone, a supply re-entered with the
+ * same expiry). These are the stored studio-reminder keys that no live studio item carries, to be restored (the existing restore command).
+ *
+ * Fail safe: nothing is returned unless every check was readable and nothing was capped away, because a reminder missing from an incomplete
+ * list has not resolved, it is unknown. Client and unpaid dismissals are never touched here.
+ */
+export function resolvedStudioDismissalKeys(needs: NeedsAttention, dismissals: ReadonlyArray<StoredDismissal>): string[] {
+  if (needs.unavailableChecks.length > 0 || needs.notReturnedCount > 0) return [];
+  const live = new Set(needs.studioItems.map((i) => i.id));
+  const keys = new Set<string>();
+  for (const d of dismissals) {
+    if (STUDIO_REMINDER_KEY.test(d.itemKey) && !live.has(d.itemKey)) keys.add(d.itemKey);
+  }
+  return [...keys].sort().slice(0, RESOLVED_CLEAR_CAP);
+}

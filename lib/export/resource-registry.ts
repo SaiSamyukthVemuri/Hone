@@ -1029,7 +1029,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "derived",
     reason:
-      "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported. A client erasure, offboarding or account-removal design must handle it: client and appointment ids sit in item_key and the table is append-only; user_id has no foreign key.",
+      "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported.",
   },
 
   // security

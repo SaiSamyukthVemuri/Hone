@@ -2,7 +2,8 @@
 --
 -- WHAT THIS IS. The owner's tidy-up of THEIR OWN Dashboard "Needs attention" view. Dismissing a reminder hides that reminder from that
 -- owner, on every device that owner signs in on. It changes nothing else: no balance, no payment row, no setup status, no access, no
--- message. Nothing in this file reads or writes a payment table; `item_key` and `instance_token` are opaque text.
+-- message. Nothing in this file reads or writes a payment table. `item_key` and `instance_token` hold record identifiers (client,
+-- appointment and session ids) and, for unpaid reminders, the dismissed outstanding amount in cents; no names, free text or clinical content.
 --
 -- SHAPE. Append-only events (dismiss | restore). The latest event per (studio, user, item_key) is the state, and a dismissal only
 -- counts while the live item's instance_token equals the stored one, so a NEW issue under the same key (a new intake submission, a
