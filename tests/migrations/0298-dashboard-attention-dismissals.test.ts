@@ -8,7 +8,7 @@ const raw = readFileSync("supabase/migrations/0298_dashboard_attention_dismissal
 const code = raw.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
 const FNS = [
   "dismiss_attention_item(uuid, text, text)",
-  "restore_attention_item(uuid, text)",
+  "restore_attention_item(uuid, text, bigint)",
   "list_dismissed_attention(uuid)",
 ];
 

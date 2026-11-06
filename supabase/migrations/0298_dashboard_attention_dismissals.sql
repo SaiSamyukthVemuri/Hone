@@ -101,7 +101,10 @@ begin
 end;
 $$;
 
-create or replace function public.restore_attention_item(p_studio uuid, p_item_key text)
+-- p_observed_seq (optional): the `event_seq` the caller saw in list_dismissed_attention. When given, the restore is CONDITIONAL: it applies only if the
+-- latest event for the key is still that dismissal, so a stale observation (the dismissal was restored and then dismissed again since) leaves the key
+-- untouched. Without it the restore applies to whatever the latest dismissal is, as the owner's own Restore button does.
+create or replace function public.restore_attention_item(p_studio uuid, p_item_key text, p_observed_seq bigint default null)
 returns jsonb
 language plpgsql
 volatile
@@ -120,11 +123,14 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended(p_studio::text || ':' || v_user::text || ':' || p_item_key, 0));
-  select e.action, e.instance_token into v_last
+  select e.action, e.instance_token, e.seq into v_last
     from public.dashboard_attention_events e
    where e.studio_id = p_studio and e.user_id = v_user and e.item_key = p_item_key
    order by e.seq desc limit 1;
   if not found or v_last.action <> 'dismiss' then
+    return jsonb_build_object('ok', true, 'changed', false);
+  end if;
+  if p_observed_seq is not null and v_last.seq <> p_observed_seq then
     return jsonb_build_object('ok', true, 'changed', false);
   end if;
   -- The restore carries the token it restores, so the history reads "dismissed X, restored X".
@@ -151,14 +157,14 @@ begin
     return jsonb_build_object('ok', false, 'code', 'refused');
   end if;
   with latest as (
-    select distinct on (e.item_key) e.item_key, e.instance_token, e.action, e.created_at
+    select distinct on (e.item_key) e.item_key, e.instance_token, e.action, e.created_at, e.seq
       from public.dashboard_attention_events e
      where e.studio_id = p_studio and e.user_id = v_user
      order by e.item_key, e.seq desc
   ), live as (
-    select item_key, instance_token, created_at from latest where action = 'dismiss' order by created_at desc, item_key limit 501
+    select item_key, instance_token, created_at, seq from latest where action = 'dismiss' order by created_at desc, item_key limit 501
   )
-  select coalesce(jsonb_agg(jsonb_build_object('item_key', item_key, 'instance_token', instance_token, 'dismissed_at', created_at)
+  select coalesce(jsonb_agg(jsonb_build_object('item_key', item_key, 'instance_token', instance_token, 'dismissed_at', created_at, 'event_seq', seq)
                             order by created_at desc, item_key), '[]'::jsonb), count(*)
     into v_rows, v_n from live;
   if v_n > 500 then
@@ -170,10 +176,10 @@ $$;
 
 -- Authenticated-only: revoke from every default-granted role BY NAME, then grant to authenticated (0129 / 0164 lesson).
 revoke execute on function public.dismiss_attention_item(uuid, text, text) from public, anon, service_role, authenticated;
-revoke execute on function public.restore_attention_item(uuid, text) from public, anon, service_role, authenticated;
+revoke execute on function public.restore_attention_item(uuid, text, bigint) from public, anon, service_role, authenticated;
 revoke execute on function public.list_dismissed_attention(uuid) from public, anon, service_role, authenticated;
 grant execute on function public.dismiss_attention_item(uuid, text, text) to authenticated;
-grant execute on function public.restore_attention_item(uuid, text) to authenticated;
+grant execute on function public.restore_attention_item(uuid, text, bigint) to authenticated;
 grant execute on function public.list_dismissed_attention(uuid) to authenticated;
 
 commit;

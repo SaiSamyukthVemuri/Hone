@@ -3,7 +3,7 @@
   "migrations": {
     "count": 257,
     "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "9a0040bd030223a632856333458c080760030dd84fa72a93355f1ecd4f7262c2"
+    "sha256": "b4de82b13fdfca5a44a85ffadc042f532b44d27d2a386a6eea1b94ddbc894334"
   },
   "public": {
     "tables": [

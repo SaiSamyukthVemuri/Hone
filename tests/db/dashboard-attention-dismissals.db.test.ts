@@ -14,6 +14,9 @@ const dismiss = (user: string, studio: string, key: string, token: string) =>
   asUser(user, async (q) => (await q(`select public.dismiss_attention_item($1,$2,$3) as r`, [studio, key, token])).rows[0].r);
 const restore = (user: string, studio: string, key: string) =>
   asUser(user, async (q) => (await q(`select public.restore_attention_item($1,$2) as r`, [studio, key])).rows[0].r);
+const restoreIf = (user: string, studio: string, key: string, seq: number) =>
+  asUser(user, async (q) => (await q(`select public.restore_attention_item($1,$2,$3) as r`, [studio, key, seq])).rows[0].r);
+const seqOf = (r: { rows: { item_key: string; event_seq: number }[] }, key: string) => r.rows.find((x) => x.item_key === key)?.event_seq as number;
 const list = (user: string, studio: string) =>
   asUser(user, async (q) => (await q(`select public.list_dismissed_attention($1) as r`, [studio])).rows[0].r);
 const keys = (r: { rows: { item_key: string }[] }) => r.rows.map((x) => x.item_key).sort();
@@ -64,6 +67,29 @@ describe("dismiss and restore", () => {
     // Restoring as the other owner does not touch the first owner's dismissals.
     expect(await restore(secondOwnerUser, a.studioId, "session:c1:s1:aftercare")).toEqual({ ok: true, changed: false });
     expect(keys(await list(a.userId, a.studioId))).toContain("session:c1:s1:aftercare");
+  });
+  it("Codex P2 4492399987: a stale conditional restore leaves a NEWER dismissal alone; the ordinary case restores the observed one", async () => {
+    const key = "no_services:studio";
+    // Tab A observes the dismissal (its event_seq) and schedules the clear.
+    expect(await dismiss(a.userId, a.studioId, key, "2026-11-03")).toEqual({ ok: true, changed: true });
+    const observed = seqOf(await list(a.userId, a.studioId), key);
+    expect(typeof observed).toBe("number");
+    // Meanwhile the reminder resolved and was cleared elsewhere, recurred, and the owner dismissed it AGAIN (same token) in tab B.
+    expect(await restore(a.userId, a.studioId, key)).toEqual({ ok: true, changed: true });
+    expect(await dismiss(a.userId, a.studioId, key, "2026-11-03")).toEqual({ ok: true, changed: true });
+    const newer = seqOf(await list(a.userId, a.studioId), key);
+    expect(newer).toBeGreaterThan(observed);
+    // Tab A's delayed clear carries the OLD event: it must not touch the newer dismissal.
+    expect(await restoreIf(a.userId, a.studioId, key, observed)).toEqual({ ok: true, changed: false });
+    expect(keys(await list(a.userId, a.studioId))).toContain(key);
+    expect(seqOf(await list(a.userId, a.studioId), key)).toBe(newer);
+    // The ordinary case: the observed event IS still the latest, so it is restored.
+    expect(await restoreIf(a.userId, a.studioId, key, newer)).toEqual({ ok: true, changed: true });
+    expect(keys(await list(a.userId, a.studioId))).not.toContain(key);
+    // Conditional on a key with nothing dismissed is a quiet no-op, and the unconditional form still works for the owner's own Restore.
+    expect(await restoreIf(a.userId, a.studioId, key, newer)).toEqual({ ok: true, changed: false });
+    expect(await dismiss(a.userId, a.studioId, key, "2026-11-04")).toEqual({ ok: true, changed: true });
+    expect(await restore(a.userId, a.studioId, key)).toEqual({ ok: true, changed: true });
   });
   it("AP2: clearing a resolved studio reminder is one restore; the same state returning later is a fresh item, and no other dismissal moves", async () => {
     const studioKey = "intake_review:studio";

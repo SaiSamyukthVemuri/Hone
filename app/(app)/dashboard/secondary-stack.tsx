@@ -717,6 +717,7 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     await restoreResolvedDismissals(
       props.studioId,
       resolvedStudioDismissalKeys(model, read.rows, { suppliesMayBeCapped }),
+      read.rows,
     );
     return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
   })();

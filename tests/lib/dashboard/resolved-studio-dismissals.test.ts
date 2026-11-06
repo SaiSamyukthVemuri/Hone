@@ -78,6 +78,7 @@ describe("the clear path is wired, owner-and-gate scoped, and touches nothing el
   it("uses only the existing restore command: no balance, payment, setup or access table", () => {
     const fn = STORE.slice(STORE.indexOf("export async function restoreResolvedDismissals"));
     expect(fn).toContain('"restore_attention_item"');
+    expect(fn).toContain("p_observed_seq");
     expect(fn).not.toMatch(/\.from\(|payment|balance|charge|settlement|studios|memberships/i);
   });
 });
