@@ -42,7 +42,7 @@ export type MachineDb = {
   rpc: (
     fn: string,
     args: Record<string, unknown>,
-  ) => Promise<{ data: unknown; error: MachineDbError }>;
+  ) => Promise<{ data: unknown; error: MachineDbError; status?: number }>;
   from: (table: string) => {
     select: (columns: string) => {
       eq: (
@@ -153,12 +153,20 @@ export type MachineOutcome<T> =
  * contract (MSG-LOG-RAW-ERROR-2) forbids free text from a database in a log line, and the code is what names the cause. No block,
  * session or client id and no reading value.
  */
-function logReadingsReadFailure(code: string): void {
+function logReadingsReadFailure(
+  code: string,
+  extra: { status?: number | null; errorClass?: ReadErrorClass; attempt?: number; event?: string } = {},
+): void {
   try {
     console.error(
       JSON.stringify({
-        event: "machine_readings_read_failed",
+        event: extra.event ?? "machine_readings_read_failed",
         code,
+        // The HTTP status NUMBER and a CLOSED class (#1369, shard 1 at d298c8b92 logged only code "unknown"): enough to tell a gateway
+        // or transport reply from a database answer, with no free text from the error.
+        ...(extra.status !== undefined ? { status: extra.status } : {}),
+        ...(extra.errorClass ? { errorClass: extra.errorClass } : {}),
+        ...(extra.attempt ? { attempt: extra.attempt } : {}),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -166,6 +174,26 @@ function logReadingsReadFailure(code: string): void {
     // Logging must never change the outcome of the read.
   }
 }
+
+type ReadErrorClass = "fetch_failed" | "json_parse" | "other";
+
+/**
+ * A CLOSED class for an error that carries no database code. The message is only MATCHED here and never logged: a reply that is not
+ * JSON (a gateway page) surfaces from supabase-js as a JSON parse message; a dropped connection as "TypeError: fetch failed".
+ */
+function readErrorClass(error: unknown): ReadErrorClass {
+  const message = typeof error === "object" && error !== null ? (error as { message?: unknown }).message : undefined;
+  if (typeof message !== "string") return "other";
+  if (message === "TypeError: fetch failed") return "fetch_failed";
+  if (/JSON|Unexpected (token|end)/i.test(message)) return "json_parse";
+  return "other";
+}
+
+const readStatus = (status: unknown): number | null =>
+  typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+
+/** Pause before the single retry of a code-less read failure. */
+const READ_RETRY_DELAY_MS = 300;
 
 function fail(error: MachineDbError, fallback: string): string {
   return error?.message?.trim() || fallback;
@@ -994,6 +1022,8 @@ export async function readingsForBlock(
    * follows.
    */
   sessionId: string,
+  /** Test seam: the pause before the one retry. */
+  opts: { retryDelayMs?: number } = {},
 ): Promise<MachineOutcome<RecordedReading[]>> {
   // ONE STATEMENT, ONE SNAPSHOT (Codex, #860 4305555264).
   //
@@ -1017,12 +1047,31 @@ export async function readingsForBlock(
   // binding is a predicate on the read itself and needs no such argument
   // (Codex, #860 4298457378 closed the hole; this removes the reasoning the
   // fix depended on).
-  const { data, error } = await db.rpc("setup_readings_for_block", {
-    p_block_id: blockId,
-    p_session_id: sessionId,
-  });
+  const callRead = () =>
+    db.rpc("setup_readings_for_block", {
+      p_block_id: blockId,
+      p_session_id: sessionId,
+    });
+  let { data, error, status } = await callRead();
+  // ONE RETRY, ONLY FOR A CODE-LESS ERROR (OPS decision after #1369 shard 1 at d298c8b92). An error with no SQLSTATE and no PostgREST
+  // code is not the database answering: it is a reply or a connection that did not complete (class logged below). This read is a STABLE
+  // function with no side effects, so repeating it is safe. A coded error is a definite database answer and is never retried; a second
+  // failure is reported exactly as a first one was.
+  if (error && dbErrorCode(error) === "unknown") {
+    logReadingsReadFailure(dbFailureCode(error), {
+      event: "machine_readings_read_retried",
+      status: readStatus(status),
+      errorClass: readErrorClass(error),
+      attempt: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? READ_RETRY_DELAY_MS));
+    ({ data, error, status } = await callRead());
+  }
   if (error) {
-    logReadingsReadFailure(dbFailureCode(error));
+    logReadingsReadFailure(dbFailureCode(error), {
+      status: readStatus(status),
+      errorClass: dbErrorCode(error) === "unknown" ? readErrorClass(error) : undefined,
+    });
     // A BLOCK WE WILL NOT SHOW GETS THE SAME SENTENCE AS A FAILED READ, and
     // that is a deliberate choice rather than laziness: the practitioner
     // cannot tell "not yours" from "the database is unhappy", so neither can

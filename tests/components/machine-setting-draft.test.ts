@@ -1396,7 +1396,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // in a query binds the record to it.
     const src = read(QUERIES_SRC);
     expect(src).toMatch(
-      /export async function readingsForBlock\([\s\S]{0,2600}?sessionId: string,\s*\n\):/,
+      /export async function readingsForBlock\([\s\S]{0,2600}?sessionId: string,\s*\n[\s\S]{0,300}?\):/,
     );
     expect(src).toMatch(
       // THE BINDING MOVED INTO THE FUNCTION (Codex, #860 4305555264). It was

@@ -40,6 +40,7 @@ const DB = vi.hoisted(() => ({
    */
   rowsFor: {} as Record<string, unknown[]>,
   errorFor: {} as Record<string, { message: string }>,
+  readSequence: [] as Array<{ message: string; code?: string } | null>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 
@@ -89,6 +90,12 @@ vi.mock("@/lib/supabase/server", () => ({
       // every case to a differently-named fixture would have changed what
       // those cases say while claiming only to move a fake.
       if (fn === "setup_readings_for_block") {
+        // A SEQUENCE OF OUTCOMES for the retry cases: each call takes the next entry (an error, or null for success).
+        if (DB.readSequence.length > 0) {
+          const next = DB.readSequence.shift()!;
+          if (next) return { data: null, error: next };
+          return { data: DB.rowsFor.treatment_setup_readings ?? [], error: null };
+        }
         const err = DB.errorFor.treatment_setup_readings ?? null;
         if (err) return { data: null, error: err };
         return {
@@ -181,6 +188,7 @@ beforeEach(() => {
   DB.selectError = null;
   DB.rowsFor = {};
   DB.errorFor = {};
+  DB.readSequence = [];
   DB.calls = [];
 });
 
@@ -1630,6 +1638,34 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
     signIn("studio-fett", "pract-sabrina", "owner");
     DB.errorFor.treatment_setup_readings = { message: "permission denied", code: "42501" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+  });
+
+  // OPS decision after #1369 shard 1 at d298c8b92: ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
+  const readCalls = () => DB.calls.filter((c) => c.fn === "setup_readings_for_block").length;
+  it("RETRY: a code-less error then success returns the readings (no failure for the caller), after exactly two reads", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.readSequence = [{ message: "FetchError: socket hang up" }, null];
+    const out = await actions.readingsForBlockAction(input);
+    expect(out.ok).toBe(true);
+    expect(readCalls()).toBe(2);
+  });
+
+  it("RETRY: two code-less failures are reported as a failure (not a refusal), after exactly two reads", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.readSequence = [{ message: "Unexpected token < in JSON" }, { message: "Unexpected token < in JSON" }];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+    expect(readCalls()).toBe(2);
+  });
+
+  it("RETRY NEGATIVE CONTROL: a CODED error is a definite database answer and is never retried", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.readSequence = [{ message: "boom", code: "XX000" }, null];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+    expect(readCalls(), "one read only").toBe(1);
+    DB.calls = [];
+    DB.readSequence = [{ message: "denied", code: "42501" }, null];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+    expect(readCalls()).toBe(1);
   });
 
   it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {
