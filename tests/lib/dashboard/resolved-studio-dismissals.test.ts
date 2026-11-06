@@ -73,11 +73,11 @@ describe("the clear path is wired, owner-and-gate scoped, and touches nothing el
   });
   it("AP2-3: the restore calls run in after(), not on the render path, with results unread", () => {
     expect(STORE).toMatch(/import \{ after \} from "next\/server"/);
-    expect(STORE).toMatch(/after\(async \(\) => \{[\s\S]*restore_attention_item/);
+    expect(STORE).toMatch(/after\(async \(\) => \{[\s\S]*restore_attention_item_if_latest/);
   });
   it("uses only the existing restore command: no balance, payment, setup or access table", () => {
     const fn = STORE.slice(STORE.indexOf("export async function restoreResolvedDismissals"));
-    expect(fn).toContain('"restore_attention_item"');
+    expect(fn).toContain('"restore_attention_item_if_latest"');
     expect(fn).toContain("p_observed_seq");
     expect(fn).not.toMatch(/\.from\(|payment|balance|charge|settlement|studios|memberships/i);
   });

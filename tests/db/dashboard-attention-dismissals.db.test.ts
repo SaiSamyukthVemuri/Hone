@@ -15,7 +15,7 @@ const dismiss = (user: string, studio: string, key: string, token: string) =>
 const restore = (user: string, studio: string, key: string) =>
   asUser(user, async (q) => (await q(`select public.restore_attention_item($1,$2) as r`, [studio, key])).rows[0].r);
 const restoreIf = (user: string, studio: string, key: string, seq: number) =>
-  asUser(user, async (q) => (await q(`select public.restore_attention_item($1,$2,$3) as r`, [studio, key, seq])).rows[0].r);
+  asUser(user, async (q) => (await q(`select public.restore_attention_item_if_latest($1,$2,$3) as r`, [studio, key, seq])).rows[0].r);
 const seqOf = (r: { rows: { item_key: string; event_seq: number }[] }, key: string) => r.rows.find((x) => x.item_key === key)?.event_seq as number;
 const list = (user: string, studio: string) =>
   asUser(user, async (q) => (await q(`select public.list_dismissed_attention($1) as r`, [studio])).rows[0].r);
@@ -86,9 +86,24 @@ describe("dismiss and restore", () => {
     // The ordinary case: the observed event IS still the latest, so it is restored.
     expect(await restoreIf(a.userId, a.studioId, key, newer)).toEqual({ ok: true, changed: true });
     expect(keys(await list(a.userId, a.studioId))).not.toContain(key);
-    // Conditional on a key with nothing dismissed is a quiet no-op, and the unconditional form still works for the owner's own Restore.
-    expect(await restoreIf(a.userId, a.studioId, key, newer)).toEqual({ ok: true, changed: false });
-    expect(await dismiss(a.userId, a.studioId, key, "2026-11-04")).toEqual({ ok: true, changed: true });
+    // NEGATIVE CONTROLS: a NULL observed event is refused (never read as "the latest"); a missing argument does not resolve to any command.
+    expect(await dismiss(a.userId, a.studioId, key, "2026-11-05")).toEqual({ ok: true, changed: true });
+    const live = seqOf(await list(a.userId, a.studioId), key);
+    const nullSeq = await asUser(a.userId, async (q) => (await q(`select public.restore_attention_item_if_latest($1,$2,null::bigint) as r`, [a.studioId, key])).rows[0].r);
+    expect(nullSeq).toEqual({ ok: false, code: "invalid_item" });
+    expect(keys(await list(a.userId, a.studioId))).toContain(key); // untouched
+    await expect(asUser(a.userId, async (q) => q(`select public.restore_attention_item_if_latest($1,$2)`, [a.studioId, key]))).rejects.toThrow(/does not exist|function/);
+    expect(keys(await list(a.userId, a.studioId))).toContain(key);
+    // A stale (lower) and a made-up (higher) observed event both restore nothing.
+    expect(await restoreIf(a.userId, a.studioId, key, live - 1)).toEqual({ ok: true, changed: false });
+    expect(await restoreIf(a.userId, a.studioId, key, live + 1000)).toEqual({ ok: true, changed: false });
+    expect(keys(await list(a.userId, a.studioId))).toContain(key);
+    // Owner-only like the others: a non-owner member is refused, and the table is unchanged.
+    expect(await asUser(member.userId, async (q) => (await q(`select public.restore_attention_item_if_latest($1,$2,$3) as r`, [a.studioId, key, live])).rows[0].r)).toEqual({ ok: false, code: "refused" });
+    expect(await restoreIf(a.userId, a.studioId, key, live)).toEqual({ ok: true, changed: true });
+    // A conditional restore on a key with nothing dismissed is a quiet no-op, and the unconditional form still works for the owner's own Restore.
+    expect(await restoreIf(a.userId, a.studioId, key, live)).toEqual({ ok: true, changed: false });
+    expect(await dismiss(a.userId, a.studioId, key, "2026-11-06")).toEqual({ ok: true, changed: true });
     expect(await restore(a.userId, a.studioId, key)).toEqual({ ok: true, changed: true });
   });
   it("AP2: clearing a resolved studio reminder is one restore; the same state returning later is a fresh item, and no other dismissal moves", async () => {

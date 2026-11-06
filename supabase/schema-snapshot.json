@@ -3,7 +3,7 @@
   "migrations": {
     "count": 257,
     "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "b4de82b13fdfca5a44a85ffadc042f532b44d27d2a386a6eea1b94ddbc894334"
+    "sha256": "c50d8ed203ac0ce2ea93085649e2d8b592a4544997b740bdbd71438b033151d5"
   },
   "public": {
     "tables": [
@@ -470,6 +470,7 @@
       "resolve_studio_by_sms_messaging_service",
       "resolve_waitlist_invitation_recipient_identity",
       "restore_attention_item",
+      "restore_attention_item_if_latest",
       "retire_practitioner_capacity",
       "retire_ready_card_attempts",
       "retire_studio_machine",

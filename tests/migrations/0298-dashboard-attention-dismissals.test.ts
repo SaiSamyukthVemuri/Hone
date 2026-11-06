@@ -8,7 +8,8 @@ const raw = readFileSync("supabase/migrations/0298_dashboard_attention_dismissal
 const code = raw.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
 const FNS = [
   "dismiss_attention_item(uuid, text, text)",
-  "restore_attention_item(uuid, text, bigint)",
+  "restore_attention_item(uuid, text)",
+  "restore_attention_item_if_latest(uuid, text, bigint)",
   "list_dismissed_attention(uuid)",
 ];
 
@@ -26,7 +27,7 @@ describe("0298 source contract", () => {
     }
   });
   it("every command is SECURITY DEFINER with an empty search_path and checks the owner and auth.uid()", () => {
-    for (const name of ["dismiss_attention_item", "restore_attention_item", "list_dismissed_attention"]) {
+    for (const name of ["dismiss_attention_item", "restore_attention_item", "restore_attention_item_if_latest", "list_dismissed_attention"]) {
       const start = code.indexOf(`function public.${name}`);
       const asAt = code.indexOf("as $$", start);
       const fn = code.slice(start, code.indexOf("$$;", asAt));

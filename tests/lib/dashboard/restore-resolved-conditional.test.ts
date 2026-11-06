@@ -22,8 +22,8 @@ describe("restoreResolvedDismissals", () => {
     expect(rpc).not.toHaveBeenCalled(); // not on the render path
     await runScheduled();
     expect(rpc).toHaveBeenCalledTimes(2);
-    expect(rpc).toHaveBeenCalledWith("restore_attention_item", { p_studio: "s1", p_item_key: "payment_setup:studio", p_observed_seq: 41 });
-    expect(rpc).toHaveBeenCalledWith("restore_attention_item", { p_studio: "s1", p_item_key: "supply_expiry:a1", p_observed_seq: 57 });
+    expect(rpc).toHaveBeenCalledWith("restore_attention_item_if_latest", { p_studio: "s1", p_item_key: "payment_setup:studio", p_observed_seq: 41 });
+    expect(rpc).toHaveBeenCalledWith("restore_attention_item_if_latest", { p_studio: "s1", p_item_key: "supply_expiry:a1", p_observed_seq: 57 });
   });
   it("NEVER restores unconditionally: a key whose observed event is unknown is skipped", async () => {
     await restoreResolvedDismissals("s1", ["payment_setup:studio"], [{ itemKey: "payment_setup:studio", instanceToken: "x" }]);

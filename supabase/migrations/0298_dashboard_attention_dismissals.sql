@@ -101,10 +101,7 @@ begin
 end;
 $$;
 
--- p_observed_seq (optional): the `event_seq` the caller saw in list_dismissed_attention. When given, the restore is CONDITIONAL: it applies only if the
--- latest event for the key is still that dismissal, so a stale observation (the dismissal was restored and then dismissed again since) leaves the key
--- untouched. Without it the restore applies to whatever the latest dismissal is, as the owner's own Restore button does.
-create or replace function public.restore_attention_item(p_studio uuid, p_item_key text, p_observed_seq bigint default null)
+create or replace function public.restore_attention_item(p_studio uuid, p_item_key text)
 returns jsonb
 language plpgsql
 volatile
@@ -123,17 +120,49 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended(p_studio::text || ':' || v_user::text || ':' || p_item_key, 0));
-  select e.action, e.instance_token, e.seq into v_last
+  select e.action, e.instance_token into v_last
     from public.dashboard_attention_events e
    where e.studio_id = p_studio and e.user_id = v_user and e.item_key = p_item_key
    order by e.seq desc limit 1;
   if not found or v_last.action <> 'dismiss' then
     return jsonb_build_object('ok', true, 'changed', false);
   end if;
-  if p_observed_seq is not null and v_last.seq <> p_observed_seq then
+  -- The restore carries the token it restores, so the history reads "dismissed X, restored X".
+  insert into public.dashboard_attention_events (studio_id, user_id, item_key, instance_token, action)
+  values (p_studio, v_user, p_item_key, v_last.instance_token, 'restore');
+  return jsonb_build_object('ok', true, 'changed', true);
+end;
+$$;
+
+-- The page's automatic clear of a RESOLVED reminder (Codex P2 4492399987). CONDITIONAL on the dismissal event the page observed: p_observed_seq is the
+-- `event_seq` from list_dismissed_attention and is REQUIRED. NULL is refused (never read as "the latest"). The restore applies only while that event is
+-- still the key's latest, so a stale observation (restored and dismissed again since) leaves the newer dismissal untouched. Same owner-only, per-owner rules.
+create or replace function public.restore_attention_item_if_latest(p_studio uuid, p_item_key text, p_observed_seq bigint)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_user uuid := auth.uid();
+  v_last record;
+begin
+  if v_user is null or p_studio is null or not public.is_studio_owner(p_studio) then
+    return jsonb_build_object('ok', false, 'code', 'refused');
+  end if;
+  if p_item_key is null or char_length(p_item_key) not between 1 and 200 or p_item_key !~ '^[A-Za-z0-9:_.-]+$' or p_observed_seq is null then
+    return jsonb_build_object('ok', false, 'code', 'invalid_item');
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(p_studio::text || ':' || v_user::text || ':' || p_item_key, 0));
+  select e.action, e.instance_token, e.seq into v_last
+    from public.dashboard_attention_events e
+   where e.studio_id = p_studio and e.user_id = v_user and e.item_key = p_item_key
+   order by e.seq desc limit 1;
+  if not found or v_last.action <> 'dismiss' or v_last.seq <> p_observed_seq then
     return jsonb_build_object('ok', true, 'changed', false);
   end if;
-  -- The restore carries the token it restores, so the history reads "dismissed X, restored X".
   insert into public.dashboard_attention_events (studio_id, user_id, item_key, instance_token, action)
   values (p_studio, v_user, p_item_key, v_last.instance_token, 'restore');
   return jsonb_build_object('ok', true, 'changed', true);
@@ -176,10 +205,12 @@ $$;
 
 -- Authenticated-only: revoke from every default-granted role BY NAME, then grant to authenticated (0129 / 0164 lesson).
 revoke execute on function public.dismiss_attention_item(uuid, text, text) from public, anon, service_role, authenticated;
-revoke execute on function public.restore_attention_item(uuid, text, bigint) from public, anon, service_role, authenticated;
+revoke execute on function public.restore_attention_item(uuid, text) from public, anon, service_role, authenticated;
+revoke execute on function public.restore_attention_item_if_latest(uuid, text, bigint) from public, anon, service_role, authenticated;
 revoke execute on function public.list_dismissed_attention(uuid) from public, anon, service_role, authenticated;
 grant execute on function public.dismiss_attention_item(uuid, text, text) to authenticated;
-grant execute on function public.restore_attention_item(uuid, text, bigint) to authenticated;
+grant execute on function public.restore_attention_item(uuid, text) to authenticated;
+grant execute on function public.restore_attention_item_if_latest(uuid, text, bigint) to authenticated;
 grant execute on function public.list_dismissed_attention(uuid) to authenticated;
 
 commit;

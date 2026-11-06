@@ -30,7 +30,7 @@ export async function loadMyDismissals(studioId: string): Promise<DismissalRead>
   }
 }
 
-// Privacy AP2: restore the dismissals of studio reminders that have resolved (see resolvedStudioDismissalKeys). Uses ONLY the restore command (an
+// Privacy AP2: restore the dismissals of studio reminders that have resolved (see resolvedStudioDismissalKeys). Uses ONLY the conditional restore command (an
 // appended `restore` event for the caller's own dismissal); it touches no balance, payment, setup status, message or access.
 // CONDITIONAL (Codex P2 4492399987): each restore carries the `event_seq` of the dismissal THIS page load observed, and the database applies it only
 // while that is still the key's latest event. The restore runs after the response, so the owner may meanwhile have dismissed the same key again
@@ -52,7 +52,7 @@ export async function restoreResolvedDismissals(
     const supabase = await createClient();
     after(async () => {
       try {
-        await Promise.all(calls.map((args) => supabase.rpc("restore_attention_item", args)));
+        await Promise.all(calls.map((args) => supabase.rpc("restore_attention_item_if_latest", args)));
       } catch {
         // intentionally silent: nothing to report to the owner, and no raw error leaves this function
       }
