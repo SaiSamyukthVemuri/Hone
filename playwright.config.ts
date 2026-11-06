@@ -76,7 +76,11 @@ export default defineConfig({
     // whenever Playwright writes artifacts, which Fast-Refreshes the
     // page mid-test and aborts in-flight server actions. A built
     // server is deterministic and matches what CI would run.
-    command: "npm run e2e:server",
+    // THE SERVER'S OWN LOG IS KEPT (Insurance R3-1 closure / F6-1, #1369): stdout and stderr are teed into test-results/server-log/, which
+    // the existing "playwright-traces" artifact upload already collects, so a server-side failure line (for example
+    // machine_readings_read_failed, validated code only) is attributable after a green run too. One file per Playwright process (its
+    // pid), so a second invocation in the same job never overwrites the first, and outside any per-run --output directory.
+    command: `mkdir -p test-results/server-log && npm run e2e:server 2>&1 | tee test-results/server-log/next-server-${process.pid}.log`,
     url: E2E_APP_ORIGIN,
     env: E2E_WEB_SERVER_ENV,
     // TEST-PORT-01. This was `!process.env.CI`, i.e. TRUE locally, which is how

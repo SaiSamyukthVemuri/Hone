@@ -41,6 +41,8 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // show another client's settings (Codex, 9c6fbbe5).
 
 /** ONE refusal text for clearing a saved machine, wherever it is reached (Insurance N-3). */
+export const RECORD_UNAVAILABLE_AFTER_SAVE_NOTICE =
+  "Saved. This treatment record could not be loaded just now; reload to try again.";
 export const ACCESS_REFUSED_AFTER_SAVE_NOTICE =
   "Saved. You no longer have access to this treatment record, so its readings are not shown.";
 export const SAVED_REFRESH_FAILED_NOTE = "Saved. The latest readings couldn't be refreshed; reload to see them.";
@@ -206,7 +208,7 @@ export function MachineFirstSetupConnected({
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   // A CONFIRMED SAVE whose follow-up refresh of the recorded settings failed: the save stands, only the list is out of date.
   const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
-  const [accessRefusedAfterSave, setAccessRefusedAfterSave] = useState(false);
+  const [refusedAfterSave, setRefusedAfterSave] = useState<"access" | "unavailable" | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
 
   const open = useCallback(async () => {
@@ -303,7 +305,7 @@ export function MachineFirstSetupConnected({
       // page supplied, and the server re-checks them against the studio it
       // derives for itself (Codex, #860 4297032712).
       setRefreshFailedAfterSave(false);
-      setAccessRefusedAfterSave(false);
+      setRefusedAfterSave(null);
       const out = await mod.recordSetupSubmissionAction({
         ...input,
         clientId,
@@ -400,8 +402,8 @@ export function MachineFirstSetupConnected({
         // (still true, one capture out of date) and a plain note says so. Nothing is re-sent: the entry stays on its saved view.
         // FAIL CLOSED FOR ACCESS, GENTLE ONLY FOR A TRANSIENT ERROR (#1369 R3-2). A definitive refusal (not signed in, or the record is no
         // longer this practitioner's) must not leave the old readings on screen, so the entry is replaced by the access notice.
-        setAccessRefusedAfterSave(!fresh.ok && fresh.refused === true);
-        setRefreshFailedAfterSave(!fresh.ok && fresh.refused !== true);
+        setRefusedAfterSave(!fresh.ok ? (fresh.refused ?? null) : null);
+        setRefreshFailedAfterSave(!fresh.ok && !fresh.refused);
       }
       return relayRecordResult(out);
     });
@@ -510,10 +512,10 @@ export function MachineFirstSetupConnected({
   const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;
   const autoRemembered = hold ? null : (ctx.remembered ?? null);
 
-  if (accessRefusedAfterSave) {
+  if (refusedAfterSave) {
     return (
-      <p className="text-sm text-amber-800" role="alert" data-testid="machine-access-refused">
-        {ACCESS_REFUSED_AFTER_SAVE_NOTICE}
+      <p className="text-sm text-amber-800" role="alert" data-testid={refusedAfterSave === "access" ? "machine-access-refused" : "machine-record-unavailable"}>
+        {refusedAfterSave === "access" ? ACCESS_REFUSED_AFTER_SAVE_NOTICE : RECORD_UNAVAILABLE_AFTER_SAVE_NOTICE}
       </p>
     );
   }
@@ -613,6 +615,7 @@ export function MachineFirstSetupConnected({
       // 4290452722).
       priorSetupUnavailable={ctx.priorSetupUnavailable}
       recordedSetupUnavailable={ctx.recordedSetupUnavailable}
+      submissionBlocked={refreshFailedAfterSave}
       blockId={blockId}
       // CREATE MODE. Forwarded rather than recreated here, and the
       // context-forwarding guard cannot see this one because it is not a

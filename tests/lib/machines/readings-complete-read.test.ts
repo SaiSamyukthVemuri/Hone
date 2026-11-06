@@ -281,7 +281,9 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
       "b",
       "s",
     );
-    expect(refused.ok === false && refused.refused).toBe(true);
+    expect(refused.ok === false && refused.refused).toBe("unavailable");
+    const denied = await readingsForBlock(fakeDb([], { error: { message: "permission denied", code: "42501" } }).db, "b", "s");
+    expect(denied.ok === false && denied.refused).toBe("access");
     const transient = await readingsForBlock(fakeDb([], { error: { message: "connection reset", code: "08006" } }).db, "b", "s");
     expect(transient.ok).toBe(false);
     expect(transient.ok === false && transient.refused).toBeUndefined();

@@ -1560,7 +1560,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // (OPS, after #1369 shard 1 at 6dc30fdd3: the failure no longer marks the surface unavailable, which replaced the saved entry; the
     // snapshot is kept as it was and a "Saved. The latest readings couldn't be refreshed" note is shown. The mounted tests in
     // machine-saved-identity-mounted.test.ts prove that behaviour.)
-    expect(src).toMatch(/: prev\s*: prev,\s*\);[\s\S]{0,900}?setRefreshFailedAfterSave\(!fresh\.ok && fresh\.refused !== true\);/);
+    expect(src).toMatch(/: prev\s*: prev,\s*\);[\s\S]{0,900}?setRefreshFailedAfterSave\(!fresh\.ok && !fresh\.refused\);/);
     expect(src, "a failed refresh must not mark the surface unavailable any more").not.toMatch(/\.\.\.prev, recordedSetupUnavailable: true/);
     expect(
       src,
@@ -1756,7 +1756,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // "blank" lines in the middle of it. A guard's extraction is as capable
     // of being wrong as the code it guards.
     const union = src.match(
-      /export type ReadingsRead =([\s\S]*?\|\s*\{ ok: false; refused\?: true \};)/,
+      /export type ReadingsRead =([\s\S]*?\|\s*\{ ok: false; refused\?: \"access\" \| \"unavailable\" \};)/,
     );
     expect(
       union,
@@ -1771,9 +1771,9 @@ describe("switching machine or mode clears the collected draft", () => {
     ).not.toMatch(/ok: false;[^}]*readings/);
 
     // AND EVERY FAILURE PATH USES IT: the query's, and not-signed-in.
-    expect(src).toMatch(/if \(!got\.ok\) return got\.refused \? \{ ok: false, refused: true \} : \{ ok: false \};/);
+    expect(src).toMatch(/if \(!got\.ok\) return got\.refused \? \{ ok: false, refused: got\.refused \} : \{ ok: false \};/);
     // NOT SIGNED IN is a failure too, not an empty treatment.
-    expect(src).toMatch(/if \(!scope\) return \{ ok: false, refused: true \};/);
+    expect(src).toMatch(/if \(!scope\) return \{ ok: false, refused: "access" \};/);
   });
 
   it("a failed GUIDANCE read is distinguishable from no previous treatment", () => {

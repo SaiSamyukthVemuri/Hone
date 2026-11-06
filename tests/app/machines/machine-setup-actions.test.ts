@@ -1605,25 +1605,31 @@ describe("previous-treatment guidance excludes the session being charted", () =>
 describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a transient failure (#1369 R3-2)", () => {
   const input = { ...ROUTE, blockId: "block-1" };
 
-  it("not signed in is a refusal", async () => {
-    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: true });
+  it("not signed in is an ACCESS refusal", async () => {
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
   });
 
-  it("a refused route (the session is not this client's) is a refusal", async () => {
+  it("a refused route (the session is not this client's, or a lineage lookup error) is UNAVAILABLE, not an accusation of access", async () => {
     signIn("studio-fett", "pract-sabrina", "owner");
     const { SessionLineageError } = await import("@/lib/sessions/session-lineage");
     LINEAGE.throws = new SessionLineageError("Treatment session not found.");
     try {
-      expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: true });
+      expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
     } finally {
       LINEAGE.throws = null;
     }
   });
 
-  it("the database's not-found for the block is a refusal", async () => {
+  it("the database's not-found for the block (deleted in another tab) is UNAVAILABLE", async () => {
     signIn("studio-fett", "pract-sabrina", "owner");
     DB.errorFor.treatment_setup_readings = { message: "Unknown treatment block for this session.", code: "P0002" } as never;
-    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: true });
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
+  });
+
+  it("an insufficient-privilege error from the database is an ACCESS refusal", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "permission denied", code: "42501" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
   });
 
   it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {

@@ -195,6 +195,12 @@ export type MachineFirstSetupPanelProps = {
    */
   recordedSetupUnavailable?: boolean;
   /**
+   * The host holds further saves (#1369 RC-1): the recorded settings shown are STALE because the refresh after a confirmed save failed,
+   * and a later save would be a revision made against a baseline she is not looking at. The server compares only the SET of group keys
+   * (`recordedGroupsMoved`), which a same-group revision does not change, so it cannot refuse this; the panel blocks until a reload.
+   */
+  submissionBlocked?: boolean;
+  /**
    * Persists the chosen machine as this practitioner's default. Supplied by
    * the connected wrapper.
    *
@@ -330,6 +336,7 @@ export function MachineFirstSetupPanel({
   recordedSetup = [],
   priorSetupUnavailable = false,
   recordedSetupUnavailable = false,
+  submissionBlocked = false,
   onSettingDraft,
   settingDraftFrozen = false,
   onRevisionUnresolved,
@@ -1066,7 +1073,7 @@ export function MachineFirstSetupPanel({
               onUnresolvedChange={setRevisionUnresolved}
               onDraftChange={onRevisionDraft}
               onRecord={recordAndCount!}
-              submissionHeld={selectionPending}
+              submissionHeld={selectionPending || submissionBlocked}
             />
           ) : (
             groups.map((group) => (

@@ -1208,7 +1208,7 @@ const isNative3gCase = (titlePath: string[]) => titlePath.some((part) => part.st
 test.beforeEach(async ({ page }, info) => {
   if (!isNative3gCase(info.titlePath)) return;
   await page.addInitScript((key) => {
-    const ids = ["machine-saved-refresh-note", "machine-access-refused"];
+    const ids = ["machine-saved-refresh-note", "machine-access-refused", "machine-record-unavailable"];
     const check = () => {
       for (const id of ids) {
         if (document.querySelector(`[data-testid="${id}"]`)) {

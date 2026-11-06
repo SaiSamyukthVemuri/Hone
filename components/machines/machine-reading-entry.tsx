@@ -494,6 +494,7 @@ export function MachineReadingEntry({
             type="button"
             variant="secondary"
             size="sm"
+            disabled={submissionHeld}
             onClick={() => {
               // A NEW capture, not an edit of the last one. Values AND channel
               // associations are cleared deliberately: pre-filling either from

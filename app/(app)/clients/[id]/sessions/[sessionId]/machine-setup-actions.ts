@@ -1185,7 +1185,7 @@ export async function readingsForBlockAction(input: {
   const scope = await identity();
   // NOT SIGNED IN is a FAILURE, not an empty treatment. It reaches the same
   // surface as a failed query and must not read as "nothing recorded".
-  if (!scope) return { ok: false, refused: true };
+  if (!scope) return { ok: false, refused: "access" };
   // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
   // path (#860 4297032712), but this read took a bare block id with no
   // lineage check either: the member-scoped SELECT policy admits any block
@@ -1203,7 +1203,7 @@ export async function readingsForBlockAction(input: {
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
   } catch (e) {
-    if (e instanceof SessionLineageError) return { ok: false, refused: true };
+    if (e instanceof SessionLineageError) return { ok: false, refused: "unavailable" };
     throw e;
   }
   const db = await machineDb();
@@ -1225,7 +1225,7 @@ export async function readingsForBlockAction(input: {
   //
   // The caller decides what to do with a failure; this one's job is to stop
   // pretending there was none.
-  if (!got.ok) return got.refused ? { ok: false, refused: true } : { ok: false };
+  if (!got.ok) return got.refused ? { ok: false, refused: got.refused } : { ok: false };
 
   // AND THE UNIT NAMES FOR WHAT CAME BACK (Codex, #860 4301669061).
   //
@@ -1276,8 +1276,12 @@ export type ReadingsRead =
        */
       unitNames: Record<string, string>;
     }
-  /** `refused`: a DEFINITIVE refusal (not signed in, not this practitioner's record). Absent: a failed read that may be transient. */
-  | { ok: false; refused?: true };
+  /**
+   * `refused`: the record must not be shown. "access" is a REAL access refusal (not signed in, insufficient privilege). "unavailable"
+   * is a record that cannot be loaded for this route (a transient lineage error, or a block deleted in another tab): neutral wording.
+   * Absent: a failed read that may be transient (the previous readings stay, with a note).
+   */
+  | { ok: false; refused?: "access" | "unavailable" };
 
 /** The profiles a practitioner may pick in this studio right now. */
 export async function listSelectableForCaller(): Promise<

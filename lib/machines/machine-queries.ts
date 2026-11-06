@@ -143,7 +143,7 @@ export type MachineOutcome<T> =
        * The database DEFINITIVELY refused the request (the block is not this practitioner's / not in this session). Set only by
        * `readingsForBlock`, so the post-save refresh can fail closed for access (#1369 R3-2) and stay gentle for a transient error.
        */
-      refused?: true;
+      refused?: "access" | "unavailable";
     };
 
 /**
@@ -1038,7 +1038,11 @@ export async function readingsForBlock(
     // migrations, and this read calls exactly one function - so a P0002 here
     // is that refusal and nothing else.
     if (error.code === "P0002") {
-      return { ok: false, error: "Could not read settings.", refused: true };
+      // NOT-FOUND: the block is not in this session any more (deleted in another tab) or never was. Not an accusation of access.
+      return { ok: false, error: "Could not read settings.", refused: "unavailable" };
+    }
+    if (error.code === "42501") {
+      return { ok: false, error: "Could not read settings.", refused: "access" };
     }
     return { ok: false, error: fail(error, "Could not read settings.") };
   }

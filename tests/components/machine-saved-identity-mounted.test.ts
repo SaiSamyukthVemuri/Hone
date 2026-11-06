@@ -562,7 +562,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   it("R3-2: a DEFINITIVE refusal on the refresh shows the access notice and leaves no readings or Saved view on screen", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
-    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: true } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: "access" } as never);
     await mountExisting(vi.fn());
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
@@ -572,6 +572,57 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(host!.querySelectorAll("input").length, "no reading field stays on screen").toBe(0);
     expect(host!.querySelector('[data-testid="machine-saved-refresh-note"]'), "not the gentle note").toBeNull();
     expect(actions.recordSetupSubmissionAction, "the save was not repeated").toHaveBeenCalledTimes(1);
+  });
+
+  it("F6-2: an UNAVAILABLE record (transient lineage error, block deleted in another tab) gets neutral wording, not an access accusation", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: "unavailable" } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    const notice = host!.querySelector('[data-testid="machine-record-unavailable"]');
+    expect(notice?.textContent).toBe("Saved. This treatment record could not be loaded just now; reload to try again.");
+    expect(host!.textContent).not.toContain("no longer have access");
+    expect(host!.querySelector('[data-testid="machine-access-refused"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "stale readings are not left on screen").toBeNull();
+    expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(1);
+  });
+
+  // RC-1 (Privacy, integrity). After a confirmed save whose refresh failed, the readings on screen are stale. The server compares only
+  // the SET of group keys (recordedGroupsMoved), which a same-group revision leaves unchanged, so it would not refuse a second save made
+  // against that stale baseline. The panel therefore blocks further saves until a reload.
+  it("RC-1: after a FAILED refresh a second save is blocked (no new capture can be started or submitted), and a successful refresh does not block", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    const another = host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-record-change"]')!;
+    expect(another.disabled, "cannot start a second capture from stale readings").toBe(true);
+    await act(async () => {
+      another.click();
+    });
+    expect(host!.querySelector('[data-testid="machine-reading-save"]'), "no editable form opened").toBeNull();
+    expect(actions.recordSetupSubmissionAction, "no second save").toHaveBeenCalledTimes(1);
+    expect(host!.querySelector('[data-testid="machine-saved-refresh-note"]')).not.toBeNull();
+  });
+
+  it("RC-1 NEGATIVE CONTROL: after a SUCCESSFUL refresh a second capture can be started and saved", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValue({ ok: true, submissionId: "sub-x", captures: 1, written: 2, reused: false } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    const another = host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-record-change"]')!;
+    expect(another.disabled).toBe(false);
+    await act(async () => {
+      another.click();
+    });
+    for (const [i, el] of fields().entries()) await type(el, String(20 + i));
+    await saveEntry();
+    expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(2);
   });
 
   it("R3-2 NEGATIVE CONTROL: a transient failure (no refusal flag) keeps the entry and shows no access notice", async () => {
