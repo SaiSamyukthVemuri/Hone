@@ -649,6 +649,8 @@ async function resolveNeedsAttentionInput({
       ...(procedureActionsRead.unavailable ? [UNAVAILABLE_RECORD_DETAILS] : []),
       ...(expiringSuppliesRead.unavailable ? [UNAVAILABLE_EXPIRING_SUPPLIES] : []),
     ],
+    // The supplies read is capped and its cut is not in treatmentMemoryNotReturned: a list this long may be missing supplies (AP2 must not read that as resolved).
+    suppliesMayBeCapped: expiringSupplies.length >= EXPIRING_SUPPLIES_LIMIT,
     treatmentMemoryNotReturned:
       clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
     recordDetailGaps: procedureActions.detailGaps,
@@ -684,7 +686,7 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
   const hit = visibleMemo.get(props.attentionSources);
   if (hit) return hit;
   const run = (async (): Promise<VisibleNeeds> => {
-    const input = await resolveNeedsAttentionInput(props);
+    const { suppliesMayBeCapped, ...input } = await resolveNeedsAttentionInput(props);
     // Unpaid balances are owner-only money (0254). A practitioner's render never queries them and never receives a figure.
     // HON-65: also OFF unless the unpaid gate is on (lib/dashboard/unpaid-gate). OFF = the loader is never called, so there are no
     // items, no window note or link, no "could not check" entry, and the heading count excludes unpaid.
@@ -714,7 +716,7 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     // AP2: a studio reminder that has resolved no longer holds its dismissal, so the same state returning later shows again.
     await restoreResolvedDismissals(
       props.studioId,
-      resolvedStudioDismissalKeys(model, read.rows, { suppliesMayBeCapped: input.supplies.length >= EXPIRING_SUPPLIES_LIMIT }),
+      resolvedStudioDismissalKeys(model, read.rows, { suppliesMayBeCapped }),
     );
     return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
   })();

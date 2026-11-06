@@ -47,7 +47,8 @@ describe("resolvedStudioDismissalKeys", () => {
   });
   it("the page passes the cap signal from the supplies read and the read exports its limit", () => {
     const STACK = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
-    expect(STACK).toMatch(/suppliesMayBeCapped: input\.supplies\.length >= EXPIRING_SUPPLIES_LIMIT/);
+    expect(STACK).toMatch(/suppliesMayBeCapped: expiringSupplies\.length >= EXPIRING_SUPPLIES_LIMIT/);
+    expect(STACK).toMatch(/resolvedStudioDismissalKeys\(model, read\.rows, \{ suppliesMayBeCapped \}\)/);
     expect(readFileSync("lib/record-keeping/queries.ts", "utf8")).toMatch(/export const EXPIRING_SUPPLIES_LIMIT = 50;[\s\S]*\.limit\(options\.limit \?\? EXPIRING_SUPPLIES_LIMIT\)/);
   });
   it("is bounded and deterministic", () => {
