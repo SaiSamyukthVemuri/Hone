@@ -3,7 +3,7 @@
   "migrations": {
     "count": 257,
     "last": "0301_session_block_machine_identity.sql",
-    "sha256": "e71b6a53d13bed1bbe59a137a264e49e0a20b55261d8212985ecf7d12b6a1142"
+    "sha256": "82c2cd813452752a92460de1e2e8bb1b1c7dd96be554312e83cb0c4ca8d1cf42"
   },
   "public": {
     "tables": [
@@ -14,6 +14,7 @@
       "appointment_settlements",
       "appointments",
       "audit_logs",
+      "block_write_receipts",
       "booking_tracking_consents",
       "calendar_connection_secrets",
       "calendar_connections",

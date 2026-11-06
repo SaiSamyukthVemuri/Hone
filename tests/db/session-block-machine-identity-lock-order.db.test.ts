@@ -379,7 +379,7 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)"
   it("(4) record_block_machine_identity waits behind the same copy, then completes: no deadlock (LM-2)", async () => {
     await waitsBehindCopy("record", (studio, s, b, m) =>
       asUser(studio.userId, (q) =>
-        q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [b, s, studio.clientId, null, m, "galvanic"]),
+        q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [b, s, studio.clientId, null, m, "galvanic", `idk-${randomUUID()}`]),
       ),
     );
   }, 60_000);

@@ -1185,10 +1185,25 @@ export async function recordBlockMachineIdentity(
     deviceId: string | null;
     modeKey: string | null;
     profileId: string | null;
+    /**
+     * THE RETRY KEY of this pick, reused by every retry of it (0301 receipts, Codex 4488743493). A write that committed and whose
+     * answer was lost is answered again, with the version that write produced and the identity it recorded, when the same key comes back.
+     */
+    idempotencyKey: string;
     /** The block version the form holds; checked inside the command (stale_block_version on a mismatch). */
     expectedUpdatedAt?: string | null;
   },
-): Promise<{ ok: true; updatedAt: string | null } | { ok: false; error: { code: string }; stale: boolean }> {
+): Promise<
+  | {
+      ok: true;
+      updatedAt: string | null;
+      /** True when the key matched an EARLIER write: nothing was written by this call. */
+      reused: boolean;
+      /** The identity the database holds for that write, so the caller adopts what was stored, not what it sent. */
+      identity: { profileId: string | null; deviceId: string | null; modeKey: string | null } | null;
+    }
+  | { ok: false; error: { code: string }; stale: boolean; unresolved: boolean }
+> {
   const { data, error } = await db.rpc("record_block_machine_identity", {
     p_block_id: input.blockId,
     p_session_id: input.sessionId,
@@ -1196,14 +1211,34 @@ export async function recordBlockMachineIdentity(
     p_profile_id: input.deviceId === null ? input.profileId : null,
     p_studio_machine_id: input.deviceId,
     p_mode_key: input.deviceId === null ? null : input.modeKey,
+    p_idempotency_key: input.idempotencyKey,
     p_expected_updated_at: input.expectedUpdatedAt ?? null,
   });
-  return error
-    ? {
-        ok: false,
-        error: { code: dbErrorCode(error) },
-        // The held version no longer matched inside the transaction; only the fact, never the message.
-        stale: /stale_block_version/.test(error.message ?? ""),
-      }
-    : { ok: true, updatedAt: typeof data === "string" ? data : null };
+  if (error) {
+    return {
+      ok: false,
+      error: { code: dbErrorCode(error) },
+      // The held version no longer matched inside the transaction; only the fact, never the message.
+      stale: /stale_block_version/.test(error.message ?? ""),
+      // A TRANSPORT FAILURE IS NOT A REFUSAL: with no database answer the write may have committed (Codex 4488743493).
+      unresolved: !isDefinitiveDatabaseAnswer(error),
+    };
+  }
+  // SHAPE-CHECKED. A reply that is not the object the command returns (a stale function still resolving) cannot be
+  // taken as "saved": the write may have committed, so it is unresolved and the same key will settle it.
+  const row = data as Partial<Record<string, unknown>> | null;
+  if (row === null || typeof row !== "object" || typeof row.updated_at !== "string") {
+    return { ok: false, error: { code: "unknown" }, stale: false, unresolved: true };
+  }
+  const text = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    ok: true,
+    updatedAt: row.updated_at,
+    reused: row.reused === true,
+    identity: {
+      profileId: text(row.machine_profile_id),
+      deviceId: text(row.studio_machine_id),
+      modeKey: text(row.machine_mode_key),
+    },
+  };
 }

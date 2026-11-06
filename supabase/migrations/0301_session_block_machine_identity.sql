@@ -41,6 +41,46 @@ alter table public.session_blocks
   validate constraint session_blocks_machine_identity_shape;
 
 -- ---------------------------------------------------------------------------
+-- WRITE RECEIPTS (Codex 4488743493 and 4488743496, decided by Sam 6 Nov 2026).
+--
+-- One row per same-key write that stamped an identity on a block. It exists so a write
+-- that COMMITTED and whose answer was lost can be answered again with the version the
+-- write itself produced: a replay returns the stored block updated_at and the stored
+-- identity, never the block's CURRENT version. Adopting a current version could mask a
+-- colleague's later edit (Insurance N-8); the stored one cannot, because anything done
+-- after the write still makes the next save conflict.
+--
+-- No clinical or free-text content: ids, a digest of the identity chosen, a timestamp.
+-- Written ONLY by the commands below, in the transaction of the write it describes, so a
+-- receipt never exists without its write. Kept for the life of the block (no pruning).
+-- RLS is on and no policy exists; direct privileges are revoked from every API role.
+-- ---------------------------------------------------------------------------
+create table if not exists public.block_write_receipts (
+  id uuid primary key default gen_random_uuid(),
+  studio_id uuid not null references public.studios (id) on delete cascade,
+  session_block_id uuid not null references public.session_blocks (id) on delete cascade,
+  kind text not null check (kind in ('identity', 'readings')),
+  idempotency_key text not null
+    check (length(btrim(idempotency_key)) between 8 and 100),
+  payload_digest text not null check (length(payload_digest) = 32),
+  resulting_updated_at timestamptz not null,
+  machine_profile_id text,
+  studio_machine_id uuid references public.studio_machines (id),
+  machine_mode_key text,
+  created_at timestamptz not null default now(),
+  constraint block_write_receipts_key_uniq unique (session_block_id, kind, idempotency_key)
+);
+
+comment on table public.block_write_receipts is
+  '0301. The receipt of one same-key write that stamped a machine identity on a treatment area: the digest of the identity chosen, the identity itself and the block updated_at that write produced. A replay of the key is answered from this row so a lost answer can be recovered without adopting a version the write did not produce. Ids and timestamps only; no clinical or free-text content.';
+
+alter table public.block_write_receipts enable row level security;
+revoke all on public.block_write_receipts from public;
+revoke all on public.block_write_receipts from anon;
+revoke all on public.block_write_receipts from authenticated;
+revoke all on public.block_write_receipts from service_role;
+
+-- ---------------------------------------------------------------------------
 -- The one writer of the three columns. Not granted to any API role: only the
 -- commands below call it, inside their own transaction.
 --
@@ -55,9 +95,11 @@ create or replace function public.apply_block_machine_identity(
   p_profile_id         text,
   p_studio_machine_id  uuid,
   p_mode_key           text,
-  p_expected_updated_at timestamptz default null
+  p_expected_updated_at timestamptz default null,
+  p_receipt_kind       text default null,
+  p_idempotency_key    text default null
 )
-returns timestamptz
+returns jsonb
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
@@ -65,37 +107,14 @@ as $$
 declare
   v_new timestamptz;
   v_current timestamptz;
+  v_key text := nullif(btrim(coalesce(p_idempotency_key, '')), '');
+  v_digest text;
+  v_receipt public.block_write_receipts%rowtype;
   v_profile text := nullif(btrim(coalesce(p_profile_id, '')), '');
   v_mode text := nullif(btrim(coalesce(p_mode_key, '')), '');
   v_unit_profile text;
   v_session_id uuid;
 begin
-  if p_studio_machine_id is not null then
-    select m.machine_profile_id into v_unit_profile
-      from public.studio_machines m
-     where m.id = p_studio_machine_id
-       and m.studio_id = p_studio_id
-       and m.retired_at is null;
-    if v_unit_profile is null then
-      raise exception 'That machine is not available in this studio.'
-        using errcode = 'check_violation';
-    end if;
-    if v_profile is not null and v_profile <> v_unit_profile then
-      raise exception 'The machine does not match the selected model.'
-        using errcode = 'check_violation';
-    end if;
-    v_profile := v_unit_profile;
-  else
-    if v_profile is null then
-      raise exception 'A machine model is required.'
-        using errcode = 'check_violation';
-    end if;
-    if v_mode is not null then
-      raise exception 'A mode needs a registered machine.'
-        using errcode = 'check_violation';
-    end if;
-  end if;
-
   -- THE HELD VERSION IS CHECKED INSIDE THIS TRANSACTION, under the row lock
   -- (Codex 4476240827, decided by OPS). A caller that holds the block's
   -- updated_at passes it; a mismatch is the same refusal as the block commands'
@@ -141,9 +160,71 @@ begin
   if not found then
     raise exception 'Block not found.' using errcode = 'check_violation';
   end if;
+  -- A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT, BEFORE ANY CHECK THAT DEPENDS ON THE BLOCK'S CURRENT STATE.
+  -- The earlier attempt committed and its answer was lost; the block may since have been edited, the unit retired or
+  -- the version moved on, none of which changes what that attempt did. The stored version is the one THAT write
+  -- produced (never the current one, Insurance N-8), so the caller adopts it and any later edit still conflicts on
+  -- its next save. The same key with a different identity is refused, never answered with the original.
+  if v_key is not null then
+    if p_receipt_kind is null or p_receipt_kind not in ('identity', 'readings') then
+      raise exception 'A receipt kind is required with a retry key.' using errcode = 'check_violation';
+    end if;
+    if length(v_key) not between 8 and 100 then
+      raise exception 'The retry key is not valid.' using errcode = 'check_violation';
+    end if;
+    v_digest := md5(
+      coalesce(nullif(btrim(coalesce(p_profile_id, '')), ''), '') || '|' ||
+      coalesce(p_studio_machine_id::text, '') || '|' ||
+      coalesce(nullif(btrim(coalesce(p_mode_key, '')), ''), ''));
+    select r.* into v_receipt
+      from public.block_write_receipts r
+     where r.session_block_id = p_block_id
+       and r.studio_id = p_studio_id
+       and r.kind = p_receipt_kind
+       and r.idempotency_key = v_key;
+    if found then
+      if v_receipt.payload_digest <> v_digest then
+        raise exception 'That save key was already used for a different machine choice.'
+          using errcode = 'unique_violation';
+      end if;
+      return jsonb_build_object(
+        'updated_at', v_receipt.resulting_updated_at,
+        'reused', true,
+        'machine_profile_id', v_receipt.machine_profile_id,
+        'studio_machine_id', v_receipt.studio_machine_id,
+        'machine_mode_key', v_receipt.machine_mode_key);
+    end if;
+  end if;
   if p_expected_updated_at is not null and v_current <> p_expected_updated_at then
     raise exception 'stale_block_version: this settings block was changed elsewhere';
   end if;
+
+  if p_studio_machine_id is not null then
+    select m.machine_profile_id into v_unit_profile
+      from public.studio_machines m
+     where m.id = p_studio_machine_id
+       and m.studio_id = p_studio_id
+       and m.retired_at is null;
+    if v_unit_profile is null then
+      raise exception 'That machine is not available in this studio.'
+        using errcode = 'check_violation';
+    end if;
+    if v_profile is not null and v_profile <> v_unit_profile then
+      raise exception 'The machine does not match the selected model.'
+        using errcode = 'check_violation';
+    end if;
+    v_profile := v_unit_profile;
+  else
+    if v_profile is null then
+      raise exception 'A machine model is required.'
+        using errcode = 'check_violation';
+    end if;
+    if v_mode is not null then
+      raise exception 'A mode needs a registered machine.'
+        using errcode = 'check_violation';
+    end if;
+  end if;
+
 
   -- AN AREA THAT ALREADY HOLDS xCell Pur READINGS NEVER GETS A NATIVE IDENTITY (Codex 4471593271, decided by OPS; protects
   -- the studio's existing records). Two machines' settings on one area, or the second overwriting the first, is the harm.
@@ -180,14 +261,27 @@ begin
          machine_mode_key = v_mode
    where b.id = p_block_id
    returning b.updated_at into v_new;
-  return v_new;
+  if v_key is not null then
+    insert into public.block_write_receipts (
+      session_block_id, studio_id, kind, idempotency_key, payload_digest,
+      resulting_updated_at, machine_profile_id, studio_machine_id, machine_mode_key)
+    values (
+      p_block_id, p_studio_id, p_receipt_kind, v_key, v_digest,
+      v_new, v_profile, p_studio_machine_id, v_mode);
+  end if;
+  return jsonb_build_object(
+    'updated_at', v_new,
+    'reused', false,
+    'machine_profile_id', v_profile,
+    'studio_machine_id', p_studio_machine_id,
+    'machine_mode_key', v_mode);
 end;
 $$;
 
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from public;
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from anon;
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from authenticated;
-revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz) from service_role;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text) from public;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text) from anon;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text) from authenticated;
+revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text) from service_role;
 
 -- ---------------------------------------------------------------------------
 -- COMMAND 1: record the identity of an EXISTING area (machine and mode chosen,
@@ -200,9 +294,10 @@ create or replace function public.record_block_machine_identity(
   p_profile_id         text,
   p_studio_machine_id  uuid,
   p_mode_key           text,
+  p_idempotency_key    text,
   p_expected_updated_at timestamptz default null
 )
-returns timestamptz
+returns jsonb
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
@@ -223,18 +318,20 @@ begin
     raise exception '%', 'Session not found or not writable by this practitioner.' using errcode = 'check_violation';
   end if;
   perform public.assert_block_in_session(p_block_id, p_session_id, v_studio);
-  -- Returns the block's new updated_at (from the UPDATE ... RETURNING).
+  -- Returns {updated_at, reused, machine_profile_id, studio_machine_id, machine_mode_key}: the block's new
+  -- updated_at (from the UPDATE ... RETURNING), or, for a replay of the same key, the one the original write
+  -- produced and the identity it recorded (see the receipt above).
   return public.apply_block_machine_identity(
     p_block_id, v_studio, p_profile_id, p_studio_machine_id, p_mode_key,
-    p_expected_updated_at);
+    p_expected_updated_at, 'identity', p_idempotency_key);
 end;
 $$;
 
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from public;
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from anon;
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from authenticated;
-revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) from service_role;
-grant execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz) to authenticated;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, text, timestamptz) from public;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, text, timestamptz) from anon;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, text, timestamptz) from authenticated;
+revoke execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, text, timestamptz) from service_role;
+grant execute on function public.record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, text, timestamptz) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- COMMAND 2: the initial save WITH identity, in ONE transaction.
@@ -378,7 +475,8 @@ as $$
 declare
   v_result jsonb;
   v_studio uuid;
-  v_new timestamptz;
+  v_applied jsonb;
+  v_receipt public.block_write_receipts%rowtype;
 begin
   -- LOCK ORDER: SESSION (FOR SHARE), THEN BLOCK (FOR UPDATE) - the order 0223 fixes in
   -- assert_setup_scope, and the order copy_session_setup and correct_finalized_session
@@ -430,12 +528,28 @@ begin
   if coalesce((v_result->>'reused')::boolean, false) is not true then
     -- The held version is checked here, in this transaction: a mismatch raises
     -- and rolls back the readings just written too. The new updated_at comes back
-    -- in the result as block_updated_at. A REPLAY returns none and checks nothing
-    -- (it writes nothing; decided by OPS, Insurance N-8).
-    v_new := public.apply_block_machine_identity(
+    -- in the result as block_updated_at.
+    v_applied := public.apply_block_machine_identity(
       p_block_id, v_studio, null, p_studio_machine_id, p_mode_key,
-      p_expected_updated_at);
-    v_result := v_result || jsonb_build_object('block_updated_at', v_new);
+      p_expected_updated_at, 'readings', p_idempotency_key);
+    v_result := v_result || jsonb_build_object('block_updated_at', v_applied->'updated_at');
+  else
+    -- A REPLAY IS ANSWERED WITH THE VERSION THE ORIGINAL SUBMISSION PRODUCED (Codex 4488743496), read from its receipt,
+    -- never the block's current version (Insurance N-8). It checks and writes nothing. A submission made before
+    -- the receipts existed has none: no version comes back and the caller fails closed (a stale refusal, then a reload).
+    select r.* into v_receipt
+      from public.block_write_receipts r
+     where r.session_block_id = p_block_id
+       and r.studio_id = v_studio
+       and r.kind = 'readings'
+       and r.idempotency_key = btrim(p_idempotency_key);
+    if found then
+      v_result := v_result || jsonb_build_object(
+        'block_updated_at', v_receipt.resulting_updated_at,
+        'machine_profile_id', v_receipt.machine_profile_id,
+        'studio_machine_id', v_receipt.studio_machine_id,
+        'machine_mode_key', v_receipt.machine_mode_key);
+    end if;
   end if;
   return v_result;
 end;

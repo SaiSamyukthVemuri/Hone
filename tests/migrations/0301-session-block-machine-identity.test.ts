@@ -55,9 +55,9 @@ describe("0301: grants", () => {
     ["public", "anon", "authenticated", "service_role"].every((r) =>
       new RegExp(`revoke execute on function public\\.${sig.replace(/[()]/g, "\\$&")}[^;]*from ${r};`).test(code),
     );
-  const internal = "apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz)";
+  const internal = "apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text)";
   const commands = [
-    "record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, timestamptz)",
+    "record_block_machine_identity(uuid, uuid, uuid, text, uuid, text, text, timestamptz)",
     "record_setup_submission_with_identity(uuid, uuid, text, text, jsonb, uuid, uuid, timestamptz)",
   ];
   it("the internal writer is granted to no API role", () => {
@@ -82,5 +82,34 @@ describe("0301: grants", () => {
 describe("0301: wording", () => {
   it("says the practitioner, with no pronouns", () => {
     expect(sql).not.toMatch(/\b(she|he|her|his|hers)\b/i);
+  });
+});
+
+describe("0301: the write receipts table (Codex 4488743493 and 4488743496)", () => {
+  it("is created once, with RLS on, no policy, and direct privileges revoked from every API role by name", () => {
+    expect(code.match(/create table if not exists public\.block_write_receipts/g)).toHaveLength(1);
+    expect(code).toMatch(/alter table public\.block_write_receipts enable row level security;/);
+    expect(code).not.toMatch(/create policy[^;]*block_write_receipts/i);
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(code, role).toContain(`revoke all on public.block_write_receipts from ${role};`);
+    }
+    expect(code).not.toMatch(/grant [a-z, ]+ on public\.block_write_receipts/i);
+  });
+  it("is unique per (block, kind, key) and keeps no clinical or free-text column", () => {
+    const table = code.slice(code.indexOf("create table if not exists public.block_write_receipts"), code.indexOf("comment on table public.block_write_receipts"));
+    expect(table).toMatch(/unique \(session_block_id, kind, idempotency_key\)/);
+    const textCols = [...table.matchAll(/^\s+(\w+) text\b/gm)].map((m) => m[1]);
+    expect(textCols.sort()).toEqual(["idempotency_key", "kind", "machine_mode_key", "machine_profile_id", "payload_digest"]);
+  });
+  it("a replay is answered from the receipt BEFORE the stale check, and never reads the block's current version into the answer", () => {
+    const apply = code.slice(code.indexOf("create or replace function public.apply_block_machine_identity"), code.indexOf("create or replace function public.record_block_machine_identity"));
+    expect(apply.indexOf("from public.block_write_receipts r")).toBeGreaterThan(-1);
+    expect(apply.indexOf("from public.block_write_receipts r")).toBeLessThan(apply.indexOf("stale_block_version"));
+    expect(apply).toMatch(/'updated_at', v_receipt\.resulting_updated_at/);
+  });
+  it("the readings replay returns the stored version from its receipt, not the block's", () => {
+    const wrap = code.slice(code.indexOf("create or replace function public.record_setup_submission_with_identity"));
+    expect(wrap).toMatch(/'block_updated_at', v_receipt\.resulting_updated_at/);
+    expect(wrap).not.toMatch(/select b\.updated_at/);
   });
 });

@@ -1838,6 +1838,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0223 (MPX-03, #829) to make the INITIAL save of a treatment area repeatable. One row per (session, caller-supplied retry key), recording a digest of the whole initial payload together with the block, entry and submission that key produced - so a retry after a lost response returns the original area instead of creating a second one carrying a second copy of the settings. TIER 2 RATHER THAN 1 because nothing in it is clinical content: it is a RECEIPT for a transport, and the three ids in it point at rows that each carry their own disposition in this registry. THE OBVIOUS ANSWER IS AN EXCLUSION on the same footing as studio_calendar_reservations - but `derived` would be an OVERCLAIM, and saying so is the point of leaving this pending. Two of its columns exist nowhere else: `idempotency_key`, which is opaque and minted by the caller's browser, and `payload_digest`, an md5 over the save's arguments. Neither is derivable from the rows it points at, and neither would mean anything to a client reading an archive - which is an argument for excluding it, not for calling it derived. It is studio-scoped and member-read like everything else here, because a key names a session and a session names a client.",
   },
+  block_write_receipts: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0301 (HON-8, #1369; Codex 4488743493 and 4488743496) so a machine-identity write or a readings submission that committed and whose answer was lost can be answered again with the block version THAT write produced. One row per (treatment area, kind, caller-supplied retry key): a digest of the identity chosen, the identity itself (model id, unit id, mode key) and the updated_at the write produced. TIER 2 and the same disposition as treatment_area_create_claims, for the same reason: nothing in it is clinical content or free text, it is a RECEIPT for a transport, and the ids in it point at rows that each carry their own disposition in this registry. Left pending rather than declared derived because `idempotency_key` is opaque and minted by the caller's browser and `payload_digest` is a hash of the choice, so neither exists anywhere else to be re-derived from. RLS is on, no policy exists and every API role's privileges are revoked: only the 0301 commands write it, in the transaction of the write it describes. Kept for the life of the block (no pruning).",
+  },
   treatment_setup_captures: {
     kind: "pending",
     ticket: "TRUTH-01B",

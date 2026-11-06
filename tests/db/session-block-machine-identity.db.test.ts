@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -279,7 +280,7 @@ describe("0301: an existing area", () => {
     const cols = `mode, apilus_modality, energy_level, minutes_performed, machine_frequency, primary_area, side, probe_key, tolerance_rating`;
     const before = await adminQuery(`select ${cols} from public.session_blocks where id=$1`, [blockId]);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, null, machine, "galvanic"]),
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [blockId, sessionId, studio.clientId, null, machine, "galvanic", `idk-${randomUUID()}`]),
     );
     expect(await identity(blockId)).toEqual({ machine_profile_id: PROFILE, studio_machine_id: machine, machine_mode_key: "galvanic" });
     const after = await adminQuery(`select ${cols} from public.session_blocks where id=$1`, [blockId]);
@@ -293,7 +294,7 @@ describe("0301: an existing area", () => {
     const machine = await register(other);
     await expect(
       asUser(other.userId, (q) =>
-        q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, owner.clientId, null, machine, "galvanic"]),
+        q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [blockId, sessionId, owner.clientId, null, machine, "galvanic", `idk-${randomUUID()}`]),
       ),
     ).rejects.toThrow();
     expect((await identity(blockId)).machine_profile_id).toBeNull();
@@ -330,7 +331,7 @@ describe("0301: an existing area", () => {
       );
     await submit(first);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, null, second, "galvanic"]),
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [blockId, sessionId, studio.clientId, null, second, "galvanic", `idk-${randomUUID()}`]),
     );
     expect((await identity(blockId)).studio_machine_id).toBe(second);
     const replay = await submit(first);
@@ -350,8 +351,8 @@ describe("0301: the block version token is checked and returned in the write tra
   const stamp = (studio: SeededStudio, sessionId: string, blockId: string, machine: string, held: string | null) =>
     asUser(studio.userId, async (q) => {
       const r = await q(
-        `select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7::timestamptz)::text as t`,
-        [blockId, sessionId, studio.clientId, null, machine, "galvanic", held],
+        `select (public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7,$8::timestamptz)->>'updated_at')::timestamptz::text as t`,
+        [blockId, sessionId, studio.clientId, null, machine, "galvanic", `stamp-${randomUUID()}`, held],
       );
       return r.rows[0].t as string;
     });
@@ -426,14 +427,14 @@ describe("0301: the block version token is checked and returned in the write tra
     expect((await identity(blockId)).studio_machine_id).toBeNull();
   });
 
-  it("a same-key replay returns NO version and checks nothing (Insurance N-8)", async () => {
+  it("a same-key replay checks nothing and returns the version the ORIGINAL write stored, not the block's current one (Insurance N-8; receipts)", async () => {
     const studio = await seedStudio("token-replay");
     const { sessionId, blockId } = await seedSession(studio);
     const machine = await register(studio);
     await submit(studio, sessionId, blockId, machine, "token-replay-0001", await version(blockId));
     const replay = await submit(studio, sessionId, blockId, machine, "token-replay-0001", "2001-01-01 00:00:00+00");
     expect(replay.reused).toBe(true);
-    expect(replay.block_updated_at).toBeUndefined();
+    expect(new Date(replay.block_updated_at!).getTime()).toBe(new Date(await version(blockId)).getTime());
   });
 });
 
@@ -522,7 +523,7 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
   const REFUSED = /already holds xCell Pur readings/;
   const record = (studio: SeededStudio, sessionId: string, blockId: string, profile: string | null, machine: string | null, mode: string | null) =>
     asUser(studio.userId, (q) =>
-      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, profile, machine, mode]),
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [blockId, sessionId, studio.clientId, profile, machine, mode, `idk-${randomUUID()}`]),
     );
   // The legacy columns are written by the older block commands, and a direct UPDATE needs an authenticated practitioner with column
   // rights this fixture does not need to reproduce: set the value as the owner, in one transaction, with the row triggers off.
@@ -666,7 +667,7 @@ describe("0301: a soft-deleted session takes no identity (Codex 4486745915)", ()
   }
   const identityCall = (studio: SeededStudio, sessionId: string, blockId: string, machine: string) =>
     asUser(studio.userId, (q) =>
-      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6)`, [blockId, sessionId, studio.clientId, null, machine, "galvanic"]),
+      q(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7)`, [blockId, sessionId, studio.clientId, null, machine, "galvanic", `idk-${randomUUID()}`]),
     );
 
   it("record_block_machine_identity refuses a deleted session and changes nothing", async () => {

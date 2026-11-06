@@ -19,7 +19,6 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
-  isDefinitiveDatabaseAnswer,
   isMissingCommand,
   MACHINE_CHOICE_NOT_STORABLE_YET,
 } from "@/lib/machines/save-attempt";
@@ -610,7 +609,16 @@ export async function recordBlockMachineIdentityAction(input: {
   profileId: string | null;
   /** The block version the host form is holding (its optimistic-concurrency token). */
   expectedUpdatedAt?: string | null;
-}): Promise<ActionResult & { updatedAt?: string }> {
+  /** One key per pick, reused by every retry of it: a write whose answer was lost is answered again from its receipt (0301). */
+  idempotencyKey: string;
+}): Promise<
+  ActionResult & {
+    updatedAt?: string;
+    /** The key matched an earlier write: the version and identity are the ones THAT write produced. */
+    reused?: boolean;
+    identity?: { profileId: string | null; deviceId: string | null; modeKey: string | null };
+  }
+> {
   const scope = await identity();
   if (!scope) {
     return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
@@ -631,6 +639,7 @@ export async function recordBlockMachineIdentityAction(input: {
       // CHECKED INSIDE THE COMMAND'S TRANSACTION, and the new version comes back from
       // the same UPDATE ... RETURNING (Codex 4476240827): no separate read can race it.
       expectedUpdatedAt: input.expectedUpdatedAt ?? null,
+      idempotencyKey: input.idempotencyKey,
     });
     if (!out.ok) {
       if (out.stale) {
@@ -640,15 +649,23 @@ export async function recordBlockMachineIdentityAction(input: {
       if (isMissingCommand(out.error)) {
         return { ok: false, code: "rejected", error: MACHINE_CHOICE_NOT_STORABLE_YET };
       }
-      return isDefinitiveDatabaseAnswer(out.error)
-        ? { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." }
-        : { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
+      // UNKNOWN IS NOT REJECTED (Codex 4488743493). With no database answer the write may have committed; "unknown" keeps the
+      // key so the caller can ask again and be answered from the receipt, instead of treating the pick as reverted.
+      return out.unresolved
+        ? { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." }
+        : { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." };
     }
     // Like Save: a stored pick must reach the session page data, or a reopened editor shows the pre-pick identity.
     revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
-    return out.updatedAt ? { ok: true, updatedAt: out.updatedAt } : { ok: true };
+    return {
+      ok: true,
+      reused: out.reused,
+      ...(out.updatedAt ? { updatedAt: out.updatedAt } : {}),
+      ...(out.identity ? { identity: out.identity } : {}),
+    };
   } catch {
-    return { ok: false, code: "not_persisted", error: "Your machine choice could not be saved just now. Try again." };
+    // A THROW AFTER THE WRITE WAS SENT SAYS NOTHING ABOUT IT: unknown, not "not saved".
+    return { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." };
   }
 }
 

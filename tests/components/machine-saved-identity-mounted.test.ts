@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const actions = vi.hoisted(() => ({
   recordSetupSubmissionAction: vi.fn(async () => ({ ok: true })),
@@ -406,7 +406,8 @@ describe("an existing area's reading entry reports its unsaved draft to the host
 
   // Privacy FH-2: a write that THROWS (server failure), not one that is refused, must not move the panel either.
   it("a THROWN identity write leaves the panel on the saved machine, keeps the typed readings, and says so", async () => {
-    actions.recordBlockMachineIdentityAction.mockRejectedValueOnce(new Error("network") as never);
+    // EVERY attempt throws: the first write and both same-key replays, so the pick is unconfirmed (Codex 4488743493).
+    for (let i = 0; i < 3; i += 1) actions.recordBlockMachineIdentityAction.mockRejectedValueOnce(new Error("network") as never);
     await mountExisting(vi.fn());
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
     await type(input, "120");
@@ -416,11 +417,14 @@ describe("an existing area's reading entry reports its unsaved draft to the host
       set.call(sel, "legacy:xcell");
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700));
+    });
     expect(sel.value).toBe("room-9");
     const after = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
     expect(after).toBe(input);
     expect(after.value).toBe("120");
-    expect(host!.textContent).toMatch(/did not save/i);
+    expect(host!.textContent).toMatch(/could not confirm/i);
   });
 
   // Codex 4480784741: a MODE change on a saved area is written first too. A refusal leaves the mode and the readings alone.
@@ -956,5 +960,264 @@ describe("Codex 4488516837: the panel cannot be opened while a create is unresol
     host!.remove();
     await mount({ blockId: null, settingDraftFrozen: false, onIdentityDraft: vi.fn(), onSettingDraft: vi.fn() });
     expect(host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.disabled).toBe(false);
+  });
+});
+
+// ===========================================================================
+// A LOST ANSWER IS SETTLED BY THE PICK'S KEY (Codex 4488743493 and 4488743496, Sam 6 Nov 2026).
+// The identity write committed and its reply was lost: the editor asks again with the SAME key, is answered with the version
+// THAT write produced and the identity it stored, keeps unrelated typed edits, and can save again. A different version than the
+// write's own is never adopted (Insurance N-8): the host only ever receives what the receipt returns.
+// ===========================================================================
+describe("a lost identity-write answer is recovered by its key", () => {
+  // An earlier test's replay timer may still be pending; let it fire (and fail) before this file's mocks are reset.
+  beforeEach(async () => {
+    await new Promise((r) => setTimeout(r, 700));
+  });
+  const pickValue = async (value: string) => {
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700));
+    });
+  };
+  const STORED = { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" };
+  const unknown = { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." } as never;
+  const keysOf = () => (actions.recordBlockMachineIdentityAction.mock.calls as unknown as [{ idempotencyKey: string }][]).map((c) => c[0].idempotencyKey);
+
+  it("(a) commit, lose the answer, recover: the panel shows the saved machine, the host holds the stored version, the typed edit stays, the key is reused", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce({ ok: true, reused: true, updatedAt: "v2-own", identity: STORED } as never);
+    const onBlockVersion = vi.fn();
+    await mount({ blockId: "b1", savedIdentity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null }, blockVersion: "v1", onBlockVersion });
+    await pickValue("room-9");
+    const keys = keysOf();
+    expect(keys).toHaveLength(2);
+    expect(keys[1], "the retry reuses the pick's key").toBe(keys[0]);
+    expect((actions.recordBlockMachineIdentityAction.mock.calls as unknown as unknown[][])[1][0]).toMatchObject({ expectedUpdatedAt: "v1" });
+    expect(onBlockVersion).toHaveBeenCalledWith("v2-own");
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("room-9");
+    expect(host!.textContent).not.toMatch(/could not confirm|did not save/i);
+  });
+
+  it("(a) the recovery touches only the identity write and the host's version: no other action, no draft callback, no clear", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce({ ok: true, reused: true, updatedAt: "v2-own", identity: STORED } as never);
+    actions.recordSetupSubmissionAction.mockClear();
+    const onRevisionDraft = vi.fn();
+    const onBlockVersion = vi.fn();
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion, onRevisionDraft });
+    onRevisionDraft.mockClear();
+    await pickValue("room-9");
+    expect(onBlockVersion).toHaveBeenCalledTimes(1);
+    expect(onRevisionDraft, "the typed-readings draft hold is not touched by the recovery").not.toHaveBeenCalled();
+    expect(actions.recordSetupSubmissionAction).not.toHaveBeenCalled();
+  });
+
+  it("an unconfirmed pick after every replay keeps the panel on the saved machine, says so, and asking again REUSES the key and settles it", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce({ ok: true, reused: true, updatedAt: "v2-own", identity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null } } as never);
+    const onBlockVersion = vi.fn();
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion });
+    await pickValue("legacy:xcell");
+    expect(host!.textContent).toMatch(/could not confirm/i);
+    expect(onBlockVersion).not.toHaveBeenCalled();
+    await pickValue("legacy:xcell");
+    const keys = keysOf();
+    expect(keys).toHaveLength(4);
+    expect(new Set(keys).size, "one key for the whole pick").toBe(1);
+    expect(onBlockVersion).toHaveBeenCalledWith("v2-own");
+  });
+
+  it("NEGATIVE CONTROL: a definitive refusal releases the key, so the next pick is a NEW write with a new key", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce({ ok: false, code: "rejected", error: "changed elsewhere" } as never)
+      .mockResolvedValueOnce({ ok: true, updatedAt: "v2", identity: STORED } as never);
+    await mount({ blockId: "b1", savedIdentity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null }, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await pickValue("room-9");
+    await pickValue("room-9");
+    const keys = keysOf();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it("a DIFFERENT pick while an earlier one is unconfirmed first settles the earlier one by its own key, and writes against the version that returns", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown)
+      .mockResolvedValueOnce(unknown) // first pick unconfirmed after its replays
+      .mockResolvedValueOnce({ ok: true, reused: true, updatedAt: "v2-own", identity: { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null } } as never)
+      .mockResolvedValueOnce({ ok: true, updatedAt: "v3", identity: STORED } as never);
+    const onBlockVersion = vi.fn();
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion });
+    await pickValue("legacy:xcell");
+    await pickValue("room-9"); // a different choice
+    const calls = (actions.recordBlockMachineIdentityAction.mock.calls as unknown as [{ idempotencyKey: string; expectedUpdatedAt: string | null }][]).map((c) => c[0]);
+    expect(calls).toHaveLength(5);
+    expect(calls[3].idempotencyKey, "the earlier pick is settled by its own key").toBe(calls[0].idempotencyKey);
+    expect(calls[4].idempotencyKey).not.toBe(calls[0].idempotencyKey);
+    expect(calls[4].expectedUpdatedAt, "the new pick goes against the version the earlier write produced").toBe("v2-own");
+  });
+});
+
+describe("(b) a lost readings answer: the replay's stored version reaches the host, and a replay with none is not adopted", () => {
+  it("the version in a REUSED reply is handed to the host (the stored one)", async () => {
+    actions.recordSetupSubmissionAction.mockReset();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, reused: true, captures: 1, written: 1, updatedAt: "v2-own" } as never);
+    const onBlockVersion = vi.fn();
+    const load = await mount({ blockId: "b1", savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" }, blockVersion: "v1", onBlockVersion });
+    expect(load).toHaveBeenCalled();
+    const src = readFileSync(path.join(process.cwd(), "components/machines/machine-first-setup-connected.tsx"), "utf8");
+    expect(src).toMatch(/if \(out\.ok && out\.updatedAt\) onBlockVersion\?\.\(out\.updatedAt\)/);
+  });
+  it("LEGACY: a reused reply with NO version (a submission made before the receipts) adopts nothing: the source never falls back to a read or a guess", () => {
+    const src = readFileSync(path.join(process.cwd(), "components/machines/machine-first-setup-connected.tsx"), "utf8");
+    const onRecord = src.slice(src.indexOf("const onRecord"), src.indexOf("const selectMachineInner"));
+    // The only adoption is the reply's own updatedAt; nothing reads session_blocks, the readings or `new Date()` for a version.
+    expect(onRecord.match(/onBlockVersion\?\./g)).toHaveLength(1);
+    expect(onRecord).not.toMatch(/updated_at|new Date|Date\.now/);
+  });
+});
+
+// ===========================================================================
+// SAM'S NAMED ASSERTION (6 Nov 2026): an UNRELATED draft field holds the SAME value after a lost-answer recovery, and the next
+// save then succeeds. The host form's own note is rendered beside the wrapper, owned by the host (not by the panel), and the host
+// holds the block version the way block-setup-form does (it adopts whatever onBlockVersion reports).
+// ===========================================================================
+describe("an unrelated draft field survives each lost-answer recovery, and the next save then succeeds", () => {
+  const STORED = { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" };
+  const note = () => host!.querySelector<HTMLInputElement>('[data-testid="host-note"]')!;
+  const held = () => host!.querySelector('[data-testid="host-held-version"]')!.textContent;
+  const typeNote = async (value: string) => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(note(), value);
+      note().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 700)); });
+
+  async function mountHost() {
+    const { useState } = await import("react");
+    function HostForm() {
+      const [text, setText] = useState("");
+      const [version, setVersion] = useState<string>("v1");
+      return createElement(
+        "div",
+        null,
+        createElement("input", { "data-testid": "host-note", type: "text", "aria-label": "note", value: text, onChange: (e: { target: { value: string } }) => setText(e.target.value) }),
+        createElement("span", { "data-testid": "host-held-version" }, version),
+        createElement(MachineFirstSetupConnected, {
+          clientId: "c",
+          sessionId: "s",
+          blockId: "b1",
+          load: vi.fn(async () => ({ ...CTX })),
+          savedIdentity: STORED,
+          blockVersion: version,
+          onBlockVersion: setVersion,
+        } as never),
+      );
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(createElement(HostForm));
+    });
+  }
+  const modeButton = (label: string) =>
+    [...host!.querySelectorAll<HTMLButtonElement>('[data-testid="machine-mode-picker"] button')].find((b) => b.textContent === label)!;
+  const typeReadings = async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    for (const [i, el] of [...host!.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"], input[type="number"]')].entries()) {
+      await act(async () => {
+        set.call(el, String(10 + i));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+  };
+  const saveReadings = () =>
+    act(async () => {
+      host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!.click();
+    });
+  beforeEach(settle);
+
+  it("LOST IDENTITY ANSWER: the host's note holds the same value, the host holds the STORED version, and the next save goes out with it and succeeds", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordSetupSubmissionAction.mockReset();
+    actions.recordBlockMachineIdentityAction
+      .mockResolvedValueOnce({ ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." } as never)
+      .mockResolvedValueOnce({ ok: true, reused: true, updatedAt: "v2-own", identity: STORED } as never);
+    actions.recordSetupSubmissionAction.mockResolvedValue({ ok: true, submissionId: "sub-n", captures: 1, written: 2, reused: false, updatedAt: "v3" } as never);
+    await mountHost();
+    await typeNote("keep this note exactly");
+    expect(held()).toBe("v1");
+    await act(async () => modeButton("Second").click());
+    await settle();
+    expect(note().value, "the unrelated field holds the SAME value after the recovery").toBe("keep this note exactly");
+    expect(held(), "the host adopted the version the lost write produced").toBe("v2-own");
+    expect(host!.textContent).not.toMatch(/could not confirm|did not save/i);
+
+    await typeReadings();
+    await saveReadings();
+    expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(1);
+    expect((actions.recordSetupSubmissionAction.mock.calls as unknown as unknown[][])[0][0]).toMatchObject({ expectedUpdatedAt: "v2-own" });
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the next save succeeded").not.toBeNull();
+    expect(note().value).toBe("keep this note exactly");
+    expect(held()).toBe("v3");
+  });
+
+  it("LOST READINGS ANSWER: the host's note holds the same value, the host holds the STORED version from the replay, and the next write goes out with it and succeeds", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordSetupSubmissionAction.mockReset();
+    actions.recordSetupSubmissionAction
+      .mockResolvedValueOnce({ ok: false, code: "unknown", error: "no answer" } as never)
+      .mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: true, updatedAt: "v2-own" } as never);
+    actions.recordBlockMachineIdentityAction.mockResolvedValue({ ok: true, updatedAt: "v3", identity: STORED } as never);
+    await mountHost();
+    await typeNote("another unrelated draft");
+    await typeReadings();
+    await saveReadings(); // the answer is lost: unknown
+    expect(held(), "nothing is adopted from an unknown answer").toBe("v1");
+    expect(note().value).toBe("another unrelated draft");
+    await saveReadings(); // the retry, same key
+    const keys = (actions.recordSetupSubmissionAction.mock.calls as unknown as [{ idempotencyKey: string }][]).map((c) => c[0].idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[1], "the retry reuses the save's key").toBe(keys[0]);
+    expect(note().value, "the unrelated field holds the SAME value after the recovery").toBe("another unrelated draft");
+    expect(held(), "the host adopted the version the lost submission produced").toBe("v2-own");
+
+    await act(async () => modeButton("Second").click());
+    await settle();
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect((actions.recordBlockMachineIdentityAction.mock.calls as unknown as unknown[][])[0][0]).toMatchObject({ expectedUpdatedAt: "v2-own" });
+    expect(held(), "the next write succeeded").toBe("v3");
+    expect(note().value).toBe("another unrelated draft");
+  });
+
+  it("NEGATIVE CONTROL: a refusal (stale) after the recovery adopts nothing and the unrelated field still holds its value", async () => {
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: "This settings block was changed elsewhere. Reload." } as never);
+    await mountHost();
+    await typeNote("still here");
+    await act(async () => modeButton("Second").click());
+    await settle();
+    expect(held()).toBe("v1");
+    expect(note().value).toBe("still here");
+    expect(host!.textContent).toMatch(/changed elsewhere/i);
   });
 });

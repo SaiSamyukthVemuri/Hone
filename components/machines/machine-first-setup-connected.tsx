@@ -140,6 +140,15 @@ type MachineFirstSetupPanelRecord = NonNullable<
   Parameters<typeof MachineFirstSetupPanel>[0]["onRecord"]
 >;
 
+type IdentityChoice = { deviceId: string | null; modeKey: string | null; profileId: string | null };
+type IdentityWriteOutcome =
+  | { ok: true; updatedAt?: string; reused?: boolean; identity?: IdentityChoice }
+  | { ok: false; code: string; error: string };
+/** Same-key replays after an unconfirmed identity write, before the pick is reported as unconfirmed. */
+export const IDENTITY_REPLAYS = 2;
+export const IDENTITY_REPLAY_DELAY_MS = 300;
+const IDENTITY_UNCONFIRMED = "We could not confirm that your machine choice was saved. Choose it again to settle it.";
+
 /**
  * One recorder result, relayed to the entry.
  *
@@ -203,6 +212,8 @@ export function MachineFirstSetupConnected({
   // loaded; an area that started with none and then recorded one here kept
   // reporting "none", so a later clear took the preference-only branch, said it
   // had worked, and left the saved identity in place.
+  // THE PICK WHOSE ANSWER IS NOT KNOWN: its key and what it asked for, kept until a same-key retry settles it.
+  const identityAttemptRef = useRef<{ sig: string; key: string; choice: IdentityChoice } | null>(null);
   const [written, setWritten] = useState<NonNullable<MachineFirstSetupConnectedProps["savedIdentity"]> | null>(null);
   const savedIdentity = written ?? savedIdentityProp;
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
@@ -465,18 +476,58 @@ export function MachineFirstSetupConnected({
     // remembered preference where it was, not move it to a machine this area cannot take. A new area carries the choice into
     // the host's Save instead (one transaction).
     if (blockId && chosen !== null) {
-      const saved = await mod.recordBlockMachineIdentityAction({
-        clientId,
-        sessionId,
-        blockId,
-        deviceId: chosen.deviceId,
-        modeKey: chosen.modeKey,
-        profileId: chosen.profileId,
-        expectedUpdatedAt: blockVersion ?? null,
-      });
-      if (!saved.ok) return { ok: false, error: saved.error, reverted: true };
-      setWritten({ profileId: chosen.profileId, deviceId: chosen.deviceId, modeKey: chosen.modeKey });
-      if (saved.updatedAt) onBlockVersion?.(saved.updatedAt);
+      // A WRITE WHOSE ANSWER WAS LOST IS SETTLED BY ITS KEY, NOT REPORTED AS REVERTED (Codex 4488743493). Each pick has ONE key,
+      // reused by every retry of it; the database answers a same-key retry from its receipt with the version THAT write produced
+      // and the identity it recorded (never the block's current version: a colleague's later edit must still conflict, N-8).
+      let version = blockVersion ?? null;
+      const adopt = (out: Extract<IdentityWriteOutcome, { ok: true }>, fallback: IdentityChoice) => {
+        const stored = out.identity ?? fallback;
+        setWritten({ profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey });
+        if (out.updatedAt) {
+          version = out.updatedAt;
+          onBlockVersion?.(out.updatedAt);
+        }
+        identityAttemptRef.current = null;
+      };
+      const write = async (c: IdentityChoice, key: string): Promise<IdentityWriteOutcome> => {
+        for (let attempt = 0; ; attempt += 1) {
+          let out: IdentityWriteOutcome;
+          try {
+            out = await mod.recordBlockMachineIdentityAction({
+              clientId,
+              sessionId,
+              blockId,
+              deviceId: c.deviceId,
+              modeKey: c.modeKey,
+              profileId: c.profileId,
+              expectedUpdatedAt: version,
+              idempotencyKey: key,
+            });
+          } catch {
+            out = { ok: false, code: "unknown", error: IDENTITY_UNCONFIRMED };
+          }
+          if (out.ok || out.code !== "unknown" || attempt >= IDENTITY_REPLAYS) return out;
+          await new Promise((resolve) => setTimeout(resolve, IDENTITY_REPLAY_DELAY_MS));
+        }
+      };
+      const sig = `${chosen.deviceId ?? ""}|${chosen.modeKey ?? ""}|${chosen.profileId ?? ""}`;
+      const earlier = identityAttemptRef.current;
+      // A DIFFERENT PICK WHILE AN EARLIER ONE IS UNCONFIRMED: settle the earlier one first, so this pick is written against the
+      // version that write produced (or not at all), never against a version the earlier write has already moved.
+      if (earlier && earlier.sig !== sig) {
+        const settled = await write(earlier.choice, earlier.key);
+        if (settled.ok) adopt(settled, earlier.choice);
+        else if (settled.code === "unknown") return { ok: false, error: IDENTITY_UNCONFIRMED, reverted: true };
+        else identityAttemptRef.current = null;
+      }
+      const attempt = identityAttemptRef.current ?? { sig, key: globalThis.crypto.randomUUID(), choice: chosen };
+      const saved = await write(chosen, attempt.key);
+      if (!saved.ok) {
+        // Unconfirmed: keep the key, so asking again is answered from the receipt (or writes once). Definitive: nothing was written.
+        identityAttemptRef.current = saved.code === "unknown" ? attempt : null;
+        return { ok: false, error: saved.error, reverted: true };
+      }
+      adopt(saved, chosen);
     }
     // THE PREFERENCE (a suggestion for the next visit) is written only for a
     // native unit; choosing the existing workflow leaves it alone.

@@ -2062,6 +2062,14 @@ describe("the staleness refusal, narrowed to the revise path", () => {
   });
 });
 
+const RECEIPT = (updatedAt: string) => ({
+  updated_at: updatedAt,
+  reused: false,
+  machine_profile_id: "fixture:p",
+  studio_machine_id: "11111111-1111-4111-8111-111111111111",
+  machine_mode_key: "flash",
+});
+
 // ===========================================================================
 // 0301 NOT APPLIED YET (Privacy EH-1/EH-2): saving the machine choice on an
 // existing area says it cannot be saved yet. It never says saved.
@@ -2074,6 +2082,7 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
     deviceId: "11111111-1111-4111-8111-111111111111",
     modeKey: "flash",
     profileId: null,
+    idempotencyKey: "pick-key-0001",
   };
 
   it("a missing command (PGRST202) is a visible, definitive 'can't save the machine choice yet'", async () => {
@@ -2096,7 +2105,7 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
 
   it("with the command present the choice is saved", async () => {
     signIn("studio-1", "prac-1", "practitioner");
-    DB.rpcResult = null;
+    DB.rpcResult = RECEIPT("v2");
     const out = await actions.recordBlockMachineIdentityAction(args);
     expect(out.ok).toBe(true);
   });
@@ -2115,19 +2124,23 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     deviceId: "11111111-1111-4111-8111-111111111111",
     modeKey: "flash",
     profileId: null,
+    idempotencyKey: "pick-key-0001",
   };
   it("passes the held version to the command and returns the version the command returned", async () => {
     signIn("studio-1", "prac-1", "practitioner");
-    DB.rpcResult = "v2";
+    DB.rpcResult = RECEIPT("v2");
     const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
-    expect(out).toEqual({ ok: true, updatedAt: "v2" });
-    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
+    expect(out).toMatchObject({ ok: true, updatedAt: "v2", reused: false });
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1", p_idempotency_key: "pick-key-0001" });
   });
-  it("without a held version it sends null and returns whatever the command returned", async () => {
+  it("without a held version it sends null; a reply that is not the receipt object is UNKNOWN, never 'saved'", async () => {
     signIn("studio-1", "prac-1", "practitioner");
-    DB.rpcResult = null;
-    expect(await actions.recordBlockMachineIdentityAction(args)).toEqual({ ok: true });
+    DB.rpcResult = RECEIPT("v2");
+    expect((await actions.recordBlockMachineIdentityAction(args)).ok).toBe(true);
     expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: null });
+    DB.rpcResult = null;
+    const odd = await actions.recordBlockMachineIdentityAction(args);
+    expect(odd).toMatchObject({ ok: false, code: "unknown" });
   });
   it("NEGATIVE CONTROL: a stale_block_version refusal from the command is the changed-elsewhere conflict, with no token", async () => {
     signIn("studio-1", "prac-1", "practitioner");
@@ -2148,7 +2161,7 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
   it("a stored identity write revalidates the session page, and a refused or failed one does not", async () => {
     signIn("studio-1", "prac-1", "practitioner");
     revalidatePathMock.mockClear();
-    DB.rpcResult = "v2";
+    DB.rpcResult = RECEIPT("v2");
     expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(true);
     expect(revalidatePathMock).toHaveBeenCalledTimes(1);
     expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
@@ -2165,6 +2178,45 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     expect(src).not.toMatch(/readBlockVersion|block-version/);
   });
 });
+
+// ===========================================================================
+// A LOST ANSWER IS UNKNOWN, AND A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT (Codex 4488743493)
+// ===========================================================================
+describe("recordBlockMachineIdentityAction: a lost answer is unknown, a replay returns the stored version and identity", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: "11111111-1111-4111-8111-111111111111",
+    modeKey: "flash",
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+    expectedUpdatedAt: "v1",
+  };
+  it("a transport failure (no database code) is code 'unknown', not 'not_persisted' or a refusal, so the caller keeps the key", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { message: "fetch failed" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out).toMatchObject({ ok: false, code: "unknown" });
+  });
+  it("a definitive refusal stays 'rejected' (nothing was written, the key is released)", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    expect(await actions.recordBlockMachineIdentityAction(args)).toMatchObject({ ok: false, code: "rejected" });
+  });
+  it("a replay returns the STORED version and identity with reused: true", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v2"), reused: true };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out).toEqual({
+      ok: true,
+      reused: true,
+      updatedAt: "v2",
+      identity: { profileId: "fixture:p", deviceId: "11111111-1111-4111-8111-111111111111", modeKey: "flash" },
+    });
+  });
+});
+
 
 // Insurance F-1 / Codex 4475784164: a non-replayed submission stamps the block identity (bumps updated_at) too.
 describe("recordSetupSubmissionAction hands back the new block version", () => {
