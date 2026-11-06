@@ -21,6 +21,20 @@ vi.mock("@/lib/supabase/queries", () => ({
   }),
 }));
 
+// Decision 3: the action now reads the appointment's assignment through the caller's client before
+// the command. The actor here is an owner, who may complete any appointment, so the row is enough.
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => {
+    const chain: Record<string, unknown> = new Proxy({}, {
+      get: (_t, prop: string) =>
+        prop === "maybeSingle"
+          ? async () => ({ data: { practitioner_id: "prac-1" }, error: null })
+          : () => chain,
+    });
+    return { from: () => chain };
+  },
+}));
+
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: async () => ({ error: rpcError.value }),

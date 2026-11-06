@@ -27,6 +27,7 @@ import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
+import { canCompleteAppointment } from "@/lib/appointments/completion-authority";
 // APPOINTMENT BOUNDARY B4 (migration 0173). The governed repair surfaces that
 // replace the operational hatch 0172 closed: owner-only outcome correction and
 // the member-authorized appointment-notes correction.
@@ -507,6 +508,7 @@ export default async function AppointmentDetailPage({
             status={typedStatus}
             startsAt={data.starts_at}
             endsAt={data.ends_at}
+            canComplete={canCompleteAppointment(practitioner, data.practitioner_id)}
           />
         </section>
       )}
