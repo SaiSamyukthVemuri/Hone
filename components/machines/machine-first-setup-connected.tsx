@@ -41,6 +41,8 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // show another client's settings (Codex, 9c6fbbe5).
 
 /** ONE refusal text for clearing a saved machine, wherever it is reached (Insurance N-3). */
+export const ACCESS_REFUSED_AFTER_SAVE_NOTICE =
+  "Saved. You no longer have access to this treatment record, so its readings are not shown.";
 export const SAVED_REFRESH_FAILED_NOTE = "Saved. The latest readings couldn't be refreshed; reload to see them.";
 export const PREFERENCE_NOT_REMEMBERED = "That machine was not remembered for your next visit.";
 export const SAVED_MACHINE_CANNOT_BE_CLEARED =
@@ -204,6 +206,7 @@ export function MachineFirstSetupConnected({
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   // A CONFIRMED SAVE whose follow-up refresh of the recorded settings failed: the save stands, only the list is out of date.
   const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
+  const [accessRefusedAfterSave, setAccessRefusedAfterSave] = useState(false);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
 
   const open = useCallback(async () => {
@@ -300,6 +303,7 @@ export function MachineFirstSetupConnected({
       // page supplied, and the server re-checks them against the studio it
       // derives for itself (Codex, #860 4297032712).
       setRefreshFailedAfterSave(false);
+      setAccessRefusedAfterSave(false);
       const out = await mod.recordSetupSubmissionAction({
         ...input,
         clientId,
@@ -394,7 +398,10 @@ export function MachineFirstSetupConnected({
         // save was confirmed, so a failed refresh used to replace the whole entry, the saved confirmation included, with "could not
         // be read just now", which is the notice for a failure when the panel OPENS and still is. Here the snapshot is kept
         // (still true, one capture out of date) and a plain note says so. Nothing is re-sent: the entry stays on its saved view.
-        setRefreshFailedAfterSave(!fresh.ok);
+        // FAIL CLOSED FOR ACCESS, GENTLE ONLY FOR A TRANSIENT ERROR (#1369 R3-2). A definitive refusal (not signed in, or the record is no
+        // longer this practitioner's) must not leave the old readings on screen, so the entry is replaced by the access notice.
+        setAccessRefusedAfterSave(!fresh.ok && fresh.refused === true);
+        setRefreshFailedAfterSave(!fresh.ok && fresh.refused !== true);
       }
       return relayRecordResult(out);
     });
@@ -502,6 +509,14 @@ export function MachineFirstSetupConnected({
   const hold = holdAutoSelect && !blockId;
   const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;
   const autoRemembered = hold ? null : (ctx.remembered ?? null);
+
+  if (accessRefusedAfterSave) {
+    return (
+      <p className="text-sm text-amber-800" role="alert" data-testid="machine-access-refused">
+        {ACCESS_REFUSED_AFTER_SAVE_NOTICE}
+      </p>
+    );
+  }
 
   return (
     <>

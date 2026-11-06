@@ -275,6 +275,18 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     ).not.toContain("Unknown treatment block");
   });
 
+  it("R3-2: only the not-found refusal carries the definitive `refused` flag; any other failure does not", async () => {
+    const refused = await readingsForBlock(
+      fakeDb([], { error: { message: "Unknown treatment block for this session.", code: "P0002" } }).db,
+      "b",
+      "s",
+    );
+    expect(refused.ok === false && refused.refused).toBe(true);
+    const transient = await readingsForBlock(fakeDb([], { error: { message: "connection reset", code: "08006" } }).db, "b", "s");
+    expect(transient.ok).toBe(false);
+    expect(transient.ok === false && transient.refused).toBeUndefined();
+  });
+
   it("CONTROL: a failure with ANOTHER code still passes its words through", async () => {
     // Without this the mapping above would also pass if it swallowed every
     // message, and "connection reset" is exactly the detail worth keeping.

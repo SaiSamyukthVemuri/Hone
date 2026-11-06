@@ -1185,7 +1185,7 @@ export async function readingsForBlockAction(input: {
   const scope = await identity();
   // NOT SIGNED IN is a FAILURE, not an empty treatment. It reaches the same
   // surface as a failed query and must not read as "nothing recorded".
-  if (!scope) return { ok: false };
+  if (!scope) return { ok: false, refused: true };
   // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
   // path (#860 4297032712), but this read took a bare block id with no
   // lineage check either: the member-scoped SELECT policy admits any block
@@ -1198,7 +1198,14 @@ export async function readingsForBlockAction(input: {
   // nothing about the block, which is exactly the mistake round 8 made here -
   // the check was added, the hole was reported closed, and the read still
   // filtered on an unbound block id (Codex, #860 4298457378).
-  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  // A refused route is a DEFINITIVE refusal (#1369 R3-2): the caller must not keep showing the old readings. A database error inside
+  // the lineage lookup throws the same error, so this fails closed for access in that rare case too.
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) return { ok: false, refused: true };
+    throw e;
+  }
   const db = await machineDb();
   // ...and this one binds the BLOCK to that session, in the query.
   const got = await readingsForBlock(db, input.blockId, input.sessionId);
@@ -1218,7 +1225,7 @@ export async function readingsForBlockAction(input: {
   //
   // The caller decides what to do with a failure; this one's job is to stop
   // pretending there was none.
-  if (!got.ok) return { ok: false };
+  if (!got.ok) return got.refused ? { ok: false, refused: true } : { ok: false };
 
   // AND THE UNIT NAMES FOR WHAT CAME BACK (Codex, #860 4301669061).
   //
@@ -1269,7 +1276,8 @@ export type ReadingsRead =
        */
       unitNames: Record<string, string>;
     }
-  | { ok: false };
+  /** `refused`: a DEFINITIVE refusal (not signed in, not this practitioner's record). Absent: a failed read that may be transient. */
+  | { ok: false; refused?: true };
 
 /** The profiles a practitioner may pick in this studio right now. */
 export async function listSelectableForCaller(): Promise<

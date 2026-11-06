@@ -521,6 +521,69 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(1);
   });
 
+  // Codex 4487911008: write-first on a saved area leaves the OLD machine's entry mounted while the change is pending. If the identity
+  // write has landed (A -> B) and the preference request is still pending, "Save these settings" would submit A's readings under B.
+  const saveButton = () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!;
+  it("Codex 4487911008: while an identity change is pending (identity landed, preference not yet) the old entry cannot submit; it works again once the change settles", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true } as never);
+    let settlePreference!: (v: unknown) => void;
+    actions.rememberMachineSelectionAction.mockImplementationOnce((() => new Promise((r) => (settlePreference = r))) as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    expect(saveButton().disabled, "ready to save before the change").toBe(false);
+    await clickMode("Second");
+    expect(actions.recordBlockMachineIdentityAction, "the identity write has gone out").toHaveBeenCalledTimes(1);
+    expect(saveButton().disabled, "held while the change is pending").toBe(true);
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(actions.recordSetupSubmissionAction, "A's readings were NOT submitted under the new machine").not.toHaveBeenCalled();
+    await act(async () => {
+      settlePreference({ ok: true });
+    });
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]')).toBeNull();
+    expect(actions.recordSetupSubmissionAction).not.toHaveBeenCalled();
+    const entryAfter = host!.querySelector('[data-testid="machine-reading-save"]') as HTMLButtonElement | null;
+    expect(entryAfter, "the entry for the new mode is mounted").not.toBeNull();
+    expect(fields().every((el) => el.value === ""), "the new mode's entry starts empty, not carrying the old mode's draft").toBe(true);
+  });
+
+  it("Codex 4487911008 NEGATIVE CONTROL: with no change pending the entry submits as before", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    expect(saveButton().disabled).toBe(false);
+    await saveEntry();
+    expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-2: a DEFINITIVE refusal on the refresh shows the access notice and leaves no readings or Saved view on screen", async () => {
+    actions.recordSetupSubmissionAction.mockClear();
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: true } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    const notice = host!.querySelector('[data-testid="machine-access-refused"]');
+    expect(notice?.textContent).toBe("Saved. You no longer have access to this treatment record, so its readings are not shown.");
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the old entry is gone").toBeNull();
+    expect(host!.querySelectorAll("input").length, "no reading field stays on screen").toBe(0);
+    expect(host!.querySelector('[data-testid="machine-saved-refresh-note"]'), "not the gentle note").toBeNull();
+    expect(actions.recordSetupSubmissionAction, "the save was not repeated").toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-2 NEGATIVE CONTROL: a transient failure (no refusal flag) keeps the entry and shows no access notice", async () => {
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
+    await mountExisting(vi.fn());
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(host!.querySelector('[data-testid="machine-access-refused"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]')).not.toBeNull();
+  });
+
   it("NEGATIVE CONTROL: a refresh that SUCCEEDS shows Saved and no note", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     await mountExisting(vi.fn());

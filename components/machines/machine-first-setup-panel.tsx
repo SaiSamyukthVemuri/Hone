@@ -1066,6 +1066,7 @@ export function MachineFirstSetupPanel({
               onUnresolvedChange={setRevisionUnresolved}
               onDraftChange={onRevisionDraft}
               onRecord={recordAndCount!}
+              submissionHeld={selectionPending}
             />
           ) : (
             groups.map((group) => (

@@ -160,6 +160,13 @@ export type MachineReadingEntryProps = {
    * clears them.
    */
   onDraftChange?: (hasDraft: boolean) => void;
+  /**
+   * TRUE WHILE A MACHINE OR MODE CHANGE IS BEING WRITTEN (Codex, #1369 4487911008). On a saved area the pick is written first and
+   * applied after; in between, this entry still belongs to the OLD machine while the record may already hold the new one, so a save
+   * here would submit the old machine's readings under the new machine. Submission is held until the change settles; the entry is
+   * then remounted for the new machine (its key) or, on a refusal, stays and works again. The draft itself is kept.
+   */
+  submissionHeld?: boolean;
 };
 
 /**
@@ -185,6 +192,7 @@ export function MachineReadingEntry({
   mintKey,
   onUnresolvedChange,
   onDraftChange,
+  submissionHeld = false,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   // SETTING GROUPS - probes sharing one set of values. One to begin with, which
@@ -408,6 +416,7 @@ export function MachineReadingEntry({
     );
 
   async function submit() {
+    if (submissionHeld) return;
     setPending(true);
     // ONE CALL, EVERY GROUP. The loop this replaced had to carry the
     // consequence of several calls: with two groups the first could succeed
@@ -592,7 +601,7 @@ export function MachineReadingEntry({
           variant="primary"
           size="md"
           onClick={submit}
-          disabled={pending || !ready}
+          disabled={pending || !ready || submissionHeld}
           pending={pending}
           busyLabel="Saving…"
           data-testid="machine-reading-save"

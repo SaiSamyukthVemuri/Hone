@@ -139,6 +139,11 @@ export type MachineOutcome<T> =
        * WAS definitive.
        */
       unresolved?: boolean;
+      /**
+       * The database DEFINITIVELY refused the request (the block is not this practitioner's / not in this session). Set only by
+       * `readingsForBlock`, so the post-save refresh can fail closed for access (#1369 R3-2) and stay gentle for a transient error.
+       */
+      refused?: true;
     };
 
 /**
@@ -1033,7 +1038,7 @@ export async function readingsForBlock(
     // migrations, and this read calls exactly one function - so a P0002 here
     // is that refusal and nothing else.
     if (error.code === "P0002") {
-      return { ok: false, error: "Could not read settings." };
+      return { ok: false, error: "Could not read settings.", refused: true };
     }
     return { ok: false, error: fail(error, "Could not read settings.") };
   }

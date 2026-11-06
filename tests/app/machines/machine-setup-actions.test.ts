@@ -58,6 +58,7 @@ const LINEAGE = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/sessions/session-lineage", () => ({
+  SessionLineageError: class SessionLineageError extends Error {},
   assertSessionForClient: async (
     studioId: string,
     clientId: string,
@@ -1598,6 +1599,37 @@ describe("previous-treatment guidance excludes the session being charted", () =>
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
     expect(call!.args.p_exclude_session_id).toBeTruthy();
     expect(typeof call!.args.p_exclude_session_id).toBe("string");
+  });
+});
+
+describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a transient failure (#1369 R3-2)", () => {
+  const input = { ...ROUTE, blockId: "block-1" };
+
+  it("not signed in is a refusal", async () => {
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: true });
+  });
+
+  it("a refused route (the session is not this client's) is a refusal", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    const { SessionLineageError } = await import("@/lib/sessions/session-lineage");
+    LINEAGE.throws = new SessionLineageError("Treatment session not found.");
+    try {
+      expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: true });
+    } finally {
+      LINEAGE.throws = null;
+    }
+  });
+
+  it("the database's not-found for the block is a refusal", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "Unknown treatment block for this session.", code: "P0002" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: true });
+  });
+
+  it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "connection reset", code: "08006" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
   });
 });
 
