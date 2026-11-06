@@ -574,6 +574,48 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(actions.recordSetupSubmissionAction, "the save was not repeated").toHaveBeenCalledTimes(1);
   });
 
+  // Codex 4488223260: a save that succeeded but whose refresh was REFUSED unmounts the panel; every hold it reported to the host
+  // (revision unresolved, draft) must be cleared, or "Save settings block" and Cancel stay disabled for ever.
+  for (const refused of ["unavailable", "access"] as const) {
+    it(`Codex 4488223260: a ${refused} refresh after a save that first LOST its answer clears every hold the host was given`, async () => {
+      const onRevisionUnresolved = vi.fn();
+      const onRevisionDraft = vi.fn();
+      actions.recordSetupSubmissionAction.mockClear();
+      actions.recordSetupSubmissionAction
+        .mockRejectedValueOnce(new Error("lost") as never)
+        .mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
+      actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused } as never);
+      await mount({
+        blockId: "b1",
+        savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
+        onRevisionUnresolved,
+        onRevisionDraft,
+      });
+      for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+      await saveEntry();
+      expect(onRevisionUnresolved, "the lost answer held the host").toHaveBeenCalledWith(true);
+      expect(onRevisionDraft).toHaveBeenCalledWith(true);
+      await saveEntry();
+      expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(2);
+      expect(host!.querySelector(`[data-testid="${refused === "access" ? "machine-access-refused" : "machine-record-unavailable"}"]`)).not.toBeNull();
+      expect(onRevisionUnresolved, "the unresolved hold is released").toHaveBeenLastCalledWith(false);
+      expect(onRevisionDraft, "the draft hold is released").toHaveBeenLastCalledWith(false);
+    });
+  }
+
+  it("Codex 4488223260 NEGATIVE CONTROL: with no refusal the holds follow the entry (a lost answer still holds)", async () => {
+    const onRevisionUnresolved = vi.fn();
+    actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("lost") as never);
+    await mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
+      onRevisionUnresolved,
+    });
+    for (const [i, el] of fields().entries()) await type(el, String(10 + i));
+    await saveEntry();
+    expect(onRevisionUnresolved).toHaveBeenLastCalledWith(true);
+  });
+
   it("F6-2: an UNAVAILABLE record (transient lineage error, block deleted in another tab) gets neutral wording, not an access accusation", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);

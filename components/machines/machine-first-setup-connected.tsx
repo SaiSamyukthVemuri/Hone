@@ -402,6 +402,14 @@ export function MachineFirstSetupConnected({
         // (still true, one capture out of date) and a plain note says so. Nothing is re-sent: the entry stays on its saved view.
         // FAIL CLOSED FOR ACCESS, GENTLE ONLY FOR A TRANSIENT ERROR (#1369 R3-2). A definitive refusal (not signed in, or the record is no
         // longer this practitioner's) must not leave the old readings on screen, so the entry is replaced by the access notice.
+        // REPORT THE HOLDS CLEARED BEFORE THE PANEL IS REMOVED (Codex #1369 4488223260). The entry reported a revision awaiting its retry and an
+        // unsaved draft to the host, and nothing reports them released when a refused refresh replaces the panel with a notice: "Save
+        // settings block" and Cancel stayed disabled for ever. The save was confirmed, so neither hold is true any more. (No effect is used
+        // here on purpose: this wrapper keeps exactly one, for opening a saved machine.)
+        if (!fresh.ok && fresh.refused) {
+          onRevisionUnresolved?.(false);
+          onRevisionDraft?.(false);
+        }
         setRefusedAfterSave(!fresh.ok ? (fresh.refused ?? null) : null);
         setRefreshFailedAfterSave(!fresh.ok && !fresh.refused);
       }
