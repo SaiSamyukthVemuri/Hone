@@ -107,6 +107,14 @@ const RULES = [
     exactly: 1,
   },
   {
+    name: "paymentIntents.confirm",
+    pattern: /paymentIntents\.confirm/g,
+    allowlist: ["lib/billing/session-payment-charge.ts"],
+    exactly: 1,
+    stripComments: true,
+    // Staged producer: fresh claim, strict binding ACK/read, winner only.
+  },
+  {
     name: "paymentIntents.cancel",
     pattern: /paymentIntents\.cancel/g,
     allowlist: [
@@ -426,6 +434,7 @@ const STRIPE_BROWSER_WRITE_SHAPE = /\b(confirmSetup|confirmPayment|confirmCardPa
 // A write SHAPE occurrence is "classified" (already inventoried above) if its
 // matched text hits one of these. Non-global so .test() is stateless.
 const CLASSIFIED_WRITE_PATTERNS = [
+  /paymentIntents\.confirm/,
   /paymentIntents\.create/,
   /paymentIntents\.cancel/,
   /refunds\.create/,

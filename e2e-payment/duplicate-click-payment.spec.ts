@@ -129,12 +129,9 @@ test("rapid duplicate-click charges exactly once (one attempt, one effect)", asy
   console.log(`[duplicate-click] invocations=${invocations} effects=${effects}`);
   // FINANCIAL GUARANTEE: exactly one processor effect (one real charge).
   expect(effects).toBe(1);
-  // The fake never hides a duplicate app call. A rapid double-click yields 1 (the
-  // UI pending-disable caught the 2nd) or 2 (the 2nd raced through and collapsed
-  // to one effect via the idempotency key) — both financially safe. Exact count
-  // is reported above.
-  expect(invocations).toBeGreaterThanOrEqual(1);
-  expect(invocations).toBeLessThanOrEqual(2);
+  // Every SDK invocation remains visible. Concurrent action requests must
+  // collapse BEFORE confirmation through the fresh claim / NULL binding gate.
+  expect(invocations).toBe(1); // only the acknowledged binding winner confirms
   // No refund path, no real Stripe network.
   expect(
     callsForAccount(seed.connectedAccountId).filter((c) => c.method === "refund_create"),

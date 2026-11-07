@@ -16,7 +16,7 @@ import path from "node:path";
 //   * card lineage re-verification
 //   * atomic claim via RPC BEFORE Stripe call
 //   * deterministic idempotency key
-//   * off_session + confirm true
+//   * unconfirmed create + winner-only off_session confirmation
 //   * metadata fully populated for future webhook reconciliation
 //   * success / failure outcomes write the same fields manual_fee
 //     writes, on the same column names
@@ -178,9 +178,15 @@ describe("runSessionPaymentCharge: paymentIntents.create parameters", () => {
     expect(HELPER).toMatch(/payment_method:\s*card\.stripe_payment_method_id/);
   });
 
-  it("sets confirm: true AND off_session: true", () => {
-    expect(HELPER).toMatch(/confirm:\s*true/);
-    expect(HELPER).toMatch(/off_session:\s*true/);
+  it("creates manual/unconfirmed then confirms off-session only after acknowledged binding", () => {
+    expect(HELPER).toMatch(/confirm:\s*false, confirmation_method: "manual"/);
+    const binding = HELPER.indexOf('const ack = await binding.select("id")');
+    const read = HELPER.indexOf("const verified = await admin.from", binding);
+    const confirm = HELPER.indexOf("stripe.paymentIntents.confirm(", read);
+    expect(binding).toBeGreaterThan(-1); expect(read).toBeGreaterThan(binding); expect(confirm).toBeGreaterThan(read);
+    expect(HELPER).toMatch(/ack.data.length !== 1/);
+    expect(HELPER).toMatch(/\.eq\("updated_at", claim.updated_at!\)/);
+    expect(HELPER).toMatch(/paymentIntents\.confirm\(created.id, \{ off_session: true \}/);
   });
 
   it("passes stripeAccount + idempotencyKey on the RequestOptions arg", () => {
@@ -317,10 +323,11 @@ describe("runSessionPaymentCharge: success / failure outcomes", () => {
     expect(HELPER).toMatch(/event:\s*"session_payment_needs_manual_review"/);
   });
 
-  it("authentication_required is escalated to severity 'critical'", () => {
-    expect(HELPER).toMatch(
-      /err\.code === "authentication_required" \? "critical" : "warning"/,
-    );
+  it("unknown or actionable confirmation errors remain critical/manual", () => {
+    expect(HELPER).toMatch(/err\.code === "authentication_required" \? "critical" : "warning"/);
+    expect(HELPER).toMatch(/severity: "critical", event: "session_payment_needs_manual_review"/);
+    expect(HELPER).toMatch(/reason: "staged_producer_unverified"/);
+    expect(HELPER).toMatch(/observed.status === "requires_payment_method" && observed.last_payment_error\?\.type === "card_error"/);
   });
 });
 

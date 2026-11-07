@@ -124,11 +124,11 @@ export async function seedEligiblePaymentWithLogin(
 }
 
 // The deterministic fake-outcome selector for a prepared attempt. Mirrors
-// buildIdempotencyKey() in lib/billing/session-payment-charge.ts EXACTLY: the
+// the fresh v2 create key in lib/billing/session-payment-charge.ts: the
 // fake outcome is keyed by the attempt's server-generated idempotency key, never
 // by any browser input.
 export function idempotencySelectorForAttempt(attemptId: string): string {
-  return `hone:session_payment:${attemptId}:v1`;
+  return `hone:session_payment:${attemptId}:v2:create`;
 }
 
 // Read the session's payment attempts WITH their ids (the DB-lane reader omits the

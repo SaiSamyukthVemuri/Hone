@@ -26,6 +26,7 @@ import {
 // real SDK call sites to their allowlisted files.
 export type FakeStripeMethod =
   | "pi_create"
+  | "pi_confirm"
   | "pi_retrieve"
   | "pi_cancel"
   | "refund_create";
@@ -69,6 +70,27 @@ function rememberMoney(run: string, id: string, money: FakeMoney): void {
 function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
   if (!id) return { amount: null, currency: null };
   return moneyByIdByRun.get(run)?.get(id) ?? { amount: null, currency: null };
+}
+
+// The staged producer creates an UNCONFIRMED PaymentIntent and confirms it
+// later under a different key. The fake remembers what each intent was created
+// for (its create key, which selects the configured outcome, plus the customer
+// and payment method the real object would state) so confirm and retrieve can
+// answer in Stripe's shape.
+type FakeIntentShape = {
+  createKey: string | null; customer: string | null; paymentMethod: string | null;
+  // Set by the first confirmation; a retrieve before it states the unconfirmed object.
+  confirmed?: boolean;
+};
+const intentShapeByRun = new Map<string, Map<string, FakeIntentShape>>();
+function rememberIntent(run: string, id: string, shape: FakeIntentShape): void {
+  const m = intentShapeByRun.get(run) ?? new Map<string, FakeIntentShape>();
+  m.set(id, shape);
+  intentShapeByRun.set(run, m);
+}
+function recalledIntent(run: string, id: string): FakeIntentShape {
+  return intentShapeByRun.get(run)?.get(id)
+    ?? { createKey: null, customer: null, paymentMethod: null };
 }
 
 function runId(): string {
@@ -127,12 +149,15 @@ export function resetFakeStripeState(run: string = runId()): void {
   idempotentResultByRun.delete(run);
   seqByRun.delete(run);
   moneyByIdByRun.delete(run);
+  intentShapeByRun.delete(run);
 }
 
 // ---- The fake client -----------------------------------------------------------
 type CreatePiParams = {
   amount?: number | null;
   currency?: string | null;
+  customer?: string | null;
+  payment_method?: string | null;
 };
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
 
@@ -144,11 +169,12 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
   // creates NO new processor effect, but it IS still an app-level invocation.
   const replay = existing !== null;
   const seq = existing ? null : nextSeq(run);
-  const id = existing ?? `pi_test_e2e_${run}_${seq}`;
-  const chargeId = `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? seq) ?? 1}`;
-  const outcome = outcomeFor(run, key);
+  // The producer only binds ids of the form pi_[A-Za-z0-9_]+, and a run id may
+  // contain hyphens.
+  const id = existing ?? `pi_test_e2e_${run.replace(/-/g, "_")}_${seq}`;
   if (!existing) {
-    // First-seen key → THIS call is the unique processor effect.
+    // First-seen key → THIS call is the unique processor object. Creating it
+    // moves no money: it is unconfirmed until the bind winner confirms.
     rememberIdempotent(run, key, id);
   }
   // Record EVERY invocation (replay flag distinguishes effect from replay) so a
@@ -162,14 +188,6 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     resultId: id,
     replay,
   });
-  // Success → succeeded (+ latest_charge); decline → non-succeeded status the
-  // real executor persists as failed; processing → pending.
-  const status =
-    outcome === "decline"
-      ? "requires_payment_method"
-      : outcome === "processing"
-        ? "processing"
-        : "succeeded";
   // A replay states the money of the ORIGINAL create, as Stripe's idempotent
   // replay returns the original object rather than echoing the new request.
   const money: FakeMoney = existing
@@ -177,14 +195,64 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     : { amount: params?.amount ?? null, currency: params?.currency ?? null };
   if (!existing) {
     rememberMoney(run, id, money);
-    rememberMoney(run, chargeId, money);
+    rememberIntent(run, id, {
+      createKey: key, customer: params?.customer ?? null, paymentMethod: params?.payment_method ?? null,
+    });
   }
+  const shape = recalledIntent(run, id);
+  return {
+    id,
+    status: "requires_confirmation",
+    amount: money.amount,
+    currency: money.currency,
+    latest_charge: null,
+    amount_received: 0,
+    amount_capturable: 0,
+    customer: shape.customer,
+    payment_method: shape.paymentMethod,
+    confirmation_method: "manual",
+    livemode: false,
+  };
+}
+
+// Confirmation is the only call that can move money. It is keyed separately
+// from the create, and its outcome comes from the create key's configured
+// outcome (server-side, never from the browser).
+function synthConfirm(run: string, id: string, opts: RequestOpts) {
+  const key = opts?.idempotencyKey ?? null;
+  const existing = idempotentResult(run, key);
+  const replay = existing !== null;
+  if (!existing) rememberIdempotent(run, key, id);
+  const shape = recalledIntent(run, id);
+  const outcome = outcomeFor(run, shape.createKey);
+  const money = recalledMoney(run, id);
+  rememberIntent(run, id, { ...shape, confirmed: true });
+  const chargeId = `ch_test_e2e_${run}_${id.match(/_(\d+)$/)?.[1] ?? 1}`;
+  if (!replay && outcome === "success") rememberMoney(run, chargeId, money);
+  record(run, {
+    method: "pi_confirm",
+    idempotencyKey: key,
+    stripeAccount: opts?.stripeAccount ?? null,
+    amountCents: money.amount,
+    currency: money.currency,
+    resultId: id,
+    replay,
+  });
+  const status =
+    outcome === "decline" ? "requires_payment_method" : outcome === "processing" ? "processing" : "succeeded";
   return {
     id,
     status,
     amount: money.amount,
     currency: money.currency,
     latest_charge: outcome === "success" ? chargeId : null,
+    amount_received: outcome === "success" ? money.amount : 0,
+    amount_capturable: 0,
+    customer: shape.customer,
+    payment_method: shape.paymentMethod,
+    confirmation_method: "manual",
+    livemode: false,
+    last_payment_error: outcome === "decline" ? { type: "card_error", code: "card_declined" } : null,
   };
 }
 
@@ -194,6 +262,8 @@ export function createFakeStripe(): Stripe {
     paymentIntents: {
       create: async (params: CreatePiParams, opts?: RequestOpts) =>
         synthPaymentIntent(runId(), opts, params),
+      confirm: async (id: string, _p?: unknown, opts?: RequestOpts) =>
+        synthConfirm(runId(), id, opts),
       retrieve: async (id: string, _p?: unknown, opts?: RequestOpts) => {
         record(runId(), {
           method: "pi_retrieve",
@@ -211,12 +281,24 @@ export function createFakeStripe(): Stripe {
         // mismatch, the same as real Stripe disagreeing with the row.
         const money = recalledMoney(run, id);
         rememberMoney(run, chargeId, money);
+        const shape = recalledIntent(run, id);
+        if (shape.createKey !== null && !shape.confirmed) {
+          // Created but never confirmed: no money moved.
+          return {
+            id, status: "requires_confirmation", amount: money.amount, currency: money.currency,
+            latest_charge: null, amount_received: 0, amount_capturable: 0,
+            customer: shape.customer, payment_method: shape.paymentMethod,
+            confirmation_method: "manual", livemode: false,
+          };
+        }
         return {
           id,
           status: "succeeded",
           amount: money.amount,
           currency: money.currency,
           latest_charge: chargeId,
+          customer: shape.customer,
+          payment_method: shape.paymentMethod,
         };
       },
       cancel: async (id: string, _p?: unknown, opts?: RequestOpts) => {

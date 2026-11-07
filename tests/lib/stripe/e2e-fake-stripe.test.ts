@@ -201,6 +201,28 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
   const effects = (run: string) =>
     getFakeStripeCalls(run).filter((c) => c.method === "pi_create" && !c.replay);
 
+  it("confirm is the only money step: keyed separately, outcome from the create key, replay-visible", async () => {
+    process.env.HONE_E2E_RUN_ID = RUN;
+    const stripe = createFakeStripe();
+    const pis = stripe.paymentIntents as unknown as {
+      create: (p: unknown, o: unknown) => Promise<{ id: string; latest_charge: string | null }>;
+      confirm: (id: string, p: unknown, o: unknown) => Promise<{ id: string; status: string; latest_charge: string | null; amount: number }>;
+    };
+    const acct = { stripeAccount: "acct_test_123" };
+    const pi = await pis.create({ amount: 22500, currency: "cad", customer: "cus_x", payment_method: "pm_x" },
+      { ...acct, idempotencyKey: "hone:session_payment:att9:v2:create" });
+    expect(pi.latest_charge).toBeNull();
+    const confirmKey = `hone:session_payment:att9:v2:confirm:${pi.id}`;
+    const first = await pis.confirm(pi.id, { off_session: true }, { ...acct, idempotencyKey: confirmKey });
+    const again = await pis.confirm(pi.id, { off_session: true }, { ...acct, idempotencyKey: confirmKey });
+    expect(first).toMatchObject({ id: pi.id, status: "succeeded", amount: 22500 });
+    expect(first.latest_charge).toMatch(/^ch_test_e2e_/);
+    expect(again.id).toBe(first.id);
+    const confirms = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_confirm");
+    expect(confirms.map((c) => c.replay)).toEqual([false, true]);
+    expect(confirms[0].idempotencyKey).toBe(confirmKey);
+  });
+
   it("first call: invocation 1, effect 1, replay false + captures key/account/id", async () => {
     process.env.HONE_E2E_RUN_ID = RUN;
     const stripe = createFakeStripe();
@@ -212,7 +234,8 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
       { stripeAccount: "acct_test_123", idempotencyKey: "hone:session_payment:att1:v1" },
     );
     expect(pi.id).toMatch(/^pi_test_e2e_/);
-    expect(pi.status).toBe("succeeded");
+    // Create moves no money: the staged producer confirms separately.
+    expect(pi.status).toBe("requires_confirmation");
     expect(invocations(RUN)).toHaveLength(1);
     expect(effects(RUN)).toHaveLength(1);
     expect(invocations(RUN)[0]).toMatchObject({

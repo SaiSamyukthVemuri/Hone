@@ -15,7 +15,6 @@ import {
   resetFakeStripeLedger,
   clearFakeStripeOutcome,
   configureFakeStripeOutcome,
-  readFakeStripeCalls,
   callsForAccount,
   countInvocationsForAccount,
   countEffectsForAccount,
@@ -227,6 +226,14 @@ test("committed charge with a lost response recovers to Paid on reload (no dupli
   expect(pi.currency).toBe("cad");
   expect(pi.resultId).toMatch(/^pi_test_e2e_/);
   expect(pi.replay).toBe(false);
+  // Object creation is separate from the one winner's money attempt.
+  const confirmations = callsForAccount(seed.connectedAccountId).filter(c => c.method === "pi_confirm");
+  expect(confirmations).toHaveLength(1);
+  expect(confirmations[0]).toMatchObject({
+    resultId: pi.resultId, replay: false,
+    idempotencyKey: `${selector.replace(/:create$/, ":confirm")}:${pi.resultId}`,
+  });
+
   expect(
     callsForAccount(seed.connectedAccountId).filter((c) => c.method === "refund_create"),
   ).toHaveLength(0);

@@ -90,7 +90,7 @@ async function settledReceiptStatus(sessionId: string, expected: string): Promis
 // checked (Codex P2 4301359791): every processor method is recorded there, so
 // a receipt path that retrieved, cancelled or refunded anything fails here.
 function expectExactlyOneCharge(seed: PaymentSeed, attemptId: string): void {
-  expect(callsForAccount(seed.connectedAccountId).map((c) => c.method)).toEqual(["pi_create"]);
+  expect(callsForAccount(seed.connectedAccountId).map((c) => c.method)).toEqual(["pi_create", "pi_confirm"]);
   expect(countInvocationsForAccount(seed.connectedAccountId)).toBe(1);
   const effects = effectsForAccount(seed.connectedAccountId);
   expect(effects).toHaveLength(1);

@@ -18,11 +18,18 @@ const fakeStripe = {
     create: async (params: Record<string, unknown>) => {
       h.createParams.push(params);
       return {
-        id: "pi_test", status: "succeeded", amount: params.amount, currency: params.currency,
-        latest_charge: "ch_test", customer: "cus_test", livemode: false,
+        id: "pi_test", status: "requires_confirmation", amount: params.amount, currency: params.currency,
+        latest_charge: null, amount_received: 0, amount_capturable: 0, customer: "cus_test",
+        payment_method: "pm_test", confirmation_method: "manual", livemode: false,
         metadata: params.metadata,
       };
     },
+    confirm: async () => ({
+      id: "pi_test", status: "succeeded", amount: AMOUNT, currency: (h.rows.payment_charge_attempts as Record<string, unknown>).currency,
+      latest_charge: "ch_test", customer: "cus_test", payment_method: "pm_test", livemode: false,
+      confirmation_method: "manual", amount_received: AMOUNT, amount_capturable: 0,
+      metadata: h.createParams.at(-1)?.metadata,
+    }),
     retrieve: async () => { throw new Error("retrieve must not be reached"); },
     cancel: async () => { throw new Error("cancel must not be reached"); },
   },
@@ -50,26 +57,35 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     from(table: string) {
       const q: Record<string, unknown> = {};
       let isUpdate = false;
+      let payload: Record<string, unknown> = {};
       const read = () => ({ data: h.rows[table] ?? null, error: null });
-      q.select = () => (isUpdate ? Promise.resolve({ data: [{ id: ATTEMPT }], error: null }) : q);
+      q.select = () => {
+        if (!isUpdate) return q;
+        // The staged producer binds the original by a compare-and-set update.
+        Object.assign(h.rows[table] as Record<string, unknown>, payload);
+        return Promise.resolve({ data: [{ id: ATTEMPT }], error: null });
+      };
       for (const m of ["eq", "is", "in", "order", "limit"]) q[m] = () => q;
       q.maybeSingle = async () => read();
       q.single = async () => read();
       q.then = (resolve: (v: unknown) => unknown) => resolve(isUpdate ? { data: [{ id: ATTEMPT }], error: null } : read());
-      q.update = () => { isUpdate = true; return q; };
+      q.update = (p: Record<string, unknown>) => { isUpdate = true; payload = p; return q; };
       q.insert = () => { throw new Error(`unexpected insert on ${table}`); };
       return q;
     },
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: { p_idempotency_key: string }) => {
       if (name !== "claim_session_payment_charge_attempt") return { data: null, error: null };
       const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+      // A fresh claim stamps the v2 create key and moves the row to pending.
+      Object.assign(row, { status: "pending_stripe", stripe_idempotency_key: args.p_idempotency_key,
+        updated_at: new Date().toISOString() });
       return {
         data: [{
           result: "claimed", attempt_id: ATTEMPT, studio_id: STUDIO, client_id: CLIENT, session_id: SESSION,
           appointment_id: APPOINTMENT, charge_reason: "session_payment", amount_cents: AMOUNT, currency: row.currency,
           client_payment_method_id: "cpm-1", card_authorization_signature_id: "sig-1", stripe_account_id: "acct_test",
           stripe_customer_id: "cus_test", stripe_payment_method_id: "pm_test", stripe_payment_intent_id: null,
-          stripe_idempotency_key: null, status_before_claim: "ready", updated_at: new Date().toISOString(),
+          stripe_idempotency_key: args.p_idempotency_key, status_before_claim: "ready", updated_at: row.updated_at,
         }],
         error: null,
       };
@@ -87,7 +103,8 @@ function setup(attemptCurrency: unknown, jurisdiction: { payment_country: string
       appointment_id: APPOINTMENT, amount_cents: AMOUNT, currency: attemptCurrency, status: "ready",
       stripe_livemode: false, client_payment_method_id: "cpm-1", card_authorization_signature_id: "sig-1",
       stripe_account_id: "acct_test", stripe_customer_id: "cus_test", stripe_payment_method_id: "pm_test",
-      stripe_payment_intent_id: null, stripe_idempotency_key: null, updated_at: "2026-08-01T00:00:00.000Z",
+      stripe_payment_intent_id: null, stripe_idempotency_key: null, stripe_charge_id: null, charged_at: null,
+      updated_at: "2026-08-01T00:00:00.000Z",
     },
     client_payment_methods: {
       id: "cpm-1", studio_id: STUDIO, client_id: CLIENT, status: "active", stripe_livemode: false,
