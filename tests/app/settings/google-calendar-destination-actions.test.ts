@@ -142,7 +142,7 @@ beforeEach(() => {
     attemptToken: TOKEN,
   } as never);
   vi.mocked(markDedicatedProvisioningAmbiguous).mockResolvedValue({ ok: true, connectionId: "c1" } as never);
-  vi.mocked(designateStudioCalendarOwner).mockResolvedValue(undefined as never);
+  vi.mocked(designateStudioCalendarOwner).mockResolvedValue(true);
   vi.mocked(createSecondaryCalendar).mockResolvedValue({ ok: true, id: "new-cal" } as never);
   vi.mocked(findCalendarsByDescriptionToken).mockResolvedValue({ ok: true, calendarIds: [] } as never);
   vi.mocked(fetchCalendarList).mockResolvedValue({ ok: true, calendars: [] } as never);
@@ -211,6 +211,15 @@ describe("provisionDedicatedCalendarAction", () => {
     expect(designateStudioCalendarOwner).toHaveBeenCalledWith(STUDIO, PRAC);
     expect(createSecondaryCalendar).not.toHaveBeenCalled();
     expect(findCalendarsByDescriptionToken).not.toHaveBeenCalled();
+  });
+
+  it("a failed owner designation after the destination was saved is reported to the practitioner (not success)", async () => {
+    vi.mocked(getOwnConnectionMetadata).mockResolvedValue(
+      dedicatedConn({ appCreatedCalendarId: "existing-app-cal", selectedCalendarDisplayName: "Hone Appointments" }),
+    );
+    vi.mocked(designateStudioCalendarOwner).mockResolvedValueOnce(false);
+    const r = await provisionDedicatedCalendarAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't update the studio calendar. Please try again." });
   });
 
   it("is blocked (needs attention) when provisioning was flagged ambiguous — never creates", async () => {

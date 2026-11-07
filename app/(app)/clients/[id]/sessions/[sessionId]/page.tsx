@@ -113,7 +113,8 @@ export default async function SessionDetailPage({
 
   const [clientData, session] = await timed("session-chart.core", () =>
     Promise.all([
-      getClientById(studio.id, id),
+      // Prices only for an owner (RBAC G-1): the loader no longer defaults to them.
+      getClientById(studio.id, id, { includePrices: practitioner.role === "owner" }),
       getSessionForClient(studio.id, id, sessionId),
     ]),
   );
@@ -187,6 +188,7 @@ export default async function SessionDetailPage({
             studioId: studio.id,
             sessionId: session.id,
             studioTimezone: studio.timezone,
+            viewerIsOwner: isOwner,
           }),
         )
       : Promise.resolve(null),

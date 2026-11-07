@@ -52,6 +52,45 @@ describe("normalizeProcedureRecordFilter (pure)", () => {
     ).toEqual({ clientId: CLIENT_ID, from: null, to: null });
   });
 
+  it("treats an impossible calendar date as absent, for from and for to, and never throws", () => {
+    for (const bad of ["2026-13-01", "2026-00-10", "2026-06-00", "2026-06-32", "2026-02-30", "2027-02-29", "not-a-date", ""]) {
+      expect(() => normalizeProcedureRecordFilter({ clientId: CLIENT_ID, from: bad, to: "2026-06-12" }), `from=${bad}`).not.toThrow();
+      expect(normalizeProcedureRecordFilter({ clientId: CLIENT_ID, from: bad, to: "2026-06-12" }), `from=${bad}`).toEqual({
+        clientId: CLIENT_ID,
+        from: null,
+        to: "2026-06-12",
+      });
+      expect(normalizeProcedureRecordFilter({ clientId: CLIENT_ID, from: "2026-06-01", to: bad }), `to=${bad}`).toEqual({
+        clientId: CLIENT_ID,
+        from: "2026-06-01",
+        to: null,
+      });
+    }
+  });
+
+  it("drops a real date outside 1900-2100 so the +1 day arithmetic can never overflow (Insurance F-1)", () => {
+    for (const bad of ["9999-12-31", "2101-01-01", "1899-12-31", "0001-01-01"]) {
+      expect(normalizeProcedureRecordFilter({ from: bad, to: bad }), bad).toEqual({ clientId: null, from: null, to: null });
+      const f = normalizeProcedureRecordFilter({ to: bad });
+      expect(() => utcInstantsForLocalDayRange(f.from, f.to, "America/Toronto"), bad).not.toThrow();
+    }
+    // The edges of the window stay valid and convert cleanly.
+    const edge = normalizeProcedureRecordFilter({ from: "1900-01-01", to: "2100-12-31" });
+    expect(edge).toEqual({ clientId: null, from: "1900-01-01", to: "2100-12-31" });
+    expect(() => utcInstantsForLocalDayRange(edge.from, edge.to, "America/Toronto")).not.toThrow();
+  });
+
+  it("keeps a leap day and the last day of a month", () => {
+    expect(normalizeProcedureRecordFilter({ from: "2028-02-29", to: "2028-03-31" })).toEqual({ clientId: null, from: "2028-02-29", to: "2028-03-31" });
+  });
+
+  it("a filter the normalizer lets through can always be converted to UTC bounds (no RangeError)", () => {
+    for (const bad of ["2026-13-01", "2026-06-32", "junk"]) {
+      const f = normalizeProcedureRecordFilter({ from: bad, to: bad });
+      expect(() => utcInstantsForLocalDayRange(f.from, f.to, "America/Toronto"), bad).not.toThrow();
+    }
+  });
+
   it("treats absent params as no filter", () => {
     expect(normalizeProcedureRecordFilter({})).toEqual({
       clientId: null,
