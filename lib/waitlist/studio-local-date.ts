@@ -1,4 +1,4 @@
-import { localDateString, localTimeString, tzOffsetMinutes } from "@/lib/booking/tz";
+import { localDateString, tzOffsetMinutes } from "@/lib/booking/tz";
 
 // WAIT-04A. A calendar date the operator typed, as the EARLIEST REAL INSTANT
 // belonging to that local calendar date in the studio's timezone.
