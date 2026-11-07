@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // RBAC G9 (Team matrix C7, C4): what removing a team member leaves behind, and the self-removal message.
 // Access itself is cut by `practitioners.active`; these cases cover the grants that would outlive it:
@@ -149,6 +151,7 @@ beforeEach(() => {
 
 describe("removing a member ends their outstanding invitations and Google Calendar connection", () => {
   it("deactivates first, then revokes this studio's PENDING invitations for the member's email (lower-cased)", async () => {
+    GOOGLE.cipher = null; // no stored Google credential, so no Google notice and the action simply returns
     await expect(removePractitionerAction(form("member-1"))).resolves.toBeUndefined();
     expect(DB.rpcCalls).toEqual([
       { fn: "set_practitioner_active_locked", args: { p_studio_id: "studio-1", p_actor_practitioner_id: "owner-1", p_target_practitioner_id: "member-1", p_active: false } },
@@ -159,11 +162,13 @@ describe("removing a member ends their outstanding invitations and Google Calend
     expect(DB.order.indexOf("rpc:set_practitioner_active_locked")).toBeLessThan(DB.order.indexOf("update:pending_invitations"));
   });
 
-  it("revokes the grant at Google BEFORE destroying the local connection, scoped to this studio and member", async () => {
-    await removePractitionerAction(form("member-1"));
-    expect(GOOGLE.revoke).toHaveBeenCalledWith("refresh-secret");
+  it("NEVER calls Google: removal deletes this studio's credential and connection only, and says so (the grant at Google is the person's to remove)", async () => {
+    const r = await outcome("member-1");
+    expect(GOOGLE.revoke).not.toHaveBeenCalled();
+    expect(DB.order).not.toContain("google:revoke");
+    expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
     expect(GOOGLE.disconnect).toHaveBeenCalledWith("studio-1", "member-1");
-    expect(DB.order.indexOf("google:revoke")).toBeLessThan(DB.order.indexOf("google:disconnect"));
+    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
   });
 
   it("a member with no Google connection is still disconnected idempotently and nothing is revoked at Google", async () => {
@@ -183,7 +188,7 @@ describe("removing a member ends their outstanding invitations and Google Calend
   it("a failed invitation clear is REPORTED by a fixed redirect code (never a throw), the Google clear still runs", async () => {
     DB.inviteUpdateError = { code: "XX000", message: "db text that must not surface" };
     const r = await outcome("member-1");
-    expect(r).toEqual({ redirectedTo: "/settings/team?removed=partial&left=invitations" });
+    expect(r).toEqual({ redirectedTo: "/settings/team?removed=partial&left=invitations,google_access" }); // the Google notice rides along: a stored credential was deleted
     expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
   });
 
@@ -194,26 +199,10 @@ describe("removing a member ends their outstanding invitations and Google Calend
     expect(DB.invitesTouched).toHaveLength(1);
   });
 
-  it("a revoke that Google did not accept is reported as google_access (revokeToken returns {ok:false}, it never rejects); the local connection is still cleared", async () => {
-    GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_http_503" });
-    const r = await outcome("member-1");
-    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
-    expect(r.redirectedTo).not.toMatch(/503/);
-    expect(GOOGLE.disconnect).toHaveBeenCalledWith("studio-1", "member-1");
-    expect(console.error).toHaveBeenCalledWith("team_action_error:remove_revoke_google");
-  });
-
-  it("a network failure at revoke is reported the same way", async () => {
-    GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_network_error" });
-    expect((await outcome("member-1")).redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
-  });
-
-  it("a ciphertext that cannot be decrypted means Google could not be revoked: google_access, and the local connection is still destroyed", async () => {
-    GOOGLE.decryptOk = false;
-    const r = await outcome("member-1");
-    expect(GOOGLE.revoke).not.toHaveBeenCalled();
-    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
-    expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
+  it("a decrypt or revoke failure cannot happen any more: the action neither decrypts nor revokes (source pin)", () => {
+    const src = readFileSync(join(__dirname, "../../../app/(app)/settings/team/actions.ts"), "utf8");
+    expect(src).not.toMatch(/revokeToken|decryptGoogleSecret/);
+    expect(src).not.toContain("@/lib/google-calendar/oauth");
   });
 
   it("a failed read of the connection store is reported as google_connection and nothing is revoked or destroyed on a guess", async () => {
@@ -227,7 +216,6 @@ describe("removing a member ends their outstanding invitations and Google Calend
 
   it("several leftovers are all named, in order, in one redirect", async () => {
     DB.inviteUpdateError = { code: "XX000", message: "x" };
-    GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_http_500" });
     const r = await outcome("member-1");
     expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=invitations,google_access");
   });
@@ -239,7 +227,7 @@ describe("removing a member ends their outstanding invitations and Google Calend
 
   it("a member with no email on file has nothing to revoke by email (no unscoped update)", async () => {
     DB.targetEmail = null;
-    await removePractitionerAction(form("member-1"));
+    await outcome("member-1");
     expect(DB.invitesTouched).toEqual([]);
   });
 });

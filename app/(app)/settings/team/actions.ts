@@ -13,8 +13,6 @@ import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { disconnectConnection, getRefreshTokenCiphertext } from "@/lib/google-calendar/connection";
-import { decryptGoogleSecret } from "@/lib/google-calendar/token-crypto";
-import { revokeToken } from "@/lib/google-calendar/oauth";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -279,7 +277,7 @@ export async function removePractitionerAction(formData: FormData): Promise<void
 // The removed member's PENDING invitations to this studio (a pending invitation is honoured later and can REACTIVATE the person:
 // link_invited_membership) and their Google Calendar connection (the studio's calendar-owner connection keeps syncing appointments
 // to their Google account otherwise: the sync reads the connection, never `practitioners.active`). Both are scoped to this studio
-// and to the target the locked command just deactivated. Returns what could not be cleared; clears the rest regardless.
+// and to the target the locked command just deactivated. Returns what could not be cleared, plus the google_access NOTICE (Hone's stored credential was deleted; any grant at Google is the person's to remove); clears the rest regardless.
 async function endRemovedMemberLeftovers(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
@@ -311,19 +309,13 @@ async function endRemovedMemberLeftovers(
   }
 
   try {
-    // Revoke at Google BEFORE destroying the local ciphertext, as the member's own Disconnect does; a failed revoke is not fatal.
+    // MEMBERSHIP-SCOPED CLEANUP ONLY (Sam, Vercel finding 01M6SPYTZ01MAGB74CGWVV953E). Removal deletes THIS studio's stored credential and
+    // marks THIS studio's connection disconnected; it never calls Google. A Google revoke acts on the person's grant to Hone, so it
+    // could end the same person's sync in a DIFFERENT studio, which this studio's owner has no right to do. The grant at Google, if any,
+    // is the person's to remove: google_access tells the owner so. It is reported only when a stored credential actually existed.
     const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
-    if (ciphertext) {
-      const dec = decryptGoogleSecret(ciphertext);
-      // revokeToken never rejects: it returns { ok: false } when Google could not be reached. Local state is still cleared below, but
-      // the grant at Google may still be live, so it is REPORTED rather than swallowed.
-      const revoked = dec.ok ? await revokeToken(dec.secret) : { ok: false as const };
-      if (!revoked.ok) {
-        console.error("team_action_error:remove_revoke_google");
-        failed.push("google_access");
-      }
-    }
     await disconnectConnection(studioId, practitionerId);
+    if (ciphertext) failed.push("google_access");
   } catch {
     console.error("team_action_error:remove_disconnect_google");
     failed.push("google_connection");

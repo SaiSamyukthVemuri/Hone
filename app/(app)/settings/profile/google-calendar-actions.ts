@@ -1,5 +1,6 @@
 "use server";
 
+import { STUDIO_LOCAL_DISCONNECT_NOTICE } from "@/lib/google-calendar/studio-local-disconnect-notice";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -27,7 +28,6 @@ import {
   findCalendarsByDescriptionToken,
   randomUrlToken,
   refreshAccessToken,
-  revokeToken,
   type GoogleCalendarListEntry,
 } from "@/lib/google-calendar/oauth";
 import { createOAuthState } from "@/lib/google-calendar/state";
@@ -61,8 +61,7 @@ type StartResult = { ok: true; url: string } | { ok: false; error: string };
 type SimpleResult = { ok: true } | { ok: false; error: string };
 // Disconnect: the local connection is always cleared; `notice` says what the member still has to do at Google when the grant could not be revoked.
 export type DisconnectResult = { ok: true; notice?: string } | { ok: false; error: string };
-const GOOGLE_GRANT_MAY_REMAIN_NOTICE =
-  "Disconnected from Hone, but we could not remove Hone's access at Google. To finish, open your Google Account, go to Security, then Third-party apps and services, and remove Hone.";
+const GOOGLE_GRANT_MAY_REMAIN_NOTICE = STUDIO_LOCAL_DISCONNECT_NOTICE;
 
 // A store error is not "not connected": say so (and let the member retry) instead of showing the wrong message.
 async function loadMetadata(
@@ -532,27 +531,18 @@ export async function disconnectGoogleCalendarAction(
   if (!ctx.ok) return { ok: false, error: ctx.error };
   const { practitioner, studio } = ctx;
 
-  // Best-effort revoke at Google BEFORE destroying local state, so we never
-  // orphan a live grant. If revoke fails we still proceed to clear locally
-  // (the token is destroyed regardless), a failed revoke is logged, not fatal.
-  // NOTE (B2.4 §17): disconnect NEVER deletes a Hone-created Google calendar; it
-  // only revokes credentials + clears local connection state. Calendar deletion is
-  // a separate future product decision.
+  // STUDIO-LOCAL DISCONNECTION (Sam, Vercel finding 01M6SPYTZ01MAGB74CGWVV953E). This removes THIS studio's stored credential and
+  // marks THIS studio's connection disconnected, and never calls Google: a revoke at Google acts on the person's grant to Hone, so it
+  // could end sync that the same Google account has in another studio. The grant at Google, if any, may remain, and the member is
+  // TOLD so rather than given a plain success.
+  // NOTE (B2.4 §17): disconnect NEVER deletes a Hone-created Google calendar; it only clears local credentials and connection state.
+  // Calendar deletion is a separate future product decision.
   let grantMayRemain = false;
   try {
-    // If the store cannot be read we do not know whether a grant exists: stop here rather than report a disconnect that did not happen.
+    // If the store cannot be read we do not know whether a credential exists: stop here rather than report a disconnect that did not happen.
     const ciphertext = await getRefreshTokenCiphertext(studio.id, practitioner.id);
-    if (ciphertext) {
-      const dec = decryptGoogleSecret(ciphertext);
-      // revokeToken never rejects, it returns { ok: false }; an undecryptable token cannot be revoked at all. Either way the local
-      // connection is still cleared (below), but the grant at Google may still be live, so the member is TOLD, not given a plain success.
-      const revoked = dec.ok ? await revokeToken(dec.secret) : { ok: false as const };
-      if (!revoked.ok) {
-        grantMayRemain = true;
-        console.error("google_calendar_error:disconnect:revoke_failed");
-      }
-    }
     await disconnectConnection(studio.id, practitioner.id);
+    grantMayRemain = Boolean(ciphertext);
   } catch (e) {
     if (!(e instanceof ConnectionStoreError)) throw e;
     console.error(`google_calendar_error:disconnect:${e.step}`);

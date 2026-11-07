@@ -155,12 +155,17 @@ describe("startGoogleCalendarConnectAction — flag gate + state + nonce cookie"
   });
 });
 
-describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
-  it("revokes at Google then clears local connection state", async () => {
+describe("disconnectGoogleCalendarAction — studio-local disconnection, never a revoke at Google", () => {
+  it("clears THIS studio's connection and never calls Google; ok WITH the notice that Google authorization may remain", async () => {
     const r = await disconnectGoogleCalendarAction();
     expect(r.ok).toBe(true);
-    expect(revokeToken).toHaveBeenCalledWith("refresh-token");
+    expect(revokeToken).not.toHaveBeenCalled();
     expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+    const notice = (r as { notice?: string }).notice ?? "";
+    expect(notice).toMatch(/Google authorization may remain/);
+    expect(notice).toMatch(/Third-party apps and services/);
+    expect(notice).toContain("This studio's stored Google credentials were removed and its sync has stopped");
+    expect(notice).not.toMatch(/other studio|disconnected from Google/i); // names no other studio, and never "disconnected from Google"
   });
 
   it("a failed local clear is reported as a failure, never as a completed disconnect (exact log string)", async () => {
@@ -171,30 +176,19 @@ describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
     expect(log).toHaveBeenCalledWith("google_calendar_error:disconnect:test_step");
   });
 
-  it("D-1 / M-3: a revoke Google did not accept still clears locally but returns ok WITH the notice that the grant may remain and how to remove it", async () => {
-    vi.mocked(revokeToken).mockResolvedValueOnce({ ok: false, reason: "revoke_http_503" } as never);
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const r = await disconnectGoogleCalendarAction();
-    expect(r.ok).toBe(true);
-    expect((r as { notice?: string }).notice).toMatch(/could not remove Hone's access at Google/);
-    expect((r as { notice?: string }).notice).toMatch(/Third-party apps and services/);
-    expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
-    expect(log).toHaveBeenCalledWith("google_calendar_error:disconnect:revoke_failed");
-  });
-
-  it("D-1: an undecryptable token cannot be revoked at Google: local clear, ok WITH the same notice", async () => {
-    const { decryptGoogleSecret } = await import("@/lib/google-calendar/token-crypto");
-    vi.mocked(decryptGoogleSecret).mockReturnValueOnce({ ok: false } as never);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const r = await disconnectGoogleCalendarAction();
-    expect(revokeToken).not.toHaveBeenCalled();
-    expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
-    expect((r as { notice?: string }).notice).toMatch(/Third-party apps and services/);
-  });
-
-  it("a clean revoke returns plain ok with NO notice", async () => {
+  it("a member with no stored credential is disconnected idempotently with plain ok and NO notice", async () => {
+    vi.mocked(getRefreshTokenCiphertext).mockResolvedValueOnce(null as never);
     const r = await disconnectGoogleCalendarAction();
     expect(r).toEqual({ ok: true });
+    expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+    expect(revokeToken).not.toHaveBeenCalled();
+  });
+
+  it("source pin: the action neither decrypts nor revokes (the revoke call is gone, not merely unreached)", () => {
+    const src = readFileSync(join(__dirname, "../../../app/(app)/settings/profile/google-calendar-actions.ts"), "utf8");
+    const body = src.slice(src.indexOf("export async function disconnectGoogleCalendarAction"), src.indexOf("export async function listWritableCalendarsAction"));
+    expect(body).not.toMatch(/revokeToken|decryptGoogleSecret/);
+    expect(src).not.toMatch(/revokeToken/);
   });
 
   it("an unreadable connection store stops BEFORE anything is destroyed (the grant status is unknown)", async () => {
