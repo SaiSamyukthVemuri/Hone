@@ -41,14 +41,27 @@ export const metadata: Metadata = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Hide the record in print media unless the audited Print button armed it
-// (browser print / Save as PDF never runs the button's audit). @page margin 0
-// with inner padding keeps the browser's default header and footer, which print
-// the URL, off the paper.
+// (browser print / Save as PDF never runs the button's audit).
+//
+// MARGINS. @page margin stays 0 so the browser's default header and footer, which
+// print the page URL (it carries the client id), are off the paper. The top and
+// bottom margin of EVERY page then comes from an empty header and footer row of a
+// table (browsers repeat thead/tfoot on each printed page), 15 mm each, instead of
+// padding on the first and last fragments only (which left pages 2..n with about
+// 7 mm). Left and right are plain padding. Spacers are 0 on screen.
+//
+// APP SHELL. The signed-in layout's footer (copyright, Privacy, Terms, email) is
+// not part of a clinical record and made its own extra A4 page, so it is hidden in
+// print here without editing the shared component. The packet's own footer sits
+// inside [data-packet-document] and is kept.
 const PRINT_CSS = `
 [data-print-unarmed-notice] { display: none; }
+[data-packet-spacer] { height: 0; padding: 0; }
 @media print {
   @page { margin: 0; }
-  [data-packet-page] { padding: 16mm; }
+  [data-packet-page] { padding: 0 16mm; }
+  [data-packet-spacer] { height: 15mm; }
+  body footer:not([data-packet-document] footer) { display: none !important; }
   [data-packet-document]:not([data-print-armed]) { display: none !important; }
   [data-packet-document]:not([data-print-armed]) ~ [data-print-unarmed-notice] { display: block !important; }
 }
@@ -248,6 +261,20 @@ export default async function DayPacketPage({
       <style>{PRINT_CSS}</style>
 
       <div data-packet-document>
+        <table role="presentation" className="w-full border-collapse">
+          <thead>
+            <tr>
+              <td data-packet-spacer />
+            </tr>
+          </thead>
+          <tfoot>
+            <tr>
+              <td data-packet-spacer />
+            </tr>
+          </tfoot>
+          <tbody>
+            <tr>
+              <td className="p-0 align-top">
         <header className="border-b-2 border-neutral-900 pb-3">
           <h1 className="text-2xl font-semibold">Clinical treatment record</h1>
           <p className="mt-1 text-sm">
@@ -287,6 +314,10 @@ export default async function DayPacketPage({
             ))}
           </ul>
         </footer>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
       <p data-print-unarmed-notice className="text-sm">
         This record can only be printed with the Print button on the page, so that the print is recorded.
