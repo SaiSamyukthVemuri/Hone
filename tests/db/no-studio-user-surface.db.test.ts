@@ -637,6 +637,12 @@ describe("no-studio authenticated user: what can be reached", () => {
       storage: fns.some((f) => String(f.fn).startsWith("storage.")),
       realtime: fns.some((f) => String(f.fn).startsWith("realtime.")),
     };
+    // H-2: checked here, on the object that is about to be saved, so it cannot depend on another test having run first.
+    const serialised = JSON.stringify(report);
+    expect(serialised.length, "empty report: the scrub check would prove nothing").toBeGreaterThan(1000);
+    expect(serialised.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [], "the saved report must carry no uuid").toEqual([]);
+    expect(serialised.match(/(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/gi) ?? [], "the saved report must carry no unhyphenated 32-hex id").toEqual([]);
+    expect(serialised.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}/g) ?? [], "the saved report must carry no email address").toEqual([]);
     const out = process.env.HONE_CENSUS_OUT;
     if (out) writeFileSync(out, JSON.stringify(report, null, 1));
     console.log(`NO-STUDIO CENSUS counts: ${JSON.stringify(report.counts)}`);
@@ -655,6 +661,7 @@ describe("no-studio authenticated user: what can be reached", () => {
     // FK would answer 23503; 42501 means RLS refused first. LOCAL OWNED STACK ONLY.
     assertOwnedLocalPair();
     let code = "";
+    let message = "";
     const c = new Client({ connectionString: resolveLocalDbUrl() });
     await c.connect();
     try {
@@ -662,12 +669,12 @@ describe("no-studio authenticated user: what can be reached", () => {
       await c.query("alter table public.service_practitioners disable trigger user");
       await c.query("set local role authenticated");
       await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
-      await c.query("savepoint sp");
       try {
         await c.query("insert into public.service_practitioners (studio_id, service_id, practitioner_id) values ($1,$2,$3)", [A.studioId, randomUUID(), randomUUID()]);
         code = "landed";
       } catch (e) {
         code = (e as { code?: string }).code ?? "?";
+        message = String((e as { message?: string }).message ?? "");
       }
     } finally {
       await c.query("rollback").catch(() => undefined);
@@ -678,13 +685,13 @@ describe("no-studio authenticated user: what can be reached", () => {
     );
     expect(notRestored, "the guard trigger must be restored after the scratch run").toBe(0);
     expect(code).toBe("42501");
-  });
-
-  it("the saved report carries no uuid and no email address (H-2)", () => {
-    const text = JSON.stringify(report);
-    expect(text.length, "empty report: the scrub check would prove nothing").toBeGreaterThan(1000);
-    expect(text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []).toEqual([]);
-    expect(text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}/g) ?? []).toEqual([]);
+    // L1-1: 42501 is also what a missing table privilege answers. Pin that the refusal is the POLICY layer: the privilege is held, and the
+    // message is the row-level-security one, not "permission denied for table".
+    expect(
+      (await adminQuery("select has_table_privilege('authenticated', 'public.service_practitioners', 'INSERT') p")).rows[0].p,
+      "authenticated must hold INSERT here, or 42501 proves nothing about RLS",
+    ).toBe(true);
+    expect(message).toMatch(/row-level security/);
   });
 
   it("every own-identity RPC raises, or leaves no row owned by a no-studio user", () => {
