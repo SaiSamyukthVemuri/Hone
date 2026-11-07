@@ -128,3 +128,21 @@ describe("the revision save hold, mounted", () => {
     expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.disabled, "the picker is live again").toBe(false);
   });
 });
+
+describe("a stored mode the unit does not offer is never re-sent, mounted (#1369 E-2)", () => {
+  it("shows the unresolved state, mounts no entry form, reports NO resolved choice, and writes nothing", () => {
+    const onRecord = vi.fn(async () => ({ ok: true }));
+    const onSelectMachine = vi.fn(async () => ({ ok: true }));
+    const onResolvedChoice = vi.fn();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(createElement(MachineFirstSetupPanel, props({ initialModeKey: "not-offered", onRecord, onSelectMachine, onResolvedChoice }) as never)));
+    expect(host.querySelector('[data-testid="machine-mode-unresolved"]'), "the unresolved state is shown").not.toBeNull();
+    expect(host.querySelector('[data-testid="machine-reading-entry"]'), "no entry form for a mode that is not offered").toBeNull();
+    expect(onResolvedChoice, "the host is told there is no resolved choice").toHaveBeenLastCalledWith(null);
+    expect(onSelectMachine, "mounting writes no identity").not.toHaveBeenCalled();
+    expect(onRecord, "mounting records nothing").not.toHaveBeenCalled();
+    for (const call of onResolvedChoice.mock.calls) expect(JSON.stringify(call)).not.toContain("not-offered");
+  });
+});
