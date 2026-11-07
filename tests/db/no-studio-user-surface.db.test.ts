@@ -207,7 +207,62 @@ async function storageCensus() {
       `select policyname, cmd, roles::text roles, qual, with_check from pg_policies where schemaname='storage' and tablename='objects' order by 1`,
     )
   ).rows;
-  return { buckets, objectPolicies: pol.map((p: J) => ({ name: p.policyname, cmd: p.cmd, roles: p.roles, qual: String(p.qual).slice(0, 200) })) };
+  return {
+    status: "DEFERRED_TO_HOSTED_CATALOG_READ (a local stack is not authoritative: migration 0092 skips bucket/policy creation without privilege, and CI runs without storage-api)",
+    localBuckets: buckets,
+    localObjectPolicies: pol.map((p: J) => ({ name: p.policyname, cmd: p.cmd, roles: p.roles, qual: String(p.qual).slice(0, 200) })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4) OWN-IDENTITY RPCs (the real question, per OPS): a user with NO practitioner
+//    row calls set_own_* / update_own_*. Each must RAISE, or succeed while
+//    leaving no row owned by that user in ANY table with a user_id column.
+// ---------------------------------------------------------------------------
+async function ownIdentityCensus() {
+  const fns = (
+    await adminQuery(
+      `select p.proname, p.oid::int8 oid, p.proargnames names, p.proargtypes::oid[] types
+         from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        where n.nspname='public' and p.prokind='f'
+          and (p.proname like 'set\_own\_%' or p.proname like 'update\_own\_%')
+          and has_function_privilege('authenticated',p.oid,'EXECUTE')
+        order by 1`,
+    )
+  ).rows;
+  const owned = (
+    await adminQuery(
+      `select table_name from information_schema.columns
+        where table_schema='public' and column_name='user_id'
+          and table_name in (select table_name from information_schema.tables where table_schema='public' and table_type='BASE TABLE')`,
+    )
+  ).rows.map((r: J) => r.table_name as string);
+  const typeName = async (oid: number) => (await adminQuery("select format_type($1,null) t", [oid])).rows[0].t as string;
+  const lit = (t: string): string =>
+    t === "uuid" ? `'${randomUUID()}'::uuid` : t === "text" ? "'x'::text" : t === "boolean" ? "true" : ["integer", "smallint", "bigint"].includes(t) ? `1::${t}` : t === "jsonb" ? "'{}'::jsonb" : `null::${t}`;
+  const results: J[] = [];
+  for (const f of fns) {
+    const args: string[] = [];
+    for (const ty of f.types) args.push(lit(await typeName(ty)));
+    const call = `select public.${f.proname}(${args.join(",")}) r`;
+    const verdict = await asJwt(S, async (q) => {
+      await q("savepoint own");
+      try {
+        await q(call);
+        let leaked = 0;
+        for (const t of owned) {
+          leaked += Number((await q(`select count(*) n from public.${t} where user_id = $1`, [S])).rows[0].n);
+        }
+        await q("rollback to savepoint own");
+        return leaked === 0 ? "ok-no-owned-rows" : `LEAK: ${leaked} rows owned by the stranger after the call`;
+      } catch (e) {
+        await q("rollback to savepoint own");
+        return "raised:" + ((e as { code?: string }).code ?? "?");
+      }
+    });
+    results.push({ fn: f.proname, verdict });
+  }
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +275,7 @@ describe("no-studio authenticated user: what can be reached", () => {
     const fns = await functionCensus();
     const tables = await tableCensus();
     const storage = await storageCensus();
+    const ownIdentity = await ownIdentityCensus();
 
     // Positive controls: the probes can distinguish a member from a stranger.
     expect(fns.length, "census saw too few functions to be meaningful").toBeGreaterThan(40);
@@ -239,10 +295,17 @@ describe("no-studio authenticated user: what can be reached", () => {
       tablesWithoutRls: tables.filter((t) => !t.rls).map((t) => t.table),
       tablesNonMembershipPolicies: tables.filter((t) => t.nonMembershipPolicies.length > 0).map((t) => ({ table: t.table, policies: t.nonMembershipPolicies })),
       storage,
+      ownIdentity,
     };
     const out = process.env.HONE_CENSUS_OUT;
     if (out) writeFileSync(out, JSON.stringify(report, null, 1));
     console.log(`NO-STUDIO CENSUS counts: ${JSON.stringify(report.counts)}`);
+  });
+
+  it("every own-identity RPC raises, or leaves no row owned by a no-studio user", () => {
+    expect(report.ownIdentity.length, "the own-identity family must be non-empty or this proves nothing").toBeGreaterThan(2);
+    const leaks = report.ownIdentity.filter((r: J) => String(r.verdict).startsWith("LEAK"));
+    expect(leaks, "own-identity RPCs that create or keep data for a user with no studio").toEqual([]);
   });
 
   it("pins the reachable set (skipped in report mode)", () => {
