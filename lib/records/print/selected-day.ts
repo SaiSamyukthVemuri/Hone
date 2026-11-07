@@ -45,9 +45,14 @@ export type DayBounds = { fromUtc: string; toUtcExclusive: string };
  * "cannot answer", not as an empty day.
  */
 export function selectedDayBounds(day: string, timezone: string): DayBounds | null {
+  // Validate the date BEFORE any date arithmetic: addDays() throws RangeError on
+  // an unparseable string (e.g. "2026-13-01"), which would escape as an exception
+  // instead of the explicit null this function promises.
+  if (!parseSelectedDay(day).ok) return null;
   const fromUtc = studioLocalDateInstant(day, timezone);
+  if (fromUtc === null) return null;
   const toUtcExclusive = studioLocalDateInstant(addDays(day, 1), timezone);
-  if (fromUtc === null || toUtcExclusive === null) return null;
+  if (toUtcExclusive === null) return null;
   return { fromUtc, toUtcExclusive };
 }
 

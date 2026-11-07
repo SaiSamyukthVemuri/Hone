@@ -84,6 +84,14 @@ describe("unresolvable day or timezone is unavailable, never empty", () => {
     expect(selectSessionsForDay(rows, scope("2026-02-30")).kind).toBe("unavailable");
     expect(selectSessionsForDay(rows, scope("2026-05-10", "")).kind).toBe("unavailable");
   });
+  it("malformed dates never throw: invalid month, junk and empty string are unavailable", () => {
+    const rows = [s("x", "2026-05-10T15:00:00.000Z")];
+    for (const bad of ["2026-13-01", "2026-00-10", "2026-05-32", "not-a-date", "", "2026-5-1", "2026-05-10T00:00"]) {
+      expect(() => selectedDayBounds(bad, TZ), bad).not.toThrow();
+      expect(selectedDayBounds(bad, TZ), bad).toBeNull();
+      expect(selectSessionsForDay(rows, scope(bad)).kind, bad).toBe("unavailable");
+    }
+  });
 });
 
 describe("selectSessionsForDay: midnight boundaries", () => {
