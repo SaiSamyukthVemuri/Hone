@@ -15,9 +15,8 @@ import { NATIVE_SETTINGS_UNREADABLE } from "@/lib/records/print/machine-settings
 // semantics and RLS; it does NOT exercise PostgREST itself (max_rows, URL length).
 // Synthetic ids throughout; no real catalogue profile is activated.
 //
-// STATUS: the first 5 tests ran 5/5 on an owned stack at 9f660e05d under a logged OPS
-// grant. The readings are now read through setup_readings_for_block (Codex P1
-// #4500529393); that change has NOT been run against a stack yet (no grant).
+// STATUS: 6/6 pass on an owned stack at 7913ae84b + this test (OPS grant 13:25:39Z), with the
+// readings read through setup_readings_for_block (Codex P1 #4500529393).
 
 afterAll(() => closePool());
 
@@ -200,5 +199,17 @@ describe("day packet loader against the real schema", () => {
     const settings = packet.visits[0].areas[0].settings;
     expect(settings).toEqual([{ label: "Settings", value: NATIVE_SETTINGS_UNREADABLE }]);
     expect(JSON.stringify(settings)).not.toContain("STALE-FREQ");
+  });
+
+  it("the RPC refuses another studio's block (P0002) and a block with the wrong session, never an empty list", async () => {
+    const a = await seedStudio("hon46ra");
+    const b = await seedStudio("hon46rb");
+    const mine = await sessionAt(a, IN_DAY);
+    const theirs = await sessionAt(b, IN_DAY);
+    const call = (as: SeededStudio, block: string, session: string) =>
+      asUser(as.userId, (q) => q(`select public.setup_readings_for_block($1::uuid, $2::uuid) as r`, [block, session]));
+    expect((await call(a, mine.blockId, mine.sessionId)).rows[0].r).toEqual([]); // legitimate, no readings
+    await expect(call(b, mine.blockId, mine.sessionId)).rejects.toMatchObject({ code: "P0002" }); // foreign studio
+    await expect(call(a, mine.blockId, theirs.sessionId)).rejects.toMatchObject({ code: "P0002" }); // wrong session
   });
 });
