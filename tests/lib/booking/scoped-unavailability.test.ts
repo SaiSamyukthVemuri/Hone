@@ -7,17 +7,17 @@ import {
   type ScopeLoad,
 } from "@/lib/booking/scoped-unavailability";
 
-// PR B Part 3E-5 — the migration-order-safe SCOPED loaders. Legacy queries
-// practitioner_id IS NULL; studio-default loads everything; a practitioner
-// scope loads studio-wide + that practitioner; fall back to the legacy unscoped
-// query ONLY on the undefined-column error; FAIL CLOSED on anything else.
+// PR B Part 3E-5 — the SCOPED loaders. Legacy queries practitioner_id IS NULL;
+// studio-default loads everything; a practitioner scope loads studio-wide +
+// that practitioner; FAIL CLOSED on every error (0137 is hosted, so there is no
+// unscoped retry that could surface dormant scoped rows).
 
 type Res = { data: unknown; error: { code: string } | null };
 const P1 = "11111111-1111-4111-8111-111111111111";
 
 // Records every filter call so a test can assert HOW the scope was applied,
-// and returns queued {data,error} on each terminal await so we can drive the
-// scoped-then-legacy fallback path.
+// and returns queued {data,error} on each terminal await so a test can count
+// queries.
 function mockQueue(results: Res[]) {
   let i = 0;
   const filters: Array<{ m: string; args: unknown[] }> = [];
@@ -87,16 +87,15 @@ describe("getScopedUpcomingTimedBlocksSafe — scope construction", () => {
     ).rejects.toThrow(/scoped_unavailability_read_failed:scope_filter/);
   });
 
-  it("falls back to the legacy unscoped query ONLY on undefined-column", async () => {
+  it("FAILS CLOSED on undefined-column too — no unscoped legacy retry", async () => {
     const q = mockQueue([
-      { data: null, error: { code: "42703" } }, // column absent (pre-0137)
-      { data: [{ id: "legacy" }], error: null },
+      { data: null, error: { code: "42703" } },
+      { data: [{ id: "dormant-scoped" }], error: null }, // must never be read
     ]);
-    const rows = await getScopedUpcomingTimedBlocksSafe(q.mock, "s1", NOW, {
-      mode: "legacy",
-    });
-    expect(rows).toEqual([{ id: "legacy" }]);
-    expect(q.calls()).toBe(2);
+    await expect(
+      getScopedUpcomingTimedBlocksSafe(q.mock, "s1", NOW, { mode: "legacy" }),
+    ).rejects.toThrow(/scoped_unavailability_read_failed:timed_blocks:42703/);
+    expect(q.calls()).toBe(1);
   });
 
   it("FAILS CLOSED on any other error — no fallback, no data leak", async () => {
@@ -127,14 +126,15 @@ describe("getScopedRecurringBreakRulesSafe — scope construction", () => {
     expect(all.used("or")).toBe(false);
   });
 
-  it("fails over on PGRST204, fails closed on a connection error", async () => {
-    const ok = mockQueue([
+  it("fails closed on PGRST204 and on a connection error", async () => {
+    const absent = mockQueue([
       { data: null, error: { code: "PGRST204" } },
       { data: [{ id: "r" }], error: null },
     ]);
-    expect(await getScopedRecurringBreakRulesSafe(ok.mock, "s1", { mode: "legacy" })).toEqual([
-      { id: "r" },
-    ]);
+    await expect(
+      getScopedRecurringBreakRulesSafe(absent.mock, "s1", { mode: "legacy" }),
+    ).rejects.toThrow(/scoped_unavailability_read_failed:recurring_rules:PGRST204/);
+    expect(absent.calls()).toBe(1);
     const bad = mockQueue([{ data: null, error: { code: "08006" } }]);
     await expect(
       getScopedRecurringBreakRulesSafe(bad.mock, "s1", { mode: "legacy" }),

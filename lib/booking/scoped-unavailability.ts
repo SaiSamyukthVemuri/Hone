@@ -4,7 +4,7 @@ import type {
   StudioTimedBlock,
 } from "@/lib/types/database";
 
-// Migration-order-safe SCOPED-UNAVAILABILITY loaders (PR B Part 3E-5).
+// SCOPED-UNAVAILABILITY loaders (PR B Part 3E-5).
 //
 // Timed blocks and recurring-break rules gained a nullable practitioner_id in
 // migration 0137 (NULL = studio-wide, a UUID = one practitioner). These loaders
@@ -23,33 +23,20 @@ import type {
 // All three are ONE query (no N+1). Cross-tenant is impossible: every query is
 // pinned to studio_id and RLS additionally scopes to the caller's studio.
 //
-// The legacy path queries practitioner_id IS NULL. If (and ONLY if) the
-// column is genuinely absent (code running before 0137 is applied) it fails
-// over to the exact pre-0137 query. Any OTHER error FAILS CLOSED. We never log
-// query contents or row data, only a bounded operational marker.
+// Any error FAILS CLOSED (0137 is hosted, so there is no pre-0137 retry: an
+// unscoped legacy read would surface the dormant scoped rows above). We never
+// log query contents or row data, only a bounded operational code.
 
 type PgErr = { code?: string | null } | null | undefined;
-
-// undefined_column (Postgres) / column-not-in-schema-cache (PostgREST).
-const UNDEFINED_COLUMN_CODES = new Set(["42703", "PGRST204"]);
 
 // Guards the practitioner id before it is interpolated into a PostgREST `.or()`
 // filter string, so a malformed id can never inject filter syntax.
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isUndefinedColumn(error: PgErr): boolean {
-  return !!error && UNDEFINED_COLUMN_CODES.has(error.code ?? "");
-}
-
 function failClosed(error: PgErr, what: string): never {
   // Safe operational code only, never the raw message (which can echo data).
   throw new Error(`scoped_unavailability_read_failed:${what}:${error?.code ?? "unknown"}`);
-}
-
-function warnColumnAbsent(what: string): void {
-  // Reached solely when the 0137 column is absent (pre-apply). Safe marker only.
-  console.warn(`scoped_unavailability_column_absent:${what}`);
 }
 
 // The three read shapes, resolved by the caller from the capacity state + view.
@@ -87,20 +74,9 @@ export async function getScopedUpcomingTimedBlocksSafe(
     query = query.or(scopedOrFilter(scope.practitionerId));
   }
   // studio-default: no practitioner filter: all studio-wide + all scoped rows.
-  const res = await query.order("starts_at");
-  if (!res.error) return (res.data ?? []) as StudioTimedBlock[];
-  if (!isUndefinedColumn(res.error)) failClosed(res.error, "timed_blocks");
-  // Column absent, only reachable for a Legacy (pre-0137) studio, where the
-  // only rows that exist are studio-wide. Fall back to the exact legacy query.
-  warnColumnAbsent("timed_blocks");
-  const legacy = await supabase
-    .from("studio_timed_blocks")
-    .select("*")
-    .eq("studio_id", studioId)
-    .gt("ends_at", nowIso)
-    .order("starts_at");
-  if (legacy.error) failClosed(legacy.error, "timed_blocks");
-  return (legacy.data ?? []) as StudioTimedBlock[];
+  const { data, error } = await query.order("starts_at");
+  if (error) failClosed(error, "timed_blocks");
+  return (data ?? []) as StudioTimedBlock[];
 }
 
 // -------------------------------------------------------------------------
@@ -120,17 +96,9 @@ export async function getScopedRecurringBreakRulesSafe(
   } else if (scope.mode === "practitioner") {
     query = query.or(scopedOrFilter(scope.practitionerId));
   }
-  const res = await query.order("created_at");
-  if (!res.error) return (res.data ?? []) as StudioRecurringBreakRule[];
-  if (!isUndefinedColumn(res.error)) failClosed(res.error, "recurring_rules");
-  warnColumnAbsent("recurring_rules");
-  const legacy = await supabase
-    .from("studio_recurring_break_rules")
-    .select("*")
-    .eq("studio_id", studioId)
-    .order("created_at");
-  if (legacy.error) failClosed(legacy.error, "recurring_rules");
-  return (legacy.data ?? []) as StudioRecurringBreakRule[];
+  const { data, error } = await query.order("created_at");
+  if (error) failClosed(error, "recurring_rules");
+  return (data ?? []) as StudioRecurringBreakRule[];
 }
 
 // -------------------------------------------------------------------------
