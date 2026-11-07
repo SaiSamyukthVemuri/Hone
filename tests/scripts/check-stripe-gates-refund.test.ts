@@ -28,7 +28,7 @@ describe("check-stripe-gates: refunds.create allowlist", () => {
   it("the allowlist does NOT contain any other refund file", () => {
     // The refund-block allowlist must contain exactly one path.
     const refundBlock =
-      GATE.match(/name:\s*"refunds\.create"[\s\S]{0,2000}exactly:\s*1/)?.[0] ??
+      GATE.match(/name:\s*"refunds\.create"[\s\S]{0,2000}?exactly:\s*1/)?.[0] ??
       "";
     const allowlistPaths = refundBlock.match(/"lib\/[^"]+"/g) ?? [];
     expect(allowlistPaths.length).toBe(1);
@@ -49,9 +49,9 @@ describe("check-stripe-gates: other gates unchanged in PR #178", () => {
     );
   });
 
-  it("checkout.sessions still declares exactly 0", () => {
+  it("checkout.sessions declares exactly 1, only in the HON-70 billing adapter (PROPOSED, pending Sam)", () => {
     expect(GATE).toMatch(
-      /name:\s*"checkout\.sessions"[\s\S]{0,600}exactly:\s*0/,
+      /name:\s*"checkout\.sessions"[\s\S]{0,1200}?"lib\/subscriptions\/billing-client\.ts",\s*\],\s*exactly:\s*1/,
     );
   });
 

@@ -158,8 +158,17 @@ const RULES = [
     // appears in legitimate UI / booking copy; we only want to flag
     // the SDK namespace.
     pattern: /checkout\.sessions/g,
-    allowlist: [],
-    exactly: 0,
+    allowlist: [
+      // PROPOSED (HON-70, pending Sam's approval; see docs/13): Hone Care Inc
+      // SOFTWARE-SUBSCRIPTION Checkout. A separate Stripe account and client
+      // (HONE_BILLING_STRIPE_SECRET_KEY, test-mode key only) in its own
+      // adapter. It is NOT Connect treatment money and must never go through
+      // getStripe()/STRIPE_SECRET_KEY. Exactly one call site in exactly this
+      // file; a second site, or any other file, is a deliberate review event.
+      // tests/scripts/check-stripe-gates.test.ts pins the isolation.
+      "lib/subscriptions/billing-client.ts",
+    ],
+    exactly: 1,
   },
   // ------------------------------------------------------------------
   // Non-money Stripe writes (PR #309).

@@ -2178,6 +2178,12 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 
 **Alternative considered:** Bigger Playwright / Cypress setup. Rejected because the goal is the floor of a test harness, not the comprehensive suite. A future PR can grow it; this PR adds it without dependency churn (only `vitest` + `@vitest/coverage-v8` as devDeps).
 
+### PROPOSED (pending Sam's approval): allow one Checkout Session site for Hone Care Inc subscriptions (HON-70, no migration)
+
+**Status: PROPOSED, not a decision.** Nothing here is approved until Sam says so in his own words; the draft PR carrying it does not qualify for a release-policy merge.
+
+**Proposal:** relax the `checkout.sessions` rule in `scripts/check-stripe-gates.mjs` from `exactly: 0` to `exactly: 1`, allowlisted to `lib/subscriptions/billing-client.ts` only. **Scope:** Hone Care Inc subscription Checkout (HON-70), a separate Stripe account and a separate client (`HONE_BILLING_STRIPE_SECRET_KEY`, test-mode key only until activation); not Connect treatment money. **Why:** HON-70 requires hosted Stripe Checkout for Solo and Studio subscriptions, and the gate had no way to admit it. **Constraints:** the call never goes through `getStripe()` or `STRIPE_SECRET_KEY`; the `getStripe()` binding rule and the unclassified-write catch-all still deny subscriptions, invoices and every other mutating resource for the Connect client; the money rules stay 1/1/0/0; `HONE_SELF_SERVE_CHECKOUT_ENABLED` stays off and no live key is accepted. **Pinned by** `tests/scripts/check-stripe-gates.test.ts` (one file, one occurrence; any other file or a second call fails; the adapter never uses `getStripe()` or the Connect key) and `tests/lib/subscriptions/stripe-separation.test.ts`. **Alternatives considered:** rewording the call to evade the gate (rejected, it defeats the inventory); a second gate script (rejected, forks the engine). **Review:** Insurance and Privacy before any merge. Production is unaffected by the draft.
+
 ## Backlog
 
 > **⚠️ POINT-IN-TIME LIST — reconcile against

@@ -159,7 +159,7 @@ describe("Layer 4: webhook processes only deployment-mode events", () => {
 // ---------------------------------------------------------------------------
 // Static Stripe-gate money inventory unchanged (1 PI / 1 refund / 0 / 0)
 // ---------------------------------------------------------------------------
-describe("static Stripe gates remain 1/1/0/0", () => {
+describe("static Stripe gates remain 1/1/0/0 (money); checkout.sessions is the HON-70 adapter", () => {
   const rule = (name: string) =>
     new RegExp(
       `name:\\s*"${name.replace(".", "\\.")}"[\\s\\S]{0,1500}?exactly:\\s*(\\d+)`,
@@ -173,8 +173,11 @@ describe("static Stripe gates remain 1/1/0/0", () => {
   it("charges.create exactly 0", () => {
     expect(STRIPE_GATE_SCRIPT.match(rule("charges.create"))?.[1]).toBe("0");
   });
-  it("checkout.sessions exactly 0", () => {
-    expect(STRIPE_GATE_SCRIPT.match(rule("checkout.sessions"))?.[1]).toBe("0");
+  it("checkout.sessions exactly 1, allowlisted to the HON-70 billing adapter only (PROPOSED, pending Sam)", () => {
+    expect(STRIPE_GATE_SCRIPT.match(rule("checkout.sessions"))?.[1]).toBe("1");
+    expect(STRIPE_GATE_SCRIPT).toMatch(
+      /name:\s*"checkout\.sessions"[\s\S]{0,1200}?"lib\/subscriptions\/billing-client\.ts",\s*\],\s*exactly:\s*1/,
+    );
   });
   it("STRIPE_ALLOW_LIVE_MODE=true is allowlisted to lib/stripe/server.ts only", () => {
     expect(STRIPE_GATE_SCRIPT).toMatch(/STRIPE_ALLOW_LIVE_MODE=true/);
