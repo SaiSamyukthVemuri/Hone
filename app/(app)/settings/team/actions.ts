@@ -10,6 +10,9 @@ import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
+import { disconnectConnection, getRefreshTokenCiphertext } from "@/lib/google-calendar/connection";
+import { decryptGoogleSecret } from "@/lib/google-calendar/token-crypto";
+import { revokeToken } from "@/lib/google-calendar/oauth";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -259,5 +262,64 @@ export async function removePractitionerAction(formData: FormData): Promise<void
       throw new Error("Practitioner not found in this studio.");
     throw new Error("Could not remove the practitioner. Please try again.");
   }
+
+  // WHAT REMOVAL LEAVES BEHIND (RBAC G9; Sam's rule: removal ends outstanding invitations). Access is already cut, because every
+  // request re-reads `active`; these two stop a removed person's old grants from outliving them.
+  const leftovers = await endRemovedMemberLeftovers(admin, studioId, id);
   revalidatePath("/settings/team");
+  if (leftovers.length > 0) {
+    throw new Error(
+      `The team member was removed and can no longer open anything, but we could not also clear their ${leftovers.join(" and ")}. ` +
+        "Their access is already blocked; contact support to finish clearing it.",
+    );
+  }
+}
+
+// The removed member's PENDING invitations to this studio (a pending invitation is honoured later and can REACTIVATE the person:
+// link_invited_membership) and their Google Calendar connection (the studio's calendar-owner connection keeps syncing appointments
+// to their Google account otherwise: the sync reads the connection, never `practitioners.active`). Both are scoped to this studio
+// and to the target the locked command just deactivated. Returns what could not be cleared; clears the rest regardless.
+async function endRemovedMemberLeftovers(
+  admin: ReturnType<typeof createAdminClient>,
+  studioId: string,
+  practitionerId: string,
+): Promise<string[]> {
+  const failed: string[] = [];
+
+  try {
+    const { data: target, error: readErr } = await admin
+      .from("practitioners")
+      .select("email")
+      .eq("id", practitionerId)
+      .eq("studio_id", studioId)
+      .maybeSingle();
+    if (readErr) throw readErr;
+    const email = typeof target?.email === "string" ? target.email.trim().toLowerCase() : "";
+    if (email) {
+      const { error: revokeErr } = await admin
+        .from("pending_invitations")
+        .update({ status: "revoked" })
+        .eq("studio_id", studioId)
+        .eq("email", email)
+        .eq("status", "pending");
+      if (revokeErr) throw revokeErr;
+    }
+  } catch (e) {
+    console.error(`team_action_db_error:remove_revoke_invitations:${dbErrorCode(e)}`);
+    failed.push("pending invitations");
+  }
+
+  try {
+    // Revoke at Google BEFORE destroying the local ciphertext, as the member's own Disconnect does; a failed revoke is not fatal.
+    const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
+    if (ciphertext) {
+      const dec = decryptGoogleSecret(ciphertext);
+      if (dec.ok) await revokeToken(dec.secret).catch(() => undefined);
+    }
+    await disconnectConnection(studioId, practitionerId);
+  } catch {
+    console.error("team_action_error:remove_disconnect_google");
+    failed.push("Google Calendar connection");
+  }
+  return failed;
 }
