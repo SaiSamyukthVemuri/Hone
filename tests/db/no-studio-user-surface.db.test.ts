@@ -49,8 +49,9 @@ import {
 // census does not scrub or otherwise vouch for the report it writes. Behavioural role-check
 // proofs (valid fixture ids, an asserted refusal, a rolled-back scratch copy that stops
 // refusing) exist for: record/supersede_appointment_settlement, set_new_client_admission_mode,
-// receptionist_cancel/create/move_appointment (no authorised-caller control: no receptionist
-// fixture), and the four own-identity RPCs (valid args plus a member control).
+// receptionist_move_appointment (scratch RED) and receptionist_cancel/create_appointment (stranger
+// refused; removing the desk gate leaves the shared core's own refusal, so no RED) (no authorised-caller
+// control: no receptionist fixture), and the four own-identity RPCs (valid args plus a member control).
 // Covered by SOURCE READING ONLY, no behavioural proof here: archive_treatment_image,
 // set_treatment_image_note, edit_client_pinned_note, reconcile_my_pending_invitation,
 // realtime.send (S1, hosted read), graphql_public.graphql (S2, hosted read).
@@ -568,7 +569,7 @@ const PINNED: string[] = [
 // rolled-back scratch copy of the function with that layer removed.
 // ---------------------------------------------------------------------------
 describe("S4: the settlement and admission-mode commands refuse a no-studio user at the membership/role check", () => {
-  type Call = { name: string; args: string; ownerCode: string; layers: Array<{ label: string; re: RegExp }>; scalar?: boolean; noControl?: boolean };
+  type Call = { name: string; args: string; ownerCode: string; layers: Array<{ label: string; re: RegExp }>; scalar?: boolean; noControl?: boolean; coreAlsoRefuses?: boolean };
   const CALLS: Call[] = [
     { name: "record_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, null, false`, ownerCode: "owner_only",
       layers: [{ label: "membership", re: /v_practitioner := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
@@ -577,9 +578,9 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
     // Receptionist desk commands: gate is receptionist_actor_id(). No receptionist fixture exists
     // here, so there is no "authorised caller passes" control; the proof is that the stranger is
     // refused and that removing the gate changes the outcome.
-    { name: "receptionist_cancel_appointment", scalar: true, noControl: true, args: `'%S'::uuid, '${randomUUID()}'::uuid, 'valid reason'`, ownerCode: "not_authorized",
+    { name: "receptionist_cancel_appointment", scalar: true, noControl: true, coreAlsoRefuses: true, args: `'%S'::uuid, '${randomUUID()}'::uuid, 'valid reason'`, ownerCode: "not_authorized",
       layers: [{ label: "desk", re: /if v_desk is null then/ }] },
-    { name: "receptionist_create_appointment", noControl: true, args: `'%S'::uuid, '%P'::uuid, '%C'::uuid, '${randomUUID()}'::uuid, now() + interval '3 days'`, ownerCode: "not_authorized",
+    { name: "receptionist_create_appointment", noControl: true, coreAlsoRefuses: true, args: `'%S'::uuid, '%P'::uuid, '%C'::uuid, '${randomUUID()}'::uuid, now() + interval '3 days'`, ownerCode: "not_authorized",
       layers: [{ label: "desk", re: /if v_desk is null then/ }] },
     { name: "receptionist_move_appointment", noControl: true, args: `'%S'::uuid, '${randomUUID()}'::uuid, '%P'::uuid, now() + interval '3 days', now() + interval '3 days 1 hour', now() + interval '4 days'`, ownerCode: "not_authorized",
       layers: [{ label: "desk", re: /if v_desk is null then/ }] },
@@ -640,7 +641,14 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
       }
       // All layers removed: the stranger is no longer refused.
       const none = await scratchRun(c, c.layers.map((l) => l.re));
-      expect(isRefusal(c, none), `with every check removed the stranger got: ${none}`).toBe(false);
+      if (c.coreAlsoRefuses) {
+        // Defence in depth: create/cancel hand the actor to a shared core that re-checks the actor
+        // against practitioners/receptionists and refuses too. Removing the desk gate alone does NOT
+        // turn this red; that is recorded, not hidden. (The core's own check is not mutated here.)
+        expect(none, "the shared core must still refuse when the desk gate is removed").toBe(c.ownerCode);
+      } else {
+        expect(isRefusal(c, none), `with every check removed the stranger got: ${none}`).toBe(false);
+      }
       // The real function is unchanged after the rollback.
       expect(isRefusal(c, await run(S, c))).toBe(true);
       void owner;
