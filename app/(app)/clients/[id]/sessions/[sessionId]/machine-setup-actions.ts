@@ -16,7 +16,7 @@ import {
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
-import { checkIdentityChoice } from "@/lib/machines/identity-choice";
+import { checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -626,12 +626,21 @@ export async function recordBlockMachineIdentityAction(input: {
   }
   const db = await machineDb();
   // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces (Codex, #1369 4498767101).
-  const allowed = await checkIdentityChoice(db, scope, {
-    deviceId: input.deviceId,
-    modeKey: input.modeKey,
-    profileId: input.profileId,
-  });
-  if (!allowed.ok) return { ok: false, code: "rejected", error: allowed.error };
+  const choice = { deviceId: input.deviceId, modeKey: input.modeKey, profileId: input.profileId };
+  const allowed = await checkIdentityChoice(db, scope, choice);
+  // A REFUSAL MUST NOT STOP THE RETRY OF A WRITE THAT ALREADY COMMITTED (Codex, #1369 4499083273). The command answers a repeated
+  // key from its receipt BEFORE it looks at the unit, but this preflight runs first: a unit retired since, or an inventory read that
+  // fails, would otherwise refuse the retry and the caller would drop the key. So the receipt-aware command decides when
+  //   * the unit is merely not available now (retired/unknown/foreign): the command itself refuses those for a NEW write; or
+  //   * the block already stores exactly this choice (the receipt table is readable by no API role; the block is the proof).
+  // An impossible pair for a NEW write is still refused here, and an unreadable inventory is "unknown": the key is kept.
+  let deferredRefusal: string | null = null;
+  if (!allowed.ok) {
+    const alreadyStored = await storedIdentityMatches(db, { blockId: input.blockId, sessionId: input.sessionId }, choice);
+    if (alreadyStored || allowed.reason === "availability") deferredRefusal = allowed.error;
+    else if (allowed.reason === "unreadable") return { ok: false, code: "unknown", error: allowed.error };
+    else return { ok: false, code: "rejected", error: allowed.error };
+  }
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
     const out = await recordBlockMachineIdentity(db, {
@@ -653,6 +662,10 @@ export async function recordBlockMachineIdentityAction(input: {
       // 0301 not applied yet: say so, never "saved".
       if (isMissingCommand(out.error)) {
         return { ok: false, code: "rejected", error: MACHINE_CHOICE_NOT_STORABLE_YET };
+      }
+      // The command refused a NEW write the preflight had deferred to it: say why, in the preflight's own words.
+      if (deferredRefusal !== null && !out.unresolved) {
+        return { ok: false, code: "rejected", error: deferredRefusal };
       }
       // UNKNOWN IS NOT REJECTED (Codex 4488743493). With no database answer the write may have committed; "unknown" keeps the
       // key so the caller can ask again and be answered from the receipt, instead of treating the pick as reverted.

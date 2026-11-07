@@ -1503,7 +1503,10 @@ export async function createTreatmentAreaWithEntryAction(
       modeKey: identity.modeKey,
       profileId: identity.profileId,
     });
-    if (!allowed.ok) return { ok: false, error: allowed.error, unresolved: false };
+    // Codex, #1369 4499083273: a unit that is merely not available NOW (retired since) is left to the receipt-aware command, which
+    // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
+    if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
+    if (!allowed.ok && allowed.reason !== "availability") return { ok: false, error: allowed.error, unresolved: false };
   }
   // Built once so the older command can be called with the same arguments when
   // 0301 is not applied yet (see the fallback below).

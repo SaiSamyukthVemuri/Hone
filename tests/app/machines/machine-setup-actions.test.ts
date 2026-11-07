@@ -143,7 +143,7 @@ vi.mock("@/lib/supabase/server", () => ({
             // session instead, so the binding is a predicate on the read
             // itself. This branch stays for the other tables that use it.
             eq: () => ({
-              limit: async () => ({ data: [{ id: "block-1" }], error: null }),
+              limit: async () => ({ data: (table === "session_blocks" ? DB.rowsFor.session_blocks : undefined) ?? [{ id: "block-1" }], error: null }),
             }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
@@ -2181,19 +2181,26 @@ describe("recordBlockMachineIdentityAction checks the choice against the unit's 
     expect(wrote()).toBe(false);
   });
 
-  it("a unit that is not in this studio's inventory (another studio's, or unknown) is refused, nothing written", async () => {
+  // AVAILABILITY IS LEFT TO THE RECEIPT-AWARE COMMAND (Codex, #1369 4499083273). The command answers a repeated key from its receipt
+  // before it looks at the unit, and refuses a NEW write to a retired or foreign unit itself, so the action calls it and, when it
+  // refuses, reports the preflight's own clear words.
+  it("a unit that is not this studio's: the command is asked and refuses the NEW write; the clear words come back", async () => {
     arrangeUnit({ studio_id: "studio-other" });
+    DB.rpcResult = null;
+    DB.rpcError = { code: "23514", message: "That machine is not available in this studio." };
     const out = await actions.recordBlockMachineIdentityAction(base);
     expect(out).toMatchObject({ ok: false, code: "rejected" });
-    expect(wrote()).toBe(false);
+    expect(wrote()).toBe(true);
   });
 
-  it("a retired unit is refused, nothing written", async () => {
+  it("a retired unit: a NEW write is refused by the command and the words are 'out of service'", async () => {
     arrangeUnit({ retired_at: "2026-10-01T00:00:00Z" });
+    DB.rpcResult = null;
+    DB.rpcError = { code: "23514", message: "That machine is not available in this studio." };
     const out = await actions.recordBlockMachineIdentityAction(base);
     expect(out).toMatchObject({ ok: false, code: "rejected" });
     if (!out.ok) expect(out.error).toMatch(/out of service/i);
-    expect(wrote()).toBe(false);
+    expect(wrote()).toBe(true);
   });
 
   it("a unit registered against a superseded profile version is refused, nothing written", async () => {
@@ -2228,12 +2235,67 @@ describe("recordBlockMachineIdentityAction checks the choice against the unit's 
     expect(wrote()).toBe(false);
   });
 
-  it("an unreadable inventory refuses (definitive, nothing written), never saved and never unknown", async () => {
+  it("an unreadable inventory is UNKNOWN (the retry key is kept), nothing written and never 'saved'", async () => {
     arrangeUnit();
     DB.errorFor.studio_machines = { message: "boom" };
     const out = await actions.recordBlockMachineIdentityAction(base);
-    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(out).toMatchObject({ ok: false, code: "unknown" });
     expect(wrote()).toBe(false);
+  });
+
+  // ---- THE LOST-ANSWER RETRY (Codex, #1369 4499083273): commit, lose the reply, the unit is retired, retry the SAME key, recover.
+  describe("a same-key retry of a committed write recovers whatever has changed since", () => {
+    const STORED_ROW = [{ id: "block-1", machine_profile_id: null, studio_machine_id: UNIT_ID, machine_mode_key: UNIT_MODE }];
+    const REPLAY = { ...RECEIPT("v2"), reused: true, machine_mode_key: UNIT_MODE };
+
+    it("the full story: the write commits and its reply is lost, the unit is then retired, the same key recovers the stored result", async () => {
+      // 1. the original write: the reply is lost (transport failure): unknown, so the caller keeps its key.
+      arrangeUnit();
+      DB.rpcError = { message: "fetch failed" };
+      const first = await actions.recordBlockMachineIdentityAction(base);
+      expect(first).toMatchObject({ ok: false, code: "unknown" });
+      // 2. it had committed; the unit is retired afterwards.
+      DB.calls = [];
+      DB.rpcError = null;
+      DB.rpcResult = REPLAY;
+      arrangeUnit({ retired_at: "2026-11-07T00:00:00Z" });
+      // 3. the SAME key: the command answers from its receipt.
+      const retry = await actions.recordBlockMachineIdentityAction(base);
+      expect(retry).toMatchObject({ ok: true, reused: true, updatedAt: "v2" });
+      expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+      expect(DB.calls.at(-1)?.args).toMatchObject({ p_idempotency_key: "pick-key-0001" });
+    });
+
+    it("the inventory read fails at retry time and the block already stores this choice: the key still recovers", async () => {
+      arrangeUnit();
+      DB.errorFor.studio_machines = { message: "boom" };
+      DB.rowsFor.session_blocks = STORED_ROW;
+      DB.rpcResult = REPLAY;
+      const out = await actions.recordBlockMachineIdentityAction(base);
+      expect(out).toMatchObject({ ok: true, reused: true });
+    });
+
+    it("the mode is no longer offered but the block already stores this choice: the replay is still answered", async () => {
+      arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+      DB.rowsFor.session_blocks = STORED_ROW;
+      DB.rpcResult = REPLAY;
+      expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(true);
+    });
+
+    it("NEGATIVE CONTROL: the same impossible choice with NOTHING stored is still refused before the command", async () => {
+      arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+      DB.rowsFor.session_blocks = [{ id: "block-1", machine_profile_id: null, studio_machine_id: null, machine_mode_key: null }];
+      expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(false);
+      expect(wrote()).toBe(false);
+    });
+
+    it("NEGATIVE CONTROL: an inventory failure with nothing stored is unknown and writes nothing", async () => {
+      arrangeUnit();
+      DB.errorFor.studio_machines = { message: "boom" };
+      const out = await actions.recordBlockMachineIdentityAction(base);
+      expect(out).toMatchObject({ ok: false, code: "unknown" });
+      expect(wrote()).toBe(false);
+    });
   });
 });
 

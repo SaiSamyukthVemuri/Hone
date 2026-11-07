@@ -75,6 +75,15 @@ vi.mock("@/lib/machines/studio-devices", () => ({
         installedOptions: [],
         retiredAt: null,
       },
+      {
+        deviceId: "dev-retired",
+        studioId: "studio-1",
+        profileId: "fixture:receipt",
+        profileVersion: 1,
+        displayName: "Room 2",
+        installedOptions: [],
+        retiredAt: "2026-11-07T00:00:00Z",
+      },
     ],
   }),
 }));
@@ -374,16 +383,30 @@ describe("0301 not applied yet: the app degrades safely", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("an identity-only save naming a unit this studio does not have is REFUSED before any command", async () => {
+  // Codex, #1369 4499083273: a unit that is merely unavailable NOW is left to the receipt-aware command, so a same-key retry of a
+  // create whose answer was lost still recovers after the unit is retired; a NEW write to it is refused by the command.
+  it("a unit retired since: the command answers the repeated key from its receipt and the save recovers", async () => {
     rpc.mockResolvedValue({ data: GOOD, error: null });
     single.mockResolvedValue({ data: BLOCK_ROW, error: null });
     const out = await createTreatmentAreaWithEntryAction({
       clientId: "client-1",
       sessionId: "session-1",
-      machineIdentity: { machineId: "dev-other", modeKey: MODE_KEY, profileId: null },
+      createKey: "create-key-0001",
+      machineIdentity: { machineId: "dev-retired", modeKey: MODE_KEY, profileId: null },
+    });
+    expect(out.ok).toBe(true);
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual(["create_block_with_initial_setup_and_identity"]);
+  });
+
+  it("NEGATIVE CONTROL: a NEW write to the retired unit is refused by the command, with the clear words", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "23514", message: "That machine is not available in this studio." } });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction({
+      clientId: "client-1",
+      sessionId: "session-1",
+      machineIdentity: { machineId: "dev-retired", modeKey: MODE_KEY, profileId: null },
     });
     expect(out.ok).toBe(false);
-    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("CONTROL: the supported unit and mode is sent to the identity command", async () => {
