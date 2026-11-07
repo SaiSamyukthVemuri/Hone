@@ -23,6 +23,10 @@ import { formatAreaLabel, type BlockArea } from "@/lib/sessions/block-areas";
 
 export const NOT_RECORDED = "Not recorded";
 /** Printed in place of a date of birth until Sabrina's format review decides it. */
+/** Said on the page so the footer describes what IS printed, not only what is not. */
+export const PACKET_INCLUDES_NOTE =
+  "Per-area numbing, tolerance, reaction and caution notes recorded on this day are included.";
+
 export const DOB_PENDING = "Pending format review";
 
 /** What the page says is NOT in the packet. Rendered verbatim. */
@@ -33,7 +37,7 @@ export const PACKET_EXCLUSIONS: readonly string[] = [
   "Payment records (prices, charges, payments and balances)",
   "Intake forms, medical history and consent forms",
   "Photos and treatment images",
-  "Next-session planning notes",
+  "The session-level next-session planning note",
   "Deleted sessions, settings blocks and entries",
 ];
 
@@ -74,7 +78,6 @@ export type PacketBlockSource = {
   reaction_type: string | null;
   reaction_notes: string | null;
   caution_note: string | null;
-  caution_for_next_session: boolean | null;
   block_notes: string | null;
   started_at: string | null;
   ended_at: string | null;
@@ -216,11 +219,21 @@ function entryReadings(e: PacketEntrySource): Reading[] {
   ]);
 }
 
+// The live writer sets only these three keys. Anything else in the jsonb (an
+// imported or legacy row) is NOT printed, and a nested value never renders
+// (Privacy B-3).
+const LASER_SETTING_KEYS: ReadonlyArray<[string, string]> = [
+  ["fluence", "fluence"],
+  ["pulse_width", "pulse width"],
+  ["spot_size", "spot size"],
+];
+
 function laserReadings(l: PacketLaserSource): Reading[] {
   const params = l.equipment_params ?? {};
-  const settings = Object.entries(params)
-    .filter(([, v]) => present(v))
-    .map(([k, v]) => `${k.replace(/_/g, " ")} ${String(v)}`);
+  const settings = LASER_SETTING_KEYS.flatMap(([key, label]) => {
+    const v = (params as Record<string, unknown>)[key];
+    return present(v) ? [`${label} ${String(v).trim()}`] : [];
+  });
   return readings([
     ["Zone", l.zone],
     ["Pass", l.session_number],

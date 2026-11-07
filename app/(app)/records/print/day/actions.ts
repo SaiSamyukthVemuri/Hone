@@ -3,6 +3,7 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { canPrintClinicalPacket, printAuditMetadata, recordDayAudit } from "@/lib/records/print/day-audit";
+import { checkPrintableDay } from "@/lib/records/print/day-guard";
 import { parseSelectedDay } from "@/lib/records/print/selected-day";
 
 // HON-46. Records the PRINT of a day packet before the browser print dialog
@@ -17,6 +18,7 @@ import { parseSelectedDay } from "@/lib/records/print/selected-day";
 // THIS owner's own preview of THIS client and day, created within 30 minutes, and
 // raises 22023 otherwise. So a forged id can only name the caller's own preview.
 // Nothing here logs or returns the client id, the day or any error text.
+// (The studio is read only for its timezone, to bound the day; it is never sent to the database.)
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -25,12 +27,12 @@ export async function recordDayPacketPrintAction(input: {
   day: string;
   previewAuditId: string;
 }): Promise<{ ok: boolean }> {
-  const { practitioner } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (!canPrintClinicalPacket(practitioner)) return { ok: false };
   if (typeof input?.clientId !== "string" || !UUID.test(input.clientId)) return { ok: false };
   if (typeof input.previewAuditId !== "string" || !UUID.test(input.previewAuditId)) return { ok: false };
   const day = parseSelectedDay(input.day);
-  if (!day.ok) return { ok: false };
+  if (!day.ok || !checkPrintableDay(day.day, studio.timezone).ok) return { ok: false };
   const supabase = await createClient();
   const recorded = await recordDayAudit((fn, args) => supabase.rpc(fn, args), {
     clientId: input.clientId,

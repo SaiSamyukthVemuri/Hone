@@ -4,6 +4,7 @@ import {
   DOB_PENDING,
   NOT_RECORDED,
   PACKET_EXCLUSIONS,
+  PACKET_INCLUDES_NOTE,
   type PacketBlockSource,
   type PacketEntrySource,
   type PacketSessionSource,
@@ -18,7 +19,7 @@ const block = (over: Partial<PacketBlockSource> = {}): PacketBlockSource => ({
   id: "b1", session_id: "s1", sort_order: 1, block_name: null, primary_area: "Upper lip", side: null, custom_area_detail: null,
   mode: null, apilus_modality: null, energy_level: null, minutes_performed: null, machine_frequency: null, probe_label: null,
   probe_type: null, probe_size: null, probe_lot_number: null, numbing_status: null, numbing_notes: null, tolerance_rating: null,
-  reaction_type: null, reaction_notes: null, caution_note: null, caution_for_next_session: null, block_notes: null,
+  reaction_type: null, reaction_notes: null, caution_note: null, block_notes: null,
   started_at: null, ended_at: null, created_at: "2026-05-11T02:31:00.000Z", ...over,
 });
 const entry = (over: Partial<PacketEntrySource> = {}): PacketEntrySource => ({
@@ -99,6 +100,22 @@ describe("buildDayPacket", () => {
       blockAreasById: new Map([["b1", [{ area: "upper_lip", laterality: "left" }, { area: "chin", laterality: "right" }] as never]]),
     });
     expect(p.visits[0].areas[0].label.split(" · ")).toHaveLength(2);
+  });
+  it("Privacy B-3: laser prints only fluence, pulse width and spot size; extra keys and nested values never print", () => {
+    const laser = { id: "l1", session_id: "s1", zone: "Chin", session_number: 2, ejection_results: null, observation_notes: null, created_at: "2026-05-11T02:40:00.000Z" };
+    const p = buildDayPacket({
+      ...base, sessions: [session()], blocks: [], entries: [],
+      laserEntries: [{ ...laser, equipment_params: { fluence: "12 J", pulse_width: 30, spot_size: "18mm", internal_flag: "SECRET-KEY", nested: { a: "NESTED-VALUE" } } }],
+    });
+    const out = JSON.stringify(p.visits[0].laserPasses);
+    expect(out).toContain("fluence 12 J");
+    expect(out).toContain("pulse width 30");
+    expect(out).toContain("spot size 18mm");
+    for (const leak of ["SECRET-KEY", "internal flag", "NESTED-VALUE", "[object Object]"]) expect(out).not.toContain(leak);
+  });
+  it("E-4: the footer names the session-level planning note and says per-area caution notes ARE included", () => {
+    expect(PACKET_EXCLUSIONS.join("|")).toContain("session-level next-session planning note");
+    expect(PACKET_INCLUDES_NOTE).toMatch(/caution notes recorded on this day are included/);
   });
   it("empty day builds an empty packet, not other data", () => {
     expect(buildDayPacket({ ...base, sessions: [], blocks: [], entries: [] }).visits).toEqual([]);

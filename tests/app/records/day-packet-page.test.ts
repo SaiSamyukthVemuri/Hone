@@ -64,8 +64,8 @@ describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
     expect(PAGE).toMatch(/searchParams/);
     expect(PAGE).not.toMatch(/\bparams:\s*Promise/);
   });
-  it("M-3: validation and refusal come before any audit or read, in this order: owner, day, client, audit, load", () => {
-    const order = ["canPrintClinicalPacket(practitioner)", "parseSelectedDay(sp.day)", "UUID.test(sp.clientId)", "recordDayAudit(", "loadDayDocument("].map((s) => PAGE.indexOf(s));
+  it("M-3: validation and refusal come before any audit or read, in this order: owner, day, day bounds, client, audit, load", () => {
+    const order = ["canPrintClinicalPacket(practitioner)", "parseSelectedDay(sp.day)", "checkPrintableDay(day.day", "UUID.test(sp.clientId)", "recordDayAudit(", "loadDayDocument("].map((s) => PAGE.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

@@ -1,13 +1,20 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { printWithAudit } from "@/lib/records/print/arm-print";
 import { recordDayPacketPrintAction } from "./actions";
 
-// HON-46. The ONLY thing that arms the packet for print. It records the print
-// in the audit trail first (server action, fail closed) and only then marks the
-// document printable and opens the browser dialog. If the audit fails nothing
-// prints and the owner is told why. Nothing here puts the client or day anywhere
-// but the action's arguments.
+// HON-46. The ONLY thing that arms the packet for print, and only for ONE print:
+// it records the print in the audit trail first (server action, fail closed),
+// arms the document, opens the browser dialog, and disarms on afterprint (or a
+// timeout, or any failure). A second Ctrl/Cmd+P therefore prints only the notice
+// and the owner presses Print again, which audits again. See lib/records/print/
+// arm-print.ts. Nothing here puts the client or day anywhere but the action's
+// arguments.
+function packetDocument(): Element | null {
+  return document.querySelector("[data-packet-document]");
+}
+
 export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId: string; day: string; previewAuditId: string }) {
   const [pending, startTransition] = useTransition();
   const [failed, setFailed] = useState(false);
@@ -15,14 +22,19 @@ export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId
   function onPrint() {
     setFailed(false);
     startTransition(async () => {
-      const res = await recordDayPacketPrintAction({ clientId, day, previewAuditId }).catch(() => ({ ok: false }));
-      if (!res.ok) {
-        setFailed(true);
-        return;
-      }
-      const doc = document.querySelector("[data-packet-document]");
-      doc?.setAttribute("data-print-armed", "true");
-      window.print();
+      const res = await printWithAudit({
+        record: () => recordDayPacketPrintAction({ clientId, day, previewAuditId }),
+        arm: () => packetDocument()?.setAttribute("data-print-armed", "true"),
+        disarm: () => packetDocument()?.removeAttribute("data-print-armed"),
+        print: () => window.print(),
+        onAfterPrint: (cb) => {
+          window.addEventListener("afterprint", cb);
+          return () => window.removeEventListener("afterprint", cb);
+        },
+        setTimer: (cb, ms) => window.setTimeout(cb, ms),
+        clearTimer: (h) => window.clearTimeout(h as number),
+      });
+      if (!res.ok) setFailed(true);
     });
   }
 
