@@ -8,6 +8,7 @@ import { parseNewStudioInput } from "@/lib/studios/new-studio";
 import { logAdminAction } from "@/lib/audit/admin-actions";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { escapeIlike } from "@/lib/search/global-search";
 import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 
 const BASE = "/admin/studios/new";
@@ -101,7 +102,7 @@ export async function createStudioWithOwnerInvite(
   // existing invites may be stored mixed-case). Escape ILIKE wildcards (% and
   // _) so an email whose local part contains them: e.g. first_last@x.com,
   // cannot over-match unrelated invitations.
-  const ownerEmailPattern = input.ownerEmail.replace(/[\\%_]/g, "\\$&");
+  const ownerEmailPattern = escapeIlike(input.ownerEmail);
   const { data: dupInvite, error: dupErr } = await admin
     .from("pending_invitations")
     .select("id")

@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { escapeIlike } from "@/lib/search/global-search";
 
 // PR #189 (pilot safety): Hone is invite-only during the pilot.
 //
@@ -42,15 +43,16 @@ export async function requestPractitionerMagicLinkAction(
 
   // Invite lookup runs through the admin client: the requester is
   // anonymous and pending_invitations is RLS-gated to studio members.
-  // ilike with no wildcards = case-insensitive equality, matching the
-  // lower(email) semantics of the handle_new_user() trigger. A lookup
+  // ilike on the ESCAPED address = case-insensitive equality, matching the
+  // lower(email) semantics of the claim RPCs. An unescaped _ or % is a wildcard
+  // and let one person's address pass the signup gate on another's invitation. A lookup
   // error fails CLOSED for signup (no user creation) while still
   // letting existing practitioners get their link.
   const admin = createAdminClient();
   const { data: invite, error: inviteError } = await admin
     .from("pending_invitations")
     .select("id")
-    .ilike("email", normalized)
+    .ilike("email", escapeIlike(normalized))
     .eq("status", "pending")
     .maybeSingle();
   const allowSignup = !inviteError && Boolean(invite);

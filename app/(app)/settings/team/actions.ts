@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { escapeIlike } from "@/lib/search/global-search";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
@@ -143,7 +144,7 @@ export async function invitePractitionerAction(
     .from("practitioners")
     .select("id")
     .eq("studio_id", studioId)
-    .ilike("email", email)
+    .ilike("email", escapeIlike(email))
     .eq("active", true)
     .maybeSingle();
   if (existingErr) {
@@ -161,7 +162,7 @@ export async function invitePractitionerAction(
     .from("pending_invitations")
     .select("id")
     .eq("studio_id", studioId)
-    .ilike("email", email)
+    .ilike("email", escapeIlike(email))
     .eq("status", "pending")
     .maybeSingle();
   if (inviteErr) {
