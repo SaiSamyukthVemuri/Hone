@@ -28,6 +28,8 @@ describe("removalLeftoverMessage", () => {
     expect(m).not.toMatch(/contact support/i);
     expect(m).not.toMatch(/could not also clear/i);
     expect(m).toContain(STUDIO_LOCAL_DISCONNECT_NOTICE);
+    // The owner cannot change the removed person's Google settings, so the one extra sentence is the actor instruction.
+    expect(m).toMatch(/You cannot change their Google settings; ask them to remove Hone there if they wish\./);
     expect(m).toMatch(/Third-party apps and services/);
     expect(m).not.toMatch(/disconnected from Google/i);
   });

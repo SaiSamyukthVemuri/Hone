@@ -94,14 +94,14 @@ describe("getRefreshTokenCiphertext", () => {
 describe("disconnectConnection", () => {
   const found = { data: { id: "c1" }, error: null };
 
-  it("does nothing, and does not throw, when there is no connection", async () => {
-    await expect(disconnectConnection("s1", "p1")).resolves.toBeUndefined();
+  it("does nothing, and does not throw, when there is no connection (answers false: no row existed)", async () => {
+    await expect(disconnectConnection("s1", "p1")).resolves.toBe(false);
     expect(STORE.calls).toEqual(["calendar_connections:select"]);
   });
 
   it("deletes the secret then marks the connection disconnected", async () => {
     STORE.replies["calendar_connections:select"] = found;
-    await expect(disconnectConnection("s1", "p1")).resolves.toBeUndefined();
+    await expect(disconnectConnection("s1", "p1")).resolves.toBe(true); // a row existed, so the caller says a grant may remain
     expect(STORE.calls).toEqual(["calendar_connections:select", "calendar_connection_secrets:delete", "calendar_connections:update"]);
   });
 

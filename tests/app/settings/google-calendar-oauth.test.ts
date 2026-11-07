@@ -39,7 +39,7 @@ vi.mock("@/lib/google-calendar/connection", () => ({
   ConnectionStoreError: STORE_ERR.Class,
   getOwnConnectionMetadata: vi.fn(async () => null),
   getRefreshTokenCiphertext: vi.fn(async () => "v1:1:iv:tag:ct"),
-  disconnectConnection: vi.fn(async () => {}),
+  disconnectConnection: vi.fn(async () => true),
   markReconnectRequired: vi.fn(async () => {}),
   setWriteCalendar: vi.fn(async () => {}),
   designateStudioCalendarOwner: vi.fn(async () => true),
@@ -176,8 +176,16 @@ describe("disconnectGoogleCalendarAction — studio-local disconnection, never a
     expect(log).toHaveBeenCalledWith("google_calendar_error:disconnect:test_step");
   });
 
-  it("a member with no stored credential is disconnected idempotently with plain ok and NO notice", async () => {
+  it("a connection row with NO stored secret still gets the notice (a grant may remain at Google)", async () => {
     vi.mocked(getRefreshTokenCiphertext).mockResolvedValueOnce(null as never);
+    const r = await disconnectGoogleCalendarAction();
+    expect((r as { notice?: string }).notice).toMatch(/Google authorization may remain/);
+    expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+  });
+
+  it("no connection row at all: disconnected idempotently with plain ok and NO notice", async () => {
+    vi.mocked(getRefreshTokenCiphertext).mockResolvedValueOnce(null as never);
+    vi.mocked(disconnectConnection).mockResolvedValueOnce(false as never);
     const r = await disconnectGoogleCalendarAction();
     expect(r).toEqual({ ok: true });
     expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);

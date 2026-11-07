@@ -336,7 +336,7 @@ export async function markReconnectRequired(
 export async function disconnectConnection(
   studioId: string,
   practitionerId: string,
-): Promise<void> {
+): Promise<boolean> {
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
   const { data: conn, error: connErr } = await admin
@@ -346,7 +346,7 @@ export async function disconnectConnection(
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
   if (connErr) throw new ConnectionStoreError("disconnect_read_connection", connErr);
-  if (!conn) return;
+  if (!conn) return false;
   // Each step is checked: a swallowed error here reported a disconnect that never happened, with the ciphertext still stored.
   const { error: delErr } = await admin
     .from("calendar_connection_secrets")
@@ -362,8 +362,11 @@ export async function disconnectConnection(
       is_studio_calendar_owner: false,
       updated_at: nowIso,
     })
-    .eq("id", conn.id as string);
+    .eq("id", conn.id as string)
+    .eq("studio_id", studioId);
   if (updErr) throw new ConnectionStoreError("disconnect_mark_disconnected", updErr);
+  // A connection row existed: a grant may remain at Google even when no local secret was stored, so the caller says so.
+  return true;
 }
 
 // Store a validated write-calendar selection (the action validated it against

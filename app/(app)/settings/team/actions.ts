@@ -312,10 +312,9 @@ async function endRemovedMemberLeftovers(
     // MEMBERSHIP-SCOPED CLEANUP ONLY (Sam, Vercel finding 01M6SPYTZ01MAGB74CGWVV953E). Removal deletes THIS studio's stored credential and
     // marks THIS studio's connection disconnected; it never calls Google. A Google revoke acts on the person's grant to Hone, so it
     // could end the same person's sync in a DIFFERENT studio, which this studio's owner has no right to do. The grant at Google, if any,
-    // is the person's to remove: google_access tells the owner so. It is reported only when a stored credential actually existed.
-    const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
-    await disconnectConnection(studioId, practitionerId);
-    if (ciphertext) failed.push("google_access");
+    // is the person's to remove: google_access tells the owner so. It is reported whenever a connection row existed: a grant may remain at Google even when no local secret was stored.
+    await getRefreshTokenCiphertext(studioId, practitionerId);
+    if (await disconnectConnection(studioId, practitionerId)) failed.push("google_access");
   } catch {
     console.error("team_action_error:remove_disconnect_google");
     failed.push("google_connection");

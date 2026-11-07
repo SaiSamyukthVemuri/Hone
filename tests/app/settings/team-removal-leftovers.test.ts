@@ -96,6 +96,8 @@ vi.mock("@/lib/google-calendar/connection", () => ({
     GOOGLE.disconnect(...(a as []));
     DB.order.push("google:disconnect");
     if (GOOGLE.disconnectThrows) throw new Error("boom");
+    // The real function answers whether a connection row existed; the fake treats "a stored secret" as "a row".
+    return GOOGLE.cipher !== null;
   }),
 }));
 vi.mock("@/lib/google-calendar/token-crypto", () => ({

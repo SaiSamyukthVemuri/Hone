@@ -540,9 +540,9 @@ export async function disconnectGoogleCalendarAction(
   let grantMayRemain = false;
   try {
     // If the store cannot be read we do not know whether a credential exists: stop here rather than report a disconnect that did not happen.
-    const ciphertext = await getRefreshTokenCiphertext(studio.id, practitioner.id);
-    await disconnectConnection(studio.id, practitioner.id);
-    grantMayRemain = Boolean(ciphertext);
+    await getRefreshTokenCiphertext(studio.id, practitioner.id);
+    // Told whenever a connection row existed: a grant may remain at Google even when no local secret was stored.
+    grantMayRemain = await disconnectConnection(studio.id, practitioner.id);
   } catch (e) {
     if (!(e instanceof ConnectionStoreError)) throw e;
     console.error(`google_calendar_error:disconnect:${e.step}`);

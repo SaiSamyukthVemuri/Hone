@@ -36,7 +36,8 @@ export function removalLeftoverMessage(items: readonly RemovalLeftover[]): strin
     parts.push("The team member was removed and can no longer open anything. Their access is already blocked.");
   }
   if (items.includes("google_access")) {
-    parts.push(STUDIO_LOCAL_DISCONNECT_NOTICE);
+    // The owner cannot change the removed person's Google settings, so the shared facts get ONE actor sentence for them.
+    parts.push(`${STUDIO_LOCAL_DISCONNECT_NOTICE} You cannot change their Google settings; ask them to remove Hone there if they wish.`);
   }
   return parts.join(" ");
 }
