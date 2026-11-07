@@ -540,7 +540,8 @@ describe("no-studio authenticated user: what can be reached", () => {
       // would make the probe look invalid for the wrong reason.
       const aMember = await asJwt(A.userId, (q) => tryInsert(q, valid.sql, valid.args));
       const layerA =
-        aStranger === "P0001" && aStrangerMessage.length > 0 && aMember === "landed" ? "refused-at-parent-lookup"
+        aStranger === "42501" && aMember === "landed" ? "refused-by-policy-with-triggers-enabled"
+        : aStranger === "P0001" && aStrangerMessage.length > 0 && aMember === "landed" ? "refused-at-parent-lookup"
         : aMember !== "landed" ? `unclassified(member-control:${aMember})`
         : `unclassified(stranger:${aStranger})`;
       // (b) policy layer, triggers DISABLED in a scratch transaction.
@@ -824,7 +825,11 @@ const PINNED: string[] = [
   "insert-resolved public.client_budget_context trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
   "insert-resolved public.client_clinical_notes trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
   "insert-resolved public.client_personal_notes trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
-  "insert-resolved public.treatment_plan_stages trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]"
+  "insert-resolved public.treatment_plan_stages trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.clients trigger[refused-by-policy-with-triggers-enabled] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.payment_charge_attempts no-insert-policy(RLS default-deny)",
+  "insert-resolved public.service_practitioners no-insert-policy(RLS default-deny)",
+  "insert-resolved public.stripe_account_provisioning_attempts no-insert-policy(RLS default-deny)"
 ];
 
 // S4: three functions returned a VALIDATION result for the census's fixture args,
