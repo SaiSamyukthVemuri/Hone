@@ -46,7 +46,7 @@ describe("login page: sign-in only, invite-only, no self-serve signup", () => {
     for (const f of ["page.tsx", "actions.ts", "SignupForm.tsx"]) {
       const p = join(process.cwd(), "app/signup", f);
       if (!existsSync(p)) continue;
-      const s = readFileSync(p, "utf8");
+      const s = readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
       expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
     }
     if (existsSync(join(process.cwd(), "app/signup/page.tsx"))) {

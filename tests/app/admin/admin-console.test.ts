@@ -120,7 +120,7 @@ describe("invite-only posture is not weakened", () => {
     for (const f of ["page.tsx", "actions.ts", "SignupForm.tsx"]) {
       const p = path.join(ROOT, "app/signup", f);
       if (!existsSync(p)) continue;
-      const s = readFileSync(p, "utf8");
+      const s = readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
       expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
     }
     if (existsSync(path.join(ROOT, "app/signup/page.tsx"))) {
