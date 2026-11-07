@@ -24,7 +24,8 @@ const DB = vi.hoisted(() => ({
 const GOOGLE = vi.hoisted(() => ({
   cipher: "cipher-1" as string | null,
   decryptOk: true,
-  revoke: vi.fn(async () => undefined),
+  revoke: vi.fn(async (..._a: unknown[]): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
+  cipherThrows: false,
   disconnect: vi.fn(async () => undefined),
   disconnectThrows: false,
 }));
@@ -74,7 +75,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 vi.mock("@/lib/google-calendar/connection", () => ({
-  getRefreshTokenCiphertext: vi.fn(async () => GOOGLE.cipher),
+  getRefreshTokenCiphertext: vi.fn(async () => {
+    if (GOOGLE.cipherThrows) throw new Error("calendar_connection_store_error:read_connection");
+    return GOOGLE.cipher;
+  }),
   disconnectConnection: vi.fn(async (...a: unknown[]) => {
     GOOGLE.disconnect(...(a as []));
     DB.order.push("google:disconnect");
@@ -114,7 +118,9 @@ beforeEach(() => {
   GOOGLE.cipher = "cipher-1";
   GOOGLE.decryptOk = true;
   GOOGLE.disconnectThrows = false;
-  GOOGLE.revoke.mockClear();
+  GOOGLE.cipherThrows = false;
+  GOOGLE.revoke.mockReset();
+  GOOGLE.revoke.mockResolvedValue({ ok: true });
   GOOGLE.disconnect.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -145,13 +151,6 @@ describe("removing a member ends their outstanding invitations and Google Calend
     expect(GOOGLE.disconnect).toHaveBeenCalledWith("studio-1", "member-1");
   });
 
-  it("a ciphertext that cannot be decrypted still destroys the local connection", async () => {
-    GOOGLE.decryptOk = false;
-    await removePractitionerAction(form("member-1"));
-    expect(GOOGLE.revoke).not.toHaveBeenCalled();
-    expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
-  });
-
   it("NOTHING is cleared when the removal itself is refused (owner cannot be removed)", async () => {
     DB.rpc = { data: "cannot_modify_owner", error: null };
     await expect(removePractitionerAction(form("owner-2"))).rejects.toThrow("The studio owner cannot be removed.");
@@ -175,6 +174,45 @@ describe("removing a member ends their outstanding invitations and Google Calend
     const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
     expect((err as Error).message).toMatch(/Google Calendar connection/);
     expect(DB.invitesTouched).toHaveLength(1);
+  });
+
+  it("a revoke that Google did not accept is REPORTED as Google access (revokeToken returns {ok:false}, it never rejects); the local connection is still cleared", async () => {
+    GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_http_503" });
+    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/removed and can no longer open anything/i);
+    expect((err as Error).message).toMatch(/Google access/);
+    expect((err as Error).message).not.toMatch(/Google Calendar connection|503/);
+    expect(GOOGLE.disconnect).toHaveBeenCalledWith("studio-1", "member-1");
+  });
+
+  it("a network failure at revoke is reported the same way", async () => {
+    GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_network_error" });
+    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/Google access/);
+  });
+
+  it("a ciphertext that cannot be decrypted means Google could not be revoked: reported as Google access, local connection still destroyed", async () => {
+    GOOGLE.decryptOk = false;
+    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
+    expect(GOOGLE.revoke).not.toHaveBeenCalled();
+    expect((err as Error).message).toMatch(/Google access/);
+    expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed read of the connection store is reported as the Google Calendar connection and nothing is revoked or destroyed on a guess", async () => {
+    GOOGLE.cipherThrows = true;
+    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/Google Calendar connection/);
+    expect(GOOGLE.revoke).not.toHaveBeenCalled();
+    expect(GOOGLE.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("both Google problems at once name the invitations too, once each", async () => {
+    DB.inviteUpdateError = { code: "XX000", message: "x" };
+    GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_http_500" });
+    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/pending invitations and Google access/);
   });
 
   it("a member with no email on file has nothing to revoke by email (no unscoped update)", async () => {

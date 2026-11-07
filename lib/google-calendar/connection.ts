@@ -79,6 +79,19 @@ export async function getOwnConnectionMetadata(
   return toMetadata(data);
 }
 
+// A database error while reading or clearing the connection store. Carries the step and the Supabase error code only (never a message that
+// could hold row text), so a caller can log it without leaking anything.
+export class ConnectionStoreError extends Error {
+  readonly step: string;
+  readonly code: string | null;
+  constructor(step: string, cause: { code?: string } | null) {
+    super(`calendar_connection_store_error:${step}`);
+    this.name = "ConnectionStoreError";
+    this.step = step;
+    this.code = typeof cause?.code === "string" ? cause.code : null;
+  }
+}
+
 // Read only the studio_id/practitioner_id-scoped ciphertext (service-role).
 // Used by calendar-selection to re-mint an access token. Never returned to UI.
 export async function getRefreshTokenCiphertext(
@@ -86,19 +99,22 @@ export async function getRefreshTokenCiphertext(
   practitionerId: string,
 ): Promise<string | null> {
   const admin = createAdminClient();
-  const { data: conn } = await admin
+  const { data: conn, error: connErr } = await admin
     .from("calendar_connections")
     .select("id")
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
+  // A failed read is NOT "no connection": callers that revoke or destroy on the strength of this answer must be able to tell.
+  if (connErr) throw new ConnectionStoreError("read_connection", connErr);
   if (!conn) return null;
-  const { data: secret } = await admin
+  const { data: secret, error: secretErr } = await admin
     .from("calendar_connection_secrets")
     .select("encrypted_refresh_token")
     .eq("connection_id", conn.id as string)
     .eq("studio_id", studioId)
     .maybeSingle();
+  if (secretErr) throw new ConnectionStoreError("read_secret", secretErr);
   return (secret?.encrypted_refresh_token as string | null) ?? null;
 }
 
@@ -127,7 +143,11 @@ export async function getOwnConnectionReadiness(
 ): Promise<{ metadata: ConnectionMetadata | null; readiness: ConnectionReadiness }> {
   const metadata = await getOwnConnectionMetadata(studioId, practitionerId);
   if (!metadata) return { metadata: null, readiness: "disconnected" };
-  const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
+  // The settings page must still render when the store read fails; the missing token then reads as not usable, as before.
+  const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId).catch((e) => {
+    if (e instanceof ConnectionStoreError) return null;
+    throw e;
+  });
   const readiness = deriveConnectionReadiness({
     connectionStatus: metadata.connectionStatus,
     grantedScopes: metadata.grantedScopes,
@@ -276,19 +296,22 @@ export async function disconnectConnection(
 ): Promise<void> {
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
-  const { data: conn } = await admin
+  const { data: conn, error: connErr } = await admin
     .from("calendar_connections")
     .select("id")
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
+  if (connErr) throw new ConnectionStoreError("disconnect_read_connection", connErr);
   if (!conn) return;
-  await admin
+  // Each step is checked: a swallowed error here reported a disconnect that never happened, with the ciphertext still stored.
+  const { error: delErr } = await admin
     .from("calendar_connection_secrets")
     .delete()
     .eq("connection_id", conn.id as string)
     .eq("studio_id", studioId);
-  await admin
+  if (delErr) throw new ConnectionStoreError("disconnect_delete_secret", delErr);
+  const { error: updErr } = await admin
     .from("calendar_connections")
     .update({
       connection_status: "disconnected",
@@ -297,6 +320,7 @@ export async function disconnectConnection(
       updated_at: nowIso,
     })
     .eq("id", conn.id as string);
+  if (updErr) throw new ConnectionStoreError("disconnect_mark_disconnected", updErr);
 }
 
 // Store a validated write-calendar selection (the action validated it against

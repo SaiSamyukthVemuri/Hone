@@ -314,7 +314,13 @@ async function endRemovedMemberLeftovers(
     const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
     if (ciphertext) {
       const dec = decryptGoogleSecret(ciphertext);
-      if (dec.ok) await revokeToken(dec.secret).catch(() => undefined);
+      // revokeToken never rejects: it returns { ok: false } when Google could not be reached. Local state is still cleared below, but
+      // the grant at Google may still be live, so it is REPORTED rather than swallowed.
+      const revoked = dec.ok ? await revokeToken(dec.secret) : { ok: false as const };
+      if (!revoked.ok) {
+        console.error("team_action_error:remove_revoke_google");
+        failed.push("Google access");
+      }
     }
     await disconnectConnection(studioId, practitionerId);
   } catch {

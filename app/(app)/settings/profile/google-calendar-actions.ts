@@ -34,6 +34,7 @@ import { createOAuthState } from "@/lib/google-calendar/state";
 import {
   beginDedicatedProvisioningAttempt,
   designateStudioCalendarOwner,
+  ConnectionStoreError,
   disconnectConnection,
   getOwnConnectionMetadata,
   getRefreshTokenCiphertext,
@@ -105,7 +106,15 @@ type TokenResult =
   | { ok: false; error: string; reconnectRequired?: boolean };
 
 async function mintAccessToken(studioId: string, practitionerId: string): Promise<TokenResult> {
-  const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
+  let ciphertext: string | null;
+  try {
+    ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId);
+  } catch (e) {
+    if (!(e instanceof ConnectionStoreError)) throw e;
+    // A store error is not a dead grant: do not flag reconnect_required, just ask to retry.
+    console.error(`google_calendar_error:mint_read_connection:${e.step}`);
+    return { ok: false, error: "Couldn't read the connection. Please try again." };
+  }
   if (!ciphertext) return { ok: false, error: "No connected Google account.", reconnectRequired: true };
   const dec = decryptGoogleSecret(ciphertext);
   if (!dec.ok) {
@@ -482,14 +491,21 @@ export async function disconnectGoogleCalendarAction(
   // NOTE (B2.4 §17): disconnect NEVER deletes a Hone-created Google calendar; it
   // only revokes credentials + clears local connection state. Calendar deletion is
   // a separate future product decision.
-  const ciphertext = await getRefreshTokenCiphertext(studio.id, practitioner.id);
-  if (ciphertext) {
-    const dec = decryptGoogleSecret(ciphertext);
-    if (dec.ok) {
-      await revokeToken(dec.secret);
+  try {
+    // If the store cannot be read we do not know whether a grant exists: stop here rather than report a disconnect that did not happen.
+    const ciphertext = await getRefreshTokenCiphertext(studio.id, practitioner.id);
+    if (ciphertext) {
+      const dec = decryptGoogleSecret(ciphertext);
+      if (dec.ok) {
+        await revokeToken(dec.secret);
+      }
     }
+    await disconnectConnection(studio.id, practitioner.id);
+  } catch (e) {
+    if (!(e instanceof ConnectionStoreError)) throw e;
+    console.error(`google_calendar_error:disconnect:${e.step}`);
+    return { ok: false, error: "Couldn't disconnect Google Calendar. Please try again." };
   }
-  await disconnectConnection(studio.id, practitioner.id);
   revalidatePath(safeReturnPath(returnPath));
   return { ok: true };
 }

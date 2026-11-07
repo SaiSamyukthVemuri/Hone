@@ -29,7 +29,14 @@ vi.mock("@/lib/google-calendar/oauth", () => ({
   })),
   revokeToken: vi.fn(async () => ({ ok: true })),
 }));
+const STORE_ERR = vi.hoisted(() => ({
+  Class: class ConnectionStoreError extends Error {
+    step = "test_step";
+    code: string | null = "57014";
+  },
+}));
 vi.mock("@/lib/google-calendar/connection", () => ({
+  ConnectionStoreError: STORE_ERR.Class,
   getOwnConnectionMetadata: vi.fn(async () => null),
   getRefreshTokenCiphertext: vi.fn(async () => "v1:1:iv:tag:ct"),
   disconnectConnection: vi.fn(async () => {}),
@@ -44,6 +51,7 @@ import { buildAuthorizationUrl, revokeToken } from "@/lib/google-calendar/oauth"
 import { createOAuthState } from "@/lib/google-calendar/state";
 import {
   getOwnConnectionMetadata,
+  getRefreshTokenCiphertext,
   disconnectConnection,
   setWriteCalendar,
   designateStudioCalendarOwner,
@@ -150,6 +158,21 @@ describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
     expect(r.ok).toBe(true);
     expect(revokeToken).toHaveBeenCalledWith("refresh-token");
     expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+  });
+
+  it("a failed local clear is reported as a failure, never as a completed disconnect", async () => {
+    vi.mocked(disconnectConnection).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:disconnect_delete_secret"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await disconnectGoogleCalendarAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't disconnect Google Calendar. Please try again." });
+  });
+
+  it("an unreadable connection store stops BEFORE anything is destroyed (the grant status is unknown)", async () => {
+    vi.mocked(getRefreshTokenCiphertext).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:read_connection"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await disconnectGoogleCalendarAction();
+    expect(r.ok).toBe(false);
+    expect(disconnectConnection).not.toHaveBeenCalled();
   });
 
   it("is rejected when the flag is OFF", async () => {
