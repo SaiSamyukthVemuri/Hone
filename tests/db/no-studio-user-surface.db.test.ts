@@ -1008,7 +1008,7 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
 //      the stranger gets the refused answer and no item key or token. The refused answer is the
 //      discriminating assertion here: events are scoped to the caller, so a stranger without the gate
 //      would see an empty list too and the absence of the key alone would not tell the cases apart;
-//   4. a member who is not an owner is refused the same way, the owner is not (control);
+//   4. a member who is not an owner, and the owner of a different studio, are refused the same way; the owner is not (control);
 //   5. a rolled-back scratch copy of each function without the ownership check no longer refuses the
 //      stranger (the probe can fail);
 //   6. anon, public and service_role cannot execute them.
@@ -1095,6 +1095,18 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
         expect(await call(c, f, A.studioId), `member ${f.name}`).toBe(REFUSED);
         await as(c, A.userId);
         expect(await call(c, f, A.studioId), `owner ${f.name}`).not.toBe(REFUSED);
+      }
+    });
+  });
+
+  it("the owner of a DIFFERENT studio, calling with this studio's id, is refused and leaves no event", async () => {
+    const B = await seedStudio("nsu-other-owner");
+    await withTx(async (c) => {
+      await as(c, B.userId);
+      for (const f of FNS) {
+        const { answer, added } = await callCounting(c, f, A.studioId);
+        expect(answer, `other-studio owner ${f.name}`).toBe(REFUSED);
+        expect(added, `${f.name}: no event in the other studio`).toBe(0);
       }
     });
   });
