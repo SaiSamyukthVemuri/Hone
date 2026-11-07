@@ -1134,10 +1134,8 @@ describe("choosing the mode on a multi-mode machine", () => {
     expect(html).toContain('aria-pressed="true"');
   });
 
-  it("falls back to the first mode when the remembered one is not this machine's", () => {
-    // A remembered mode can outlive the machine it was chosen on, and a key
-    // means nothing outside the profile that declares it. Falling back beats
-    // blanking the panel.
+  it("does NOT fall back to the first mode when the recorded one is not this machine's (#1369)", () => {
+    // Superseded contract: this used to fall back to the first mode, which showed a mode the record does not hold.
     const html = render({
       scope: SCOPE,
       devices: [DEV],
@@ -1147,13 +1145,9 @@ describe("choosing the mode on a multi-mode machine", () => {
       blockId: "block-1",
     });
     expect(html).toContain('data-testid="machine-chosen"');
-    // GALVANIC's field contract, not Blend's - the first active mode. Asserted
-    // on the read-only field list, because the entry surface renders only when
-    // `onRecord` is wired and this render does not wire it.
-    expect(html).toContain("Current");
-    expect(html, "Blend's contract must not be rendered here").not.toContain(
-      "Blend current",
-    );
+    expect(html).toContain('data-testid="machine-mode-unresolved"');
+    expect(html, "no mode's fields may be shown for a key the unit lacks").not.toContain("Blend current");
+    expect(html).not.toContain("Current");
   });
 });
 
@@ -1907,5 +1901,22 @@ describe("the owner hint says what to send for an unlisted model", () => {
 
   it("is shown to the owner only", () => {
     expect(staff).not.toContain("machine-owner-hint");
+  });
+});
+
+describe("a recorded mode the unit does not offer is never shown as another mode (#1369, Vercel 01M6VEJJ83G4GZ10DFCKMJAEVP)", () => {
+  const base = { scope: SCOPE, devices: [DEVICE], catalogue: CAT, persistence: DATABASE_PERSISTENCE };
+
+  it("shows the unresolved state and no mode's fields", () => {
+    const html = render({ ...base, initialDeviceId: "room-9", restoredSelection: { deviceId: "room-9", modeKey: "not-a-mode" } });
+    expect(html).toContain('data-testid="machine-mode-unresolved"');
+    expect(html).toContain("Recorded mode not available on this machine");
+    expect(html).not.toContain("Galvanic");
+  });
+
+  it("CONTROL: an offered key resolves normally, with no unresolved notice", () => {
+    const html = render({ ...base, initialDeviceId: "room-9", restoredSelection: { deviceId: "room-9", modeKey: "galvanic" } });
+    expect(html).not.toContain("machine-mode-unresolved");
+    expect(html).toContain("Galvanic");
   });
 });

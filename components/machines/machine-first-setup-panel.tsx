@@ -633,7 +633,13 @@ export function MachineFirstSetupPanel({
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
-  const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
+  // A MODE KEY THIS UNIT DOES NOT OFFER IS NEVER SHOWN AS A DIFFERENT MODE (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
+  // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
+  // panel showed a mode the record does not hold. Only "no key at all" defaults to the first mode; a key that is set but not offered is an
+  // explicit UNRESOLVED state with no mode selected, so no reading for that mode can be recorded until a mode is chosen on purpose.
+  const modeFound = modeKey ? (modes.find((m) => m.key === modeKey) ?? null) : null;
+  const modeUnresolved = Boolean(chosen) && Boolean(modeKey) && modes.length > 0 && modeFound === null;
+  const mode = modeUnresolved ? null : (modeFound ?? modes[0] ?? null);
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const unsupported = chosen ? unsupportedModes(chosen.profile) : [];
   // TELL THE HOST WHICH KIND OF MACHINE IS IN FORCE, so its form shows only
@@ -648,7 +654,7 @@ export function MachineFirstSetupPanel({
   const savedUnavailable = Boolean(blockId) && savedDeviceId !== null && !legacyChosen && chosen === null;
   const machineKind: "none" | "legacy" | "native" = legacyChosen
     ? "legacy"
-    : (chosen && mode) || savedUnavailable
+    : (chosen && mode) || savedUnavailable || modeUnresolved
       ? "native"
       : "none";
   useEffect(() => {
@@ -802,6 +808,11 @@ export function MachineFirstSetupPanel({
             )}
           </select>
         </FieldLabel>
+      )}
+      {modeUnresolved && (
+        <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-mode-unresolved">
+          Recorded mode not available on this machine. Choose a mode to continue; nothing has been changed on the record.
+        </p>
       )}
       {savedUnavailable && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-saved-unavailable">
