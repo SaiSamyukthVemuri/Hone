@@ -25,6 +25,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         op = "update";
         return chain;
       };
+      chain.upsert = () => {
+        op = "upsert";
+        return chain;
+      };
       chain.eq = () => chain;
       chain.maybeSingle = async () => {
         STORE.calls.push(key());
@@ -42,7 +46,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 import {
   ConnectionStoreError,
   disconnectConnection,
+  getConnectionAccountId,
+  getOwnConnectionMetadata,
   getRefreshTokenCiphertext,
+  persistConnectedFromCallback,
+  setDestinationMode,
 } from "@/lib/google-calendar/connection";
 
 const ERR = { code: "57014", message: "canceling statement due to statement timeout (row text must not travel)" };
@@ -119,5 +127,52 @@ describe("disconnectConnection", () => {
     const e = await disconnectConnection("s1", "p1").catch((x) => x);
     expect(e).toBeInstanceOf(ConnectionStoreError);
     expect(e.step).toBe("disconnect_mark_disconnected");
+  });
+});
+
+describe("the other connection reads (sweep): an error is never 'absent'", () => {
+  it("getConnectionAccountId: null only when there is no connection; THROWS on a store error (it used to answer null and skip the account gate)", async () => {
+    await expect(getConnectionAccountId("s1", "p1")).resolves.toBeNull();
+    STORE.replies["calendar_connections:select"] = { data: { google_account_id: "sub-1" }, error: null };
+    await expect(getConnectionAccountId("s1", "p1")).resolves.toBe("sub-1");
+    STORE.replies["calendar_connections:select"] = { data: null, error: ERR };
+    const e = await getConnectionAccountId("s1", "p1").catch((x) => x);
+    expect(e).toBeInstanceOf(ConnectionStoreError);
+    expect(e.step).toBe("read_account_id");
+  });
+
+  it("getOwnConnectionMetadata: null when absent, THROWS on a store error", async () => {
+    await expect(getOwnConnectionMetadata("s1", "p1")).resolves.toBeNull();
+    STORE.replies["calendar_connections:select"] = { data: null, error: ERR };
+    const e = await getOwnConnectionMetadata("s1", "p1").catch((x) => x);
+    expect(e).toBeInstanceOf(ConnectionStoreError);
+    expect(e.step).toBe("read_metadata");
+  });
+
+  it("setDestinationMode: a store error is store_read_failed, not connection_not_found", async () => {
+    STORE.replies["calendar_connections:select"] = { data: null, error: ERR };
+    await expect(setDestinationMode("s1", "p1", "dedicated_app_created")).resolves.toEqual({ ok: false, reason: "store_read_failed" });
+    STORE.replies["calendar_connections:select"] = { data: null, error: null };
+    await expect(setDestinationMode("s1", "p1", "dedicated_app_created")).resolves.toEqual({ ok: false, reason: "connection_not_found" });
+  });
+
+  it("persistConnectedFromCallback with no new refresh token: a failed secret read is secret_read_failed and does NOT mark the connection reconnect_required", async () => {
+    STORE.replies["calendar_connections:upsert"] = { data: { id: "c1" }, error: null };
+    STORE.replies["calendar_connections:select"] = { data: { id: "c1" }, error: null };
+    STORE.replies["calendar_connection_secrets:select"] = { data: null, error: ERR };
+    const r = await persistConnectedFromCallback({
+      studioId: "s1",
+      practitionerId: "p1",
+      googleAccountId: "sub-1",
+      googleAccountEmail: "a@example.test",
+      grantedScopes: ["x"],
+      tokenExpiresAt: new Date().toISOString(),
+      writeCalendarId: null,
+      encryptedRefreshToken: null,
+      refreshTokenLast4: null,
+      encryptionKeyVersion: 1,
+    });
+    expect(r).toEqual({ ok: false, reason: "secret_read_failed" });
+    expect(STORE.calls).not.toContain("calendar_connections:update");
   });
 });

@@ -87,6 +87,8 @@ export function GoogleCalendarCard({
   const banner = gcal ? STATUS_MESSAGES[gcal] : null;
 
   const [error, setError] = useState<string | null>(null);
+  // Set when Disconnect cleared Hone's side but Google may still hold the grant: shown until the member acknowledges it.
+  const [disconnectNotice, setDisconnectNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [ownedCalendars, setOwnedCalendars] = useState<GoogleCalendarListEntry[] | null>(null);
   const [chosenCalendar, setChosenCalendar] = useState<string>("");
@@ -145,6 +147,10 @@ export function GoogleCalendarCard({
         return;
       }
       setConfirmDisconnect(false);
+      if (r.notice) {
+        setDisconnectNotice(r.notice);
+        return;
+      }
       window.location.href = returnPath;
     });
   }
@@ -453,6 +459,14 @@ export function GoogleCalendarCard({
         <p role="alert" className="text-xs text-red-700 dark:text-red-400">
           {error}
         </p>
+      )}
+      {disconnectNotice && (
+        <div role="status" data-testid="google-disconnect-notice" className="flex flex-col gap-2 text-xs text-amber-800 dark:text-amber-300">
+          <p>{disconnectNotice}</p>
+          <button type="button" className={btnSecondary} onClick={() => { window.location.href = returnPath; }}>
+            Done
+          </button>
+        </div>
       )}
     </div>
   );

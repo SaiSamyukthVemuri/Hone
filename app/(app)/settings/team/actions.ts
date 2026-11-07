@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import type { RemovalLeftover } from "@/lib/team/removal-leftovers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -268,10 +270,9 @@ export async function removePractitionerAction(formData: FormData): Promise<void
   const leftovers = await endRemovedMemberLeftovers(admin, studioId, id);
   revalidatePath("/settings/team");
   if (leftovers.length > 0) {
-    throw new Error(
-      `The team member was removed and can no longer open anything, but we could not also clear their ${leftovers.join(" and ")}. ` +
-        "Their access is already blocked; contact support to finish clearing it.",
-    );
+    // NOT a throw: the removal HAPPENED, and a thrown error is redacted to "Something went wrong" in production. A fixed redirect code lets the
+    // page say "removed; <X> could not be cleared" (lib/team/removal-leftovers.ts owns the wording).
+    redirect(`/settings/team?removed=partial&left=${leftovers.join(",")}`);
   }
 }
 
@@ -283,8 +284,8 @@ async function endRemovedMemberLeftovers(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
   practitionerId: string,
-): Promise<string[]> {
-  const failed: string[] = [];
+): Promise<RemovalLeftover[]> {
+  const failed: RemovalLeftover[] = [];
 
   try {
     const { data: target, error: readErr } = await admin
@@ -306,7 +307,7 @@ async function endRemovedMemberLeftovers(
     }
   } catch (e) {
     console.error(`team_action_db_error:remove_revoke_invitations:${dbErrorCode(e)}`);
-    failed.push("pending invitations");
+    failed.push("invitations");
   }
 
   try {
@@ -319,13 +320,13 @@ async function endRemovedMemberLeftovers(
       const revoked = dec.ok ? await revokeToken(dec.secret) : { ok: false as const };
       if (!revoked.ok) {
         console.error("team_action_error:remove_revoke_google");
-        failed.push("Google access");
+        failed.push("google_access");
       }
     }
     await disconnectConnection(studioId, practitionerId);
   } catch {
     console.error("team_action_error:remove_disconnect_google");
-    failed.push("Google Calendar connection");
+    failed.push("google_connection");
   }
   return failed;
 }

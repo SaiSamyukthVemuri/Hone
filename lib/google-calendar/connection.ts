@@ -75,7 +75,9 @@ export async function getOwnConnectionMetadata(
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
-  if (error || !data) return null;
+  // A failed read is not "no connection": the OAuth callback decides account-switch and destination gates on this answer.
+  if (error) throw new ConnectionStoreError("read_metadata", error);
+  if (!data) return null;
   return toMetadata(data);
 }
 
@@ -126,12 +128,14 @@ export async function getConnectionAccountId(
   practitionerId: string,
 ): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await admin
+  const { data, error } = await admin
     .from("calendar_connections")
     .select("google_account_id")
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
+  // null here means "no connection yet" and LETS the callback skip the account-mismatch gate, so an error must never read as null.
+  if (error) throw new ConnectionStoreError("read_account_id", error);
   return (data?.google_account_id as string | null) ?? null;
 }
 
@@ -141,7 +145,11 @@ export async function getOwnConnectionReadiness(
   studioId: string,
   practitionerId: string,
 ): Promise<{ metadata: ConnectionMetadata | null; readiness: ConnectionReadiness }> {
-  const metadata = await getOwnConnectionMetadata(studioId, practitionerId);
+  // The settings page must still render when the store read fails; it then reads as disconnected, as it did before.
+  const metadata = await getOwnConnectionMetadata(studioId, practitionerId).catch((e) => {
+    if (e instanceof ConnectionStoreError) return null;
+    throw e;
+  });
   if (!metadata) return { metadata: null, readiness: "disconnected" };
   // The settings page must still render when the store read fails; the missing token then reads as not usable, as before.
   const ciphertext = await getRefreshTokenCiphertext(studioId, practitionerId).catch((e) => {
@@ -228,11 +236,13 @@ export async function persistConnectedFromCallback(input: {
   }
 
   // No new refresh token: preserve an existing one, else fail closed.
-  const { data: existing } = await admin
+  const { data: existing, error: existingErr } = await admin
     .from("calendar_connection_secrets")
     .select("encrypted_refresh_token")
     .eq("connection_id", connectionId)
     .maybeSingle();
+  // A failed read must not fall through to "no refresh token" (that marks a healthy connection reconnect_required).
+  if (existingErr) return { ok: false, reason: "secret_read_failed" };
   if (existing?.encrypted_refresh_token) return { ok: true, connectionId };
 
   await admin
@@ -351,12 +361,13 @@ export async function setDestinationMode(
   mode: CalendarDestinationMode,
 ): Promise<PersistResult> {
   const admin = createAdminClient();
-  const { data: conn } = await admin
+  const { data: conn, error: connErr } = await admin
     .from("calendar_connections")
     .select("id, destination_mode")
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
+  if (connErr) return { ok: false, reason: "store_read_failed" };
   if (!conn) return { ok: false, reason: "connection_not_found" };
   const connectionId = conn.id as string;
   const current = conn.destination_mode as string | null;

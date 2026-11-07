@@ -22,6 +22,7 @@ import {
 import { consumeOAuthState } from "@/lib/google-calendar/state";
 import { encryptGoogleSecret } from "@/lib/google-calendar/token-crypto";
 import {
+  ConnectionStoreError,
   getConnectionAccountId,
   getOwnConnectionMetadata,
   persistConnectedFromCallback,
@@ -120,8 +121,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // ACCOUNT-SWITCH PROTECTION. If a connection already exists, the returned Google
   // identity MUST match it. On a mismatch we STOP (PRE-replacement), never
   // overwrite credentials or granted_scopes; the practitioner must disconnect first.
-  const existing = await getOwnConnectionMetadata(consumed.studioId, consumed.practitionerId);
-  const existingAccountId = await getConnectionAccountId(consumed.studioId, consumed.practitionerId);
+  // A store error is NOT "no existing connection": reading it as absent would skip this gate and let a different Google account overwrite
+  // the stored credentials. Fail closed: nothing is written, the previous credentials survive.
+  let existing: Awaited<ReturnType<typeof getOwnConnectionMetadata>>;
+  let existingAccountId: string | null;
+  try {
+    existing = await getOwnConnectionMetadata(consumed.studioId, consumed.practitionerId);
+    existingAccountId = await getConnectionAccountId(consumed.studioId, consumed.practitionerId);
+  } catch (e) {
+    if (!(e instanceof ConnectionStoreError)) throw e;
+    console.error(`google_calendar_error:oauth_callback:${e.step}`);
+    return redirect(consumed.redirectPath, "error");
+  }
   if (existingAccountId !== null && existingAccountId !== info.sub) {
     return redirect(consumed.redirectPath, "account_mismatch");
   }

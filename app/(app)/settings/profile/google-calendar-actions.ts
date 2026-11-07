@@ -58,6 +58,24 @@ import {
 
 type StartResult = { ok: true; url: string } | { ok: false; error: string };
 type SimpleResult = { ok: true } | { ok: false; error: string };
+// Disconnect: the local connection is always cleared; `notice` says what the member still has to do at Google when the grant could not be revoked.
+export type DisconnectResult = { ok: true; notice?: string } | { ok: false; error: string };
+const GOOGLE_GRANT_MAY_REMAIN_NOTICE =
+  "Disconnected from Hone, but we could not remove Hone's access at Google. To finish, open your Google Account, go to Security, then Third-party apps and services, and remove Hone.";
+
+// A store error is not "not connected": say so (and let the member retry) instead of showing the wrong message.
+async function loadMetadata(
+  studioId: string,
+  practitionerId: string,
+): Promise<{ ok: true; value: Awaited<ReturnType<typeof getOwnConnectionMetadata>> } | { ok: false; error: string }> {
+  try {
+    return { ok: true, value: await getOwnConnectionMetadata(studioId, practitionerId) };
+  } catch (e) {
+    if (!(e instanceof ConnectionStoreError)) throw e;
+    console.error(`google_calendar_error:load_metadata:${e.step}`);
+    return { ok: false, error: "Couldn't read the connection. Please try again." };
+  }
+}
 type CalendarsResult =
   | { ok: true; calendars: GoogleCalendarListEntry[] }
   | { ok: false; error: string; reconnectRequired?: boolean };
@@ -147,7 +165,11 @@ export async function startGoogleCalendarConnectAction(
     return { ok: false, error: "Google Calendar sync is not configured yet. Contact support." };
   }
 
-  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  const existingRead = await loadMetadata(studio.id, practitioner.id);
+
+  if (!existingRead.ok) return { ok: false, error: existingRead.error };
+
+  const existing = existingRead.value;
   // Force consent only when we need a fresh refresh token: first connect, or a
   // grant that is missing/reconnect-required/revoked. A healthy reconnect does
   // not force consent (Google will reuse the existing grant; we preserve the
@@ -207,7 +229,9 @@ export async function chooseDestinationModeAction(
   if (!isCalendarDestinationMode(mode)) {
     return { ok: false, error: "Choose a valid destination." };
   }
-  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  const existingRead = await loadMetadata(studio.id, practitioner.id);
+  if (!existingRead.ok) return { ok: false, error: existingRead.error };
+  const existing = existingRead.value;
   if (!existing || existing.connectionStatus !== "connected") {
     return { ok: false, error: "Connect your Google account first." };
   }
@@ -249,7 +273,11 @@ export async function startGoogleCalendarEventScopeUpgradeAction(
     return { ok: false, error: "Google Calendar sync is not configured yet. Contact support." };
   }
 
-  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  const existingRead = await loadMetadata(studio.id, practitioner.id);
+
+  if (!existingRead.ok) return { ok: false, error: existingRead.error };
+
+  const existing = existingRead.value;
   if (!existing || existing.connectionStatus === "disconnected") {
     return { ok: false, error: "Connect your Google account first." };
   }
@@ -315,7 +343,11 @@ export async function provisionDedicatedCalendarAction(
     return { ok: false, error: "Google Calendar sync is not configured yet. Contact support." };
   }
 
-  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  const existingRead = await loadMetadata(studio.id, practitioner.id);
+
+  if (!existingRead.ok) return { ok: false, error: existingRead.error };
+
+  const existing = existingRead.value;
   if (!existing || existing.connectionStatus !== "connected") {
     return { ok: false, error: "Connect your Google account first." };
   }
@@ -356,8 +388,9 @@ export async function provisionDedicatedCalendarAction(
     if (claim.ok) {
       attemptToken = fresh;
     } else {
-      const reread = await getOwnConnectionMetadata(studio.id, practitioner.id);
-      attemptToken = reread?.provisioningAttemptToken ?? null;
+      const rereadResult = await loadMetadata(studio.id, practitioner.id);
+      if (!rereadResult.ok) return { ok: false, error: rereadResult.error };
+      attemptToken = rereadResult.value?.provisioningAttemptToken ?? null;
       if (!attemptToken) {
         return { ok: false, error: "Couldn't start calendar creation. Please try again." };
       }
@@ -447,7 +480,9 @@ export async function selectOwnedCalendarAction(
   if (typeof calendarId !== "string" || !calendarId) {
     return { ok: false, error: "Choose a calendar." };
   }
-  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  const existingRead = await loadMetadata(studio.id, practitioner.id);
+  if (!existingRead.ok) return { ok: false, error: existingRead.error };
+  const existing = existingRead.value;
   if (!existing || existing.connectionStatus !== "connected") {
     return { ok: false, error: "Connect your Google account first." };
   }
@@ -480,7 +515,7 @@ export async function selectOwnedCalendarAction(
 
 export async function disconnectGoogleCalendarAction(
   returnPath?: string,
-): Promise<SimpleResult> {
+): Promise<DisconnectResult> {
   const ctx = await requireConnectionContext();
   if (!ctx.ok) return { ok: false, error: ctx.error };
   const { practitioner, studio } = ctx;
@@ -491,13 +526,18 @@ export async function disconnectGoogleCalendarAction(
   // NOTE (B2.4 §17): disconnect NEVER deletes a Hone-created Google calendar; it
   // only revokes credentials + clears local connection state. Calendar deletion is
   // a separate future product decision.
+  let grantMayRemain = false;
   try {
     // If the store cannot be read we do not know whether a grant exists: stop here rather than report a disconnect that did not happen.
     const ciphertext = await getRefreshTokenCiphertext(studio.id, practitioner.id);
     if (ciphertext) {
       const dec = decryptGoogleSecret(ciphertext);
-      if (dec.ok) {
-        await revokeToken(dec.secret);
+      // revokeToken never rejects, it returns { ok: false }; an undecryptable token cannot be revoked at all. Either way the local
+      // connection is still cleared (below), but the grant at Google may still be live, so the member is TOLD, not given a plain success.
+      const revoked = dec.ok ? await revokeToken(dec.secret) : { ok: false as const };
+      if (!revoked.ok) {
+        grantMayRemain = true;
+        console.error("google_calendar_error:disconnect:revoke_failed");
       }
     }
     await disconnectConnection(studio.id, practitioner.id);
@@ -507,7 +547,7 @@ export async function disconnectGoogleCalendarAction(
     return { ok: false, error: "Couldn't disconnect Google Calendar. Please try again." };
   }
   revalidatePath(safeReturnPath(returnPath));
-  return { ok: true };
+  return grantMayRemain ? { ok: true, notice: GOOGLE_GRANT_MAY_REMAIN_NOTICE } : { ok: true };
 }
 
 // List the connection's Google calendars (writer role) for the generic Phase-A
@@ -557,7 +597,9 @@ export async function designateSelfAsCalendarOwnerAction(): Promise<SimpleResult
   const ctx = await requireOwnerConnectionContext();
   if (!ctx.ok) return { ok: false, error: ctx.error };
   const { practitioner, studio } = ctx;
-  const existing = await getOwnConnectionMetadata(studio.id, practitioner.id);
+  const existingRead = await loadMetadata(studio.id, practitioner.id);
+  if (!existingRead.ok) return { ok: false, error: existingRead.error };
+  const existing = existingRead.value;
   if (!existing || existing.connectionStatus !== "connected") {
     return { ok: false, error: "Connect your Google account first." };
   }

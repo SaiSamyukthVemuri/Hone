@@ -31,6 +31,17 @@ const GOOGLE = vi.hoisted(() => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// Next's redirect() throws a control-flow error; capture the URL like the framework would.
+class RedirectSignal extends Error {
+  constructor(public url: string) {
+    super("NEXT_REDIRECT");
+  }
+}
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => {
+    throw new RedirectSignal(url);
+  },
+}));
 vi.mock("@/lib/email/client", () => ({ resend: null, FROM_ADDRESS: "Hone <hello@hone.care>" }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -97,6 +108,17 @@ vi.mock("@/lib/google-calendar/oauth", () => ({
 
 import { removePractitionerAction } from "@/app/(app)/settings/team/actions";
 
+// Runs the action and reports how it ended: a redirect URL (leftovers), a thrown message (a refusal before anything was removed), or neither.
+async function outcome(id: string): Promise<{ redirectedTo?: string; error?: string }> {
+  try {
+    await removePractitionerAction(form(id));
+    return {};
+  } catch (e) {
+    if (e instanceof RedirectSignal) return { redirectedTo: e.url };
+    return { error: (e as Error).message };
+  }
+}
+
 const form = (id: string) => {
   const fd = new FormData();
   fd.set("id", id);
@@ -158,61 +180,61 @@ describe("removing a member ends their outstanding invitations and Google Calend
     expect(GOOGLE.disconnect).not.toHaveBeenCalled();
   });
 
-  it("a failed invitation clear is REPORTED (not silent), the Google clear still runs, and the message says access is already blocked", async () => {
+  it("a failed invitation clear is REPORTED by a fixed redirect code (never a throw), the Google clear still runs", async () => {
     DB.inviteUpdateError = { code: "XX000", message: "db text that must not surface" };
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
-    expect(err).toBeInstanceOf(Error);
-    const msg = (err as Error).message;
-    expect(msg).toMatch(/removed and can no longer open anything/i);
-    expect(msg).toMatch(/pending invitations/);
-    expect(msg).not.toMatch(/db text|XX000/);
+    const r = await outcome("member-1");
+    expect(r).toEqual({ redirectedTo: "/settings/team?removed=partial&left=invitations" });
     expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed Google clear is REPORTED and the invitation clear still ran", async () => {
+  it("a failed Google clear is REPORTED by a redirect code and the invitation clear still ran", async () => {
     GOOGLE.disconnectThrows = true;
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/Google Calendar connection/);
+    const r = await outcome("member-1");
+    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_connection");
     expect(DB.invitesTouched).toHaveLength(1);
   });
 
-  it("a revoke that Google did not accept is REPORTED as Google access (revokeToken returns {ok:false}, it never rejects); the local connection is still cleared", async () => {
+  it("a revoke that Google did not accept is reported as google_access (revokeToken returns {ok:false}, it never rejects); the local connection is still cleared", async () => {
     GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_http_503" });
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/removed and can no longer open anything/i);
-    expect((err as Error).message).toMatch(/Google access/);
-    expect((err as Error).message).not.toMatch(/Google Calendar connection|503/);
+    const r = await outcome("member-1");
+    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
+    expect(r.redirectedTo).not.toMatch(/503/);
     expect(GOOGLE.disconnect).toHaveBeenCalledWith("studio-1", "member-1");
+    expect(console.error).toHaveBeenCalledWith("team_action_error:remove_revoke_google");
   });
 
   it("a network failure at revoke is reported the same way", async () => {
     GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_network_error" });
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/Google access/);
+    expect((await outcome("member-1")).redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
   });
 
-  it("a ciphertext that cannot be decrypted means Google could not be revoked: reported as Google access, local connection still destroyed", async () => {
+  it("a ciphertext that cannot be decrypted means Google could not be revoked: google_access, and the local connection is still destroyed", async () => {
     GOOGLE.decryptOk = false;
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
+    const r = await outcome("member-1");
     expect(GOOGLE.revoke).not.toHaveBeenCalled();
-    expect((err as Error).message).toMatch(/Google access/);
+    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_access");
     expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed read of the connection store is reported as the Google Calendar connection and nothing is revoked or destroyed on a guess", async () => {
+  it("a failed read of the connection store is reported as google_connection and nothing is revoked or destroyed on a guess", async () => {
     GOOGLE.cipherThrows = true;
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/Google Calendar connection/);
+    const r = await outcome("member-1");
+    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=google_connection");
     expect(GOOGLE.revoke).not.toHaveBeenCalled();
     expect(GOOGLE.disconnect).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith("team_action_error:remove_disconnect_google");
   });
 
-  it("both Google problems at once name the invitations too, once each", async () => {
+  it("several leftovers are all named, in order, in one redirect", async () => {
     DB.inviteUpdateError = { code: "XX000", message: "x" };
     GOOGLE.revoke.mockResolvedValue({ ok: false, reason: "revoke_http_500" });
-    const err = await removePractitionerAction(form("member-1")).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/pending invitations and Google access/);
+    const r = await outcome("member-1");
+    expect(r.redirectedTo).toBe("/settings/team?removed=partial&left=invitations,google_access");
+  });
+
+  it("a refusal BEFORE removal still throws (nothing was removed, so there is nothing to report as partial)", async () => {
+    DB.rpc = { data: "invalid_practitioner", error: null };
+    expect(await outcome("member-1")).toEqual({ error: "Practitioner not found in this studio." });
   });
 
   it("a member with no email on file has nothing to revoke by email (no unscoped update)", async () => {
