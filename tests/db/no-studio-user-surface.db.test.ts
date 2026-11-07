@@ -1001,13 +1001,19 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
 // 112-115, 148-151, 181-184), and answers only {ok:false, code:'refused'}. Proven here:
 //   1. the stranger gets exactly that answer for the owner's real studio, a random studio and a
 //      NULL studio (so the answer is no oracle for which studios exist, and echoes no studio id);
-//   2. the stranger's calls add no event row (count read through the admin connection);
+//   2. the stranger's calls add no event row, counted on the SAME connection inside the transaction
+//      (reset role, count, back to the savepoint), so a call that did insert would be seen; the scratch
+//      probe below shows the count moving when the ownership check is removed from dismiss_attention_item;
 //   3. after the OWNER dismissed an item (same transaction, claims then switched to the stranger),
-//      the stranger's list returns no rows and no item key, and the stranger's restores change nothing;
+//      the stranger gets the refused answer and no item key or token. The refused answer is the
+//      discriminating assertion here: events are scoped to the caller, so a stranger without the gate
+//      would see an empty list too and the absence of the key alone would not tell the cases apart;
 //   4. a member who is not an owner is refused the same way, the owner is not (control);
 //   5. a rolled-back scratch copy of each function without the ownership check no longer refuses the
 //      stranger (the probe can fail);
 //   6. anon, public and service_role cannot execute them.
+// The scratch-copy probe (5) runs CREATE OR REPLACE FUNCTION inside a transaction it always rolls back. It is
+// local-stack only: this file must never be pointed at a hosted database (the harness refuses a non-loopback pair).
 // ---------------------------------------------------------------------------
 describe("S5: the 0298 dismissal functions refuse a no-studio user at the ownership check and leak nothing", () => {
   const KEY = "unpaid:s5-probe";
@@ -1023,12 +1029,18 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
   const as = async (c: Client, userId: string) => {
     await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
   };
-  const call = async (c: Client, f: Fn, studio: string | null) => {
+  const call = async (c: Client, f: Fn, studio: string | null) => (await callCounting(c, f, studio)).answer;
+  // The answer plus how many events the call left in the studio, counted on the same connection before the
+  // savepoint is rolled back (the table is closed to authenticated, so the count runs as the owner role).
+  const callCounting = async (c: Client, f: Fn, studio: string | null) => {
     await c.query("savepoint s5");
-    try { return JSON.stringify((await c.query(f.sql(studio))).rows[0].r); }
-    finally { await c.query("rollback to savepoint s5"); }
+    try {
+      const answer = JSON.stringify((await c.query(f.sql(studio))).rows[0].r);
+      await c.query("reset role");
+      const added = Number((await c.query("select count(*)::int n from public.dashboard_attention_events where studio_id = $1", [A.studioId])).rows[0].n);
+      return { answer, added };
+    } finally { await c.query("rollback to savepoint s5"); }
   };
-  const events = async () => Number((await adminQuery("select count(*)::int n from public.dashboard_attention_events where studio_id = $1", [A.studioId])).rows[0].n);
   const withTx = async <T,>(fn: (c: Client) => Promise<T>): Promise<T> => {
     const c = new Client({ connectionString: resolveLocalDbUrl() });
     await c.connect();
@@ -1043,18 +1055,17 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
   };
 
   it("the stranger gets exactly {ok:false, code:refused} for a real, a random and a NULL studio, and no studio id is echoed", async () => {
-    const before = await events();
     await withTx(async (c) => {
       await as(c, S);
       for (const f of FNS) {
         for (const st of [A.studioId, randomUUID(), null]) {
-          const r = await call(c, f, st);
-          expect(r, `${f.name}(${st === null ? "null" : "studio"})`).toBe(REFUSED);
-          expect(r).not.toContain(A.studioId);
+          const { answer, added } = await callCounting(c, f, st);
+          expect(answer, `${f.name}(${st === null ? "null" : "studio"})`).toBe(REFUSED);
+          expect(answer).not.toContain(A.studioId);
+          expect(added, `${f.name}: a refused stranger call must leave no event in the studio`).toBe(0);
         }
       }
     });
-    expect(await events(), "a refused stranger call must add no event").toBe(before);
   });
 
   it("an item the owner dismissed is not visible to the stranger, and the stranger's restores change nothing", async () => {
@@ -1098,9 +1109,11 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
         await c.query(def.replace(gate, ""));
         await c.query("set local role authenticated");
         await as(c, S);
-        return call(c, f, A.studioId);
+        return callCounting(c, f, A.studioId);
       });
-      expect(out, "with the ownership check removed the stranger is no longer refused").not.toBe(REFUSED);
+      expect(out.answer, "with the ownership check removed the stranger is no longer refused").not.toBe(REFUSED);
+      // The event count moves too, for the command that writes unconditionally (the restores have nothing to restore).
+      if (f.name === "dismiss_attention_item") expect(out.added, "the stranger's dismissal is written once the check is gone").toBe(1);
       // the real function is unchanged after the rollback
       await withTx(async (c) => { await as(c, S); expect(await call(c, f, A.studioId)).toBe(REFUSED); });
     });
