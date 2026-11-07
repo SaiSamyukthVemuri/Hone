@@ -27,6 +27,10 @@ import {
   ANALYTICS_EVENTS,
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
+import {
+  SELF_SERVE_PRICING_FOOTNOTE,
+  getPlanChoices,
+} from "@/lib/subscriptions/plan-selection";
 
 // Pricing page, USD (US$), three plans, no artificial feature restrictions, no
 // caps/quotas, no unsupported annual, no self-service checkout, no Google
@@ -140,6 +144,10 @@ function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
 }
 
 export default function PricingPage() {
+  // Empty while HONE_SELF_SERVE_CHECKOUT_ENABLED is off (the default), which
+  // leaves every byte of the page below exactly as it was. The flag is read from
+  // the deployment env, so flipping it needs a redeploy.
+  const planChoices = getPlanChoices(process.env);
   return (
     <MarketingSurface>
       <SkipLink />
@@ -190,10 +198,28 @@ export default function PricingPage() {
               </li>
             ))}
           </ul>
+          {planChoices.length === 0 ? (
           <p className="mt-3 text-[0.875rem] text-muted">
             Prices are in US dollars (USD). Setup and payment activation happen during
             guided onboarding; there is no self-service checkout.
           </p>
+          ) : (
+            <>
+              <p className="mt-3 text-[0.875rem] text-muted">{SELF_SERVE_PRICING_FOOTNOTE}</p>
+              <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2">
+                {planChoices.map((c) => (
+                  <li key={c.plan}>
+                    <Link
+                      href={c.href}
+                      className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
+                    >
+                      {c.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <CTAButton
             href={WALKTHROUGH.href}
             event={ANALYTICS_EVENTS.primaryCtaClick}

@@ -121,7 +121,23 @@ describe("PR #253 invite-only gate stays closed for non-operators", () => {
     // The wizard lives ONLY under app/admin (operator-gated). No public route.
     expect(existsSync(path.join(ROOT, "app/studios"))).toBe(false);
     expect(existsSync(path.join(ROOT, "app/(auth)/signup"))).toBe(false);
-    expect(existsSync(path.join(ROOT, "app/signup"))).toBe(false);
+    // HON-70 (Sam, 1 Nov, Extension 1): self-service ACCOUNT creation is now a
+    // decided product path, so app/signup may exist, but ONLY as the flag-gated
+    // account step. It must 404 unless the flag is on and must contain no
+    // studio-creation or admin-client code. Self-serve STUDIO creation stays
+    // behind a verified payment (a later milestone), never in a public route.
+    for (const f of ["page.tsx", "actions.ts", "SignupForm.tsx"]) {
+      const p = path.join(ROOT, "app/signup", f);
+      if (!existsSync(p)) continue;
+      const s = readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+      // Tripwire only: it pins spellings. The real boundary is the database (see tests/db/invite-only-posture.db.test.ts); extend THAT, not this regex, when a studio-creating function is added (Insurance U-4).
+      expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
+    }
+    if (existsSync(path.join(ROOT, "app/signup/page.tsx"))) {
+      expect(readFileSync(path.join(ROOT, "app/signup/page.tsx"), "utf8")).toMatch(
+        /if \(!isSelfServeCheckoutEnabled\(process\.env\)\) notFound\(\)/,
+      );
+    }
     expect(existsSync(path.join(ROOT, "app/admin/studios/new/page.tsx"))).toBe(true);
   });
 });
