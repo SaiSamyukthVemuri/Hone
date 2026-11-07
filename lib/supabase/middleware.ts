@@ -145,6 +145,12 @@ export async function updateSession(request: NextRequest) {
     // path match: do NOT broaden to /api/stripe/* because future Stripe
     // routes (refresh, dashboard link, etc.) should remain owner-only.
     pathname === "/api/stripe/webhook" ||
+    // HON-70 (PROPOSED): the Hone Care Inc SUBSCRIPTION billing webhook is a
+    // separate route with its own signing secret. Same rule: EXACT path, never
+    // /api/billing/*. Without it Stripe would be redirected to /login before the
+    // route's own flag gate ran (Codex P2 4500263864). The route returns 404
+    // with the flag off and 503 until a store exists.
+    pathname === "/api/billing/webhook" ||
     // Twilio inbound SMS webhook authenticates via X-Twilio-Signature
     // (HMAC-SHA1 over the full URL plus sorted POST fields, validated
     // inside the route handler before any DB write). Exact path match
