@@ -16,6 +16,7 @@ import {
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { shouldShowReviewLink } from "@/lib/appointments/review-link";
+import { parseRemovalLeftovers, removalLeftoverMessage } from "@/lib/team/removal-leftovers";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -49,7 +50,13 @@ async function getPendingInvitations(
   return (data ?? []) as PendingInvitation[];
 }
 
-export default async function TeamSettingsPage() {
+export default async function TeamSettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ removed?: string; left?: string }>;
+}) {
+  const sp = (await searchParams) ?? {};
+  const leftovers = sp.removed === "partial" ? parseRemovalLeftovers(sp.left) : [];
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
@@ -65,6 +72,11 @@ export default async function TeamSettingsPage() {
 
   return (
     <div className="flex flex-col gap-12">
+      {leftovers.length > 0 && (
+        <p role="status" data-testid="team-removal-leftovers" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+          {removalLeftoverMessage(leftovers)}
+        </p>
+      )}
       <CurrentPractitioners
         practitioners={practitioners}
         currentPractitionerId={practitioner.id}
