@@ -301,7 +301,7 @@ describe("no-studio authenticated user: what can be reached", () => {
     const wroteRows = (v: string) => v.startsWith("ok:") && !/:0$/.test(v) && !/:$/.test(v);
     const reachableTables = tables.filter((t) => {
       const p = t.strangerProbes as Record<string, string>;
-      return rowsSeen(p.select ?? "") || (p.insert ?? "").startsWith("ok:") || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
+      return rowsSeen(p.select ?? "") || (p.insert ?? "").startsWith("ok:") || /^err:(23502|23503|23505|23514)$/.test(p.insert ?? "") || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
     });
     // Policies that grant to authenticated with no predicate at all.
     const unconditional = (
@@ -313,6 +313,17 @@ describe("no-studio authenticated user: what can be reached", () => {
           order by 1`,
       )
     ).rows.map((r: J) => r.p as string);
+    // Policies on granted tables that call NO membership helper at all (stricter than the
+    // per-table list below, which also accepts a bare studio_id or jwt mention).
+    const noHelper = (
+      await adminQuery(
+        `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p from pg_policies
+          where schemaname in ('public','storage')
+            and (roles::text like '%authenticated%' or roles::text like '%public%')
+            and coalesce(qual,'')||' '||coalesce(with_check,'') !~ '(is_studio_member|is_studio_owner|can_[a-z_]+|auth[.]uid[(][)]|is_platform_admin)'
+          order by 1`,
+      )
+    ).rows.map((r: J) => r.p as string);
     report = {
       generatedAt: new Date().toISOString(),
       counts: { functionsProbed: fns.length, functionsReachable: reachableFns.length, tablesGranted: tables.length, tablesReachable: reachableTables.length },
@@ -320,10 +331,17 @@ describe("no-studio authenticated user: what can be reached", () => {
       functionsReachableNoIdentityCheck: reachableFns.filter((f) => !f.bodyChecksIdentity && f.secdef),
       tablesReachable: reachableTables,
       unconditionalPolicies: unconditional,
+      policiesWithoutMembershipHelper: noHelper,
+      claim:
+        "No table showed a visible or writable row to a no-studio user in the SEEDED LOCAL FIXTURE; the policies listed under unconditionalPolicies carry a literal-true predicate. This is not a proof about hosted data, and the report is NOT scrubbed.",
       tablesWithoutRls: tables.filter((t) => !t.rls).map((t) => t.table),
       tablesNonMembershipPolicies: tables.filter((t) => t.nonMembershipPolicies.length > 0).map((t) => ({ table: t.table, policies: t.nonMembershipPolicies })),
       storage,
       ownIdentity,
+    };
+    report.servicesPresent = {
+      storage: (await adminQuery(`select to_regclass('storage.objects') is not null p`)).rows[0].p as boolean,
+      realtime: (await adminQuery(`select to_regclass('realtime.messages') is not null p`)).rows[0].p as boolean,
     };
     const out = process.env.HONE_CENSUS_OUT;
     if (out) writeFileSync(out, JSON.stringify(report, null, 1));
@@ -344,16 +362,28 @@ describe("no-studio authenticated user: what can be reached", () => {
       ...report.functionsReachable.map((f: J) => `fn ${f.fn}`),
       ...report.tablesReachable.map((t: J) => `tbl ${t.table}`),
       ...report.unconditionalPolicies.map((p: string) => `policy ${p}`),
+      ...report.policiesWithoutMembershipHelper.map((p: string) => `nohelper ${p}`),
     ].sort();
-    expect(names, "reachable-by-a-no-studio-user set changed; review every added item").toEqual([...PINNED].sort());
+    // Services the CI db lane does not start (-x realtime,storage-api in ci.yml) have no
+    // such functions; their pin is asserted only when the service is present.
+    const present = report.servicesPresent as Record<string, boolean>;
+    const svcOf = (n: string) => (/^fn storage\./.test(n) ? "storage" : /^fn realtime\./.test(n) ? "realtime" : null);
+    const skipped = Object.entries(present).filter(([, v]) => !v).map(([k]) => k);
+    for (const k of skipped) console.log(`${k}: SKIPPED_NOT_IN_STACK (its functions are not asserted here)`);
+    const inScope = (n: string) => { const sv = svcOf(n); return sv === null || present[sv]; };
+    expect(names.filter(inScope), "reachable-by-a-no-studio-user set changed; review every added item").toEqual(PINNED.filter(inScope).sort());
+    // A missing service must never HIDE a reachable function: nothing from a skipped schema may appear.
+    expect(names.filter((n) => !inScope(n)), "a function appeared in a schema the stack says is absent").toEqual([]);
   });
 });
 
+// Core set (always asserted) plus storage/realtime entries (asserted only when that service
+// is in the stack; CI starts Supabase with -x ...,realtime,...,storage-api).
 // Recorded from the reviewed first run (report NO-STUDIO-SURFACE-*.json in the lane
 // handoff, 7 Nov, production chain through 0300, local stack). Every entry is a
 // function that RAN for a no-studio user (almost all return false/null/not_authorized
 // or an empty result by design) or a policy that grants with no predicate. No
-// table is reachable (no row seen, no write landed). Storage is deferred to the
+// table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
 // hosted catalog read. A NEW entry fails this test and must be reviewed.
 const PINNED: string[] = [
   "fn graphql_public.graphql(\"operationName\" text, query text, variables jsonb, extensions jsonb)",
@@ -409,14 +439,6 @@ const PINNED: string[] = [
   "policy public.waitlist waitlist_anonymous_insert [INSERT]"
 ];
 
-// ---------------------------------------------------------------------------
-// S4: three functions returned a VALIDATION result for the census's fixture args,
-// so the census alone did not prove they refuse a stranger. Here the arguments
-// are valid in shape (a real studio with a real owner), and the refusal must be
-// the OWNER/MEMBERSHIP result, not a validation one. Control: the real owner gets
-// a different result (the gate passed). Proof of sensitivity: a rolled-back
-// scratch copy of each function with the owner check removed no longer refuses.
-// ---------------------------------------------------------------------------
 // S4: three functions returned a VALIDATION result for the census's fixture args,
 // so the census alone did not prove they refuse a stranger. Here the arguments
 // are valid in shape (a real studio with a real owner). The two settlement
