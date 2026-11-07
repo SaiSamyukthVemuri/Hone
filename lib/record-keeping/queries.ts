@@ -544,7 +544,12 @@ export function normalizeProcedureRecordFilter(raw: {
   const realDay = (s: string | undefined): s is string => {
     if (!s || !day.test(s)) return false;
     const d = new Date(`${s}T00:00:00Z`);
-    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return false;
+    // Bound the year too: the day range is converted with addDays(to, 1), and
+    // 9999-12-31 + 1 rolls to year 10000, whose six-digit-year ISO string is no
+    // longer a date, so the same RangeError / 500 returned for that one input.
+    const year = d.getUTCFullYear();
+    return year >= 1900 && year <= 2100;
   };
   const clientId = raw.clientId && uuid.test(raw.clientId) ? raw.clientId : null;
   let from = realDay(raw.from) ? raw.from : null;
