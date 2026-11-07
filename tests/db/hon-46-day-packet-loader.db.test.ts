@@ -15,8 +15,9 @@ import { NATIVE_SETTINGS_UNREADABLE } from "@/lib/records/print/machine-settings
 // semantics and RLS; it does NOT exercise PostgREST itself (max_rows, URL length).
 // Synthetic ids throughout; no real catalogue profile is activated.
 //
-// STATUS: written without a stack (no OPS grant yet). It has typechecked but NOT
-// been run; expect to adjust seeding once it meets the real schema.
+// STATUS: the first 5 tests ran 5/5 on an owned stack at 9f660e05d under a logged OPS
+// grant. The readings are now read through setup_readings_for_block (Codex P1
+// #4500529393); that change has NOT been run against a stack yet (no grant).
 
 afterAll(() => closePool());
 
@@ -26,6 +27,13 @@ const wire = (row: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v]));
 function sqlReader(userId: string): PacketReader {
   return {
+    // The real function, as the signed-in user: one statement, RLS on.
+    rpc(fn: string, args: Record<string, string>) {
+      if (fn !== "setup_readings_for_block") throw new Error("unexpected rpc");
+      return asUser(userId, (query) => query(`select public.setup_readings_for_block($1::uuid, $2::uuid) as r`, [args.p_block_id, args.p_session_id]))
+        .then((r) => ({ data: r.rows[0].r as unknown, error: null }))
+        .catch((e: unknown) => ({ data: null, error: e }));
+    },
     from(table: string) {
       if (!IDENT.test(table)) throw new Error("bad table");
       let cols = "*";
@@ -177,8 +185,8 @@ describe("day packet loader against the real schema", () => {
     const r = await load(s);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.setupReadings.map((x) => x.id)).toEqual([dayReading]);
-    expect(r.value.setupReadings[0].session_block_id).toBe(day.blockId);
+    expect(dayReading).toBeTruthy();
+    expect(r.value.setupReadings.map((x) => x.session_block_id)).toEqual([day.blockId]);
   });
 
   it("a recorded shape the catalogue cannot resolve prints the explicit refusal and none of the block's legacy columns", async () => {

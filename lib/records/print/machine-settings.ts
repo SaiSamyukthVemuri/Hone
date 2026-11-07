@@ -18,11 +18,7 @@ import { findMode, modeFields } from "@/lib/machines/profile-contract";
 
 export const NATIVE_SETTINGS_UNREADABLE = "Settings recorded in a format this packet can't show yet";
 
-export const SETUP_READING_COLUMNS =
-  "id, session_block_id, capture_id, machine_profile_id, machine_profile_version, mode_key, group_key, channels, stage_key, field_key, value_numeric, value_text, absence_reason, native_unit, decimals, observation_source, revision, recorded_at";
-
 export type PacketSetupReadingSource = {
-  id: string;
   session_block_id: string;
   capture_id: string | null;
   machine_profile_id: string;

@@ -7,6 +7,7 @@ type Call = { table: string; ops: Array<[string, ...unknown[]]> };
 function fake(tables: Record<string, Array<Record<string, unknown>>>, opts: { pageCap?: number; failTable?: string } = {}) {
   const calls: Call[] = [];
   const reader: PacketReader = {
+    rpc: () => Promise.resolve({ data: [], error: null }),
     from(table: string) {
       const call: Call = { table, ops: [] };
       calls.push(call);
@@ -117,7 +118,7 @@ describe("loadDayPacket", () => {
     const leaky = fake({ sessions: [sess("mine", "2026-05-10T15:00:00.000Z"), sess("theirs", "2026-05-10T15:00:00.000Z", { client_id: "client-2" })] });
     // Make the fake ignore eq() so the "query" returns both rows.
     const orig = leaky.reader.from.bind(leaky.reader);
-    const leakyReader: PacketReader = { from: (t) => { const q = orig(t); const e = q.eq.bind(q); q.eq = (c, v) => (c === "client_id" ? q : e(c, v)); return q; } };
+    const leakyReader: PacketReader = { rpc: leaky.reader.rpc, from: (t) => { const q = orig(t); const e = q.eq.bind(q); q.eq = (c, v) => (c === "client_id" ? q : e(c, v)); return q; } };
     const r = await run(leakyReader);
     expect(r.ok && r.value.sessions.map((s) => s.id)).toEqual(["mine"]);
   });
