@@ -475,12 +475,14 @@ function stripDeletedEntries(session: SessionWithEntries): SessionWithEntries {
 export async function getClientById(
   studioId: string,
   clientId: string,
-  // Default true: every other caller is unchanged. The Client Profile passes
-  // `{ includePrices: false }` for a non-owner, and then no client pricing row
-  // and no `price_paid_cents` is fetched at all.
-  options: ProfileReadOptions = { includePrices: true },
+  // Default is the SAFE direction (RBAC G-1): no client pricing row and no
+  // `price_paid_cents` is fetched unless the caller passes `{ includePrices: true }`,
+  // which only an owner's request may do. Five pages call this loader and four of
+  // them never needed a price; the default used to be true, so each of them fetched
+  // spend for a practitioner.
+  options: ProfileReadOptions = {},
 ): Promise<ClientCheatSheet | null> {
-  const includePrices = options.includePrices !== false;
+  const includePrices = options.includePrices === true;
   const supabase = await createClient();
 
   const { data: client, error: clientErr } = await supabase
