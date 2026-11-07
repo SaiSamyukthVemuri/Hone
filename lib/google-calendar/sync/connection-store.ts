@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { storeRotatedRefreshToken } from "../connection";
+import { ConnectionWriteError } from "../store-write-error";
 import { RefreshSecretReadError, type ConnectionAuthRow, type ConnectionStore } from "./token-manager";
 
 // Google Calendar: Phase B2.1: the production ConnectionStore, backed by the
@@ -65,15 +66,16 @@ export function createAdminConnectionStore(): ConnectionStore {
       await storeRotatedRefreshToken(args);
     },
     async touchTokenExpiry(connectionId, studioId, expiresAtIso) {
-      await admin
+      const { error } = await admin
         .from("calendar_connections")
         .update({ token_expires_at: expiresAtIso, updated_at: new Date().toISOString() })
         .eq("id", connectionId)
         .eq("studio_id", studioId);
+      if (error) throw new ConnectionWriteError("touch_token_expiry");
     },
     async markReconnectRequired(connectionId, studioId, code) {
       const nowIso = new Date().toISOString();
-      await admin
+      const { error } = await admin
         .from("calendar_connections")
         .update({
           connection_status: "reconnect_required",
@@ -83,6 +85,7 @@ export function createAdminConnectionStore(): ConnectionStore {
         })
         .eq("id", connectionId)
         .eq("studio_id", studioId);
+      if (error) throw new ConnectionWriteError("mark_reconnect_required");
     },
   };
 }

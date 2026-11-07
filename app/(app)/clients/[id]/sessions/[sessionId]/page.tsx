@@ -188,6 +188,7 @@ export default async function SessionDetailPage({
             studioId: studio.id,
             sessionId: session.id,
             studioTimezone: studio.timezone,
+            viewerIsOwner: isOwner,
           }),
         )
       : Promise.resolve(null),
