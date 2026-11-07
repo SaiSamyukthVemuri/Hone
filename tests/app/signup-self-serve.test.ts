@@ -132,8 +132,15 @@ describe("requestSignupLinkAction", () => {
     });
     const signInWithOtp = vi.fn();
     createClientMock.mockResolvedValue({ auth: { signInWithOtp } });
+    const errors: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(" "));
+    });
     const r = await run("new@example.test", "true");
+    errSpy.mockRestore();
     spy.mockRestore();
+    // Exactly one bounded line: a fixed code, no address, no error text.
+    expect(errors).toEqual(["signup_origin_unavailable"]);
     expect(r).toEqual({ ok: false, error: "Could not send the link. Try again in a moment." });
     expect(signInWithOtp).not.toHaveBeenCalled();
   });

@@ -10,6 +10,13 @@
 // anything, so it fails closed:
 //   * flag off (default)  -> 404, as if the endpoint did not exist;
 //   * flag on, no store   -> 503, before the body is read.
+//
+// Only POST is exported, so an anonymous GET gets Next's 405, not a 404 and not
+// the /login redirect other unauthenticated API paths get: the route's existence
+// is fingerprintable (same as the Stripe webhook; low impact). The path is a
+// public middleware entry (exact match). Once a store exists this route MUST
+// verify the signature before reading or acting on anything (activation
+// condition G-2, docs/billing/HON-70-ACTIVATION-CONDITIONS.md).
 
 import { NextResponse } from "next/server";
 import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";

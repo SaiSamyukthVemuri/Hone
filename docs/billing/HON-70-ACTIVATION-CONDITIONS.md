@@ -75,3 +75,26 @@ Where the flag is defined: `isSelfServeCheckoutEnabled` in `lib/subscriptions/pl
 * C-2: the `new Stripe(` gate pin can be evaded by an aliased import (recorded in docs/13).
 * Whether a checkout with a paid-but-refused second subscription needs an ops alert and refund path
   is undecided (`second_open_subscription`).
+
+## Insurance conditions, verbatim (PEER-1380-1E5BC9A4)
+
+* **U-1:** /signup is an unauthenticated, bulk email-sending path with no app-level limiter and no captcha, relying on Supabase's built-in OTP limits. Three consequences when the flag is ever on: (a) the project-wide email_sent limit is SHARED with every other auth email (login links for existing customers and invites), so an attacker iterating distinct addresses can exhaust it and block Sabrina's staff from signing in: an availability attack on production through a public form; (b) Hone-branded mail to arbitrary third-party addresses harms sender reputation; (c) auth.users rows accrue unbounded. The tracked config shows email_sent = 1000 and sign_in_sign_ups = 30 per rate-limit window locally; the HOSTED values are not in the repository and I did not read them (Sam-run). Before activation: a captcha (Supabase supports Turnstile/hCaptcha) or a per-IP limiter on this action, the hosted rate limits and custom SMTP verified, and an alert on send failures. Keep the flag off until then.
+
+* **U-2:** The tracked supabase/config.toml has enable_signup = true, so GoTrue accepts new-user requests with the public anon key regardless of this PR if hosted matches. The invite-only guarantee therefore rests on the database (a no-op handle_new_user, no studio INSERT policy, RLS membership checks) and the no-studio middleware gate, not on closing signups. That is the right place for it, and this PR does not create the capability, but it makes it discoverable and email-emitting. The activation precondition is therefore a census of what any authenticated user with NO studio can reach: RPCs executable by authenticated that do not check membership, storage policies, and tables with non-membership policies. The existing DB test covers studios, practitioners and invitations inserts and cross-studio reads, not the function and storage surface. I suggest this be added to Machines' hosted catalog read (C-6) as an explicit 'no-studio user' probe, and to the DB test once create_self_serve_studio exists.
+
+* **U-5:** The importer tripwire is file-level. It does not pin WHAT the permitted files import, so wiring checkout or webhook handling into app/api/billing/webhook/route.ts or the pricing page would not fail it. The new importers are clean today (plans and plan-selection only), and the 'no Stripe or billing code' test covers only the three signup files, not pricing. Pin the import list per importer, as I suggested for the route.
+
+* **U-7:** Terms section 8 stays true only while the flag is off in EVERY deployed environment (Privacy R-3, already a condition). Preview deployments with the flag on would make /signup and the OTP path live there against the shared Supabase project; keep the flag unset on previews.
+
+## Added by the 1B2D2D06 read
+* G-2 (store PR): once a store exists, `/api/billing/webhook` (publicly reachable by exact path) must
+  verify the signature with `HONE_BILLING_WEBHOOK_SECRET` BEFORE reading or acting on anything. A named
+  condition of the persistence PR, not a comment.
+* G-4 (activation): the flag-ON path is the one that creates Auth rows for any address and CI never
+  runs it (its Playwright case self-skips). Run the flag-on Playwright case ONCE on an owned local
+  stack, with the paired-target guard, before activation; and close the abuse limits above (RL-1..5,
+  U-1) first.
+* G-3 (low): the webhook route exports only POST, so an anonymous GET gets Next's 405 where other
+  unauthenticated API paths are redirected; the route's existence is fingerprintable (same pattern as
+  the Stripe webhook).
+* G-5: a missing app-origin env now logs one bounded server line (a fixed code, no address).

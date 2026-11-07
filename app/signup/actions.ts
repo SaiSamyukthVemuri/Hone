@@ -44,6 +44,9 @@ export async function requestSignupLinkAction(
   try {
     redirectTo = `${getRequiredAppOrigin()}/auth/callback`;
   } catch {
+    // One bounded server-side signal for a misconfigured deployment: a fixed
+    // code only, never the address or the error text (Insurance G-5).
+    console.error("signup_origin_unavailable");
     return { ok: false, error: "Could not send the link. Try again in a moment." };
   }
   const supabase = await createClient();
