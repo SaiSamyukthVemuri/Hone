@@ -57,6 +57,7 @@ export async function loadDayDocument(args: {
     blockAreasById: loaded.value.blockAreasById,
     entries: loaded.value.entries,
     laserEntries: loaded.value.laserEntries,
+    setupReadings: loaded.value.setupReadings,
     practitionerNameById: loaded.value.practitionerNameById,
   });
   return { ok: true, packet, legalNamesUnavailable: !identity.ok };

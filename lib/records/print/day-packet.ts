@@ -20,6 +20,7 @@
 
 import { localDateString, localTimeString12h } from "@/lib/booking/tz";
 import { formatAreaLabel, type BlockArea } from "@/lib/sessions/block-areas";
+import { NATIVE_SETTINGS_UNREADABLE, nativeSettingsForBlock, type PacketSetupReadingSource } from "./machine-settings";
 
 export const NOT_RECORDED = "Not recorded";
 /** Printed in place of a date of birth until Sabrina's format review decides it. */
@@ -254,6 +255,20 @@ function areaLabel(b: PacketBlockSource, areas: ReadonlyArray<BlockArea> | undef
   return detail ? `${base} (${detail})` : base;
 }
 
+/** Machine-native readings win; a block that has them never prints its legacy columns. */
+function settingsFor(b: PacketBlockSource, native: ReadonlyArray<PacketSetupReadingSource>): Reading[] {
+  const n = nativeSettingsForBlock(native);
+  if (n !== null) return n.kind === "settings" ? n.lines : [{ label: "Settings", value: NATIVE_SETTINGS_UNREADABLE }];
+  return readings([
+    ["Mode", b.mode],
+    ["Modality", b.apilus_modality],
+    ["Energy level", b.energy_level],
+    ["Frequency", b.machine_frequency],
+    ["Probe", [b.probe_label, b.probe_type, b.probe_size].filter(present).join(" ")],
+    ["Probe lot", b.probe_lot_number],
+  ]);
+}
+
 export function buildDayPacket(input: {
   day: string;
   timezone: string;
@@ -265,6 +280,8 @@ export function buildDayPacket(input: {
   blockAreasById?: ReadonlyMap<string, ReadonlyArray<BlockArea>>;
   entries: ReadonlyArray<PacketEntrySource>;
   laserEntries: ReadonlyArray<PacketLaserSource>;
+  /** Machine-native setup readings (treatment_setup_readings), any block. */
+  setupReadings?: ReadonlyArray<PacketSetupReadingSource>;
   practitionerNameById: ReadonlyMap<string, string>;
 }): DayPacket {
   const tz = input.timezone;
@@ -283,6 +300,8 @@ export function buildDayPacket(input: {
     // An entry of a block that was filtered out (soft-deleted) is OMITTED, as
     // the session loader omits it; it must never resurface as a legacy entry.
   }
+  const setupByBlock = new Map<string, PacketSetupReadingSource[]>();
+  for (const r of input.setupReadings ?? []) setupByBlock.set(r.session_block_id, [...(setupByBlock.get(r.session_block_id) ?? []), r]);
   const blocksBySession = new Map<string, PacketBlockSource[]>();
   for (const b of input.blocks) blocksBySession.set(b.session_id, [...(blocksBySession.get(b.session_id) ?? []), b]);
   const laserBySession = new Map<string, PacketLaserSource[]>();
@@ -313,14 +332,7 @@ export function buildDayPacket(input: {
             duration: b.minutes_performed === null || !Number.isFinite(b.minutes_performed) ? NOT_RECORDED : `${b.minutes_performed} min`,
             startedAt: clock(b.started_at, tz),
             endedAt: clock(b.ended_at, tz),
-            settings: readings([
-              ["Mode", b.mode],
-              ["Modality", b.apilus_modality],
-              ["Energy level", b.energy_level],
-              ["Frequency", b.machine_frequency],
-              ["Probe", [b.probe_label, b.probe_type, b.probe_size].filter(present).join(" ")],
-              ["Probe lot", b.probe_lot_number],
-            ]),
+            settings: settingsFor(b, setupByBlock.get(b.id) ?? []),
             notes: readings([
               ["Numbing", [b.numbing_status, b.numbing_notes].filter(present).join(": ")],
               ["Tolerance", b.tolerance_rating],

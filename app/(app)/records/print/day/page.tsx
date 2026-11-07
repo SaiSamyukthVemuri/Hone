@@ -260,7 +260,7 @@ export default async function DayPacketPage({
             <span className="font-medium">Date of birth:</span> {packet.dateOfBirth}
           </p>
           <p className="text-[11px] text-neutral-600">
-            Generated from Hone records as of {readAt}; a treatment charted after that time is not included. A treatment is
+            Generated from Hone records starting at {readAt}; changes made while this packet was generated may appear. A treatment is
             listed on the day it started. Missing information is shown as {NOT_RECORDED}.
             {legalNamesUnavailable ? " Legal names could not be loaded; this record shows the name on file." : ""}
           </p>
