@@ -10,7 +10,12 @@ import { adminQuery, asUser, closePool, seedMember, seedSession, seedStudio, typ
 //  C3  a REVOKED invitation cannot be accepted: the accept command finds no invitation and creates no membership (positive control: a pending one is accepted).
 //  C13 the owner of studio B cannot revoke studio A's invitation (positive control: the owner of A can revoke their own).
 //  C15 removing a member and inviting them again reactivates the SAME row in place (no second membership row), and the invitation is consumed.
-// NOT RUN until a database stack exists for the reviewer; this file only proves what it asserts when it passes.
+//  RV-2 (Insurance) the direct STORAGE API with a removed member's still-valid JWT: storage.objects is not readable or listable for the studio, and the
+//      member cannot insert. HONEST LIMIT: 0093 DROPPED the 0092 member policies on storage.objects, so an ACTIVE member is refused too; the denial comes from
+//      the absence of any authenticated policy (a structural assertion below), not from the membership check. The test therefore proves the removed member gains
+//      nothing through storage.objects, and it fails if any policy naming is_studio_member is ever (re)added without a membership-aware proof. It does NOT cover
+//      signed URLs minted by the service role (the window after removal is Photos' RV/IG-6 item) or buckets other than treatment-images.
+// Run status: the C6/C3/C13/C15 tests ran in the DB lane on #1374 (5/5). The storage describe below was added later and has NOT been run yet.
 
 afterAll(async () => {
   await closePool();
@@ -108,5 +113,46 @@ describe("C15: removing and inviting the same person again", () => {
     expect(rows[0]).toMatchObject({ id: m.practitionerId, active: true, role: "practitioner" });
     expect((await adminQuery("select status from public.pending_invitations where id=$1", [inv])).rows[0].status).toBe("accepted");
     expect(await count(m.userId, "clients")).toBeGreaterThan(0);
+  });
+});
+
+describe("RV-2: a removed member's still-valid JWT gets nothing from storage.objects", () => {
+  const objectFor = async (s: SeededStudio): Promise<string> => {
+    const name = `${s.studioId}/${s.clientId}/${randomUUID()}.jpg`;
+    await adminQuery("insert into storage.objects (bucket_id, name) values ('treatment-images', $1)", [name]);
+    return name;
+  };
+  const visible = (userId: string, name: string): Promise<number> =>
+    asUser(userId, async (q) => Number((await q("select count(*) n from storage.objects where bucket_id = 'treatment-images' and name = $1", [name])).rows[0].n));
+  const listed = (userId: string, studioId: string): Promise<number> =>
+    asUser(userId, async (q) => Number((await q("select count(*) n from storage.objects where bucket_id = 'treatment-images' and name like $1", [`${studioId}/%`])).rows[0].n));
+
+  it("structure: no policy on storage.objects names is_studio_member (the 0092 policies were dropped by 0093)", async () => {
+    const r = await adminQuery("select policyname, coalesce(qual,'') || coalesce(with_check,'') as expr from pg_policies where schemaname = 'storage' and tablename = 'objects'");
+    expect(r.rows.filter((x: { expr: string }) => /is_studio_member/.test(x.expr)), "a member-based storage policy exists: it needs a revocation proof").toEqual([]);
+  });
+
+  it("CONTROL: the object exists (admin reads it); active member, removed member and a stranger all see zero rows, by select and by list", async () => {
+    const A = await seedStudio("rv-sto");
+    const B = await seedStudio("rv-sto-stranger");
+    const m = await seedMember(A, "rv-sto-m");
+    const name = await objectFor(A);
+    expect(Number((await adminQuery("select count(*) n from storage.objects where bucket_id = 'treatment-images' and name = $1", [name])).rows[0].n), "positive control: the row exists").toBe(1);
+
+    expect(await visible(m.userId, name), "active member (denial is by absence of a policy, see header)").toBe(0);
+    expect(await remove(A, m.practitionerId)).toBe("ok");
+    expect(await visible(m.userId, name), "removed member, direct select").toBe(0);
+    expect(await listed(m.userId, A.studioId), "removed member, list by studio prefix").toBe(0);
+    expect(await visible(B.userId, name), "stranger (owner of another studio)").toBe(0);
+    expect(await listed(B.userId, A.studioId), "stranger, list by studio prefix").toBe(0);
+  });
+
+  it("the removed member cannot insert an object under the studio prefix either", async () => {
+    const A = await seedStudio("rv-sto-ins");
+    const m = await seedMember(A, "rv-sto-ins-m");
+    expect(await remove(A, m.practitionerId)).toBe("ok");
+    const name = `${A.studioId}/${A.clientId}/${randomUUID()}.jpg`;
+    await expect(asUser(m.userId, async (q) => q("insert into storage.objects (bucket_id, name) values ('treatment-images', $1)", [name]))).rejects.toThrow();
+    expect(Number((await adminQuery("select count(*) n from storage.objects where name = $1", [name])).rows[0].n)).toBe(0);
   });
 });
