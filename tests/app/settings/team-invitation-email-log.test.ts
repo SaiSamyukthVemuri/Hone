@@ -27,8 +27,10 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => {
     const chain: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "ilike"]) chain[m] = () => chain;
+    for (const m of ["select", "eq", "ilike", "limit"]) chain[m] = () => chain;
     chain.maybeSingle = async () => ({ data: null, error: null });
+    // the existing-member / pending-invite checks now fetch a bounded candidate list and await it
+    chain.then = (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null });
     chain.insert = async () => ({ error: null });
     return { from: () => chain };
   }),
