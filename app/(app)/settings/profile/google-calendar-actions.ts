@@ -31,6 +31,7 @@ import {
   type GoogleCalendarListEntry,
 } from "@/lib/google-calendar/oauth";
 import { createOAuthState } from "@/lib/google-calendar/state";
+import { ConnectionWriteError } from "@/lib/google-calendar/store-write-error";
 import {
   beginDedicatedProvisioningAttempt,
   designateStudioCalendarOwner,
@@ -83,6 +84,7 @@ type CalendarsResult =
 // The fixed display name of the secondary calendar Hone creates for the dedicated
 // destination. Human-readable only; never contains PHI / account data.
 const DEDICATED_CALENDAR_NAME = "Hone Appointments";
+const OWNER_SAVE_ERROR = "Couldn't update the studio calendar. Please try again.";
 // A machine-readable, NON-SENSITIVE marker embedded in a created calendar's
 // description so an ambiguous provider response can be reconciled by EXACT token.
 const PROVISIONING_MARKER_PREFIX = "hone-provisioning-attempt:";
@@ -123,6 +125,16 @@ type TokenResult =
   | { ok: true; accessToken: string }
   | { ok: false; error: string; reconnectRequired?: boolean };
 
+// The member is told to reconnect either way; a mark that did not stick is logged (not silent) and the next call retries it.
+async function markReconnectOrLog(studioId: string, practitionerId: string, code: string): Promise<void> {
+  try {
+    await markReconnectRequired(studioId, practitionerId, code);
+  } catch (e) {
+    if (!(e instanceof ConnectionWriteError)) throw e;
+    console.error(`google_calendar_error:mint_access_token:${e.step}`);
+  }
+}
+
 async function mintAccessToken(studioId: string, practitionerId: string): Promise<TokenResult> {
   let ciphertext: string | null;
   try {
@@ -136,13 +148,13 @@ async function mintAccessToken(studioId: string, practitionerId: string): Promis
   if (!ciphertext) return { ok: false, error: "No connected Google account.", reconnectRequired: true };
   const dec = decryptGoogleSecret(ciphertext);
   if (!dec.ok) {
-    await markReconnectRequired(studioId, practitionerId, "decrypt_failed");
+    await markReconnectOrLog(studioId, practitionerId, "decrypt_failed");
     return { ok: false, error: "Could not read the connection. Please reconnect.", reconnectRequired: true };
   }
   const refreshed = await refreshAccessToken(dec.secret);
   if (!refreshed.ok) {
     if (refreshed.invalidGrant) {
-      await markReconnectRequired(studioId, practitionerId, "invalid_grant");
+      await markReconnectOrLog(studioId, practitionerId, "invalid_grant");
       return { ok: false, error: "Google access was revoked. Please reconnect.", reconnectRequired: true };
     }
     return { ok: false, error: "Couldn't reach Google. Please try again." };
@@ -367,7 +379,7 @@ export async function provisionDedicatedCalendarAction(
       displayName: existing.selectedCalendarDisplayName ?? DEDICATED_CALENDAR_NAME,
     });
     if (!conv.ok) return { ok: false, error: "Couldn't confirm the calendar. Please try again." };
-    await designateStudioCalendarOwner(studio.id, practitioner.id);
+    if (!(await designateStudioCalendarOwner(studio.id, practitioner.id))) return { ok: false, error: OWNER_SAVE_ERROR };
     revalidatePath(safeReturnPath(returnPath));
     return { ok: true };
   }
@@ -413,7 +425,7 @@ export async function provisionDedicatedCalendarAction(
       displayName: DEDICATED_CALENDAR_NAME,
     });
     if (!saved.ok) return { ok: false, error: "Couldn't save the calendar. Please try again." };
-    await designateStudioCalendarOwner(studio.id, practitioner.id);
+    if (!(await designateStudioCalendarOwner(studio.id, practitioner.id))) return { ok: false, error: OWNER_SAVE_ERROR };
     revalidatePath(safeReturnPath(returnPath));
     return { ok: true };
   }
@@ -444,7 +456,7 @@ export async function provisionDedicatedCalendarAction(
     // Do NOT delete: the token lets a retry reconcile + adopt this exact calendar.
     return { ok: false, error: "Created the calendar but couldn't save it. Please try again." };
   }
-  await designateStudioCalendarOwner(studio.id, practitioner.id);
+  if (!(await designateStudioCalendarOwner(studio.id, practitioner.id))) return { ok: false, error: OWNER_SAVE_ERROR };
   revalidatePath(safeReturnPath(returnPath));
   return { ok: true };
 }
@@ -508,7 +520,7 @@ export async function selectOwnedCalendarAction(
     displayName: entry.summary,
   });
   if (!saved.ok) return { ok: false, error: "Couldn't save the calendar. Please try again." };
-  await designateStudioCalendarOwner(studio.id, practitioner.id);
+  if (!(await designateStudioCalendarOwner(studio.id, practitioner.id))) return { ok: false, error: OWNER_SAVE_ERROR };
   revalidatePath(safeReturnPath(returnPath));
   return { ok: true };
 }
@@ -585,7 +597,14 @@ export async function selectWriteCalendarAction(formData: FormData): Promise<Sim
     return { ok: false, error: "That calendar isn't available on your connected account." };
   }
 
-  await setWriteCalendar(studio.id, practitioner.id, calendarId);
+  try {
+    await setWriteCalendar(studio.id, practitioner.id, calendarId);
+  } catch (e) {
+    if (!(e instanceof ConnectionWriteError)) throw e;
+    // Never report a saved choice that was not saved.
+    console.error(`google_calendar_error:select_write_calendar:${e.step}`);
+    return { ok: false, error: "Couldn't save your calendar choice. Please try again." };
+  }
   revalidatePath("/settings/profile");
   return { ok: true };
 }
@@ -603,7 +622,7 @@ export async function designateSelfAsCalendarOwnerAction(): Promise<SimpleResult
   if (!existing || existing.connectionStatus !== "connected") {
     return { ok: false, error: "Connect your Google account first." };
   }
-  await designateStudioCalendarOwner(studio.id, practitioner.id);
+  if (!(await designateStudioCalendarOwner(studio.id, practitioner.id))) return { ok: false, error: OWNER_SAVE_ERROR };
   revalidatePath("/settings/profile");
   return { ok: true };
 }

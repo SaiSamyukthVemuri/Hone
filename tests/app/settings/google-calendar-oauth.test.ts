@@ -42,13 +42,14 @@ vi.mock("@/lib/google-calendar/connection", () => ({
   disconnectConnection: vi.fn(async () => {}),
   markReconnectRequired: vi.fn(async () => {}),
   setWriteCalendar: vi.fn(async () => {}),
-  designateStudioCalendarOwner: vi.fn(async () => {}),
+  designateStudioCalendarOwner: vi.fn(async () => true),
 }));
 
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isGoogleTokenCryptoConfigured } from "@/lib/google-calendar/token-crypto";
 import { buildAuthorizationUrl, revokeToken } from "@/lib/google-calendar/oauth";
 import { createOAuthState } from "@/lib/google-calendar/state";
+import { ConnectionWriteError } from "@/lib/google-calendar/store-write-error";
 import {
   getOwnConnectionMetadata,
   getRefreshTokenCiphertext,
@@ -251,6 +252,18 @@ describe("selectWriteCalendarAction — validate against Google's own list", () 
     expect(r.ok).toBe(true);
     expect(setWriteCalendar).toHaveBeenCalledWith(STUDIO, PRAC, "primary");
   });
+
+  it("a calendar choice that could not be saved (store write error) is reported, with a fixed log string, not shown as success", async () => {
+    const { ConnectionWriteError } = await import("@/lib/google-calendar/store-write-error");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(setWriteCalendar).mockRejectedValueOnce(new ConnectionWriteError("set_write_calendar"));
+    const fd = new FormData();
+    fd.set("calendar_id", "primary");
+    const r = await selectWriteCalendarAction(fd);
+    expect(r).toEqual({ ok: false, error: "Couldn't save your calendar choice. Please try again." });
+    expect(spy).toHaveBeenCalledWith("google_calendar_error:select_write_calendar:set_write_calendar");
+    spy.mockRestore();
+  });
 });
 
 describe("designateSelfAsCalendarOwnerAction — owner-only", () => {
@@ -272,6 +285,13 @@ describe("designateSelfAsCalendarOwnerAction — owner-only", () => {
     const r = await designateSelfAsCalendarOwnerAction();
     expect(r.ok).toBe(true);
     expect(designateStudioCalendarOwner).toHaveBeenCalledWith(STUDIO, PRAC);
+  });
+
+  it("a FAILED designate (the store returned an error) is reported, not shown as success", async () => {
+    vi.mocked(getOwnConnectionMetadata).mockResolvedValue({ connectionStatus: "connected" } as never);
+    vi.mocked(designateStudioCalendarOwner).mockResolvedValueOnce(false);
+    const r = await designateSelfAsCalendarOwnerAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't update the studio calendar. Please try again." });
   });
 });
 

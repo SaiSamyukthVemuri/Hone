@@ -816,4 +816,22 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). Rows are first read through the RLS client scoped to the caller's studio + client + session, unarchived, and each path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
     scopeGuard: "validateTreatmentImagePath",
   },
+  {
+    path: "lib/billing/appointment-payment-state.ts",
+    purpose: "Owner display path: read the visible appointments' clients' custom prices for the free-visit determination.",
+    why: "client_pricing is owner-only through the Data API (0303). The loader refuses a non-owner viewer before any read, then reads the studio and client taken from an RLS-scoped row (never an argument) on the service role.",
+    scopeGuard: "viewerIsOwner",
+  },
+  {
+    path: "lib/billing/appointment-settlement.ts",
+    purpose: "Owner-only quote: read one visible appointment's client's custom price.",
+    why: "client_pricing is owner-only through the Data API (0303). The loader refuses a non-owner viewer before any read, then reads the studio and client taken from an RLS-scoped row (never an argument) on the service role.",
+    scopeGuard: "viewerIsOwner !== true",
+  },
+  {
+    path: "lib/billing/authoritative-session-payment.ts",
+    purpose: "Owner-only authoritative amount: read the scoped session's client's custom price.",
+    why: "client_pricing is owner-only through the Data API (0303). The loader refuses a non-owner viewer before any read, then reads the studio and client taken from an RLS-scoped row (never an argument) on the service role.",
+    scopeGuard: "viewerIsOwner !== true",
+  },
 ];
