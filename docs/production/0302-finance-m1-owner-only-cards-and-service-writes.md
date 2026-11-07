@@ -53,8 +53,8 @@ Channel note: card brand and last4 remain readable to members through `practitio
   the seven-item read-back all ran afterwards; see `docs/production/migration-ledger.md` and
   `docs/production/migration-state.json`, and `01-ops/RECORD-0302-APPLIED-20261107.md`. The
   dry-run listing is evidenced by Sam's transcript and the RUN file (the `dry-run.log` body was
-  not pasted). The 15-reader claim above (all service-role clients) was verified by both Machines
-  and Privacy.
+  not pasted). The 15-reader claim above (all service-role clients) was verified by Machines;
+  Privacy traced the page and action owner gates for the product readers.
 
 ## Not covered (separate migrations)
 
