@@ -928,7 +928,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/records/print/day",
     reason:
-      "Per-client clinical print; needs clientId and day; owner-only. Reached from a client's profile, never a destination to search for.",
+      "Per-client clinical print; needs clientId and day; owner-only. Will be reached from a client's profile (entry link pending), never a destination to search for.",
   },
   {
     route: "/settings",

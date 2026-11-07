@@ -13,7 +13,8 @@ const found = (() => {
   throw new Error("no numeric field in catalogue");
 })();
 
-const reading = (over: Partial<PacketSetupReadingSource> = {}): PacketSetupReadingSource => ({
+type TestReading = PacketSetupReadingSource & { id: string };
+const reading = (over: Partial<TestReading> = {}): TestReading => ({
   id: "r1", session_block_id: "b1", capture_id: "c1", machine_profile_id: found.p.profileId, machine_profile_version: found.p.version,
   mode_key: found.m.key, group_key: "g1", channels: [], stage_key: null, field_key: found.f.key, value_numeric: "1.25", value_text: null,
   absence_reason: null, native_unit: found.f.unit, decimals: found.f.decimals, observation_source: "practitioner-entered", revision: 1,
@@ -74,9 +75,9 @@ describe("machine-native settings (Codex P1 #4500315781)", () => {
     ["a value of an unknown shape", { value_numeric: "NaN" }],
     ["a row with neither value nor a known absence", { value_numeric: null, absence_reason: "weird" }],
   ])("FAILS CLOSED for %s: explicit message, no legacy fallback, no partial settings", (_n, over) => {
-    const n = nativeSettingsForBlock([reading(), reading({ id: "r9", field_key: "x", ...over } as Partial<PacketSetupReadingSource>)].slice(over ? 1 : 0));
+    const n = nativeSettingsForBlock([reading(), reading({ id: "r9", field_key: "x", ...over } as Partial<TestReading>)].slice(over ? 1 : 0));
     expect(n).toEqual({ kind: "unreadable" });
-    const s = settingsOf(packet([reading(), reading({ id: "r9", ...over } as Partial<PacketSetupReadingSource>)]));
+    const s = settingsOf(packet([reading(), reading({ id: "r9", ...over } as Partial<TestReading>)]));
     expect(s).toEqual([{ label: "Settings", value: NATIVE_SETTINGS_UNREADABLE }]);
     expect(JSON.stringify(s)).not.toContain("STALE-FREQ");
   });
@@ -109,7 +110,18 @@ describe("probe identity and lot are kept whichever source supplies the settings
 describe("loadDayPacket reads the native readings", () => {
   const mk = (tables: Record<string, Array<Record<string, unknown>>>, fail?: string) => {
     const ops: Array<[string, string, ...unknown[]]> = [];
+    const rpcCalls: Array<[string, Record<string, string>]> = [];
     const reader: PacketReader = {
+      // One block's readings in ONE call (the DB function is a single STABLE statement). RLS is
+      // modelled by dropping other studios' rows; the real behaviour is proven in the E-5 DB test.
+      rpc(fn, args) {
+        rpcCalls.push([fn, args]);
+        if (fail === "rpc") return Promise.resolve({ data: null, error: { message: "x" } });
+        const rows = (tables.treatment_setup_readings ?? [])
+          .filter((r) => r.session_block_id === args.p_block_id && r.studio_id === "st")
+          .map(({ studio_id: _s, id: _i, ...rest }) => rest);
+        return Promise.resolve({ data: rows, error: null });
+      },
       from(table: string) {
         const calls: Array<[string, unknown, unknown]> = [];
         const q: PacketQuery = {
@@ -133,7 +145,7 @@ describe("loadDayPacket reads the native readings", () => {
         return q;
       },
     };
-    return { reader, ops };
+    return { reader, ops, rpcCalls };
   };
   const sess = { id: "s1", studio_id: "st", client_id: "cl", deleted_at: null, started_at: "2026-05-10T15:00:00.000Z", ended_at: null, modality: "x", session_notes: null, performed_by_practitioner_id: "p1", practitioner_id: "p1", aftercare_and_risks_explained_at: null, aftercare_and_risks_explained_by: null };
   const run = (reader: PacketReader) => loadDayPacket({ supabase: reader, studioId: "st", clientId: "cl", day: "2026-05-10", timezone: "America/Toronto", loadBlockAreas: () => Promise.resolve(new Map()) });
@@ -146,21 +158,98 @@ describe("loadDayPacket reads the native readings", () => {
       { ...reading({ id: "r-otherblock", session_block_id: "b-else" }), studio_id: "st" },
     ],
   };
-  it("loads only this studio's readings for this day's blocks, with named columns", async () => {
-    const { reader, ops } = mk(tables);
+  it("reads each of this day's blocks through setup_readings_for_block with the block's own session, and attaches only that block's rows", async () => {
+    const { reader, rpcCalls, ops } = mk(tables);
     const r = await run(reader);
-    expect(r.ok && r.value.setupReadings.map((x) => x.id)).toEqual(["r1"]);
-    expect(ops).toContainEqual(["treatment_setup_readings", "eq", "studio_id", "st"]);
-    expect(ops.find((o) => o[0] === "treatment_setup_readings" && o[1] === "select")![2]).not.toContain("*");
+    expect(rpcCalls).toEqual([["setup_readings_for_block", { p_block_id: "b1", p_session_id: "s1" }]]);
+    expect(r.ok && r.value.setupReadings.map((x) => x.session_block_id)).toEqual(["b1"]);
+    expect(r.ok && r.value.setupReadings).toHaveLength(1); // the other studio's and other block's rows never arrive
+    // The keyset page loop over the readings table is gone: nothing may query it directly.
+    expect(ops.some((o) => o[0] === "treatment_setup_readings")).toBe(false);
   });
-  it("a failed readings read fails the whole packet, never an empty settings list", async () => {
-    const { reader } = mk(tables, "treatment_setup_readings");
+  it.each([
+    ["an rpc error", "rpc"],
+  ])("a failed readings read (%s) fails the whole packet, never an empty settings list", async (_n, f) => {
+    const { reader } = mk(tables, f);
     expect(await run(reader)).toEqual({ ok: false, reason: "read_failed" });
   });
+  it("a non-array answer, a thrown rpc and a row for a different block each fail the whole packet", async () => {
+    const base = mk(tables).reader;
+    const bad = (rpc: PacketReader["rpc"]) => run({ ...base, from: base.from, rpc });
+    expect(await bad(() => Promise.resolve({ data: { not: "an array" }, error: null }))).toEqual({ ok: false, reason: "read_failed" });
+    expect(await bad(() => Promise.resolve({ data: null, error: null }))).toEqual({ ok: false, reason: "read_failed" });
+    expect(await bad(() => Promise.reject(new Error("boom")))).toEqual({ ok: false, reason: "read_failed" });
+    expect(await bad(() => Promise.resolve({ data: [{ ...reading({ session_block_id: "b-else" }) }], error: null }))).toEqual({ ok: false, reason: "read_failed" });
+  });
   it("an empty day makes no readings read", async () => {
-    const { reader, ops } = mk({ ...tables, sessions: [] });
+    const { reader, ops, rpcCalls } = mk({ ...tables, sessions: [] });
     const r = await run(reader);
     expect(r.ok && r.value.setupReadings).toEqual([]);
     expect(ops.some((o) => o[0] === "treatment_setup_readings")).toBe(false);
+    expect(rpcCalls).toEqual([]);
+  });
+});
+
+// Codex P1 #4500529393. A capture committed WHILE the readings are being read must never
+// come back half-read. The store below commits a two-field capture right after the first
+// request that touches the readings returns, with one row sorting before the keyset cursor
+// and one after - the exact straddle. rpc() answers from the store at the instant of the
+// call (one statement, one snapshot); a paged from() read would see the commit mid-loop.
+describe("a capture committed during the read is never returned partially", () => {
+  const sess = { id: "s1", studio_id: "st", client_id: "cl", deleted_at: null, started_at: "2026-05-10T15:00:00.000Z", ended_at: null, modality: "x", session_notes: null, performed_by_practitioner_id: "p1", practitioner_id: "p1", aftercare_and_risks_explained_at: null, aftercare_and_risks_explained_by: null };
+  const row = (id: string, capture: string, field: string) => ({ ...reading({ id, capture_id: capture, field_key: field }), studio_id: "st" });
+  const build = () => {
+    // 1,000 rows in capture c0 fill a whole page; capture c1 (2 rows) is committed afterwards.
+    const store: Array<Record<string, unknown>> = Array.from({ length: 1000 }, (_v, i) => row(`m-${String(i).padStart(4, "0")}`, "c0", `f${i}`));
+    const expected: Record<string, number> = { c0: 1000, c1: 2 };
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      store.push(row("a-0001", "c1", "current"), row("z-0001", "c1", "duration"));
+    };
+    const strip = ({ studio_id: _s, id: _i, ...rest }: Record<string, unknown>) => rest;
+    const reader: PacketReader = {
+      rpc(_fn, args) {
+        const snapshot = store.filter((r) => r.session_block_id === args.p_block_id).map(strip);
+        commit(); // lands after this statement's snapshot
+        return Promise.resolve({ data: snapshot, error: null });
+      },
+      from(table: string) {
+        const calls: Array<[string, unknown, unknown]> = [];
+        const q: PacketQuery = {
+          select: () => q, eq: (c, v) => (calls.push(["eq", c, v]), q), is: (c, v) => (calls.push(["is", c, v]), q),
+          in: (c, v) => (calls.push(["in", c, v]), q), gt: (c, v) => (calls.push(["gt", c, v]), q),
+          gte: () => q, lt: () => q, order: () => q, range: () => q,
+          then(ok, bad) {
+            const base: Record<string, Array<Record<string, unknown>>> = {
+              sessions: [sess], practitioners: [{ id: "p1", display_name: "D" }],
+              session_blocks: [{ ...block(), studio_id: "st", deleted_at: null }],
+            };
+            let rows = table === "treatment_setup_readings" ? [...store] : [...(base[table] ?? [])];
+            rows.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+            for (const [op, c, v] of calls) {
+              if (op === "eq" || op === "is") rows = rows.filter((r) => r[c as string] === v);
+              if (op === "in") rows = rows.filter((r) => (v as string[]).includes(r[c as string] as string));
+              if (op === "gt") rows = rows.filter((r) => String(r[c as string]) > String(v));
+            }
+            const page = rows.slice(0, 1000);
+            if (table === "treatment_setup_readings") commit();
+            return Promise.resolve({ data: page, error: null }).then(ok, bad);
+          },
+        };
+        return q;
+      },
+    };
+    return { reader, expected };
+  };
+  it("every capture that is returned is returned whole", async () => {
+    const { reader, expected } = build();
+    const r = await loadDayPacket({ supabase: reader, studioId: "st", clientId: "cl", day: "2026-05-10", timezone: "America/Toronto", loadBlockAreas: () => Promise.resolve(new Map()) });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const counts: Record<string, number> = {};
+    for (const x of r.value.setupReadings) counts[x.capture_id ?? ""] = (counts[x.capture_id ?? ""] ?? 0) + 1;
+    for (const [capture, n] of Object.entries(counts)) expect(n).toBe(expected[capture]);
   });
 });

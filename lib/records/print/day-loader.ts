@@ -19,7 +19,7 @@
 // studio-member RLS applies on top of the filters here.
 
 import type { BlockArea } from "@/lib/sessions/block-areas";
-import { SETUP_READING_COLUMNS, type PacketSetupReadingSource } from "@/lib/records/print/machine-settings";
+import type { PacketSetupReadingSource } from "@/lib/records/print/machine-settings";
 import { readAllPages } from "@/lib/records/print/paging";
 import { selectedDayBounds, selectSessionsForDay } from "@/lib/records/print/selected-day";
 import type {
@@ -56,6 +56,8 @@ export interface PacketQuery extends PromiseLike<Result> {
 }
 export interface PacketReader {
   from(table: string): PacketQuery;
+  /** Named database function call (PostgREST rpc). Used only for setup_readings_for_block. */
+  rpc(fn: string, args: Record<string, string>): PromiseLike<{ data: unknown; error: unknown }>;
 }
 
 const PAGE = 1000;
@@ -80,6 +82,39 @@ async function readChunked<T extends { id: string }>(
   );
   if (parts.some((p) => p === null)) return null;
   return (parts as T[][]).flat();
+}
+
+const RPC_CONCURRENCY = 8;
+
+async function readSetupReadings(
+  supabase: PacketReader,
+  blocks: ReadonlyArray<{ id: string; session_id: string }>,
+): Promise<PacketSetupReadingSource[] | null> {
+  const out: PacketSetupReadingSource[][] = new Array(blocks.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed) {
+      const i = next++;
+      if (i >= blocks.length) return;
+      const b = blocks[i];
+      let res: { data: unknown; error: unknown };
+      try {
+        res = await supabase.rpc("setup_readings_for_block", { p_block_id: b.id, p_session_id: b.session_id });
+      } catch {
+        failed = true;
+        return;
+      }
+      const rows = res.data;
+      if (res.error || !Array.isArray(rows) || rows.some((r) => r === null || typeof r !== "object" || (r as { session_block_id?: unknown }).session_block_id !== b.id)) {
+        failed = true;
+        return;
+      }
+      out[i] = rows as PacketSetupReadingSource[];
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(RPC_CONCURRENCY, blocks.length) }, worker));
+  return failed ? null : out.flat();
 }
 
 export type DayPacketLoad =
@@ -157,13 +192,16 @@ export async function loadDayPacket(args: {
   ]);
   if (blocks === null || entries === null || laserEntries === null) return { ok: false, reason: "read_failed" };
 
-  // Machine-native settings (treatment_setup_readings) for ONLY these blocks,
-  // studio-scoped, to completion. Read-only; a failed read fails the whole packet.
-  const setupReadings = await readChunked<PacketSetupReadingSource>(
-    blocks.map((b) => b.id),
-    (ids, after) =>
-      keyset(supabase.from("treatment_setup_readings").select(SETUP_READING_COLUMNS).eq("studio_id", studioId).in("session_block_id", ids), after),
-  );
+  // Machine-native settings, ONE block at a time through `setup_readings_for_block`
+  // (Codex P1 #4500529393). That function is a single STABLE statement, so one
+  // block's readings come from one snapshot: a capture committed while we read is
+  // wholly in or wholly out. A keyset page loop over random-uuid ids could straddle
+  // a capture and print half of it (a duration without its current). The session is
+  // the block's own (already studio- and client-scoped above); the function binds
+  // block-in-session in its query and SECURITY INVOKER keeps studio RLS on top.
+  // ANY failure (rpc error, a refused block, a non-array, a row for another block)
+  // fails the whole packet: never a partial or empty settings list.
+  const setupReadings = await readSetupReadings(supabase, blocks);
   if (setupReadings === null) return { ok: false, reason: "read_failed" };
 
   // Names for ONLY the practitioners these sessions reference, to completion.
