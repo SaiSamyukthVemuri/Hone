@@ -13,16 +13,24 @@ Policies only. No grant, no function, no data (zero migration-level DML), one ta
 
 | Table | Before | After |
 |---|---|---|
-| `client_payment_methods` | SELECT for every studio member (0058) | SELECT for the studio owner only (`is_studio_owner`) |
-| `services` | INSERT and UPDATE for every member (0173) | INSERT and UPDATE for the owner only |
+| `client_payment_methods` | SELECT for every studio member (0058) | SELECT for the studio owner only (`is_studio_owner`), on the user-token (direct Data-API) path, by RLS; admin-client readers are gated in code and unaffected |
+| `services` | INSERT and UPDATE for every member (0173) | INSERT and UPDATE for the owner only, on the user-token path, by RLS |
 | `services` SELECT | member-wide | unchanged (M3 owns it) |
+
+Channel note: card brand and last4 remain readable to members through `practitioner_notifications` (held, #1290; F10). This migration does not change that channel, and it is not an owner-only claim about the product.
 
 ## Why no application change is needed
 
 - Every application reader of `client_payment_methods` uses the service-role client.
   Pinned by `tests/security/finance-m1-card-readers.test.ts`, with a negative control.
-- Every application writer of `services` sits behind `assertOwner`
-  (`app/(app)/settings/services/actions.ts`). No practitioner flow writes the table.
+- Every direct application writer of `services` sits behind `assertOwner`
+  (`app/(app)/settings/services/actions.ts`: inserts at :134 and :138 after the `assertOwner()`
+  at :108; updates at :173 and :180 after :145; the active toggle at :298 after :280). Machines
+  scanned `app/`, `lib/`, `components/` and `scripts/` for `.from("services")` followed by
+  insert, update, upsert or delete and found only those five call sites (this is Machines'
+  own check, not a Privacy-verified claim). The two definer commands that update the table,
+  `reorder_studio_service` and `show_studio_service` (0161:118, :242), each refuse a
+  non-owner (`is_studio_owner`, 0161:136, :254).
 - SECURITY DEFINER paths and the service role ignore policies, so card save,
   settlement and jurisdiction are unaffected.
 
@@ -40,7 +48,13 @@ Policies only. No grant, no function, no data (zero migration-level DML), one ta
   `appointment-parent-delete-boundary`. 104 of 104 pass across those and the new file;
   64 other related DB files passed before the flip.
 - Hosted read-back and preflight with function-body fingerprints (Privacy G-4):
-  `machines/window-reads-m1/`. Not run on hosted.
+  `machines/window-reads-m1/`. Not run on hosted at the time this proof was written (pre-apply text, unchanged).
+- **Post-apply note (2026-11-07).** The hosted Part A reads (30/30), the dry run, the apply and
+  the seven-item read-back all ran afterwards; see `docs/production/migration-ledger.md` and
+  `docs/production/migration-state.json`, and `01-ops/RECORD-0302-APPLIED-20261107.md`. The
+  dry-run listing is evidenced by Sam's transcript and the RUN file (the `dry-run.log` body was
+  not pasted). The 15-reader claim above (all service-role clients) was verified by both Machines
+  and Privacy.
 
 ## Not covered (separate migrations)
 
