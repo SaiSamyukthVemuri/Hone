@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // RBAC Nov-20 matrix, GAP-C3 / C6 / C13 / C15 (revocation, database layer). Synthetic ids only, real role JWTs (asUser = authenticated + jwt sub).
 //  C6  a removed member, with their OWN login, reads nothing from the tables a practitioner could read a second earlier. The removal is the real
@@ -10,12 +10,14 @@ import { adminQuery, asUser, closePool, seedMember, seedSession, seedStudio, typ
 //  C3  a REVOKED invitation cannot be accepted: the accept command finds no invitation and creates no membership (positive control: a pending one is accepted).
 //  C13 the owner of studio B cannot revoke studio A's invitation (positive control: the owner of A can revoke their own).
 //  C15 removing a member and inviting them again reactivates the SAME row in place (no second membership row), and the invitation is consumed.
-//  RV-2 (Insurance) the direct STORAGE API with a removed member's still-valid JWT: storage.objects is not readable or listable for the studio, and the
-//      member cannot insert. HONEST LIMIT: 0093 DROPPED the 0092 member policies on storage.objects, so an ACTIVE member is refused too; the denial comes from
-//      the absence of any authenticated policy (a structural assertion below), not from the membership check. The test therefore proves the removed member gains
-//      nothing through storage.objects, and it fails if any policy naming is_studio_member is ever (re)added without a membership-aware proof. It does NOT cover
-//      signed URLs minted by the service role (the window after removal is Photos' RV/IG-6 item) or buckets other than treatment-images.
-// Run status: the C6/C3/C13/C15 tests ran in the DB lane on #1374 (5/5). The storage describe below was added later and has NOT been run yet.
+//  RV-2 (Insurance) the direct table path on storage.objects for a removed member's still-valid user token: not readable or listable for the studio, and the
+//      member cannot insert (SQLSTATE 42501). HONEST LIMIT: 0093 DROPPED the 0092 member policies on storage.objects, so an ACTIVE member is refused too; the denial
+//      comes from the ABSENCE of any policy that applies to authenticated, anon or public for this bucket (a structural assertion below that names any offender), not
+//      from a membership check. The treatment-images bucket must also be private (public = false). This is covered by a database test on the local stack (SQL only,
+//      no storage service). It does NOT cover the Storage HTTP API, signed URLs minted by the service role (the window after removal is Photos' RV/IG-6 item),
+//      buckets other than treatment-images, or production.
+// Run status: C6/C3/C13/C15 ran in the DB lane on #1374 (5/5). The RV-2 describe is covered by the DB lane on #1377 at ebe416891 (8/8); the S-1..S-3 and bucket-private
+//      assertions were added after that run and are covered once the DB lane runs the head that carries them.
 
 afterAll(async () => {
   await closePool();
@@ -127,9 +129,23 @@ describe("RV-2: a removed member's still-valid JWT gets nothing from storage.obj
   const listed = (userId: string, studioId: string): Promise<number> =>
     asUser(userId, async (q) => Number((await q("select count(*) n from storage.objects where bucket_id = 'treatment-images' and name like $1", [`${studioId}/%`])).rows[0].n));
 
-  it("structure: no policy on storage.objects names is_studio_member (the 0092 policies were dropped by 0093)", async () => {
-    const r = await adminQuery("select policyname, coalesce(qual,'') || coalesce(with_check,'') as expr from pg_policies where schemaname = 'storage' and tablename = 'objects'");
-    expect(r.rows.filter((x: { expr: string }) => /is_studio_member/.test(x.expr)), "a member-based storage policy exists: it needs a revocation proof").toEqual([]);
+  it("structure: storage.objects exists (the checks below are vacuous if the table is absent)", async () => {
+    expect((await adminQuery("select to_regclass('storage.objects') as t")).rows[0].t).not.toBeNull();
+  });
+
+  it("structure: NO policy on storage.objects applies to authenticated, anon or public for this bucket (the 0092 policies were dropped by 0093)", async () => {
+    const r = await adminQuery("select policyname, roles::text[] as roles, coalesce(qual,'') || ' ' || coalesce(with_check,'') as expr from pg_policies where schemaname = 'storage' and tablename = 'objects'");
+    const offenders = r.rows
+      .filter((x: { roles: string[]; expr: string }) => x.roles.some((role) => ["authenticated", "anon", "public"].includes(role)))
+      .filter((x: { expr: string }) => !/bucket_id/.test(x.expr) || /treatment-images/.test(x.expr))
+      .map((x: { policyname: string }) => x.policyname);
+    expect(offenders, `policies on storage.objects reachable by a user token for treatment-images (or with no bucket filter): ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  it("the treatment-images bucket is private (public = false)", async () => {
+    const r = await adminQuery("select public from storage.buckets where id = 'treatment-images'");
+    expect(r.rows, "the bucket row exists").toHaveLength(1);
+    expect(r.rows[0].public).toBe(false);
   });
 
   it("CONTROL: the object exists (admin reads it); active member, removed member and a stranger all see zero rows, by select and by list", async () => {
@@ -147,12 +163,23 @@ describe("RV-2: a removed member's still-valid JWT gets nothing from storage.obj
     expect(await listed(B.userId, A.studioId), "stranger, list by studio prefix").toBe(0);
   });
 
+  it("anon gets nothing either: no rows visible (or no privilege, 42501) and an insert is refused with 42501", async () => {
+    const A = await seedStudio("rv-sto-anon");
+    const name = await objectFor(A);
+    const seen = await asRole("anon", async (q) => Number((await q("select count(*) n from storage.objects where bucket_id = 'treatment-images' and name = $1", [name])).rows[0].n)).catch((e: { code?: string }) => {
+      expect(e.code, "anon select may only fail with insufficient_privilege").toBe("42501");
+      return 0;
+    });
+    expect(seen).toBe(0);
+    await expect(asRole("anon", async (q) => q("insert into storage.objects (bucket_id, name) values ('treatment-images', $1)", [`${A.studioId}/${randomUUID()}.jpg`]))).rejects.toMatchObject({ code: "42501" });
+  });
+
   it("the removed member cannot insert an object under the studio prefix either", async () => {
     const A = await seedStudio("rv-sto-ins");
     const m = await seedMember(A, "rv-sto-ins-m");
     expect(await remove(A, m.practitionerId)).toBe("ok");
     const name = `${A.studioId}/${A.clientId}/${randomUUID()}.jpg`;
-    await expect(asUser(m.userId, async (q) => q("insert into storage.objects (bucket_id, name) values ('treatment-images', $1)", [name]))).rejects.toThrow();
+    await expect(asUser(m.userId, async (q) => q("insert into storage.objects (bucket_id, name) values ('treatment-images', $1)", [name]))).rejects.toMatchObject({ code: "42501" });
     expect(Number((await adminQuery("select count(*) n from storage.objects where name = $1", [name])).rows[0].n)).toBe(0);
   });
 });
