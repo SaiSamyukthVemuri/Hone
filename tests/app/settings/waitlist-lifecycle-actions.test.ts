@@ -274,10 +274,10 @@ describe("source contract", () => {
 
   it("wires exactly the seven permitted commands and no others", () => {
     // TWO CALL SHAPES, and a census that saw only one would under-report.
-    // `remove` and `claim-next` name their command at the `.rpc(` call; the four
-    // single-entry actions pass it to the shared runner as `rpc: "…"`. Both are
-    // string literals, so both are greppable — but a scan for `.rpc("` alone
-    // finds two of six and silently calls that the whole census.
+    // `claim-next` names its command at the `.rpc(` call; the six single-entry
+    // actions (remove included) pass it to the shared runner as `rpc: "…"`. Both
+    // are string literals, so both are greppable — but a scan for `.rpc("` alone
+    // finds one of seven and silently calls that the whole census.
     const rpcs = [
       ...[...CODE.matchAll(/\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]!),
       ...[...CODE.matchAll(/\brpc:\s*"([a-z_]+)"/g)].map((m) => m[1]!),

@@ -1225,6 +1225,14 @@ describe("removal", () => {
     expect(rpcCalls).toHaveLength(0);
   });
 
+  it("checks the entry id BEFORE the owner check", async () => {
+    scenario.role = "practitioner";
+    await expect(removeWaitlistEntryAction(new FormData())).rejects.toThrow(
+      "Missing waitlist entry.",
+    );
+    expect(rpcCalls).toHaveLength(0);
+  });
+
   it("the browser cannot supply a studio, actor or role", async () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");

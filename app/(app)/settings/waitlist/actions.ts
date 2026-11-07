@@ -57,10 +57,10 @@ type RemoveWaitlistEntryResult =
  * The refusals given their own copy.
  *
  * `invalid_input` is deliberately absent. The command returns it for a null
- * studio, actor or entry id, and all three are guarded above before the RPC is
- * issued — so reaching it means something upstream is broken rather than
- * something the operator can act on, and the generic message is the honest
- * answer. It stays in the union so that assumption is stated rather than
+ * studio, actor or entry id, and all three are guarded before the RPC is issued
+ * (by `requiredEntryId` and the runner below) — so reaching it means something
+ * upstream is broken rather than something the operator can act on, and the
+ * generic message is the honest answer. It stays in the union so that assumption is stated rather than
  * implied.
  *
  * `not_owner` and `not_a_member` DO keep copy even though the route checks the
@@ -80,54 +80,14 @@ const REFUSAL_MESSAGES: Readonly<
 };
 
 export async function removeWaitlistEntryAction(formData: FormData): Promise<void> {
-  const entryId = formData.get("entry_id");
-  if (typeof entryId !== "string" || !entryId) {
-    throw new Error("Missing waitlist entry.");
-  }
-
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  // Route-level authority. Deliberately NOT the only check: the command below
-  // re-derives the same fact from the database, so this early refusal is a
-  // clearer message, never the guarantee.
-  if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can change the waitlist.");
-  }
-  // `practitioners.user_id` is nullable in the schema (a row can exist for an
-  // invited practitioner before they sign in). This one was resolved FROM a
-  // session, so it is always present — narrowed explicitly rather than passed
-  // through as null, which the command would refuse as `invalid_input` and
-  // report as a generic failure.
-  const actorUserId = practitioner.user_id;
-  if (!actorUserId) {
-    throw new Error("Could not identify the signed-in practitioner.");
-  }
-
-  const admin = createAdminClient();
-  const { data, error } = await admin.rpc("remove_new_client_waitlist_entry", {
-    p_studio_id: studio.id,
-    p_entry_id: entryId,
-    p_actor_user_id: actorUserId,
+  await runEntryLifecycleCommand({
+    rpc: "remove_new_client_waitlist_entry",
+    entryId: requiredEntryId(formData),
+    successCode: "removed",
+    event: "waitlist_remove_failed",
+    refusals: REFUSAL_MESSAGES,
+    genericError: "Could not remove that entry. Please try again.",
   });
-
-  if (error || data !== "removed") {
-    const outcome =
-      error?.code ?? (typeof data === "string" ? data : "unknown");
-    console.error(
-      JSON.stringify({
-        event: "waitlist_remove_failed",
-        studioId: studio.id,
-        outcome,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    const known =
-      typeof data === "string"
-        ? REFUSAL_MESSAGES[data as keyof typeof REFUSAL_MESSAGES]
-        : undefined;
-    throw new Error(known ?? "Could not remove that entry. Please try again.");
-  }
-
-  revalidatePath("/settings/waitlist");
 }
 
 // ===========================================================================
@@ -136,8 +96,8 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
 //
 // Migrations 0188-0190 shipped the whole practitioner-side lifecycle. Until now
 // only public JOIN and operator REMOVAL were surfaced, so five commands the
-// database already enforces had no way to be invoked. This block wires exactly
-// those five, in the same shape as the removal above.
+// database already enforces had no way to be invoked. This block wires them
+// through one runner, which the removal above now uses too.
 //
 // DELIBERATELY NOT WIRED HERE: `issue_new_client_waitlist_invitation`,
 // `redeem_new_client_waitlist_invitation` and
@@ -172,7 +132,7 @@ const AUTHORITY_REFUSALS = {
 } as const;
 
 /**
- * Shared plumbing for the four single-entry commands.
+ * Shared plumbing for every single-entry command, removal included.
  *
  * It carries NO lifecycle knowledge: the command name, its success code and its
  * refusal copy are supplied by the caller, and the ruling is whatever the
@@ -184,17 +144,11 @@ async function runEntryLifecycleCommand(options: {
   rpc: string;
   entryId: string;
   /**
-   * The code, or codes, that mean the command DID what it was asked to.
-   *
-   * WHY MORE THAN ONE, AND WHY IT IS STILL AN ALLOWLIST. WAIT-P1-EXIT's close
-   * resolves a stuck entry in one of two truthful ways: it closes an unbooked
-   * cycle, or -- finding an appointment the pre-0195 flow left stranded -- it
-   * records the missing conversion. Both moved the entry; neither is a refusal.
-   * Every other caller passes a single string and is unchanged, and success is
-   * still compared as an exact STRING against a closed list, never inferred
-   * from the absence of an error.
+   * The one code that means the command DID what it was asked to. Compared as
+   * an exact STRING, never inferred from the absence of an error. (Close took
+   * two until 0201 retired its repair path.)
    */
-  successCode: string | readonly string[];
+  successCode: string;
   event: string;
   refusals: Readonly<Record<string, string>>;
   genericError: string;
@@ -206,6 +160,11 @@ async function runEntryLifecycleCommand(options: {
   if (practitioner.role !== "owner") {
     throw new Error("Only studio owners can change the waitlist.");
   }
+  // `practitioners.user_id` is nullable in the schema (a row can exist for an
+  // invited practitioner before they sign in). This one was resolved FROM a
+  // session, so it is always present — narrowed explicitly rather than passed
+  // through as null, which the command would refuse as `invalid_input` and
+  // report as a generic failure.
   const actorUserId = practitioner.user_id;
   if (!actorUserId) {
     throw new Error("Could not identify the signed-in practitioner.");
@@ -218,11 +177,7 @@ async function runEntryLifecycleCommand(options: {
     p_actor_user_id: actorUserId,
   });
 
-  const succeeded =
-    typeof options.successCode === "string"
-      ? [options.successCode]
-      : options.successCode;
-  if (error || typeof data !== "string" || !succeeded.includes(data)) {
+  if (error || data !== options.successCode) {
     const outcome = error?.code ?? (typeof data === "string" ? data : "unknown");
     console.error(
       JSON.stringify({
@@ -442,8 +397,7 @@ export async function closeUnbookedWaitlistInvitationAction(
   await runEntryLifecycleCommand({
     rpc: "close_unbooked_new_client_waitlist_invitation",
     entryId: requiredEntryId(formData),
-    // ONE SUCCESS CODE AGAIN, after 0201 retired the repair path. The runner
-    // still accepts a list; this caller simply no longer needs one.
+    // ONE SUCCESS CODE AGAIN, after 0201 retired the repair path.
     successCode: "closed",
     event: "waitlist_close_unbooked_failed",
     refusals: CLOSE_REFUSALS,
