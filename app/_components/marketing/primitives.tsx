@@ -244,15 +244,6 @@ export function Hairline({
   );
 }
 
-/** Small teal-wash chip/pill. */
-export function Chip({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-wash px-3 py-1 text-[0.8125rem] font-medium text-[color:var(--color-mineral-deep)]">
-      {children}
-    </span>
-  );
-}
-
 type CTAVariant = "primary" | "secondary" | "outline";
 
 /**

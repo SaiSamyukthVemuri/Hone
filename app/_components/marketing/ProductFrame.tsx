@@ -69,18 +69,3 @@ export function BrowserFrame({
     </ProductFrame>
   );
 }
-
-/**
- * ProductAnnotation, a small mineral note pointing at part of a composition.
- * Purely descriptive marketing annotation.
- */
-export function ProductAnnotation({ children }: { children: ReactNode }) {
-  return (
-    <p className="text-[0.8125rem] leading-[1.5] text-[color:var(--color-mineral-deep)]">
-      <span aria-hidden="true" className="mr-1.5 font-semibold">
-        →
-      </span>
-      {children}
-    </p>
-  );
-}
