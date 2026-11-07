@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
@@ -234,8 +235,11 @@ async function getFreeAppointmentIds(
     serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
   }
 
+  // client_pricing becomes owner-only through the Data API (0303), so this read uses the service role. Membership
+  // and scope are proven by the RLS-scoped reads above (same studio; the client comes from that row, never from an
+  // argument). OWNERSHIP is getAppointmentPaymentStates' `viewerIsOwner` refusal, which runs before this loader is reached.
   const { data: pricingRows, error: pricingError } = clientIds.length
-    ? await supabase
+    ? await createAdminClient()
         .from("client_pricing")
         .select("client_id, service_name, price_cents, notes, effective_from")
         .eq("studio_id", studioId)
