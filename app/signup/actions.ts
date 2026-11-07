@@ -37,13 +37,19 @@ export async function requestSignupLinkAction(
   // After verification the person lands on the ordinary signed-in destination;
   // with no studio the middleware sends them to /no-access. The paid "Start your
   // studio" step is a later milestone and is deliberately not linked from here.
+  // The chosen plan is NOT carried through the link: it is re-chosen after
+  // verification (Insurance U-6). A missing origin env is a generic failure, not
+  // an unhandled 500.
+  let redirectTo: string;
+  try {
+    redirectTo = `${getRequiredAppOrigin()}/auth/callback`;
+  } catch {
+    return { ok: false, error: "Could not send the link. Try again in a moment." };
+  }
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithOtp({
     email: normalized,
-    options: {
-      emailRedirectTo: `${getRequiredAppOrigin()}/auth/callback`,
-      shouldCreateUser: true,
-    },
+    options: { emailRedirectTo: redirectTo, shouldCreateUser: true },
   });
   if (error) {
     // No Supabase error text leaves this function (it can quote the address).

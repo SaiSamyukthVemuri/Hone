@@ -130,6 +130,7 @@ describe("PR #253 invite-only gate stays closed for non-operators", () => {
       const p = path.join(ROOT, "app/signup", f);
       if (!existsSync(p)) continue;
       const s = readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+      // Tripwire only: it pins spellings. The real boundary is the database (see tests/db/invite-only-posture.db.test.ts); extend THAT, not this regex, when a studio-creating function is added (Insurance U-4).
       expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
     }
     if (existsSync(path.join(ROOT, "app/signup/page.tsx"))) {

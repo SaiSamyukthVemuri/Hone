@@ -125,6 +125,19 @@ describe("requestSignupLinkAction", () => {
     });
   });
 
+  it("a missing app origin env is the generic failure, not a throw, and sends nothing", async () => {
+    const mod = await import("@/lib/app-origin");
+    const spy = vi.spyOn(mod, "getRequiredAppOrigin").mockImplementation(() => {
+      throw new Error("APP_ORIGIN missing");
+    });
+    const signInWithOtp = vi.fn();
+    createClientMock.mockResolvedValue({ auth: { signInWithOtp } });
+    const r = await run("new@example.test", "true");
+    spy.mockRestore();
+    expect(r).toEqual({ ok: false, error: "Could not send the link. Try again in a moment." });
+    expect(signInWithOtp).not.toHaveBeenCalled();
+  });
+
   it("a provider error returns a fixed message that never quotes the address or the error", async () => {
     createClientMock.mockResolvedValue({
       auth: {

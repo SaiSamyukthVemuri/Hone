@@ -47,6 +47,7 @@ describe("login page: sign-in only, invite-only, no self-serve signup", () => {
       const p = join(process.cwd(), "app/signup", f);
       if (!existsSync(p)) continue;
       const s = readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+      // Tripwire only: it pins spellings. The real boundary is the database (see tests/db/invite-only-posture.db.test.ts); extend THAT, not this regex, when a studio-creating function is added (Insurance U-4).
       expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
     }
     if (existsSync(join(process.cwd(), "app/signup/page.tsx"))) {
