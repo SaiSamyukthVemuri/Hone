@@ -43,6 +43,20 @@ describe("client_payment_methods readers (finance M1)", () => {
     expect(bad).toEqual([]);
   });
 
+  it("every admin* receiver is BOUND to createAdminClient() in its file (Privacy M-4), or is a parameter of a known helper", () => {
+    // The receiver NAME alone proves nothing. Bound = `const admin = createAdminClient()` in the same file.
+    // Parameter form (`admin: SupabaseClient`) cannot be proven from this file; the files that use it are pinned, so a NEW
+    // parameter-form reader fails here and must be reviewed (its callers must pass the service-role client).
+    const PARAM_ALLOWED = new Set(["lib/billing/card-change-notification.ts", "lib/payments/admin-payment-status.ts"]);
+    const unproven: string[] = [];
+    for (const h of hits) {
+      const text = readFileSync(join(ROOT, h.file), "utf8");
+      const bound = new RegExp(`\\b(const|let)\\s+${h.receiver}\\s*(:[^=]+)?=\\s*(await\\s+)?createAdminClient\\(`).test(text);
+      if (!bound && !PARAM_ALLOWED.has(h.file)) unproven.push(`${h.file} (${h.receiver})`);
+    }
+    expect(unproven).toEqual([]);
+  });
+
   it("no reader sits in a client component", () => {
     for (const h of hits) {
       const text = readFileSync(join(ROOT, h.file), "utf8");
