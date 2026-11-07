@@ -13,7 +13,7 @@ import {
   subscription,
 } from "./helpers/fake-billing-client";
 
-const FRESH: KnownState = { eventProcessed: false, subscription: null };
+const FRESH: KnownState = { eventProcessed: false, subscription: null, userStudioCreationUnlocked: false };
 
 function decide(over: {
   event?: ReturnType<typeof event>;
@@ -61,14 +61,15 @@ describe("decideBillingEvent", () => {
     const d = decide({
       known: {
         eventProcessed: false,
-        subscription: { lastEventCreated: 500, studioCreationUnlocked: true },
+        subscription: { lastEventCreated: 500 },
+        userStudioCreationUnlocked: true,
       },
     });
     expect(d).toMatchObject({ kind: "apply", unlockStudioCreation: false });
   });
 
   it("treats a duplicate event id as a no-op", () => {
-    expect(decide({ known: { eventProcessed: true, subscription: null } })).toEqual({
+    expect(decide({ known: { eventProcessed: true, subscription: null, userStudioCreationUnlocked: false } })).toEqual({
       kind: "duplicate",
     });
   });
@@ -78,7 +79,8 @@ describe("decideBillingEvent", () => {
       event: event({ created: 900 }),
       known: {
         eventProcessed: false,
-        subscription: { lastEventCreated: 1000, studioCreationUnlocked: true },
+        subscription: { lastEventCreated: 1000 },
+        userStudioCreationUnlocked: true,
       },
     });
     expect(d).toEqual({ kind: "stale" });
@@ -91,7 +93,8 @@ describe("decideBillingEvent", () => {
       event: event({ id: "evt_2", created: 1100 }),
       known: {
         eventProcessed: false,
-        subscription: { lastEventCreated: 1000, studioCreationUnlocked: true },
+        subscription: { lastEventCreated: 1000 },
+        userStudioCreationUnlocked: true,
       },
     });
     expect(second).toMatchObject({ kind: "apply", unlockStudioCreation: false });
@@ -194,7 +197,10 @@ describe("subscriptionIdOf", () => {
 describe("handleBillingWebhook", () => {
   const RAW = '{"id":"evt_1"}';
   const SIG = "t=1,v1=ok";
-  const lookup = async () => FRESH;
+  const lookups = {
+    lookupEvent: async () => false,
+    lookupState: async () => ({ subscription: null, userStudioCreationUnlocked: false }),
+  };
 
   function signed(e = event()) {
     return { rawBody: RAW, signature: SIG, event: e };
@@ -203,7 +209,7 @@ describe("handleBillingWebhook", () => {
   it("refuses a missing signature before touching the client", async () => {
     const client = fakeBilling({ signed: signed() });
     for (const signature of [null, ""]) {
-      const out = await handleBillingWebhook({ rawBody: RAW, signature, client, env: ENV_ON, lookup });
+      const out = await handleBillingWebhook({ rawBody: RAW, signature, client, env: ENV_ON, ...lookups });
       expect(out).toEqual({ http: 400, error: "missing_signature" });
     }
     expect(client.calls.constructEvent).toBe(0);
@@ -212,8 +218,8 @@ describe("handleBillingWebhook", () => {
 
   it("refuses an invalid signature or a tampered body without refetching", async () => {
     const client = fakeBilling({ signed: signed(), subscription: subscription() });
-    const bad = await handleBillingWebhook({ rawBody: RAW, signature: "forged", client, env: ENV_ON, lookup });
-    const tampered = await handleBillingWebhook({ rawBody: RAW + " ", signature: SIG, client, env: ENV_ON, lookup });
+    const bad = await handleBillingWebhook({ rawBody: RAW, signature: "forged", client, env: ENV_ON, ...lookups });
+    const tampered = await handleBillingWebhook({ rawBody: RAW + " ", signature: SIG, client, env: ENV_ON, ...lookups });
     expect(bad).toEqual({ http: 400, error: "invalid_signature" });
     expect(tampered).toEqual({ http: 400, error: "invalid_signature" });
     expect(client.calls.retrieveSubscription).toEqual([]);
@@ -225,7 +231,7 @@ describe("handleBillingWebhook", () => {
       signed: signed(),
       subscription: subscription({ status: "canceled" }),
     });
-    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, lookup });
+    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, ...lookups });
     expect(client.calls.retrieveSubscription).toEqual(["sub_1"]);
     expect(out).toMatchObject({
       http: 200,
@@ -235,7 +241,7 @@ describe("handleBillingWebhook", () => {
 
   it("unlocks from a verified paid subscription", async () => {
     const client = fakeBilling({ signed: signed(), subscription: subscription() });
-    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, lookup });
+    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, ...lookups });
     expect(out).toMatchObject({ http: 200, decision: { kind: "apply", unlockStudioCreation: true } });
   });
 
@@ -243,7 +249,8 @@ describe("handleBillingWebhook", () => {
     const client = fakeBilling({ signed: signed(), subscription: subscription() });
     const out = await handleBillingWebhook({
       rawBody: RAW, signature: SIG, client, env: ENV_ON,
-      lookup: async () => ({ eventProcessed: true, subscription: null }),
+      lookupEvent: async () => true,
+      lookupState: async () => { throw new Error("must not be asked for a replay"); },
     });
     expect(out).toEqual({ http: 200, decision: { kind: "duplicate" } });
     expect(client.calls.retrieveSubscription).toEqual([]);
@@ -251,7 +258,7 @@ describe("handleBillingWebhook", () => {
 
   it("acknowledges unsupported events without a refetch", async () => {
     const client = fakeBilling({ signed: signed(event({ type: "charge.refunded" })) });
-    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, lookup });
+    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, ...lookups });
     expect(out).toEqual({ http: 200, decision: { kind: "ignored", reason: "unsupported_event" } });
     expect(client.calls.retrieveSubscription).toEqual([]);
   });
@@ -259,45 +266,82 @@ describe("handleBillingWebhook", () => {
   it("acknowledges an event with no subscription reference", async () => {
     const e = event({ type: "invoice.paid", object: { id: "in_1", mode: null, client_reference_id: null, subscription: null, metadata: {} } });
     const client = fakeBilling({ signed: signed(e) });
-    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, lookup });
+    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, ...lookups });
     expect(out).toEqual({ http: 200, decision: { kind: "ignored", reason: "no_subscription" } });
   });
 
   it("refuses a live-mode event before refetching (no endless retry)", async () => {
     const client = fakeBilling({ signed: signed(event({ livemode: true })), subscription: subscription() });
-    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, lookup });
+    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, ...lookups });
     expect(out).toEqual({ http: 200, decision: { kind: "refused", reason: "livemode_event" } });
     expect(client.calls.retrieveSubscription).toEqual([]);
   });
 
   it("asks Stripe to retry when the refetch fails", async () => {
     const client = fakeBilling({ signed: signed(), subscription: new Error("stripe down") });
-    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, lookup });
+    const out = await handleBillingWebhook({ rawBody: RAW, signature: SIG, client, env: ENV_ON, ...lookups });
     expect(out).toEqual({ http: 502, error: "subscription_unavailable" });
   });
 
   it("is idempotent end to end: replaying the same event yields one unlock", async () => {
-    // A tiny in-memory store standing in for the future DB command.
-    const store = { processed: new Set<string>(), unlocked: 0, last: null as number | null };
+    // A tiny in-memory store standing in for the future DB command. The unlock is USER-scoped.
+    const store = { processed: new Set<string>(), unlockedUsers: new Set<string>(), last: new Map<string, number>(), unlocks: 0 };
     const client = fakeBilling({ signed: signed(), subscription: subscription() });
     const run = async () => {
       const out = await handleBillingWebhook({
         rawBody: RAW, signature: SIG, client, env: ENV_ON,
-        lookup: async ({ eventId }) => ({
-          eventProcessed: store.processed.has(eventId),
-          subscription: store.last === null ? null : { lastEventCreated: store.last, studioCreationUnlocked: store.unlocked > 0 },
+        lookupEvent: async (id) => store.processed.has(id),
+        lookupState: async ({ subscriptionId, userId }) => ({
+          subscription: store.last.has(subscriptionId) ? { lastEventCreated: store.last.get(subscriptionId)! } : null,
+          userStudioCreationUnlocked: store.unlockedUsers.has(userId),
         }),
       });
       if (out.http === 200 && out.decision.kind === "apply") {
         store.processed.add(out.decision.entitlement.lastEventId);
-        store.last = out.decision.entitlement.lastEventCreated;
-        if (out.decision.unlockStudioCreation) store.unlocked += 1;
+        store.last.set(out.decision.entitlement.stripeSubscriptionId, out.decision.entitlement.lastEventCreated);
+        if (out.decision.unlockStudioCreation) { store.unlockedUsers.add(out.decision.entitlement.userId); store.unlocks += 1; }
       }
       return out;
     };
     await run();
     await run();
     await run();
-    expect(store.unlocked).toBe(1);
+    expect(store.unlocks).toBe(1);
+  });
+
+  it("Codex P2 4499972609: TWO subscriptions by the SAME user unlock a studio once, not twice", async () => {
+    const store = { processed: new Set<string>(), unlockedUsers: new Set<string>(), last: new Map<string, number>(), unlocks: 0 };
+    const play = async (eventId: string, subId: string, userId: string, created: number) => {
+      const sub = subscription({ id: subId, metadata: { hone_user_id: userId, hone_plan: "solo" } });
+      const e = event({ id: eventId, created, object: { id: subId, mode: null, client_reference_id: null, subscription: null, metadata: {} } });
+      const client = fakeBilling({ signed: { rawBody: RAW, signature: SIG, event: e }, subscription: sub });
+      const out = await handleBillingWebhook({
+        rawBody: RAW, signature: SIG, client, env: ENV_ON,
+        lookupEvent: async (id) => store.processed.has(id),
+        lookupState: async ({ subscriptionId, userId: u }) => ({
+          subscription: store.last.has(subscriptionId) ? { lastEventCreated: store.last.get(subscriptionId)! } : null,
+          userStudioCreationUnlocked: store.unlockedUsers.has(u),
+        }),
+      });
+      if (out.http === 200 && out.decision.kind === "apply") {
+        store.processed.add(eventId);
+        store.last.set(subId, created);
+        if (out.decision.unlockStudioCreation) { store.unlockedUsers.add(userId); store.unlocks += 1; }
+      }
+      return out;
+    };
+    await play("evt_a", "sub_A", "user-1", 1000); // first Checkout Session
+    await play("evt_b", "sub_B", "user-1", 1001); // second, same user, a subscription Hone has never seen
+    expect(store.unlocks).toBe(1);
+    // A DIFFERENT user still gets their own unlock (the marker is per user, not global).
+    await play("evt_c", "sub_C", "user-2", 1002);
+    expect(store.unlocks).toBe(2);
+  });
+
+  it("an unseen subscription does not make the user look un-unlocked (decision level)", () => {
+    const unseenButUserUnlocked: KnownState = { eventProcessed: false, subscription: null, userStudioCreationUnlocked: true };
+    expect(decide({ known: unseenButUserUnlocked })).toMatchObject({ kind: "apply", unlockStudioCreation: false });
+    // ...and the same unseen subscription for a user who was never unlocked does unlock.
+    expect(decide({ known: FRESH })).toMatchObject({ kind: "apply", unlockStudioCreation: true });
   });
 });

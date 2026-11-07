@@ -8,6 +8,7 @@
 import type { BillingPrice, BillingStripeClient } from "./billing-client";
 import {
   PLANS,
+  type PlanKey,
   isSelfServeCheckoutEnabled,
   parsePlanKey,
   resolvePlanPriceId,
@@ -18,6 +19,8 @@ import {
 export type CheckoutRefusal =
   | "checkout_disabled"
   | "unauthenticated"
+  | "already_subscribed"
+  | "checkout_in_progress"
   | "unknown_plan"
   | "price_not_configured"
   | "invalid_origin"
@@ -31,8 +34,38 @@ export type CheckoutRefusal =
   | "price_livemode";
 
 export type CheckoutResult =
-  | { ok: true; sessionId: string; url: string }
+  | { ok: true; sessionId: string; url: string; reused: boolean }
   | { ok: false; reason: CheckoutRefusal };
+
+/**
+ * What Hone already knows about this user's billing, read by the caller from its
+ * own store. The builder is stateless; it decides from this.
+ *
+ * DECISION (HON-70, Codex P2 4499972609; DB-DESIGN.md section 3.6): a user has at
+ * most ONE live purchase path.
+ *   * An open subscription  -> REFUSE (`already_subscribed`). They must not buy a
+ *     second one; the DB also refuses a second open subscription, but by then
+ *     they would already have been charged.
+ *   * An unexpired session for the SAME plan -> REUSE it (no second session).
+ *   * An unexpired session for a DIFFERENT plan -> REFUSE (`checkout_in_progress`)
+ *     until it expires. No expire call is made: a second Stripe write type is not
+ *     worth a payment-gate change, and sessions are created with the shortest
+ *     lifetime Stripe allows (30 minutes) so the wait is short.
+ *   * Otherwise create a new one.
+ */
+export interface ExistingCheckoutState {
+  hasOpenSubscription: boolean;
+  openSession: {
+    id: string;
+    url: string;
+    plan: PlanKey;
+    /** Unix seconds. */
+    expiresAt: number;
+  } | null;
+}
+
+/** Stripe's minimum Checkout Session lifetime is 30 minutes; one minute of slack. */
+export const CHECKOUT_SESSION_TTL_SECONDS = 31 * 60;
 
 export interface CheckoutRequest {
   client: BillingStripeClient;
@@ -43,6 +76,10 @@ export interface CheckoutRequest {
   user: { id: string; email?: string | null } | null;
   /** This deployment's own origin (server-resolved, never from the request). */
   origin: string;
+  /** The user's existing billing state from Hone's store. Absent = nothing known. */
+  existing?: ExistingCheckoutState;
+  /** Unix seconds. Injected so tests are deterministic. */
+  nowSeconds?: number;
 }
 
 /**
@@ -95,6 +132,19 @@ export async function createSubscriptionCheckout(
   if (planKey === null) return { ok: false, reason: "unknown_plan" };
   const plan = PLANS[planKey];
 
+  // One live purchase path per user, decided before any Stripe call.
+  const now = req.nowSeconds ?? Math.floor(Date.now() / 1000);
+  if (req.existing?.hasOpenSubscription) {
+    return { ok: false, reason: "already_subscribed" };
+  }
+  const open = req.existing?.openSession ?? null;
+  if (open && open.expiresAt > now) {
+    if (open.plan === planKey) {
+      return { ok: true, sessionId: open.id, url: open.url, reused: true };
+    }
+    return { ok: false, reason: "checkout_in_progress" };
+  }
+
   const priceId = resolvePlanPriceId(planKey, req.env);
   if (priceId === null) return { ok: false, reason: "price_not_configured" };
 
@@ -118,9 +168,10 @@ export async function createSubscriptionCheckout(
     metadata,
     successUrl: `${origin}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
     cancelUrl: `${origin}/pricing`,
+    expiresAt: now + CHECKOUT_SESSION_TTL_SECONDS,
   });
   // Hosted Checkout always returns a url; without one there is nothing to
   // redirect to, so treat it as unavailable rather than inventing one.
   if (!session.url) return { ok: false, reason: "price_unavailable" };
-  return { ok: true, sessionId: session.id, url: session.url };
+  return { ok: true, sessionId: session.id, url: session.url, reused: false };
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createSubscriptionCheckout } from "@/lib/subscriptions/checkout-session";
+import {
+  CHECKOUT_SESSION_TTL_SECONDS,
+  createSubscriptionCheckout,
+} from "@/lib/subscriptions/checkout-session";
 import {
   ENV_ON,
   SOLO_PRICE,
@@ -10,6 +13,7 @@ import {
 
 const USER = { id: "user-1", email: "owner@example.test" };
 const ORIGIN = "https://app.example.test";
+const NOW = 1_800_000_000;
 
 function prices() {
   return {
@@ -25,6 +29,7 @@ function run(over: Partial<Parameters<typeof createSubscriptionCheckout>[0]> = {
     plan: "solo",
     user: USER,
     origin: ORIGIN,
+    nowSeconds: NOW,
     ...over,
   }).then((result) => ({ result, client }));
 }
@@ -36,6 +41,7 @@ describe("createSubscriptionCheckout", () => {
       ok: true,
       sessionId: "cs_test_1",
       url: "https://checkout.stripe.test/c/cs_test_1",
+      reused: false,
     });
     expect(client.calls.createCheckoutSession).toEqual([
       {
@@ -45,8 +51,11 @@ describe("createSubscriptionCheckout", () => {
         metadata: { hone_user_id: "user-1", hone_plan: "solo" },
         successUrl: `${ORIGIN}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl: `${ORIGIN}/pricing`,
+        expiresAt: NOW + CHECKOUT_SESSION_TTL_SECONDS,
       },
     ]);
+    // Stripe's floor is 30 minutes.
+    expect(CHECKOUT_SESSION_TTL_SECONDS).toBeGreaterThanOrEqual(30 * 60);
   });
 
   it("uses the Studio price for the studio plan", async () => {
@@ -115,5 +124,60 @@ describe("createSubscriptionCheckout", () => {
   it("refuses a session that has no hosted url", async () => {
     const { result } = await run({}, fakeBilling({ prices: prices(), checkoutUrl: null }));
     expect(result).toEqual({ ok: false, reason: "price_unavailable" });
+  });
+
+  describe("one live purchase path per user (Codex P2 4499972609)", () => {
+    const open = (over: Partial<NonNullable<NonNullable<Parameters<typeof createSubscriptionCheckout>[0]["existing"]>["openSession"]>> = {}) => ({
+      id: "cs_test_open",
+      url: "https://checkout.stripe.test/c/cs_test_open",
+      plan: "solo" as const,
+      expiresAt: NOW + 600,
+      ...over,
+    });
+
+    it("refuses a user who already has an open subscription, without calling Stripe", async () => {
+      const { result, client } = await run({ existing: { hasOpenSubscription: true, openSession: null } });
+      expect(result).toEqual({ ok: false, reason: "already_subscribed" });
+      expect(client.calls.retrievePrice).toEqual([]);
+      expect(client.calls.createCheckoutSession).toEqual([]);
+    });
+
+    it("reuses an unexpired session for the SAME plan instead of creating a second", async () => {
+      const { result, client } = await run({ existing: { hasOpenSubscription: false, openSession: open() } });
+      expect(result).toEqual({
+        ok: true,
+        sessionId: "cs_test_open",
+        url: "https://checkout.stripe.test/c/cs_test_open",
+        reused: true,
+      });
+      expect(client.calls.createCheckoutSession).toEqual([]);
+    });
+
+    it("refuses a DIFFERENT plan while an unexpired session is open", async () => {
+      const { result, client } = await run({
+        plan: "studio",
+        existing: { hasOpenSubscription: false, openSession: open({ plan: "solo" }) },
+      });
+      expect(result).toEqual({ ok: false, reason: "checkout_in_progress" });
+      expect(client.calls.createCheckoutSession).toEqual([]);
+    });
+
+    it("an EXPIRED session no longer blocks: a new one is created (any plan)", async () => {
+      for (const expiresAt of [NOW, NOW - 1, NOW - 86_400]) {
+        const { result, client } = await run({
+          plan: "studio",
+          existing: { hasOpenSubscription: false, openSession: open({ expiresAt }) },
+        });
+        expect(result).toMatchObject({ ok: true, reused: false });
+        expect(client.calls.createCheckoutSession).toHaveLength(1);
+      }
+    });
+
+    it("still refuses when disabled or unauthenticated, before looking at existing state", async () => {
+      const off = await run({ env: {}, existing: { hasOpenSubscription: false, openSession: open() } });
+      expect(off.result).toEqual({ ok: false, reason: "checkout_disabled" });
+      const anon = await run({ user: null, existing: { hasOpenSubscription: false, openSession: open() } });
+      expect(anon.result).toEqual({ ok: false, reason: "unauthenticated" });
+    });
   });
 });

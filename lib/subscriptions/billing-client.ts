@@ -73,6 +73,8 @@ export interface CreateCheckoutSessionParams {
   metadata: Record<string, string>;
   successUrl: string;
   cancelUrl: string;
+  /** Unix seconds. Stripe requires at least 30 minutes from creation. */
+  expiresAt: number;
 }
 
 export interface BillingStripeClient {
@@ -209,6 +211,7 @@ export function createBillingStripeClient(
         subscription_data: { metadata: params.metadata },
         success_url: params.successUrl,
         cancel_url: params.cancelUrl,
+        expires_at: params.expiresAt,
       });
       return { id: session.id, url: session.url };
     },

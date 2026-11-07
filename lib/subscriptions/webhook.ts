@@ -51,9 +51,16 @@ export interface KnownState {
   subscription: {
     /** `created` of the newest event already applied. */
     lastEventCreated: number;
-    /** A studio-creation unlock was already issued for this user. */
-    studioCreationUnlocked: boolean;
   } | null;
+  /**
+   * An unlock was already issued to THIS USER, by any of their subscriptions.
+   * The unlock is user-scoped, never subscription-scoped: a subscription Hone
+   * has not seen yet must not read as "this user was never unlocked", or two
+   * Checkout Sessions by one user would each unlock a studio (Codex P2
+   * 4499972609). The caller resolves it from the user binding of the REFETCHED
+   * subscription.
+   */
+  userStudioCreationUnlocked: boolean;
 }
 
 export interface EntitlementWrite {
@@ -177,7 +184,7 @@ export function decideBillingEvent(input: {
   }
 
   const entitled = ENTITLED_STATUSES.has(subscription.status);
-  const alreadyUnlocked = known.subscription?.studioCreationUnlocked === true;
+  const alreadyUnlocked = known.userStudioCreationUnlocked;
   return {
     kind: "apply",
     unlockStudioCreation: entitled && !alreadyUnlocked,
@@ -201,10 +208,16 @@ export async function handleBillingWebhook(input: {
   signature: string | null;
   client: BillingStripeClient;
   env: SubscriptionEnv;
-  lookup: (ids: {
-    eventId: string;
+  /** Has this Stripe event id been fully processed? Asked before any refetch. */
+  lookupEvent: (eventId: string) => Promise<boolean>;
+  /**
+   * What is recorded for this subscription and this user. Asked after the
+   * refetch, because the user comes from the refetched subscription's binding.
+   */
+  lookupState: (ids: {
     subscriptionId: string;
-  }) => Promise<KnownState>;
+    userId: string;
+  }) => Promise<Pick<KnownState, "subscription" | "userStudioCreationUnlocked">>;
 }): Promise<WebhookOutcome> {
   if (!input.signature) return { http: 400, error: "missing_signature" };
 
@@ -228,9 +241,8 @@ export async function handleBillingWebhook(input: {
     return { http: 200, decision: { kind: "ignored", reason: "no_subscription" } };
   }
 
-  const known = await input.lookup({ eventId: event.id, subscriptionId });
   // A replay needs no refetch.
-  if (known.eventProcessed) {
+  if (await input.lookupEvent(event.id)) {
     return { http: 200, decision: { kind: "duplicate" } };
   }
 
@@ -240,6 +252,13 @@ export async function handleBillingWebhook(input: {
   } catch {
     return { http: 502, error: "subscription_unavailable" };
   }
+  // The user is whoever the REFETCHED subscription is bound to. With no
+  // binding there is nothing to look up (and the decision refuses it).
+  const userId = subscription.metadata.hone_user_id;
+  const state = userId
+    ? await input.lookupState({ subscriptionId, userId })
+    : { subscription: null, userStudioCreationUnlocked: false };
+  const known: KnownState = { eventProcessed: false, ...state };
   return {
     http: 200,
     decision: decideBillingEvent({ event, subscription, known, env: input.env }),
