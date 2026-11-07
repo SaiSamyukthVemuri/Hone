@@ -66,8 +66,22 @@ export function nativeSettingsForBlock(rows: ReadonlyArray<PacketSetupReadingSou
     const k = [r.machine_profile_id, r.machine_profile_version, r.mode_key, r.group_key, r.revision, r.capture_id ?? ""].join("|");
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
+  // OUTPUT DOES NOT DEPEND ON INPUT ORDER (the RPC orders by field/group/revision, not by time).
+  // Rows within a group are put in a total order, and groups are ordered by time, group, revision
+  // and then every remaining identity part, so two groups that tie on the first three still sort
+  // the same way whatever order the rows arrived in.
+  const rowOrder = (a: PacketSetupReadingSource, b: PacketSetupReadingSource) =>
+    a.recorded_at.localeCompare(b.recorded_at) || (a.stage_key ?? "").localeCompare(b.stage_key ?? "") || a.field_key.localeCompare(b.field_key);
+  for (const g of groups.values()) g.sort(rowOrder);
   const ordered = [...groups.values()].sort(
-    (a, b) => a[0].recorded_at.localeCompare(b[0].recorded_at) || a[0].group_key.localeCompare(b[0].group_key) || a[0].revision - b[0].revision,
+    (a, b) =>
+      a[0].recorded_at.localeCompare(b[0].recorded_at) ||
+      a[0].group_key.localeCompare(b[0].group_key) ||
+      a[0].revision - b[0].revision ||
+      a[0].machine_profile_id.localeCompare(b[0].machine_profile_id) ||
+      a[0].machine_profile_version - b[0].machine_profile_version ||
+      a[0].mode_key.localeCompare(b[0].mode_key) ||
+      (a[0].capture_id ?? "").localeCompare(b[0].capture_id ?? ""),
   );
   const revisionsOf = new Map<string, number>();
   for (const g of ordered) {
