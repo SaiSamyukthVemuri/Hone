@@ -94,7 +94,6 @@ afterAll(async () => {
 // files: the file-derived hash is asserted equal to its literal below, so an edit to either migration fails and forces a re-review.
 const DESK_DIRECTORY_SHA_0274 = "b22ec40edbaad1a9dee2b5bdde1130caa7d5c646eed72998c0ca4a0e509572ef"; // the applied body
 const DESK_DIRECTORY_SHA_0280 = "5ad2c10fe9f9a8e1cb887831f7f15e2a7ebdf02b500de0c6accca720e49ba0eb"; // 0280 name rule (unapplied)
-const DESK_DIRECTORY_ALLOWED = [DESK_DIRECTORY_SHA_0274, DESK_DIRECTORY_SHA_0280];
 const DESK_0280_FILE = "supabase/migrations/0280_receptionist_name_rule.sql";
 // With 0280 in the chain the live body must be the 0280 one; the 0274 body is acceptable only on a chain without it.
 const DESK_DIRECTORY_EXPECTED = existsSync(DESK_0280_FILE) ? [DESK_DIRECTORY_SHA_0280] : [DESK_DIRECTORY_SHA_0274];
@@ -115,9 +114,6 @@ describe("desk directory pin: reviewed literal hashes", () => {
     expect(bodySha("supabase/migrations/0274_receptionist_desk_projection.sql")).toBe(DESK_DIRECTORY_SHA_0274);
     const sha0280 = bodySha(DESK_0280_FILE);
     if (sha0280 !== null) expect(sha0280).toBe(DESK_DIRECTORY_SHA_0280);
-  });
-  it("the allowed set is exactly the two reviewed bodies", () => {
-    expect(DESK_DIRECTORY_ALLOWED).toEqual([DESK_DIRECTORY_SHA_0274, DESK_DIRECTORY_SHA_0280]);
   });
 });
 
