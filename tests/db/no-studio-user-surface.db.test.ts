@@ -175,6 +175,17 @@ async function tableCensus() {
       probes.update = await asJwt(S, (q) => outcome(q, `update ${fq} set ${col} = ${col}`));
     }
     if (t.d) probes.delete = await asJwt(S, (q) => outcome(q, `delete from ${fq}`));
+    // BEFORE INSERT row triggers run BEFORE the RLS WITH CHECK, so a 23xxx error on a table
+    // that has one says nothing about whether the policy would have admitted the row.
+    const beforeInsertTriggers = Number(
+      (
+        await adminQuery(
+          `select count(*) n from pg_trigger g where g.tgrelid = $1::regclass and not g.tgisinternal
+              and (g.tgtype & 2) = 2 and (g.tgtype & 4) = 4`,
+          [fq],
+        )
+      ).rows[0].n,
+    );
     const nonMembership = pol.filter((p: J) => {
       const e = `${p.qual ?? ""} ${p.with_check ?? ""}`;
       return !/auth\.uid\(\)|is_studio_member|is_studio_owner|studio_id|current_studio|jwt/.test(e);
@@ -184,6 +195,7 @@ async function tableCensus() {
       rls: t.rls,
       privileges: { select: t.s, insert: t.i, update: t.u, delete: t.d },
       policyCount: pol.length,
+      beforeInsertTriggers,
       nonMembershipPolicies: nonMembership.map((p: J) => `${p.policyname} [${p.cmd}] qual=${String(p.qual).slice(0, 80)}`),
       strangerProbes: probes,
     });
@@ -301,8 +313,12 @@ describe("no-studio authenticated user: what can be reached", () => {
     const wroteRows = (v: string) => v.startsWith("ok:") && !/:0$/.test(v) && !/:$/.test(v);
     const reachableTables = tables.filter((t) => {
       const p = t.strangerProbes as Record<string, string>;
-      return rowsSeen(p.select ?? "") || (p.insert ?? "").startsWith("ok:") || /^err:(23502|23503|23505|23514)$/.test(p.insert ?? "") || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
+      return rowsSeen(p.select ?? "") || (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && /^err:(23502|23503|23505|23514)$/.test(p.insert ?? "")) || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
     });
+    // A constraint error on insert where a BEFORE trigger exists: neither reached nor refused.
+    const insertIndeterminate = tables
+      .filter((t) => t.beforeInsertTriggers > 0 && /^err:23\d\d\d$/.test((t.strangerProbes as Record<string, string>).insert ?? ""))
+      .map((t) => t.table as string);
     // Policies that grant to authenticated with no predicate at all.
     const unconditional = (
       await adminQuery(
@@ -332,6 +348,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       tablesReachable: reachableTables,
       unconditionalPolicies: unconditional,
       policiesWithoutMembershipHelper: noHelper,
+      insertIndeterminateBeforeTrigger: insertIndeterminate,
       claim:
         "No table showed a visible or writable row to a no-studio user in the SEEDED LOCAL FIXTURE; the policies listed under unconditionalPolicies carry a literal-true predicate. This is not a proof about hosted data, and the report is NOT scrubbed.",
       tablesWithoutRls: tables.filter((t) => !t.rls).map((t) => t.table),
@@ -339,9 +356,12 @@ describe("no-studio authenticated user: what can be reached", () => {
       storage,
       ownIdentity,
     };
+    // "Present" = the stack actually exposes functions in that schema to authenticated.
+    // (storage.objects/realtime.messages tables are NOT a safe signal: a stack started
+    // without storage-api/realtime can still carry the schemas' helper functions.)
     report.servicesPresent = {
-      storage: (await adminQuery(`select to_regclass('storage.objects') is not null p`)).rows[0].p as boolean,
-      realtime: (await adminQuery(`select to_regclass('realtime.messages') is not null p`)).rows[0].p as boolean,
+      storage: fns.some((f) => String(f.fn).startsWith("storage.")),
+      realtime: fns.some((f) => String(f.fn).startsWith("realtime.")),
     };
     const out = process.env.HONE_CENSUS_OUT;
     if (out) writeFileSync(out, JSON.stringify(report, null, 1));
@@ -363,6 +383,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       ...report.tablesReachable.map((t: J) => `tbl ${t.table}`),
       ...report.unconditionalPolicies.map((p: string) => `policy ${p}`),
       ...report.policiesWithoutMembershipHelper.map((p: string) => `nohelper ${p}`),
+      ...report.insertIndeterminateBeforeTrigger.map((t: string) => `insert-indeterminate ${t}`),
     ].sort();
     // Services the CI db lane does not start (-x realtime,storage-api in ci.yml) have no
     // such functions; their pin is asserted only when the service is present.
@@ -382,8 +403,11 @@ describe("no-studio authenticated user: what can be reached", () => {
 // Recorded from the reviewed first run (report NO-STUDIO-SURFACE-*.json in the lane
 // handoff, 7 Nov, production chain through 0300, local stack). Every entry is a
 // function that RAN for a no-studio user (almost all return false/null/not_authorized
-// or an empty result by design) or a policy that grants with no predicate. No
-// table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
+// or an empty result by design) or a policy that grants with no predicate. Two tables
+// (waitlist, demo_requests) accept an anonymous insert by their literal-true policies;
+// four more returned a constraint error on insert from a table with a BEFORE INSERT
+// trigger, which runs ahead of the RLS check and so is INDETERMINATE, not reached.
+// No other table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
 // hosted catalog read. A NEW entry fails this test and must be reviewed.
 const PINNED: string[] = [
   "fn graphql_public.graphql(\"operationName\" text, query text, variables jsonb, extensions jsonb)",
@@ -436,7 +460,26 @@ const PINNED: string[] = [
   "policy public.demo_requests demo_requests_anonymous_insert [INSERT]",
   "policy public.machine_profile_field_contract machine_profile_field_contract_read [SELECT]",
   "policy public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT]",
-  "policy public.waitlist waitlist_anonymous_insert [INSERT]"
+  "policy public.waitlist waitlist_anonymous_insert [INSERT]",
+  "tbl public.demo_requests",
+  "tbl public.waitlist",
+  "nohelper public.demo_requests demo_requests_anonymous_insert [INSERT]",
+  "nohelper public.electrolysis_entries electrolysis_entries: members insert [INSERT]",
+  "nohelper public.electrolysis_entries electrolysis_entries: members select [SELECT]",
+  "nohelper public.electrolysis_entries electrolysis_entries: members update [UPDATE]",
+  "nohelper public.laser_entries laser_entries: members insert [INSERT]",
+  "nohelper public.laser_entries laser_entries: members select [SELECT]",
+  "nohelper public.laser_entries laser_entries: members update [UPDATE]",
+  "nohelper public.machine_profile_field_contract machine_profile_field_contract_read [SELECT]",
+  "nohelper public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT]",
+  "nohelper public.studio_timed_blocks studio_timed_blocks_member_delete_own [DELETE]",
+  "nohelper public.studio_timed_blocks studio_timed_blocks_member_insert [INSERT]",
+  "nohelper public.studio_timed_blocks studio_timed_blocks_member_update_own [UPDATE]",
+  "nohelper public.waitlist waitlist_anonymous_insert [INSERT]",
+  "insert-indeterminate public.clients",
+  "insert-indeterminate public.payment_charge_attempts",
+  "insert-indeterminate public.service_practitioners",
+  "insert-indeterminate public.stripe_account_provisioning_attempts"
 ];
 
 // S4: three functions returned a VALIDATION result for the census's fixture args,
