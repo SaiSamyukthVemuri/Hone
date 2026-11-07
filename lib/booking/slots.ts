@@ -460,11 +460,10 @@ export async function getAvailableSlots(
       if (def) applyWindow(def);
     }
   } else {
-    // OFF: studio-wide window only. The migration-order-safe loaders filter
+    // OFF: studio-wide window only. The studio-wide loaders filter
     // practitioner_id IS NULL, so a rolled-back studio's retained practitioner
     // rows are ignored (and never make maybeSingle throw on a doubled weekday);
-    // they fall back to the exact legacy query only if the 0135 column is
-    // genuinely absent (pre-apply).
+    // any read error fails closed.
     const override = await getStudioWideOverrideDaySafe(supabase, studio.id, dateStr);
     if (override) {
       applyWindow(override);
