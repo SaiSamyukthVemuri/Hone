@@ -16,6 +16,13 @@ import {
 
 export const SIGNUP_PATH = "/signup";
 
+/**
+ * PROPOSED copy (Sam owns the final wording at activation). Shown on /pricing
+ * ONLY while the flag is on; flag off keeps the existing sentence untouched.
+ */
+export const SELF_SERVE_PRICING_FOOTNOTE =
+  "Prices are in US dollars (USD). Choose a plan to create your account. Creating an account is free and gives no studio access; studio access starts only once your plan is confirmed. Larger studios and existing customers use guided onboarding.";
+
 export interface PlanChoice {
   readonly plan: PlanKey;
   readonly label: string;

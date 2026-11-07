@@ -196,7 +196,13 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     // The old census failed the moment anyone wired billing into the app. The
     // prefix exemption removed that, so pin the importer set instead. Adding an
     // importer is a deliberate, reviewed edit of THIS list.
-    const REVIEWED_IMPORTERS = ["app/api/billing/webhook/route.ts"];
+    const REVIEWED_IMPORTERS = [
+      "app/api/billing/webhook/route.ts",
+      // HON-70 UI head (PROPOSED, flag-gated): the plan links and the account step.
+      "app/pricing/page.tsx",
+      "app/signup/actions.ts",
+      "app/signup/page.tsx",
+    ];
     const { execSync } = await import("node:child_process");
     const raw = execSync(
       `grep -rlE "(from|import\\()\\s*[\\"'](@/lib/subscriptions|(\\.\\./)+subscriptions|(\\.\\./)+lib/subscriptions)" app lib components middleware.ts || true`,

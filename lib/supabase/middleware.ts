@@ -36,6 +36,9 @@ export async function updateSession(request: NextRequest) {
   const isPublicRoute =
     pathname === "/" ||
     pathname === "/login" ||
+    // HON-70 (PROPOSED): exact path only, never a prefix. The page itself is a
+    // 404 unless HONE_SELF_SERVE_CHECKOUT_ENABLED is exactly "true".
+    pathname === "/signup" ||
     pathname.startsWith("/auth/") ||
     pathname === "/pricing" ||
     pathname === "/demo" ||
