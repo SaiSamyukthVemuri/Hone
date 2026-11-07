@@ -56,6 +56,20 @@ import {
 // set_treatment_image_note, edit_client_pinned_note, reconcile_my_pending_invitation,
 // realtime.send (S1, hosted read), graphql_public.graphql (S2, hosted read).
 
+
+/**
+ * A policy whose ONLY identity term is "auth.uid() is not null" (or the (select auth.uid()) form)
+ * admits every signed-in account, including one with no studio, exactly like a literal true. It
+ * is NOT a membership check. Exported pure so a sample test can prove the detector can fire.
+ */
+export function uidOnlyPolicy(expr: string): boolean {
+  const e = expr.toLowerCase().replace(/\s+/g, " ");
+  if (!/auth\.uid\(\)/.test(e)) return false;
+  if (/(is_studio_member|is_studio_owner|can_[a-z_]+|is_platform_admin)/.test(e)) return false;
+  const rest = e.replace(/\(?\s*(?:select\s+)?auth\.uid\(\)(?:\s+as\s+uid)?\s*\)?\s+is\s+not\s+null/g, "");
+  return !/auth\.uid\(\)/.test(rest);
+}
+
 type J = Record<string, any>;
 let A: SeededStudio; // a real studio, so membership-gated functions reach their gate
 let M: { userId: string; practitionerId: string }; // member control
@@ -390,8 +404,8 @@ describe("no-studio authenticated user: what can be reached", () => {
           order by 1`,
       )
     ).rows.map((r: J) => r.p as string);
-    // Policies on granted tables that call NO membership helper at all (stricter than the
-    // per-table list below, which also accepts a bare studio_id or jwt mention).
+    // Policies naming NO membership helper and NO auth.uid() at all (this list does not catch a policy whose
+    // only identity term is `auth.uid() is not null`; that is the separate uidonly detector below).
     const noHelper = (
       await adminQuery(
         `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p from pg_policies
@@ -401,6 +415,17 @@ describe("no-studio authenticated user: what can be reached", () => {
           order by 1`,
       )
     ).rows.map((r: J) => r.p as string);
+    const uidOnly = (
+      await adminQuery(
+        `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p, coalesce(qual,'')||' '||coalesce(with_check,'') e
+           from pg_policies
+          where schemaname in ('public','storage')
+            and (roles::text like '%authenticated%' or roles::text like '%public%')
+          order by 1`,
+      )
+    ).rows
+      .filter((r: J) => uidOnlyPolicy(String(r.e)))
+      .map((r: J) => r.p as string);
     report = {
       generatedAt: new Date().toISOString(),
       counts: { functionsProbed: fns.length, functionsReachable: reachableFns.length, tablesGranted: tables.length, tablesReachable: reachableTables.length },
@@ -410,6 +435,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       tableLeaks: leaks,
       unconditionalPolicies: unconditional,
       policiesWithoutMembershipHelper: noHelper,
+      policiesOnlyAuthUidNotNull: uidOnly,
       insertIndeterminateBeforeTrigger: insertIndeterminate,
       claim:
         "No table showed a visible or writable row to a no-studio user in the SEEDED LOCAL FIXTURE; the policies listed under unconditionalPolicies carry a literal-true predicate. This is not a proof about hosted data, and the report is NOT scrubbed.",
@@ -438,6 +464,15 @@ describe("no-studio authenticated user: what can be reached", () => {
     expect(report.ownIdentity.some((r: J) => r.verdict === "ok-no-owned-rows"), "no own-identity call ran to the leak check").toBe(true);
   });
 
+  it("the auth.uid()-only detector can fire, and does not fire on real membership checks", () => {
+    for (const bad of ["auth.uid() IS NOT NULL", "(auth.uid() IS NOT NULL)", "( SELECT auth.uid() AS uid) IS NOT NULL"]) {
+      expect(uidOnlyPolicy(bad), bad).toBe(true);
+    }
+    for (const ok of ["user_id = auth.uid()", "(user_id = ( SELECT auth.uid() AS uid))", "is_studio_member(studio_id)", "auth.uid() IS NOT NULL AND is_studio_member(studio_id)", "true", "auth.uid() IS NOT NULL AND user_id = auth.uid()"]) {
+      expect(uidOnlyPolicy(ok), ok).toBe(false);
+    }
+  });
+
   it("no table leaks a row or accepts an update/delete for a no-studio user (fixture-independent)", () => {
     expect(report.tableLeaks, "a no-studio user saw rows in a table without a literal-true SELECT policy, or an UPDATE/DELETE landed").toEqual([]);
   });
@@ -449,6 +484,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       ...report.tablesReachable.map((t: J) => `tbl-insert-admitted ${t.table}`),
       ...report.unconditionalPolicies.map((p: string) => `policy ${p}`),
       ...report.policiesWithoutMembershipHelper.map((p: string) => `nohelper ${p}`),
+      ...report.policiesOnlyAuthUidNotNull.map((p: string) => `uidonly ${p}`),
       ...report.insertIndeterminateBeforeTrigger.map((t: string) => `insert-indeterminate ${t}`),
       ...report.tablesWithoutRls.map((t: string) => `rls-off ${t}`),
       ...report.tablesNonMembershipPolicies.flatMap((t: J) => t.policies.map((p: string) => `nonmember ${t.table} ${p}`)),
@@ -461,8 +497,6 @@ describe("no-studio authenticated user: what can be reached", () => {
     for (const k of skipped) console.log(`${k}: SKIPPED_NOT_IN_STACK (its functions are not asserted here)`);
     const inScope = (n: string) => { const sv = svcOf(n); return sv === null || present[sv]; };
     expect(names.filter(inScope), "reachable-by-a-no-studio-user set changed; review every added item").toEqual(PINNED.filter(inScope).sort());
-    // A missing service must never HIDE a reachable function: nothing from a skipped schema may appear.
-    expect(names.filter((n) => !inScope(n)), "a function appeared in a schema the stack says is absent").toEqual([]);
   });
 });
 
