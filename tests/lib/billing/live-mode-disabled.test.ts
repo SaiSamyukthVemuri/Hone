@@ -157,7 +157,7 @@ describe("Layer 4: webhook processes only deployment-mode events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Static Stripe-gate money inventory unchanged (1 PI / 1 refund / 0 / 0)
+// Static Stripe-gate inventory: 1 PI / 1 refund / 0 charges / 1 checkout.sessions (HON-70 adapter)
 // ---------------------------------------------------------------------------
 describe("static Stripe gates: money 1/1/0 and checkout.sessions 1 (the HON-70 billing adapter only)", () => {
   const rule = (name: string) =>
