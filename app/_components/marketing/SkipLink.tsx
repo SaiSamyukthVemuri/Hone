@@ -4,18 +4,12 @@
 // keyboard or screen-reader user traverses the whole primary navigation again
 // on every page.
 //
-// WHY IT IS A COMPONENT RATHER THAN A LINE IN SiteHeader.
-// The marketing site has TWO shells. `SiteHeader` serves the ten shell pages;
-// `MarketingHeader` serves /privacy and /terms through PolicyLayout. Putting
-// the link in SiteHeader alone would give the policy routes a `#main-content`
-// target with nothing pointing at it — a bypass target that cannot be reached.
-//
-// IT IS DELIBERATELY NOT ADDED TO MarketingHeader, even though that would look
-// like the tidier place. `app/book/[slug]/page.tsx` renders MarketingHeader
-// too, and that route is a booking surface with its own landmark structure.
-// Adding the link there would point at a target that route does not define.
-// So each shell renders this directly, and exactly the routes that gain a
-// target also gain the link.
+// WHY IT IS A COMPONENT RATHER THAN A LINE IN SiteHeader, which would look
+// like the tidier place. Each shell that defines the `#main-content` target
+// (the ten shell pages, and PolicyLayout for /privacy and /terms) renders this
+// directly, so exactly the routes that gain a target also gain the link.
+// `app/book/[slug]/page.tsx` is a booking surface with its own landmark
+// structure and defines no such target, so it renders no link.
 //
 // A PLAIN <a>, NOT next/link: the target is already on the page, so a router
 // navigation is the wrong primitive and would not move focus.

@@ -174,9 +174,8 @@ describe("3 + 6: the pair is bound — renaming either side is RED", () => {
 });
 
 describe("1 (boundary): 'where required' is a real boundary, not everywhere", () => {
-  // SkipLink.tsx documents why it is NOT added to the shared headers: the book
-  // route renders MarketingHeader too and defines no such target, so a link
-  // there would point at nothing. That rationale is only true while the book
+  // SkipLink.tsx documents why it is NOT added to a shared header: the book
+  // route defines no such target, so a link there would point at nothing. That rationale is only true while the book
   // route stays without a target — pin the premise, not just the conclusion.
   it("the book route has no skip link and no canonical target", () => {
     const code = codeOnly(read(BOOK_ROUTE));
@@ -184,11 +183,8 @@ describe("1 (boundary): 'where required' is a real boundary, not everywhere", ()
     expect(mainTargetIds(BOOK_ROUTE)).toHaveLength(0);
   });
 
-  it("neither shared header smuggles the link back in", () => {
-    for (const rel of [
-      "app/_components/marketing/SiteHeader.tsx",
-      "app/_components/MarketingHeader.tsx",
-    ]) {
+  it("the shared header does not smuggle the link back in", () => {
+    for (const rel of ["app/_components/marketing/SiteHeader.tsx"]) {
       expect(codeOnly(read(rel)), `${rel} renders SkipLink`).not.toContain(
         "<SkipLink",
       );
@@ -376,9 +372,10 @@ describe("5: footer navigation groups keep accessible names", () => {
 // carries its own scroll margin, so the browser stops short by the header's
 // height.
 //
-// THE POLICY LAYOUT IS DELIBERATELY EXEMPT. `MarketingHeader` is not sticky —
-// it scrolls away with the page — so there is nothing to clear, and giving it an
-// offset would be a gap with no cause.
+// THE POLICY LAYOUT IS COVERED DIFFERENTLY. Since a3f6cf1df it renders the same
+// sticky SiteHeader inside MarketingSurface, and the unlayered
+// `.marketing-surface [id]` rule in globals.css sets its target's offset (an
+// unlayered rule outranks any layered scroll-mt-* utility).
 describe("7: the skip target clears the sticky header", () => {
   /** Tailwind spacing steps are 0.25rem; `h-16` is 4rem is 64px. */
   const STICKY_HEADER_CLASS = "h-16";
@@ -426,13 +423,15 @@ describe("7: the skip target clears the sticky header", () => {
     ).toEqual([]);
   });
 
-  it("the policy layout is exempt because its header is not sticky", () => {
-    // Stated as an assertion rather than an omission: if MarketingHeader ever
-    // becomes sticky, this fails and the exemption has to be revisited.
-    const header = codeOnly(read("app/_components/MarketingHeader.tsx"));
-    expect(
-      header,
-      "MarketingHeader became sticky — the policy layout now needs a scroll offset too",
-    ).not.toMatch(/\bsticky\b/);
+  it("the policy layout clears the sticky header through the marketing-surface rule", () => {
+    const layout = codeOnly(read(POLICY_LAYOUT));
+    expect(layout).toContain("<SiteHeader");
+    expect(layout).toContain("<MarketingSurface");
+    const rule = read("app/globals.css").match(
+      /\.marketing-surface \[id\]\s*\{[^}]*scroll-margin-top:\s*(\d+(?:\.\d+)?)rem/,
+    );
+    expect(rule, "globals.css lost the .marketing-surface [id] scroll offset").not.toBeNull();
+    // MIN_STEPS spacing steps of 0.25rem each: the header's height in rem.
+    expect(Number(rule![1])).toBeGreaterThanOrEqual(MIN_STEPS / 4);
   });
 });

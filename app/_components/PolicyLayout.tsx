@@ -16,9 +16,8 @@ import { MarketingSurface, Container, Display } from "@/app/_components/marketin
 // footer and type scale. THE POLICY TEXT IS NOT CHANGED: this file owns layout
 // only, and every word a policy says lives in its own page.
 //
-// The older MarketingHeader/MarketingFooter are left exactly as they were: the
-// booking, intake, portal and token routes still render them, and those are not
-// marketing pages.
+// The older MarketingFooter is left exactly as it was: the booking, intake,
+// portal and token routes still render it, and those are not marketing pages.
 //
 // LANDMARKS. The outer element was <main>, which put the header's <nav> and
 // the footer's contentinfo INSIDE the main landmark — so "main" was the entire
