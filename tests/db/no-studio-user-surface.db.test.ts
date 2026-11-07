@@ -292,15 +292,32 @@ describe("no-studio authenticated user: what can be reached", () => {
     expect(tables.length).toBeGreaterThan(80);
 
     const reachableFns = fns.filter((f) => f.strangerOk);
-    const reachableTables = tables.filter((t) =>
-      Object.values(t.strangerProbes as Record<string, string>).some((v) => v.startsWith("ok:")),
-    );
+    // A table is reachable only if the stranger SEES a row, or a write statement
+    // succeeds and affects a row / an insert lands. An empty SELECT that merely runs
+    // is privilege+RLS working, not reach.
+    const rowsSeen = (v: string) => /"n":"?([1-9]\d*)/.test(v);
+    const wroteRows = (v: string) => v.startsWith("ok:") && !/:0$/.test(v) && !/:$/.test(v);
+    const reachableTables = tables.filter((t) => {
+      const p = t.strangerProbes as Record<string, string>;
+      return rowsSeen(p.select ?? "") || (p.insert ?? "").startsWith("ok:") || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
+    });
+    // Policies that grant to authenticated with no predicate at all.
+    const unconditional = (
+      await adminQuery(
+        `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p from pg_policies
+          where schemaname in ('public','storage')
+            and (roles::text like '%authenticated%' or roles::text like '%public%')
+            and (coalesce(qual,'')='true' or coalesce(with_check,'')='true')
+          order by 1`,
+      )
+    ).rows.map((r: J) => r.p as string);
     report = {
       generatedAt: new Date().toISOString(),
       counts: { functionsProbed: fns.length, functionsReachable: reachableFns.length, tablesGranted: tables.length, tablesReachable: reachableTables.length },
       functionsReachable: reachableFns,
       functionsReachableNoIdentityCheck: reachableFns.filter((f) => !f.bodyChecksIdentity && f.secdef),
       tablesReachable: reachableTables,
+      unconditionalPolicies: unconditional,
       tablesWithoutRls: tables.filter((t) => !t.rls).map((t) => t.table),
       tablesNonMembershipPolicies: tables.filter((t) => t.nonMembershipPolicies.length > 0).map((t) => ({ table: t.table, policies: t.nonMembershipPolicies })),
       storage,
@@ -324,11 +341,68 @@ describe("no-studio authenticated user: what can be reached", () => {
     const names = [
       ...report.functionsReachable.map((f: J) => `fn ${f.fn}`),
       ...report.tablesReachable.map((t: J) => `tbl ${t.table}`),
+      ...report.unconditionalPolicies.map((p: string) => `policy ${p}`),
     ].sort();
     expect(names, "reachable-by-a-no-studio-user set changed; review every added item").toEqual([...PINNED].sort());
   });
 });
 
-// Filled from the first report run (see the findings handoff). Empty means
-// "nothing recorded yet": the pin test fails until a reviewed set is entered.
-const PINNED: string[] = [];
+// Recorded from the reviewed first run (report NO-STUDIO-SURFACE-*.json in the lane
+// handoff, 7 Nov, production chain through 0300, local stack). Every entry is a
+// function that RAN for a no-studio user (almost all return false/null/not_authorized
+// or an empty result by design) or a policy that grants with no predicate. No
+// table is reachable (no row seen, no write landed). Storage is deferred to the
+// hosted catalog read. A NEW entry fails this test and must be reviewed.
+const PINNED: string[] = [
+  "fn graphql_public.graphql(\"operationName\" text, query text, variables jsonb, extensions jsonb)",
+  "fn public.appointment_transition_allowed(p_old_status text, p_new_status text)",
+  "fn public.archive_treatment_image(p_image_id uuid, p_client_id uuid)",
+  "fn public.audit_actor_is_caller(target_actor_id uuid, target_studio_id uuid)",
+  "fn public.can_read_client_legal_identity(target_studio_id uuid)",
+  "fn public.can_use_client_legal_identity(target_studio_id uuid)",
+  "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
+  "fn public.is_studio_member(target_studio_id uuid)",
+  "fn public.is_studio_owner(target_studio_id uuid)",
+  "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",
+  "fn public.member_owns_scoped_timed_block(p_studio_id uuid, p_practitioner_id uuid)",
+  "fn public.my_pending_invitation()",
+  "fn public.receptionist_cancel_appointment(p_studio_id uuid, p_appointment_id uuid, p_reason text)",
+  "fn public.receptionist_create_appointment(p_studio_id uuid, p_target_practitioner_id uuid, p_client_id uuid, p_service_id uuid, p_starts_at tim",
+  "fn public.receptionist_move_appointment(p_studio_id uuid, p_appointment_id uuid, p_target_practitioner_id uuid, p_expected_starts_at timestamp ",
+  "fn public.reconcile_my_pending_invitation()",
+  "fn public.record_appointment_settlement(p_studio_id uuid, p_appointment_id uuid, p_method text, p_amount_cents integer, p_note text, p_livemode",
+  "fn public.session_is_visible(target_session_id uuid)",
+  "fn public.set_new_client_admission_mode(p_studio_id uuid, p_mode text)",
+  "fn public.set_own_calendar_feed_token_hash(p_studio_id uuid, p_token_hash text)",
+  "fn public.set_own_default_machine(p_studio_id uuid, p_machine_id uuid, p_mode_key text)",
+  "fn public.set_own_default_machine_frequency(p_studio_id uuid, p_frequency text)",
+  "fn public.set_treatment_image_note(p_image_id uuid, p_client_id uuid, p_note text)",
+  "fn public.setup_capture_history_for_block(p_block_id uuid)",
+  "fn public.sms_normalized_phone(p_phone text)",
+  "fn public.sms_trimmable_whitespace()",
+  "fn public.supersede_appointment_settlement(p_studio_id uuid, p_expected_settlement_id uuid, p_method text, p_amount_cents integer, p_reason tex",
+  "fn public.update_own_practitioner_profile(p_studio_id uuid, p_display_name text, p_color text)",
+  "fn realtime.apply_rls(wal jsonb, max_record_bytes integer)",
+  "fn realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[])",
+  "fn realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[])",
+  "fn realtime.quote_wal2json(entity regclass)",
+  "fn realtime.send(payload bytea, event text, topic text, private boolean)",
+  "fn realtime.send(payload jsonb, event text, topic text, private boolean)",
+  "fn realtime.topic()",
+  "fn storage.allow_any_operation(expected_operations text[])",
+  "fn storage.allow_only_operation(expected_operation text)",
+  "fn storage.extension(name text)",
+  "fn storage.filename(name text)",
+  "fn storage.foldername(name text)",
+  "fn storage.get_common_prefix(p_key text, p_prefix text, p_delimiter text)",
+  "fn storage.get_size_by_bucket()",
+  "fn storage.list_multipart_uploads_with_delimiter(bucket_id text, prefix_param text, delimiter_param text, max_keys integer, next_key_token text",
+  "fn storage.list_objects_with_delimiter(_bucket_id text, prefix_param text, delimiter_param text, max_keys integer, start_after text, next_token",
+  "fn storage.operation()",
+  "fn storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer, search text, sortcolumn text, sortorder text)",
+  "fn storage.search_v2(prefix text, bucket_name text, limits integer, levels integer, start_after text, sort_order text, sort_column text, sort_c",
+  "policy public.demo_requests demo_requests_anonymous_insert [INSERT]",
+  "policy public.machine_profile_field_contract machine_profile_field_contract_read [SELECT]",
+  "policy public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT]",
+  "policy public.waitlist waitlist_anonymous_insert [INSERT]"
+];
