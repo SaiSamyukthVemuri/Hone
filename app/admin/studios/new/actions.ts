@@ -8,7 +8,7 @@ import { parseNewStudioInput } from "@/lib/studios/new-studio";
 import { logAdminAction } from "@/lib/audit/admin-actions";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { escapeIlike } from "@/lib/search/global-search";
+import { EMAIL_CANDIDATE_LIMIT, emailIlikePattern, hasExactEmailMatch } from "@/lib/invitations/email-match";
 import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 
 const BASE = "/admin/studios/new";
@@ -102,15 +102,15 @@ export async function createStudioWithOwnerInvite(
   // existing invites may be stored mixed-case). Escape ILIKE wildcards (% and
   // _) so an email whose local part contains them: e.g. first_last@x.com,
   // cannot over-match unrelated invitations.
-  const ownerEmailPattern = escapeIlike(input.ownerEmail);
-  const { data: dupInvite, error: dupErr } = await admin
+  const ownerEmailPattern = emailIlikePattern(input.ownerEmail);
+  const { data: dupInvites, error: dupErr } = await admin
     .from("pending_invitations")
-    .select("id")
+    .select("id, email")
     .ilike("email", ownerEmailPattern)
     .eq("status", "pending")
-    .maybeSingle();
+    .limit(EMAIL_CANDIDATE_LIMIT);
   if (dupErr) fail(`Could not verify invitations: ${dupErr.message}`);
-  if (dupInvite) {
+  if (hasExactEmailMatch(dupInvites, input.ownerEmail)) {
     fail(
       `There is already a pending invitation for ${input.ownerEmail}. Resolve it before creating another studio for this owner.`,
     );

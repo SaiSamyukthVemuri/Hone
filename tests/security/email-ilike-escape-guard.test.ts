@@ -25,9 +25,9 @@ export function unescapedEmailIlike(src: string): string[] {
   const bad: string[] = [];
   for (const m of src.matchAll(CALL)) {
     const arg = m[3].trim();
-    if (/^escapeIlike\(/.test(arg)) continue;
+    if (/^(escapeIlike|emailIlikePattern)\(/.test(arg)) continue;
     const id = /^[A-Za-z_$][\w$]*$/.exec(arg)?.[0];
-    if (id && new RegExp(`(?:const|let)\\s+${id}\\b[^=]*=\\s*escapeIlike\\(`).test(src)) continue;
+    if (id && new RegExp(`(?:const|let)\\s+${id}\\b[^=]*=\\s*(?:escapeIlike|emailIlikePattern)\\(`).test(src)) continue;
     bad.push(`${m[2]} <- ${arg}`);
   }
   return bad;
@@ -46,6 +46,7 @@ describe("no unescaped .ilike on an email column in app/ and lib/", () => {
     expect(unescapedEmailIlike('q.ilike("email", normalized)')).toHaveLength(1);
     expect(unescapedEmailIlike("q.ilike('owner_email', value)")).toHaveLength(1);
     expect(unescapedEmailIlike('q.ilike("email", escapeIlike(normalized))')).toEqual([]);
+    expect(unescapedEmailIlike('q.ilike("email", emailIlikePattern(normalized))')).toEqual([]);
     expect(unescapedEmailIlike('const pat = escapeIlike(x);\nq.ilike("email", pat)')).toEqual([]);
     expect(unescapedEmailIlike('q.ilike("name", pattern)')).toEqual([]);
   });

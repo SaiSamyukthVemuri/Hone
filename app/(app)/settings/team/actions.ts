@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { escapeIlike } from "@/lib/search/global-search";
+import { EMAIL_CANDIDATE_LIMIT, emailIlikePattern, hasExactEmailMatch } from "@/lib/invitations/email-match";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
@@ -140,17 +140,17 @@ export async function invitePractitionerAction(
   const supabase = await createClient();
 
   // Already an active practitioner in this studio?
-  const { data: existingPractitioner, error: existingErr } = await supabase
+  const { data: existingPractitioners, error: existingErr } = await supabase
     .from("practitioners")
-    .select("id")
+    .select("id, email")
     .eq("studio_id", studioId)
-    .ilike("email", escapeIlike(email))
+    .ilike("email", emailIlikePattern(email))
     .eq("active", true)
-    .maybeSingle();
+    .limit(EMAIL_CANDIDATE_LIMIT);
   if (existingErr) {
     return { ok: false, error: "Could not check existing practitioners." };
   }
-  if (existingPractitioner) {
+  if (hasExactEmailMatch(existingPractitioners, email)) {
     return {
       ok: false,
       error: `${email} is already a practitioner at this studio.`,
@@ -158,17 +158,17 @@ export async function invitePractitionerAction(
   }
 
   // Already invited at this studio (still pending)?
-  const { data: existingInvite, error: inviteErr } = await supabase
+  const { data: existingInvites, error: inviteErr } = await supabase
     .from("pending_invitations")
-    .select("id")
+    .select("id, email")
     .eq("studio_id", studioId)
-    .ilike("email", escapeIlike(email))
+    .ilike("email", emailIlikePattern(email))
     .eq("status", "pending")
-    .maybeSingle();
+    .limit(EMAIL_CANDIDATE_LIMIT);
   if (inviteErr) {
     return { ok: false, error: "Could not check existing invitations." };
   }
-  if (existingInvite) {
+  if (hasExactEmailMatch(existingInvites, email)) {
     return {
       ok: false,
       error: `${email} already has a pending invite at this studio.`,

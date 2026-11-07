@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { escapeIlike } from "@/lib/search/global-search";
+import { EMAIL_CANDIDATE_LIMIT, emailIlikePattern, singleExactEmailRow } from "@/lib/invitations/email-match";
 
 // PR #189 (pilot safety): Hone is invite-only during the pilot.
 //
@@ -49,12 +49,15 @@ export async function requestPractitionerMagicLinkAction(
   // error fails CLOSED for signup (no user creation) while still
   // letting existing practitioners get their link.
   const admin = createAdminClient();
-  const { data: invite, error: inviteError } = await admin
+  const { data: candidates, error: inviteError } = await admin
     .from("pending_invitations")
-    .select("id")
-    .ilike("email", escapeIlike(normalized))
+    .select("id, email")
+    .ilike("email", emailIlikePattern(normalized))
     .eq("status", "pending")
-    .maybeSingle();
+    .limit(EMAIL_CANDIDATE_LIMIT);
+  // The ilike only narrows candidates (PostgREST also treats * as a wildcard); signup is allowed only when EXACTLY ONE candidate's
+  // address equals the typed one. Several candidates, or none equal, fail closed.
+  const invite = singleExactEmailRow(candidates, normalized);
   const allowSignup = !inviteError && Boolean(invite);
 
   const supabase = await createClient();

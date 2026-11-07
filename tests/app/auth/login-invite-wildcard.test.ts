@@ -25,13 +25,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const filters: Array<(r: { email: string; status: string }) => boolean> = [];
       const b: Record<string, unknown> = {};
       b.select = () => b;
-      b.ilike = (col: string, pat: string) => { filters.push((r) => likeToRegExp(pat).test((r as Record<string, string>)[col])); return b; };
+      // PostgREST rewrites * to % in like/ilike values BEFORE Postgres sees them (probed live): the fake does the same.
+      b.ilike = (col: string, pat: string) => { const sent = pat.replace(/\*/g, "%"); filters.push((r) => likeToRegExp(sent).test((r as Record<string, string>)[col])); return b; };
+      b.limit = () => b;
       b.eq = (col: string, v: string) => { filters.push((r) => (r as Record<string, string>)[col] === v); return b; };
-      b.maybeSingle = async () => {
-        const rows = h.invites.filter((r) => filters.every((f) => f(r)));
-        if (rows.length > 1) return { data: null, error: { message: "multiple rows" } };
-        return { data: rows[0] ?? null, error: null };
-      };
+      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: h.invites.filter((r) => filters.every((f) => f(r))), error: null });
       return b;
     },
   }),
@@ -59,6 +57,19 @@ describe("invite-only signup gate: the typed address is matched LITERALLY, case-
   it("a percent sign does NOT match either (a%@example.com)", async () => {
     await requestPractitionerMagicLinkAction("b%@example.com");
     expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("PostgREST's * alias for %: b*@example.com does NOT enable signup", async () => {
+    await requestPractitionerMagicLinkAction("b*@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("*@example.com (matches every invite at the domain) does NOT enable signup", async () => {
+    await requestPractitionerMagicLinkAction("*@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("even if the filter returned a wildcard-matched candidate (escape removed), the in-code exact compare refuses it", async () => {
+    const { singleExactEmailRow } = await import("@/lib/invitations/email-match");
+    expect(singleExactEmailRow([{ email: "bob.jones@example.com" }], "b*@example.com")).toBeNull();
+    expect(singleExactEmailRow([{ email: "bob.jones@example.com" }, { email: "carol@example.com" }], "*@example.com")).toBeNull();
   });
   it("a mixed-case exact match still allows signup", async () => {
     await requestPractitionerMagicLinkAction("  BOB.Jones@Example.COM ");
