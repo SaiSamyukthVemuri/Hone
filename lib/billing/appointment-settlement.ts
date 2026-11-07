@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
 import {
@@ -158,8 +159,10 @@ export async function resolveAppointmentQuotedAmountCents(
   if (!svc?.name) return null;
 
   const clientId = (appt as { client_id: string | null }).client_id;
+  // 0303: client_pricing is owner-only through the Data API, so this read uses the service role. Membership is
+  // already proven by the user-client reads above (RLS-scoped, same studio); the filters below pin studio and client.
   const { data: pricingRows, error: pricingError } = clientId
-    ? await supabase
+    ? await createAdminClient()
         .from("client_pricing")
         .select("service_name, price_cents, notes, effective_from")
         .eq("studio_id", studioId)

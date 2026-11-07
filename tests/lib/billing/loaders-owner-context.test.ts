@@ -20,7 +20,7 @@ vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => true }));
 const MONEY = new Set(["payment_charge_attempts", "manual_fee_charge_attempts", "appointment_settlements"]);
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+  createClient: async () => ((globalThis as { __mkSb?: () => unknown }).__mkSb = () => ({
     from: (table: string) => {
       h.reads.push(table);
       const eqs: Array<[string, unknown]> = [];
@@ -49,7 +49,11 @@ vi.mock("@/lib/supabase/server", () => ({
       };
       return q;
     },
-  }),
+  }))(),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  // 0303: client_pricing reads run on the service role; serve the same fake as the user client.
+  createAdminClient: () => (globalThis as { __mkSb?: () => unknown }).__mkSb!(),
 }));
 
 const { getAppointmentPaymentStates } = await import("@/lib/billing/appointment-payment-state");
