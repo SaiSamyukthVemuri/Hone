@@ -81,6 +81,23 @@ describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
     expect(PAGE).toMatch(/data-packet-document\]:not\(\[data-print-armed\]\) \{ display: none !important; \}/);
     expect(BUTTON).toMatch(/setAttribute\("data-print-armed"/);
   });
+  it("layout (Photos #1383 proof): the app-shell footer is hidden in print but the packet's own footer is kept", () => {
+    // The signed-in layout renders AppFooter (a <footer>) after the page; it made its own A4 page.
+    expect(PAGE).toMatch(/body footer:not\(\[data-packet-document\] footer\) \{ display: none !important; \}/);
+    // The packet's own footer is inside [data-packet-document] (what the :not() excludes).
+    const doc = PAGE.slice(PAGE.indexOf("<div data-packet-document>"), PAGE.indexOf("data-print-unarmed-notice className"));
+    expect(doc).toMatch(/<footer /);
+  });
+  it("layout (Photos #1383 proof): every printed page gets a 15 mm top and bottom margin from repeating spacer rows, with @page margin still 0 (no browser URL header)", () => {
+    expect(PAGE).toMatch(/@page \{ margin: 0; \}/);
+    expect(PAGE).toMatch(/\[data-packet-spacer\] \{ height: 15mm; \}/);
+    expect(PAGE).toMatch(/\[data-packet-spacer\] \{ height: 0; padding: 0; \}/); // none on screen
+    // The spacers are the table's header and footer groups, which browsers repeat on every page.
+    expect(PAGE).toMatch(/<thead>\s*<tr>\s*<td data-packet-spacer \/>\s*<\/tr>\s*<\/thead>\s*<tfoot>\s*<tr>\s*<td data-packet-spacer \/>/);
+    // Padding is left and right only; the old first/last-fragment top/bottom padding is gone.
+    expect(PAGE).toMatch(/\[data-packet-page\] \{ padding: 0 16mm; \}/);
+    expect(PAGE).not.toMatch(/\[data-packet-page\] \{ padding: 16mm; \}/);
+  });
 });
 
 describe("owner gate, explicit refusals and fail-closed states (page source)", () => {
