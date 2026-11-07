@@ -70,6 +70,11 @@ export function uidOnlyPolicy(expr: string): boolean {
   return !/auth\.uid\(\)/.test(rest);
 }
 
+/** Any SQLSTATE in class 23 (integrity constraint violation), including 23P01 exclusion violations. */
+const INSERT_CONSTRAINT = /^err:23[0-9A-Z]{3}$/;
+/** An insert outcome that is neither landed, a privilege/RLS refusal (42501) nor a class-23 error. */
+const insertUnclassified = (v: string) => !!v && !v.startsWith("ok:") && v !== "err:42501" && !INSERT_CONSTRAINT.test(v);
+
 type J = Record<string, any>;
 let A: SeededStudio; // a real studio, so membership-gated functions reach their gate
 let M: { userId: string; practitionerId: string }; // member control
@@ -214,7 +219,8 @@ async function tableCensus() {
     );
     const nonMembership = pol.filter((p: J) => {
       const e = `${p.qual ?? ""} ${p.with_check ?? ""}`;
-      return !/auth\.uid\(\)|is_studio_member|is_studio_owner|studio_id|current_studio|jwt/.test(e);
+      // A policy whose only identity term is `auth.uid() is not null` admits every signed-in account.
+      return uidOnlyPolicy(e) || !/auth\.uid\(\)|is_studio_member|is_studio_owner|studio_id|current_studio|jwt/.test(e);
     });
     out.push({
       table: fq,
@@ -388,12 +394,16 @@ describe("no-studio authenticated user: what can be reached", () => {
     // policy admitted it (no BEFORE INSERT trigger ran ahead of RLS), or it simply landed.
     const reachableTables = tables.filter((t) => {
       const p = t.strangerProbes as Record<string, string>;
-      return (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && /^err:(23502|23503|23505|23514)$/.test(p.insert ?? ""));
+      return (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && INSERT_CONSTRAINT.test(p.insert ?? ""));
     });
     // A constraint error on insert where a BEFORE trigger exists: neither reached nor refused.
     const insertIndeterminate = tables
-      .filter((t) => t.beforeInsertTriggers > 0 && /^err:23\d\d\d$/.test((t.strangerProbes as Record<string, string>).insert ?? ""))
+      .filter((t) => t.beforeInsertTriggers > 0 && INSERT_CONSTRAINT.test((t.strangerProbes as Record<string, string>).insert ?? ""))
       .map((t) => t.table as string);
+    // Anything else the insert probe returned (a code we have not classified) must be listed, not ignored.
+    const insertOther = tables
+      .filter((t) => insertUnclassified((t.strangerProbes as Record<string, string>).insert ?? ""))
+      .map((t) => `${t.table} ${(t.strangerProbes as Record<string, string>).insert}`);
     // Policies that grant to authenticated with no predicate at all.
     const unconditional = (
       await adminQuery(
@@ -437,6 +447,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       policiesWithoutMembershipHelper: noHelper,
       policiesOnlyAuthUidNotNull: uidOnly,
       insertIndeterminateBeforeTrigger: insertIndeterminate,
+      insertUnclassified: insertOther,
       claim:
         "No table showed a visible or writable row to a no-studio user in the SEEDED LOCAL FIXTURE; the policies listed under unconditionalPolicies carry a literal-true predicate. This is not a proof about hosted data, and the report is NOT scrubbed.",
       tablesWithoutRls: tables.filter((t) => !t.rls).map((t) => t.table),
@@ -473,6 +484,15 @@ describe("no-studio authenticated user: what can be reached", () => {
     }
   });
 
+  it("insert outcomes: a class-23 code of any kind is recognised; an unknown code is listed, never ignored", () => {
+    for (const c of ["err:23502", "err:23503", "err:23505", "err:23514", "err:23P01"]) expect(INSERT_CONSTRAINT.test(c), c).toBe(true);
+    for (const c of ["err:42501", "err:22P02", "err:42P01", "err:0A000"]) expect(INSERT_CONSTRAINT.test(c), c).toBe(false);
+    expect(insertUnclassified("err:22P02")).toBe(true);
+    expect(insertUnclassified("err:42501")).toBe(false);
+    expect(insertUnclassified("err:23P01")).toBe(false);
+    expect(insertUnclassified('ok:[]:1')).toBe(false);
+  });
+
   it("no table leaks a row or accepts an update/delete for a no-studio user (fixture-independent)", () => {
     expect(report.tableLeaks, "a no-studio user saw rows in a table without a literal-true SELECT policy, or an UPDATE/DELETE landed").toEqual([]);
   });
@@ -486,6 +506,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       ...report.policiesWithoutMembershipHelper.map((p: string) => `nohelper ${p}`),
       ...report.policiesOnlyAuthUidNotNull.map((p: string) => `uidonly ${p}`),
       ...report.insertIndeterminateBeforeTrigger.map((t: string) => `insert-indeterminate ${t}`),
+      ...report.insertUnclassified.map((t: string) => `insert-unclassified ${t}`),
       ...report.tablesWithoutRls.map((t: string) => `rls-off ${t}`),
       ...report.tablesNonMembershipPolicies.flatMap((t: J) => t.policies.map((p: string) => `nonmember ${t.table} ${p}`)),
     ].sort();
