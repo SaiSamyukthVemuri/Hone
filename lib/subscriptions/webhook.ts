@@ -76,6 +76,13 @@ export interface EntitlementWrite {
   lastEventCreated: number;
 }
 
+const USER_ID_SHAPE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Hone user ids are uuids; anything else in Stripe-side metadata is not ours. */
+export function isUserId(value: string): boolean {
+  return USER_ID_SHAPE.test(value);
+}
+
 export type RefusalReason =
   | "livemode_event"
   | "subscription_livemode"
@@ -162,7 +169,9 @@ export function decideBillingEvent(input: {
   // The subscription must be bound to a Hone user, and every binding present
   // must agree: plan metadata with the price, session reference with the user.
   const userId = subscription.metadata.hone_user_id;
-  if (!userId) return { kind: "refused", reason: "missing_user_binding" };
+  if (!userId || !isUserId(userId)) {
+    return { kind: "refused", reason: "missing_user_binding" };
+  }
   const metaPlan = subscription.metadata.hone_plan;
   if (metaPlan !== undefined && metaPlan !== planKey) {
     return { kind: "refused", reason: "plan_metadata_mismatch" };
@@ -254,7 +263,10 @@ export async function handleBillingWebhook(input: {
   }
   // The user is whoever the REFETCHED subscription is bound to. With no
   // binding there is nothing to look up (and the decision refuses it).
-  const userId = subscription.metadata.hone_user_id;
+  // A missing OR malformed id is "no binding" (a 200 refusal, never a lookup that
+  // could throw and make Stripe retry forever). Insurance R-4.
+  const rawUserId = subscription.metadata.hone_user_id;
+  const userId = rawUserId && isUserId(rawUserId) ? rawUserId : null;
   const state = userId
     ? await input.lookupState({ subscriptionId, userId })
     : { subscription: null, userStudioCreationUnlocked: false };

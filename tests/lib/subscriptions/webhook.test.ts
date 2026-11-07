@@ -35,7 +35,7 @@ describe("decideBillingEvent", () => {
       kind: "apply",
       unlockStudioCreation: true,
       entitlement: {
-        userId: "user-1",
+        userId: "11111111-1111-4111-8111-111111111111",
         plan: "solo",
         stripeCustomerId: "cus_1",
         stripeSubscriptionId: "sub_1",
@@ -50,7 +50,7 @@ describe("decideBillingEvent", () => {
   it("derives the plan from the PRICE, so Studio is Studio", () => {
     const d = decide({
       subscription: subscription(
-        { metadata: { hone_user_id: "user-1", hone_plan: "studio" } },
+        { metadata: { hone_user_id: "11111111-1111-4111-8111-111111111111", hone_plan: "studio" } },
         { id: STUDIO_PRICE, unit_amount: 9900 },
       ),
     });
@@ -135,13 +135,14 @@ describe("decideBillingEvent", () => {
     ["two line items", { subscription: { ...subscription(), items: [...subscription().items, ...subscription().items] } }, "no_single_item"],
     ["no line items", { subscription: { ...subscription(), items: [] } }, "no_single_item"],
     ["no user binding", { subscription: subscription({ metadata: {} }) }, "missing_user_binding"],
-    ["plan metadata that disagrees with the price", { subscription: subscription({ metadata: { hone_user_id: "user-1", hone_plan: "studio" } }) }, "plan_metadata_mismatch"],
+    ["a malformed user binding", { subscription: subscription({ metadata: { hone_user_id: "not-a-uuid", hone_plan: "solo" } }) }, "missing_user_binding"],
+    ["plan metadata that disagrees with the price", { subscription: subscription({ metadata: { hone_user_id: "11111111-1111-4111-8111-111111111111", hone_plan: "studio" } }) }, "plan_metadata_mismatch"],
     [
       "a session whose client_reference_id is a different user",
       {
         event: event({
           type: "checkout.session.completed",
-          object: { id: "cs_1", mode: "subscription", client_reference_id: "user-2", subscription: "sub_1", metadata: {} },
+          object: { id: "cs_1", mode: "subscription", client_reference_id: "22222222-2222-4222-8222-222222222222", subscription: "sub_1", metadata: {} },
         }),
       },
       "user_binding_mismatch",
@@ -151,7 +152,7 @@ describe("decideBillingEvent", () => {
       {
         event: event({
           type: "checkout.session.completed",
-          object: { id: "cs_1", mode: "payment", client_reference_id: "user-1", subscription: "sub_1", metadata: {} },
+          object: { id: "cs_1", mode: "payment", client_reference_id: "11111111-1111-4111-8111-111111111111", subscription: "sub_1", metadata: {} },
         }),
       },
       "not_subscription_checkout",
@@ -165,7 +166,7 @@ describe("decideBillingEvent", () => {
     const d = decide({
       event: event({
         type: "checkout.session.completed",
-        object: { id: "cs_1", mode: "subscription", client_reference_id: "user-1", subscription: "sub_1", metadata: {} },
+        object: { id: "cs_1", mode: "subscription", client_reference_id: "11111111-1111-4111-8111-111111111111", subscription: "sub_1", metadata: {} },
       }),
     });
     expect(d).toMatchObject({ kind: "apply", unlockStudioCreation: true });
@@ -223,6 +224,19 @@ describe("handleBillingWebhook", () => {
     expect(bad).toEqual({ http: 400, error: "invalid_signature" });
     expect(tampered).toEqual({ http: 400, error: "invalid_signature" });
     expect(client.calls.retrieveSubscription).toEqual([]);
+  });
+
+  it("a malformed hone_user_id is a 200 refusal and the store is never asked (Insurance R-4)", async () => {
+    const client = fakeBilling({
+      signed: signed(),
+      subscription: subscription({ metadata: { hone_user_id: "'; drop table x; --", hone_plan: "solo" } }),
+    });
+    const out = await handleBillingWebhook({
+      rawBody: RAW, signature: SIG, client, env: ENV_ON,
+      lookupEvent: async () => false,
+      lookupState: async () => { throw new Error("must not be asked with an unvalidated id"); },
+    });
+    expect(out).toMatchObject({ http: 200, decision: { kind: "refused", reason: "missing_user_binding" } });
   });
 
   it("refetches the subscription and decides from it, not from the event", async () => {
@@ -330,11 +344,11 @@ describe("handleBillingWebhook", () => {
       }
       return out;
     };
-    await play("evt_a", "sub_A", "user-1", 1000); // first Checkout Session
-    await play("evt_b", "sub_B", "user-1", 1001); // second, same user, a subscription Hone has never seen
+    await play("evt_a", "sub_A", "11111111-1111-4111-8111-111111111111", 1000); // first Checkout Session
+    await play("evt_b", "sub_B", "11111111-1111-4111-8111-111111111111", 1001); // second, same user, a subscription Hone has never seen
     expect(store.unlocks).toBe(1);
     // A DIFFERENT user still gets their own unlock (the marker is per user, not global).
-    await play("evt_c", "sub_C", "user-2", 1002);
+    await play("evt_c", "sub_C", "22222222-2222-4222-8222-222222222222", 1002);
     expect(store.unlocks).toBe(2);
   });
 

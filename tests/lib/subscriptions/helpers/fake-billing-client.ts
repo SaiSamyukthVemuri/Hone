@@ -43,7 +43,7 @@ export function subscription(
     customer: "cus_1",
     livemode: false,
     cancel_at_period_end: false,
-    metadata: { hone_user_id: "user-1", hone_plan: "solo" },
+    metadata: { hone_user_id: "11111111-1111-4111-8111-111111111111", hone_plan: "solo" },
     items: [
       {
         price: {

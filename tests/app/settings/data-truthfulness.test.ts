@@ -192,6 +192,26 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     expect(censusHits(raw), "subscription machinery appeared outside the flag-off HON-70 locations; revisit Terms section 8").toEqual([]);
   });
 
+  it("activation tripwire: only the reviewed files outside lib/subscriptions/ import it (Insurance C-1b)", async () => {
+    // The old census failed the moment anyone wired billing into the app. The
+    // prefix exemption removed that, so pin the importer set instead. Adding an
+    // importer is a deliberate, reviewed edit of THIS list.
+    const REVIEWED_IMPORTERS = ["app/api/billing/webhook/route.ts"];
+    const { execSync } = await import("node:child_process");
+    const raw = execSync(
+      `grep -rlE "(from|import\\()\\s*[\\"'](@/lib/subscriptions|(\\.\\./)+subscriptions|(\\.\\./)+lib/subscriptions)" app lib components middleware.ts || true`,
+      { cwd: REPO, encoding: "utf8" },
+    );
+    const importers = raw.split("\n").map((l) => l.trim()).filter(Boolean)
+      .filter((f) => !f.startsWith("lib/subscriptions/")).sort();
+    expect(importers).toEqual(REVIEWED_IMPORTERS);
+  });
+
+  it("anti-vacuity: the importer grep really finds the one known importer", async () => {
+    const src = readFileSync(path.join(REPO, "app/api/billing/webhook/route.ts"), "utf8");
+    expect(src).toMatch(/from\s+["']@\/lib\/subscriptions\//);
+  });
+
   it("anti-vacuity: the census still sees the permitted machinery, and still flags the same shape anywhere else", async () => {
     const { execSync } = await import("node:child_process");
     const raw = execSync(`grep -rlE "${CENSUS}" app lib || true`, { cwd: REPO, encoding: "utf8" });
