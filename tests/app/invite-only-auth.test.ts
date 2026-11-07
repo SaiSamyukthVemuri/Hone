@@ -38,7 +38,22 @@ describe("login page: sign-in only, invite-only, no self-serve signup", () => {
   });
 
   it("there is no public /signup or /register route", () => {
-    expect(existsSync(join(process.cwd(), "app/signup"))).toBe(false);
+    // HON-70 (Sam, 1 Nov, Extension 1): self-service ACCOUNT creation is now a
+    // decided product path, so app/signup may exist, but ONLY as the flag-gated
+    // account step. It must 404 unless the flag is on and must contain no
+    // studio-creation or admin-client code. Self-serve STUDIO creation stays
+    // behind a verified payment (a later milestone), never in a public route.
+    for (const f of ["page.tsx", "actions.ts", "SignupForm.tsx"]) {
+      const p = join(process.cwd(), "app/signup", f);
+      if (!existsSync(p)) continue;
+      const s = readFileSync(p, "utf8");
+      expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
+    }
+    if (existsSync(join(process.cwd(), "app/signup/page.tsx"))) {
+      expect(readFileSync(join(process.cwd(), "app/signup/page.tsx"), "utf8")).toMatch(
+        /if \(!isSelfServeCheckoutEnabled\(process\.env\)\) notFound\(\)/,
+      );
+    }
     expect(existsSync(join(process.cwd(), "app/(auth)/signup"))).toBe(false);
     expect(existsSync(join(process.cwd(), "app/register"))).toBe(false);
     expect(existsSync(join(process.cwd(), "app/(auth)/register"))).toBe(false);

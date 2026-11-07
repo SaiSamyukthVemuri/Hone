@@ -112,7 +112,22 @@ describe("data privacy: NO client-level clinical data in the console", () => {
 describe("invite-only posture is not weakened", () => {
   it("introduces no public self-serve studio-creation route", () => {
     expect(existsSync(path.join(ROOT, "app/studios"))).toBe(false);
-    expect(existsSync(path.join(ROOT, "app/signup"))).toBe(false);
+    // HON-70 (Sam, 1 Nov, Extension 1): self-service ACCOUNT creation is now a
+    // decided product path, so app/signup may exist, but ONLY as the flag-gated
+    // account step. It must 404 unless the flag is on and must contain no
+    // studio-creation or admin-client code. Self-serve STUDIO creation stays
+    // behind a verified payment (a later milestone), never in a public route.
+    for (const f of ["page.tsx", "actions.ts", "SignupForm.tsx"]) {
+      const p = path.join(ROOT, "app/signup", f);
+      if (!existsSync(p)) continue;
+      const s = readFileSync(p, "utf8");
+      expect(s, f).not.toMatch(/create_self_serve_studio|from\(["']studios["']\)|createAdminClient|handle_new_user/);
+    }
+    if (existsSync(path.join(ROOT, "app/signup/page.tsx"))) {
+      expect(readFileSync(path.join(ROOT, "app/signup/page.tsx"), "utf8")).toMatch(
+        /if \(!isSelfServeCheckoutEnabled\(process\.env\)\) notFound\(\)/,
+      );
+    }
     expect(existsSync(path.join(ROOT, "app/(auth)/signup"))).toBe(false);
     // The wizard stays operator-only under app/admin.
     expect(existsSync(path.join(ROOT, "app/admin/studios/new/page.tsx"))).toBe(true);
