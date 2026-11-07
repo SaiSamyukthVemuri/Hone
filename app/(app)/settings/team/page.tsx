@@ -53,8 +53,8 @@ async function getPendingInvitations(
 export default async function TeamSettingsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ removed?: string; left?: string }>;
-} = {}) {
+  searchParams: Promise<{ removed?: string; left?: string }>;
+}) {
   const sp = (await searchParams) ?? {};
   const leftovers = sp.removed === "partial" ? parseRemovalLeftovers(sp.left) : [];
   const { practitioner, studio } = await requirePractitionerWithStudio();
