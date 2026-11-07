@@ -40,6 +40,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 
 import {
   designateStudioCalendarOwner,
+  disconnectConnection,
   markReconnectRequired,
   persistConnectedFromCallback,
   setWriteCalendar,
@@ -66,6 +67,7 @@ beforeEach(() => {
   h.ops = [];
   h.script = {};
   vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(console.error).mockClear();
 });
 
 describe("storeRotatedRefreshToken", () => {
@@ -149,5 +151,42 @@ describe("persistConnectedFromCallback (P-1): no token returned", () => {
     h.script["calendar_connections.upsert"] = [{ data: { id: "c1" }, error: null }];
     h.script["calendar_connection_secrets.upsert"] = [{ data: null, error: DB_ERR }];
     expect(await persistConnectedFromCallback({ ...INPUT, encryptedRefreshToken: "enc", refreshTokenLast4: "1234" })).toEqual({ ok: false, reason: "secret_upsert_failed" });
+  });
+  it("Q-2: a secret-upsert error leaves the ROW reconnect_required (not connected), with fixed log strings and no error object", async () => {
+    h.script["calendar_connections.upsert"] = [{ data: { id: "c1" }, error: null }];
+    h.script["calendar_connection_secrets.upsert"] = [{ data: null, error: DB_ERR }];
+    expect(await persistConnectedFromCallback({ ...INPUT, encryptedRefreshToken: "enc", refreshTokenLast4: "1234" })).toEqual({ ok: false, reason: "secret_upsert_failed" });
+    const statuses = writes("calendar_connections").map((w) => (w.payload as { connection_status: string }).connection_status);
+    expect(statuses).toEqual(["connected", "reconnect_required"]);
+    const demote = writes("calendar_connections").find((w) => w.op === "update")!.payload as { last_error_code: string };
+    expect(demote.last_error_code).toBe("secret_store_failed");
+    // O-2: the log argument is a fixed string, never an id, message or error object.
+    const calls = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.map((c) => c.length)).toEqual(calls.map(() => 1));
+    expect(calls.map((c) => c[0])).toEqual(["google_calendar_error:oauth_persist:store_secret"]);
+  });
+  it("Q-2: if the demotion write also fails it is logged and the caller still gets secret_upsert_failed", async () => {
+    h.script["calendar_connections.upsert"] = [{ data: { id: "c1" }, error: null }];
+    h.script["calendar_connection_secrets.upsert"] = [{ data: null, error: DB_ERR }];
+    h.script["calendar_connections.update"] = [{ data: null, error: DB_ERR }];
+    expect(await persistConnectedFromCallback({ ...INPUT, encryptedRefreshToken: "enc", refreshTokenLast4: "1234" })).toEqual({ ok: false, reason: "secret_upsert_failed" });
+    const calls = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => c[0]);
+    expect(calls).toEqual(["google_calendar_error:oauth_persist:store_secret", "google_calendar_error:oauth_persist:demote_after_secret_failure"]);
+  });
+  it("Q-1: a failed secret delete throws disconnect_delete_secret and the connection row is NOT marked disconnected", async () => {
+    h.script["calendar_connections.select"] = [{ data: { id: "c1" }, error: null }];
+    h.script["calendar_connection_secrets.delete"] = [{ data: null, error: DB_ERR }];
+    await expect(disconnectConnection("s1", "p1")).rejects.toMatchObject({ name: "ConnectionWriteError", step: "disconnect_delete_secret" });
+    expect(writes("calendar_connections")).toEqual([]);
+  });
+  it("Q-1: a failed mark-disconnected throws disconnect_mark_disconnected", async () => {
+    h.script["calendar_connections.select"] = [{ data: { id: "c1" }, error: null }];
+    h.script["calendar_connections.update"] = [{ data: null, error: DB_ERR }];
+    await expect(disconnectConnection("s1", "p1")).rejects.toMatchObject({ step: "disconnect_mark_disconnected" });
+  });
+  it("Q-1: a clean disconnect deletes the secret and marks the row disconnected", async () => {
+    h.script["calendar_connections.select"] = [{ data: { id: "c1" }, error: null }];
+    await disconnectConnection("s1", "p1");
+    expect(writes().map((w) => `${w.table}.${w.op}`)).toEqual(["calendar_connection_secrets.delete", "calendar_connections.update"]);
   });
 });

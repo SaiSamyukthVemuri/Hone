@@ -42,6 +42,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isGoogleTokenCryptoConfigured } from "@/lib/google-calendar/token-crypto";
 import { buildAuthorizationUrl, revokeToken } from "@/lib/google-calendar/oauth";
 import { createOAuthState } from "@/lib/google-calendar/state";
+import { ConnectionWriteError } from "@/lib/google-calendar/store-write-error";
 import {
   getOwnConnectionMetadata,
   disconnectConnection,
@@ -150,6 +151,14 @@ describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
     expect(r.ok).toBe(true);
     expect(revokeToken).toHaveBeenCalledWith("refresh-token");
     expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+  });
+
+  it("Q-1: a failed local disconnect write is reported as a failure, not 'disconnected'", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(disconnectConnection).mockRejectedValueOnce(new ConnectionWriteError("disconnect_delete_secret"));
+    const r = await disconnectGoogleCalendarAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't disconnect Google Calendar. Please try again." });
+    expect(console.error).toHaveBeenCalledWith("google_calendar_error:disconnect:disconnect_delete_secret");
   });
 
   it("is rejected when the flag is OFF", async () => {

@@ -501,7 +501,13 @@ export async function disconnectGoogleCalendarAction(
       await revokeToken(dec.secret);
     }
   }
-  await disconnectConnection(studio.id, practitioner.id);
+  try {
+    await disconnectConnection(studio.id, practitioner.id);
+  } catch (e) {
+    if (!(e instanceof ConnectionWriteError)) throw e;
+    console.error(`google_calendar_error:disconnect:${e.step}`);
+    return { ok: false, error: "Couldn't disconnect Google Calendar. Please try again." };
+  }
   revalidatePath(safeReturnPath(returnPath));
   return { ok: true };
 }

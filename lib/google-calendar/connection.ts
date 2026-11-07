@@ -234,7 +234,22 @@ export async function persistConnectedFromCallback(input: {
       },
       { onConflict: "connection_id" },
     );
-    if (secretError) return { ok: false, reason: "secret_upsert_failed" };
+    if (secretError) {
+      // The row above says "connected" but no verified token was stored for it. Never leave that state: mark it reconnect_required
+      // (checked; a failure here is logged, the caller is told the secret failed either way).
+      console.error("google_calendar_error:oauth_persist:store_secret");
+      const { error: demoteError } = await admin
+        .from("calendar_connections")
+        .update({
+          connection_status: "reconnect_required",
+          last_error_code: "secret_store_failed",
+          last_error_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq("id", connectionId);
+      if (demoteError) console.error("google_calendar_error:oauth_persist:demote_after_secret_failure");
+      return { ok: false, reason: "secret_upsert_failed" };
+    }
     return { ok: true, connectionId };
   }
 
@@ -303,12 +318,14 @@ export async function disconnectConnection(
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
   if (!conn) return;
-  await admin
+  // Each step is checked: a swallowed error here reported a disconnect that never happened, with the ciphertext still stored.
+  const { error: delErr } = await admin
     .from("calendar_connection_secrets")
     .delete()
     .eq("connection_id", conn.id as string)
     .eq("studio_id", studioId);
-  await admin
+  if (delErr) throw new ConnectionWriteError("disconnect_delete_secret");
+  const { error: updErr } = await admin
     .from("calendar_connections")
     .update({
       connection_status: "disconnected",
@@ -317,6 +334,7 @@ export async function disconnectConnection(
       updated_at: nowIso,
     })
     .eq("id", conn.id as string);
+  if (updErr) throw new ConnectionWriteError("disconnect_mark_disconnected");
 }
 
 // Store a validated write-calendar selection (the action validated it against
