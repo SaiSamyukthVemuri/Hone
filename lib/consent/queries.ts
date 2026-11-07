@@ -51,7 +51,7 @@ export async function getConsentTemplatesForStudio(
     .from("consent_form_templates")
     .select("*")
     .eq("studio_id", studioId);
-  if (scope.includeCardAuthorization === false) {
+  if (scope.includeCardAuthorization !== true) {
     query = query.in("form_type", [...NON_FINANCE_FORM_TYPES]);
   }
   const { data, error } = await query
@@ -193,7 +193,7 @@ export async function getLatestSignaturesForPractitionerView(
   const admin = createAdminClient();
   let allowedTemplateIds: string[] | null = null;
   let authorizedSignatureIds: string[] = [];
-  if (scope.includeCardAuthorization === false) {
+  if (scope.includeCardAuthorization !== true) {
     // Ids only (nothing returned to the caller). A signature is classified by what was signed, not
     // by its template's current form_type alone: any signature a card-on-file row points at is card
     // authorization evidence, whatever its template is now called (a member can edit form_type).

@@ -133,6 +133,21 @@ describe("the profile page asks for the scope per viewer, and card authorization
   });
 });
 
+describe("an undefined scope at runtime fails closed (Privacy H-1)", () => {
+  it.each([undefined, null, "yes", 1])("includeCardAuthorization %j hides card authorization", async (v) => {
+    const { getConsentTemplatesForStudio, getLatestSignaturesForPractitionerView } = await import("@/lib/consent/queries");
+    const scope = { includeCardAuthorization: v } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect((await getConsentTemplatesForStudio("s1", scope)).map((t) => t.id)).not.toContain("t-card");
+    const ids = (await getLatestSignaturesForPractitionerView("s1", "c1", scope)).map((s) => s.id);
+    expect(ids).toEqual(["g1"]);
+  });
+  it("a missing scope object entirely also hides it", async () => {
+    const { getLatestSignaturesForPractitionerView } = await import("@/lib/consent/queries");
+    const ids = (await getLatestSignaturesForPractitionerView("s1", "c1", {} as any)).map((s) => s.id); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(ids).toEqual(["g1"]);
+  });
+});
+
 describe("no caller can read card authorization by omission", () => {
   it("every call to the two loaders names includeCardAuthorization", async () => {
     const { execSync } = await import("node:child_process");
