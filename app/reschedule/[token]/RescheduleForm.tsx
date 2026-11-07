@@ -6,6 +6,7 @@ import {
   fetchRescheduleSlotsAction,
   rescheduleAppointmentViaTokenAction,
 } from "./actions";
+import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 
 // Pretty-print a local YYYY-MM-DD as "Monday, June 1" (with year only
 // when not the current calendar year). Pure client-side formatting; no
@@ -66,36 +67,6 @@ type Props = {
   presentedPolicyHash: string | null;
 };
 
-// Today in the studio's local calendar, not the visitor's UTC date.
-// A reschedule page opened at 10pm Toronto must default to today's
-// remaining slots, not tomorrow's.
-function todayInStudio(tz: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
-// Today + (months × 31 days) in studio tz. Mirrors
-// horizonDaysForMonths() in lib/booking/horizon.ts; computed here to
-// avoid pulling a server helper into a client component. Unknown
-// horizon values fall back to 3 months so the picker still renders.
-function horizonInStudio(
-  tz: string,
-  months: number,
-): { min: string; max: string } {
-  const safeMonths =
-    Number.isInteger(months) && months >= 1 && months <= 12 ? months : 3;
-  const min = todayInStudio(tz);
-  const [y, m, d] = min.split("-").map(Number);
-  const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  noon.setUTCDate(noon.getUTCDate() + safeMonths * 31);
-  const max = `${noon.getUTCFullYear()}-${String(noon.getUTCMonth() + 1).padStart(2, "0")}-${String(noon.getUTCDate()).padStart(2, "0")}`;
-  return { min, max };
-}
-
 // Ties the disabled submit to its reason. One constant so the id on the <p> and
 // the aria-describedby on the button cannot drift apart.
 /**
@@ -140,11 +111,13 @@ export function RescheduleForm({
   requiresAcknowledgement,
   presentedPolicyHash,
 }: Props) {
-  const horizon = horizonInStudio(
+  // Studio-local today, not the visitor's: a page opened at 10pm Toronto must
+  // default to today's remaining slots, not tomorrow's.
+  const horizon = horizonRangeInStudioTz(
     studioTimezone,
     studioPublicBookingHorizonMonths,
   );
-  const [date, setDate] = useState(horizon.min);
+  const [date, setDate] = useState(horizon.minDateStr);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [picked, setPicked] = useState<Slot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -361,8 +334,8 @@ export function RescheduleForm({
         <input
           type="date"
           value={date}
-          min={horizon.min}
-          max={horizon.max}
+          min={horizon.minDateStr}
+          max={horizon.maxDateStr}
           onChange={(e) => setDate(e.target.value)}
           className="w-full max-w-[16rem] bg-transparent py-2 text-[16px] outline-none"
           style={{ borderBottom: "1px solid #0A0A0A" }}

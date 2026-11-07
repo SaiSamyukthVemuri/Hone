@@ -75,8 +75,11 @@ describe("downstream bounds derive from the max horizon (no truncation)", () => 
     expect(CRON).toMatch(/HORIZON_DAYS = maxPublicBookingHorizonDays\(\) \+ 14/);
     expect(CRON).not.toMatch(/HORIZON_DAYS = 186/);
   });
-  it("the reschedule client picker accepts 1..12", () => {
-    expect(RFORM).toMatch(/months >= 1 && months <= 12/);
+  it("the reschedule client picker takes its 1..12 range from the shared helper", () => {
+    expect(RFORM).toMatch(/import \{ horizonRangeInStudioTz \} from "@\/lib\/booking\/horizon"/);
+    expect(RFORM).toMatch(/min=\{horizon\.minDateStr\}/);
+    expect(RFORM).toMatch(/max=\{horizon\.maxDateStr\}/);
+    expect(RFORM).not.toMatch(/months >= 1 && months <= 12/);
   });
   it("final booking validation is preserved (isWithinPublicBookingHorizon still gates the book)", () => {
     expect(BOOK).toMatch(/isWithinPublicBookingHorizon\(/);
