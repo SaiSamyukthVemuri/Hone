@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { Client } from "pg";
+import { E2E_SUPABASE_URL as VALIDATED_API_URL } from "../../e2e/helpers/local-env";
+import { apiUrlInForce, assertLoopbackPair } from "./helpers/owned-pair-core";
 import {
   adminQuery,
   asUser,
@@ -115,14 +117,12 @@ async function scanUidOnly(run: (sql: string) => Promise<{ rows: J[] }>): Promis
 }
 
 /**
- * LOOPBACK-ONLY check (Insurance Y-1): refuses a non-loopback DB or API URL. It does not prove the stack is the
- * OWNED one; that protection is vitest.db.config.ts' paired-target guard (#879, E2E_SUPABASE_URL + HONE_LOCAL_DB_URL).
+ * LOOPBACK-ONLY check (Insurance Y-1). It uses local-env's VALIDATED API URL (the explicit variable, or the
+ * default stack when CI leaves E2E_SUPABASE_URL unset: Codex P1 #4500640473). It does not prove the stack is
+ * the OWNED one; that is vitest.db.config.ts' paired-target guard (#879).
  */
 function assertOwnedLocalPair(): void {
-  const loop = (u: string) => ["127.0.0.1", "localhost", "[::1]", "::1"].includes(new URL(u).hostname);
-  const db = resolveLocalDbUrl();
-  const api = process.env.E2E_SUPABASE_URL ?? "";
-  if (!loop(db) || !api || !loop(api)) throw new Error("trigger-disabling probe refused: needs a loopback DB and E2E_SUPABASE_URL (the owned pair is enforced by vitest.db.config.ts)");
+  assertLoopbackPair(resolveLocalDbUrl(), apiUrlInForce(process.env, VALIDATED_API_URL));
 }
 
 /** Any SQLSTATE in class 23 (integrity constraint violation), including 23P01 exclusion violations. */
