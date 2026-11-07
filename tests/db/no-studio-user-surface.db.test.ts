@@ -519,7 +519,9 @@ describe("no-studio authenticated user: what can be reached", () => {
       }
       // (a) trigger layer, triggers ENABLED.
       const aStranger = await asJwt(S, (q) => tryInsert(q, valid.sql, valid.args));
-      const aMember = await asJwt(M.userId, (q) => tryInsert(q, valid.sql, valid.args));
+      // Control = the studio OWNER: a plain practitioner is refused by some of these tables' policies, which
+      // would make the probe look invalid for the wrong reason.
+      const aMember = await asJwt(A.userId, (q) => tryInsert(q, valid.sql, valid.args));
       const layerA =
         aStranger === "P0001" && aMember === "landed" ? "refused-at-parent-lookup"
         : aMember !== "landed" ? `unclassified(member-control:${aMember})`
@@ -535,7 +537,7 @@ describe("no-studio authenticated user: what can be reached", () => {
         await c.query("set local role authenticated");
         await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
         bStranger = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
-        await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: M.userId, role: "authenticated" })]);
+        await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
         bMember = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
       } finally {
         await c.query("rollback").catch(() => undefined);
@@ -793,6 +795,14 @@ const PINNED: string[] = [
   "nonmember public.machine_profile_field_contract machine_profile_field_contract_read [SELECT] qual=true",
   "nonmember public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT] qual=true",
   "nonmember public.waitlist waitlist_anonymous_insert [INSERT] qual=null",
+  "insert-resolved public.client_budget_context trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.client_clinical_notes trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.client_personal_notes trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.clients refused(weak:default-values-row)",
+  "insert-resolved public.payment_charge_attempts refused(weak:default-values-row)",
+  "insert-resolved public.service_practitioners refused(weak:default-values-row)",
+  "insert-resolved public.stripe_account_provisioning_attempts refused(weak:default-values-row)",
+  "insert-resolved public.treatment_plan_stages trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]"
 ];
 
 // S4: three functions returned a VALIDATION result for the census's fixture args,
