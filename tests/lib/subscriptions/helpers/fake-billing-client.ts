@@ -95,6 +95,8 @@ export function fakeBilling(opts: {
   /** The only (rawBody, signature) pair the fake accepts, with its event. */
   signed?: { rawBody: string; signature: string; event: BillingEvent };
   checkoutUrl?: string | null;
+  /** When set, createCheckoutSession throws this. */
+  createError?: Error;
 } = {}): FakeBilling {
   const calls: FakeBilling["calls"] = {
     retrievePrice: [],
@@ -118,6 +120,7 @@ export function fakeBilling(opts: {
     },
     async createCheckoutSession(params) {
       calls.createCheckoutSession.push(params);
+      if (opts.createError) throw opts.createError;
       return {
         id: "cs_test_1",
         url:

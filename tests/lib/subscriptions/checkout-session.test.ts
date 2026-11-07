@@ -121,6 +121,27 @@ describe("createSubscriptionCheckout", () => {
     expect(result).toEqual({ ok: false, reason: "price_unavailable" });
   });
 
+  it("a throwing createCheckoutSession returns a fixed code and never leaks the error text, email or request id (Privacy S-1)", async () => {
+    const leak = new Error(`Invalid email address: ${USER.email} (request req_SECRET123)`);
+    const logs: string[] = [];
+    const spies = (["log", "info", "warn", "error"] as const).map((m) => {
+      const orig = console[m];
+      console[m] = (...a: unknown[]) => { logs.push(a.map(String).join(" ")); };
+      return () => { console[m] = orig; };
+    });
+    let result;
+    try {
+      ({ result } = await run({}, fakeBilling({ prices: prices(), createError: leak })));
+    } finally {
+      spies.forEach((restore) => restore());
+    }
+    expect(result).toEqual({ ok: false, reason: "checkout_unavailable" });
+    const seen = JSON.stringify(result) + logs.join("\n");
+    expect(seen).not.toContain(USER.email);
+    expect(seen).not.toContain("req_SECRET123");
+    expect(seen).not.toContain("Invalid email");
+  });
+
   it("refuses a session that has no hosted url", async () => {
     const { result } = await run({}, fakeBilling({ prices: prices(), checkoutUrl: null }));
     expect(result).toEqual({ ok: false, reason: "price_unavailable" });

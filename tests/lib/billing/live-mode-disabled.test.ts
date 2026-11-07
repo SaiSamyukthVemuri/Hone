@@ -159,7 +159,7 @@ describe("Layer 4: webhook processes only deployment-mode events", () => {
 // ---------------------------------------------------------------------------
 // Static Stripe-gate money inventory unchanged (1 PI / 1 refund / 0 / 0)
 // ---------------------------------------------------------------------------
-describe("static Stripe gates remain 1/1/0/0 (money); checkout.sessions is the HON-70 adapter", () => {
+describe("static Stripe gates: money 1/1/0 and checkout.sessions 1 (the HON-70 billing adapter only)", () => {
   const rule = (name: string) =>
     new RegExp(
       `name:\\s*"${name.replace(".", "\\.")}"[\\s\\S]{0,1500}?exactly:\\s*(\\d+)`,

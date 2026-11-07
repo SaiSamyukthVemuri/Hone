@@ -25,6 +25,7 @@ export type CheckoutRefusal =
   | "price_not_configured"
   | "invalid_origin"
   | "price_unavailable"
+  | "checkout_unavailable"
   | "price_mismatch"
   | "price_inactive"
   | "price_not_recurring"
@@ -161,15 +162,23 @@ export async function createSubscriptionCheckout(
   if (refusal) return { ok: false, reason: refusal };
 
   const metadata = { hone_user_id: req.user.id, hone_plan: planKey };
-  const session = await req.client.createCheckoutSession({
-    priceId,
-    clientReferenceId: req.user.id,
-    customerEmail: req.user.email ?? null,
-    metadata,
-    successUrl: `${origin}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancelUrl: `${origin}/pricing`,
-    expiresAt: now + CHECKOUT_SESSION_TTL_SECONDS,
-  });
+  // A raw Stripe error can quote the offending parameter (e.g. an invalid
+  // customer_email) and carries a request id; it must never reach the caller,
+  // the route's error path or Sentry. Only this fixed code leaves. (Privacy S-1.)
+  let session: { id: string; url: string | null };
+  try {
+    session = await req.client.createCheckoutSession({
+      priceId,
+      clientReferenceId: req.user.id,
+      customerEmail: req.user.email ?? null,
+      metadata,
+      successUrl: `${origin}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${origin}/pricing`,
+      expiresAt: now + CHECKOUT_SESSION_TTL_SECONDS,
+    });
+  } catch {
+    return { ok: false, reason: "checkout_unavailable" };
+  }
   // Hosted Checkout always returns a url; without one there is nothing to
   // redirect to, so treat it as unavailable rather than inventing one.
   if (!session.url) return { ok: false, reason: "price_unavailable" };

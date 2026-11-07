@@ -350,6 +350,51 @@ describe("check-stripe-gates: getStripe() binding convention (PR #321)", () => {
 
 // PROPOSED (HON-70, pending Sam's approval): the single Checkout Session site is
 // the Hone Care Inc subscription adapter, isolated from Connect/treatment money.
+describe("check-stripe-gates: Stripe client construction is pinned to two files (Insurance G-2)", () => {
+  const FILES = ["lib/stripe/server.ts", "lib/subscriptions/billing-client.ts"];
+  const NEW = "const c = new Stripe(secret, {});\n";
+  let dir: string | null = null;
+  function runAgainst(files: Record<string, string>) {
+    dir = mkdtempSync(path.join(tmpdir(), "stripe-ctor-"));
+    for (const [rel, contents] of Object.entries(files)) {
+      const abs = path.join(dir, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, contents, "utf8");
+    }
+    return spawnSync("node", [SCRIPT_PATH], { cwd: dir, encoding: "utf8" });
+  }
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  it("passes with exactly one constructor in each of the two files (anti-vacuity: the detector counts both)", () => {
+    const r = runAgainst({ [FILES[0]]: NEW, [FILES[1]]: NEW });
+    expect(r.stdout ?? "").toMatch(/^PASS new Stripe\(: 2 occurrence\(s\)/m);
+  });
+  it("HARD-FAILS a third constructor in any other file", () => {
+    const r = runAgainst({ [FILES[0]]: NEW, [FILES[1]]: NEW, "lib/other/billing2.ts": NEW });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL new Stripe\(:/m);
+    expect(r.stdout ?? "").toContain("lib/other/billing2.ts");
+  });
+  it("HARD-FAILS a renamed second client inside the billing adapter", () => {
+    const r = runAgainst({ [FILES[0]]: NEW, [FILES[1]]: NEW + "const billing = new Stripe(k, {});\n" });
+    expect(r.stdout ?? "").toMatch(/^FAIL new Stripe\(:/m);
+  });
+  it("HARD-FAILS when a constructor disappears (the pin cannot silently shrink)", () => {
+    const r = runAgainst({ [FILES[0]]: NEW });
+    expect(r.stdout ?? "").toMatch(/^FAIL new Stripe\(:/m);
+  });
+  it("source shape: exactly 2, two allowlisted files", () => {
+    expect(SCRIPT_SOURCE).toMatch(/name: "new Stripe\(",[\s\S]*?allowlist: \["lib\/stripe\/server\.ts", "lib\/subscriptions\/billing-client\.ts"\],\s*exactly: 2,/);
+  });
+  it("the real repo has exactly those two constructors", () => {
+    const r = spawnSync("node", [SCRIPT_PATH], { cwd: REPO_ROOT, encoding: "utf8" });
+    expect(r.stdout ?? "").toMatch(/^PASS new Stripe\(: 2 occurrence\(s\)/m);
+  });
+});
+
 describe("check-stripe-gates: checkout.sessions is the HON-70 billing adapter only", () => {
   const BILLING_CLIENT = "lib/subscriptions/billing-client.ts";
   const CALL = "await stripe.checkout.sessions.create({});\n";
