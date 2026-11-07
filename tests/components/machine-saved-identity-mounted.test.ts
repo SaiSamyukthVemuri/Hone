@@ -1216,6 +1216,18 @@ describe("a lost identity-write answer is recovered by its key", () => {
     await pickValue("legacy:xcell");
     expect(shown()).toBe("room-9");
   });
+
+  // Codex, #1369 4498767101: the action now refuses a unit/mode pair the model does not offer, before anything is written.
+  it("a refused unit/mode pick shows the action's clear copy and leaves the panel on the saved machine, never on the refused one", async () => {
+    const COPY = "That machine does not offer that mode. Choose the machine and mode again. Nothing was saved.";
+    actions.recordBlockMachineIdentityAction.mockReset();
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: COPY } as never);
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion: vi.fn() });
+    await pickValue("legacy:xcell");
+    expect(host!.textContent).toContain(COPY);
+    expect(shown()).toBe("room-9");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("(b) a lost readings answer: the replay's stored version reaches the host, and a replay with none is not adopted", () => {

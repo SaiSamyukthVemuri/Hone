@@ -19,6 +19,7 @@ import {
 } from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { checkIdentityChoice } from "@/lib/machines/identity-choice";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -1494,6 +1495,16 @@ export async function createTreatmentAreaWithEntryAction(
     !withSetup &&
     identity !== null &&
     (identity.machineId !== null || identity.profileId !== null);
+  // THE SAME CONTRACT A REMEMBERED CHOICE PASSES, BEFORE ANYTHING IS SENT (Codex, #1369 4498767101). The command only checks that
+  // the unit is this studio's and not retired, so an impossible unit/mode pair would otherwise be stored with the new area.
+  if (identityOnly) {
+    const allowed = await checkIdentityChoice(supabase as unknown as MachineDb, { studioId: studio.id, practitionerId: practitioner.id }, {
+      deviceId: identity.machineId,
+      modeKey: identity.modeKey,
+      profileId: identity.profileId,
+    });
+    if (!allowed.ok) return { ok: false, error: allowed.error, unresolved: false };
+  }
   // Built once so the older command can be called with the same arguments when
   // 0301 is not applied yet (see the fallback below).
   const identityArgs = {

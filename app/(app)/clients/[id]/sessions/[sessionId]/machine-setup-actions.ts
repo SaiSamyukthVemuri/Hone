@@ -16,6 +16,7 @@ import {
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
+import { checkIdentityChoice } from "@/lib/machines/identity-choice";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -623,10 +624,14 @@ export async function recordBlockMachineIdentityAction(input: {
   if (!scope) {
     return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
   }
-  if (input.deviceId === null && input.profileId !== LEGACY_MACHINE_PROFILE_ID) {
-    return { ok: false, code: "rejected", error: "That machine could not be checked." };
-  }
   const db = await machineDb();
+  // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces (Codex, #1369 4498767101).
+  const allowed = await checkIdentityChoice(db, scope, {
+    deviceId: input.deviceId,
+    modeKey: input.modeKey,
+    profileId: input.profileId,
+  });
+  if (!allowed.ok) return { ok: false, code: "rejected", error: allowed.error };
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
     const out = await recordBlockMachineIdentity(db, {

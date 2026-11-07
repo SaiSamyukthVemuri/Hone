@@ -2062,6 +2062,27 @@ describe("the staleness refusal, narrowed to the revise path", () => {
   });
 });
 
+// THE UNIT THE IDENTITY WRITES BELOW ARE MADE AGAINST. The action now checks the pick against the studio's own inventory and
+// the catalogue (Codex, #1369 4498767101), so every case that expects a write needs a registered, supported unit and mode.
+const UNIT_ID = "11111111-1111-4111-8111-111111111111";
+const UNIT_MODE = "galvanic";
+const unitRow = (over: Record<string, unknown> = {}) => ({
+  id: UNIT_ID,
+  studio_id: "studio-1",
+  machine_profile_id: synthetic.SYNTHETIC_DEMO_PROFILE.profileId,
+  machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version,
+  display_name: "Room 9",
+  installed_options: [],
+  retired_at: null,
+  ...over,
+});
+function arrangeUnit(over: Record<string, unknown> = {}) {
+  vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+  DB.rowsFor.studio_machines = [unitRow(over)];
+}
+afterEach(() => vi.unstubAllEnvs());
+
 const RECEIPT = (updatedAt: string) => ({
   updated_at: updatedAt,
   reused: false,
@@ -2079,11 +2100,12 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
     clientId: "client-ana",
     sessionId: "session-1",
     blockId: "block-1",
-    deviceId: "11111111-1111-4111-8111-111111111111",
-    modeKey: "flash",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
     profileId: null,
     idempotencyKey: "pick-key-0001",
   };
+  beforeEach(() => arrangeUnit());
 
   it("a missing command (PGRST202) is a visible, definitive 'can't save the machine choice yet'", async () => {
     signIn("studio-1", "prac-1", "practitioner");
@@ -2111,6 +2133,110 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
   });
 });
 
+
+// ===========================================================================
+// AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN (Codex, #1369 4498767101)
+// The identity command only checks that the unit is the studio's and not retired. The action applies the contract
+// `rememberMachineSelectionAction` uses, first, so a stale panel or a crafted request cannot store a mode the unit's model does
+// not offer. Every refusal here must leave the command uncalled: "nothing written" is the point.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction checks the choice against the unit's contract first", () => {
+  const base = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null as string | null,
+    idempotencyKey: "pick-key-0001",
+  };
+  const wrote = () => DB.calls.some((c) => c.fn === "record_block_machine_identity");
+  beforeEach(() => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+  });
+
+  it("CONTROL: a supported mode on a registered unit is saved, and the command is called once with it", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out.ok).toBe(true);
+    expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_mode_key: UNIT_MODE });
+  });
+
+  it("a mode the unit's model does not offer is refused with clear copy and NOTHING is written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, modeKey: "blend" });
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    if (!out.ok) {
+      expect(out.error).toMatch(/does not offer that mode/i);
+      expect(out.error).toMatch(/nothing was saved/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+
+  it("an invented mode key is refused, nothing written", async () => {
+    arrangeUnit();
+    expect((await actions.recordBlockMachineIdentityAction({ ...base, modeKey: "not-a-mode" })).ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a unit that is not in this studio's inventory (another studio's, or unknown) is refused, nothing written", async () => {
+    arrangeUnit({ studio_id: "studio-other" });
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(false);
+  });
+
+  it("a retired unit is refused, nothing written", async () => {
+    arrangeUnit({ retired_at: "2026-10-01T00:00:00Z" });
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    if (!out.ok) expect(out.error).toMatch(/out of service/i);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a unit registered against a superseded profile version is refused, nothing written", async () => {
+    arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+    expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a profile id that is not the unit's own is refused, nothing written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, profileId: "some-other-profile" });
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(false);
+  });
+
+  it("the unit's own profile id is accepted (NEGATIVE CONTROL for the mismatch case)", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, profileId: synthetic.SYNTHETIC_DEMO_PROFILE.profileId });
+    expect(out.ok).toBe(true);
+    expect(wrote()).toBe(true);
+  });
+
+  it("the legacy model (no unit) carries no mode: a mode with it is refused, nothing written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({
+      ...base,
+      deviceId: null,
+      modeKey: "thermo",
+      profileId: "dectro-apilus:xcell",
+    });
+    expect(out.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory refuses (definitive, nothing written), never saved and never unknown", async () => {
+    arrangeUnit();
+    DB.errorFor.studio_machines = { message: "boom" };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(false);
+  });
+});
+
 // ===========================================================================
 // THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE" (Photos R2, #1369 c0d7b3ddc)
 // The held version is checked INSIDE the command's transaction and the new one comes back from
@@ -2121,11 +2247,12 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     clientId: "client-ana",
     sessionId: "session-1",
     blockId: "block-1",
-    deviceId: "11111111-1111-4111-8111-111111111111",
-    modeKey: "flash",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
     profileId: null,
     idempotencyKey: "pick-key-0001",
   };
+  beforeEach(() => arrangeUnit());
   it("passes the held version to the command and returns the version the command returned", async () => {
     signIn("studio-1", "prac-1", "practitioner");
     DB.rpcResult = RECEIPT("v2");
@@ -2187,12 +2314,13 @@ describe("recordBlockMachineIdentityAction: a lost answer is unknown, a replay r
     clientId: "client-ana",
     sessionId: "session-1",
     blockId: "block-1",
-    deviceId: "11111111-1111-4111-8111-111111111111",
-    modeKey: "flash",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
     profileId: null,
     idempotencyKey: "pick-key-0001",
     expectedUpdatedAt: "v1",
   };
+  beforeEach(() => arrangeUnit());
   it("a transport failure (no database code) is code 'unknown', not 'not_persisted' or a refusal, so the caller keeps the key", async () => {
     signIn("studio-1", "prac-1", "practitioner");
     DB.rpcError = { message: "fetch failed" };

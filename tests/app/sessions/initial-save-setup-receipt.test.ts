@@ -357,6 +357,50 @@ describe("0301 not applied yet: the app degrades safely", () => {
     expect(rpc.mock.calls.map((c) => c[0])).toEqual(["create_block_with_initial_setup_and_identity"]);
   });
 
+  // Codex, #1369 4498767101: the identity command only checks the unit is this studio's and not retired, so the action applies
+  // the remembered-choice contract first. A refusal here has sent nothing.
+  it("an identity-only save with a mode the unit's model does not offer is REFUSED before any command, with clear copy", async () => {
+    rpc.mockResolvedValue({ data: GOOD, error: null });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction({
+      clientId: "client-1",
+      sessionId: "session-1",
+      machineIdentity: { machineId: "dev-1", modeKey: "not-a-mode", profileId: null },
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toMatch(/does not offer that mode/i);
+    expect(out.error).toMatch(/nothing was saved/i);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("an identity-only save naming a unit this studio does not have is REFUSED before any command", async () => {
+    rpc.mockResolvedValue({ data: GOOD, error: null });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction({
+      clientId: "client-1",
+      sessionId: "session-1",
+      machineIdentity: { machineId: "dev-other", modeKey: MODE_KEY, profileId: null },
+    });
+    expect(out.ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: the supported unit and mode is sent to the identity command", async () => {
+    rpc.mockResolvedValue({ data: GOOD, error: null });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const out = await createTreatmentAreaWithEntryAction({
+      clientId: "client-1",
+      sessionId: "session-1",
+      machineIdentity: { machineId: "dev-1", modeKey: MODE_KEY, profileId: null },
+    });
+    expect(out.ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      "create_block_with_initial_setup_and_identity",
+      expect.objectContaining({ p_studio_machine_id: "dev-1", p_setup_mode_key: MODE_KEY }),
+    );
+  });
+
   it("NEGATIVE CONTROL: an ordinary refusal does NOT fall back to the older command", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "23514", message: "check violation" } });
     single.mockResolvedValue({ data: BLOCK_ROW, error: null });
