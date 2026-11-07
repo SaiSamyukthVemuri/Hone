@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { ConnectionWriteError } from "./store-write-error";
 import { deriveConnectionReadiness, type ConnectionReadiness } from "./readiness";
 import type { CalendarDestinationMode } from "./destination-scopes";
 
@@ -165,6 +166,36 @@ export async function persistConnectedFromCallback(input: {
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
 
+  // Decide the status BEFORE writing anything. With no new refresh token, an existing stored one is preserved, else the
+  // connection must not be marked healthy. A failed read here leaves the previous row untouched (no "connected" row without
+  // a verified token), and reports a failure rather than guessing.
+  let healthy = true;
+  if (!input.encryptedRefreshToken) {
+    const { data: prior, error: priorError } = await admin
+      .from("calendar_connections")
+      .select("id")
+      .eq("practitioner_id", input.practitionerId)
+      .maybeSingle();
+    if (priorError) {
+      console.error("google_calendar_error:oauth_persist:read_connection");
+      return { ok: false, reason: "connection_read_failed" };
+    }
+    let hasToken = false;
+    if (prior?.id) {
+      const { data: existing, error: secretReadError } = await admin
+        .from("calendar_connection_secrets")
+        .select("encrypted_refresh_token")
+        .eq("connection_id", prior.id as string)
+        .maybeSingle();
+      if (secretReadError) {
+        console.error("google_calendar_error:oauth_persist:read_secret");
+        return { ok: false, reason: "secret_read_failed" };
+      }
+      hasToken = Boolean(existing?.encrypted_refresh_token);
+    }
+    healthy = hasToken;
+  }
+
   const { data: conn, error: upsertError } = await admin
     .from("calendar_connections")
     .upsert(
@@ -175,12 +206,12 @@ export async function persistConnectedFromCallback(input: {
         google_account_id: input.googleAccountId,
         google_account_email: input.googleAccountEmail,
         write_calendar_id: input.writeCalendarId,
-        connection_status: "connected",
+        connection_status: healthy ? "connected" : "reconnect_required",
         granted_scopes: input.grantedScopes,
         token_expires_at: input.tokenExpiresAt,
         last_successful_auth_at: nowIso,
-        last_error_code: null,
-        last_error_at: null,
+        last_error_code: healthy ? null : "no_refresh_token",
+        last_error_at: healthy ? null : nowIso,
         disconnected_at: null,
         updated_at: nowIso,
       },
@@ -203,28 +234,26 @@ export async function persistConnectedFromCallback(input: {
       },
       { onConflict: "connection_id" },
     );
-    if (secretError) return { ok: false, reason: "secret_upsert_failed" };
+    if (secretError) {
+      // The row above says "connected" but no verified token was stored for it. Never leave that state: mark it reconnect_required
+      // (checked; a failure here is logged, the caller is told the secret failed either way).
+      console.error("google_calendar_error:oauth_persist:store_secret");
+      const { error: demoteError } = await admin
+        .from("calendar_connections")
+        .update({
+          connection_status: "reconnect_required",
+          last_error_code: "secret_store_failed",
+          last_error_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq("id", connectionId);
+      if (demoteError) console.error("google_calendar_error:oauth_persist:demote_after_secret_failure");
+      return { ok: false, reason: "secret_upsert_failed" };
+    }
     return { ok: true, connectionId };
   }
 
-  // No new refresh token: preserve an existing one, else fail closed.
-  const { data: existing } = await admin
-    .from("calendar_connection_secrets")
-    .select("encrypted_refresh_token")
-    .eq("connection_id", connectionId)
-    .maybeSingle();
-  if (existing?.encrypted_refresh_token) return { ok: true, connectionId };
-
-  await admin
-    .from("calendar_connections")
-    .update({
-      connection_status: "reconnect_required",
-      last_error_code: "no_refresh_token",
-      last_error_at: nowIso,
-      updated_at: nowIso,
-    })
-    .eq("id", connectionId);
-  return { ok: false, reason: "no_refresh_token" };
+  return healthy ? { ok: true, connectionId } : { ok: false, reason: "no_refresh_token" };
 }
 
 // Store a rotated refresh token (Google returned a new one during a refresh).
@@ -236,7 +265,7 @@ export async function storeRotatedRefreshToken(input: {
   encryptionKeyVersion: number;
 }): Promise<void> {
   const admin = createAdminClient();
-  await admin
+  const { data, error } = await admin
     .from("calendar_connection_secrets")
     .update({
       encrypted_refresh_token: input.encryptedRefreshToken,
@@ -245,7 +274,11 @@ export async function storeRotatedRefreshToken(input: {
       updated_at: new Date().toISOString(),
     })
     .eq("connection_id", input.connectionId)
-    .eq("studio_id", input.studioId);
+    .eq("studio_id", input.studioId)
+    .select("connection_id");
+  // Google has already rotated the token: if the new one is not stored, the old one may stop working. Never report success for that.
+  if (error) throw new ConnectionWriteError("store_rotated_token");
+  if (!data || data.length === 0) throw new ConnectionWriteError("store_rotated_token_no_row");
 }
 
 export async function markReconnectRequired(
@@ -255,7 +288,7 @@ export async function markReconnectRequired(
 ): Promise<void> {
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
-  await admin
+  const { error } = await admin
     .from("calendar_connections")
     .update({
       connection_status: "reconnect_required",
@@ -265,6 +298,8 @@ export async function markReconnectRequired(
     })
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId);
+  // A mark that did not stick leaves a dead grant looking connected: no reconnect prompt, and the worker keeps retrying.
+  if (error) throw new ConnectionWriteError("mark_reconnect_required");
 }
 
 // Disconnect: DESTROY the stored ciphertext (delete the secrets row) and mark
@@ -283,12 +318,14 @@ export async function disconnectConnection(
     .eq("practitioner_id", practitionerId)
     .maybeSingle();
   if (!conn) return;
-  await admin
+  // Each step is checked: a swallowed error here reported a disconnect that never happened, with the ciphertext still stored.
+  const { error: delErr } = await admin
     .from("calendar_connection_secrets")
     .delete()
     .eq("connection_id", conn.id as string)
     .eq("studio_id", studioId);
-  await admin
+  if (delErr) throw new ConnectionWriteError("disconnect_delete_secret");
+  const { error: updErr } = await admin
     .from("calendar_connections")
     .update({
       connection_status: "disconnected",
@@ -297,6 +334,7 @@ export async function disconnectConnection(
       updated_at: nowIso,
     })
     .eq("id", conn.id as string);
+  if (updErr) throw new ConnectionWriteError("disconnect_mark_disconnected");
 }
 
 // Store a validated write-calendar selection (the action validated it against
@@ -307,11 +345,12 @@ export async function setWriteCalendar(
   calendarId: string,
 ): Promise<void> {
   const admin = createAdminClient();
-  await admin
+  const { error } = await admin
     .from("calendar_connections")
     .update({ write_calendar_id: calendarId, updated_at: new Date().toISOString() })
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId);
+  if (error) throw new ConnectionWriteError("set_write_calendar");
 }
 
 // B2.4, record the owner's chosen appointment DESTINATION mode. NO-SWITCH: once a
@@ -497,17 +536,27 @@ export async function setOwnedCalendarDestination(
 export async function designateStudioCalendarOwner(
   studioId: string,
   practitionerId: string,
-): Promise<void> {
+): Promise<boolean> {
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
-  await admin
+  const { error: clearError } = await admin
     .from("calendar_connections")
     .update({ is_studio_calendar_owner: false, updated_at: nowIso })
     .eq("studio_id", studioId)
     .neq("practitioner_id", practitionerId);
-  await admin
+  // Do not set the new owner over a failed clear: the partial unique index would reject it or two owners would coexist.
+  if (clearError) {
+    console.error("google_calendar_error:designate_owner:clear_others");
+    return false;
+  }
+  const { error: setError } = await admin
     .from("calendar_connections")
     .update({ is_studio_calendar_owner: true, updated_at: nowIso })
     .eq("studio_id", studioId)
     .eq("practitioner_id", practitionerId);
+  if (setError) {
+    console.error("google_calendar_error:designate_owner:set_owner");
+    return false;
+  }
+  return true;
 }
