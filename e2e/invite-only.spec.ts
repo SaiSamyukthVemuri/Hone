@@ -164,6 +164,9 @@ test.describe("self-serve signup is dark by default (HON-70)", () => {
     await expect(page.getByText(/there is no self-service checkout/i)).toHaveCount(0);
 
     await page.goto("/signup?plan=solo");
+    // Only ever an owned local stack: playwright.config.ts loads e2e/helpers/local-env.ts,
+    // whose paired-target guard (#879) refuses anything else before a test runs.
+    expect(new URL(page.url()).origin).toBe(E2E_APP_ORIGIN);
     await expect(page.getByRole("heading", { name: "Create your account", level: 1 })).toBeVisible();
     await expect(page.getByText(/free and gives no studio access/i)).toBeVisible();
     await expect(page.getByText(/separate, paid step/i)).toBeVisible();

@@ -55,6 +55,8 @@ const PRICE_ID_SHAPE = /^price_[A-Za-z0-9]+$/;
 /**
  * The flag defaults OFF. Only the exact string "true" turns it on; "1", "TRUE"
  * and " true" are all OFF so a typo can never open checkout.
+ *
+ * Turning it ON anywhere real is gated by docs/billing/HON-70-ACTIVATION-CONDITIONS.md.
  */
 export function isSelfServeCheckoutEnabled(env: SubscriptionEnv): boolean {
   return env.HONE_SELF_SERVE_CHECKOUT_ENABLED === "true";
