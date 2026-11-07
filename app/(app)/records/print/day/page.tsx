@@ -3,11 +3,12 @@ import Link from "next/link";
 import { requirePractitionerWithStudio, getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { readPrintIdentities } from "@/lib/clients/print-identity";
-import { formatLocalDateLabel, localTimeString12h } from "@/lib/booking/tz";
+import { formatLocalDateLabel, localDateString, localTimeString12h } from "@/lib/booking/tz";
 import { auditThenLoad, canPrintClinicalPacket, previewAuditMetadata, recordDayAudit } from "@/lib/records/print/day-audit";
 import { loadDayDocument, type DayDocument } from "@/lib/records/print/day-document";
 import { loadDayPacket, type PacketReader } from "@/lib/records/print/day-loader";
-import { NOT_RECORDED, PACKET_EXCLUSIONS, type PacketVisit, type Reading } from "@/lib/records/print/day-packet";
+import { checkPrintableDay } from "@/lib/records/print/day-guard";
+import { NOT_RECORDED, PACKET_EXCLUSIONS, PACKET_INCLUDES_NOTE, type PacketVisit, type Reading } from "@/lib/records/print/day-packet";
 import { parseSelectedDay } from "@/lib/records/print/selected-day";
 import { AuditedPrintButton } from "./print-button";
 
@@ -158,6 +159,14 @@ export default async function DayPacketPage({
       </Refusal>
     );
   }
+  const printable = checkPrintableDay(day.day, studio.timezone);
+  if (!printable.ok) {
+    return printable.reason === "future" ? (
+      <Refusal title="That day is in the future.">There are no treatments to print for a day that has not happened.</Refusal>
+    ) : (
+      <Refusal title="That day is not a valid date.">Open this page from a client, with one client and one day selected.</Refusal>
+    );
+  }
   const clientId = typeof sp.clientId === "string" && UUID.test(sp.clientId) ? sp.clientId.toLowerCase() : null;
   if (clientId === null) {
     return <Refusal title="Choose a client to print.">Open this page from a client, with one client and one day selected.</Refusal>;
@@ -166,6 +175,10 @@ export default async function DayPacketPage({
   // 3. AUDIT FIRST, then load. Nothing about the client or the day is read until
   //    the preview is recorded (the database derives the studio and the owner).
   const supabase = await createClient();
+  // The instant the packet is generated FROM: taken before the audit and the
+  // first read, so "as of" never claims a treatment charted during the read
+  // (Insurance E-3).
+  const generatedFrom = new Date();
   const outcome = await auditThenLoad<Extract<DayDocument, { ok: true }>>(
     () =>
       recordDayAudit((fn, args) => supabase.rpc(fn, args), {
@@ -222,7 +235,7 @@ export default async function DayPacketPage({
 
   const { packet, legalNamesUnavailable } = outcome.document;
   const dayLabel = formatLocalDateLabel(packet.day);
-  const readAt = `${localTimeString12h(new Date(), studio.timezone)} (${studio.timezone})`;
+  const readAt = `${formatLocalDateLabel(localDateString(generatedFrom, studio.timezone))}, ${localTimeString12h(generatedFrom, studio.timezone)} (${studio.timezone})`;
 
   return (
     <div data-packet-page className="mx-auto flex max-w-3xl flex-col gap-4 bg-white p-4 text-neutral-900">
@@ -266,7 +279,8 @@ export default async function DayPacketPage({
         )}
 
         <footer className="mt-4 border-t border-neutral-300 pt-2 text-[11px] text-neutral-600">
-          <p className="font-medium">Not included in this record:</p>
+          <p>{PACKET_INCLUDES_NOTE}</p>
+          <p className="mt-1 font-medium">Not included in this record:</p>
           <ul className="ml-4 list-disc">
             {PACKET_EXCLUSIONS.map((x) => (
               <li key={x}>{x}</li>
