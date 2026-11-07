@@ -92,7 +92,9 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     expect(body).not.toContain("minutes_performed");
     // The application mechanism is still a spread — which is exactly why
     // omitting the key preserves the destination's own value.
-    expect(body).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);
+    // It goes through copyPatchForMachine (lib/machines/pending-setup.ts), which only BLANKS the hidden legacy
+    // fields under a native machine and never adds a key, so the spread still cannot carry minutes.
+    expect(body).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.copyPatchForMachine\(machineKind, patch\) \}\)\)/);
   });
 
   // -------------------------------------------------------------------------

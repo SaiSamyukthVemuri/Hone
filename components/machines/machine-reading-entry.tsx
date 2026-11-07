@@ -150,6 +150,23 @@ export type MachineReadingEntryProps = {
    * that gap.
    */
   onUnresolvedChange?: (unresolved: boolean) => void;
+  /**
+   * WHETHER ANYTHING TYPED HAS NOT BEEN SAVED (Codex, #1369 4476240831).
+   *
+   * The create form reports its draft to the host; this form, on an EXISTING
+   * area, kept its values to itself, so the host's status kept saying Saved
+   * and the leave guard stayed disarmed over numbers that were never recorded.
+   * True while any group holds a non-empty value; false again once a save
+   * clears them.
+   */
+  onDraftChange?: (hasDraft: boolean) => void;
+  /**
+   * TRUE WHILE A MACHINE OR MODE CHANGE IS BEING WRITTEN (Codex, #1369 4487911008). On a saved area the pick is written first and
+   * applied after; in between, this entry still belongs to the OLD machine while the record may already hold the new one, so a save
+   * here would submit the old machine's readings under the new machine. Submission is held until the change settles; the entry is
+   * then remounted for the new machine (its key) or, on a refusal, stays and works again. The draft itself is kept.
+   */
+  submissionHeld?: boolean;
 };
 
 /**
@@ -174,6 +191,8 @@ export function MachineReadingEntry({
   onRecord,
   mintKey,
   onUnresolvedChange,
+  onDraftChange,
+  submissionHeld = false,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   // SETTING GROUPS - probes sharing one set of values. One to begin with, which
@@ -348,6 +367,22 @@ export function MachineReadingEntry({
    */
   const transportHold = pending || save.unresolved;
 
+  // NOT AFTER AN ACKNOWLEDGED SAVE (Codex, #1369 4477412918). The typed values stay in `groups`
+  // until the practitioner starts a new capture, but they are RECORDED by then: the page must
+  // stop saying Unsaved and stop warning on leave. A save still in flight or of unknown outcome
+  // is not recorded, so it keeps counting.
+  const hasDraft =
+    !save.recorded &&
+    groups.some((g) => Object.values(g.values).some((v) => String(v ?? "").trim() !== ""));
+  const reportedDraft = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (reportedDraft.current === hasDraft) return;
+    reportedDraft.current = hasDraft;
+    onDraftChange?.(hasDraft);
+  }, [hasDraft, onDraftChange]);
+  // GONE WITH THE ENTRY: an unmounted form holds nothing unsaved.
+  useEffect(() => () => onDraftChange?.(false), [onDraftChange]);
+
   const reportedUnresolved = useRef<boolean | null>(null);
   useEffect(() => {
     if (reportedUnresolved.current === transportHold) return;
@@ -381,6 +416,7 @@ export function MachineReadingEntry({
     );
 
   async function submit() {
+    if (submissionHeld) return;
     setPending(true);
     // ONE CALL, EVERY GROUP. The loop this replaced had to carry the
     // consequence of several calls: with two groups the first could succeed
@@ -458,6 +494,7 @@ export function MachineReadingEntry({
             type="button"
             variant="secondary"
             size="sm"
+            disabled={submissionHeld}
             onClick={() => {
               // A NEW capture, not an edit of the last one. Values AND channel
               // associations are cleared deliberately: pre-filling either from
@@ -565,7 +602,7 @@ export function MachineReadingEntry({
           variant="primary"
           size="md"
           onClick={submit}
-          disabled={pending || !ready}
+          disabled={pending || !ready || submissionHeld}
           pending={pending}
           busyLabel="Saving…"
           data-testid="machine-reading-save"

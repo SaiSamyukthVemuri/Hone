@@ -310,3 +310,50 @@ describe("5 · a SETTLED close clears only its own key", () => {
     ).toBeGreaterThanOrEqual(3);
   });
 });
+
+// ===========================================================================
+// EVERY CALLER OF submit() IS INSIDE THE RECOVERY GATES (Codex, #1369 4475351367, P1)
+// ===========================================================================
+//
+// The gates were on the Save button only. The save-status "Try again" button is
+// enabled whenever `error` is set, and a FAILED claim lookup sets `error` while
+// `resumeChoicePending` holds Save - so "Try again" called submit() past every
+// gate. The machine settings were not rebuilt, `machineSetupForSave()` returned
+// null, the create went out with NO idempotency key, and a retry after a save
+// that had committed made a duplicate treatment area. Source contract (the
+// wiring, not the behaviour; the form has no component harness):
+describe("submit() enforces the recovery gates for every caller", () => {
+  const gates = FORM.slice(FORM.indexOf("const saveBlocked ="), FORM.indexOf("function submit()"));
+
+  it("one named predicate holds every gate the Save button had", () => {
+    for (const g of [
+      "pending",
+      'resume.state === "checking"',
+      'resume.state === "saved"',
+      "resumeChoicePending",
+      "resumedNeedsSettings",
+      "resumedUnconfirmed",
+      "revisionUnresolved",
+      "identityWritePending",
+    ]) {
+      expect(gates, g).toContain(g);
+    }
+  });
+
+  it("submit() returns before anything else when the predicate holds, so no create (and no unkeyed create) can start", () => {
+    expect(FORM).toMatch(/function submit\(\) \{\s*if \(saveBlocked\) return;\s*setError\(null\);/);
+  });
+
+  it("the Save button lists the same flags, and Try again is withheld by the predicate", () => {
+    // The Save button keeps its own literal list (other pins read it); the two must name the same flags.
+    const btn = FORM.slice(FORM.indexOf('data-testid="save-treatment-area"') - 3000, FORM.indexOf('data-testid="save-treatment-area"'));
+    for (const g of ["pending", 'resume.state === "checking"', 'resume.state === "saved"', "resumeChoicePending", "resumedNeedsSettings", "resumedUnconfirmed", "revisionUnresolved", "identityWritePending"]) {
+      expect(btn, `button: ${g}`).toContain(g);
+    }
+    expect(FORM).toContain("onRetry={saveBlocked ? undefined : () => submit()}");
+  });
+
+  it("the keyed create path is unchanged: the attached setup is still computed once per attempt", () => {
+    expect(FORM).toContain("const attachedSetup = machineSetupForSave();");
+  });
+});

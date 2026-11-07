@@ -59,6 +59,8 @@ export const BROWSER_GROUPS = {
       // form must run this spec, and filing it elsewhere would hide it from
       // the only lane its subject can regress in.
       "machine-switch-discards-draft.spec.ts",
+      "machine-one-selector.spec.ts",
+      "machine-mode-then-save.spec.ts",
       // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
       // again. Same surface once more, so the same group - and this one most
       // of all, because what it proves is that the FORM reuses its retry key,

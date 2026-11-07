@@ -281,7 +281,9 @@ describe("the handoff's shape, pinned on source", () => {
     // computed once per attempt - see the case above. Asserting the inline
     // call here would contradict that.
     expect(src).toMatch(/initialSetup: attachedSetup/);
-    expect((src.match(/randomUUID/g) ?? []).length).toBe(1);
+    // One for the settings handoff, one for a SETTINGS-FREE create's own retry key (bareCreateKeyRef, never mirrored to the URL).
+    expect((src.match(/randomUUID/g) ?? []).length).toBe(2);
+    expect(src).toMatch(/bareCreateKeyRef\.current \?\?= crypto\.randomUUID\(\)/);
   });
 });
 // ---------------------------------------------------------------------------
@@ -648,7 +650,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // the two cases now behave identically — they are indistinguishable to
     // the practitioner and must be.
     const src = read(FORM_SRC);
-    expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) setSaveUnresolved\(true\)/);
+    expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) \{[\s\S]*?setSaveUnresolved\(true\)/);
     expect(assignedExpression(src, "draftFrozen")).toContain("saveUnresolved");
   });
 
@@ -1100,16 +1102,16 @@ describe("switching machine or mode clears the collected draft", () => {
     // two are indistinguishable to the practitioner and must behave alike.
     const src = read(ACTIONS_SRC);
     expect(src).toMatch(
-      /if \(withSetup && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{/,
+      /if \(\(withSetup \|\| bareKey\) && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{/,
     );
     // WITHSETUP ONLY, and that condition is load-bearing rather than
     // defensive: `create_block_with_entry` binds no retry key, so there is
     // no safe retry to offer and freezing would strand her.
     expect(
       src,
-      "the unresolved path must stay behind withSetup",
+      "the unresolved path must stay behind a retry key (withSetup or bareKey)",
     ).toMatch(
-      /if \(withSetup && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{[\s\S]{0,400}?unresolved: true as const/,
+      /if \(\(withSetup \|\| bareKey\) && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{[\s\S]{0,400}?unresolved: true as const/,
     );
   });
 
@@ -1222,6 +1224,9 @@ describe("switching machine or mode clears the collected draft", () => {
     "resumedNeedsSettings",
     "resumedUnconfirmed",
     "revisionUnresolved",
+    // A saved area's machine write in flight (Codex, #1369 4477716784). Not a create-mode flag: it is released in a
+    // `finally` the moment the write settles, success or refusal, so it can never strand Save.
+    "identityWritePending",
   ];
   const saveDisabledIdentifiers = (expr: string) =>
     [
@@ -1345,7 +1350,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // The panel knows which block it is charting; it does not get to say
     // whose chart that is. The ids come from the page's props.
     const conn = read(CONN_SRC);
-    expect(conn).toMatch(/recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/);
+    expect(conn).toMatch(/recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,(\s*expectedUpdatedAt: blockVersion \?\? null,)?\s*\}\)/);
   });
 
   it("selection writes are SERIALISED, not just de-duplicated on return", () => {
@@ -1391,7 +1396,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // in a query binds the record to it.
     const src = read(QUERIES_SRC);
     expect(src).toMatch(
-      /export async function readingsForBlock\([\s\S]{0,2600}?sessionId: string,\s*\n\):/,
+      /export async function readingsForBlock\([\s\S]{0,2600}?sessionId: string,\s*\n[\s\S]{0,300}?\):/,
     );
     expect(src).toMatch(
       // THE BINDING MOVED INTO THE FUNCTION (Codex, #860 4305555264). It was
@@ -1467,7 +1472,9 @@ describe("switching machine or mode clears the collected draft", () => {
       src,
       "the freeze must come from EITHER save path",
     ).toMatch(/const identityFrozen = settingDraftFrozen \|\| revisionUnresolved/);
-    expect(src).toMatch(/selectable\.length === 0 \|\| selectionPending \|\| identityFrozen/);
+    // The selector is dead only when NOTHING can be chosen (no native unit AND no existing-workflow option), or while a write or an
+    // unresolved save holds it (Codex #1369 4471593277: it used to be dead whenever no native unit was registered).
+    expect(src).toMatch(/\(selectable\.length === 0 && !legacyMachine\) \|\|\s*selectionPending \|\|\s*identityFrozen/);
     expect(src).toMatch(/disabled=\{selectionPending \|\| identityFrozen\}/);
   });
 
@@ -1550,7 +1557,11 @@ describe("switching machine or mode clears the collected draft", () => {
     // guard reported the protection as present (Codex, #860 4300759932).
     // Asserting the FAILURE BRANCH is what the claim actually needs.
     const src = read(CONN_SRC);
-    expect(src).toMatch(/: \{ \.\.\.prev, recordedSetupUnavailable: true \}/);
+    // (OPS, after #1369 shard 1 at 6dc30fdd3: the failure no longer marks the surface unavailable, which replaced the saved entry; the
+    // snapshot is kept as it was and a "Saved. The latest readings couldn't be refreshed" note is shown. The mounted tests in
+    // machine-saved-identity-mounted.test.ts prove that behaviour.)
+    expect(src).toMatch(/: prev\s*: prev,\s*\);[\s\S]{0,900}?setRefreshFailedAfterSave\(!fresh\.ok && !fresh\.refused\);/);
+    expect(src, "a failed refresh must not mark the surface unavailable any more").not.toMatch(/\.\.\.prev, recordedSetupUnavailable: true/);
     expect(
       src,
       "a thrown refresh must also become a failure, not an exception",
@@ -1745,7 +1756,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // "blank" lines in the middle of it. A guard's extraction is as capable
     // of being wrong as the code it guards.
     const union = src.match(
-      /export type ReadingsRead =([\s\S]*?\|\s*\{ ok: false \};)/,
+      /export type ReadingsRead =([\s\S]*?\|\s*\{ ok: false; refused\?: \"access\" \| \"unavailable\" \};)/,
     );
     expect(
       union,
@@ -1760,9 +1771,9 @@ describe("switching machine or mode clears the collected draft", () => {
     ).not.toMatch(/ok: false;[^}]*readings/);
 
     // AND EVERY FAILURE PATH USES IT: the query's, and not-signed-in.
-    expect(src).toMatch(/if \(!got\.ok\) return \{ ok: false \};/);
+    expect(src).toMatch(/if \(!got\.ok\) return got\.refused \? \{ ok: false, refused: got\.refused \} : \{ ok: false \};/);
     // NOT SIGNED IN is a failure too, not an empty treatment.
-    expect(src).toMatch(/if \(!scope\) return \{ ok: false \};/);
+    expect(src).toMatch(/if \(!scope\) return \{ ok: false, refused: "access" \};/);
   });
 
   it("a failed GUIDANCE read is distinguishable from no previous treatment", () => {
@@ -1794,7 +1805,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // CONTROL_COMPACT_FINE_POINTER: 44px on every coarse pointer, 32px only
     // behind the explicit pointer-fine gate.
     const src = read(CONN_SRC);
-    expect(src).toMatch(/<Button[\s\S]{0,200}data-testid="machine-first-open"/);
+    expect(src).toMatch(/<Button[\s\S]{0,260}data-testid="machine-first-open"/);
     expect(
       src,
       "a hand-rolled className is how the floor was lost the first two times",
@@ -1954,5 +1965,33 @@ describe("every block/capture consumer is bound to the authorized route", () => 
       unbound,
       "a function takes a block or capture id without binding it to the route",
     ).toEqual([]);
+  });
+});
+
+describe("Codex 4488516837: a lost create answer keeps its key AND its identity", () => {
+  const src = readFileSync(
+    nodePath.join(process.cwd(), "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"),
+    "utf8",
+  );
+  it("the identity is snapshotted with the first attempt and the retry sends the snapshot, not the live draft", () => {
+    expect(src).toMatch(/createAttemptRef\.current \?\?= \{ identity: identityDraftRef\.current, unresolved: false \}/);
+    expect(src).toMatch(/const attemptIdentity = createAttemptRef\.current\.identity/);
+    expect(src).toMatch(/machineIdentity: attemptIdentity/);
+    expect(src).not.toMatch(/machineId: identityDraftRef\.current/);
+  });
+  it("a panel opened after the lost answer cannot overwrite the draft", () => {
+    expect(src).toMatch(/if \(createAttemptRef\.current !== null\) return;\s*identityDraftRef\.current = choice;/);
+  });
+  it("a refusal after a lost answer keeps the key, freezes the form and says reload; only a first-attempt refusal drops it", () => {
+    const m = src.match(/if \("unresolved" in res && res\.unresolved\) \{[\s\S]*?return;\n      \}/)!;
+    expect(m).not.toBeNull();
+    const body = m[0];
+    expect(body).toMatch(/else if \(createAttemptRef\.current\.unresolved\) \{[\s\S]*?CREATE_REFUSED_AFTER_LOST_ANSWER[\s\S]*?setSaveUnresolved\(true\)/);
+    const keep = body.match(/else if \(createAttemptRef\.current\.unresolved\) \{[\s\S]*?\n        \} else \{/)![0];
+    expect(keep).not.toMatch(/bareCreateKeyRef\.current = null/);
+    expect(body).toMatch(/\} else \{[\s\S]*?bareCreateKeyRef\.current = null;[\s\S]*?createAttemptRef\.current = null/);
+  });
+  it("success drops both the key and the snapshot", () => {
+    expect(src).toMatch(/bareCreateKeyRef\.current = null;\n      createAttemptRef\.current = null;/);
   });
 });

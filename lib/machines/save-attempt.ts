@@ -337,3 +337,23 @@ export function isDefinitiveDatabaseAnswer(
   // answered by it, which is equally definitive.
   return code.startsWith("PGRST");
 }
+
+/**
+ * THE COMMAND DOES NOT EXIST YET (migration-first order slipped).
+ *
+ * PostgREST's schema-cache code PGRST202 or Postgres' undefined_function
+ * 42883, and nothing else: never a message, never another code. Either one
+ * means the function was not found, so NOTHING was executed and nothing was
+ * written; a caller may therefore fall back to the older command safely. Same
+ * rule as lib/email/reminder-authority-mode.ts.
+ */
+export function isMissingCommand(
+  error: { code?: string | null } | null | undefined,
+): boolean {
+  const code = error?.code?.trim() ?? "";
+  return code === "PGRST202" || code === "42883";
+}
+
+/** Shown wherever a machine choice cannot be stored because 0301 is not applied. */
+export const MACHINE_CHOICE_NOT_STORABLE_YET =
+  "Can't save the machine choice yet. Your charting is not affected: save the area without it for now.";

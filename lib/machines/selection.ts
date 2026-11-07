@@ -241,20 +241,17 @@ export type SelectOutcome =
     };
 
 /**
- * Remember a machine for this practitioner in this studio.
- *
- * Refuses rather than storing anything a later resolve would have to reject,
- * so an unusable selection never becomes the remembered one. Writes only after
- * every check passes.
+ * The checks `selectDevice` makes, WITHOUT the write. A choice that is only being RECORDED (the saved treatment identity) must
+ * pass the same contract as one being REMEMBERED: an impossible unit/mode pair is refused before anything is stored
+ * (Codex, #1369 4498767101). Pure: it reads nothing and writes nothing.
  */
-export async function selectDevice(
+export function checkDeviceChoice(
   scope: SelectionScope,
   deviceId: string,
   modeKey: string | null,
   devices: readonly StudioDevice[],
-  store: SelectionStore,
   catalogue: readonly MachineProfile[] = MACHINE_CATALOGUE,
-): Promise<SelectOutcome> {
+): SelectOutcome {
   const device = devices.find((d) => d.deviceId === deviceId);
   if (!device) {
     return { ok: false, code: "unknown_device", message: `No device '${deviceId}'.` };
@@ -322,8 +319,28 @@ export async function selectDevice(
   }
 
   const selection: StoredSelection = { deviceId, modeKey };
-  await store.write(scope, selection);
   return { ok: true, selection };
+}
+
+/**
+ * Remember a machine for this practitioner in this studio.
+ *
+ * Refuses rather than storing anything a later resolve would have to reject,
+ * so an unusable selection never becomes the remembered one. Writes only after
+ * every check passes.
+ */
+export async function selectDevice(
+  scope: SelectionScope,
+  deviceId: string,
+  modeKey: string | null,
+  devices: readonly StudioDevice[],
+  store: SelectionStore,
+  catalogue: readonly MachineProfile[] = MACHINE_CATALOGUE,
+): Promise<SelectOutcome> {
+  const checked = checkDeviceChoice(scope, deviceId, modeKey, devices, catalogue);
+  if (!checked.ok) return checked;
+  await store.write(scope, checked.selection);
+  return checked;
 }
 
 /** Explicitly forget the remembered machine. The visible "Change machine" path. */
