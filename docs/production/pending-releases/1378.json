@@ -1,0 +1,6 @@
+{
+  "pr": 1378,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0280_receptionist_name_rule.sql"],
+  "release_receipt": "01-ops/1378-release-receipt.json"
+}

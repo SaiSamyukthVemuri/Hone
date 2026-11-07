@@ -93,14 +93,20 @@ afterAll(async () => {
 // The 0274 desk directory's source hash, read from the migration file (frozen once applied) so the
 // reviewed-delegate pin follows the reviewed text. Absent file = no second delegate is allowed.
 function deskDirectorySha(): string | null {
-  const path = "supabase/migrations/0274_receptionist_desk_projection.sql";
-  if (!existsSync(path)) return null;
-  const src = readFileSync(path, "utf8");
-  const start = src.indexOf("create function public.receptionist_client_directory(");
-  if (start < 0) return null;
-  const open = src.indexOf("as $$", start) + "as $$".length;
-  const close = src.indexOf("$$;", open);
-  return createHash("sha256").update(src.slice(open, close), "utf8").digest("hex");
+  // 0280 redefines the directory (name rule); the live definition is the latest file that carries it.
+  for (const path of [
+    "supabase/migrations/0280_receptionist_name_rule.sql",
+    "supabase/migrations/0274_receptionist_desk_projection.sql",
+  ]) {
+    if (!existsSync(path)) continue;
+    const src = readFileSync(path, "utf8");
+    const start = src.search(/create (or replace )?function public\.receptionist_client_directory\(/);
+    if (start < 0) continue;
+    const open = src.indexOf("as $$", start) + "as $$".length;
+    const close = src.indexOf("$$;", open);
+    return createHash("sha256").update(src.slice(open, close), "utf8").digest("hex");
+  }
+  return null;
 }
 const DESK_DIRECTORY_SHA_VALUE = deskDirectorySha() ?? "absent";
 const DESK_DIRECTORY_SHA = `'${DESK_DIRECTORY_SHA_VALUE}'`;
