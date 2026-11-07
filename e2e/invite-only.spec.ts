@@ -128,3 +128,53 @@ test.describe("no-studio authenticated user is gated", () => {
     await page.waitForURL(/\/login/, { timeout: 20_000 });
   });
 });
+
+// HON-70 (PROPOSED): self-serve ACCOUNT signup is dark by default. Lives in this
+// spec (already in owner_admin) rather than a new file so the browser-group
+// manifest and its count pins are untouched. CI runs the flag-OFF default; the
+// flag-ON block self-skips unless the server was started with the flag (the
+// outer runner sets HONE_SELF_SERVE_CHECKOUT_ENABLED=true for both processes).
+test.describe("self-serve signup is dark by default (HON-70)", () => {
+  const FLAG_ON = process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED === "true";
+
+  test("flag off: /signup is a 404 and /pricing keeps the guided-onboarding sentence with no signup link", async ({
+    page,
+  }) => {
+    test.skip(FLAG_ON, "flag-OFF assertions only");
+    const res = await page.goto("/signup");
+    expect(res?.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: /create your account/i })).toHaveCount(0);
+
+    await page.goto("/pricing");
+    await expect(
+      page.getByText(/there is no self-service checkout/i),
+    ).toBeVisible();
+    await expect(page.locator('a[href^="/signup"]')).toHaveCount(0);
+  });
+
+  test("flag on: /signup shows the free-account vs paid-studio split and sends one link; pricing links carry only the plan key", async ({
+    page,
+  }) => {
+    test.skip(!FLAG_ON, "needs the server started with HONE_SELF_SERVE_CHECKOUT_ENABLED=true");
+    await page.goto("/pricing");
+    const hrefs = await page.locator('a[href^="/signup"]').evaluateAll((els) =>
+      els.map((e) => e.getAttribute("href")),
+    );
+    expect(hrefs.sort()).toEqual(["/signup?plan=solo", "/signup?plan=studio"]);
+    await expect(page.getByText(/there is no self-service checkout/i)).toHaveCount(0);
+
+    await page.goto("/signup?plan=solo");
+    await expect(page.getByRole("heading", { name: "Create your account", level: 1 })).toBeVisible();
+    await expect(page.getByText(/free and gives no studio access/i)).toBeVisible();
+    await expect(page.getByText(/separate, paid step/i)).toBeVisible();
+    // No price id, no Stripe, no studio creation on this page.
+    await expect(page.locator("body")).not.toContainText(/price_|stripe|checkout\.stripe/i);
+
+    const address = `signup-${Date.now()}@harness.local`;
+    const before = await listMessageIds(address);
+    await page.getByLabel("Email address").fill(address);
+    await page.getByRole("button", { name: /email me a link/i }).click();
+    await expect(page.getByRole("status")).toContainText(/check your email/i);
+    await expect.poll(async () => (await listMessageIds(address)).length).toBeGreaterThan(before.length);
+  });
+});
