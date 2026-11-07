@@ -352,12 +352,11 @@ describe("0173 GROUP 5 — appointment lineage is no longer reachable through a 
 });
 
 describe("0173 GROUP 5 — the product workflows it must not break", () => {
-  it("a member can still read, create and UPDATE a service", async () => {
+  it("the owner can still read, create and UPDATE a service (members: 0302 makes writes owner-only)", async () => {
     const studio = await seedStudio("l23-crud");
-    const member = await seedMember(studio, "l23-crud-m");
-    const serviceId = randomUUID();
+        const serviceId = randomUUID();
 
-    await asUser(member.userId, async (q) => {
+    await asUser(studio.userId, async (q) => {
       await q(
         `insert into public.services (id, studio_id, name, default_duration_minutes, active)
          values ($1, $2, 'Member created', 45, true)`,

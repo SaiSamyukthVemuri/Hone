@@ -78,6 +78,7 @@ describe("HON-44 catalog: every authenticated write policy is scoped to the call
 const OWNER_ONLY_WRITE_TABLES = [
   "studios",
   "client_pricing",
+  "services",
   "pending_invitations",
   "studio_availability_default",
   "studio_availability_overrides",
@@ -88,11 +89,10 @@ const OWNER_ONLY_WRITE_TABLES = [
   "imported_treatment_memories",
 ];
 
-// OPEN GAPS (team/HON44-GAPS.md H1, H2): member-level write policies exist today. They are recorded affirmatively below (the exact
+// OPEN GAP (team/HON44-GAPS.md H2; H1 closed by 0302, services moved to OWNER_ONLY_WRITE_TABLES): member-level write policies exist today. They are recorded affirmatively below (the exact
 // member policies); the test turns red when the gap is closed, which is the signal to move the table into OWNER_ONLY_WRITE_TABLES.
 // The fix is held (unnumbered SQL). Owner-only is production behaviour today, superseded by the Roles permission core (R1/R3/R4).
 const OPEN_OWNER_ONLY_GAPS: [string, string][] = [
-  ["services", "H1"],
   ["consent_form_templates", "H2"],
 ];
 
@@ -100,7 +100,6 @@ describe("HON-44 catalog: owner-only-by-design tables have no member-level write
   // Affirmative record of the gap as it is TODAY: the table has write policies and exactly these admit members. Invert (and move
   // the table into OWNER_ONLY_WRITE_TABLES) when the held fix lands. It fails loudly if the table is renamed or loses its policies.
   const OPEN_GAP_MEMBER_POLICIES: Record<string, string[]> = {
-    services: ["services_member_insert (INSERT)", "services_member_update (UPDATE)"],
     consent_form_templates: ["consent_form_templates_studio_member_insert (INSERT)", "consent_form_templates_studio_member_update (UPDATE)"],
   };
   it.each(OPEN_OWNER_ONLY_GAPS)("%s: OPEN GAP %s, member-level write policies exist today", async (table) => {
