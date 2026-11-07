@@ -44,6 +44,17 @@ import {
 //             does not call a membership/ownership/uid check.
 //   storage   buckets and storage.objects policies applicable to authenticated.
 
+// WHAT THIS DOES NOT CLAIM. The 47 pinned functions are the set that RAN for a no-studio user in
+// the seeded local fixture. That is a reviewed list, not a proof that they are harmless, and the
+// census does not scrub or otherwise vouch for the report it writes. Behavioural role-check
+// proofs (valid fixture ids, an asserted refusal, a rolled-back scratch copy that stops
+// refusing) exist for: record/supersede_appointment_settlement, set_new_client_admission_mode,
+// receptionist_cancel/create/move_appointment (no authorised-caller control: no receptionist
+// fixture), and the four own-identity RPCs (valid args plus a member control).
+// Covered by SOURCE READING ONLY, no behavioural proof here: archive_treatment_image,
+// set_treatment_image_note, edit_client_pinned_note, reconcile_my_pending_invitation,
+// realtime.send (S1, hosted read), graphql_public.graphql (S2, hosted read).
+
 type J = Record<string, any>;
 let A: SeededStudio; // a real studio, so membership-gated functions reach their gate
 let M: { userId: string; practitionerId: string }; // member control
@@ -254,11 +265,38 @@ async function ownIdentityCensus() {
   const typeName = async (oid: number) => (await adminQuery("select format_type($1,null) t", [oid])).rows[0].t as string;
   const lit = (t: string): string =>
     t === "uuid" ? `'${randomUUID()}'::uuid` : t === "text" ? "'x'::text" : t === "boolean" ? "true" : ["integer", "smallint", "bigint"].includes(t) ? `1::${t}` : t === "jsonb" ? "'{}'::jsonb" : `null::${t}`;
+  // VALID-shape arguments against a REAL studio, so the call reaches its identity logic
+  // (own_practitioner_in_studio) instead of failing on argument shape. A member control
+  // must get a non-null result with the same arguments, which proves the shape is valid.
+  const validArgs: Record<string, string[]> = {
+    set_own_calendar_feed_token_hash: [`'${A.studioId}'::uuid`, `'${"a".repeat(64)}'::text`],
+    set_own_default_machine_frequency: [`'${A.studioId}'::uuid`, `'13.56 MHz'::text`],
+    set_own_default_machine: [`'${A.studioId}'::uuid`, `null::uuid`, `null::text`],
+    update_own_practitioner_profile: [`'${A.studioId}'::uuid`, `'Nsu Name'::text`, `'teal'::text`],
+  };
   const results: J[] = [];
   for (const f of fns) {
-    const args: string[] = [];
-    for (const ty of f.types) args.push(lit(await typeName(ty)));
+    const args = validArgs[f.proname as string];
+    if (!args) {
+      results.push({ fn: f.proname, verdict: "CHECK-ERROR:no-valid-args-defined" });
+      continue;
+    }
     const call = `select public.${f.proname}(${args.join(",")}) r`;
+    const control = await asJwt(M.userId, async (q) => {
+      await q("savepoint ctl");
+      try {
+        const r = await q(call);
+        return r.rows[0]?.r == null ? "CONTROL-FAILED:null" : "control-ok";
+      } catch (e) {
+        return "CONTROL-FAILED:" + ((e as { code?: string }).code ?? "?");
+      } finally {
+        await q("rollback to savepoint ctl");
+      }
+    });
+    if (control !== "control-ok") {
+      results.push({ fn: f.proname, verdict: "CHECK-ERROR:" + control });
+      continue;
+    }
     const verdict = await asJwt(S, async (q) => {
       await q("savepoint own");
       try {
@@ -311,9 +349,31 @@ describe("no-studio authenticated user: what can be reached", () => {
     // is privilege+RLS working, not reach.
     const rowsSeen = (v: string) => /"n":"?([1-9]\d*)/.test(v);
     const wroteRows = (v: string) => v.startsWith("ok:") && !/:0$/.test(v) && !/:$/.test(v);
+    const literalTrueSelect = new Set<string>(
+      (
+        await adminQuery(
+          `select schemaname||'.'||tablename t from pg_policies
+            where schemaname in ('public','storage') and cmd in ('SELECT','ALL')
+              and (roles::text like '%authenticated%' or roles::text like '%public%')
+              and coalesce(qual,'')='true'`,
+        )
+      ).rows.map((r: J) => r.t as string),
+    );
+    // Data-dependent facts (a row another suite happened to seed) are NOT pinned: the db lane
+    // runs every file on one database. They are asserted instead: a stranger may see rows only
+    // in a table whose SELECT policy is a literal true (itself pinned below), and no UPDATE or
+    // DELETE may land a row anywhere.
+    const leaks = tables
+      .filter((t) => {
+        const p = t.strangerProbes as Record<string, string>;
+        return (rowsSeen(p.select ?? "") && !literalTrueSelect.has(t.table)) || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
+      })
+      .map((t) => t.table as string);
+    // Structural, fixture-independent: the insert reached the table's own constraints, i.e. the
+    // policy admitted it (no BEFORE INSERT trigger ran ahead of RLS), or it simply landed.
     const reachableTables = tables.filter((t) => {
       const p = t.strangerProbes as Record<string, string>;
-      return rowsSeen(p.select ?? "") || (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && /^err:(23502|23503|23505|23514)$/.test(p.insert ?? "")) || wroteRows(p.update ?? "") || wroteRows(p.delete ?? "");
+      return (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && /^err:(23502|23503|23505|23514)$/.test(p.insert ?? ""));
     });
     // A constraint error on insert where a BEFORE trigger exists: neither reached nor refused.
     const insertIndeterminate = tables
@@ -346,6 +406,7 @@ describe("no-studio authenticated user: what can be reached", () => {
       functionsReachable: reachableFns,
       functionsReachableNoIdentityCheck: reachableFns.filter((f) => !f.bodyChecksIdentity && f.secdef),
       tablesReachable: reachableTables,
+      tableLeaks: leaks,
       unconditionalPolicies: unconditional,
       policiesWithoutMembershipHelper: noHelper,
       insertIndeterminateBeforeTrigger: insertIndeterminate,
@@ -376,14 +437,20 @@ describe("no-studio authenticated user: what can be reached", () => {
     expect(report.ownIdentity.some((r: J) => r.verdict === "ok-no-owned-rows"), "no own-identity call ran to the leak check").toBe(true);
   });
 
+  it("no table leaks a row or accepts an update/delete for a no-studio user (fixture-independent)", () => {
+    expect(report.tableLeaks, "a no-studio user saw rows in a table without a literal-true SELECT policy, or an UPDATE/DELETE landed").toEqual([]);
+  });
+
   it("pins the reachable set (skipped in report mode)", () => {
     if (process.env.HONE_CENSUS_REPORT === "1") return;
     const names = [
       ...report.functionsReachable.map((f: J) => `fn ${f.fn}`),
-      ...report.tablesReachable.map((t: J) => `tbl ${t.table}`),
+      ...report.tablesReachable.map((t: J) => `tbl-insert-admitted ${t.table}`),
       ...report.unconditionalPolicies.map((p: string) => `policy ${p}`),
       ...report.policiesWithoutMembershipHelper.map((p: string) => `nohelper ${p}`),
       ...report.insertIndeterminateBeforeTrigger.map((t: string) => `insert-indeterminate ${t}`),
+      ...report.tablesWithoutRls.map((t: string) => `rls-off ${t}`),
+      ...report.tablesNonMembershipPolicies.flatMap((t: J) => t.policies.map((p: string) => `nonmember ${t.table} ${p}`)),
     ].sort();
     // Services the CI db lane does not start (-x realtime,storage-api in ci.yml) have no
     // such functions; their pin is asserted only when the service is present.
@@ -461,8 +528,8 @@ const PINNED: string[] = [
   "policy public.machine_profile_field_contract machine_profile_field_contract_read [SELECT]",
   "policy public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT]",
   "policy public.waitlist waitlist_anonymous_insert [INSERT]",
-  "tbl public.demo_requests",
-  "tbl public.waitlist",
+  "tbl-insert-admitted public.demo_requests",
+  "tbl-insert-admitted public.waitlist",
   "nohelper public.demo_requests demo_requests_anonymous_insert [INSERT]",
   "nohelper public.electrolysis_entries electrolysis_entries: members insert [INSERT]",
   "nohelper public.electrolysis_entries electrolysis_entries: members select [SELECT]",
@@ -479,7 +546,17 @@ const PINNED: string[] = [
   "insert-indeterminate public.clients",
   "insert-indeterminate public.payment_charge_attempts",
   "insert-indeterminate public.service_practitioners",
-  "insert-indeterminate public.stripe_account_provisioning_attempts"
+  "insert-indeterminate public.stripe_account_provisioning_attempts",
+  "nonmember public.demo_requests demo_requests_anonymous_insert [INSERT] qual=null",
+  "nonmember public.electrolysis_entries electrolysis_entries: members select [SELECT] qual=session_is_visible(session_id)",
+  "nonmember public.electrolysis_entries electrolysis_entries: members insert [INSERT] qual=null",
+  "nonmember public.electrolysis_entries electrolysis_entries: members update [UPDATE] qual=session_is_visible(session_id)",
+  "nonmember public.laser_entries laser_entries: members select [SELECT] qual=session_is_visible(session_id)",
+  "nonmember public.laser_entries laser_entries: members insert [INSERT] qual=null",
+  "nonmember public.laser_entries laser_entries: members update [UPDATE] qual=session_is_visible(session_id)",
+  "nonmember public.machine_profile_field_contract machine_profile_field_contract_read [SELECT] qual=true",
+  "nonmember public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT] qual=true",
+  "nonmember public.waitlist waitlist_anonymous_insert [INSERT] qual=null"
 ];
 
 // S4: three functions returned a VALIDATION result for the census's fixture args,
@@ -491,16 +568,26 @@ const PINNED: string[] = [
 // rolled-back scratch copy of the function with that layer removed.
 // ---------------------------------------------------------------------------
 describe("S4: the settlement and admission-mode commands refuse a no-studio user at the membership/role check", () => {
-  type Call = { name: string; args: string; ownerCode: string; layers: Array<{ label: string; re: RegExp }> };
+  type Call = { name: string; args: string; ownerCode: string; layers: Array<{ label: string; re: RegExp }>; scalar?: boolean; noControl?: boolean };
   const CALLS: Call[] = [
     { name: "record_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, null, false`, ownerCode: "owner_only",
       layers: [{ label: "membership", re: /v_practitioner := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
     { name: "supersede_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, 'valid reason', null, false`, ownerCode: "not_owner",
       layers: [{ label: "membership", re: /v_practitioner := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
+    // Receptionist desk commands: gate is receptionist_actor_id(). No receptionist fixture exists
+    // here, so there is no "authorised caller passes" control; the proof is that the stranger is
+    // refused and that removing the gate changes the outcome.
+    { name: "receptionist_cancel_appointment", scalar: true, noControl: true, args: `'%S'::uuid, '${randomUUID()}'::uuid, 'valid reason'`, ownerCode: "not_authorized",
+      layers: [{ label: "desk", re: /if v_desk is null then/ }] },
+    { name: "receptionist_create_appointment", noControl: true, args: `'%S'::uuid, '%P'::uuid, '%C'::uuid, '${randomUUID()}'::uuid, now() + interval '3 days'`, ownerCode: "not_authorized",
+      layers: [{ label: "desk", re: /if v_desk is null then/ }] },
+    { name: "receptionist_move_appointment", noControl: true, args: `'%S'::uuid, '${randomUUID()}'::uuid, '%P'::uuid, now() + interval '3 days', now() + interval '3 days 1 hour', now() + interval '4 days'`, ownerCode: "not_authorized",
+      layers: [{ label: "desk", re: /if v_desk is null then/ }] },
     { name: "set_new_client_admission_mode", args: `'%S'::uuid, 'waitlist'`, ownerCode: "not_authorized",
       layers: [{ label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
   ];
-  const sqlFor = (c: Call) => `select (public.${c.name}(${c.args.replace("%S", A.studioId)})).* `;
+  const fill = (c: Call) => c.args.replace("%S", A.studioId).replace("%P", A.practitionerId).replace("%C", A.clientId);
+  const sqlFor = (c: Call) => (c.scalar ? `select public.${c.name}(${fill(c)}) r` : `select (public.${c.name}(${fill(c)})).* `);
   const first = (rows: J[]) => String(Object.values(rows[0] ?? {})[0]);
   const run = (userId: string, c: Call) =>
     asJwt(userId, async (q) => {
@@ -535,11 +622,13 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
   for (const c of CALLS) {
     it(`${c.name}: a stranger is refused by the membership/role check, the owner is not`, async () => {
       const stranger = await run(S, c);
-      const owner = await run(A.userId, c);
       expect(isRefusal(c, stranger), `stranger outcome: ${stranger}`).toBe(true);
       expect(stranger).not.toMatch(/invalid/);
-      expect(isRefusal(c, owner), `control: owner outcome ${owner}`).toBe(false);
-      expect(owner).not.toMatch(/^invalid/);
+      if (!c.noControl) {
+        const owner = await run(A.userId, c);
+        expect(isRefusal(c, owner), `control: owner outcome ${owner}`).toBe(false);
+        expect(owner).not.toMatch(/^invalid/);
+      }
     });
 
     it(`${c.name}: scratch copies with the check(s) removed no longer refuse the stranger (can fail)`, async () => {
