@@ -90,26 +90,36 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The 0274 desk directory's source hash, read from the migration file (frozen once applied) so the
-// reviewed-delegate pin follows the reviewed text. Absent file = no second delegate is allowed.
-function deskDirectorySha(): string | null {
-  const path = "supabase/migrations/0274_receptionist_desk_projection.sql";
-  if (!existsSync(path)) return null;
-  const src = readFileSync(path, "utf8");
-  const start = src.indexOf("create function public.receptionist_client_directory(");
-  if (start < 0) return null;
-  const open = src.indexOf("as $$", start) + "as $$".length;
-  const close = src.indexOf("$$;", open);
-  return createHash("sha256").update(src.slice(open, close), "utf8").digest("hex");
-}
-const DESK_DIRECTORY_SHA_VALUE = deskDirectorySha() ?? "absent";
-const DESK_DIRECTORY_SHA = `'${DESK_DIRECTORY_SHA_VALUE}'`;
-// 0280 (the name rule, unapplied) redefines the directory. Its reviewed body is pinned by an EXPLICIT constant, not read from the
-// file, so a change to that body fails here until the reviewers re-sign it. The 0274 pin above stays as the production definition.
-// sha256 of the $$ body of receptionist_client_directory in 0280_receptionist_name_rule.sql as reviewed at PR head 47904b8c1.
-const DESK_DIRECTORY_SHA_0280 = `'5ad2c10fe9f9a8e1cb887831f7f15e2a7ebdf02b500de0c6accca720e49ba0eb'`;
+// Literal reviewed hashes (Insurance PEER-1378-DESK-PIN, computed with this method at 47904b8c1). They are NOT derived from the
+// files: the file-derived hash is asserted equal to its literal below, so an edit to either migration fails and forces a re-review.
+const DESK_DIRECTORY_SHA_0274 = "b22ec40edbaad1a9dee2b5bdde1130caa7d5c646eed72998c0ca4a0e509572ef"; // the applied body
+const DESK_DIRECTORY_SHA_0280 = "5ad2c10fe9f9a8e1cb887831f7f15e2a7ebdf02b500de0c6accca720e49ba0eb"; // 0280 name rule (unapplied)
+const DESK_DIRECTORY_ALLOWED = [DESK_DIRECTORY_SHA_0274, DESK_DIRECTORY_SHA_0280];
+const DESK_0280_FILE = "supabase/migrations/0280_receptionist_name_rule.sql";
+// With 0280 in the chain the live body must be the 0280 one; the 0274 body is acceptable only on a chain without it.
+const DESK_DIRECTORY_EXPECTED = existsSync(DESK_0280_FILE) ? [DESK_DIRECTORY_SHA_0280] : [DESK_DIRECTORY_SHA_0274];
+const DESK_DIRECTORY_SHA = DESK_DIRECTORY_EXPECTED.map((h) => `'${h}'`).join(", ");
 const DESK_DIRECTORY_SIGNATURE =
   "'public.receptionist_client_directory(pg_catalog.uuid,pg_catalog.text,pg_catalog.text[],pg_catalog.text,pg_catalog.int4,pg_catalog.int4)'";
+
+describe("desk directory pin: reviewed literal hashes", () => {
+  const bodySha = (path: string): string | null => {
+    if (!existsSync(path)) return null;
+    const src = readFileSync(path, "utf8");
+    const start = src.search(/create (or replace )?function public\.receptionist_client_directory\(/);
+    if (start < 0) return null;
+    const open = src.indexOf("as $$", start) + "as $$".length;
+    return createHash("sha256").update(src.slice(open, src.indexOf("$$;", open)), "utf8").digest("hex");
+  };
+  it("the 0274 and 0280 file bodies equal their reviewed literals, so an edit to either forces a re-review", () => {
+    expect(bodySha("supabase/migrations/0274_receptionist_desk_projection.sql")).toBe(DESK_DIRECTORY_SHA_0274);
+    const sha0280 = bodySha(DESK_0280_FILE);
+    if (sha0280 !== null) expect(sha0280).toBe(DESK_DIRECTORY_SHA_0280);
+  });
+  it("the allowed set is exactly the two reviewed bodies", () => {
+    expect(DESK_DIRECTORY_ALLOWED).toEqual([DESK_DIRECTORY_SHA_0274, DESK_DIRECTORY_SHA_0280]);
+  });
+});
 
 describe("1. authorized assisted entry uses the governed draft command", () => {
   it("writes questionnaire answers AND the reserved provenance key", async () => {
@@ -521,7 +531,7 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         and p.proowner = (select w.proowner from pg_catalog.pg_proc w where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure) and p.provolatile = 's' and p.prokind = 'f'
         and p.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'plpgsql')
         and p.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
-        and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') in (${DESK_DIRECTORY_SHA}, ${DESK_DIRECTORY_SHA_0280})
+        and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') in (${DESK_DIRECTORY_SHA})
         and pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
         and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
         and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
@@ -554,7 +564,7 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     // On a chain without 0274 the directory function is absent; with it, it is the only addition.
     expect(names.every((n) => n === "receptionist_client_contacts" || n === "receptionist_client_directory")).toBe(true);
     const directory = rows.find((r) => bare(r.signature).startsWith("receptionist_client_directory("));
-    if (directory) expect([DESK_DIRECTORY_SHA_VALUE, DESK_DIRECTORY_SHA_0280.replaceAll("'", "")]).toContain(directory.sha);
+    if (directory) expect(DESK_DIRECTORY_EXPECTED).toContain(directory.sha);
   });
 
   it("additive0243 keeps legacy writes available and invalidates stale CAS before later0248 closure", async () => {
