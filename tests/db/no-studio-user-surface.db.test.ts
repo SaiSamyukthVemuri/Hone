@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
+import { Client } from "pg";
 import {
   adminQuery,
   asUser,
+  resolveLocalDbUrl,
   closePool,
   seedMember,
   seedStudio,
@@ -406,3 +408,88 @@ const PINNED: string[] = [
   "policy public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT]",
   "policy public.waitlist waitlist_anonymous_insert [INSERT]"
 ];
+
+// ---------------------------------------------------------------------------
+// S4: three functions returned a VALIDATION result for the census's fixture args,
+// so the census alone did not prove they refuse a stranger. Here the arguments
+// are valid in shape (a real studio with a real owner), and the refusal must be
+// the OWNER/MEMBERSHIP result, not a validation one. Control: the real owner gets
+// a different result (the gate passed). Proof of sensitivity: a rolled-back
+// scratch copy of each function with the owner check removed no longer refuses.
+// ---------------------------------------------------------------------------
+// S4: three functions returned a VALIDATION result for the census's fixture args,
+// so the census alone did not prove they refuse a stranger. Here the arguments
+// are valid in shape (a real studio with a real owner). The two settlement
+// commands have TWO layers: session_actor_practitioner (raises for a non-member)
+// and then is_studio_owner (closed 'owner_only' / 'not_owner'). The admission-mode
+// command has the owner layer only ('not_authorized'). Each layer is proven by a
+// rolled-back scratch copy of the function with that layer removed.
+// ---------------------------------------------------------------------------
+describe("S4: the settlement and admission-mode commands refuse a no-studio user at the membership/role check", () => {
+  type Call = { name: string; args: string; ownerCode: string; layers: Array<{ label: string; re: RegExp }> };
+  const CALLS: Call[] = [
+    { name: "record_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, null, false`, ownerCode: "owner_only",
+      layers: [{ label: "membership", re: /v_practitioner := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
+    { name: "supersede_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, 'valid reason', null, false`, ownerCode: "not_owner",
+      layers: [{ label: "membership", re: /v_practitioner := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
+    { name: "set_new_client_admission_mode", args: `'%S'::uuid, 'waitlist'`, ownerCode: "not_authorized",
+      layers: [{ label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
+  ];
+  const sqlFor = (c: Call) => `select (public.${c.name}(${c.args.replace("%S", A.studioId)})).* `;
+  const first = (rows: J[]) => String(Object.values(rows[0] ?? {})[0]);
+  const run = (userId: string, c: Call) =>
+    asJwt(userId, async (q) => {
+      await q("savepoint x");
+      try { return first((await q(sqlFor(c))).rows); }
+      catch (e) { return `raised:${(e as Error).message}`; }
+      finally { await q("rollback to savepoint x"); }
+    });
+  const isRefusal = (c: Call, r: string) => r === c.ownerCode || /^raised:(Inactive practitioners|An authenticated practitioner)/.test(r);
+  const scratchRun = async (c: Call, remove: RegExp[]) => {
+    const def = (await adminQuery(`select pg_get_functiondef(p.oid) d from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=$1`, [c.name])).rows[0].d as string;
+    let scratch = def;
+    for (const re of remove) {
+      expect(scratch, `layer ${re} must be present (else this probe is stale)`).toMatch(re);
+      scratch = scratch.replace(re, (m) => (m.startsWith("if ") ? "if false then" : "v_practitioner := null;"));
+    }
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    try {
+      await client.query("begin");
+      await client.query(scratch);
+      await client.query("set local role authenticated");
+      await client.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
+      await client.query("savepoint y");
+      return await client.query(sqlFor(c)).then((x) => first(x.rows), (e) => `raised:${(e as Error).message}`);
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      await client.end();
+    }
+  };
+
+  for (const c of CALLS) {
+    it(`${c.name}: a stranger is refused by the membership/role check, the owner is not`, async () => {
+      const stranger = await run(S, c);
+      const owner = await run(A.userId, c);
+      expect(isRefusal(c, stranger), `stranger outcome: ${stranger}`).toBe(true);
+      expect(stranger).not.toMatch(/invalid/);
+      expect(isRefusal(c, owner), `control: owner outcome ${owner}`).toBe(false);
+      expect(owner).not.toMatch(/^invalid/);
+    });
+
+    it(`${c.name}: scratch copies with the check(s) removed no longer refuse the stranger (can fail)`, async () => {
+      const owner = c.layers.find((l) => l.label === "owner")!;
+      const membership = c.layers.find((l) => l.label === "membership");
+      if (membership) {
+        // Membership layer removed alone: the owner layer must still refuse (defence in depth).
+        expect(await scratchRun(c, [membership.re])).toBe(c.ownerCode);
+      }
+      // All layers removed: the stranger is no longer refused.
+      const none = await scratchRun(c, c.layers.map((l) => l.re));
+      expect(isRefusal(c, none), `with every check removed the stranger got: ${none}`).toBe(false);
+      // The real function is unchanged after the rollback.
+      expect(isRefusal(c, await run(S, c))).toBe(true);
+      void owner;
+    });
+  }
+});
