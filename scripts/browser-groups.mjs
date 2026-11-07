@@ -409,6 +409,8 @@ export const BROWSER_GROUPS = {
       // practitioner (fake Resend capture ledger) and the detail page names them.
       "assigned-practitioner-mail.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
+      // Published service prices follow the studio control (#1375): a practitioner books and moves, and the price shows while ON.
+      "owner-only-prices-calendar.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
       "practitioner-reassignment-studio-b.spec.ts",
       "practitioner-schedule-owner.spec.ts",
