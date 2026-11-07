@@ -21,7 +21,7 @@ describe("readAllPages", () => {
     const { page, calls } = store(all, 1000);
     const out = await readAllPages(page, { pageSize: 1000 });
     expect(out).toEqual(all);
-    expect(calls).toEqual([null, "01000", "02000"]);
+    expect(calls).toEqual([null, "01000", "02000", "02500"]);
   });
   it("an exact multiple of the page size needs one more (empty) read to know it is done", async () => {
     const all = rows(2000);
@@ -29,8 +29,10 @@ describe("readAllPages", () => {
     expect(await readAllPages(page, { pageSize: 1000 })).toEqual(all);
     expect(calls).toHaveLength(3);
   });
-  it("a short or empty first page is complete", async () => {
-    expect(await readAllPages(store(rows(3), 1000).page, { pageSize: 1000 })).toEqual(rows(3));
+  it("a short or empty first page is complete, but only an EMPTY page ends the read", async () => {
+    const short = store(rows(3), 1000);
+    expect(await readAllPages(short.page, { pageSize: 1000 })).toEqual(rows(3));
+    expect(short.calls).toEqual([null, "00003"]);
     expect(await readAllPages(store([], 1000).page, { pageSize: 1000 })).toEqual([]);
   });
   it("fails closed (null, not partial rows) on a read error mid-way", async () => {
@@ -54,6 +56,20 @@ describe("readAllPages", () => {
   });
   it("fails closed if a page returns more rows than the page size", async () => {
     expect(await readAllPages(() => Promise.resolve({ data: rows(3), error: null }), { pageSize: 2 })).toBeNull();
+  });
+  it("Insurance P-1: a server cap BELOW pageSize (max_rows 500 vs 1000) still returns every row", async () => {
+    const all = rows(2500);
+    const { page } = store(all, 500); // the server silently caps every response at 500
+    expect(await readAllPages(page, { pageSize: 1000 })).toEqual(all);
+  });
+  it("Privacy Q-5: a repeated or out-of-order id fails closed instead of printing a row twice", async () => {
+    const dup = [{ id: "a" }, { id: "b" }, { id: "b" }];
+    expect(await readAllPages(() => Promise.resolve({ data: dup, error: null }), { pageSize: 10 })).toBeNull();
+    const unordered = [{ id: "b" }, { id: "a" }];
+    expect(await readAllPages(() => Promise.resolve({ data: unordered, error: null }), { pageSize: 10 })).toBeNull();
+    // A page function that ignores the cursor and re-serves page one.
+    let n = 0;
+    expect(await readAllPages(() => Promise.resolve({ data: n++ === 0 ? [{ id: "a" }, { id: "b" }] : [{ id: "b" }, { id: "c" }], error: null }), { pageSize: 10 })).toBeNull();
   });
   it("anti-vacuity: a single unpaged read of the same store drops rows, which is what this guards against", async () => {
     const all = rows(2500);

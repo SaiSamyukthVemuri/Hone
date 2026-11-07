@@ -68,7 +68,7 @@ export type SelectableSession = {
 export type SelectedDay<T extends SelectableSession> =
   | { kind: "empty"; day: string; clientId: string }
   // The day's bounds could not be resolved (bad timezone/date). NOT an empty day.
-  | { kind: "unavailable"; day: string; clientId: string; reason: "unresolvable_day" }
+  | { kind: "unavailable"; day: string; clientId: string; reason: "unresolvable_day" | "malformed_rows" | "missing_scope" }
   | { kind: "sessions"; day: string; clientId: string; sessions: T[] };
 
 /**
@@ -82,6 +82,21 @@ export function selectSessionsForDay<T extends SelectableSession>(
   sessions: readonly T[],
   scope: { studioId: string; clientId: string; day: string; timezone: string },
 ): SelectedDay<T> {
+  // An empty scope id would match nothing and read as an empty day.
+  if (scope.studioId.length === 0 || scope.clientId.length === 0) {
+    return { kind: "unavailable", day: scope.day, clientId: scope.clientId, reason: "missing_scope" };
+  }
+  // A row the query forgot a column on (undefined deleted_at / ids / started_at)
+  // is MALFORMED DATA, not an absent treatment: answering "empty" would be a false
+  // clinical statement (Privacy Q-3). Refuse the whole selection instead.
+  for (const s of sessions) {
+    if (
+      typeof s.id !== "string" || typeof s.studio_id !== "string" || typeof s.client_id !== "string" ||
+      typeof s.started_at !== "string" || s.deleted_at === undefined
+    ) {
+      return { kind: "unavailable", day: scope.day, clientId: scope.clientId, reason: "malformed_rows" };
+    }
+  }
   const bounds = selectedDayBounds(scope.day, scope.timezone);
   if (bounds === null) {
     return { kind: "unavailable", day: scope.day, clientId: scope.clientId, reason: "unresolvable_day" };

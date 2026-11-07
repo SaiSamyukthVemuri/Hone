@@ -94,6 +94,24 @@ describe("unresolvable day or timezone is unavailable, never empty", () => {
   });
 });
 
+describe("malformed input is unavailable, never an empty day (Privacy Q-3, Q-6)", () => {
+  it("a row missing deleted_at, ids or started_at refuses the whole selection", () => {
+    const good = s("g", "2026-05-10T15:00:00.000Z");
+    const noDeleted = { ...good, id: "nd" } as Record<string, unknown>;
+    delete noDeleted.deleted_at;
+    for (const bad of [noDeleted, { ...good, started_at: undefined }, { ...good, client_id: undefined }, { ...good, studio_id: undefined }]) {
+      const r = selectSessionsForDay([good, bad as unknown as SelectableSession], scope("2026-05-10"));
+      expect(r.kind).toBe("unavailable");
+      expect(r.kind === "unavailable" && r.reason).toBe("malformed_rows");
+    }
+  });
+  it("an empty studio or client id is unavailable", () => {
+    const rows = [s("x", "2026-05-10T15:00:00.000Z")];
+    expect(selectSessionsForDay(rows, { ...scope("2026-05-10"), clientId: "" }).kind).toBe("unavailable");
+    expect(selectSessionsForDay(rows, { ...scope("2026-05-10"), studioId: "" }).kind).toBe("unavailable");
+  });
+});
+
 describe("selectSessionsForDay: midnight boundaries", () => {
   const day = "2026-05-10"; // [04:00Z, next 04:00Z) in Toronto
   it("includes the first instant of the local day and excludes the last instant of the previous one", () => {
