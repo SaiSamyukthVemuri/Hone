@@ -156,6 +156,10 @@ test.describe("self-serve signup is dark by default (HON-70)", () => {
     page,
   }) => {
     test.skip(!FLAG_ON, "needs the server started with HONE_SELF_SERVE_CHECKOUT_ENABLED=true");
+    // Before ANY navigation: the configured target is the owned local stack's app origin.
+    // (playwright.config.ts loads e2e/helpers/local-env.ts, whose paired-target guard #879
+    // refuses anything else before a test runs; this fails first if a run is mis-pointed.)
+    expect(new URL(String(test.info().project.use.baseURL)).origin).toBe(E2E_APP_ORIGIN);
     await page.goto("/pricing");
     const hrefs = await page.locator('a[href^="/signup"]').evaluateAll((els) =>
       els.map((e) => e.getAttribute("href")),

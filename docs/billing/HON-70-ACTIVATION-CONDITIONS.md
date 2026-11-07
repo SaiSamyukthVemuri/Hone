@@ -55,6 +55,8 @@ Where the flag is defined: `isSelfServeCheckoutEnabled` in `lib/subscriptions/pl
   Inc (US) Stripe account before any real signup; use the verified email.
 * S-3: entitlement binds on the Hone user id, never an email fallback.
 * The exact-path public entry for `/api/billing/webhook` is in place (Codex P2 4500263864).
+* G-1 (Privacy): test-mode key only until a separate live approval; the allow-list does not encode test mode.
+* K-2 (Insurance): the owned-stack flag-on run is recorded as evidence before activation.
 
 ## Persistence milestone (migration, T3, its own reviews)
 * Unique Stripe event id plus ONE atomic command (insert-or-skip, apply only when inserted); the stale
