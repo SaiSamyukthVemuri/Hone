@@ -25,11 +25,18 @@ export type ArmDeps = {
   clearTimer: (handle: unknown) => void;
 };
 
-export async function printWithAudit(deps: ArmDeps): Promise<{ ok: boolean }> {
+/**
+ * `reason` tells the caller WHICH step failed, so the message is true: a refused
+ * audit means nothing was recorded; a print failure means the print WAS recorded
+ * and only the browser dialog could not open (Insurance F-5).
+ */
+export type PrintOutcome = { ok: true } | { ok: false; reason: "audit_failed" | "print_failed" };
+
+export async function printWithAudit(deps: ArmDeps): Promise<PrintOutcome> {
   const recorded = await deps.record().catch(() => ({ ok: false }));
   if (!recorded.ok) {
     deps.disarm();
-    return { ok: false };
+    return { ok: false, reason: "audit_failed" };
   }
 
   let done = false;
@@ -50,7 +57,7 @@ export async function printWithAudit(deps: ArmDeps): Promise<{ ok: boolean }> {
     deps.print();
   } catch {
     finish();
-    return { ok: false };
+    return { ok: false, reason: "print_failed" };
   }
   return { ok: true };
 }

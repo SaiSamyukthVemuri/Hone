@@ -75,20 +75,22 @@ describe("printWithAudit: one print per audited click", () => {
 describe("printWithAudit: every failure path leaves the document unarmed", () => {
   it("a refused audit never arms or prints", async () => {
     const b = browser({ recordOk: false });
-    expect(await printWithAudit(b.deps)).toEqual({ ok: false });
+    expect(await printWithAudit(b.deps)).toEqual({ ok: false, reason: "audit_failed" });
     expect(b.log).not.toContain("arm");
     expect(b.log).not.toContain("print");
     expect(b.browserPrintShowsRecord()).toBe(false);
   });
   it("a thrown audit action never arms or prints", async () => {
     const b = browser({ record: () => Promise.reject(new Error("net")) });
-    expect(await printWithAudit(b.deps)).toEqual({ ok: false });
+    expect(await printWithAudit(b.deps)).toEqual({ ok: false, reason: "audit_failed" });
     expect(b.log).not.toContain("arm");
     expect(b.log).not.toContain("print");
   });
   it("if window.print throws, the arm is removed at once", async () => {
     const b = browser({ printThrows: true });
-    expect(await printWithAudit(b.deps)).toEqual({ ok: false });
+    // F-5: the audit SUCCEEDED, so the reason must not say it did not.
+    expect(await printWithAudit(b.deps)).toEqual({ ok: false, reason: "print_failed" });
+    expect(b.log).toContain("record");
     expect(b.browserPrintShowsRecord()).toBe(false);
     expect(b.state.listeners.size).toBe(0);
     expect(b.state.timers.size).toBe(0);

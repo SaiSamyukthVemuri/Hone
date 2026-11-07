@@ -38,6 +38,7 @@ export const PACKET_EXCLUSIONS: readonly string[] = [
   "Intake forms, medical history and consent forms",
   "Photos and treatment images",
   "The session-level next-session planning note",
+  "The \"caution for next session\" flag on an area (the area's caution note itself is included)",
   "Deleted sessions, settings blocks and entries",
 ];
 

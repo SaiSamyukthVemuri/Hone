@@ -17,10 +17,10 @@ function packetDocument(): Element | null {
 
 export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId: string; day: string; previewAuditId: string }) {
   const [pending, startTransition] = useTransition();
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<null | "audit_failed" | "print_failed">(null);
 
   function onPrint() {
-    setFailed(false);
+    setFailed(null);
     startTransition(async () => {
       const res = await printWithAudit({
         record: () => recordDayPacketPrintAction({ clientId, day, previewAuditId }),
@@ -34,7 +34,7 @@ export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId
         setTimer: (cb, ms) => window.setTimeout(cb, ms),
         clearTimer: (h) => window.clearTimeout(h as number),
       });
-      if (!res.ok) setFailed(true);
+      if (!res.ok) setFailed(res.reason);
     });
   }
 
@@ -49,9 +49,14 @@ export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId
       >
         {pending ? "Recording print…" : "Print"}
       </button>
-      {failed && (
+      {failed === "audit_failed" && (
         <p role="alert" className="text-xs text-red-700">
           Could not record this print in the audit log, so nothing was printed. Reload the page and try again.
+        </p>
+      )}
+      {failed === "print_failed" && (
+        <p role="alert" className="text-xs text-red-700">
+          This print was recorded in the audit log, but the browser could not open the print dialog. Press Print to try again; that is recorded again.
         </p>
       )}
     </div>
