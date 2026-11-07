@@ -1,9 +1,11 @@
 # 0302: finance M1, owner-only card summaries and owner-only service writes (HON-44)
 
-**Status: AUTHORED, NOT APPLIED (held).**
+**Status: APPLIED to production 2026-11-07 (read-back 16:32:02Z-16:32:05Z, APPLIED+VERIFIED).**
 `supabase/migrations/0302_finance_m1_owner_only_cards_and_service_writes.sql`.
-The hosted apply needs Sam's approval in his own words. This file is the proof the
-migration relies on. It is evidence and argument, not apply authority.
+The apply was Sam's own-words decision; the record is in `docs/production/migration-ledger.md`
+and `docs/production/migration-state.json`. This file is the proof the migration relied on. It is
+evidence and argument, not apply authority, and it was written before the apply. The migration
+is frozen; the down file was not applied.
 
 ## What it changes
 

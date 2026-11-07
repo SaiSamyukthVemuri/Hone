@@ -15,7 +15,32 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-11-06T22:58:42Z-22:58:47Z, post-0301 apply; `0301` APPLIED above the hosted max `0300`, `0298` APPLIED OUT OF ORDER earlier the same day, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+## Current state (verified 2026-11-07T16:32:02Z-16:32:05Z, post-0302 apply; `0302` APPLIED above the hosted max `0301`, `0298` APPLIED OUT OF ORDER on 2026-11-06, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0302`, with `0281` applied below the max (declared in `hosted_out_of_order`), and the same unhosted gaps as the previous state. This tree carries the `0301` file (#1369, which this change is stacked on) and the `0302` file; both were hosted before either file reached the production branch.** The `0298` caveat in the previous state is unchanged.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0302**, declared in `docs/production/migration-state.json`. Read back 2026-11-07T16:32:02Z-16:32:05Z: APPLIED+VERIFIED as recorded by OPS: 259 history rows, max 0302, `0302` exactly once, version-set md5 `8c9d00e31dcbecaf1551a45b6df8f58b`; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
+| **Repo migration max** | **0302** (`0302_finance_m1_owner_only_cards_and_service_writes.sql`), derived from the source files on this tree; the file is present at the applied bytes (sha256 `2db0c9704b7bf1b5bc5a78dbc2d33788bef04700040d3e4dccbe0e4228d706ad`). |
+| **Next free number** | Next free number is **0303** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0302 apply (facts as recorded by OPS, 2026-11-07; `01-ops/RECORD-0302-APPLIED-20261107.md`)
+
+- **What it is.** Finance M1: `client_payment_methods` SELECT becomes owner-only, and `services` INSERT and UPDATE become owner-only, on the direct Data-API (user-token) path. Policies and one table comment only: no grant, function, trigger or data change.
+- **What it does not do.** Readers that use the service-role client are gated in code and are unaffected (H-1 is open). `services` stays member-readable until M3. Card brand and last4 remain readable to members through `practitioner_notifications` (held, #1290; F10). It is not an owner-only claim about the product.
+- **Authorization.** Sam's own words in chat on 2026-11-07, recorded by OPS in `01-ops/ROLES-DECISIONS-LOG.md`: ONE plain push of 0302 from `stage-0302-b00-mac`, then the read-back and reconcile. It excludes the undo file, 0303 and later, any settings change and any retry.
+- **Order and run.** One plain `db push` of one file, no `--include-all`; 0302 is above the previous hosted max, so it was not applied out of order. Part A read-only reads 30/30 (verified by Machines and OPS; Privacy RD-2 PASS); four pre-push reads OK; first APPLY 16:31:22Z; the dry run at 16:31:25Z listed exactly `0302_finance_m1_owner_only_cards_and_service_writes.sql`; second APPLY 16:32:01Z; exit 0; no settings write. The dry-run listing is evidenced by Sam's transcript; the `dry-run.log` body was not pasted (log sha256 prefix `b811be96`).
+- **Package.** Apply script `d2e6d38e…`, conf `f19047f8…`, bundle `49cff8e2…` (259 files, list `f5f748e9…`), runner `471ecb9d…`; pinned CLI v2.102.0 (full values in `hosted_note`).
+- **Read-back.** 2026-11-07T16:32:02Z-16:32:05Z: OVERALL PASS, seven checks. History 259 rows, max 0302, once, md5 `8c9d00e3…`; catalog fingerprint `26665601e6488a03cabad8d9771e1776` (4187 entries); `client_payment_methods` has exactly one policy (owner select); `services` has member select and owner insert and update; table privileges, RLS, the two helpers and 16 function bodies unchanged; comment md5 `114ee102…`.
+- **Written closeout.** Machines' independent verifier 69/69 with a negative control that fails; Insurance post-apply PASS; Privacy "no objection to staging 0303 on this item", which is not a blanket PASS (it rests on the catalog and privilege read and the runner's comparator for the 16 function bodies, which Privacy did not recompute).
+- **Not captured.** Any server-side apply instant and statement-level timing. Migration history is not table-content evidence.
+- **Rollback.** The 0302 down file restores the three member policies. It was not applied and its application is a separate decision.
+- **Release.** This change carries the 0302 file behind #1369's 0301 file. No application code ships with 0302.
+- **New base for every later stage.** 259 rows, max 0302, version-set md5 `8c9d00e3…`, catalog `26665601…`.
+
+## Previous state (verified 2026-11-06T22:58:42Z-22:58:47Z, post-0301 apply; `0301` APPLIED above the hosted max `0300`, `0298` APPLIED OUT OF ORDER earlier the same day, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
 > **CURRENT RELATIONSHIP: repo == hosted at `0301`, with `0281` applied below the max (declared in `hosted_out_of_order`), and `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0280`, `0282`-`0296`, `0298` and `0299` declared unhosted. `0298` WAS ALSO APPLIED out of order on 2026-11-06 at 17:35:59Z (one `--include-all` push, read-back PASS, reconciled via the approved substitute script `45c83d4a`), but its structured `hosted_out_of_order` entry lands with #1357, which carries the file: until that merges the structured lists in this tree lag hosted for `0298`, and `0298` remains in the unhosted lists there.** The single sealed migration `0301_session_block_machine_identity.sql` (sha256 `4642153b373a495baec733fee76493377bad8e74dca5d412aa1728046a080998`) was APPLIED to production by ONE plain push of one file, by Sam under his own-words authorization (`01-ops/SAM-AUTHORIZATION-0301-b12-20261106T224831Z.txt`). Carrier PR #1369, frozen at head `5ae0b9bbe0436d6879233198546d43ceff3e54bf` at the apply; stage `stage-0301-b12-mac`, `SHA256SUMS.txt` sha256 `3eec77de3e23074b6623367c22c1db95792a9ef22cbaabf965c764b1d185bc22`.
 

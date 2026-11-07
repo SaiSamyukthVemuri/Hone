@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax } from "./helpers/migration-state";
@@ -25,6 +26,12 @@ describe("0302 migration state", () => {
   it("is the repository maximum and consumes exactly one number", () => {
     expect(isRepoMax("0302")).toBe(true);
     expect(countVersion("0302")).toBe(1);
+  });
+
+  it("is byte-identical to the file applied to production (sealed sha256)", () => {
+    // 0302 was applied on 2026-11-07 from the sealed file; an applied migration is frozen.
+    const sha = createHash("sha256").update(readFileSync(join(ROOT, MIG_PATH))).digest("hex");
+    expect(sha).toBe("2db0c9704b7bf1b5bc5a78dbc2d33788bef04700040d3e4dccbe0e4228d706ad");
   });
 
   it("its rollback is not in the migrations directory", () => {
