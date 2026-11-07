@@ -142,7 +142,10 @@ export async function resolveAppointmentQuotedAmountCents(
   studioId: string,
   appointmentId: string,
   studioTimezone: string,
+  viewerIsOwner: boolean,
 ): Promise<number | null> {
+  // Closed refusal BEFORE any read: a non-owner gets no quote.
+  if (viewerIsOwner !== true) return null;
   const supabase = await createClient();
   const { data: appt, error: apptError } = await supabase
     .from("appointments")
@@ -159,8 +162,9 @@ export async function resolveAppointmentQuotedAmountCents(
   if (!svc?.name) return null;
 
   const clientId = (appt as { client_id: string | null }).client_id;
-  // 0303: client_pricing is owner-only through the Data API, so this read uses the service role. Membership is
-  // already proven by the user-client reads above (RLS-scoped, same studio); the filters below pin studio and client.
+  // client_pricing becomes owner-only through the Data API (0303), so this read uses the service role. Membership
+  // and scope are proven by the RLS-scoped reads above (same studio; the client comes from that row, never from an
+  // argument). OWNERSHIP is this function's own `viewerIsOwner` refusal at the top, not the scoped reads.
   const { data: pricingRows, error: pricingError } = clientId
     ? await createAdminClient()
         .from("client_pricing")

@@ -86,6 +86,7 @@ const ARGS = {
   studioId: "studio-1",
   sessionId: "sess-1",
   studioTimezone: "America/Toronto",
+  viewerIsOwner: true,
 };
 
 beforeEach(() => {

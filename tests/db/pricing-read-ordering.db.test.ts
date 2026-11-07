@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // The billing loaders read client_pricing on the service role AFTER an RLS-scoped user-JWT read of the
-// appointment proves membership and scope (see tests/lib/billing/pricing-service-role-ordering.test.ts for the
+// appointment proves membership and scope (ownership is each loader's own viewerIsOwner refusal) (see tests/lib/billing/pricing-service-role-ordering.test.ts for the
 // loader-level ordering). This runs that exact two-step shape against the REAL migrated chain with real JWTs:
 //   step 1  as the caller:   select the appointment (RLS)         -> found only for a member of that studio
 //   step 2  service role:    select client_pricing by studio+client, ONLY if step 1 found a row
@@ -60,7 +60,7 @@ describe("service-role pricing read after a scoped membership read", () => {
   it("the owner gets the custom price", async () => {
     expect(await priceFor(studio.userId, apptId)).toBe(7000);
   });
-  it("an authorised non-owner practitioner of the studio gets the custom price", async () => {
+  it("a non-owner practitioner of the same studio passes the scoped read, so the service-role step returns the price (the loaders' owner refusal, not this step, keeps them out today)", async () => {
     expect(await priceFor(member.userId, apptId)).toBe(7000);
   });
   it("another studio's owner gets no price (the scoped read finds nothing)", async () => {

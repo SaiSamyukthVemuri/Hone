@@ -56,27 +56,50 @@ beforeEach(() => {
 describe("resolveAppointmentQuotedAmountCents", () => {
   it("missing or other-studio appointment (scoped read returns nothing): no price, service role never asked", async () => {
     h.user.appointments = { data: null, error: null };
-    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC")).toBeNull();
+    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC", true)).toBeNull();
     expect(h.adminCalls).toEqual([]);
   });
 
   it("a failed scoped read: no price, service role never asked", async () => {
     h.user.appointments = { data: null, error: { code: "42501" } };
-    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC")).toBeNull();
+    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC", true)).toBeNull();
     expect(h.adminCalls).toEqual([]);
   });
 
   it("a visible appointment: the service-role read is pinned to studio AND client and returns the custom price", async () => {
     h.user.appointments = { data: { id: APPT, client_id: CLIENT, duration_minutes: 60, service: { name: "Cut", price_cents: 5000 } }, error: null };
-    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC")).toBe(7000);
+    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC", true)).toBe(7000);
     expect(h.adminCalls).toHaveLength(1);
     expect(h.adminCalls[0].table).toBe("client_pricing");
     expect(h.adminCalls[0].eqs).toEqual([["studio_id", STUDIO], ["client_id", CLIENT]]);
   });
 });
 
+describe("a non-owner viewer is refused before ANY read (prices and the owner's pricing notes are owner-only)", () => {
+  it("resolveAppointmentQuotedAmountCents: null, no user read, no service-role read", async () => {
+    h.user.appointments = { data: { id: APPT, client_id: CLIENT, duration_minutes: 60, service: { name: "Cut", price_cents: 5000 } }, error: null };
+    expect(await resolveAppointmentQuotedAmountCents(STUDIO, APPT, "UTC", false)).toBeNull();
+    expect(h.adminCalls).toEqual([]);
+  });
+
+  it("getAuthoritativeSessionPaymentAmount: closed owner_only refusal, nothing else returned (no amount, no customPricingNote)", async () => {
+    h.user.sessions = { data: { id: SESSION, client_id: CLIENT, appointment_id: APPT, deleted_at: null }, error: null };
+    h.user.appointments = { data: { id: APPT, duration_minutes: 60, service: { name: "Cut", price_cents: 5000 } }, error: null };
+    h.adminRows = [{ service_name: "Cut", price_cents: 7000, notes: "owner-only note", effective_from: "2026-01-01" }];
+    const r = await getAuthoritativeSessionPaymentAmount({ studioId: STUDIO, sessionId: SESSION, studioTimezone: "UTC", viewerIsOwner: false });
+    expect(r).toEqual({ ok: false, failure: { kind: "owner_only" } });
+    expect(JSON.stringify(r)).not.toContain("owner-only note");
+    expect(h.adminCalls).toEqual([]);
+  });
+
+  it("a missing or non-boolean viewer is also refused (the check is strict, not truthy)", async () => {
+    const r = await getAuthoritativeSessionPaymentAmount({ studioId: STUDIO, sessionId: SESSION, studioTimezone: "UTC", viewerIsOwner: "yes" as unknown as boolean });
+    expect(r).toEqual({ ok: false, failure: { kind: "owner_only" } });
+  });
+});
+
 describe("getAuthoritativeSessionPaymentAmount", () => {
-  const args = { studioId: STUDIO, sessionId: SESSION, studioTimezone: "UTC" };
+  const args = { studioId: STUDIO, sessionId: SESSION, studioTimezone: "UTC", viewerIsOwner: true };
 
   it("session not visible (other studio / missing): fails closed, service role never asked", async () => {
     h.user.sessions = { data: null, error: null };

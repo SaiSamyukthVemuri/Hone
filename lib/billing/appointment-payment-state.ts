@@ -235,8 +235,9 @@ async function getFreeAppointmentIds(
     serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
   }
 
-  // 0303: client_pricing is owner-only through the Data API, so this read uses the service role. Membership is
-  // already proven by the user-client reads above (RLS-scoped, same studio); the filters below pin studio and client.
+  // client_pricing becomes owner-only through the Data API (0303), so this read uses the service role. Membership
+  // and scope are proven by the RLS-scoped reads above (same studio; the client comes from that row, never from an
+  // argument). OWNERSHIP is getAppointmentPaymentStates' `viewerIsOwner` refusal, which runs before this loader is reached.
   const { data: pricingRows, error: pricingError } = clientIds.length
     ? await createAdminClient()
         .from("client_pricing")
