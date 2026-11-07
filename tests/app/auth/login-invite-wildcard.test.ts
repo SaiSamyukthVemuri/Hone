@@ -84,14 +84,17 @@ describe("invite-only signup gate: the typed address is matched LITERALLY, case-
     await requestPractitionerMagicLinkAction("alicexsmith@example.com");
     expect(lastOptions().shouldCreateUser).toBe(false);
   });
-  it("a FULL candidate page (50 lookalikes + the real invite) is inconclusive: signup stays off", async () => {
-    h.invites = [
-      ...Array.from({ length: 49 }, (_, n) => ({ id: `f${n}`, email: `bob${String(n).padStart(2, "0")}jones@example.com`, status: "pending" })),
-      { id: "i9", email: "bob*jones@example.com", status: "pending" },
-    ];
-    await requestPractitionerMagicLinkAction("bob**jones@example.com");
+  // Typed bob*jones@ is sent as bob_jones@: it matches every distinct one-character lookalike and the stored bob*jones@ itself.
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789-.+=~!#$&'^`{}|".split("").filter((c) => c !== "_" && c !== "*");
+  const oneChar = (n: number) => chars.slice(0, n).map((c, i) => ({ id: `o${i}`, email: `bob${c}jones@example.com`, status: "pending" }));
+  const real = { id: "r1", email: "bob*jones@example.com", status: "pending" };
+  it("49 one-character lookalikes + the exact bob*jones@ = a FULL page of 50 that holds the exact row: inconclusive, signup off", async () => {
+    h.invites = [...oneChar(49), real];
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
     expect(lastOptions().shouldCreateUser).toBe(false);
-    h.invites = h.invites.slice(1);
+  });
+  it("48 lookalikes + the exact row = 49 rows, not full: the exact row is found and signup is allowed", async () => {
+    h.invites = [...oneChar(48), real];
     await requestPractitionerMagicLinkAction("bob*jones@example.com");
     expect(lastOptions().shouldCreateUser).toBe(true);
   });
