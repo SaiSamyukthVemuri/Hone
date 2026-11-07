@@ -19,6 +19,7 @@
 // studio-member RLS applies on top of the filters here.
 
 import type { BlockArea } from "@/lib/sessions/block-areas";
+import { SETUP_READING_COLUMNS, type PacketSetupReadingSource } from "@/lib/records/print/machine-settings";
 import { readAllPages } from "@/lib/records/print/paging";
 import { selectedDayBounds, selectSessionsForDay } from "@/lib/records/print/selected-day";
 import type {
@@ -90,6 +91,7 @@ export type DayPacketLoad =
         blockAreasById: Map<string, BlockArea[]>;
         entries: PacketEntrySource[];
         laserEntries: PacketLaserSource[];
+        setupReadings: PacketSetupReadingSource[];
         practitionerNameById: Map<string, string>;
       };
     }
@@ -136,6 +138,7 @@ export async function loadDayPacket(args: {
     blockAreasById: new Map<string, BlockArea[]>(),
     entries: [],
     laserEntries: [],
+    setupReadings: [],
     practitionerNameById: new Map<string, string>(),
   };
   if (sessions.length === 0) return { ok: true, value: empty };
@@ -153,6 +156,15 @@ export async function loadDayPacket(args: {
     ),
   ]);
   if (blocks === null || entries === null || laserEntries === null) return { ok: false, reason: "read_failed" };
+
+  // Machine-native settings (treatment_setup_readings) for ONLY these blocks,
+  // studio-scoped, to completion. Read-only; a failed read fails the whole packet.
+  const setupReadings = await readChunked<PacketSetupReadingSource>(
+    blocks.map((b) => b.id),
+    (ids, after) =>
+      keyset(supabase.from("treatment_setup_readings").select(SETUP_READING_COLUMNS).eq("studio_id", studioId).in("session_block_id", ids), after),
+  );
+  if (setupReadings === null) return { ok: false, reason: "read_failed" };
 
   // Names for ONLY the practitioners these sessions reference, to completion.
   // display_name only: never an email (the Records register falls back to one).
@@ -178,5 +190,5 @@ export async function loadDayPacket(args: {
 
   const practitionerNameById = new Map<string, string>();
   for (const a of authors) if (a.display_name && a.display_name.trim().length > 0) practitionerNameById.set(a.id, a.display_name.trim());
-  return { ok: true, value: { sessions, blocks, blockAreasById, entries, laserEntries, practitionerNameById } };
+  return { ok: true, value: { sessions, blocks, blockAreasById, entries, laserEntries, setupReadings, practitionerNameById } };
 }

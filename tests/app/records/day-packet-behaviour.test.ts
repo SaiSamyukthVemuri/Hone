@@ -155,17 +155,19 @@ describe("what the page shows once audited", () => {
     expect(html).toContain("Pending format review");
     expect(html).toContain("Print");
     expect(html).toContain("Per-area numbing, tolerance, reaction and caution notes");
-    expect(html).toMatch(/as of May 10, 2026|as of [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    expect(html).toMatch(/starting at May 10, 2026|starting at [A-Z][a-z]{2} \d{1,2}, \d{4}/);
   });
-  it("Insurance E-3/F-4: 'as of' is the instant BEFORE the audit and read, with date, time and zone", async () => {
+  it("Insurance E-3/F-4: 'starting at' is the instant BEFORE the audit and read, with date, time and zone", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       vi.setSystemTime(new Date("2026-05-11T15:00:00.000Z")); // 11:00 AM on 11 May in Toronto
       // Time passes during the audit and the reads: 10 minutes by the time they finish.
       state.onRpc = () => vi.setSystemTime(new Date("2026-05-11T15:10:00.000Z"));
       const html = await render({ clientId: CLIENT, day: DAY });
-      expect(html).toContain("as of May 11, 2026, 11:00 AM (America/Toronto)");
+      expect(html).toContain("starting at May 11, 2026, 11:00 AM (America/Toronto)");
       expect(html).not.toContain("11:10 AM");
+      expect(html).not.toContain("charted after that time is not included");
+      expect(html).toContain("changes made while this packet was generated may appear");
     } finally {
       state.onRpc = null;
       vi.useRealTimers();

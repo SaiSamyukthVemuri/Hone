@@ -4,7 +4,8 @@ import type { DayPacketLoad } from "@/lib/records/print/day-loader";
 
 const okLoad = (sessions: unknown[] = []): DayPacketLoad => ({
   ok: true,
-  value: { sessions: sessions as never, blocks: [], blockAreasById: new Map(), entries: [], laserEntries: [], practitionerNameById: new Map([["p1", "Dana"]]) },
+  value: { sessions: sessions as never, blocks: [], blockAreasById: new Map(), entries: [], laserEntries: [],
+    setupReadings: [], practitionerNameById: new Map([["p1", "Dana"]]) },
 });
 const session = {
   id: "s1", started_at: "2026-05-10T15:00:00.000Z", ended_at: null, modality: "x", session_notes: null,
