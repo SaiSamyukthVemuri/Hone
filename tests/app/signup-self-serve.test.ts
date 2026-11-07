@@ -71,6 +71,9 @@ describe("/signup page and middleware", () => {
     const f = strip(read("app/signup/SignupForm.tsx")).replace(/\s+/g, " ");
     expect(f).toMatch(/Creating an account is free and gives no studio access/);
     expect(f).toMatch(/Starting your studio is a separate, paid step/);
+    // Unverified claim (Privacy 1e5bc9a4 (b)/(c)): when the auth row is created.
+    expect(f).not.toMatch(/account is created when/i);
+    expect(f).toMatch(/link to confirm your address/);
     expect(f).toMatch(/href="\/terms"/);
     expect(f).toMatch(/href="\/privacy"/);
     expect(f).not.toMatch(/I agree|I accept|consent/i);

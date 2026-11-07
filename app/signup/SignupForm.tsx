@@ -54,7 +54,7 @@ export function SignupForm({ planSummary }: { planSummary: string | null }) {
 
         {status.kind === "sent" ? (
           <p role="status" className="text-center text-[14px] leading-[1.55]">
-            Check your email. Your account is created when you follow the link we sent.
+            Check your email for a link to confirm your address and continue.
           </p>
         ) : (
           <form onSubmit={submit} noValidate>

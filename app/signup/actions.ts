@@ -9,9 +9,15 @@ import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 // a new auth user lands on /no-access until a paid plan is confirmed by a
 // verified webhook (a later milestone). Nothing here touches Stripe or billing.
 //
-// Email verification IS the sign-in: the account only exists once the person
-// follows the one-time link sent to the address. The response is identical for
-// every well-formed address so this form is not an account-enumeration oracle.
+// The person confirms their address by following the one-time link. Whether
+// Supabase creates the auth row at request time or at link time is NOT verified
+// here (Privacy 1e5bc9a4 (b)), so neither this comment nor the copy claims
+// either. The response is identical for every well-formed address so this form
+// is not an account-enumeration oracle.
+//
+// DELIBERATE REVERSAL of PR #189: the login action allowed user creation only
+// for an invited address; this sets shouldCreateUser true for ANY well-formed
+// address. Flag-gated; a Sam decision, named in the PR body.
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
