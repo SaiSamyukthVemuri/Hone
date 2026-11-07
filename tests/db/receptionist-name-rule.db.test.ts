@@ -32,9 +32,12 @@ beforeAll(async () => {
   await adminQuery("update public.clients set archived_at = now() where id = $1", [a.clientId]);
   // Stored-name order is Abe < Zed; id order is the OPPOSITE (Zed's id sorts first). An order that follows
   // the stored name would put Abe first; the rule puts the unlabelled clients in id order.
-  await addClient("zed", "00000000-0000-4000-8000-000000000001", "Zed Omegastored", null, "+1 555 0301");
-  await addClient("abe", "00000000-0000-4000-8000-000000000002", "Abe Alphastored", null, "+1 555 0302");
-  await addClient("carol", "00000000-0000-4000-8000-000000000003", "Carol Legalname", "Caz", "+1 555 0303");
+  // Ids are generated per run (fixed ids collide on a re-run and with other suites on a shared stack); the two
+  // unlabelled ids are sorted so Zed's keeps sorting first (lowercase uuid text sorts like the uuid type).
+  const [lowId, highId] = [randomUUID(), randomUUID()].sort();
+  await addClient("zed", lowId, "Zed Omegastored", null, "+1 555 0301");
+  await addClient("abe", highId, "Abe Alphastored", null, "+1 555 0302");
+  await addClient("carol", randomUUID(), "Carol Legalname", "Caz", "+1 555 0303");
 });
 
 afterAll(async () => {
