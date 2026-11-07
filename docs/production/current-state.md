@@ -1027,7 +1027,7 @@ before any production action; this sentence is itself a dated observation.
 |---|---|---|
 | **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
 | **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
-| **#833** — PAY-CCY-02 (#824 US/USD 2/4): per-studio payment country and charge currency | **OPEN**, and a **DRAFT** | Not merged. Carries the unapplied **0214**; no studio has a payment country in production. |
+| **#833** — PAY-CCY-02 (#824 US/USD 2/4): per-studio payment country and charge currency | **OPEN**, and a **DRAFT** | Not merged. The PR is not shipped, and its separate migration **0214** is not pending: it is on main and applied in production (see `docs/production/migration-state.json`) |
 | **#836** — PAY-CCY-03 (#824 US/USD 3/4): Stripe accounts follow the studio's verified country | **OPEN**, and a **DRAFT**, stacked on #833 | Not merged. No USD Stripe account is provisioned by production code. |
 | **#839** — PAY-CCY-04 (#824 US/USD 4/4): money surfaces name the studio's currency | **OPEN**, and a **DRAFT**, stacked on #836 | Not merged. |
 | **#847** — PAY-CCY-05 (#824 US/USD): US studio session payment end to end in USD, fake Stripe | **OPEN**, and a **DRAFT**, stacked on #839 | Not merged. US/USD activation remains **PENDING** (§7). |
@@ -1762,7 +1762,8 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
   been observed or measured at this sync.**
 - **US/USD remains PENDING.** Per-studio payment jurisdiction, USD Stripe accounts and USD
   activation are **not merged and not active**: #833, #836, #839 and #847 are drafts. Their
-  migration chain (0214 onward) is unmerged and **not applied**. #834 changes no studio's
+  database migrations (0214 and 0257) are on main and **applied** (see `docs/production/migration-state.json`);
+  the application changes and USD activation are not. #834 changes no studio's
   currency or Stripe configuration.
 - **Receipts** are live. **Refunds** are deployed but have **zero production rows on this
   baseline**. **Disputes** are **alert-only** — 0 have occurred.
