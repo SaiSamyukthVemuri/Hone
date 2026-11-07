@@ -143,8 +143,8 @@ begin
     return;
   end if;
   if v_email is not null and (pg_catalog.char_length(v_email) > 254
-       or v_email ~ '\s' or pg_catalog.position('@' in v_email) < 2
-       or pg_catalog.position('@' in v_email) = pg_catalog.char_length(v_email)) then
+       or v_email ~ '\s' or pg_catalog.strpos(v_email, '@') < 2
+       or pg_catalog.strpos(v_email, '@') = pg_catalog.char_length(v_email)) then
     return query select 'invalid_email'::text, null::uuid;
     return;
   end if;
@@ -159,9 +159,9 @@ begin
     return;
   end;
 
-  if v_pref is not null then v_fields := v_fields || 'preferred_name'; end if;
-  if v_phone is not null then v_fields := v_fields || 'phone'; end if;
-  if v_email is not null then v_fields := v_fields || 'email'; end if;
+  if v_pref is not null then v_fields := pg_catalog.array_append(v_fields, 'preferred_name'::text); end if;
+  if v_phone is not null then v_fields := pg_catalog.array_append(v_fields, 'phone'::text); end if;
+  if v_email is not null then v_fields := pg_catalog.array_append(v_fields, 'email'::text); end if;
   insert into public.receptionist_client_audit (studio_id, client_id, receptionist_id, action, fields)
   values (p_studio_id, v_id, v_desk, 'created', v_fields);
 
@@ -240,21 +240,21 @@ begin
   if p_patch ? 'preferred_name' then
     v_new := nullif(pg_catalog.btrim(coalesce(p_patch ->> 'preferred_name', '')), '');
     if v_new is not null and pg_catalog.char_length(v_new) > 200 then return 'invalid_preferred_name'; end if;
-    if v_new is distinct from v_c.preferred_name then v_pref := v_new; v_fields := v_fields || 'preferred_name'; end if;
+    if v_new is distinct from v_c.preferred_name then v_pref := v_new; v_fields := pg_catalog.array_append(v_fields, 'preferred_name'::text); end if;
   end if;
   if p_patch ? 'phone' then
     v_new := nullif(pg_catalog.btrim(coalesce(p_patch ->> 'phone', '')), '');
     if v_new is not null and pg_catalog.char_length(v_new) > 40 then return 'invalid_phone'; end if;
-    if v_new is distinct from v_c.phone then v_phone := v_new; v_fields := v_fields || 'phone'; end if;
+    if v_new is distinct from v_c.phone then v_phone := v_new; v_fields := pg_catalog.array_append(v_fields, 'phone'::text); end if;
   end if;
   if p_patch ? 'email' then
     v_new := nullif(pg_catalog.btrim(coalesce(p_patch ->> 'email', '')), '');
     if v_new is not null and (pg_catalog.char_length(v_new) > 254 or v_new ~ '\s'
-         or pg_catalog.position('@' in v_new) < 2
-         or pg_catalog.position('@' in v_new) = pg_catalog.char_length(v_new)) then
+         or pg_catalog.strpos(v_new, '@') < 2
+         or pg_catalog.strpos(v_new, '@') = pg_catalog.char_length(v_new)) then
       return 'invalid_email';
     end if;
-    if v_new is distinct from v_c.email then v_email := v_new; v_fields := v_fields || 'email'; end if;
+    if v_new is distinct from v_c.email then v_email := v_new; v_fields := pg_catalog.array_append(v_fields, 'email'::text); end if;
   end if;
 
   if pg_catalog.cardinality(v_fields) = 0 then

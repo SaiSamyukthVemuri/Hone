@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 256,
-    "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "a5bb678fd56372114dd84ac5c8308eca83e6a04688f2e9427e1c8973e00938e4"
+    "count": 257,
+    "last": "0307_receptionist_noshow_and_client_contact.sql",
+    "sha256": "b001ef6c68811425a08229d37df28bf7c9b17c189758aeada715ffd76a4df36c"
   },
   "public": {
     "tables": [
@@ -76,6 +76,7 @@
       "practitioner_notifications",
       "practitioners",
       "probe_lots",
+      "receptionist_client_audit",
       "record_keeping_audit_events",
       "record_keeping_disinfectants",
       "record_keeping_exposure_incidents",
@@ -392,8 +393,11 @@
       "receptionist_client_contacts_v2",
       "receptionist_client_directory",
       "receptionist_create_appointment",
+      "receptionist_create_client",
+      "receptionist_mark_no_show",
       "receptionist_move_appointment",
       "receptionist_studio_timezone",
+      "receptionist_update_client_contact",
       "reconcile_bound_payment_event",
       "reconcile_card_payment_succeeded",
       "reconcile_dispute_closed",

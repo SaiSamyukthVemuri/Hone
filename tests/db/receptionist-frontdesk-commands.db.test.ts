@@ -15,7 +15,7 @@ async function seedDesk(studio: SeededStudio, active = true): Promise<string> {
   const userId = randomUUID();
   await adminQuery("insert into auth.users(id,email) values ($1,$2)", [userId, `fd-${userId.slice(0, 8)}@harness.local`]);
   await adminQuery(
-    "insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic Front Desk',$3)",
+    "insert into public.studio_receptionists(studio_id,user_id,display_name,active,deactivated_at) values ($1,$2,'Synthetic Front Desk',$3, case when $3 then null else now() end)",
     [studio.studioId, userId, active],
   );
   return userId;
