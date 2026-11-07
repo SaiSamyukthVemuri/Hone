@@ -18,6 +18,7 @@ const state = {
   fromCalls: [] as string[],
   tables: {} as Record<string, Array<Record<string, unknown>>>,
   failTable: null as string | null,
+  onRpc: null as null | (() => void),
 };
 
 vi.mock("@/lib/supabase/queries", () => ({
@@ -34,6 +35,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: (fn: string, args: Record<string, unknown>) => {
       state.rpcCalls.push({ fn, args });
+      state.onRpc?.();
       return Promise.resolve(state.rpcResult);
     },
     from: (table: string) => {
@@ -154,6 +156,26 @@ describe("what the page shows once audited", () => {
     expect(html).toContain("Print");
     expect(html).toContain("Per-area numbing, tolerance, reaction and caution notes");
     expect(html).toMatch(/as of May 10, 2026|as of [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  });
+  it("Insurance E-3/F-4: 'as of' is the instant BEFORE the audit and read, with date, time and zone", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-05-11T15:00:00.000Z")); // 11:00 AM on 11 May in Toronto
+      // Time passes during the audit and the reads: 10 minutes by the time they finish.
+      state.onRpc = () => vi.setSystemTime(new Date("2026-05-11T15:10:00.000Z"));
+      const html = await render({ clientId: CLIENT, day: DAY });
+      expect(html).toContain("as of May 11, 2026, 11:00 AM (America/Toronto)");
+      expect(html).not.toContain("11:10 AM");
+    } finally {
+      state.onRpc = null;
+      vi.useRealTimers();
+    }
+  });
+  it("E-4/F-1: the footer names the next-session caution flag as excluded and the caution note as included", async () => {
+    const html = await render({ clientId: CLIENT, day: DAY });
+    expect(html).toContain("caution for next session");
+    expect(html).toContain("the area&#x27;s caution note itself is included");
+    expect(html).toContain("session-level next-session planning note");
   });
   it("an empty day is named and has no Print button", async () => {
     state.tables.sessions = [session({ started_at: "2026-05-09T15:00:00.000Z" })];
