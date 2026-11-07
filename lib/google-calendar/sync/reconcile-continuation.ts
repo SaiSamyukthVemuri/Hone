@@ -1,5 +1,5 @@
 import "server-only";
-import { Redis } from "@upstash/redis";
+import { getUpstashRedis } from "@/lib/upstash-redis";
 import { reconcileLockKey } from "./reconcile-lock";
 import type { ReconcileContinuation, ReconcileContinuationStore } from "./reconcile";
 
@@ -98,10 +98,8 @@ export function createReconcileContinuationStore(redis: ContinuationRedis | null
 }
 
 function getContinuationRedis(): ContinuationRedis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  const client = new Redis({ url, token });
+  const client = getUpstashRedis();
+  if (!client) return null;
   return {
     get: (k) => client.get(k),
     eval: (script, keys, args) => client.eval(script, keys, args),

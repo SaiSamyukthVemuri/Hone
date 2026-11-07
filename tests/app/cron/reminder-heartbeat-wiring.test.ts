@@ -71,9 +71,11 @@ describe("cron route records the heartbeat on the authorized success path only",
 
 describe("heartbeat module is fail-open, secret-free, and migration-free", () => {
   it("reuses Upstash (no new dependency, no DB migration)", () => {
-    expect(HEARTBEAT).toMatch(/@upstash\/redis/);
-    expect(HEARTBEAT).toMatch(/UPSTASH_REDIS_REST_URL/);
-    expect(HEARTBEAT).toMatch(/UPSTASH_REDIS_REST_TOKEN/);
+    expect(HEARTBEAT).toMatch(/from "@\/lib\/upstash-redis"/);
+    const client = read("lib/upstash-redis.ts");
+    expect(client).toMatch(/@upstash\/redis/);
+    expect(client).toMatch(/UPSTASH_REDIS_REST_URL/);
+    expect(client).toMatch(/UPSTASH_REDIS_REST_TOKEN/);
   });
 
   it("is best-effort/fail-open (write + read wrapped, never throws)", () => {

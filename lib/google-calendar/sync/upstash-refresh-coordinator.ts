@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { Redis } from "@upstash/redis";
+import { getUpstashRedis, RELEASE_IF_OWNER_LUA } from "@/lib/upstash-redis";
 import type { RefreshCoordinator } from "./token-manager";
 
 // Google Calendar: Phase B2.3-c2: the PRODUCTION cross-process token-refresh
@@ -56,10 +56,6 @@ export function refreshLockKey(connectionId: string): string {
   return `${KEY_PREFIX}${connectionId}`;
 }
 
-// Release: delete the key ONLY if it still holds our exact token, so a slow holder
-// whose lease already expired can never delete a DIFFERENT invocation's lock.
-const RELEASE_LUA =
-  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
 // A safe, typed internal error. Carries NO connection id and NO raw Redis message
 // (only a coarse reason), so nothing sensitive can leak if it is ever logged. The
@@ -108,7 +104,7 @@ export function createRefreshCoordinator(
         // Best-effort ownership-safe release. If it fails, the TTL expires the lease.
         if (acquired) {
           try {
-            await redis.eval(RELEASE_LUA, [key], [token]);
+            await redis.eval(RELEASE_IF_OWNER_LUA, [key], [token]);
           } catch {
             // never let a release failure corrupt the completed callback result
           }
@@ -119,10 +115,8 @@ export function createRefreshCoordinator(
 }
 
 function getRefreshLockRedis(): RefreshLockRedis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  const client = new Redis({ url, token });
+  const client = getUpstashRedis();
+  if (!client) return null;
   return {
     set: (key, value, o) => client.set(key, value, o),
     eval: (script, keys, args) => client.eval(script, keys, args),

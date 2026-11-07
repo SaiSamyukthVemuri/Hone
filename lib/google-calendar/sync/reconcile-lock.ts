@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { Redis } from "@upstash/redis";
+import { getUpstashRedis, RELEASE_IF_OWNER_LUA } from "@/lib/upstash-redis";
 import type { LockAcquire, ReconcileCoordinator, ReconcileLock } from "./reconcile";
 
 // Google Calendar: Phase B2.3-b: a REAL cross-process, per-studio reconciliation
@@ -58,9 +58,6 @@ export function reconcileLockKey(studioId: string): string {
 // Back-compat local alias.
 const lockKey = reconcileLockKey;
 
-// Release: delete the key ONLY if it still holds our token.
-const RELEASE_LUA =
-  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 // Renew: extend the TTL (ms) ONLY if we still own it.
 const RENEW_LUA =
   "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
@@ -92,7 +89,7 @@ export function createReconcileLock(
     async release(studioId: string, token: string): Promise<void> {
       if (!redis) return;
       try {
-        await redis.eval(RELEASE_LUA, [lockKey(studioId)], [token]);
+        await redis.eval(RELEASE_IF_OWNER_LUA, [lockKey(studioId)], [token]);
       } catch {
         // Best-effort: if release fails the TTL still expires the lease.
       }
@@ -157,7 +154,7 @@ export function createReconcileCoordinator(
     async release(token: string) {
       if (!redis) return;
       try {
-        await redis.eval(RELEASE_LUA, [K], [token]);
+        await redis.eval(RELEASE_IF_OWNER_LUA, [K], [token]);
       } catch {
         // Best-effort; the TTL expires the lease.
       }
@@ -199,10 +196,8 @@ export function createReconcileCoordinator(
 }
 
 function getLockRedis(): LockRedis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  const client = new Redis({ url, token });
+  const client = getUpstashRedis();
+  if (!client) return null;
   return {
     get: (key) => client.get(key),
     set: (key, value, o) => client.set(key, value, o),

@@ -1,5 +1,5 @@
 import "server-only";
-import { Redis } from "@upstash/redis";
+import { getUpstashRedis } from "@/lib/upstash-redis";
 
 // Google Calendar: Phase B2.3-c2: the worker-drain route heartbeat.
 //
@@ -48,17 +48,12 @@ export type WorkerHeartbeat = {
   by_code?: Record<string, number>;
 };
 
-function getRedis(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? new Redis({ url, token }) : null;
-}
 
 // Best-effort, fail-open. Called by the worker route AFTER a run reaches its
 // truthful final result. Never throws.
 export async function recordWorkerRun(heartbeat: WorkerHeartbeat): Promise<void> {
   try {
-    const redis = getRedis();
+    const redis = getUpstashRedis();
     if (!redis) return;
     await redis.set(HEARTBEAT_KEY, heartbeat, { ex: HEARTBEAT_TTL_SECONDS });
   } catch {
@@ -70,7 +65,7 @@ export async function recordWorkerRun(heartbeat: WorkerHeartbeat): Promise<void>
 // Upstash is unconfigured/unreachable or no run has been recorded.
 export async function readWorkerHeartbeat(): Promise<WorkerHeartbeat | null> {
   try {
-    const redis = getRedis();
+    const redis = getUpstashRedis();
     if (!redis) return null;
     const raw = await redis.get<WorkerHeartbeat | string>(HEARTBEAT_KEY);
     if (!raw) return null;

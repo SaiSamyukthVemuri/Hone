@@ -1,5 +1,5 @@
 import "server-only";
-import { Redis } from "@upstash/redis";
+import { getUpstashRedis } from "@/lib/upstash-redis";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { ReconcileCoordinator, ReconcileRunResult, RunOutcome } from "./reconcile";
@@ -61,11 +61,6 @@ export type ReconcileHeartbeat = {
   errorClass?: string;
 };
 
-function getRedis(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? new Redis({ url, token }) : null;
-}
 
 // Build a PHI-free heartbeat from a run result. `at` = completion time. Pure. The
 // `outcome` passed in may already be downgraded (e.g. dead-row work deferred).
@@ -103,7 +98,7 @@ export function reconcileHeartbeatFromRun(
 
 export async function recordReconcileRun(heartbeat: ReconcileHeartbeat): Promise<void> {
   try {
-    const redis = getRedis();
+    const redis = getUpstashRedis();
     if (!redis) return;
     await redis.set(HEARTBEAT_KEY, heartbeat, { ex: HEARTBEAT_TTL_SECONDS });
   } catch {
@@ -113,7 +108,7 @@ export async function recordReconcileRun(heartbeat: ReconcileHeartbeat): Promise
 
 export async function readReconcileHeartbeat(): Promise<ReconcileHeartbeat | null> {
   try {
-    const redis = getRedis();
+    const redis = getUpstashRedis();
     if (!redis) return null;
     const raw = await redis.get<ReconcileHeartbeat | string>(HEARTBEAT_KEY);
     if (!raw) return null;

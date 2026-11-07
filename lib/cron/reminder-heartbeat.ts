@@ -1,5 +1,5 @@
 import "server-only";
-import { Redis } from "@upstash/redis";
+import { getUpstashRedis } from "@/lib/upstash-redis";
 import { CRON_INTERVAL_MINUTES } from "@/lib/cron/reminder-schedule";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
@@ -107,11 +107,6 @@ export type ReminderHeartbeat = {
   smsFailed?: number;
 };
 
-function getRedis(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? new Redis({ url, token }) : null;
-}
 
 // Parse a heartbeat that may arrive as an object or a JSON string (the Upstash
 // client usually deserializes, but tolerate both). Returns null on anything
@@ -329,7 +324,7 @@ export async function recordReminderRunSuccess(
   heartbeat: ReminderHeartbeat,
 ): Promise<void> {
   try {
-    const redis = getRedis();
+    const redis = getUpstashRedis();
     if (!redis) return;
     const maxPlausibleIso = new Date(
       Date.now() + REMINDER_FUTURE_TOLERANCE_MINUTES * 60_000,
@@ -352,7 +347,7 @@ export async function recordReminderRunSuccess(
 // Upstash is unconfigured/unreachable or no run has been recorded.
 export async function readReminderHeartbeat(): Promise<ReminderHeartbeat | null> {
   try {
-    const redis = getRedis();
+    const redis = getUpstashRedis();
     if (!redis) return null;
     const raw = await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY);
     if (!raw) return null;
