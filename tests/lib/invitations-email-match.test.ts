@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import { emailIlikePattern, exactEmailRows, hasExactEmailMatch, singleExactEmailRow } from "@/lib/invitations/email-match";
 
 describe("emailIlikePattern", () => {
-  it("escapes backslash, percent, underscore AND asterisk (PostgREST's alias for %)", () => {
-    expect(emailIlikePattern("a_b%c*d\\e@x.com")).toBe("a\\_b\\%c\\*d\\\\e@x.com");
+  it("escapes backslash, percent and underscore; each asterisk becomes the single-character wildcard _ (PostgREST never sees a *)", () => {
+    expect(emailIlikePattern("a_b%c*d\\e@x.com")).toBe("a\\_b\\%c_d\\\\e@x.com");
+    expect(emailIlikePattern("*@x.com")).toBe("_@x.com");
+  });
+  it("pins the exact string: a real underscore stays escaped, the asterisk becomes a bare _", () => {
+    expect(emailIlikePattern("a_b*c@x.com")).toBe("a\\_b_c@x.com");
+  });
+  it("contains no asterisk at all", () => {
+    expect(emailIlikePattern("a*b**c@x.com")).not.toContain("*");
   });
   it("leaves an ordinary address unchanged", () => {
     expect(emailIlikePattern("bob.jones@example.com")).toBe("bob.jones@example.com");
