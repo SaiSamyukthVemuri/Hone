@@ -102,6 +102,20 @@ describe("probe identity and lot are kept whichever source supplies the settings
   it("a legacy block is unchanged: mode, energy, frequency, then probe and lot", () => {
     expect(settingsOf(packet([], probe)).map((r) => r.label)).toEqual(["Mode", "Energy level", "Frequency", "Probe", "Probe lot"]);
   });
+  it("the printed settings do not depend on the order the rows arrive in (the RPC orders by field, not time)", () => {
+    const t = "2026-05-10T15:00:00.000Z";
+    const other = found.p.modes.find((m) => m.key !== found.m.key);
+    const rows = [
+      reading({ id: "a", group_key: "g1", capture_id: "c1", recorded_at: t }),
+      reading({ id: "b", group_key: "g1", capture_id: "c2", revision: 1, recorded_at: t, value_numeric: "9.5" }), // ties on time, group and revision
+      reading({ id: "c", group_key: "g1", capture_id: "c3", revision: 2, recorded_at: "2026-05-10T15:05:00.000Z", value_numeric: "3.5" }),
+      reading({ id: "d", group_key: "g2", capture_id: "c4", recorded_at: t, ...(other ? { mode_key: other.key } : {}) }),
+    ];
+    const render = (rs: typeof rows) => JSON.stringify(nativeSettingsForBlock(rs));
+    const base = render(rows);
+    const perms = [[3, 2, 1, 0], [1, 0, 3, 2], [2, 0, 3, 1], [0, 3, 1, 2]];
+    for (const p of perms) expect(render(p.map((i) => rows[i]))).toBe(base);
+  });
   it("a native block with no probe recorded prints no probe line", () => {
     expect(settingsOf(packet([reading()])).some((r) => r.label.startsWith("Probe"))).toBe(false);
   });
@@ -250,6 +264,8 @@ describe("a capture committed during the read is never returned partially", () =
     if (!r.ok) return;
     const counts: Record<string, number> = {};
     for (const x of r.value.setupReadings) counts[x.capture_id ?? ""] = (counts[x.capture_id ?? ""] ?? 0) + 1;
+    // Positive control: the filled page really was read, so the loop below is not vacuous.
+    expect(counts.c0).toBe(1000);
     for (const [capture, n] of Object.entries(counts)) expect(n).toBe(expected[capture]);
   });
 });
