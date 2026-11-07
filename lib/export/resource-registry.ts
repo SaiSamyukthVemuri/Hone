@@ -1016,6 +1016,24 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   // EXCLUDED - a decision on the record, with the reason it was made.
   // -------------------------------------------------------------------------
 
+  // derived
+  // 0298. Per-owner view state of the Dashboard "Needs attention" list: which reminder an owner chose to hide, and when. It holds record
+  // identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical
+  // content. Every reminder it hides is recomputed from records that ARE exported, and it is rebuilt by simply not dismissing.
+  // Excluded as a DECISION (Privacy: APPROVE_WITH_CONDITIONS, 5 Nov), not an omission: nothing in it is studio content a departing studio needs back,
+  // and exporting it would hand one owner's view history to whoever receives the file.
+  // MUST BE HANDLED by any client-erasure, offboarding or account-removal design (Privacy ET-2, ET-3), and listed before activation is proposed:
+  //   - client and appointment ids sit inside item_key, and the table is append-only (a trigger refuses every UPDATE, and a DELETE unless the
+  //     whole studio is already gone), so a client erasure or anonymisation cannot clear them without a governed override;
+  //   - user_id has no foreign key to the account record, so a removed or deleted account leaves its rows behind (only that user could read
+  //     them, and the studio cascade removes them with the studio).
+  dashboard_attention_events: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported.",
+  },
+
   // security
   calendar_connection_secrets: {
     kind: "excluded",
