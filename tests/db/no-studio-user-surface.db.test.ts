@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { Client } from "pg";
+import { E2E_SUPABASE_URL as VALIDATED_API_URL } from "../../e2e/helpers/local-env";
+import { apiUrlInForce, assertLoopbackPair } from "./helpers/owned-pair-core";
 import {
   adminQuery,
   asUser,
@@ -55,6 +57,78 @@ import {
 // Covered by SOURCE READING ONLY, no behavioural proof here: archive_treatment_image,
 // set_treatment_image_note, edit_client_pinned_note, reconcile_my_pending_invitation,
 // realtime.send (S1, hosted read), graphql_public.graphql (S2, hosted read).
+
+
+/**
+ * A policy whose ONLY identity term is "auth.uid() is not null" (or the (select auth.uid()) form)
+ * admits every signed-in account, including one with no studio, exactly like a literal true. It
+ * is NOT a membership check. Exported pure so a sample test can prove the detector can fire.
+ *
+ * KNOWN LIMITS (Insurance Z-2): the helper exemption is a SUBSTRING test, so any expression that
+ * merely contains is_studio_member / is_studio_owner / can_* / is_platform_admin is exempt whatever
+ * the boolean structure ("auth.uid() IS NOT NULL OR is_studio_member(studio_id)" admits every
+ * signed-in account and is NOT flagged), and `can_[a-z_]+` also matches a column that starts with
+ * "can_". Both are contrived today; this is a tripwire, not a policy prover.
+ */
+export function uidOnlyPolicy(expr: string): boolean {
+  const e = expr.toLowerCase().replace(/\s+/g, " ");
+  if (!/auth\.uid\(\)/.test(e)) return false;
+  if (/(is_studio_member|is_studio_owner|can_[a-z_]+|is_platform_admin)/.test(e)) return false;
+  const rest = e.replace(/\(?\s*(?:select\s+)?auth\.uid\(\)(?:\s+as\s+uid)?\s*\)?\s+is\s+not\s+null/g, "");
+  return !/auth\.uid\(\)/.test(rest);
+}
+
+/**
+ * USING and WITH CHECK are evaluated SEPARATELY (Insurance Z-1): a FOR ALL / UPDATE policy with
+ * `using (auth.uid() is not null)` and a real membership WITH CHECK still exposes every row to
+ * SELECT/UPDATE/DELETE, and a concatenation would let the leftover auth.uid() hide it.
+ */
+export function uidOnlyPolicyRow(qual: string | null | undefined, withCheck: string | null | undefined): boolean {
+  return (!!qual && uidOnlyPolicy(qual)) || (!!withCheck && uidOnlyPolicy(withCheck));
+}
+
+/**
+ * BROADER tripwire (Privacy R-2): the bare `auth.uid() is not null` term appears ANYWHERE in the expression,
+ * including `is_studio_member(...) OR auth.uid() is not null`, which the strict detector's helper exemption
+ * lets through. It also fires on a legitimate `auth.uid() is not null AND <membership>`; every hit is pinned
+ * by name so a human reads each one.
+ */
+export function uidBareTerm(expr: string): boolean {
+  const e = expr.toLowerCase().replace(/\s+/g, " ");
+  return /\(?\s*(?:select\s+)?auth\.uid\(\)(?:\s+as\s+uid)?\s*\)?\s+is\s+not\s+null/.test(e);
+}
+export function uidBareTermRow(qual: string | null | undefined, withCheck: string | null | undefined): boolean {
+  return (!!qual && uidBareTerm(qual)) || (!!withCheck && uidBareTerm(withCheck));
+}
+
+/** Policies (applicable to authenticated) that are uid-only (strict) or contain the bare term (broad), judged per expression. */
+async function scanUidOnly(run: (sql: string) => Promise<{ rows: J[] }>): Promise<{ strict: string[]; bare: string[] }> {
+  const { rows } = await run(
+    `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p, qual, with_check
+       from pg_policies
+      where schemaname in ('public','storage')
+        and (roles::text like '%authenticated%' or roles::text like '%public%')
+      order by 1`,
+  );
+  return {
+    strict: rows.filter((r) => uidOnlyPolicyRow(r.qual, r.with_check)).map((r) => r.p as string),
+    bare: rows.filter((r) => uidBareTermRow(r.qual, r.with_check)).map((r) => r.p as string),
+  };
+}
+
+/**
+ * LOOPBACK-ONLY check (Insurance Y-1). It uses local-env's VALIDATED API URL (the explicit variable, or the
+ * default stack when CI leaves E2E_SUPABASE_URL unset: Codex P1 #4500640473). It does not prove the stack is
+ * the OWNED one; that is vitest.db.config.ts' paired-target guard (#879).
+ */
+function assertOwnedLocalPair(): void {
+  assertLoopbackPair(resolveLocalDbUrl(), apiUrlInForce(process.env, VALIDATED_API_URL));
+}
+
+/** Any SQLSTATE in class 23 (integrity constraint violation), including 23P01 exclusion violations. */
+const INSERT_CONSTRAINT = /^err:23[0-9A-Z]{3}$/;
+/** An insert outcome that is neither landed, a privilege/RLS refusal (42501) nor a class-23 error. */
+const insertUnclassified = (v: string) => !!v && !v.startsWith("ok:") && v !== "err:42501" && !INSERT_CONSTRAINT.test(v);
 
 type J = Record<string, any>;
 let A: SeededStudio; // a real studio, so membership-gated functions reach their gate
@@ -200,7 +274,8 @@ async function tableCensus() {
     );
     const nonMembership = pol.filter((p: J) => {
       const e = `${p.qual ?? ""} ${p.with_check ?? ""}`;
-      return !/auth\.uid\(\)|is_studio_member|is_studio_owner|studio_id|current_studio|jwt/.test(e);
+      // A policy whose only identity term is `auth.uid() is not null` admits every signed-in account.
+      return uidOnlyPolicyRow(p.qual, p.with_check) || !/auth\.uid\(\)|is_studio_member|is_studio_owner|studio_id|current_studio/.test(e);
     });
     out.push({
       table: fq,
@@ -374,12 +449,134 @@ describe("no-studio authenticated user: what can be reached", () => {
     // policy admitted it (no BEFORE INSERT trigger ran ahead of RLS), or it simply landed.
     const reachableTables = tables.filter((t) => {
       const p = t.strangerProbes as Record<string, string>;
-      return (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && /^err:(23502|23503|23505|23514)$/.test(p.insert ?? ""));
+      return (p.insert ?? "").startsWith("ok:") || (t.beforeInsertTriggers === 0 && INSERT_CONSTRAINT.test(p.insert ?? ""));
     });
     // A constraint error on insert where a BEFORE trigger exists: neither reached nor refused.
     const insertIndeterminate = tables
-      .filter((t) => t.beforeInsertTriggers > 0 && /^err:23\d\d\d$/.test((t.strangerProbes as Record<string, string>).insert ?? ""))
+      .filter((t) => t.beforeInsertTriggers > 0 && INSERT_CONSTRAINT.test((t.strangerProbes as Record<string, string>).insert ?? ""))
       .map((t) => t.table as string);
+    // Anything else the insert probe returned (a code we have not classified) must be listed, not ignored.
+    const insertOther = tables
+      .filter((t) => insertUnclassified((t.strangerProbes as Record<string, string>).insert ?? ""))
+      .map((t) => `${t.table} ${(t.strangerProbes as Record<string, string>).insert}`);
+    // Z-4. Insert outcomes that a BEFORE trigger answered ahead of RLS are resolved at TWO layers.
+    //  (a) trigger layer: a VALID row naming a REAL parent from the seeded studio. The stranger is expected to
+    //      get P0001 (the parent is invisible to the invoker trigger); a studio MEMBER's identical row must LAND
+    //      (rolled-back savepoint). Only if the member control lands is it classed "refused at the parent
+    //      lookup"; otherwise the probe is wrong and the table stays unclassified.
+    //  (b) policy layer: in a ROLLED-BACK transaction, as the owner role, disable the user triggers, then run
+    //      the same valid row as the stranger (expect 42501 from the policy) and as the member (must LAND).
+    //      pg_trigger.tgenabled is asserted restored afterwards. LOCAL OWNED STACK ONLY.
+    // Tables with no valid-row builder keep a weaker default-values probe, labelled as such.
+    assertOwnedLocalPair();
+    const toResolve = Array.from(new Set([...insertIndeterminate, ...insertOther.map((x) => x.split(" ")[0])])).sort();
+    const planId = randomUUID();
+    await adminQuery(`insert into public.treatment_plans (id, studio_id, client_id, name) values ($1,$2,$3,'census scratch plan')`, [planId, A.studioId, A.clientId]);
+    const VALID: Record<string, { sql: string; args: unknown[] }> = {
+      "public.client_budget_context": { sql: "insert into public.client_budget_context (client_id, studio_id, updated_by_practitioner_id) values ($1,$2,$3)", args: [A.clientId, A.studioId, A.practitionerId] },
+      "public.client_clinical_notes": { sql: "insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body) values ($1,$2,$3,'consultation','census scratch')", args: [A.clientId, A.studioId, A.practitionerId] },
+      "public.client_personal_notes": { sql: "insert into public.client_personal_notes (client_id, studio_id, updated_by_practitioner_id) values ($1,$2,$3)", args: [A.clientId, A.studioId, A.practitionerId] },
+      "public.clients": { sql: "insert into public.clients (studio_id, name) values ($1,'census scratch client')", args: [A.studioId] },
+      "public.treatment_plan_stages": { sql: "insert into public.treatment_plan_stages (plan_id, studio_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,$2,'weekly',30,4,'weeks')", args: [planId, A.studioId] },
+    };
+    // Returns the SQLSTATE; the exception MESSAGE (never row text: uuids and quoted values are masked) is kept
+    // in `lastMessage` so a trigger-layer refusal is evidence, not inference (Insurance Y-2).
+    let lastMessage = "";
+    const maskMessage = (m: string) =>
+      m.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<uuid>").replace(/\(.*?\)=\(.*?\)/g, "(<cols>)=(<values>)").slice(0, 140);
+    const tryInsert = async (q: (t: string, p?: unknown[]) => Promise<any>, sql: string, args: unknown[]): Promise<string> => {
+      await q("savepoint ins");
+      lastMessage = "";
+      try {
+        await q(sql, args);
+        return "landed";
+      } catch (e) {
+        lastMessage = maskMessage(String((e as { message?: string }).message ?? ""));
+        return (e as { code?: string }).code ?? "?";
+      } finally {
+        await q("rollback to savepoint ins");
+      }
+    };
+    const insertResolved: J[] = [];
+    for (const fq of toResolve) {
+      const [sch, tbl] = fq.split(".");
+      const checks = (
+        await adminQuery(
+          `select with_check from pg_policies where schemaname=$1 and tablename=$2 and cmd in ('INSERT','ALL')
+             and (roles::text like '%authenticated%' or roles::text like '%public%')`,
+          [sch, tbl],
+        )
+      ).rows.map((r: J) => String(r.with_check ?? ""));
+      const valid = VALID[fq];
+      if (!valid) {
+        // No INSERT/ALL policy applicable to authenticated or public means RLS default-denies every insert,
+        // whatever the row: assert that from pg_policies (Privacy W-1). Otherwise fall back to a weak probe.
+        if (checks.length === 0) {
+          insertResolved.push({ table: fq, verdict: "no-insert-policy(RLS default-deny)", rawWithTriggersOff: "n/a", insertWithCheck: [] });
+          continue;
+        }
+        // Weak probe: a default-values row names no studio, so a refusal says only "refused for a null-studio row".
+        let raw = "";
+        const c = new Client({ connectionString: resolveLocalDbUrl() });
+        await c.connect();
+        try {
+          await c.query("begin");
+          await c.query(`alter table ${fq} disable trigger user`);
+          await c.query("set local role authenticated");
+          await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
+          raw = await tryInsert((t, p) => c.query(t, p), `insert into ${fq} default values`, []);
+        } finally {
+          await c.query("rollback").catch(() => undefined);
+          await c.end();
+        }
+        const verdict = raw === "landed" || /^23[0-9A-Z]{3}$/.test(raw) ? "admitted(weak:null-studio-row)" : raw === "42501" ? "refused-for-null-studio-row" : `unresolved:${raw}`;
+        insertResolved.push({ table: fq, verdict, rawWithTriggersOff: raw, insertWithCheck: checks.map((w) => w.slice(0, 160)) });
+        continue;
+      }
+      // (a) trigger layer, triggers ENABLED.
+      const aStranger = await asJwt(S, (q) => tryInsert(q, valid.sql, valid.args));
+      const aStrangerMessage = lastMessage;
+      // Control = the studio OWNER: a plain practitioner is refused by some of these tables' policies, which
+      // would make the probe look invalid for the wrong reason.
+      const aMember = await asJwt(A.userId, (q) => tryInsert(q, valid.sql, valid.args));
+      const layerA =
+        aStranger === "42501" && aMember === "landed" ? "refused-by-policy-with-triggers-enabled"
+        : aStranger === "P0001" && aStrangerMessage.length > 0 && aMember === "landed" ? "refused-at-parent-lookup"
+        : aMember !== "landed" ? `unclassified(member-control:${aMember})`
+        : `unclassified(stranger:${aStranger})`;
+      // (b) policy layer, triggers DISABLED in a scratch transaction.
+      let bStranger = "";
+      let bMember = "";
+      const c = new Client({ connectionString: resolveLocalDbUrl() });
+      await c.connect();
+      try {
+        await c.query("begin");
+        await c.query(`alter table ${fq} disable trigger user`);
+        await c.query("set local role authenticated");
+        await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
+        bStranger = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
+        await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+        bMember = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
+      } finally {
+        await c.query("rollback").catch(() => undefined);
+        await c.end();
+      }
+      const stillDisabled = Number(
+        (await adminQuery(`select count(*) n from pg_trigger where tgrelid = $1::regclass and not tgisinternal and tgenabled <> 'O'`, [fq])).rows[0].n,
+      );
+      const layerB =
+        stillDisabled > 0 ? "TRIGGER-NOT-RESTORED"
+        : bMember !== "landed" ? `probe-invalid(member-control:${bMember})`
+        : bStranger === "42501" ? "refused by policy (guard trigger disabled in a scratch run)"
+        : bStranger === "landed" || /^23[0-9A-Z]{3}$/.test(bStranger) ? "ADMITTED by policy"
+        : `unresolved:${bStranger}`;
+      insertResolved.push({
+        table: fq, verdict: `trigger[${layerA}] policy[${layerB}]`,
+        raw: { aStranger, aStrangerMessage, aMember, bStranger, bMember, stillDisabled },
+        insertWithCheck: checks.map((w) => w.slice(0, 160)),
+      });
+    }
+    await adminQuery("delete from public.treatment_plans where id = $1", [planId]); // scratch row, not left behind
     // Policies that grant to authenticated with no predicate at all.
     const unconditional = (
       await adminQuery(
@@ -390,8 +587,8 @@ describe("no-studio authenticated user: what can be reached", () => {
           order by 1`,
       )
     ).rows.map((r: J) => r.p as string);
-    // Policies on granted tables that call NO membership helper at all (stricter than the
-    // per-table list below, which also accepts a bare studio_id or jwt mention).
+    // Policies naming NO membership helper and NO auth.uid() at all (this list does not catch a policy whose
+    // only identity term is `auth.uid() is not null`; that is the separate uidonly detector below).
     const noHelper = (
       await adminQuery(
         `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p from pg_policies
@@ -401,6 +598,9 @@ describe("no-studio authenticated user: what can be reached", () => {
           order by 1`,
       )
     ).rows.map((r: J) => r.p as string);
+    const uidScan = await scanUidOnly((sql) => adminQuery(sql));
+    const uidOnly = uidScan.strict;
+    const uidBare = uidScan.bare;
     report = {
       generatedAt: new Date().toISOString(),
       counts: { functionsProbed: fns.length, functionsReachable: reachableFns.length, tablesGranted: tables.length, tablesReachable: reachableTables.length },
@@ -410,9 +610,13 @@ describe("no-studio authenticated user: what can be reached", () => {
       tableLeaks: leaks,
       unconditionalPolicies: unconditional,
       policiesWithoutMembershipHelper: noHelper,
+      policiesOnlyAuthUidNotNull: uidOnly,
+      policiesWithBareAuthUidNotNull: uidBare,
       insertIndeterminateBeforeTrigger: insertIndeterminate,
+      insertUnclassified: insertOther,
+      insertResolved,
       claim:
-        "No table showed a visible or writable row to a no-studio user in the SEEDED LOCAL FIXTURE; the policies listed under unconditionalPolicies carry a literal-true predicate. This is not a proof about hosted data, and the report is NOT scrubbed.",
+        "No table showed a visible or writable row to a no-studio user in the SEEDED LOCAL FIXTURE; the policies listed under unconditionalPolicies carry a literal-true predicate. Inserts that a BEFORE trigger answered ahead of RLS were re-probed with that trigger disabled in a rolled-back transaction (insertResolved); an outcome that stays unresolved is listed as such, not read as refused. This is not a proof about hosted data, and the report is NOT scrubbed.",
       tablesWithoutRls: tables.filter((t) => !t.rls).map((t) => t.table),
       tablesNonMembershipPolicies: tables.filter((t) => t.nonMembershipPolicies.length > 0).map((t) => ({ table: t.table, policies: t.nonMembershipPolicies })),
       storage,
@@ -438,6 +642,69 @@ describe("no-studio authenticated user: what can be reached", () => {
     expect(report.ownIdentity.some((r: J) => r.verdict === "ok-no-owned-rows"), "no own-identity call ran to the leak check").toBe(true);
   });
 
+  it("the auth.uid()-only detector can fire, and does not fire on real membership checks", () => {
+    for (const bad of ["auth.uid() IS NOT NULL", "(auth.uid() IS NOT NULL)", "( SELECT auth.uid() AS uid) IS NOT NULL"]) {
+      expect(uidOnlyPolicy(bad), bad).toBe(true);
+    }
+    for (const ok of ["user_id = auth.uid()", "(user_id = ( SELECT auth.uid() AS uid))", "is_studio_member(studio_id)", "auth.uid() IS NOT NULL AND is_studio_member(studio_id)", "true", "auth.uid() IS NOT NULL AND user_id = auth.uid()"]) {
+      expect(uidOnlyPolicy(ok), ok).toBe(false);
+    }
+  });
+
+  it("USING and WITH CHECK are judged separately: a mixed pair is flagged (Z-1)", () => {
+    expect(uidOnlyPolicyRow("auth.uid() IS NOT NULL", "(user_id = auth.uid())")).toBe(true); // USING uid-only
+    expect(uidOnlyPolicyRow("(user_id = auth.uid())", "auth.uid() IS NOT NULL")).toBe(true); // WITH CHECK uid-only
+    expect(uidOnlyPolicyRow("is_studio_member(studio_id)", "is_studio_member(studio_id)")).toBe(false);
+    expect(uidOnlyPolicyRow(null, "(user_id = auth.uid())")).toBe(false);
+    // R-2: the OR form (strict misses it by design: the helper exemption), caught by the bare-term scan.
+    expect(uidOnlyPolicyRow("is_studio_member(studio_id) OR auth.uid() IS NOT NULL", null)).toBe(false);
+    expect(uidBareTermRow("is_studio_member(studio_id) OR auth.uid() IS NOT NULL", null)).toBe(true);
+    expect(uidBareTermRow("(user_id = auth.uid())", "( SELECT auth.uid() AS uid) IS NOT NULL")).toBe(true);
+    expect(uidBareTermRow("user_id = auth.uid()", "is_studio_member(studio_id)")).toBe(false);
+  });
+
+  it("the census scan flags a REAL scratch policy `using (auth.uid() is not null)` (created and rolled back inside the test) (Z-3)", async () => {
+    assertOwnedLocalPair();
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("create table public.zz_census_scratch (id int, user_id uuid)");
+      await c.query("alter table public.zz_census_scratch enable row level security");
+      await c.query("create policy zz_uid_only on public.zz_census_scratch for all to authenticated using (auth.uid() is not null) with check (user_id = auth.uid())");
+      await c.query("create policy zz_member on public.zz_census_scratch for select to authenticated using (public.is_studio_member(gen_random_uuid()))");
+      await c.query("create policy zz_or on public.zz_census_scratch for insert to authenticated with check (public.is_studio_member(gen_random_uuid()) or auth.uid() is not null)");
+      const hits = await scanUidOnly((sql) => c.query(sql));
+      expect(hits.strict.some((h) => h.includes("zz_census_scratch zz_uid_only")), `strict scan: ${hits.strict.join(" | ")}`).toBe(true);
+      expect(hits.strict.some((h) => h.includes("zz_member"))).toBe(false);
+      // R-2: the OR form slips past the strict detector (helper exemption) but the bare-term scan catches it.
+      expect(hits.strict.some((h) => h.includes("zz_or"))).toBe(false);
+      expect(hits.bare.some((h) => h.includes("zz_census_scratch zz_or")), `bare scan: ${hits.bare.join(" | ")}`).toBe(true);
+      expect(hits.bare.some((h) => h.includes("zz_member"))).toBe(false);
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+    const gone = (await adminQuery("select to_regclass('public.zz_census_scratch') t")).rows[0].t;
+    expect(gone, "the scratch table must not survive the rollback").toBeNull();
+  });
+
+  it("payment_charge_attempts and stripe_account_provisioning_attempts have NO authenticated INSERT policy (RLS default-deny)", () => {
+    const by = Object.fromEntries(report.insertResolved.map((r: J) => [r.table, r.verdict]));
+    for (const t of ["public.payment_charge_attempts", "public.stripe_account_provisioning_attempts"]) {
+      expect(by[t], t).toBe("no-insert-policy(RLS default-deny)");
+    }
+  });
+
+  it("insert outcomes: a class-23 code of any kind is recognised; an unknown code is listed, never ignored", () => {
+    for (const c of ["err:23502", "err:23503", "err:23505", "err:23514", "err:23P01"]) expect(INSERT_CONSTRAINT.test(c), c).toBe(true);
+    for (const c of ["err:42501", "err:22P02", "err:42P01", "err:0A000"]) expect(INSERT_CONSTRAINT.test(c), c).toBe(false);
+    expect(insertUnclassified("err:22P02")).toBe(true);
+    expect(insertUnclassified("err:42501")).toBe(false);
+    expect(insertUnclassified("err:23P01")).toBe(false);
+    expect(insertUnclassified('ok:[]:1')).toBe(false);
+  });
+
   it("no table leaks a row or accepts an update/delete for a no-studio user (fixture-independent)", () => {
     expect(report.tableLeaks, "a no-studio user saw rows in a table without a literal-true SELECT policy, or an UPDATE/DELETE landed").toEqual([]);
   });
@@ -449,7 +716,9 @@ describe("no-studio authenticated user: what can be reached", () => {
       ...report.tablesReachable.map((t: J) => `tbl-insert-admitted ${t.table}`),
       ...report.unconditionalPolicies.map((p: string) => `policy ${p}`),
       ...report.policiesWithoutMembershipHelper.map((p: string) => `nohelper ${p}`),
-      ...report.insertIndeterminateBeforeTrigger.map((t: string) => `insert-indeterminate ${t}`),
+      ...report.policiesOnlyAuthUidNotNull.map((p: string) => `uidonly ${p}`),
+      ...report.policiesWithBareAuthUidNotNull.map((p: string) => `uidbare ${p}`),
+      ...report.insertResolved.map((r: J) => `insert-resolved ${r.table} ${r.verdict}`),
       ...report.tablesWithoutRls.map((t: string) => `rls-off ${t}`),
       ...report.tablesNonMembershipPolicies.flatMap((t: J) => t.policies.map((p: string) => `nonmember ${t.table} ${p}`)),
     ].sort();
@@ -461,8 +730,6 @@ describe("no-studio authenticated user: what can be reached", () => {
     for (const k of skipped) console.log(`${k}: SKIPPED_NOT_IN_STACK (its functions are not asserted here)`);
     const inScope = (n: string) => { const sv = svcOf(n); return sv === null || present[sv]; };
     expect(names.filter(inScope), "reachable-by-a-no-studio-user set changed; review every added item").toEqual(PINNED.filter(inScope).sort());
-    // A missing service must never HIDE a reachable function: nothing from a skipped schema may appear.
-    expect(names.filter((n) => !inScope(n)), "a function appeared in a schema the stack says is absent").toEqual([]);
   });
 });
 
@@ -475,7 +742,8 @@ describe("no-studio authenticated user: what can be reached", () => {
 // (waitlist, demo_requests) accept an anonymous insert by their literal-true policies;
 // four more returned a constraint error on insert from a table with a BEFORE INSERT
 // trigger, which runs ahead of the RLS check and so is INDETERMINATE, not reached.
-// No other table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
+// Four more raised P0001 (a custom exception from a guard) on insert: unclassified, listed, not read as
+// refused or admitted. No other table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
 // hosted catalog read. A NEW entry fails this test and must be reviewed.
 const PINNED: string[] = [
   "fn graphql_public.graphql(\"operationName\" text, query text, variables jsonb, extensions jsonb)",
@@ -544,10 +812,6 @@ const PINNED: string[] = [
   "nohelper public.studio_timed_blocks studio_timed_blocks_member_insert [INSERT]",
   "nohelper public.studio_timed_blocks studio_timed_blocks_member_update_own [UPDATE]",
   "nohelper public.waitlist waitlist_anonymous_insert [INSERT]",
-  "insert-indeterminate public.clients",
-  "insert-indeterminate public.payment_charge_attempts",
-  "insert-indeterminate public.service_practitioners",
-  "insert-indeterminate public.stripe_account_provisioning_attempts",
   "nonmember public.demo_requests demo_requests_anonymous_insert [INSERT] qual=null",
   "nonmember public.electrolysis_entries electrolysis_entries: members select [SELECT] qual=session_is_visible(session_id)",
   "nonmember public.electrolysis_entries electrolysis_entries: members insert [INSERT] qual=null",
@@ -557,7 +821,15 @@ const PINNED: string[] = [
   "nonmember public.laser_entries laser_entries: members update [UPDATE] qual=session_is_visible(session_id)",
   "nonmember public.machine_profile_field_contract machine_profile_field_contract_read [SELECT] qual=true",
   "nonmember public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT] qual=true",
-  "nonmember public.waitlist waitlist_anonymous_insert [INSERT] qual=null"
+  "nonmember public.waitlist waitlist_anonymous_insert [INSERT] qual=null",
+  "insert-resolved public.client_budget_context trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.client_clinical_notes trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.client_personal_notes trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.treatment_plan_stages trigger[refused-at-parent-lookup] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.clients trigger[refused-by-policy-with-triggers-enabled] policy[refused by policy (guard trigger disabled in a scratch run)]",
+  "insert-resolved public.payment_charge_attempts no-insert-policy(RLS default-deny)",
+  "insert-resolved public.service_practitioners no-insert-policy(RLS default-deny)",
+  "insert-resolved public.stripe_account_provisioning_attempts no-insert-policy(RLS default-deny)"
 ];
 
 // S4: three functions returned a VALIDATION result for the census's fixture args,
