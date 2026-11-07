@@ -112,8 +112,8 @@ describe("desk directory pin: reviewed literal hashes", () => {
   };
   it("the 0274 and 0280 file bodies equal their reviewed literals, so an edit to either forces a re-review", () => {
     expect(bodySha("supabase/migrations/0274_receptionist_desk_projection.sql")).toBe(DESK_DIRECTORY_SHA_0274);
-    const sha0280 = bodySha(DESK_0280_FILE);
-    if (sha0280 !== null) expect(sha0280).toBe(DESK_DIRECTORY_SHA_0280);
+    // Exists => must hash to the literal; a regex that stops matching yields null and FAILS rather than skipping.
+    if (existsSync(DESK_0280_FILE)) expect(bodySha(DESK_0280_FILE)).toBe(DESK_DIRECTORY_SHA_0280);
   });
 });
 
