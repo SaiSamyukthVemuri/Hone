@@ -530,7 +530,8 @@ describe("no-studio authenticated user: what can be reached", () => {
 // (waitlist, demo_requests) accept an anonymous insert by their literal-true policies;
 // four more returned a constraint error on insert from a table with a BEFORE INSERT
 // trigger, which runs ahead of the RLS check and so is INDETERMINATE, not reached.
-// No other table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
+// Four more raised P0001 (a custom exception from a guard) on insert: unclassified, listed, not read as
+// refused or admitted. No other table showed a visible or writable row in the seeded local fixture. Storage is deferred to the
 // hosted catalog read. A NEW entry fails this test and must be reviewed.
 const PINNED: string[] = [
   "fn graphql_public.graphql(\"operationName\" text, query text, variables jsonb, extensions jsonb)",
@@ -612,7 +613,11 @@ const PINNED: string[] = [
   "nonmember public.laser_entries laser_entries: members update [UPDATE] qual=session_is_visible(session_id)",
   "nonmember public.machine_profile_field_contract machine_profile_field_contract_read [SELECT] qual=true",
   "nonmember public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT] qual=true",
-  "nonmember public.waitlist waitlist_anonymous_insert [INSERT] qual=null"
+  "nonmember public.waitlist waitlist_anonymous_insert [INSERT] qual=null",
+  "insert-unclassified public.client_budget_context err:P0001",
+  "insert-unclassified public.client_clinical_notes err:P0001",
+  "insert-unclassified public.client_personal_notes err:P0001",
+  "insert-unclassified public.treatment_plan_stages err:P0001"
 ];
 
 // S4: three functions returned a VALIDATION result for the census's fixture args,
