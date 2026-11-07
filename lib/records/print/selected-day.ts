@@ -7,10 +7,18 @@
 //
 // The day is a STUDIO-LOCAL calendar date. It is converted to a half-open UTC
 // interval [00:00 that day, 00:00 next day) in the studio's IANA timezone, the
-// same convention as the Records print view (utcInstantsForLocalDayRange), so a
-// 23-hour spring-forward day and a 25-hour fall-back day are each one whole day.
+// Records print view, so a 23-hour spring-forward day and a 25-hour fall-back day
+// are each one whole day.
+//
+// BOTH bounds are the first REAL instant of their local date
+// (studioLocalDateInstant). Where a zone skips midnight (e.g. America/Santiago on
+// 2026-09-06, 00:00 -> 01:00) the nonexistent 00:00 must not be mapped into the
+// previous day: that would add the prior day's last hour to this window and take
+// it from the prior day. An unresolvable timezone or date is a refusal, never a
+// UTC fallback.
 
-import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
+import { addDays } from "@/lib/booking/tz";
+import { studioLocalDateInstant } from "@/lib/waitlist/studio-local-date";
 
 export type DayParse =
   | { ok: true; day: string }
@@ -31,12 +39,16 @@ export function parseSelectedDay(raw: string | undefined | null): DayParse {
 
 export type DayBounds = { fromUtc: string; toUtcExclusive: string };
 
-/** UTC instants bounding one studio-local day: inclusive start, exclusive end. */
-export function selectedDayBounds(day: string, timezone: string): DayBounds {
-  return {
-    fromUtc: utcInstantFromLocal(day, "00:00", timezone).toISOString(),
-    toUtcExclusive: utcInstantFromLocal(addDays(day, 1), "00:00", timezone).toISOString(),
-  };
+/**
+ * UTC instants bounding one studio-local day: inclusive start, exclusive end.
+ * Null when the date or timezone cannot be resolved; callers must treat that as
+ * "cannot answer", not as an empty day.
+ */
+export function selectedDayBounds(day: string, timezone: string): DayBounds | null {
+  const fromUtc = studioLocalDateInstant(day, timezone);
+  const toUtcExclusive = studioLocalDateInstant(addDays(day, 1), timezone);
+  if (fromUtc === null || toUtcExclusive === null) return null;
+  return { fromUtc, toUtcExclusive };
 }
 
 /** The columns selection needs. A page may carry more; selection reads only these. */
@@ -50,6 +62,8 @@ export type SelectableSession = {
 
 export type SelectedDay<T extends SelectableSession> =
   | { kind: "empty"; day: string; clientId: string }
+  // The day's bounds could not be resolved (bad timezone/date). NOT an empty day.
+  | { kind: "unavailable"; day: string; clientId: string; reason: "unresolvable_day" }
   | { kind: "sessions"; day: string; clientId: string; sessions: T[] };
 
 /**
@@ -63,7 +77,11 @@ export function selectSessionsForDay<T extends SelectableSession>(
   sessions: readonly T[],
   scope: { studioId: string; clientId: string; day: string; timezone: string },
 ): SelectedDay<T> {
-  const { fromUtc, toUtcExclusive } = selectedDayBounds(scope.day, scope.timezone);
+  const bounds = selectedDayBounds(scope.day, scope.timezone);
+  if (bounds === null) {
+    return { kind: "unavailable", day: scope.day, clientId: scope.clientId, reason: "unresolvable_day" };
+  }
+  const { fromUtc, toUtcExclusive } = bounds;
   const from = Date.parse(fromUtc);
   const to = Date.parse(toUtcExclusive);
   const kept = sessions

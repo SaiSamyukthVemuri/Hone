@@ -38,17 +38,51 @@ describe("selectedDayBounds (studio-local day -> half-open UTC interval)", () =>
     });
   });
   it("spring-forward day is 23h (EST start, EDT end)", () => {
-    const b = selectedDayBounds("2026-03-08", TZ);
+    const b = selectedDayBounds("2026-03-08", TZ)!;
     expect(b).toEqual({ fromUtc: "2026-03-08T05:00:00.000Z", toUtcExclusive: "2026-03-09T04:00:00.000Z" });
     expect((Date.parse(b.toUtcExclusive) - Date.parse(b.fromUtc)) / 3_600_000).toBe(23);
   });
   it("fall-back day is 25h (EDT start, EST end)", () => {
-    const b = selectedDayBounds("2026-11-01", TZ);
+    const b = selectedDayBounds("2026-11-01", TZ)!;
     expect(b).toEqual({ fromUtc: "2026-11-01T04:00:00.000Z", toUtcExclusive: "2026-11-02T05:00:00.000Z" });
     expect((Date.parse(b.toUtcExclusive) - Date.parse(b.fromUtc)) / 3_600_000).toBe(25);
   });
   it("the same instant is a different local day in a different studio timezone", () => {
-    expect(selectedDayBounds("2026-05-10", "Pacific/Auckland").fromUtc).toBe("2026-05-09T12:00:00.000Z");
+    expect(selectedDayBounds("2026-05-10", "Pacific/Auckland")?.fromUtc).toBe("2026-05-09T12:00:00.000Z");
+  });
+});
+
+describe("zones that skip midnight (America/Santiago, 2026-09-06: 00:00 -> 01:00)", () => {
+  const SCL = "America/Santiago";
+  // 00:00 -04 on 6 Sep does not exist; the first real instant is 01:00 -03 = 04:00Z.
+  it("the selected day starts at the first real instant, not an hour into the day before", () => {
+    expect(selectedDayBounds("2026-09-06", SCL)).toEqual({
+      fromUtc: "2026-09-06T04:00:00.000Z",
+      toUtcExclusive: "2026-09-07T03:00:00.000Z",
+    });
+  });
+  it("the day before ends at that same instant, so no instant is in both days or in neither", () => {
+    expect(selectedDayBounds("2026-09-05", SCL)).toEqual({
+      fromUtc: "2026-09-05T04:00:00.000Z",
+      toUtcExclusive: "2026-09-06T04:00:00.000Z",
+    });
+  });
+  it("a visit in the hour the old mapping stole belongs to the day before, and only to it", () => {
+    const lateFifth = s("late-5th", "2026-09-06T03:30:00.000Z"); // 23:30 -04 on 5 Sep
+    const firstSixth = s("first-6th", "2026-09-06T04:00:00.000Z"); // 01:00 -03 on 6 Sep
+    const rows = [lateFifth, firstSixth];
+    expect(ids(selectSessionsForDay(rows, scope("2026-09-05", SCL)))).toEqual(["late-5th"]);
+    expect(ids(selectSessionsForDay(rows, scope("2026-09-06", SCL)))).toEqual(["first-6th"]);
+  });
+});
+
+describe("unresolvable day or timezone is unavailable, never empty", () => {
+  it("returns kind unavailable for an unknown timezone and for an impossible date", () => {
+    const rows = [s("x", "2026-05-10T15:00:00.000Z")];
+    expect(selectedDayBounds("2026-05-10", "Not/AZone")).toBeNull();
+    expect(selectSessionsForDay(rows, scope("2026-05-10", "Not/AZone")).kind).toBe("unavailable");
+    expect(selectSessionsForDay(rows, scope("2026-02-30")).kind).toBe("unavailable");
+    expect(selectSessionsForDay(rows, scope("2026-05-10", "")).kind).toBe("unavailable");
   });
 });
 
