@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 256,
+    "count": 257,
     "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "a5bb678fd56372114dd84ac5c8308eca83e6a04688f2e9427e1c8973e00938e4"
+    "sha256": "5809f254702e28251ed2f533ddfdb1d5d67624a4d034a7cfec3df3338c061179"
   },
   "public": {
     "tables": [
