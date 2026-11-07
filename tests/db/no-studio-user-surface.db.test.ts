@@ -497,26 +497,62 @@ describe("no-studio authenticated user: what can be reached", () => {
         await q("rollback to savepoint ins");
       }
     };
+    // V-1/H-1: the guard trigger's own sentence per table. client_clinical_notes words it "a visible clients row" (its parent lookup is
+    // visibility-based); the other three say "an existing ... row". A different P0001 stays unclassified instead of passing as this one.
+    const PARENT_LOOKUP_SENTENCE: Record<string, RegExp> = { "public.client_clinical_notes": /does not reference a visible clients row/ };
     const insertResolved: J[] = [];
-    for (const fq of toResolve) {
-      const [sch, tbl] = fq.split(".");
-      const checks = (
-        await adminQuery(
-          `select with_check from pg_policies where schemaname=$1 and tablename=$2 and cmd in ('INSERT','ALL')
-             and (roles::text like '%authenticated%' or roles::text like '%public%')`,
-          [sch, tbl],
-        )
-      ).rows.map((r: J) => String(r.with_check ?? ""));
-      const valid = VALID[fq];
-      if (!valid) {
-        // No INSERT/ALL policy applicable to authenticated or public means RLS default-denies every insert,
-        // whatever the row: assert that from pg_policies (Privacy W-1). Otherwise fall back to a weak probe.
-        if (checks.length === 0) {
-          insertResolved.push({ table: fq, verdict: "no-insert-policy(RLS default-deny)", rawWithTriggersOff: "n/a", insertWithCheck: [] });
+    // N-2: the scratch plan is removed even when a probe throws mid-loop.
+    try {
+      for (const fq of toResolve) {
+        const [sch, tbl] = fq.split(".");
+        const checks = (
+          await adminQuery(
+            `select with_check from pg_policies where schemaname=$1 and tablename=$2 and cmd in ('INSERT','ALL')
+               and (roles::text like '%authenticated%' or roles::text like '%public%')`,
+            [sch, tbl],
+          )
+        ).rows.map((r: J) => String(r.with_check ?? ""));
+        const valid = VALID[fq];
+        if (!valid) {
+          // No INSERT/ALL policy applicable to authenticated or public means RLS default-denies every insert,
+          // whatever the row: assert that from pg_policies (Privacy W-1). Otherwise fall back to a weak probe.
+          if (checks.length === 0) {
+            insertResolved.push({ table: fq, verdict: "no-insert-policy(RLS default-deny)", rawWithTriggersOff: "n/a", insertWithCheck: [] });
+            continue;
+          }
+          // Weak probe: a default-values row names no studio, so a refusal says only "refused for a null-studio row".
+          let raw = "";
+          const c = new Client({ connectionString: resolveLocalDbUrl() });
+          await c.connect();
+          try {
+            await c.query("begin");
+            await c.query(`alter table ${fq} disable trigger user`);
+            await c.query("set local role authenticated");
+            await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
+            raw = await tryInsert((t, p) => c.query(t, p), `insert into ${fq} default values`, []);
+          } finally {
+            await c.query("rollback").catch(() => undefined);
+            await c.end();
+          }
+          const verdict = raw === "landed" || /^23[0-9A-Z]{3}$/.test(raw) ? "admitted(weak:null-studio-row)" : raw === "42501" ? "refused-for-null-studio-row" : `unresolved:${raw}`;
+          insertResolved.push({ table: fq, verdict, rawWithTriggersOff: raw, insertWithCheck: checks.map((w) => w.slice(0, 160)) });
           continue;
         }
-        // Weak probe: a default-values row names no studio, so a refusal says only "refused for a null-studio row".
-        let raw = "";
+        // (a) trigger layer, triggers ENABLED.
+        const aStranger = await asJwt(S, (q) => tryInsert(q, valid.sql, valid.args));
+        const aStrangerMessage = lastMessage;
+        // Control = the studio OWNER: a plain practitioner is refused by some of these tables' policies, which
+        // would make the probe look invalid for the wrong reason.
+        const aMember = await asJwt(A.userId, (q) => tryInsert(q, valid.sql, valid.args));
+        const layerA =
+          aStranger === "42501" && aMember === "landed" ? "refused-by-policy-with-triggers-enabled"
+          // V-1/H-1: the SPECIFIC trigger sentence, not merely a non-empty message, so another P0001 cannot pass as this refusal.
+        : aStranger === "P0001" && (PARENT_LOOKUP_SENTENCE[fq] ?? /does not reference an existing/).test(aStrangerMessage) && aMember === "landed" ? "refused-at-parent-lookup"
+          : aMember !== "landed" ? `unclassified(member-control:${aMember})`
+          : `unclassified(stranger:${aStranger})`;
+        // (b) policy layer, triggers DISABLED in a scratch transaction.
+        let bStranger = "";
+        let bMember = "";
         const c = new Client({ connectionString: resolveLocalDbUrl() });
         await c.connect();
         try {
@@ -524,59 +560,31 @@ describe("no-studio authenticated user: what can be reached", () => {
           await c.query(`alter table ${fq} disable trigger user`);
           await c.query("set local role authenticated");
           await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
-          raw = await tryInsert((t, p) => c.query(t, p), `insert into ${fq} default values`, []);
+          bStranger = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
+          await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+          bMember = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
         } finally {
           await c.query("rollback").catch(() => undefined);
           await c.end();
         }
-        const verdict = raw === "landed" || /^23[0-9A-Z]{3}$/.test(raw) ? "admitted(weak:null-studio-row)" : raw === "42501" ? "refused-for-null-studio-row" : `unresolved:${raw}`;
-        insertResolved.push({ table: fq, verdict, rawWithTriggersOff: raw, insertWithCheck: checks.map((w) => w.slice(0, 160)) });
-        continue;
+        const stillDisabled = Number(
+          (await adminQuery(`select count(*) n from pg_trigger where tgrelid = $1::regclass and not tgisinternal and tgenabled <> 'O'`, [fq])).rows[0].n,
+        );
+        const layerB =
+          stillDisabled > 0 ? "TRIGGER-NOT-RESTORED"
+          : bMember !== "landed" ? `probe-invalid(member-control:${bMember})`
+          : bStranger === "42501" ? "refused by policy (guard trigger disabled in a scratch run)"
+          : bStranger === "landed" || /^23[0-9A-Z]{3}$/.test(bStranger) ? "ADMITTED by policy"
+          : `unresolved:${bStranger}`;
+        insertResolved.push({
+          table: fq, verdict: `trigger[${layerA}] policy[${layerB}]`,
+          raw: { aStranger, aStrangerMessage, aMember, bStranger, bMember, stillDisabled },
+          insertWithCheck: checks.map((w) => w.slice(0, 160)),
+        });
       }
-      // (a) trigger layer, triggers ENABLED.
-      const aStranger = await asJwt(S, (q) => tryInsert(q, valid.sql, valid.args));
-      const aStrangerMessage = lastMessage;
-      // Control = the studio OWNER: a plain practitioner is refused by some of these tables' policies, which
-      // would make the probe look invalid for the wrong reason.
-      const aMember = await asJwt(A.userId, (q) => tryInsert(q, valid.sql, valid.args));
-      const layerA =
-        aStranger === "42501" && aMember === "landed" ? "refused-by-policy-with-triggers-enabled"
-        : aStranger === "P0001" && aStrangerMessage.length > 0 && aMember === "landed" ? "refused-at-parent-lookup"
-        : aMember !== "landed" ? `unclassified(member-control:${aMember})`
-        : `unclassified(stranger:${aStranger})`;
-      // (b) policy layer, triggers DISABLED in a scratch transaction.
-      let bStranger = "";
-      let bMember = "";
-      const c = new Client({ connectionString: resolveLocalDbUrl() });
-      await c.connect();
-      try {
-        await c.query("begin");
-        await c.query(`alter table ${fq} disable trigger user`);
-        await c.query("set local role authenticated");
-        await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: S, role: "authenticated" })]);
-        bStranger = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
-        await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
-        bMember = await tryInsert((t, p) => c.query(t, p), valid.sql, valid.args);
-      } finally {
-        await c.query("rollback").catch(() => undefined);
-        await c.end();
-      }
-      const stillDisabled = Number(
-        (await adminQuery(`select count(*) n from pg_trigger where tgrelid = $1::regclass and not tgisinternal and tgenabled <> 'O'`, [fq])).rows[0].n,
-      );
-      const layerB =
-        stillDisabled > 0 ? "TRIGGER-NOT-RESTORED"
-        : bMember !== "landed" ? `probe-invalid(member-control:${bMember})`
-        : bStranger === "42501" ? "refused by policy (guard trigger disabled in a scratch run)"
-        : bStranger === "landed" || /^23[0-9A-Z]{3}$/.test(bStranger) ? "ADMITTED by policy"
-        : `unresolved:${bStranger}`;
-      insertResolved.push({
-        table: fq, verdict: `trigger[${layerA}] policy[${layerB}]`,
-        raw: { aStranger, aStrangerMessage, aMember, bStranger, bMember, stillDisabled },
-        insertWithCheck: checks.map((w) => w.slice(0, 160)),
-      });
+    } finally {
+      await adminQuery("delete from public.treatment_plans where id = $1", [planId]); // scratch row, not left behind
     }
-    await adminQuery("delete from public.treatment_plans where id = $1", [planId]); // scratch row, not left behind
     // Policies that grant to authenticated with no predicate at all.
     const unconditional = (
       await adminQuery(
@@ -632,6 +640,51 @@ describe("no-studio authenticated user: what can be reached", () => {
     const out = process.env.HONE_CENSUS_OUT;
     if (out) writeFileSync(out, JSON.stringify(report, null, 1));
     console.log(`NO-STUDIO CENSUS counts: ${JSON.stringify(report.counts)}`);
+  });
+
+  it("service_practitioners has no INSERT policy for authenticated/public, and an owner insert is refused by RLS, not by a later constraint (V-2)", async () => {
+    const pol = (
+      await adminQuery(
+        `select policyname from pg_policies where schemaname='public' and tablename='service_practitioners' and cmd in ('INSERT','ALL')
+            and (roles::text like '%authenticated%' or roles::text like '%public%')`,
+      )
+    ).rows;
+    expect(pol, "an INSERT/ALL policy appeared on service_practitioners: the default-deny pin is stale").toEqual([]);
+    // service_practitioners has a BEFORE INSERT guard trigger that answers (23514) ahead of RLS, so as in the census the trigger is
+    // disabled inside a rolled-back transaction to reach the policy layer. Random service/practitioner ids: if RLS admitted the row the
+    // FK would answer 23503; 42501 means RLS refused first. LOCAL OWNED STACK ONLY.
+    assertOwnedLocalPair();
+    let code = "";
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("alter table public.service_practitioners disable trigger user");
+      await c.query("set local role authenticated");
+      await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+      await c.query("savepoint sp");
+      try {
+        await c.query("insert into public.service_practitioners (studio_id, service_id, practitioner_id) values ($1,$2,$3)", [A.studioId, randomUUID(), randomUUID()]);
+        code = "landed";
+      } catch (e) {
+        code = (e as { code?: string }).code ?? "?";
+      }
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+    const notRestored = Number(
+      (await adminQuery("select count(*) n from pg_trigger where tgrelid = 'public.service_practitioners'::regclass and not tgisinternal and tgenabled <> 'O'")).rows[0].n,
+    );
+    expect(notRestored, "the guard trigger must be restored after the scratch run").toBe(0);
+    expect(code).toBe("42501");
+  });
+
+  it("the saved report carries no uuid and no email address (H-2)", () => {
+    const text = JSON.stringify(report);
+    expect(text.length, "empty report: the scrub check would prove nothing").toBeGreaterThan(1000);
+    expect(text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []).toEqual([]);
+    expect(text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}/g) ?? []).toEqual([]);
   });
 
   it("every own-identity RPC raises, or leaves no row owned by a no-studio user", () => {
