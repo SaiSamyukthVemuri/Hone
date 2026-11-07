@@ -249,6 +249,15 @@ async function ownIdentityCensus() {
       await q("savepoint own");
       try {
         await q(call);
+      } catch (e) {
+        await q("rollback to savepoint own");
+        return "raised:" + ((e as { code?: string }).code ?? "?");
+      }
+      // The call succeeded. Count rows the stranger now owns, as the OWNER role
+      // (the stranger has no SELECT on some of these tables, which would otherwise
+      // be mistaken for the function raising). The rollback restores the role.
+      try {
+        await q("reset role");
         let leaked = 0;
         for (const t of owned) {
           leaked += Number((await q(`select count(*) n from public.${t} where user_id = $1`, [S])).rows[0].n);
@@ -257,7 +266,7 @@ async function ownIdentityCensus() {
         return leaked === 0 ? "ok-no-owned-rows" : `LEAK: ${leaked} rows owned by the stranger after the call`;
       } catch (e) {
         await q("rollback to savepoint own");
-        return "raised:" + ((e as { code?: string }).code ?? "?");
+        return "CHECK-ERROR:" + ((e as { code?: string }).code ?? "?");
       }
     });
     results.push({ fn: f.proname, verdict });
@@ -304,8 +313,10 @@ describe("no-studio authenticated user: what can be reached", () => {
 
   it("every own-identity RPC raises, or leaves no row owned by a no-studio user", () => {
     expect(report.ownIdentity.length, "the own-identity family must be non-empty or this proves nothing").toBeGreaterThan(2);
-    const leaks = report.ownIdentity.filter((r: J) => String(r.verdict).startsWith("LEAK"));
-    expect(leaks, "own-identity RPCs that create or keep data for a user with no studio").toEqual([]);
+    const bad = report.ownIdentity.filter((r: J) => /^(LEAK|CHECK-ERROR)/.test(String(r.verdict)));
+    expect(bad, "own-identity RPCs that keep data for a user with no studio, or a check that could not run").toEqual([]);
+    // Anti-vacuity: at least one must have actually run to completion and been counted.
+    expect(report.ownIdentity.some((r: J) => r.verdict === "ok-no-owned-rows"), "no own-identity call ran to the leak check").toBe(true);
   });
 
   it("pins the reachable set (skipped in report mode)", () => {
