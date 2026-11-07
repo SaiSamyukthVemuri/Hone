@@ -167,15 +167,62 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     expect(TERMS).toMatch(/separate from the payments your studio takes from its own clients/i);
   });
 
+  // PROPOSED (HON-70, pending Sam; reviewed with the payments-gate commit).
+  //
+  // Terms section 8 says there is no automated Hone subscription billing system
+  // "at this time". That stays TRUE while the HON-70 machinery is flag-OFF and
+  // its webhook route fails closed. The census therefore permits subscription
+  // machinery in EXACTLY two places and keeps catching it anywhere else. It does
+  // NOT rewrite the Terms: restating section 8 before activation is Sam's.
+  const CENSUS = String.raw`subscriptions\.create|stripe_subscription|customer\.subscription|invoice\.payment_failed`;
+  const FLAG_OFF_MACHINERY = ["lib/subscriptions/", "app/api/billing/webhook/"];
+  const censusHits = (grepOutput: string): string[] =>
+    grepOutput
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .filter((f) => !FLAG_OFF_MACHINERY.some((prefix) => f.startsWith(prefix)));
+
   it("the subscription census assumption is still true", async () => {
-    // If someone later builds real subscription billing, this test should fail
-    // so the Terms get restored rather than left understating the product.
+    // If someone later builds real subscription billing OUTSIDE the two flag-off
+    // locations, this test should fail so the Terms get restored rather than
+    // left understating the product.
     const { execSync } = await import("node:child_process");
-    const hits = execSync(
-      `grep -rlE "subscriptions\\.create|stripe_subscription|customer\\.subscription|invoice\\.payment_failed" app lib || true`,
-      { cwd: REPO, encoding: "utf8" },
-    ).trim();
-    expect(hits, "subscription machinery appeared; revisit Terms section 8").toBe("");
+    const raw = execSync(`grep -rlE "${CENSUS}" app lib || true`, { cwd: REPO, encoding: "utf8" });
+    expect(censusHits(raw), "subscription machinery appeared outside the flag-off HON-70 locations; revisit Terms section 8").toEqual([]);
+  });
+
+  it("anti-vacuity: the census still sees the permitted machinery, and still flags the same shape anywhere else", async () => {
+    const { execSync } = await import("node:child_process");
+    const raw = execSync(`grep -rlE "${CENSUS}" app lib || true`, { cwd: REPO, encoding: "utf8" });
+    // The exemption is doing real work: the permitted locations DO match the grep.
+    expect(raw).toMatch(/^lib\/subscriptions\//m);
+    // And a hit anywhere else is kept, including a look-alike path prefix.
+    expect(censusHits("app/foo/bar.ts\nlib/billing/x.ts\nlib/subscriptions-extra/y.ts\napp/api/billing/other/route.ts")).toEqual([
+      "app/foo/bar.ts",
+      "lib/billing/x.ts",
+      "lib/subscriptions-extra/y.ts",
+      "app/api/billing/other/route.ts",
+    ]);
+    expect(censusHits("lib/subscriptions/webhook.ts\napp/api/billing/webhook/route.ts")).toEqual([]);
+  });
+
+  it("the permitted machinery is dormant: the flag defaults OFF and the webhook route 404s with it off", async () => {
+    const { isSelfServeCheckoutEnabled } = await import("@/lib/subscriptions/plans");
+    expect(isSelfServeCheckoutEnabled({})).toBe(false);
+    expect(isSelfServeCheckoutEnabled({ HONE_SELF_SERVE_CHECKOUT_ENABLED: "TRUE" })).toBe(false);
+    const { POST } = await import("@/app/api/billing/webhook/route");
+    const saved = process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED;
+    delete process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED;
+    try {
+      expect((await POST()).status).toBe(404);
+    } finally {
+      if (saved !== undefined) process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED = saved;
+    }
+  });
+
+  it("the Terms are NOT edited by this change: section 8 still says there is no automated subscription billing", () => {
+    expect(TERMS).toMatch(/no automated Hone subscription billing system at this time/i);
   });
 });
 
