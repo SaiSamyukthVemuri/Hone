@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { EMAIL_CANDIDATE_LIMIT, emailIlikePattern, hasExactEmailMatch } from "@/lib/invitations/email-match";
+import { EMAIL_CANDIDATE_LIMIT, emailCandidateState, emailIlikePattern } from "@/lib/invitations/email-match";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
@@ -150,7 +150,11 @@ export async function invitePractitionerAction(
   if (existingErr) {
     return { ok: false, error: "Could not check existing practitioners." };
   }
-  if (hasExactEmailMatch(existingPractitioners, email)) {
+  const practitionerState = emailCandidateState(existingPractitioners, email);
+  if (practitionerState === "inconclusive") {
+    return { ok: false, error: "Could not check existing practitioners." };
+  }
+  if (practitionerState === "match") {
     return {
       ok: false,
       error: `${email} is already a practitioner at this studio.`,
@@ -168,7 +172,11 @@ export async function invitePractitionerAction(
   if (inviteErr) {
     return { ok: false, error: "Could not check existing invitations." };
   }
-  if (hasExactEmailMatch(existingInvites, email)) {
+  const inviteState = emailCandidateState(existingInvites, email);
+  if (inviteState === "inconclusive") {
+    return { ok: false, error: "Could not check existing invitations." };
+  }
+  if (inviteState === "match") {
     return {
       ok: false,
       error: `${email} already has a pending invite at this studio.`,

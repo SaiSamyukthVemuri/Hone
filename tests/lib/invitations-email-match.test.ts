@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailIlikePattern, exactEmailRows, hasExactEmailMatch, singleExactEmailRow } from "@/lib/invitations/email-match";
+import { EMAIL_CANDIDATE_LIMIT, emailCandidateState, emailIlikePattern, exactEmailRows, hasExactEmailMatch, singleExactEmailRow } from "@/lib/invitations/email-match";
 
 describe("emailIlikePattern", () => {
   it("escapes backslash, percent and underscore; each asterisk becomes the single-character wildcard _ (PostgREST never sees a *)", () => {
@@ -31,5 +31,19 @@ describe("exact compare of fetched candidates", () => {
     expect(singleExactEmailRow(rows, "bob_jones@example.com")).toEqual({ email: "bob_jones@example.com" });
     expect(singleExactEmailRow([{ email: "a@x.com" }, { email: "A@x.com" }], "a@x.com")).toBeNull();
     expect(singleExactEmailRow(null, "a@x.com")).toBeNull();
+  });
+});
+
+describe("full candidate page is inconclusive (fail closed)", () => {
+  const page = (n: number) => Array.from({ length: n }, (_, i) => ({ email: `bob${i}jones@x.com` }));
+  it("emailCandidateState: match / none / inconclusive", () => {
+    expect(emailCandidateState([{ email: "a@x.com" }], "a@x.com")).toBe("match");
+    expect(emailCandidateState(page(3), "a@x.com")).toBe("none");
+    expect(emailCandidateState(page(EMAIL_CANDIDATE_LIMIT), "a@x.com")).toBe("inconclusive");
+    expect(emailCandidateState([...page(EMAIL_CANDIDATE_LIMIT - 1), { email: "a@x.com" }], "a@x.com")).toBe("match");
+  });
+  it("singleExactEmailRow refuses a full page even when it holds the one exact row", () => {
+    expect(singleExactEmailRow([...page(EMAIL_CANDIDATE_LIMIT - 1), { email: "a@x.com" }], "a@x.com")).toBeNull();
+    expect(singleExactEmailRow([...page(EMAIL_CANDIDATE_LIMIT - 2), { email: "a@x.com" }], "a@x.com")).not.toBeNull();
   });
 });

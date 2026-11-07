@@ -72,6 +72,29 @@ describe("invite-only signup gate: the typed address is matched LITERALLY, case-
     expect(singleExactEmailRow([{ email: "bob.jones@example.com" }], "b*@example.com")).toBeNull();
     expect(singleExactEmailRow([{ email: "bob.jones@example.com" }, { email: "carol@example.com" }], "*@example.com")).toBeNull();
   });
+  it("a mixed-case, padded exact match still allows signup", async () => {
+    await requestPractitionerMagicLinkAction("  BOB.Jones@Example.COM ");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
+  it("an invitation whose own address contains an underscore matches itself, in any case", async () => {
+    await requestPractitionerMagicLinkAction("alice_smith@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
+  it("...and its underscore does not stand for a different character (aliceXsmith)", async () => {
+    await requestPractitionerMagicLinkAction("alicexsmith@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("a FULL candidate page (50 lookalikes + the real invite) is inconclusive: signup stays off", async () => {
+    h.invites = [
+      ...Array.from({ length: 49 }, (_, n) => ({ id: `f${n}`, email: `bob${String(n).padStart(2, "0")}jones@example.com`, status: "pending" })),
+      { id: "i9", email: "bob*jones@example.com", status: "pending" },
+    ];
+    await requestPractitionerMagicLinkAction("bob**jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+    h.invites = h.invites.slice(1);
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
   // One-character lookalikes of bob*jones@: each matches the pattern bob_jones@ (the * is sent as a one-character wildcard).
   const lookalikes = ["bobXjones", "bob.jones", "bob-jones", "bob_jones", "bobajones", "bob1jones", "bobzjones"].map((l, n) => ({
     id: `l${n}`, email: `${l}@example.com`, status: "pending",

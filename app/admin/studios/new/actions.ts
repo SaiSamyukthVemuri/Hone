@@ -8,7 +8,7 @@ import { parseNewStudioInput } from "@/lib/studios/new-studio";
 import { logAdminAction } from "@/lib/audit/admin-actions";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { EMAIL_CANDIDATE_LIMIT, emailIlikePattern, hasExactEmailMatch } from "@/lib/invitations/email-match";
+import { EMAIL_CANDIDATE_LIMIT, emailCandidateState, emailIlikePattern } from "@/lib/invitations/email-match";
 import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 
 const BASE = "/admin/studios/new";
@@ -110,7 +110,9 @@ export async function createStudioWithOwnerInvite(
     .eq("status", "pending")
     .limit(EMAIL_CANDIDATE_LIMIT);
   if (dupErr) fail(`Could not verify invitations: ${dupErr.message}`);
-  if (hasExactEmailMatch(dupInvites, input.ownerEmail)) {
+  const dupState = emailCandidateState(dupInvites, input.ownerEmail);
+  if (dupState === "inconclusive") fail("Could not verify invitations.");
+  if (dupState === "match") {
     fail(
       `There is already a pending invitation for ${input.ownerEmail}. Resolve it before creating another studio for this owner.`,
     );
