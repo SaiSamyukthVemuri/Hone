@@ -255,18 +255,28 @@ function areaLabel(b: PacketBlockSource, areas: ReadonlyArray<BlockArea> | undef
   return detail ? `${base} (${detail})` : base;
 }
 
-/** Machine-native readings win; a block that has them never prints its legacy columns. */
+/**
+ * Machine-native readings win for SETTINGS; a block with them never prints its legacy
+ * mode / energy / frequency columns. The probe and its lot are NOT settings: the
+ * machine-first flow saves them on the block, so they print whichever source supplies
+ * the settings, including next to the unreadable-settings refusal (lot traceability).
+ */
 function settingsFor(b: PacketBlockSource, native: ReadonlyArray<PacketSetupReadingSource>): Reading[] {
-  const n = nativeSettingsForBlock(native);
-  if (n !== null) return n.kind === "settings" ? n.lines : [{ label: "Settings", value: NATIVE_SETTINGS_UNREADABLE }];
-  return readings([
-    ["Mode", b.mode],
-    ["Modality", b.apilus_modality],
-    ["Energy level", b.energy_level],
-    ["Frequency", b.machine_frequency],
+  const probe = readings([
     ["Probe", [b.probe_label, b.probe_type, b.probe_size].filter(present).join(" ")],
     ["Probe lot", b.probe_lot_number],
   ]);
+  const n = nativeSettingsForBlock(native);
+  if (n !== null) return [...(n.kind === "settings" ? n.lines : [{ label: "Settings", value: NATIVE_SETTINGS_UNREADABLE }]), ...probe];
+  return [
+    ...readings([
+      ["Mode", b.mode],
+      ["Modality", b.apilus_modality],
+      ["Energy level", b.energy_level],
+      ["Frequency", b.machine_frequency],
+    ]),
+    ...probe,
+  ];
 }
 
 export function buildDayPacket(input: {

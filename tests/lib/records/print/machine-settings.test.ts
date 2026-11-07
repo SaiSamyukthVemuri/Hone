@@ -30,8 +30,8 @@ const block = (over: Partial<PacketBlockSource> = {}): PacketBlockSource => ({
   probe_size: null, probe_lot_number: null, numbing_status: null, numbing_notes: null, tolerance_rating: null, reaction_type: null,
   reaction_notes: null, caution_note: null, block_notes: null, started_at: null, ended_at: null, created_at: "2026-05-10T15:00:00.000Z", ...over,
 });
-const packet = (setupReadings: PacketSetupReadingSource[]) =>
-  buildDayPacket({ day: "2026-05-10", timezone: "America/Toronto", studioName: "S", clientName: "C", sessions: [session], blocks: [block()], entries: [], laserEntries: [], setupReadings, practitionerNameById: new Map() });
+const packet = (setupReadings: PacketSetupReadingSource[], blockOver: Partial<PacketBlockSource> = {}) =>
+  buildDayPacket({ day: "2026-05-10", timezone: "America/Toronto", studioName: "S", clientName: "C", sessions: [session], blocks: [block(blockOver)], entries: [], laserEntries: [], setupReadings, practitionerNameById: new Map() });
 const settingsOf = (p: ReturnType<typeof packet>) => p.visits[0].areas[0].settings;
 
 describe("machine-native settings (Codex P1 #4500315781)", () => {
@@ -79,6 +79,30 @@ describe("machine-native settings (Codex P1 #4500315781)", () => {
     const s = settingsOf(packet([reading(), reading({ id: "r9", ...over } as Partial<PacketSetupReadingSource>)]));
     expect(s).toEqual([{ label: "Settings", value: NATIVE_SETTINGS_UNREADABLE }]);
     expect(JSON.stringify(s)).not.toContain("STALE-FREQ");
+  });
+});
+
+describe("probe identity and lot are kept whichever source supplies the settings (Codex P2 #4500489752)", () => {
+  const probe = { probe_label: "Probe-X", probe_type: "insulated", probe_size: "002", probe_lot_number: "LOT-77" };
+  it("a native block prints its probe and lot after the native settings", () => {
+    const s = settingsOf(packet([reading()], probe));
+    expect(s).toContainEqual({ label: "Probe", value: "Probe-X insulated 002" });
+    expect(s).toContainEqual({ label: "Probe lot", value: "LOT-77" });
+    expect(JSON.stringify(s)).not.toContain("STALE-FREQ");
+  });
+  it("an unreadable native block still prints probe and lot next to the refusal, and no legacy settings", () => {
+    const s = settingsOf(packet([reading({ mode_key: "no-such-mode" })], probe));
+    expect(s).toEqual([
+      { label: "Settings", value: NATIVE_SETTINGS_UNREADABLE },
+      { label: "Probe", value: "Probe-X insulated 002" },
+      { label: "Probe lot", value: "LOT-77" },
+    ]);
+  });
+  it("a legacy block is unchanged: mode, energy, frequency, then probe and lot", () => {
+    expect(settingsOf(packet([], probe)).map((r) => r.label)).toEqual(["Mode", "Energy level", "Frequency", "Probe", "Probe lot"]);
+  });
+  it("a native block with no probe recorded prints no probe line", () => {
+    expect(settingsOf(packet([reading()])).some((r) => r.label.startsWith("Probe"))).toBe(false);
   });
 });
 
