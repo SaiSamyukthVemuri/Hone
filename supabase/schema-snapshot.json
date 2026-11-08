@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 260,
-    "last": "0323_waitlist_launch_controls.sql",
-    "sha256": "3f7410dbf0c5fe77f76b76f7a258df7033d3d2557beb1d1e72174342068bed03"
+    "count": 261,
+    "last": "0324_waitlist_atomic_send_allowance.sql",
+    "sha256": "354ca222ae98932d674e715996599e5d42cde67b0c5701b229b6612d28df3b5a"
   },
   "public": {
     "tables": [
@@ -238,6 +238,7 @@
       "copy_session_setup",
       "correct_finalized_session",
       "count_competing_waitlist_invitations",
+      "count_waitlist_competing_invitations_internal",
       "count_waitlist_times_feedback",
       "create_appointment_core",
       "create_block_with_entry",
