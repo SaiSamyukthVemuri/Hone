@@ -19,7 +19,7 @@ import {
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
-import { redeemedUnbookedEntries } from "@/lib/waitlist/needs-attention";
+import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -675,6 +675,7 @@ export default async function WaitlistSettingsPage({
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
+  const attention = await loadNeedsAttention(supabase, studio.id);
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (cycleIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
@@ -863,8 +864,7 @@ export default async function WaitlistSettingsPage({
               says only what is known: the booking did not complete. It cannot
               say why, so it names no reason. */}
           {(() => {
-            const stuck = redeemedUnbookedEntries(rows, cycleByEntry);
-            if (stuck === null) {
+            if (attention.kind === "unknown") {
               return (
                 <p className="text-sm text-neutral-600 dark:text-neutral-400" role="status">
                   We couldn&rsquo;t check whether any invitation was used without a booking.
@@ -872,25 +872,30 @@ export default async function WaitlistSettingsPage({
                 </p>
               );
             }
-            if (stuck.length === 0) return null;
+            if (attention.total === 0) return null;
             return (
               <section
                 aria-labelledby="needs-attention-heading"
                 className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
               >
                 <h2 id="needs-attention-heading" className="font-medium">
-                  Needs your attention ({stuck.length})
+                  Needs your attention ({attention.total})
                 </h2>
                 <p className="mt-1">
-                  The booking didn&rsquo;t complete for {stuck.length === 1 ? "this person" : "these people"}.
+                  The booking didn&rsquo;t complete for {attention.total === 1 ? "this person" : "these people"}.
                   Their invitation has been used, so it can&rsquo;t be sent again. Please check
                   the calendar, then contact them to book a time.
                 </p>
                 <ul className="mt-2 list-disc pl-5">
-                  {stuck.map((r) => (
+                  {attention.shown.map((r) => (
                     <li key={r.id}>{r.name}</li>
                   ))}
                 </ul>
+                {attention.total > attention.shown.length && (
+                  <p className="mt-1">
+                    Showing {attention.shown.length} of {attention.total}.
+                  </p>
+                )}
                 <p className="mt-2">
                   <WaitlistNavLink href={sectionHref("invited")} className="underline">
                     Open the Invited group

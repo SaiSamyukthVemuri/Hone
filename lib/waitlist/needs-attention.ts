@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 // Entries whose invitation was used but whose booking did not complete.
 //
 // DERIVED, NEVER STORED. After the redeem commits and the appointment does not,
@@ -7,20 +9,48 @@
 // failed (a taken time and a lost response look the same here), so the copy
 // built on it must not claim a reason.
 
-export type AttentionEntry = {
-  id: string;
-  name: string;
-  joined_at: string;
-  status: string;
-};
+// ---------------------------------------------------------------------------
+// The dedicated, COMPLETE read. The page's paged section rows are not used: a
+// count that silently misses people is worse than none.
+// ---------------------------------------------------------------------------
 
-export type CycleFacts = { redeemed: boolean };
+export type NeedsAttention =
+  | { kind: "unknown" }
+  | { kind: "ok"; total: number; shown: Array<{ id: string; name: string }> };
 
-export function redeemedUnbookedEntries<T extends AttentionEntry>(
-  rows: readonly T[],
-  cycles: ReadonlyMap<string, CycleFacts> | null,
-): T[] | null {
-  // Unknown is not "none": the caller says so rather than showing an empty list.
-  if (cycles === null) return null;
-  return rows.filter((r) => r.status === "invited" && cycles.get(r.id)?.redeemed === true);
+export const ATTENTION_SHOW_LIMIT = 20;
+// Invited entries are bounded by the admission allowance; this is a safety cap,
+// and exceeding it is reported as unknown rather than silently truncated.
+const INVITED_CAP = 1000;
+
+export async function loadNeedsAttention(db: SupabaseClient, studioId: string): Promise<NeedsAttention> {
+  try {
+    const invited: { data: Array<{ id: string; name: string }> | null; error: unknown } = await db
+      .from("new_client_waitlist_entries")
+      .select("id,name")
+      .eq("studio_id", studioId)
+      .eq("status", "invited")
+      .order("joined_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(INVITED_CAP + 1);
+    if (invited.error || !invited.data || invited.data.length > INVITED_CAP) return { kind: "unknown" };
+    if (invited.data.length === 0) return { kind: "ok", total: 0, shown: [] };
+    const ids = invited.data.map((r) => r.id);
+    const redeemed: { data: Array<{ entry_id: string }> | null; error: unknown } = await db
+      .from("new_client_waitlist_invitations")
+      .select("entry_id")
+      .eq("studio_id", studioId)
+      .in("entry_id", ids)
+      .not("redeemed_at", "is", null);
+    if (redeemed.error || !redeemed.data) return { kind: "unknown" };
+    const spent = new Set(redeemed.data.map((r) => r.entry_id));
+    const stuck = invited.data.filter((r) => spent.has(r.id));
+    return {
+      kind: "ok",
+      total: stuck.length,
+      shown: stuck.slice(0, ATTENTION_SHOW_LIMIT).map((r) => ({ id: r.id, name: r.name })),
+    };
+  } catch {
+    return { kind: "unknown" };
+  }
 }
