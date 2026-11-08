@@ -160,6 +160,53 @@ describe("InvitationContainer background refresh", () => {
     expect(host.querySelector('[data-testid="availability-note"]')).toBeNull();
   });
 
+  it("a read that began BEFORE a decline and lands AFTER it does not overwrite the declined screen", async () => {
+    await mount();
+    let landLate!: (v: unknown) => void;
+    load.mockReturnValueOnce(new Promise((r) => (landLate = r)));
+    await returnToTab();
+    timesDontWork.mockResolvedValueOnce({ kind: "declined", keptOnList: true });
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "These times don’t work")!;
+    await act(async () => {
+      btn.click();
+    });
+    expect(host.textContent).toContain("your reply is saved for the studio");
+    await act(async () => {
+      landLate(offer());
+    });
+    expect(host.textContent).toContain("your reply is saved for the studio");
+    expect(host.querySelector("textarea")).toBeNull();
+  });
+
+  it("a read that began BEFORE a refused save and lands AFTER it keeps the refusal on screen", async () => {
+    await mount();
+    await type("Evenings");
+    let landLate!: (v: unknown) => void;
+    load.mockReturnValueOnce(new Promise((r) => (landLate = r)));
+    await returnToTab();
+    timesDontWork.mockResolvedValueOnce(offer({ refusal: "feedback_unavailable" }));
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "These times don’t work")!;
+    await act(async () => {
+      btn.click();
+    });
+    expect(host.textContent).toContain("Nothing has changed");
+    await act(async () => {
+      landLate(offer()); // an offer WITHOUT the refusal
+    });
+    expect(host.textContent).toContain("Nothing has changed");
+    expect(note()?.value).toBe("Evenings");
+  });
+
+  it("a failed read does not start the interval: the next return reads again", async () => {
+    await mount();
+    load.mockResolvedValueOnce({ kind: "error", retryable: true });
+    await returnToTab();
+    expect(load).toHaveBeenCalledTimes(1);
+    load.mockResolvedValueOnce(offer());
+    await returnToTab(); // same instant: only a SUCCESS starts the interval
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("is throttled: a second return inside the interval does not read again", async () => {
     await mount();
     load.mockResolvedValue(offer());

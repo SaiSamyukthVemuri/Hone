@@ -107,18 +107,22 @@ export function InvitationContainer({
   const latest = useRef({ kind: state.kind, pending });
   latest.current = { kind: state.kind, pending };
   const lastRefreshAt = useRef(0);
+  const readInFlight = useRef(false);
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       if (latest.current.kind !== "offer" || latest.current.pending) return;
-      const now = Date.now();
-      if (now - lastRefreshAt.current < REFRESH_MIN_INTERVAL_MS) return;
-      lastRefreshAt.current = now;
+      // THE INTERVAL STARTS AT A SUCCESSFUL READ, so a failed one can be retried
+      // on the next return; one read at a time bounds the cost of retrying.
+      if (readInFlight.current) return;
+      if (Date.now() - lastRefreshAt.current < REFRESH_MIN_INTERVAL_MS) return;
+      readInFlight.current = true;
       const began = epoch.current;
       void (async () => {
         try {
           const next = await loadInvitationAction(token);
           if (next.kind === "error") return;
+          lastRefreshAt.current = Date.now();
           // STALE IF an action started since (new epoch), one is running, or the
           // screen is no longer an offer: a booked or declined screen must never
           // be overwritten by a read that began before it.
@@ -127,6 +131,8 @@ export function InvitationContainer({
           applyState(next);
         } catch {
           // keep the current offer
+        } finally {
+          readInFlight.current = false;
         }
       })();
     };
