@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getNewClientAdmissionMode,
-  newClientAdmissionInvitedRefusalKind,
+  invitedBookingRefusalKind,
 } from "@/lib/booking/new-client-admission";
 import {
   inviteSubmissionFromFormData,
@@ -180,7 +180,7 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   try {
     const { studio } = await getCurrentPractitionerWithStudio();
     const admission = await getNewClientAdmissionMode(studio);
-    const refusal = newClientAdmissionInvitedRefusalKind(admission);
+    const refusal = await invitedBookingRefusalKind(admission);
     if (refusal) {
       return { outcome: null, reason: refusal === "closed" ? "admission_closed" : "admission_unreadable" };
     }

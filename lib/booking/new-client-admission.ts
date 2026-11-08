@@ -362,28 +362,63 @@ export function newClientAdmissionRefusesOutright(
 }
 
 /**
- * Is an INVITED new-client booking refused? Mirrors 0204 `assert_new_client_admission`
- * op 'invited_book': ok for open and waitlist, refused for closed and unreadable.
- * The invitation screen and the owner's invite composer both ask THIS, so neither can
- * hold a different opinion from the database. Tied to the copy by
- * tests/source-guards/invited-booking-refusal-copy.test.ts.
+ * Does the database let an INVITED booking pass while the studio is Closed? 0323 changes the
+ * `invited_book` cell of `assert_new_client_admission` and creates a marker function in the
+ * same transaction, so the marker's presence IS the answer:
+ *   applied     the marker answered true
+ *   absent      PostgREST/Postgres say the function does not exist (0323 not applied yet)
+ *   unreadable  any other failure: nothing may be assumed
+ */
+export type ClosedInvitedRule = "applied" | "absent" | "unreadable";
+
+const MARKER_ABSENT_CODES = new Set(["PGRST202", "42883"]);
+
+export async function readClosedInvitedBookingRule(): Promise<ClosedInvitedRule> {
+  try {
+    const { data, error } = await createAdminClient().rpc("waitlist_closed_invited_booking_enabled");
+    if (error) return MARKER_ABSENT_CODES.has(error.code) ? "absent" : "unreadable";
+    return data === true ? "applied" : "unreadable";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/**
+ * Is an INVITED new-client booking refused? Mirrors 0204/0323 `assert_new_client_admission`
+ * op 'invited_book': ok for open and waitlist; for closed only once 0323 is applied
+ * (`rule === "applied"`); an unreadable mode is always refused. The invitation screen and the
+ * owner's invite composer both ask THIS, so neither can hold a different opinion from the
+ * database. Tied to the copy by tests/source-guards/invited-booking-refusal-copy.test.ts.
  */
 export function newClientAdmissionRefusesInvitedBooking(
   a: NewClientAdmission,
+  rule: ClosedInvitedRule,
 ): boolean {
-  return newClientAdmissionRefusesOutright(a);
+  if (!a.ok) return true;
+  return a.mode === "closed" && rule !== "applied";
 }
 
 /**
  * WHY an invited booking is refused, for copy that must not assert more than is known:
- * `closed` is a read mode; `unreadable` means the mode could not be read (still refused,
- * fail closed, but nobody may be told the studio is closed). null = not refused.
+ * `closed` is a read mode with the rule known to be absent; `unreadable` means the mode or the
+ * rule could not be read (still refused, fail closed, but nobody may be told the studio is
+ * closed). null = not refused.
  */
 export function newClientAdmissionInvitedRefusalKind(
   a: NewClientAdmission,
+  rule: ClosedInvitedRule,
 ): "closed" | "unreadable" | null {
-  if (!newClientAdmissionRefusesInvitedBooking(a)) return null;
-  return a.ok ? "closed" : "unreadable";
+  if (!newClientAdmissionRefusesInvitedBooking(a, rule)) return null;
+  if (!a.ok) return "unreadable";
+  return rule === "absent" ? "closed" : "unreadable";
+}
+
+/** The same question, reading the rule only when it can matter (a Closed studio). */
+export async function invitedBookingRefusalKind(
+  a: NewClientAdmission,
+): Promise<"closed" | "unreadable" | null> {
+  const rule: ClosedInvitedRule = a.ok && a.mode === "closed" ? await readClosedInvitedBookingRule() : "absent";
+  return newClientAdmissionInvitedRefusalKind(a, rule);
 }
 
 export function newClientMayBook(a: NewClientAdmission): boolean {

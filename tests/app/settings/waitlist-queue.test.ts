@@ -223,7 +223,7 @@ vi.mock("@/lib/waitlist/times-feedback-owner", async (orig) => {
 
 // Null keeps the legacy-bridge behaviour every pre-existing test relies on; a test sets a
 // STORED mode to exercise the closed-admission invite block.
-const admissionHolder = vi.hoisted(() => ({ stored: null as string | null }));
+const admissionHolder = vi.hoisted(() => ({ stored: null as string | null, rule: "absent" as "applied" | "absent" | "error" }));
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
@@ -440,6 +440,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       throw new Error(`the waitlist action must not touch tables directly: ${table}`);
     },
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      // The 0323 marker; not a waitlist call, so it is not recorded with them.
+      if (fn === "waitlist_closed_invited_booking_enabled") {
+        if (admissionHolder.rule === "applied") return { data: true, error: null };
+        return { data: null, error: { code: admissionHolder.rule === "absent" ? "PGRST202" : "XX000", message: "x" } };
+      }
       rpcCalls.push({ fn, args });
       // THE CONSUMED COUNT IS ITS OWN ANSWER. Returning the removal result for
       // every rpc made the count NaN, which the page correctly read as unknown
@@ -2867,9 +2872,29 @@ describe("0208 — each row states its SMS standing, as recorded", () => {
   });
 });
 
-describe("closed admission blocks the owner's invite (0204 invited_book refuses it)", () => {
+describe("closed admission blocks the owner's invite until 0323 is applied (0204 invited_book refuses it)", () => {
   afterEach(() => {
     admissionHolder.stored = null;
+    admissionHolder.rule = "absent";
+  });
+
+  it("shows NO block under Closed once 0323 is applied (the marker answers true)", async () => {
+    admissionHolder.stored = "closed";
+    admissionHolder.rule = "applied";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    expect(await render()).not.toContain("invites-blocked-admission");
+  });
+
+  it("a marker failure other than 'absent' pauses invitations without claiming Closed", async () => {
+    admissionHolder.stored = "closed";
+    admissionHolder.rule = "error";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("We couldn’t check new-client admission, so invitations are paused.");
+    expect(html).not.toContain("set to Closed");
   });
 
   it("says so, names Settings → Booking, and links to it", async () => {

@@ -453,11 +453,11 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
  * tests/source-guards/invited-booking-refusal-copy.test.ts.
  */
 export const INVITE_ADMISSION_CLOSED_COPY =
-  "No invitation was created. New-client admission is set to Closed, so people you invite couldn’t book. Set it to Waitlist (or Open) in Settings → Booking first.";
+  "No invitation was created. New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
 
 /** The owner's banner / composer reason while admission is Closed. Its own text, not a slice of the notice. */
 export const INVITE_ADMISSION_CLOSED_BANNER_COPY =
-  "New-client admission is set to Closed, so people you invite couldn’t book. Set it to Waitlist (or Open) in Settings → Booking first.";
+  "New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
 
 /**
  * Admission could not be READ. Invitations are paused (fail closed) but nothing is claimed

@@ -53,7 +53,7 @@ import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   NEW_CLIENT_ADMISSION_REFUSAL_CODE,
   getNewClientAdmissionMode,
-  newClientAdmissionInvitedRefusalKind,
+  invitedBookingRefusalKind,
 } from "@/lib/booking/new-client-admission";
 import {
   FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
@@ -629,7 +629,7 @@ async function loadContext(
     id: resolved.invitation.studioId,
     slug: studio.slug,
   });
-  const refusal = newClientAdmissionInvitedRefusalKind(admission);
+  const refusal = await invitedBookingRefusalKind(admission);
   if (refusal) {
     return {
       ok: false,
@@ -1367,7 +1367,7 @@ export async function bookInvitationSlotAction(
     return {
       kind: "closed",
       reason:
-        newClientAdmissionInvitedRefusalKind(now) === "closed"
+        (await invitedBookingRefusalKind(now)) === "closed"
           ? "admission_closed"
           : "admission_unreadable",
       presentation: ctx.studio.presentation,

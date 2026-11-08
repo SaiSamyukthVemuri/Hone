@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, versionsAbove } from "./helpers/migration-state";
 
 // 0319 — "these times don't work". STATIC contract. Behaviour is proved against a
 // real database in tests/db/waitlist-times-unsuitable.db.test.ts.
@@ -12,8 +12,8 @@ const DOWN = readFileSync(join(__dirname, "..", "..", "supabase/rollbacks/0319_w
 const E = exec(M);
 
 describe("0319 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0319")).toBe(true);
+  it("consumes exactly one number and is no longer the repository maximum", () => {
+    expect(versionsAbove("0319").length).toBeGreaterThan(0);
     expect(countVersion("0319")).toBe(1);
   });
 });

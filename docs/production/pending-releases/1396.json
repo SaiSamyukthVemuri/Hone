@@ -1,1 +1,1 @@
-{"pr":1396,"runtime":true,"migrations":["supabase/migrations/0313_waitlist_booking_command.sql","supabase/migrations/0319_waitlist_times_unsuitable.sql"],"release_receipt":"01-ops/1396-release-receipt.json"}
+{"pr":1396,"runtime":true,"migrations":["supabase/migrations/0313_waitlist_booking_command.sql","supabase/migrations/0319_waitlist_times_unsuitable.sql","supabase/migrations/0323_waitlist_launch_controls.sql"],"release_receipt":"01-ops/1396-release-receipt.json"}

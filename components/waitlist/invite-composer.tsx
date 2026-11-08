@@ -291,7 +291,7 @@ function StatefulInviteComposer(props: InviteComposerProps) {
           if (cancelled) return;
           setCapacity(
             r.ok
-              ? { status: "ok", lines: capacityLines({ fit: r.fit, outstanding: r.outstanding, open: r.open }) }
+              ? { status: "ok", lines: capacityLines({ fit: r.fit, outstanding: r.outstanding, open: r.open }, r.outstandingScope) }
               : { status: "unavailable" },
           );
         })

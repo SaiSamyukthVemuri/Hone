@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 259,
-    "last": "0319_waitlist_times_unsuitable.sql",
-    "sha256": "c1da525c456929e53684bcf3f2746045111d02cf42cb7a192905e731f796fae9"
+    "count": 260,
+    "last": "0323_waitlist_launch_controls.sql",
+    "sha256": "3f2ae34f37e7e04422ccecca25349cdca4f40293566b603cebdc7d2f935a5e6e"
   },
   "public": {
     "tables": [
@@ -237,6 +237,7 @@
       "consume_payment_recovery_tokens_for_charge_attempt",
       "copy_session_setup",
       "correct_finalized_session",
+      "count_competing_waitlist_invitations",
       "count_waitlist_times_feedback",
       "create_appointment_core",
       "create_block_with_entry",
@@ -581,6 +582,7 @@
       "validate_public_reschedule_slot",
       "validate_schedule_scope",
       "waitlist_admission_round_consumed",
+      "waitlist_closed_invited_booking_enabled",
       "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
       "waive_appointment_fee",

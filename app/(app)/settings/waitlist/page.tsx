@@ -25,7 +25,7 @@ import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
 import {
   getNewClientAdmissionMode,
-  newClientAdmissionInvitedRefusalKind,
+  invitedBookingRefusalKind,
 } from "@/lib/booking/new-client-admission";
 import {
   INVITE_ADMISSION_CLOSED_BANNER_COPY,
@@ -690,9 +690,9 @@ export default async function WaitlistSettingsPage({
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   const attention = await loadNeedsAttention(supabase, studio.id);
   const declined = await loadDeclinedAttention(supabase, studio.id);
-  // 0204 refuses an INVITED booking while admission is Closed (or unreadable), so Send is
+  // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
   // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
-  const invitesBlockedKind = newClientAdmissionInvitedRefusalKind(
+  const invitesBlockedKind = await invitedBookingRefusalKind(
     await getNewClientAdmissionMode(studio),
   );
   const invitesBlockedByAdmission = invitesBlockedKind !== null;

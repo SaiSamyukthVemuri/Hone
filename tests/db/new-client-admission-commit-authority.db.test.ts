@@ -418,7 +418,7 @@ describe("3. invitation booking vs owner -> CLOSED", () => {
     expect(await modeOf(f.studioId)).toBe("closed");
   });
 
-  it("B. owner first -> a VALID invitation still REFUSES, and spends nothing", async () => {
+  it("B. owner first -> a VALID invitation still BOOKS under CLOSED (0323), and converts the entry", async () => {
     const f = await seed("inv-b");
     await stamp(f.studioId, "waitlist");
     const entryId = await seedRedeemedInvitation(f);
@@ -432,20 +432,33 @@ describe("3. invitation booking vs owner -> CLOSED", () => {
     expect(await waitUntilBlocked(aPid)).toBe(true);
 
     await B.query("commit");
-    const refused = await pending;
+    const booked = await pending;
     await A.query("commit");
 
-    // CLOSED beats a valid invitation, and the entry is not converted - the
-    // refusal happens before the inner command can spend anything.
-    expect(refused.rows[0].result).toBe("new_client_admission_refused");
-    expect(refused.rows[0].appointment_id).toBeNull();
-    expect(await countsFor(f.studioId)).toEqual(before);
+    // Closed means no new PUBLIC booking or join; a person already invited, whose invitation the
+    // command proves, still books. Before 0323 this refused (0204 invited_book was open|waitlist).
+    expect(booked.rows[0].result).toBe("created_and_converted");
+    expect((await countsFor(f.studioId)).appointments).toBe(before.appointments + 1);
+    expect(await modeOf(f.studioId)).toBe("closed");
     const entry = await adminQuery(
       `select status, converted_at from public.new_client_waitlist_entries where id = $1`,
       [entryId],
     );
-    expect(entry.rows[0].converted_at).toBeNull();
-    expect(entry.rows[0].status).toBe("invited");
+    expect(entry.rows[0].converted_at).not.toBeNull();
+  });
+
+  it("C. under CLOSED an ordinary (non-invited) new-client booking still REFUSES and spends nothing", async () => {
+    const f = await seed("inv-c");
+    await stamp(f.studioId, "closed");
+    const before = await countsFor(f.studioId);
+    const r = await adminQuery(
+      `select * from public.create_public_appointment_for_new_client(
+         $1::uuid, $2::uuid, null, null, null, null, $3::uuid, $4::timestamptz, $5,
+         false, null, null, null)`,
+      [f.studioId, f.existingClientId, f.serviceId, f.slot, hash64()],
+    );
+    expect(r.rows[0].result).toBe("new_client_admission_refused");
+    expect(await countsFor(f.studioId)).toEqual(before);
   });
 });
 

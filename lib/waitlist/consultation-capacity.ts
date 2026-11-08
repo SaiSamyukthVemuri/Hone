@@ -62,7 +62,7 @@ export const CAPACITY_NOTE =
  * The words beside the number. "At least", never "exactly": the count treats the
  * studio as one calendar, so it never over-promises but may under-count.
  */
-export function capacityLines(c: CapacityEstimate): string[] {
+export function capacityLines(c: CapacityEstimate, outstandingScope: "window" | "all" = "window"): string[] {
   const lines = [
     c.fit === 0
       ? "No consultation times fit this window right now."
@@ -70,7 +70,9 @@ export function capacityLines(c: CapacityEstimate): string[] {
   ];
   if (c.outstanding > 0) {
     lines.push(
-      `${c.outstanding} invitation${c.outstanding === 1 ? " is" : "s are"} already out and not yet booked, so about ${c.open} more could be offered.`,
+      outstandingScope === "all"
+        ? `${c.outstanding} invitation${c.outstanding === 1 ? " is" : "s are"} already out and not yet booked (this counts every live invitation, whatever dates it covers), so about ${c.open} more could be offered.`
+        : `${c.outstanding} invitation${c.outstanding === 1 ? " is" : "s are"} already out for these dates and not yet booked, so about ${c.open} more could be offered.`,
     );
   }
   lines.push(CAPACITY_NOTE);

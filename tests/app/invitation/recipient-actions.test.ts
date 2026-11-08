@@ -165,6 +165,8 @@ const studioFixture = {
   horizonMonths: null as number | null,
   /** The stored admission mode; undefined models a row that carries no admission columns. */
   admissionMode: undefined as string | undefined,
+  /** 0323 marker: applied | absent (not yet applied) | error (any other failure). */
+  closedInvitedRule: "absent" as "applied" | "absent" | "error",
 };
 /**
  * The service the invitation is scoped to.
@@ -224,6 +226,13 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
       // HON-7 / 0313: the reopen lookup. Answered from a fixture, never recorded as
       // an identity call (it carries no capability).
+      if (fn === "waitlist_closed_invited_booking_enabled") {
+        if (studioFixture.closedInvitedRule === "applied") return { data: true, error: null };
+        return {
+          data: null,
+          error: { code: studioFixture.closedInvitedRule === "absent" ? "PGRST202" : "XX000", message: "x" },
+        };
+      }
       if (fn === "waitlist_invitation_booking_state") {
         return { data: bookingStateFixture.rows, error: null };
       }
@@ -388,6 +397,7 @@ beforeEach(() => {
   studioFixture.timezone = "America/Toronto";
   studioFixture.horizonMonths = null;
   studioFixture.admissionMode = undefined;
+  studioFixture.closedInvitedRule = "absent";
   serviceFixture.name = "Consultation";
   serviceFixture.modality = "consultation";
   serviceFixture.active = true;
@@ -1481,6 +1491,30 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
         expect(out.reason).toBe("admission_unreadable");
       }
       expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    });
+
+    it("once 0323 is applied (marker answers true) a CLOSED studio leaves the offer open", async () => {
+      studioFixture.closedInvitedRule = "applied";
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("closed");
+      expect(out).toHaveProperty("days");
+    });
+
+    it("a marker failure other than 'absent' fails closed with the non-asserting wording", async () => {
+      studioFixture.closedInvitedRule = "error";
+      for (const [, run] of everyAction) {
+        const out = await run();
+        if (out.kind !== "closed") throw new Error("unreachable");
+        expect(out.reason).toBe("admission_unreadable");
+      }
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    });
+
+    it("the marker is never consulted for a studio that is not closed", async () => {
+      studioFixture.admissionMode = "waitlist";
+      studioFixture.closedInvitedRule = "error";
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("closed");
     });
 
     it.each(["waitlist", "open"])("%s admission leaves the offer open", async (mode) => {

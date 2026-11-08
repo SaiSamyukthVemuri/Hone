@@ -17,8 +17,15 @@ import { consultationsThatFit, estimateCapacity } from "@/lib/waitlist/consultat
 // copy beside it says so.
 
 export type WindowCapacityResult =
-  | { ok: true; fit: number; outstanding: number; open: number }
+  | { ok: true; fit: number; outstanding: number; open: number; outstandingScope: OutstandingScope }
   | { ok: false };
+
+// "window": only invitations whose scope overlaps this window (0323). "all": every live
+// invitation in the studio, the conservative count used until 0323 is applied.
+export type OutstandingScope = "window" | "all";
+
+// PostgREST answers PGRST202 for a function it cannot find; Postgres itself answers 42883.
+const FUNCTION_ABSENT = new Set(["PGRST202", "42883"]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_WINDOW_DAYS = 365;
@@ -63,7 +70,7 @@ export async function estimateWindowCapacityAction(input: {
       const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
       if (weekdays === null || weekdays.length === 0 || weekdays.includes(dow)) dates.push(d);
     }
-    if (dates.length === 0) return { ok: true, ...estimateCapacity(0, 0) };
+    if (dates.length === 0) return { ok: true, ...estimateCapacity(0, 0), outstandingScope: "window" };
 
     const range = await fetchPublicSlotsForDates({
       slug: row.slug as string,
@@ -72,30 +79,50 @@ export async function estimateWindowCapacityAction(input: {
     });
     if (!range.ok) return { ok: false };
 
-    // LIVE invitations for EVERY service, from every batch: the studio is one
-    // calendar, so an invitation for another service competes for the same
-    // window. Sent, not expired, not redeemed, not released, not declined. A booked one is already an
+    // LIVE invitations that COMPETE with this window, for EVERY service: the studio is one
+    // calendar, so an invitation for another service competes for the same hours, but one
+    // scoped to other dates or other weekdays does not. A booked one is already an
     // appointment in the slot list and is not counted again.
     //
-    // READ THROUGH THE OWNER'S OWN SESSION, NOT THE ADMIN CLIENT. service_role has
-    // no SELECT on this table (0188 grants it to `authenticated` alone, behind
-    // the owner policy), so the admin path answered 42501 every time and the
-    // panel always said "couldn't check". The session client is scoped by RLS to
-    // the owner's studio; the explicit studio_id filter is belt and braces.
+    // The scope columns have no grant for any API role, so the narrowing happens in an
+    // owner-gated function (0323) that returns one integer. It is called through the
+    // OWNER'S OWN SESSION: service_role has no access to these tables, and the function
+    // re-proves ownership itself.
+    //
+    // Before 0323 is applied the function does not exist; then every live invitation in the
+    // studio is counted, which can only under-state what is left, and the copy says so.
     const session = await createClient();
-    const live = await session
-      .from("new_client_waitlist_invitations")
-      .select("id", { count: "exact", head: true })
-      .eq("studio_id", studio.id)
-      .is("redeemed_at", null)
-      .is("expired_at", null)
-      .is("released_at", null)
-      .is("declined_at", null)
-      .gt("expires_at", new Date().toISOString());
-    if (live.error) return { ok: false };
+    const rpc = await session.rpc("count_competing_waitlist_invitations", {
+      p_studio_id: studio.id,
+      p_from: first,
+      p_to: addDays(first, input.windowDays - 1),
+      p_weekdays: weekdays === null || weekdays.length === 0 ? null : weekdays,
+    });
+    let outstanding: number;
+    let outstandingScope: OutstandingScope;
+    if (!rpc.error) {
+      if (typeof rpc.data !== "number" || !Number.isInteger(rpc.data) || rpc.data < 0) return { ok: false };
+      outstanding = rpc.data;
+      outstandingScope = "window";
+    } else if (FUNCTION_ABSENT.has(rpc.error.code)) {
+      const live = await session
+        .from("new_client_waitlist_invitations")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studio.id)
+        .is("redeemed_at", null)
+        .is("expired_at", null)
+        .is("released_at", null)
+        .is("declined_at", null)
+        .gt("expires_at", new Date().toISOString());
+      if (live.error) return { ok: false };
+      outstanding = live.count ?? 0;
+      outstandingScope = "all";
+    } else {
+      return { ok: false };
+    }
 
     const fit = consultationsThatFit(range.slots, Number(row.buffer_minutes ?? 0));
-    return { ok: true, ...estimateCapacity(fit, live.count ?? 0) };
+    return { ok: true, ...estimateCapacity(fit, outstanding), outstandingScope };
   } catch {
     return { ok: false };
   }

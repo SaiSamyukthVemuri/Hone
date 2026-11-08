@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// While new-client admission is Closed (or unreadable), 0204 refuses an INVITED booking,
+// While new-client admission is Closed (until 0323 is applied) or unreadable, 0204 refuses an INVITED booking,
 // so the owner's send is refused BEFORE the command: nothing is created or counted.
 
 const getCurrentPractitionerWithStudio = vi.fn();
 const getNewClientAdmissionMode = vi.fn();
 const inviteToBook = vi.fn();
+const readRule = vi.fn();
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -14,6 +15,16 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
   ...((await orig()) as object),
   getNewClientAdmissionMode: (...a: unknown[]) => getNewClientAdmissionMode(...a),
+}));
+// The 0323 marker, read through the admin client by the real predicate.
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => ({
+    rpc: async () => {
+      const r = await readRule();
+      if (r === "applied") return { data: true, error: null };
+      return { data: null, error: { code: r === "absent" ? "PGRST202" : "XX000", message: "x" } };
+    },
+  }),
 }));
 vi.mock("@/lib/waitlist/invite-to-book-adapter", async (orig) => ({
   ...((await orig()) as object),
@@ -34,9 +45,10 @@ const form = () => {
 };
 
 beforeEach(() => {
-  for (const m of [getCurrentPractitionerWithStudio, getNewClientAdmissionMode, inviteToBook]) m.mockReset();
+  for (const m of [getCurrentPractitionerWithStudio, getNewClientAdmissionMode, inviteToBook, readRule]) m.mockReset();
   getCurrentPractitionerWithStudio.mockResolvedValue({ studio: { id: "s", slug: "studio-a" } });
   inviteToBook.mockResolvedValue({ state: "refused" });
+  readRule.mockResolvedValue("absent");
 });
 
 describe("inviteToBookAction under admission", () => {
@@ -47,6 +59,20 @@ describe("inviteToBookAction under admission", () => {
     getNewClientAdmissionMode.mockResolvedValue(admission);
     const r = await inviteToBookAction(form());
     expect(r).toEqual({ outcome: null, reason });
+    expect(inviteToBook).not.toHaveBeenCalled();
+  });
+
+  it("a CLOSED studio reaches the command once 0323 is applied", async () => {
+    getNewClientAdmissionMode.mockResolvedValue({ ok: true, mode: "closed", source: "persisted" });
+    readRule.mockResolvedValue("applied");
+    await inviteToBookAction(form());
+    expect(inviteToBook).toHaveBeenCalledTimes(1);
+  });
+
+  it("a CLOSED studio whose rule cannot be read is refused as UNREADABLE, not as closed", async () => {
+    getNewClientAdmissionMode.mockResolvedValue({ ok: true, mode: "closed", source: "persisted" });
+    readRule.mockResolvedValue("error");
+    expect(await inviteToBookAction(form())).toEqual({ outcome: null, reason: "admission_unreadable" });
     expect(inviteToBook).not.toHaveBeenCalled();
   });
 

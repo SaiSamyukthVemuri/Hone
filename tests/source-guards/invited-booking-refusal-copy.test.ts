@@ -8,24 +8,28 @@ import { describe, expect, it } from "vitest";
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("invited_book refusal is tied to honest copy", () => {
-  it("the database matrix still refuses closed/unknown for invited_book (the premise)", () => {
-    const sql = read("supabase/migrations/0204_new_client_admission_mode.sql");
-    const m = sql.match(/when 'invited_book' then\s+case\s+when v_mode in \(([^)]*)\) then 'ok'/);
-    expect(m, "invited_book branch not found in 0204").not.toBeNull();
-    const ok = m![1].replace(/\s/g, "");
-    expect(ok).toBe("'open','waitlist'");
+  it("the database matrix: 0204 refuses closed for invited_book; 0323 allows it and ships the marker with it (the premise)", () => {
+    const cell = (sql: string) => {
+      const m = sql.match(/when 'invited_book' then\s+case\s+when v_mode in \(([^)]*)\) then 'ok'/);
+      expect(m, "invited_book branch not found").not.toBeNull();
+      return m![1].replace(/\s/g, "");
+    };
+    expect(cell(read("supabase/migrations/0204_new_client_admission_mode.sql"))).toBe("'open','waitlist'");
+    const m0323 = read("supabase/migrations/0323_waitlist_launch_controls.sql");
+    expect(cell(m0323)).toBe("'open','waitlist','closed'");
+    expect(m0323).toContain("create or replace function public.waitlist_closed_invited_booking_enabled()");
   });
 
-  it("the shared predicate mirrors that refusal and has one definition", () => {
+  it("the shared predicate mirrors that rule and has one definition", () => {
     const src = read("lib/booking/new-client-admission.ts");
     expect(src).toMatch(
-      /export function newClientAdmissionRefusesInvitedBooking\([\s\S]*?\{\s*return newClientAdmissionRefusesOutright\(a\);/,
+      /export function newClientAdmissionRefusesInvitedBooking\([\s\S]*?\{\s*if \(!a\.ok\) return true;\s*return a\.mode === "closed" && rule !== "applied";/,
     );
   });
 
   it("the invitation funnel asks it and answers with admission_closed, before any booking", () => {
     const src = read("app/invitation/[token]/actions.ts");
-    expect(src).toContain("newClientAdmissionInvitedRefusalKind(admission)");
+    expect(src).toContain("invitedBookingRefusalKind(admission)");
     expect(src).toMatch(/"admission_closed" : "admission_unreadable"/);
     // and a commit-time refusal code maps to the same state, not to bookingRefusalFor's "unavailable"
     expect(src).toMatch(/booked\.code === NEW_CLIENT_ADMISSION_REFUSAL_CODE[\s\S]{0,800}admission_closed/);
@@ -64,13 +68,13 @@ describe("invited_book refusal is tied to honest copy", () => {
     expect(page).toContain("INVITE_ADMISSION_UNREADABLE_COPY");
     // the kind is derived from ok, so unreadable can never take the closed branch
     const adm = read("lib/booking/new-client-admission.ts");
-    expect(adm).toMatch(/return a\.ok \? "closed" : "unreadable";/);
+    expect(adm).toMatch(/if \(!a\.ok\) return "unreadable";\s*return rule === "absent" \? "closed" : "unreadable";/);
   });
 
   it("the owner's send is refused server-side and withheld in the composer, with the settings path named", () => {
     const act = read("app/(app)/settings/waitlist/invite-actions.ts");
-    expect(act).toMatch(/newClientAdmissionInvitedRefusalKind\(admission\)[\s\S]{0,800}admission_closed/);
-    const order = act.indexOf("newClientAdmissionInvitedRefusalKind(admission)");
+    expect(act).toMatch(/invitedBookingRefusalKind\(admission\)[\s\S]{0,800}admission_closed/);
+    const order = act.indexOf("invitedBookingRefusalKind(admission)");
     expect(order).toBeGreaterThan(-1);
     expect(order).toBeLessThan(act.indexOf("admissionCommandAdapter.inviteToBook(input)"));
     const page = read("app/(app)/settings/waitlist/page.tsx");

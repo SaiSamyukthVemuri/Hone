@@ -50,8 +50,14 @@ describe("capacityLines", () => {
   it("says 'at least', mentions outstanding invitations, and ends with the not-reserved note", () => {
     const l = capacityLines({ fit: 5, outstanding: 2, open: 3 });
     expect(l[0]).toBe("At least 5 consultations fit this window.");
-    expect(l[1]).toMatch(/2 invitations are already out and not yet booked, so about 3 more/);
+    expect(l[1]).toMatch(/2 invitations are already out for these dates and not yet booked, so about 3 more/);
     expect(l[l.length - 1]).toMatch(/Nothing is reserved/);
+  });
+
+  it("says it counts every live invitation when only the studio-wide count is available", () => {
+    const l = capacityLines({ fit: 5, outstanding: 2, open: 3 }, "all");
+    expect(l[1]).toMatch(/counts every live invitation, whatever dates it covers/);
+    expect(l[1]).not.toMatch(/for these dates/);
   });
 
   it("is honest when nothing fits and never presents a lower bound as exact", () => {
