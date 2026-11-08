@@ -54,13 +54,13 @@ describe("0323 — shape", () => {
     expect(now.join("\n")).not.toBe(old.join("\n"));
   });
 
-  it("the marker exists in the same migration, returns only true, and is granted to service_role and authenticated alone", () => {
+  it("the marker exists in the same migration, returns only true, and is granted to service_role alone", () => {
     const def = fnDef("waitlist_closed_invited_booking_enabled");
     expect(def).toMatch(/returns boolean/);
     expect(def).toMatch(/select true/);
     expect(def).toMatch(/set search_path = pg_catalog, pg_temp/);
     expect(E).toContain(`revoke all on function ${MARKER} from public, anon, authenticated, service_role;`);
-    expect(E).toContain(`grant execute on function ${MARKER} to service_role, authenticated;`);
+    expect(E).toContain(`grant execute on function ${MARKER} to service_role;`);
     expect(E).toContain(`revoke all on function ${ASSERT} from public, anon, authenticated, service_role;`);
   });
 

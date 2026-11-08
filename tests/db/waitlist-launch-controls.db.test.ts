@@ -128,15 +128,16 @@ describe("0323 part A — the admission matrix", () => {
     }
   });
 
-  it("the marker exists, answers true, and only service_role and authenticated may call it", async () => {
+  it("the marker exists, answers true, and only service_role may call it", async () => {
     expect(await markerExists()).toBe(true);
-    for (const role of ["service_role", "authenticated"] as const) {
-      const r = await asRole(role, (query) => query(`select public.waitlist_closed_invited_booking_enabled() as v`));
-      expect(r.rows[0].v).toBe(true);
+    const r = await asRole("service_role", (query) => query(`select public.waitlist_closed_invited_booking_enabled() as v`));
+    expect(r.rows[0].v).toBe(true);
+    for (const role of ["anon", "authenticated"] as const) {
+      await expect(
+        asRole(role, (query) => query(`select public.waitlist_closed_invited_booking_enabled()`)),
+        role,
+      ).rejects.toMatchObject({ code: "42501" });
     }
-    await expect(
-      asRole("anon", (query) => query(`select public.waitlist_closed_invited_booking_enabled()`)),
-    ).rejects.toMatchObject({ code: "42501" });
     const acl = await q<{ n: number }>(
       `select count(*)::int as n from pg_proc p cross join lateral aclexplode(p.proacl) a
         where p.oid = 'public.waitlist_closed_invited_booking_enabled()'::regprocedure and a.grantee = 0`,

@@ -1,8 +1,29 @@
 -- ROLLBACK for 0323 (DRAFT; NOT a migration; never placed in supabase/migrations).
 -- Restores the 0204 admission matrix byte for byte (invited_book refused under closed), drops the
--- marker and the counting function. No data is touched. The application treats an absent marker as
--- "rule not applied" and goes back to refusing invitations under Closed, and an absent counting
--- function as "count every live invitation", so this is safe at any time.
+-- marker and the counting function. No table or row is touched. The application treats an absent marker
+-- as "rule not applied" and goes back to refusing invitations under Closed, and an absent counting
+-- function as "count every live invitation".
+--
+-- THIS ROLLBACK IS NOT BEHAVIOUR-NEUTRAL WHILE A CLOSED STUDIO HOLDS A LIVE INVITATION. After it,
+-- that invitation's link is refused again:
+--   * flag-on path (WAITLIST_BOOKING_COMMAND=1, the launch configuration): the redemption happens
+--     inside the booking command, so a refused booking rolls the redemption back and the invitation
+--     stays live until it expires (48h). Nobody is stranded, but nobody can book.
+--   * legacy flag-off path: the invitation is redeemed first and the booking second, so a booking
+--     refused after the redemption can leave a redeemed-but-unbooked invitation.
+-- READ-ONLY CHECK to run BEFORE applying this file (it changes nothing; service role or SQL editor):
+--
+--   select s.id as studio_id, count(*) as live_invitations
+--     from public.new_client_waitlist_invitations i
+--     join public.studios s on s.id = i.studio_id
+--    where s.new_client_admission_mode = 'closed'
+--      and i.redeemed_at is null and i.expired_at is null
+--      and i.released_at is null and i.declined_at is null
+--      and i.expires_at > now()
+--    group by s.id;
+--
+-- Zero rows: the rollback changes nothing anyone can see. Any row: decide first (wait out the 48h
+-- lifetime, or ask the owner to release those invitations); do not roll back over them unannounced.
 begin;
 set local lock_timeout = '5s';
 

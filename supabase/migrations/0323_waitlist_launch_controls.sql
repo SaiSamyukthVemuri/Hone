@@ -10,7 +10,7 @@
 --   invitation (48h lifetime) will find that link bookable from the apply. Only that.
 --   public.waitlist_closed_invited_booking_enabled() returns true and is created in the SAME
 --   transaction, so the application can tell the rule is applied (absent = not yet). It is
---   executable by service_role and authenticated only.
+--   executable by service_role only: the application reads it through its service client.
 --
 -- PART B. The capacity estimate (below).
 --
@@ -98,7 +98,7 @@ as $$ select true $$;
 
 revoke all on function public.assert_new_client_admission(uuid, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.waitlist_closed_invited_booking_enabled() from public, anon, authenticated, service_role;
-grant execute on function public.waitlist_closed_invited_booking_enabled() to service_role, authenticated;
+grant execute on function public.waitlist_closed_invited_booking_enabled() to service_role;
 
 comment on function public.waitlist_closed_invited_booking_enabled() is
   'Marker: exists exactly when assert_new_client_admission lets invited_book pass under closed (0323).';
@@ -178,18 +178,18 @@ declare
   v_fn regprocedure := 'public.count_competing_waitlist_invitations(uuid, date, date, integer[])'::regprocedure;
   v_role text;
 begin
-  -- Part A: the matrix is callable by nobody; the marker by service_role and authenticated only.
+  -- Part A: the matrix is callable by nobody; the marker by service_role only.
   foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
     if pg_catalog.has_function_privilege(v_role, 'public.assert_new_client_admission(uuid, text, boolean)'::regprocedure, 'EXECUTE') then
       raise exception '0323: % must not be able to execute assert_new_client_admission', v_role;
     end if;
   end loop;
   if pg_catalog.has_function_privilege('anon', 'public.waitlist_closed_invited_booking_enabled()'::regprocedure, 'EXECUTE')
+     or pg_catalog.has_function_privilege('authenticated', 'public.waitlist_closed_invited_booking_enabled()'::regprocedure, 'EXECUTE')
      or not pg_catalog.has_function_privilege('service_role', 'public.waitlist_closed_invited_booking_enabled()'::regprocedure, 'EXECUTE')
-     or not pg_catalog.has_function_privilege('authenticated', 'public.waitlist_closed_invited_booking_enabled()'::regprocedure, 'EXECUTE')
      or exists (select 1 from pg_catalog.pg_proc p cross join lateral pg_catalog.aclexplode(p.proacl) a
                  where p.oid = 'public.waitlist_closed_invited_booking_enabled()'::regprocedure and a.grantee = 0) then
-    raise exception '0323: waitlist_closed_invited_booking_enabled must be executable by service_role and authenticated only';
+    raise exception '0323: waitlist_closed_invited_booking_enabled must be executable by service_role only';
   end if;
   if not exists (select 1 from pg_catalog.pg_proc p
                   where p.oid = 'public.assert_new_client_admission(uuid, text, boolean)'::regprocedure

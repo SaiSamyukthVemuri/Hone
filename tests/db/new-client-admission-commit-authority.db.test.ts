@@ -338,6 +338,16 @@ describe("2. durable waitlist join vs owner -> CLOSED", () => {
     expect(await modeOf(f.studioId)).toBe("closed");
   });
 
+  it("F1. an already-CLOSED studio refuses a public join with zero entries (and so does the signup answer)", async () => {
+    const f = await seed("join-closed");
+    await stamp(f.studioId, "closed");
+    const before = await countsFor(f.studioId);
+    const r = await adminQuery(join(f));
+    expect(r.rows[0].result).toBe("new_client_admission_refused");
+    expect(r.rows[0].entry_id).toBeNull();
+    expect(await countsFor(f.studioId)).toEqual(before);
+  });
+
   it("B. owner first -> the join WAITS, then REFUSES and writes no entry", async () => {
     const f = await seed("join-b");
     await stamp(f.studioId, "waitlist");
@@ -459,6 +469,170 @@ describe("3. invitation booking vs owner -> CLOSED", () => {
     );
     expect(r.rows[0].result).toBe("new_client_admission_refused");
     expect(await countsFor(f.studioId)).toEqual(before);
+  });
+  // -------------------------------------------------------------------------
+  // F1. Under CLOSED the matrix no longer stops an invited booking, so the
+  // delegate's own proof (the redeemed invitation bound to this entry, studio
+  // and recipient) is the ONLY barrier. Each of these must refuse with ZERO
+  // writes: no client, no appointment, no entry or invitation change.
+  // -------------------------------------------------------------------------
+  type Kind = "unredeemed" | "declined" | "released" | "expired" | "mismatch" | "cross_studio";
+
+  async function seedEntry(f: Fixture, kind: Kind): Promise<string> {
+    const entryId = randomUUID();
+    const email = kind === "mismatch" ? `other-${randomUUID().slice(0, 8)}@harness.local` : f.existingClientEmail;
+    const terminal = kind === "declined" || kind === "released";
+    const expired = kind === "expired";
+    if (terminal) {
+      await adminQuery(
+        `insert into public.new_client_waitlist_entries (id,studio_id,name,email,status,released_at)
+         values ($1,$2,'Invited',$3,'released',now())`,
+        [entryId, f.studioId, email],
+      );
+    } else if (expired) {
+      await adminQuery(
+        `insert into public.new_client_waitlist_entries
+           (id,studio_id,name,email,status,claimed_at,claimed_by_practitioner_id,invited_at,expired_at)
+         values ($1,$2,'Invited',$3,'expired',now(),$4,now(),now())`,
+        [entryId, f.studioId, email, f.ownerId],
+      );
+    } else {
+      await adminQuery(
+        `insert into public.new_client_waitlist_entries
+           (id,studio_id,name,email,status,claimed_at,claimed_by_practitioner_id,invited_at)
+         values ($1,$2,'Invited',$3,'invited',now(),$4,now())`,
+        [entryId, f.studioId, email, f.ownerId],
+      );
+    }
+    // Which terminal column the invitation carries is the whole difference between the kinds.
+    const col =
+      kind === "declined" ? "declined_at"
+        : kind === "released" ? "released_at"
+          : kind === "expired" ? "expired_at"
+            : kind === "unredeemed" ? null
+              : "redeemed_at"; // mismatch and cross_studio: redeemed, but not for this caller
+    await adminQuery(
+      `insert into public.new_client_waitlist_invitations
+         (studio_id,entry_id,token_hash,expires_at,issued_by_practitioner_id${col ? `,${col}` : ""})
+       values ($1,$2,$3, now() + interval '7 days', $4${col ? ",now()" : ""})`,
+      [f.studioId, entryId, hash64(), f.ownerId],
+    );
+    return entryId;
+  }
+
+  const snapshot = async (studioId: string, entryId: string) => ({
+    counts: await countsFor(studioId),
+    entry: (
+      await adminQuery(
+        `select status, converted_at, converted_client_id from public.new_client_waitlist_entries where id = $1`,
+        [entryId],
+      )
+    ).rows[0],
+    invitation: (
+      await adminQuery(
+        `select redeemed_at, expired_at, released_at, declined_at from public.new_client_waitlist_invitations where entry_id = $1`,
+        [entryId],
+      )
+    ).rows[0],
+  });
+
+  it.each(["unredeemed", "declined", "released", "expired", "mismatch"] as const)(
+    "F1. CLOSED + a %s invitation -> refused, zero writes",
+    async (kind) => {
+      const f = await seed(`inv-f1-${kind}`);
+      await stamp(f.studioId, "closed");
+      const entryId = await seedEntry(f, kind);
+      const before = await snapshot(f.studioId, entryId);
+      const r = await adminQuery(invitedBook(f, entryId, f.slot));
+      // The delegate's proof refuses, for the stated reason, not a fixture accident.
+      expect(r.rows[0].result, `closed + ${kind}`).toBe(kind === "mismatch" ? "recipient_mismatch" : "not_redeemed");
+      expect(r.rows[0].appointment_id).toBeNull();
+      expect(await snapshot(f.studioId, entryId)).toEqual(before);
+    },
+  );
+
+  it("F1. CLOSED + an entry from ANOTHER studio -> refused, zero writes in either studio", async () => {
+    const mine = await seed("inv-f1-x-mine");
+    const theirs = await seed("inv-f1-x-theirs");
+    await stamp(mine.studioId, "closed");
+    await stamp(theirs.studioId, "closed");
+    const entryId = await seedEntry(theirs, "cross_studio");
+    const beforeTheirs = await snapshot(theirs.studioId, entryId);
+    const beforeMine = await countsFor(mine.studioId);
+    const r = await adminQuery(invitedBook(mine, entryId, mine.slot));
+    expect(r.rows[0].result).not.toMatch(/^created/);
+    expect(r.rows[0].appointment_id).toBeNull();
+    expect(await snapshot(theirs.studioId, entryId)).toEqual(beforeTheirs);
+    expect(await countsFor(mine.studioId)).toEqual(beforeMine);
+  });
+
+  // -------------------------------------------------------------------------
+  // F2. UNKNOWN still refuses an invited booking, and it is order-dependent:
+  // the mode is read UNDER THE STUDIO LOCK at commit. (The ordinary-book
+  // open -> closed race is section 1 A/B above; once an invited booking passes
+  // Closed, unknown is the one mode left that distinguishes the orders for it.)
+  // -------------------------------------------------------------------------
+  const invitedBookUnknown = (f: Fixture, entryId: string, startsAt: string) =>
+    `select * from public.create_public_appointment_for_new_client(
+       '${f.studioId}'::uuid, '${f.existingClientId}'::uuid, null, null, null, null,
+       '${f.serviceId}'::uuid, '${startsAt}'::timestamptz, '${hash64()}',
+       null, null, null, '${entryId}'::uuid)`;
+
+  async function ownerUnstampsHoldingLock(c: Client, studioId: string): Promise<void> {
+    await c.query("begin");
+    await c.query("select set_config('hone.admission_mode_studio_id', $1, true)", [studioId]);
+    await c.query(
+      `update public.studios
+          set new_client_admission_mode = 'open',
+              new_client_admission_mode_set_at = null,
+              new_client_admission_mode_set_by = null
+        where id = $1`,
+      [studioId],
+    );
+  }
+
+  it("F2-A. invited booking first -> it COMMITS, then the studio becomes unknown", async () => {
+    const f = await seed("inv-f2-a");
+    await stamp(f.studioId, "closed");
+    const entryId = await seedRedeemedInvitation(f);
+    const before = await countsFor(f.studioId);
+
+    await A.query("begin");
+    const booked = await A.query(invitedBookUnknown(f, entryId, f.slot));
+    expect(booked.rows[0].result).toBe("created_and_converted");
+
+    const ownerPid = await pidOf(B);
+    const owner = ownerUnstampsHoldingLock(B, f.studioId);
+    expect(await waitUntilBlocked(ownerPid)).toBe(true);
+    await A.query("commit");
+    await owner;
+    await B.query("commit");
+    expect((await countsFor(f.studioId)).appointments).toBe(before.appointments + 1);
+  });
+
+  it("F2-B. the studio becomes unknown first -> the invited booking WAITS, then REFUSES with zero writes", async () => {
+    const f = await seed("inv-f2-b");
+    await stamp(f.studioId, "closed");
+    const entryId = await seedRedeemedInvitation(f);
+    const before = await countsFor(f.studioId);
+
+    await ownerUnstampsHoldingLock(B, f.studioId);
+    await A.query("begin");
+    const aPid = await pidOf(A);
+    const pending = A.query(invitedBookUnknown(f, entryId, f.slot));
+    expect(await waitUntilBlocked(aPid)).toBe(true);
+    await B.query("commit");
+    const refused = await pending;
+    await A.query("commit");
+
+    expect(refused.rows[0].result).toBe("new_client_admission_refused");
+    expect(refused.rows[0].appointment_id).toBeNull();
+    expect(await countsFor(f.studioId)).toEqual(before);
+    const entry = await adminQuery(
+      `select status, converted_at from public.new_client_waitlist_entries where id = $1`,
+      [entryId],
+    );
+    expect(entry.rows[0].converted_at).toBeNull();
   });
 });
 
