@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 257,
+    "count": 258,
     "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "933d1bc98592a3f2409ab933ed7b82190145aaf0a86ce321987cca2ba284c79a"
+    "sha256": "f67dfbb02489cf3ac851c06cb34ae9284d9c604f38335c94812622bc58f1643f"
   },
   "public": {
     "tables": [
@@ -45,6 +45,7 @@
       "clinical_record_snapshots",
       "consent_form_templates",
       "conversion_event_deliveries",
+      "dashboard_attention_events",
       "delivery_concerns",
       "delivery_incidents",
       "delivery_sweep_heartbeat",
@@ -263,6 +264,7 @@
       "create_waitlist_public_appointment",
       "current_privacy_version",
       "current_terms_version",
+      "dashboard_attention_events_immutable",
       "decline_new_client_waitlist_invitation",
       "default_eligibility_for_practitioner",
       "default_eligibility_for_service",
@@ -271,6 +273,7 @@
       "delete_recurring_break_rule",
       "delivery_concerns_identity_guard",
       "delivery_concerns_server_defaults",
+      "dismiss_attention_item",
       "edit_client_pinned_note",
       "edit_session_started_at",
       "effective_access",
@@ -344,6 +347,7 @@
       "join_new_client_waitlist_with_sms_answer",
       "latest_setup_for_client",
       "link_invited_membership",
+      "list_dismissed_attention",
       "list_permission_audit",
       "lock_appointment_for_command",
       "lock_structural_calendar_source_mutation",
@@ -501,6 +505,8 @@
       "resolve_public_any_available_practitioner",
       "resolve_studio_by_sms_messaging_service",
       "resolve_waitlist_invitation_recipient_identity",
+      "restore_attention_item",
+      "restore_attention_item_if_latest",
       "retire_practitioner_capacity",
       "retire_ready_card_attempts",
       "retire_studio_machine",

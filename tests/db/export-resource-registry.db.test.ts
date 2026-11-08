@@ -919,7 +919,9 @@ describe("what is excluded, and on what grounds", () => {
       // data and operator release flags, with no studio content; the studio-scoped permission tables are PENDING under TRUTH-01B.
       // 10 -> 11 platform: permission_key_release (0287, activation rule): when each key's enforcement became real, written only by a migration.
       platform: 11,
-      derived: 7,
+      // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
+      // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
+      derived: 8,
       deliberate_privacy: 2,
     });
   });

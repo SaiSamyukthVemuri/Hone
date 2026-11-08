@@ -19,7 +19,7 @@ import {
 } from "@/lib/dashboard/practice-metrics";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
-import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
+import { EXPIRING_SUPPLIES_LIMIT, getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { NeedsAttentionPanel } from "./needs-attention-panel";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
 import {
@@ -27,8 +27,8 @@ import {
   CHECK_UNAVAILABLE,
   type NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
-import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
-import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
+import { applyDismissals, headingCount, resolvedStudioDismissalKeys, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
+import { loadMyDismissals, restoreResolvedDismissals } from "@/lib/dashboard/attention-dismissal-store";
 import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
 import { dashboardUnpaidEnabled } from "@/lib/dashboard/unpaid-gate";
 import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
@@ -657,6 +657,8 @@ async function resolveNeedsAttentionInput({
       ...(procedureActionsRead.unavailable ? [UNAVAILABLE_RECORD_DETAILS] : []),
       ...(expiringSuppliesRead.unavailable ? [UNAVAILABLE_EXPIRING_SUPPLIES] : []),
     ],
+    // The supplies read is capped and its cut is not in treatmentMemoryNotReturned: a list this long may be missing supplies (AP2 must not read that as resolved).
+    suppliesMayBeCapped: expiringSupplies.length >= EXPIRING_SUPPLIES_LIMIT,
     treatmentMemoryNotReturned:
       clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
     recordDetailGaps: procedureActions.detailGaps,
@@ -692,7 +694,7 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
   const hit = visibleMemo.get(props.attentionSources);
   if (hit) return hit;
   const run = (async (): Promise<VisibleNeeds> => {
-    const input = await resolveNeedsAttentionInput(props);
+    const { suppliesMayBeCapped, ...input } = await resolveNeedsAttentionInput(props);
     // Unpaid balances are owner-only money (0254). A practitioner's render never queries them and never receives a figure.
     // HON-65: also OFF unless the unpaid gate is on (lib/dashboard/unpaid-gate). OFF = the loader is never called, so there are no
     // items, no window note or link, no "could not check" entry, and the heading count excludes unpaid.
@@ -719,6 +721,12 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     const read = await loadMyDismissals(props.studioId);
     if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: true, dismissalsUnavailable: true, countKnown };
     const { shown, dismissed } = applyDismissals(model, read.rows);
+    // AP2: a studio reminder that has resolved no longer holds its dismissal, so the same state returning later shows again.
+    await restoreResolvedDismissals(
+      props.studioId,
+      resolvedStudioDismissalKeys(model, read.rows, { suppliesMayBeCapped }),
+      read.rows,
+    );
     return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
   })();
   visibleMemo.set(props.attentionSources, run);

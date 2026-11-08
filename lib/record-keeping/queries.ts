@@ -64,6 +64,9 @@ export async function getSterileItemRecords(
 // inventory the charting form and every historical link resolve through) and
 // getLotTraceability — are DIFFERENT functions and are deliberately left
 // unfiltered. Current inventory is not historical record existence.
+/** The most expiring supplies the dashboard read returns. A list this long may have been cut, so it cannot prove a supply has resolved. */
+export const EXPIRING_SUPPLIES_LIMIT = 50;
+
 export async function getExpiringSterileItems(
   studioId: string,
   todayIso: string,
@@ -85,7 +88,7 @@ export async function getExpiringSterileItems(
     .not("expiry_date", "is", null)
     .lte("expiry_date", horizon)
     .order("expiry_date", { ascending: true })
-    .limit(options.limit ?? 50);
+    .limit(options.limit ?? EXPIRING_SUPPLIES_LIMIT);
   // DAT-002 (the #981 pattern): refuse through the route error boundary.
   // An empty list on a failed read would hide expiring sterile stock.
   if (error) throw new Error("Failed to load expiring supplies");
@@ -543,9 +546,22 @@ export function normalizeProcedureRecordFilter(raw: {
   const uuid =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const day = /^\d{4}-\d{2}-\d{2}$/;
+  // A REAL calendar date, not just the right shape: "2026-13-01" matches the
+  // pattern but makes addDays() throw a RangeError downstream, turning a typed
+  // URL into a 500. An impossible date is treated like an absent one.
+  const realDay = (s: string | undefined): s is string => {
+    if (!s || !day.test(s)) return false;
+    const d = new Date(`${s}T00:00:00Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return false;
+    // Bound the year too: the day range is converted with addDays(to, 1), and
+    // 9999-12-31 + 1 rolls to year 10000, whose six-digit-year ISO string is no
+    // longer a date, so the same RangeError / 500 returned for that one input.
+    const year = d.getUTCFullYear();
+    return year >= 1900 && year <= 2100;
+  };
   const clientId = raw.clientId && uuid.test(raw.clientId) ? raw.clientId : null;
-  let from = raw.from && day.test(raw.from) ? raw.from : null;
-  let to = raw.to && day.test(raw.to) ? raw.to : null;
+  let from = realDay(raw.from) ? raw.from : null;
+  let to = realDay(raw.to) ? raw.to : null;
   if (from && to && from > to) {
     from = null;
     to = null;
