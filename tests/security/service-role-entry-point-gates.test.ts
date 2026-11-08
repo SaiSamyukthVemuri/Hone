@@ -44,7 +44,6 @@ export const GATE_EXCEPTIONS: Record<string, string> = {
   "app/calendar-feed/[token]/route.ts": "anonymous token-keyed feed: the presented token is hashed and looked up, and a miss returns 404 (a hashed lookup followed by a miss check; read by Privacy in the #1399 review)",
   "app/portal/verify/[token]/actions.ts": "anonymous portal sign-in link verification: the token is hashed and looked up, and a miss refuses; it creates the portal session, so there is no session to gate yet",
   "app/portal/verify/[token]/page.tsx": "anonymous landing page for the portal sign-in link: it hashes the presented token and looks it up, and a miss shows the generic expired-link state; no portal session exists yet",
-  "app/(app)/settings/waitlist/invite-actions.ts": "gate is in the database: the admit_ commands re-derive membership and owner role from the session, the action passes no actor identity (named by Insurance in final451)",
   "app/api/cron/calendar-sync/route.ts": "the cron secret check (isAuthorizedCronRequest) is inside the helper this route calls first, not in the route file (named by Insurance in final451)",
   "app/portal/logout/actions.ts": "destroys the caller's own portal session only; reads and returns no client data",
 };
