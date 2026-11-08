@@ -102,6 +102,11 @@ export function useReportDraft(flags: DraftFlags, apiOverride?: DraftRegistryApi
   const fromContext = useContext(ApiContext);
   const api = apiOverride ?? fromContext;
   const id = useId();
+  // WITHOUT A PROVIDER EVERY REPORT IS A SILENT NO-OP, and the leave guard and the Cancel gate would fail open. Loud in development and
+  // preview; the bare renders of the unit suites run under NODE_ENV=test and stay quiet.
+  if (!api && process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
+    console.error("useReportDraft ran with no DraftRegistryProvider above it: its draft and hold are NOT being tracked (draft-registry.tsx).");
+  }
   const { draft, unresolved } = flags;
   useLayoutEffect(() => {
     api?.report(id, { draft, unresolved });

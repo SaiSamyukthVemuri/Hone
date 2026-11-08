@@ -358,6 +358,50 @@ describe("T6 randomized oracle", () => {
       });
 });
 
+// C1 (Insurance final424): the provider is what makes every report count. Without it useReportDraft silently does nothing and the leave guard
+// and the Cancel gate fail open while every other test stays green.
+describe("C1 the host provides the registry", () => {
+  it("block-setup-form wraps its ONLY MachineFirstSetupConnected in DraftRegistryProvider, api and view from the same useDraftRegistryState", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
+    const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect((code.match(/<MachineFirstSetupConnected\b/g) ?? []).length, "exactly one connected panel").toBe(1);
+    expect((code.match(/useDraftRegistryState\(\)/g) ?? []).length, "one registry per form").toBe(1);
+    expect(code).toMatch(/const draftRegistry = useDraftRegistryState\(\);/);
+    const open = code.indexOf("<DraftRegistryProvider api={draftRegistry.api} view={draftRegistry.view}>");
+    const close = code.indexOf("</DraftRegistryProvider>");
+    const at = code.indexOf("<MachineFirstSetupConnected");
+    expect(open, "the provider takes api AND view from the same registry").toBeGreaterThan(0);
+    expect(at, "the connected panel is inside the provider").toBeGreaterThan(open);
+    expect(close, "and the provider closes after it").toBeGreaterThan(at);
+    expect((code.match(/<DraftRegistryProvider\b/g) ?? []).length, "one provider").toBe(1);
+  });
+
+  it("useReportDraft with no registry is loud outside tests and quiet in tests and production", async () => {
+    const { useReportDraft: hook } = await import("@/components/machines/draft-registry");
+    const bare = () => {
+      function Bare() {
+        hook({ draft: true, unresolved: false });
+        return null;
+      }
+      const render = create(false);
+      return render(createElement(Bare));
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("NODE_ENV", "development");
+    await bare();
+    expect(spy, "development: it says so").toHaveBeenCalledWith(expect.stringContaining("no DraftRegistryProvider"));
+    spy.mockClear();
+    for (const env of ["test", "production"]) {
+      vi.stubEnv("NODE_ENV", env);
+      await act(async () => root!.render(createElement("div")));
+      await bare();
+      expect(spy, `${env}: quiet`).not.toHaveBeenCalled();
+    }
+    vi.unstubAllEnvs();
+  });
+});
+
 // SPELLING TRIPWIRE: nothing outside the hook may write the host's draft or hold. The only writers are `useReportDraft` and the registry's
 // own api; a component that takes or calls a draft/hold setter again reintroduces the edge-triggered model.
 describe("no writer outside useReportDraft", () => {
