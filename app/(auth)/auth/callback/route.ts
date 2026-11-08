@@ -85,13 +85,16 @@ export async function GET(request: Request) {
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }
-      // The key is single-use whatever happened above.
-      if (returnKey || request.headers.get("cookie")?.includes(RETURN_TO_COOKIE)) {
-        response.cookies.delete(RETURN_TO_COOKIE);
-      }
-      return response;
+      return clearReturnKey(request, response);
     }
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth`);
+  // A failed exchange or a missing code clears the key too, so an unrelated sign-in later in the same browser cannot inherit it.
+  return clearReturnKey(request, NextResponse.redirect(`${origin}/login?error=auth`));
+}
+
+// The key is single-use on EVERY exit of this route.
+function clearReturnKey(request: Request, response: NextResponse): NextResponse {
+  if (request.headers.get("cookie")?.includes(RETURN_TO_COOKIE)) response.cookies.delete(RETURN_TO_COOKIE);
+  return response;
 }

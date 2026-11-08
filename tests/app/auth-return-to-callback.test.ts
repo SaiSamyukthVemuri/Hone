@@ -63,16 +63,31 @@ describe("existing sign-in flows are unchanged", () => {
     "a %s reconciliation still overrides the remembered page",
     async (status, path) => {
       h.reconcile.mockResolvedValue({ data: { status }, error: null });
-      expect(await loc(request({ cookie: "hone_return_to=waitlist_followup" }))).toBe(`${ORIGIN}${path}`);
+      const res = await GET(request({ cookie: "hone_return_to=waitlist_followup" }));
+      expect(res.headers.get("location")).toBe(`${ORIGIN}${path}`);
+      // The valid key lost to the outcome and is still spent.
+      expect(res.headers.get("set-cookie") ?? "").toMatch(/hone_return_to=;/);
     },
   );
   it("a multi-studio chooser still wins", async () => {
     h.reconcile.mockResolvedValue({ data: { status: "linked", choose_studio: true }, error: null });
     expect(await loc(request({ cookie: "hone_return_to=waitlist_followup" }))).toBe(`${ORIGIN}/dashboard`);
   });
-  it("a failed exchange keeps the login error and ignores the cookie", async () => {
+  it("a failed exchange keeps the login error, ignores the cookie and clears it", async () => {
     h.exchange.mockResolvedValue({ data: { user: null }, error: { code: "synthetic" } });
-    expect(await loc(request({ cookie: "hone_return_to=waitlist_followup" }))).toBe(`${ORIGIN}/login?error=auth`);
+    const res = await GET(request({ cookie: "hone_return_to=waitlist_followup" }));
+    expect(res.headers.get("location")).toBe(`${ORIGIN}/login?error=auth`);
+    expect(res.headers.get("set-cookie") ?? "").toMatch(/hone_return_to=;/);
+  });
+  it("a missing code keeps the login error and clears the cookie", async () => {
+    const url = new URL("/auth/callback", ORIGIN);
+    const res = await GET(new Request(url, { headers: { cookie: "hone_return_to=waitlist_followup" } }));
+    expect(res.headers.get("location")).toBe(`${ORIGIN}/login?error=auth`);
+    expect(res.headers.get("set-cookie") ?? "").toMatch(/hone_return_to=;/);
+  });
+  it("no cookie on the request sets no cookie on a failure", async () => {
+    h.exchange.mockResolvedValue({ data: { user: null }, error: { code: "synthetic" } });
+    expect((await GET(request())).headers.get("set-cookie")).toBeNull();
   });
 });
 
