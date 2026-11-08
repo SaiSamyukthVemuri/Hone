@@ -29,8 +29,11 @@ export function violations(src: string): string[] {
   }
 
   // 3. The deferred stamp runs strictly after the command AND after the not-created guard.
-  const deferredRun = code.search(/if \(deferredConsentStamp\) await deferredConsentStamp\(\);/);
+  const deferredRun = code.search(/if \(deferredConsentStamp && existingClient && committedClientId === existingClient\.id\) \{\s*await deferredConsentStamp\(\);\s*\}/);
   const createdGuard = code.lastIndexOf("if (rpcErr || !createdId)");
+  if (!/if \(deferredConsentStamp && existingClient && committedClientId === existingClient\.id\)/.test(code)) {
+    out.push("the deferred stamp is not bound to the committed client (H1)");
+  }
   if (deferredRun < 0) out.push("the deferred stamp is never run");
   else if (deferredRun < rpcAlt || deferredRun < createdGuard) out.push("the deferred stamp runs before the booking is known committed");
 
@@ -67,12 +70,19 @@ describe("0313 command path: no write precedes the capability proof", () => {
   });
 
   it("fails when the deferred stamp is run before the not-created guard", () => {
-    const run = "if (deferredConsentStamp) await deferredConsentStamp();";
-    const without = src.replace(run, "");
+    const runRe = /if \(deferredConsentStamp && existingClient && committedClientId === existingClient\.id\) \{\s*await deferredConsentStamp\(\);\s*\}/;
+    const run = src.match(runRe)![0];
+    const without = src.replace(runRe, "");
     expect(without).not.toBe(src);
     const early = without.replace("const appointmentToken = generateAppointmentToken();", `${run}\n  const appointmentToken = generateAppointmentToken();`);
     expect(early).not.toBe(without);
     expect(violations(early).length).toBeGreaterThan(0);
+  });
+
+  it("fails when the deferred stamp is no longer bound to the committed client (H1)", () => {
+    const mutated = src.replace(" && existingClient && committedClientId === existingClient.id", "");
+    expect(mutated).not.toBe(src);
+    expect(violations(mutated).join(" ")).toContain("committed client");
   });
 
   it("fails when some other write is added before the command", () => {

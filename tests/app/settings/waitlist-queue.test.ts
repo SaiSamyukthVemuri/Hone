@@ -198,6 +198,29 @@ function reset() {
 // NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
 // Delegating to the REAL resolver with no stored value routes it through the
 // transition bridge, so the env stubbing below keeps meaning what it meant.
+// The three owner follow-up cards read through these loaders. A test may force a result to model
+// "zero active entries but n>0 items"; null passes through to the real loader (every other test).
+const followUp = vi.hoisted(() => ({
+  attention: null as unknown,
+  declined: null as unknown,
+  replies: null as unknown,
+}));
+vi.mock("@/lib/waitlist/needs-attention", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/needs-attention")>();
+  return { ...a, loadNeedsAttention: vi.fn(async (...args: Parameters<typeof a.loadNeedsAttention>) =>
+    (followUp.attention as Awaited<ReturnType<typeof a.loadNeedsAttention>> | null) ?? a.loadNeedsAttention(...args)) };
+});
+vi.mock("@/lib/waitlist/declined-attention", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/declined-attention")>();
+  return { ...a, loadDeclinedAttention: vi.fn(async (...args: Parameters<typeof a.loadDeclinedAttention>) =>
+    (followUp.declined as Awaited<ReturnType<typeof a.loadDeclinedAttention>> | null) ?? a.loadDeclinedAttention(...args)) };
+});
+vi.mock("@/lib/waitlist/times-feedback-owner", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/times-feedback-owner")>();
+  return { ...a, countTimesFeedback: vi.fn(async (...args: Parameters<typeof a.countTimesFeedback>) =>
+    (followUp.replies as Awaited<ReturnType<typeof a.countTimesFeedback>> | null) ?? a.countTimesFeedback(...args)) };
+});
+
 // Null keeps the legacy-bridge behaviour every pre-existing test relies on; a test sets a
 // STORED mode to exercise the closed-admission invite block.
 const admissionHolder = vi.hoisted(() => ({ stored: null as string | null }));
@@ -2876,5 +2899,54 @@ describe("closed admission blocks the owner's invite (0204 invited_book refuses 
     scenario.rows = [entry({ id: "w1", status: "waiting" })];
     scenario.count = 1;
     expect(await render()).not.toContain("invites-blocked-admission");
+  });
+});
+
+describe("owner follow-up cards render with ZERO active entries (Codex P2)", () => {
+  afterEach(() => {
+    followUp.attention = followUp.declined = followUp.replies = null;
+    vi.unstubAllEnvs();
+  });
+  const empty = () => {
+    scenario.rows = [];
+    scenario.count = 0;
+  };
+
+  it("Replies to review (n) shows, beside the empty-queue message", async () => {
+    vi.stubEnv("WAITLIST_TIMES_FEEDBACK", "1");
+    followUp.replies = { kind: "ok", n: 2 };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Replies to review (2)");
+  });
+
+  it("Needs your attention (n) shows, beside the empty-queue message", async () => {
+    followUp.attention = { kind: "ok", total: 3, shown: [{ id: "a", name: "A" }] };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Needs your attention (3)");
+  });
+
+  it("Declined the offered times (n) shows, beside the empty-queue message", async () => {
+    followUp.declined = { kind: "ok", total: 1, shown: [{ id: "d", name: "D" }], ids: new Set(["d"]) };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Declined the offered times (1)");
+  });
+
+  it("none of the three is rendered inside the active-entries branch", () => {
+    const src = readFileSync(path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const branch = src.indexOf("{active === 0 ? (");
+    expect(branch).toBeGreaterThan(-1);
+    for (const marker of ['id="needs-attention-heading"', 'data-testid="declined-card"', 'id="replies-heading"']) {
+      const at = src.indexOf(marker);
+      expect(at, marker).toBeGreaterThan(-1);
+      expect(at, `${marker} must precede the active branch`).toBeLessThan(branch);
+    }
   });
 });

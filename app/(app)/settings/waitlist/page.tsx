@@ -876,32 +876,11 @@ export default async function WaitlistSettingsPage({
         </section>
       )}
 
-      {active === 0 ? (
-        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-          Nobody is waiting right now. New-client requests from your booking
-          page will appear here.
-        </div>
-      ) : (
-        <>
-          <InviteOutcomeBoundary
-            action={inviteToBookAction}
-            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
-          >
-          {focusedStatus && (
-            <p className="text-sm">
-              <WaitlistNavLink href={QUEUE_PATH} className="underline">
-                Back to all groups
-              </WaitlistNavLink>
-            </p>
-          )}
-
-          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
-              `revalidatePath` on a committed admission moves the row to
-              `invited`, and a composer is mounted only for waiting/claimed — so
-              the composer unmounts on exactly the outcomes that carry a delivery
-              disposition. This boundary survives that, and survives the row
-              leaving the visible list altogether. */}
-
+      {/* THE OWNER FOLLOW-UP CARDS RENDER WHETHER OR NOT ANYONE IS ACTIVE. They describe
+          things that outlive the queue: reply rows persist after the entry converts or is
+          removed, and a used-but-unbooked invitation or a declined offer is exactly when
+          the queue may look empty. Inside the `active !== 0` branch they vanished with the
+          last active entry (Codex P2). */}
           {/* NEEDS YOUR ATTENTION. Derived from facts this page already read: an
               invited entry whose invitation was used. It survives a reload and
               says only what is known: the booking did not complete. It cannot
@@ -1003,6 +982,32 @@ export default async function WaitlistSettingsPage({
               </p>
             </section>
           )}
+
+      {active === 0 ? (
+        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+          Nobody is waiting right now. New-client requests from your booking
+          page will appear here.
+        </div>
+      ) : (
+        <>
+          <InviteOutcomeBoundary
+            action={inviteToBookAction}
+            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+          >
+          {focusedStatus && (
+            <p className="text-sm">
+              <WaitlistNavLink href={QUEUE_PATH} className="underline">
+                Back to all groups
+              </WaitlistNavLink>
+            </p>
+          )}
+
+          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
+              `revalidatePath` on a committed admission moves the row to
+              `invited`, and a composer is mounted only for waiting/claimed — so
+              the composer unmounts on exactly the outcomes that carry a delivery
+              disposition. This boundary survives that, and survives the row
+              leaving the visible list altogether. */}
 
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);

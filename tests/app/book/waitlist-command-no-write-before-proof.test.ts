@@ -44,6 +44,8 @@ const scenario = {
   clientStudioId: STUDIO_ID,
   clientSmsConsentAt: null as string | null,
   rpcResult: "created" as string,
+  rpcClientId: null as string | null,
+  rpcError: null as { code: string; message: string } | null,
 };
 const eqCalls: Array<[string, unknown]> = [];
 
@@ -119,8 +121,9 @@ const admin = {
   rpc: async (fn: string) => {
     rpcCalls.push(fn);
     events.push(`rpc:${fn}`);
+    if (scenario.rpcError) return { data: null, error: scenario.rpcError };
     return {
-      data: scenario.rpcResult !== "created" && scenario.rpcResult !== "created_and_converted" ? [{ result: scenario.rpcResult }] : [{ result: scenario.rpcResult, client_id: CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }],
+      data: scenario.rpcResult !== "created" && scenario.rpcResult !== "created_and_converted" ? [{ result: scenario.rpcResult }] : [{ result: scenario.rpcResult, client_id: scenario.rpcClientId ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }],
       error: null,
     };
   },
@@ -280,6 +283,8 @@ beforeEach(() => {
   scenario.clientStudioId = STUDIO_ID;
   scenario.clientSmsConsentAt = null;
   scenario.rpcResult = "created";
+  scenario.rpcClientId = null;
+  scenario.rpcError = null;
   admissionOverride = null;
   authorizeCalls.length = 0;
   authorizeResult = "authorized";
@@ -346,11 +351,40 @@ describe("0313 command path: no write precedes proof of the capability", () => {
     expect(events.slice(0, cmd).filter((e) => e.startsWith("write:"))).toEqual([]);
   });
 
-  it("flag OFF is unchanged: the redeem (proof) comes first, then the stamp may run", async () => {
+  it("H1: a committed booking whose client is NOT the matched client stamps nothing", async () => {
+    scenario.rpcResult = "created_and_converted";
+    scenario.rpcClientId = "99999999-0000-4000-8000-000000000001";
+    await publicBookAppointmentAction(invitedForm());
+    expect(events).toContain("rpc:redeem_and_book_waitlist_invitation");
+    expect(events).not.toContain(CLIENT_CONSENT_WRITE);
+  });
+
+  it("an rpc error (outcome uncertain) stamps nothing", async () => {
+    scenario.rpcError = { code: "57014", message: "canceled" };
+    const r = await publicBookAppointmentAction(invitedForm());
+    expect(r.ok).toBe(false);
+    expect(events).not.toContain(CLIENT_CONSENT_WRITE);
+  });
+
+  it.each(["time_unavailable", "outside_availability", "new_client_admission_refused", "archived_client_collision"])(
+    "a non-created refusal (%s) stamps nothing",
+    async (result) => {
+      scenario.rpcResult = result;
+      const r = await publicBookAppointmentAction(invitedForm());
+      expect(r.ok).toBe(false);
+      expect(events).not.toContain(CLIENT_CONSENT_WRITE);
+    },
+  );
+
+  it("flag OFF is unchanged: redeem-first (proof), then the stamp RUNS ahead of the command as before", async () => {
     vi.unstubAllEnvs();
     vi.stubEnv("WAITLIST_BOOKING_COMMAND", "");
-    scenario.rpcResult = "created";
+    scenario.rpcResult = "created_and_converted";
     await publicBookAppointmentAction(invitedForm());
     expect(events).not.toContain("rpc:redeem_and_book_waitlist_invitation");
+    const stamp = events.indexOf(CLIENT_CONSENT_WRITE);
+    const cmd = events.findIndex((e) => e.startsWith("rpc:create_"));
+    expect(stamp, "the flag-off stamp still runs").toBeGreaterThanOrEqual(0);
+    expect(cmd).toBeGreaterThan(stamp);
   });
 });

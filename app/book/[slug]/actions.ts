@@ -1616,7 +1616,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // existing client's write-once SMS consent may now be recorded. Soft-fail, as before.
   // `clientSms*` hold the COMMITTED values (overwritten from the command's row above),
   // so an already-recorded consent or a STOP is respected.
-  if (deferredConsentStamp) await deferredConsentStamp();
+  // H1: the stamp targets and compares against `existingClient`, so it runs only when the
+  // booking's committed client IS that client; any other id writes nothing.
+  if (deferredConsentStamp && existingClient && committedClientId === existingClient.id) {
+    await deferredConsentStamp();
+  }
 
   // The appointment is COMMITTED (create_public_appointment returned 'created'),
   // together with its audit row. Everything from here on is a post-commit,
