@@ -405,7 +405,7 @@ export function groupSlotsByDay(
 }
 
 /** "Thu, Nov 13 at 3:00 PM" in the studio's zone, or nothing for an unreadable instant. */
-function openUntil(expiresAt: string, tz: string): { inviteOpenUntil?: string } {
+export function openUntil(expiresAt: string, tz: string): { inviteOpenUntil?: string } {
   const at = new Date(expiresAt);
   if (Number.isNaN(at.getTime())) return {};
   return { inviteOpenUntil: `${formatSlotDayLabel(localDateString(at, tz))} at ${localTimeString12h(at, tz)} (studio time)` };

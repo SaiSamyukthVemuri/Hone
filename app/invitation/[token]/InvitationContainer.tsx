@@ -26,6 +26,8 @@ import {
 
 /** Background refresh on tab return runs at most this often. */
 export const REFRESH_MIN_INTERVAL_MS = 30_000;
+/** A background read that has not answered by now is abandoned; the offer stays. */
+export const REFRESH_TIMEOUT_MS = 15_000;
 
 export function InvitationContainer({
   token,
@@ -120,8 +122,16 @@ export function InvitationContainer({
       const began = epoch.current;
       void (async () => {
         try {
-          const next = await loadInvitationAction(token);
-          if (next.kind === "error") return;
+          // A hung read must not pin readInFlight forever (no further refresh
+          // would ever start). On timeout the result is dropped, like a failure.
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const next = await Promise.race([
+            loadInvitationAction(token),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(() => resolve(null), REFRESH_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timer));
+          if (next === null || next.kind === "error") return;
           lastRefreshAt.current = Date.now();
           // STALE IF an action started since (new epoch), one is running, or the
           // screen is no longer an offer: a booked or declined screen must never

@@ -586,6 +586,20 @@ describe("HON-7 offer: the whole window and the invitation's own close", () => {
     expect(html).toContain("The days below are the days you can choose from.");
   });
 
+  it("the close time the server builds is stated in studio time, and the screen shows it verbatim", async () => {
+    const { openUntil } = await import("@/lib/waitlist/invitation-offer");
+    const built = openUntil("2026-09-10T19:00:00.000Z", "America/Toronto");
+    expect(built.inviteOpenUntil).toBe("Thu, Sep 10 at 3:00 PM (studio time)");
+    expect(openUntil("not a date", "America/Toronto")).toEqual({});
+    const html = render({ ...base, ...built });
+    expect(html).toContain("Book by Thu, Sep 10 at 3:00 PM (studio time)");
+  });
+
+  it("a lost race says the time was just taken and names nobody", () => {
+    const html = render({ ...base, refusal: "slot_taken" } as never);
+    expect(html).toContain("That time was just taken. Please pick another time.");
+  });
+
   it("shows a cancellation notice only when the server supplied one", () => {
     expect(render(base)).not.toContain('data-testid="booking-notice"');
     const html = render({ ...base, bookingNotice: "NOTICE-TEXT" });

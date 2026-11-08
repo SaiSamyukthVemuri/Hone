@@ -20,7 +20,7 @@ vi.mock("@/app/invitation/[token]/actions", () => ({
 
 const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { InvitationContainer, REFRESH_MIN_INTERVAL_MS } = await import(
+const { InvitationContainer, REFRESH_MIN_INTERVAL_MS, REFRESH_TIMEOUT_MS } = await import(
   "@/app/invitation/[token]/InvitationContainer"
 );
 
@@ -218,5 +218,27 @@ describe("InvitationContainer background refresh", () => {
     now += 2;
     await returnToTab();
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("a read that never answers is abandoned after the timeout: the offer stays and a later return reads again", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await mount();
+      load.mockReturnValueOnce(new Promise(() => {}));
+      await returnToTab();
+      expect(load).toHaveBeenCalledTimes(1);
+      // Still in flight: another return must not start a second read.
+      await returnToTab();
+      expect(load).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS);
+      });
+      expect(host.textContent).toContain("Mondays");
+      load.mockResolvedValueOnce(offer());
+      await returnToTab(); // a timeout is not a success, so no throttle interval was started
+      expect(load).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

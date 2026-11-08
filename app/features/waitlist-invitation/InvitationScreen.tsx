@@ -150,7 +150,7 @@ const PROOF_NOTICE_COPY: Record<ProofNotice, string> = {
 };
 
 const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {
-  slot_taken: "That time was taken while you were choosing. Please pick another.",
+  slot_taken: "That time was just taken. Please pick another time.",
   not_permitted: "Your invitation doesn't cover that time. Please choose one of the times shown.",
   unavailable: "We couldn't complete that booking. Please try again in a moment.",
   note_invalid: "Your message can’t be saved as written. Please use plain text and try again.",
