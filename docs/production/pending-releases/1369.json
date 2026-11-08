@@ -1,6 +1,9 @@
 {
   "pr": 1369,
   "runtime": true,
-  "migrations": ["supabase/migrations/0301_session_block_machine_identity.sql"],
+  "migrations": [
+    "supabase/migrations/0301_session_block_machine_identity.sql",
+    "supabase/migrations/0310_block_machine_identity_mode_contract.sql"
+  ],
   "release_receipt": "01-ops/1369-release-receipt.json"
 }
