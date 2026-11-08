@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 261,
-    "last": "0324_waitlist_atomic_send_allowance.sql",
-    "sha256": "4f99085a9265f824de35de1fc2f80d5d9d3f8abc92adfb2a6a94afa419d6da4e"
+    "count": 262,
+    "last": "0325_waitlist_decline_followups.sql",
+    "sha256": "399fa6dfe4552a346f072356bd56df6db1d440176bd3a58f34dc380d7baa0674"
   },
   "public": {
     "tables": [
@@ -129,6 +129,10 @@
       "treatment_setup_readings",
       "treatment_setup_submissions",
       "waitlist",
+      "waitlist_decline_answers",
+      "waitlist_decline_owner_emails",
+      "waitlist_erase_records",
+      "waitlist_followups",
       "waitlist_invitation_bookings",
       "waitlist_invitation_followups",
       "waitlist_times_feedback"
@@ -263,6 +267,7 @@
       "dashboard_attention_events_immutable",
       "decline_new_client_waitlist_invitation",
       "decline_waitlist_invitation_times_unsuitable",
+      "decline_waitlist_invitation_with_answers",
       "default_eligibility_for_practitioner",
       "default_eligibility_for_service",
       "delete_availability_day_locked",
@@ -286,6 +291,7 @@
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
+      "erase_waitlist_decline_answers",
       "expire_new_client_waitlist_invitation",
       "expire_pending_sessions",
       "expire_platform_lead_alerts",
@@ -339,8 +345,10 @@
       "join_new_client_waitlist_with_phone_and_sms_answer",
       "join_new_client_waitlist_with_profile",
       "join_new_client_waitlist_with_sms_answer",
+      "keep_waitlist_withdrawal",
       "latest_setup_for_client",
       "link_invited_membership",
+      "link_waitlist_followup_appointment",
       "list_dismissed_attention",
       "list_waitlist_times_feedback",
       "lock_appointment_for_command",
@@ -356,6 +364,7 @@
       "mark_stripe_account_provisioning_failed",
       "mark_stripe_customer_provisioning_failed",
       "mark_stripe_event_processed",
+      "mark_waitlist_decline_handled",
       "mark_waitlist_mobile_verified",
       "materialize_recurring_break_rule",
       "member_owns_scoped_timed_block",
@@ -363,6 +372,7 @@
       "move_appointment_core",
       "move_or_reassign_appointment",
       "my_pending_invitation",
+      "new_client_waitlist_entries_erase_on_remove",
       "new_client_waitlist_entries_record_event",
       "new_client_waitlist_entries_server_timestamps",
       "new_client_waitlist_entries_transition_guard",
@@ -393,6 +403,8 @@
       "public_cancel_appointment_with_token",
       "public_reschedule_slot_candidates",
       "read_waitlist_admission_round_consumed",
+      "read_waitlist_followup_status",
+      "read_waitlist_followups",
       "rebuild_blockout_reservations_for_studio_tz",
       "rebuild_recurring_break_occurrences_for_studio_tz",
       "receptionist_actor_id",
@@ -469,6 +481,7 @@
       "repair_bump_appointment_sync_version",
       "repair_enqueue_orphan_link_delete",
       "report_delivery_concern",
+      "request_waitlist_withdrawal",
       "requeue_new_client_waitlist_entry",
       "requeue_platform_lead_alert",
       "reschedule_appointment_v2",
