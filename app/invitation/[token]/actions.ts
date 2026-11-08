@@ -1156,6 +1156,9 @@ export async function submitInvitationProofAction(
 export async function declineInvitationAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
+  // 0325: with the decline-answers flag on, the recipient's choices are book, "None of these times work" (both answers required) or "I no
+  // longer need an appointment". A plain decline is not one of them, so a direct POST is refused here too, before any read or mutation.
+  if (waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
   const capability = await readCapability(rawToken);
   // P2-A. THE CONTEXT IS RESOLVED BEFORE THE COMMAND, NOT ONLY AFTER IT FAILS.
   //
@@ -1317,6 +1320,8 @@ export async function timesDontWorkAction(
   note: string,
 ): Promise<InvitationViewState> {
   if (!waitlistTimesFeedbackEnabled()) return loadInvitationAction(rawToken);
+  // 0325: the answers flow replaces this free-note decline; a direct POST is refused while it is on.
+  if (waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
   // THROTTLED BEFORE THE FIRST DATABASE READ, like proof submission: a wrong
   // capability would otherwise drive unlimited locked lookups on a public path.
   const gate = await limitPublicSlots({

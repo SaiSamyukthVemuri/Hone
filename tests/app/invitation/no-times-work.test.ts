@@ -145,6 +145,14 @@ describe("the server actions", () => {
     // the id is a local used only in that call; no returned object carries it
     expect(answers).not.toMatch(/return \{[^}]*invitationId/);
   });
+  it("the plain decline and the times-feedback decline are refused while the flag is on, before any read", () => {
+    const plain = ACTIONS.slice(ACTIONS.indexOf("export async function declineInvitationAction"));
+    const guard = plain.indexOf("if (waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(plain.indexOf("readCapability("));
+    const feedback = ACTIONS.slice(ACTIONS.indexOf("export async function timesDontWorkAction"));
+    expect(feedback.slice(0, feedback.indexOf("limitPublicSlots"))).toContain("if (waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);");
+  });
   it("never log or echo the answers", () => {
     for (const a of [answers, withdrawal]) expect(a).not.toMatch(/console\.|logger|log\w*\(/);
   });
@@ -157,6 +165,14 @@ describe("the server actions", () => {
     const screen = read("app/features/waitlist-invitation/InvitationScreen.tsx");
     expect(screen).toContain("onNoTimesWork && onNoLongerNeed");
     expect(screen).toContain("I can’t make any of these");
+    // The plain decline button is only in the ELSE branch of the answers form, so it is not on the page while the form is.
+    const form = screen.indexOf("onNoTimesWork && onNoLongerNeed ? (");
+    expect(form).toBeGreaterThan(0);
+    expect(screen.indexOf("onClick={onDecline}")).toBeGreaterThan(form);
+    expect((screen.match(/onClick=\{onDecline\}/g) ?? []).length).toBe(1);
+    const container = read("app/invitation/[token]/InvitationContainer.tsx");
+    expect(container).toContain("declineAnswers\n          ? (a: { why: string; better: string })");
+    expect(container).toContain("onNoLongerNeed={declineAnswers ?");
     expect(screen).toContain("{DECLINE_CONFIRMATION}");
     expect(screen).toContain("{WITHDRAWAL_CONFIRMATION}");
   });

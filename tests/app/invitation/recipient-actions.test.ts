@@ -761,6 +761,28 @@ describe("the link alone is not authorisation", () => {
     expect(out.kind).toBe("proof");
   });
 
+  it("with the decline-answers flag ON, a plain decline is refused even with a proven capability: no command, no mutation (a direct POST cannot reach it)", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    declineInvitation.mockResolvedValue({ kind: "declined" });
+    vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "1");
+    try {
+      const out = await declineInvitationAction(TOKEN);
+      expect(declineInvitation).not.toHaveBeenCalled();
+      expect(out.kind).not.toBe("declined");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("with the flag OFF a proven plain decline still goes through unchanged", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    declineInvitation.mockResolvedValue({ kind: "declined" });
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+    const out = await declineInvitationAction(TOKEN);
+    expect(declineInvitation).toHaveBeenCalledTimes(1);
+    expect(out.kind).toBe("declined");
+  });
+
   it("books once a capability exists, through the SHARED booking engine", async () => {
     cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
     publicBookAppointmentAction.mockResolvedValue({
