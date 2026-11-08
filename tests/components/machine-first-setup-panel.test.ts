@@ -427,6 +427,13 @@ describe("the connected wrapper makes NO request until asked", () => {
     expect((code.match(/useEffect\(/g) ?? []).length).toBe(1);
     expect(code).toMatch(/if \(hasSavedIdentity && state === "idle" && ctx === null\) void open\(\)/);
     expect(code).toContain("useCallback");
+    // ...and that one effect has NO CLEANUP and reports nothing to the host (Codex #1369 4505408578): a cleanup keyed on
+    // [hasSavedIdentity] runs when the identity is WRITTEN, while the reading entry is still mounted, and used to clear the host's
+    // draft and hold. Unsaved state is the owners' registry entries (components/machines/draft-registry.tsx), never this wrapper's.
+    const effect = code.slice(code.indexOf("useEffect("), code.indexOf("}, [hasSavedIdentity]);"));
+    expect(effect, "the open-on-identity effect was not found").toContain("void open()");
+    expect(effect, "the open-on-identity effect returns a cleanup").not.toMatch(/return\s*(\(\)|\w+)?\s*(=>|;|\()/);
+    expect(code, "the wrapper reports a draft or hold to the host").not.toMatch(/onRevision(Draft|Unresolved)/);
   });
 
   it("sends no ownership of its own", () => {

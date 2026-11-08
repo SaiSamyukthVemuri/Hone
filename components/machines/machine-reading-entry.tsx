@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { useReportDraft } from "./draft-registry";
 import { RangeConfirmationList } from "./range-confirmation-list";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
@@ -134,33 +135,6 @@ export type MachineReadingEntryProps = {
   /** Injected by tests so the retry key is deterministic. */
   mintKey?: () => string;
   /**
-   * REPORT WHEN THIS SAVE'S OUTCOME IS UNKNOWN, so the panel can freeze the
-   * machine and mode with it.
-   *
-   * Round 10 froze the identity controls against the CREATE form's
-   * unresolved save. A REVISION save is the other path, and its unresolved
-   * state lived entirely in this child: the dropdown stayed live, and
-   * switching after a lost response UNMOUNTED this component and discarded
-   * the retry key it was holding. Switching back and saving then minted a
-   * new key and appended a duplicate immutable capture if the first request
-   * had committed (Codex, #860 4300759930).
-   *
-   * The key's whole purpose is to survive the gap between a lost answer and
-   * the retry; a control that can unmount the thing holding it is part of
-   * that gap.
-   */
-  onUnresolvedChange?: (unresolved: boolean) => void;
-  /**
-   * WHETHER ANYTHING TYPED HAS NOT BEEN SAVED (Codex, #1369 4476240831).
-   *
-   * The create form reports its draft to the host; this form, on an EXISTING
-   * area, kept its values to itself, so the host's status kept saying Saved
-   * and the leave guard stayed disarmed over numbers that were never recorded.
-   * True while any group holds a non-empty value; false again once a save
-   * clears them.
-   */
-  onDraftChange?: (hasDraft: boolean) => void;
-  /**
    * TRUE WHILE A MACHINE OR MODE CHANGE IS BEING WRITTEN (Codex, #1369 4487911008). On a saved area the pick is written first and
    * applied after; in between, this entry still belongs to the OLD machine while the record may already hold the new one, so a save
    * here would submit the old machine's readings under the new machine. Submission is held until the change settles; the entry is
@@ -190,8 +164,6 @@ export function MachineReadingEntry({
   recordedGroups,
   onRecord,
   mintKey,
-  onUnresolvedChange,
-  onDraftChange,
   submissionHeld = false,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
@@ -374,21 +346,9 @@ export function MachineReadingEntry({
   const hasDraft =
     !save.recorded &&
     groups.some((g) => Object.values(g.values).some((v) => String(v ?? "").trim() !== ""));
-  const reportedDraft = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (reportedDraft.current === hasDraft) return;
-    reportedDraft.current = hasDraft;
-    onDraftChange?.(hasDraft);
-  }, [hasDraft, onDraftChange]);
-  // GONE WITH THE ENTRY: an unmounted form holds nothing unsaved.
-  useEffect(() => () => onDraftChange?.(false), [onDraftChange]);
-
-  const reportedUnresolved = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (reportedUnresolved.current === transportHold) return;
-    reportedUnresolved.current = transportHold;
-    onUnresolvedChange?.(transportHold);
-  }, [transportHold, onUnresolvedChange]);
+  // REPORTED AS LEVELS TO THE HOST'S REGISTRY (draft-registry.tsx): the current flags on every change of their value, removed on unmount only.
+  // The controls that can destroy this save's retry key are outside this component, and they read the registry's derived view.
+  useReportDraft({ draft: hasDraft, unresolved: transportHold });
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a

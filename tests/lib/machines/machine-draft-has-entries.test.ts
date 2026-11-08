@@ -23,17 +23,23 @@ describe("machineDraftHasEntries", () => {
 describe("the host form's dirty flag", () => {
   const FORM = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
   const dirty = FORM.slice(FORM.indexOf("  const dirty ="), FORM.indexOf("  // THE LEAVE PROMPT"));
-  it("counts the machine draft only through machineDraftHasEntries, never on mere presence", () => {
-    expect(dirty).toContain("machineDraftHasEntries(machineDraft)");
+  const read = (f: string) => readFileSync(f, "utf8");
+  // Level, not edge (#1369): every unsaved-state term is a registry OWNER, and the host's dirty flag reads the derived `anyDraft`.
+  it("counts the machine draft only through machineDraftHasEntries (in its registry owner), never on mere presence", () => {
+    expect(dirty).toContain("draftRegistry.view.anyDraft");
     expect(dirty).not.toMatch(/machineDraft !== null/);
+    const owner = read("components/machines/machine-setting-draft.tsx");
+    expect(owner).toContain("setHasEntries(machineDraftHasEntries(payload))");
+    expect(owner).toMatch(/useReportDraft\(\{ draft: hasEntries, unresolved: false \}\)/);
   });
-  it("an EXPLICIT machine pick still counts (identityDirty is kept)", () => {
-    expect(dirty).toContain("identityDirty");
+  it("an EXPLICIT machine pick still counts (identityDirty is registered)", () => {
+    expect(FORM).toMatch(/useReportDraft\(\{ draft: identityDirty, unresolved: false \}, draftRegistry\.api\)/);
   });
-  // Codex 4476240831: an EXISTING area's reading draft must count as unsaved. Source pin (the form has no component harness): dropping
-  // the `revisionDraft` term would leave typed readings unprotected by the leave guard with nothing else going red.
-  it("an existing area's reading draft counts (revisionDraft is kept in the dirty flag)", () => {
-    expect(dirty).toMatch(/\|\|\s*revisionDraft\s*\|\|/);
+  // Codex 4476240831: an EXISTING area's reading draft must count as unsaved. Dropping the owner's registration would leave typed readings
+  // unprotected by the leave guard; the mounted proof is tests/components/machine-draft-registry.test.ts.
+  it("an existing area's reading draft counts (the reading entry registers hasDraft)", () => {
+    expect(read("components/machines/machine-reading-entry.tsx")).toMatch(/useReportDraft\(\{ draft: hasDraft, unresolved: transportHold \}\)/);
+    expect(FORM).not.toMatch(/\brevisionDraft\b/);
   });
   // Codex 4482278089: the automatic switch to a native machine clears prefilled legacy fields; the dirty BASELINE is rebased through the
   // same transform so an untouched form does not read "Unsaved". Source pin of the rebase.

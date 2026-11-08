@@ -86,9 +86,6 @@ export type MachineFirstSetupConnectedProps = {
    */
   /** Forwarded to the panel: the host's save is unresolved. */
   settingDraftFrozen?: boolean;
-  /** Forwarded straight through: see the panel's own prop. */
-  onRevisionUnresolved?: (unresolved: boolean) => void;
-  onRevisionDraft?: (hasDraft: boolean) => void;
   /**
    * True while a SAVED area's machine choice is being written (Codex, #1369 4477716784). The host holds its
    * own Save for that long: if the block save committed first, the identity write would be refused as stale
@@ -212,8 +209,6 @@ export function MachineFirstSetupConnected({
   record,
   onSettingDraft,
   settingDraftFrozen = false,
-  onRevisionUnresolved,
-  onRevisionDraft,
   onIdentityWritePending,
   holdAutoSelect = false,
   savedIdentity: savedIdentityProp = null,
@@ -264,18 +259,12 @@ export function MachineFirstSetupConnected({
   const hasSavedIdentity = Boolean(
     savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId),
   );
-  // THE HOLDS THE ENTRY REPORTED TO THE HOST ARE RELEASED ON EVERY CLOSE PATH (Codex #1369 4488223260, Sam's overnight direction). A refused
-  // refresh releases them inline (below); this cleanup covers every other way the panel goes: the host closing the form, a re-render that
-  // swaps the wrapper out, the effect's own dependency changing. Reported through a ref so the LATEST callbacks are used, and kept in the
-  // wrapper's ONE existing effect (a guard pins exactly one).
-  const holdsRef = useRef({ onRevisionUnresolved, onRevisionDraft });
-  holdsRef.current = { onRevisionUnresolved, onRevisionDraft };
+  // THE WRAPPER'S ONE EFFECT OPENS A SAVED MACHINE AND HAS NO CLEANUP. It used to also report "no draft, no unresolved save" to the host in its
+  // cleanup, which ran whenever `hasSavedIdentity` changed (an identity write confirming) while the reading entry was still mounted, so the
+  // host showed Saved and the leave guard went off over typed readings (Codex #1369 4505408578). The holds now live in the host's registry,
+  // are written by their owners and removed only when the owner unmounts (draft-registry.tsx).
   useEffect(() => {
     if (hasSavedIdentity && state === "idle" && ctx === null) void open();
-    return () => {
-      holdsRef.current.onRevisionUnresolved?.(false);
-      holdsRef.current.onRevisionDraft?.(false);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedIdentity]);
 
@@ -439,14 +428,8 @@ export function MachineFirstSetupConnected({
         // (still true, one capture out of date) and a plain note says so. Nothing is re-sent: the entry stays on its saved view.
         // FAIL CLOSED FOR ACCESS, GENTLE ONLY FOR A TRANSIENT ERROR (#1369 R3-2). A definitive refusal (not signed in, or the record is no
         // longer this practitioner's) must not leave the old readings on screen, so the entry is replaced by the access notice.
-        // REPORT THE HOLDS CLEARED BEFORE THE PANEL IS REMOVED (Codex #1369 4488223260). The entry reported a revision awaiting its retry and an
-        // unsaved draft to the host, and nothing reports them released when a refused refresh replaces the panel with a notice: "Save
-        // settings block" and Cancel stayed disabled for ever. The save was confirmed, so neither hold is true any more. (No effect is used
-        // here on purpose: this wrapper keeps exactly one, for opening a saved machine.)
-        if (!fresh.ok && fresh.refused) {
-          onRevisionUnresolved?.(false);
-          onRevisionDraft?.(false);
-        }
+        // NO HOLD IS RELEASED BY HAND HERE: a refused refresh replaces the panel, which unmounts the reading entry, and the entry removes its own
+        // draft and unresolved flags from the host's registry (the save was confirmed, so neither is true any more).
         setRefusedAfterSave(!fresh.ok ? (fresh.refused ?? null) : null);
         setRefreshFailedAfterSave(!fresh.ok && !fresh.refused);
       }
@@ -733,8 +716,6 @@ export function MachineFirstSetupConnected({
       onSettingDraft={onSettingDraft}
       // FORWARDED. Five values in this lane have been computed correctly and
       // dropped at a hop exactly like this one.
-      onRevisionUnresolved={onRevisionUnresolved}
-      onRevisionDraft={onRevisionDraft}
       settingDraftFrozen={settingDraftFrozen}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}

@@ -100,6 +100,7 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
@@ -118,7 +119,6 @@ import {
   copyPatchForMachine,
   copySourceMatchesMachine,
   legacySettingsEntered,
-  machineDraftHasEntries,
   type PendingSetupIdentity,
 } from "@/lib/machines/pending-setup";
 import {
@@ -460,7 +460,9 @@ export function BlockSetupForm({
     modeKey: string | null;
     profileId: string | null;
   } | null>(null);
+  const draftRegistry = useDraftRegistryState();
   const [identityDirty, setIdentityDirty] = useState(false);
+  useReportDraft({ draft: identityDirty, unresolved: false }, draftRegistry.api);
   // An EXISTING area that already holds legacy readings is never switched to a
   // native machine: that would leave two machines' settings on one area, or
   // overwrite the first. The choice is refused and a new area is the way.
@@ -748,9 +750,10 @@ export function BlockSetupForm({
    * alone; merging them would make clearing one clear the other. They are
    * combined only where a control has to be frozen.
    */
-  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
-  // Values typed into an EXISTING area's reading entry and not yet saved.
-  const [revisionDraft, setRevisionDraft] = useState(false);
+  // ONE REGISTRY for every unsaved machine owner on this form (draft-registry.tsx): the reading entry and the create form's settings draft
+  // write their LEVELS into it and remove themselves on unmount; "unsaved" and "a save is unresolved" are derived from it, so nothing here
+  // sets them by hand. The picked-but-unwritten machine (`identityDirty`) is reported into the same registry below.
+  const revisionUnresolved = draftRegistry.view.anyUnresolved;
   // A saved area's machine choice is being written; the block save waits (Codex, #1369 4477716784).
   const [identityWritePending, setIdentityWritePending] = useState(false);
 
@@ -1038,9 +1041,7 @@ export function BlockSetupForm({
   }
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
-    machineDraftHasEntries(machineDraft) ||
-    revisionDraft ||
-    identityDirty;
+    draftRegistry.view.anyDraft;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);
   // ARMED UNTIL A SAVE IS CONFIRMED (Codex #1369 4493497730). It used to be disarmed while "Saving…" was pending, so closing, reloading or
@@ -1941,6 +1942,7 @@ export function BlockSetupForm({
           no row yet, so there is nothing to record readings against and the
           panel shows the field contract read-only instead of inviting a value
           it would have to discard. */}
+      <DraftRegistryProvider api={draftRegistry.api} view={draftRegistry.view}>
       <MachineFirstSetupConnected
         blockId={block?.id ?? null}
         clientId={clientId}
@@ -1956,10 +1958,8 @@ export function BlockSetupForm({
         // covers it too and it has to freeze with everything else - the same
         // flag, not a second rule that could disagree.
         settingDraftFrozen={draftFrozen}
-        // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
+        // THE PANEL'S REVISION SAVE REACHES THIS FORM through the registry above, so the Cancel button
         // below can be frozen by it (Codex, #860 4302176844).
-        onRevisionUnresolved={setRevisionUnresolved}
-        onRevisionDraft={setRevisionDraft}
         onIdentityWritePending={setIdentityWritePending}
         // A studio-default frequency is prefilled, not typed: it does not count as entered work.
         holdAutoSelect={legacySettingsEntered({
@@ -1985,6 +1985,7 @@ export function BlockSetupForm({
           if (block) setHeldVersion(token);
         }}
       />
+      </DraftRegistryProvider>
 
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">

@@ -15,6 +15,7 @@ import type { StudioDevice } from "@/lib/machines/selection";
 const { createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
+const { newViewRef, withRegistry } = await import("./helpers/draft-registry-probe");
 const { MachineFirstSetupPanel } = await import("@/components/machines/machine-first-setup-panel");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -91,13 +92,13 @@ function fill(testId: string, value: string) {
 }
 
 /** Mount, enter a reading, press Save, and leave the save UNANSWERED. */
-function mountWithSaveInFlight(onRevisionUnresolved: (u: boolean) => void) {
+function mountWithSaveInFlight(viewRef: ReturnType<typeof newViewRef>) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   const onRecord = vi.fn(() => new Promise<never>(() => {}));
   const render = (extra: Record<string, unknown>) =>
-    act(() => root!.render(createElement(MachineFirstSetupPanel, props({ onRecord, onRevisionUnresolved, ...extra }) as never)));
+    act(() => root!.render(withRegistry(viewRef, createElement(MachineFirstSetupPanel, props({ onRecord, ...extra }) as never))));
   render({});
   fill("reading-current", "120");
   fill("reading-duration", "1.5");
@@ -109,22 +110,22 @@ function mountWithSaveInFlight(onRevisionUnresolved: (u: boolean) => void) {
 
 describe("the revision save hold, mounted", () => {
   it("control: an unanswered save HOLDS, tells the host, and freezes the machine picker", () => {
-    const seen: boolean[] = [];
-    const { onRecord } = mountWithSaveInFlight((u) => seen.push(u));
+    const view = newViewRef();
+    const { onRecord } = mountWithSaveInFlight(view);
     expect(onRecord, "the save reached the recorder").toHaveBeenCalledTimes(1);
-    expect(seen.at(-1), "the host was told the save is unresolved").toBe(true);
+    expect(view.current.anyUnresolved, "the host sees the save is unresolved").toBe(true);
     const picker = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]');
     expect(picker, "the machine picker is mounted").not.toBeNull();
     expect(picker!.disabled, "the identity control is frozen while the hold stands").toBe(true);
   });
 
   it("the hold is RELEASED when the record becomes unavailable and the entry unmounts", () => {
-    const seen: boolean[] = [];
-    const { render } = mountWithSaveInFlight((u) => seen.push(u));
-    expect(seen.at(-1)).toBe(true);
+    const view = newViewRef();
+    const { render } = mountWithSaveInFlight(view);
+    expect(view.current.anyUnresolved).toBe(true);
     render({ recordedSetupUnavailable: true });
     expect(host!.querySelector('[data-testid="machine-reading-entry"]'), "the entry is gone").toBeNull();
-    expect(seen.at(-1), "the host is told the hold is released").toBe(false);
+    expect(view.current.anyUnresolved, "the hold is released with the entry").toBe(false);
     expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.disabled, "the picker is live again").toBe(false);
   });
 });

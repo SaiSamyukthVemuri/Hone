@@ -485,9 +485,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // one reason — each can discard this save's retry key — so what it needs
     // is the window in which a key is at risk, and nothing wider.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(/onUnresolvedChange\?\.\(transportHold\)/);
-    expect(src).not.toMatch(/onUnresolvedChange\?\.\(frozen\)/);
-    expect(src).not.toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
+    expect(src).toMatch(/unresolved: transportHold/);
+    expect(src).not.toMatch(/unresolved: frozen\b/);
+    expect(src).not.toMatch(/unresolved: save\.unresolved/);
     // And the hold itself must not consult the acknowledged state.
     const hold = assignedExpression(src, "transportHold");
     expect(hold, "an acknowledged save still holds the host's controls").not.toMatch(
@@ -857,15 +857,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // save path, or a second mirror of an existing one, fails here with the
     // list in front of you. It pins WHAT the owners are, not how many, and
     // it fails with the diff rather than a bare number.
-    const OWNERS: Array<[string, string]> = [
-      // The host form's own create-mode save.
-      [FORM_SRC, "saveUnresolved"],
-      // The panel's revision save, mirrored into the host so the host's
-      // Cancel can read it. THIS MIRROR is the duplication the refactor
-      // removes.
-      [FORM_SRC, "revisionUnresolved"],
-      [PANEL_SRC, "revisionUnresolved"],
-    ];
+    // THE SINGLE-OWNER REFACTOR HAS LANDED (#1369, Insurance final423): no component keeps a `useState` for "unresolved" any more. The
+    // host's create-mode save is the only local flag; the revision hold is a registry entry, derived by `anyUnresolved`.
+    const OWNERS: Array<[string, string]> = [[FORM_SRC, "saveUnresolved"]];
 
     const found: string[] = [];
     for (const src of [FORM_SRC, PANEL_SRC, CONN_SRC, ENTRY_SRC]) {
@@ -885,7 +879,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // NON-VACUITY: a regex that matched nothing would make the comparison
     // above pass only when the expected list was also empty, but say so
     // clearly rather than leaving it to be inferred.
-    expect(found.length, "no unresolved-state owners were found at all").toBe(3);
+    expect(found.length, "no unresolved-state owners were found at all").toBe(1);
   });
 
   it("DISMISSAL freezes on a REVISION save too, not only the create save", () => {
@@ -916,72 +910,40 @@ describe("switching machine or mode clears the collected draft", () => {
       "Cancel must observe the panel's REVISION save as well, or one click discards the retry key on an existing block",
     ).toMatch(/revisionUnresolved/);
 
-    // THEY STAY SEPARATE pieces of state, combined only at the control.
-    // Different owners, either can be true alone, and merging them would
-    // make clearing one clear the other.
-    expect(form).toMatch(
-      /const \[revisionUnresolved, setRevisionUnresolved\] = useState\(false\)/,
-    );
+    // The revision hold is DERIVED from the registry, never a second mirror in the host.
+    expect(form).toMatch(/const revisionUnresolved = draftRegistry\.view\.anyUnresolved;/);
+    expect(form).not.toMatch(/setRevisionUnresolved/);
   });
 
-  it("and the panel's revision state REACHES the host, hop by hop", () => {
-    // ASSERTED AT EVERY HOP, because this is the lane's most repeated
-    // defect: a value that exists, is correct, and never arrives. Five
-    // instances so far, and this value crosses FOUR components.
+  it("and the panel's revision state REACHES the host through the registry, not through props", () => {
+    // Level, not edge: the entry WRITES `{draft, unresolved: transportHold}` under its own id, the host DERIVES `anyUnresolved`.
     const entry = read(ENTRY_SRC);
-    // It reports the TRANSPORT hold, which covers the request's own duration
-    // as well as an unknown outcome — the host's identity controls can
-    // discard the retry key in both windows (Codex, #860 4305022472) — but
-    // NOT an acknowledged save, which has no key left to protect
-    // (4305364945).
-    expect(entry, "1/4 the entry reports its transport hold").toMatch(
-      /onUnresolvedChange\?\.\(transportHold\)/,
+    expect(entry, "1/3 the entry writes its transport hold to the registry").toMatch(
+      /useReportDraft\(\{ draft: hasDraft, unresolved: transportHold \}\)/,
     );
     const hold = assignedExpression(entry, "transportHold");
-    expect(hold, "1/4 the reported hold misses the in-flight window").toContain(
-      "pending",
-    );
-    expect(hold, "1/4 the reported hold misses an unknown outcome").toContain(
-      "save.unresolved",
-    );
-
+    expect(hold, "1/3 the reported hold misses the in-flight window").toContain("pending");
+    expect(hold, "1/3 the reported hold misses an unknown outcome").toContain("save.unresolved");
     const panel = read(PANEL_SRC);
-    expect(panel, "2/4 the panel subscribes to the entry").toMatch(
-      /onUnresolvedChange=\{setRevisionUnresolved\}/,
-    );
-    expect(
-      panel,
-      "2/4 the panel must report it upward, on both edges",
-    ).toMatch(/onRevisionUnresolved\?\.\(revisionUnresolved\)/);
-
-    const conn = read(CONN_SRC);
-    expect(conn, "3/4 the connector forwards it").toMatch(
-      /onRevisionUnresolved=\{onRevisionUnresolved\}/,
-    );
-
+    expect(panel, "2/3 the panel reads the derived view").toMatch(/anyUnresolved: revisionUnresolved\s*\} = useDraftView\(\)/);
     const form = read(FORM_SRC);
-    expect(form, "4/4 the host subscribes to it").toMatch(
-      /onRevisionUnresolved=\{setRevisionUnresolved\}/,
-    );
+    expect(form, "3/3 the host reads the derived view").toMatch(/revisionUnresolved = draftRegistry\.view\.anyUnresolved/);
+    // (the panel's `onDraftChange` is the create form's PAYLOAD callback, data and not a flag, so it is not in this list)
+    for (const [name, text] of [["connector", read(CONN_SRC)], ["panel", panel], ["entry", entry]] as const) {
+      expect(text, `${name} no longer takes a draft/hold callback`).not.toMatch(/onRevisionUnresolved|onRevisionDraft|onUnresolvedChange/);
+    }
+    expect(entry, "the entry takes no draft callback").not.toMatch(/onDraftChange/);
+    expect(read(CONN_SRC), "the connector takes no draft callback").not.toMatch(/onDraftChange/);
   });
 
   it("the revision hold is RELEASED when the unavailable record unmounts the entry", () => {
-    // CODEX #1205 4400713832. A confirmed save whose history refresh fails sets
-    // `recordedSetupUnavailable`, the panel stops rendering the entry, and the
-    // entry's own effect - the only thing that reports the hold back to false -
-    // dies with it. The panel must release the hold itself on that edge, or the
-    // machine/mode controls and Cancel stay disabled after a confirmed save.
+    // CODEX #1205 4400713832, now structural: the entry removes its OWN registry key on unmount, so nothing has to reset it. Mounted
+    // coverage: machine-first-setup-panel-mounted.test.ts ("the hold is RELEASED ...").
     const panel = read(PANEL_SRC);
-    expect(
-      panel,
-      "the entry is unmounted by recordedSetupUnavailable (the premise of this guard)",
-    ).toMatch(/recordAndCount && mode && !recordedSetupUnavailable \?/);
-    expect(
-      panel,
-      "nothing releases the revision hold when the entry unmounts, so the controls stay frozen after a confirmed save",
-    ).toMatch(
-      /useEffect\(\(\) => \{\s*if \(recordedSetupUnavailable\) setRevisionUnresolved\(false\);\s*\}, \[recordedSetupUnavailable\]\);/,
+    expect(panel, "the entry is unmounted by recordedSetupUnavailable (the premise of this guard)").toMatch(
+      /recordAndCount && mode && !recordedSetupUnavailable \?/,
     );
+    expect(panel, "a manual reset of the hold is back").not.toMatch(/setRevisionUnresolved/);
   });
 
   it("EVERY relayed failure on the recorder path carries the outcome code", () => {
@@ -1712,14 +1674,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // the first request had committed. A control that can destroy the key
     // is part of the gap the key exists to cover.
     const entry = read(ENTRY_SRC);
-    expect(entry).toMatch(/onUnresolvedChange\?: \(unresolved: boolean\) => void;/);
-    expect(
-      entry,
-      "the entry must report BOTH edges, or the freeze never lifts",
-    ).toMatch(/onUnresolvedChange\?\.\(transportHold\)/);
+    expect(entry, "the entry writes the transport hold to the registry").toMatch(/unresolved: transportHold/);
 
     const panel = read(PANEL_SRC);
-    expect(panel).toMatch(/onUnresolvedChange=\{setRevisionUnresolved\}/);
     expect(panel).toMatch(/const identityFrozen = settingDraftFrozen \|\| revisionUnresolved/);
   });
 
@@ -1728,7 +1685,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // merging them into one piece of state would make the host's save and
     // the child's indistinguishable, and clearing one would clear both.
     const panel = read(PANEL_SRC);
-    expect(panel).toMatch(/const \[revisionUnresolved, setRevisionUnresolved\] = useState\(false\)/);
+    expect(panel).toMatch(/anyUnresolved: revisionUnresolved\s*\} = useDraftView\(\)/);
     expect(panel).toMatch(/settingDraftFrozen = false,/);
   });
 

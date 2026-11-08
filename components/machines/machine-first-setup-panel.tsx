@@ -24,6 +24,7 @@ import type {
   ReadingSubmission,
   RecordedReading,
 } from "@/lib/machines/machine-queries";
+import { LocalDraftRegistry, useDraftView, useHasDraftRegistry } from "./draft-registry";
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
@@ -142,17 +143,6 @@ export type MachineFirstSetupPanelProps = {
    */
   /** The host form's save is unresolved, so the create-mode draft is frozen. */
   settingDraftFrozen?: boolean;
-  /**
-   * Report that a REVISION save's outcome is unknown, so the HOST can freeze
-   * its own controls.
-   *
-   * The panel freezes what it owns. It cannot freeze the host form's Cancel,
-   * and that is the control whose use destroys the retry key by unmounting
-   * the entry (Codex, #860 4302176844).
-   */
-  onRevisionUnresolved?: (unresolved: boolean) => void;
-  /** An existing area's reading entry holds typed values that are not saved. */
-  onRevisionDraft?: (hasDraft: boolean) => void;
   onSettingDraft?: (
     draft: {
       groups: GroupSubmission[];
@@ -328,7 +318,7 @@ export function withheld(catalogue: readonly MachineProfile[]) {
     }));
 }
 
-export function MachineFirstSetupPanel({
+function MachineFirstSetupPanelImpl({
   devices = [],
   scope = null,
   initialDeviceId = null,
@@ -345,8 +335,6 @@ export function MachineFirstSetupPanel({
   submissionBlocked = false,
   onSettingDraft,
   settingDraftFrozen = false,
-  onRevisionUnresolved,
-  onRevisionDraft,
   unavailableSelection = null,
   suggestedMachine = null,
   restoredSelection: restored = null,
@@ -395,46 +383,12 @@ export function MachineFirstSetupPanel({
    */
   const [selectionPending, setSelectionPending] = useState(false);
   /**
-   * A REVISION SAVE'S OUTCOME IS UNKNOWN.
-   *
-   * `settingDraftFrozen` is the CREATE form's unresolved save, reported by
-   * the host. This is the other save path — `MachineReadingEntry` on an
-   * existing block — whose unresolved state lived only in that child, so
-   * the identity controls stayed live through it (Codex, #860 4300759930).
-   *
-   * The two are kept separate and combined at the point of use rather than
-   * merged into one flag, because they are reported by different owners
-   * and either can be true alone.
+   * A REVISION SAVE'S OUTCOME IS UNKNOWN: read from the host's registry (draft-registry.tsx), where the reading entry reports it as a LEVEL
+   * and removes it when it unmounts, so the hold cannot outlive the entry that owned it and cannot be dropped by this panel's own re-render
+   * (the old local state, its report effect and the release on `recordedSetupUnavailable` are gone). It is a hold on the identity controls
+   * and on the host's Cancel and Save, because each of them can unmount the entry and with it the retry key.
    */
-  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
-
-  // AND THE HOST IS TOLD (Codex, #860 4302176844).
-  //
-  // This state froze the panel's OWN identity controls from round 12, and
-  // stayed here. The host form's Cancel button is outside the panel, checks
-  // only the create-mode flag, and unmounting the entry is what destroys
-  // the retry key - so the one control that can lose the key never saw the
-  // state that should have frozen it.
-  const reportUnresolved = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (reportUnresolved.current === revisionUnresolved) return;
-    reportUnresolved.current = revisionUnresolved;
-    onRevisionUnresolved?.(revisionUnresolved);
-  }, [revisionUnresolved, onRevisionUnresolved]);
-  // THE HOLD DIES WITH THE ENTRY THAT OWNED IT (Codex, #1205 4400713832).
-  //
-  // The entry reports its transport hold from an effect, and it is the only
-  // thing that ever reports it back to false. A save that is CONFIRMED but
-  // whose history refresh then fails marks the record unavailable, which
-  // unmounts the entry while its last report was still "held" - so nothing
-  // could release it, and the machine and mode pickers and the host's Cancel
-  // stayed disabled after a save the practitioner had been told succeeded.
-  // No key is left to protect once the entry is gone, so the hold is released
-  // here, where the unmount is decided, instead of relying on a child that
-  // no longer exists. A remounted entry reports afresh.
-  useEffect(() => {
-    if (recordedSetupUnavailable) setRevisionUnresolved(false);
-  }, [recordedSetupUnavailable]);
+  const { anyUnresolved: revisionUnresolved } = useDraftView();
   // EITHER SAVE PATH FREEZES THE IDENTITY. The machine and the mode are
   // part of the payload both digests are bound to, and switching away can
   // unmount the component holding a retry key.
@@ -1096,8 +1050,6 @@ export function MachineFirstSetupPanel({
               // The revision path's half of the freeze: the entry owns that
               // save's state, and the controls that can discard its retry
               // key are out here.
-              onUnresolvedChange={setRevisionUnresolved}
-              onDraftChange={onRevisionDraft}
               onRecord={recordAndCount!}
               // The host's own save (`settingDraftFrozen`) holds the same block version this save would send: if both went out, the host save
               // wins, this one is rejected as stale, and the editor closes with the typed readings discarded (#1369 Codex 4505116958).
@@ -1221,6 +1173,18 @@ export function MachineFirstSetupPanel({
         rememberedDeviceId={selection.persisted}
       />
     </section>
+  );
+}
+
+/** The panel reads and reports through the host's draft registry; mounted without a host it brings its own. */
+export function MachineFirstSetupPanel(props: MachineFirstSetupPanelProps) {
+  const hosted = useHasDraftRegistry();
+  return hosted ? (
+    <MachineFirstSetupPanelImpl {...props} />
+  ) : (
+    <LocalDraftRegistry>
+      <MachineFirstSetupPanelImpl {...props} />
+    </LocalDraftRegistry>
   );
 }
 

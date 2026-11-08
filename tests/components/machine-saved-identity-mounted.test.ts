@@ -13,6 +13,7 @@ const actions = vi.hoisted(() => ({
 vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions", () => actions);
 
 
+import { newViewRef, withRegistry } from "./helpers/draft-registry-probe";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import type { StudioDevice } from "@/lib/machines/selection";
 
@@ -87,6 +88,9 @@ const SCOPE = { studioId: "studio-synthetic", practitionerId: "pract-synthetic" 
 
 
 
+// The host's registry view, written on every render by the probe that wraps each mount (a stand-in for block-setup-form).
+const view = newViewRef();
+const connectedEl = (props: Record<string, unknown>) => withRegistry(view, createElement(MachineFirstSetupConnected, props as never));
 let host: HTMLElement | null = null;
 let root: ReturnType<typeof createRoot> | null = null;
 afterEach(() => {
@@ -123,7 +127,7 @@ async function mount(extra: Record<string, unknown>) {
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", load, ...rest } as never),
+      connectedEl({ clientId: "c", sessionId: "s", load, ...rest } as never),
     );
   });
   return load;
@@ -221,7 +225,7 @@ describe("a saved machine identity, through the connected wrapper", () => {
     });
     // A later render hands the panel a NEW callback and re-runs its resolution pass.
     await act(async () => {
-      root!.render(createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", blockId: null, onIdentityDraft, savedIdentity: null, onSettingDraft: vi.fn(), load: vi.fn(async () => CTX) } as never));
+      root!.render(connectedEl({ clientId: "c", sessionId: "s", blockId: null, onIdentityDraft, savedIdentity: null, onSettingDraft: vi.fn(), load: vi.fn(async () => CTX) } as never));
     });
     // The LAST thing the host heard is what its Save records: the panel's own resolution pass must not clear it.
     expect(onIdentityDraft.mock.calls.at(-1)?.[0]).toEqual({ deviceId: null, modeKey: null, profileId: "dectro-apilus:xcell" });
@@ -358,35 +362,31 @@ describe("an existing area's reading entry reports its unsaved draft to the host
       el.dispatchEvent(new Event("input", { bubbles: true }));
     });
   };
-  const mountExisting = async (onRevisionDraft: (d: boolean) => void) =>
+  const mountExisting = async () =>
     mount({
       blockId: "b1",
       savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
-      onRevisionDraft,
     });
 
   it("typing a value reports a draft; clearing it reports none", async () => {
-    const onRevisionDraft = vi.fn();
-    await mountExisting(onRevisionDraft);
+    await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]');
     expect(input, "the entry's first field is mounted").not.toBeNull();
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+    expect(view.current.anyDraft).toBe(false);
     await type(input!, "120");
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
+    expect(view.current.anyDraft).toBe(true);
     await type(input!, "");
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+    expect(view.current.anyDraft).toBe(false);
   });
 
   it("NEGATIVE CONTROL: nothing typed never reports a draft", async () => {
-    const onRevisionDraft = vi.fn();
-    await mountExisting(onRevisionDraft);
-    expect(onRevisionDraft).not.toHaveBeenCalledWith(true);
+    await mountExisting();
+    expect(view.current.anyDraft).toBe(false);
   });
 
   // Codex 4480035425: a refused pick on a saved native area must not unmount the reading entry (its typed readings would be lost).
   it("a REFUSED 'Choose machine…' leaves the typed readings in place (no unmount, no remount)", async () => {
-    const onRevisionDraft = vi.fn();
-    await mountExisting(onRevisionDraft);
+    await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
     await type(input, "120");
     const pickEmpty = async (value: string) => {
@@ -408,7 +408,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   it("a THROWN identity write leaves the panel on the saved machine, keeps the typed readings, and says so", async () => {
     // EVERY attempt throws: the first write and both same-key replays, so the pick is unconfirmed (Codex 4488743493).
     for (let i = 0; i < 3; i += 1) actions.recordBlockMachineIdentityAction.mockRejectedValueOnce(new Error("network") as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
     await type(input, "120");
     const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
@@ -435,7 +435,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   const entryField = () => host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
   it("a REFUSED mode change keeps the mode and the typed readings (same field node, same value)", async () => {
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, error: "changed elsewhere" } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     const input = entryField();
     await type(input, "120");
     await clickMode("Second");
@@ -447,7 +447,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   });
   it("NEGATIVE CONTROL: an ACKNOWLEDGED mode change applies (the entry is for the new mode)", async () => {
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, updatedAt: "v2" } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     const input = entryField();
     await type(input, "120");
     await clickMode("Second");
@@ -456,7 +456,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
 
   it("a REFUSED pick of ANOTHER machine (stale tab) also keeps the typed readings", async () => {
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: false, error: "changed elsewhere" } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
     await type(input, "120");
     const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
@@ -491,20 +491,19 @@ describe("an existing area's reading entry reports its unsaved draft to the host
 
   it("Codex P2 4477412918: after an ACKNOWLEDGED save the draft is released, so the page stops saying Unsaved", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
-    const onRevisionDraft = vi.fn();
-    await mountExisting(onRevisionDraft);
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
+    expect(view.current.anyDraft).toBe(true);
     await saveEntry();
     expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the saved view is showing").not.toBeNull();
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+    expect(view.current.anyDraft).toBe(false);
   });
 
   it("OPS (shard 1): after a CONFIRMED save a FAILED refresh keeps 'Saved', adds the plain note, and repeats nothing", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the saved confirmation stays").not.toBeNull();
@@ -519,7 +518,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockRejectedValueOnce(new Error("network down") as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     expect(host!.querySelector('[data-testid="machine-reading-saved"]')).not.toBeNull();
@@ -535,7 +534,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true } as never);
     let settlePreference!: (v: unknown) => void;
     actions.rememberMachineSelectionAction.mockImplementationOnce((() => new Promise((r) => (settlePreference = r))) as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     expect(saveButton().disabled, "ready to save before the change").toBe(false);
     await clickMode("Second");
@@ -558,7 +557,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   it("Codex 4487911008 NEGATIVE CONTROL: with no change pending the entry submits as before", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     expect(saveButton().disabled).toBe(false);
     await saveEntry();
@@ -569,7 +568,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: "access" } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     const notice = host!.querySelector('[data-testid="machine-access-refused"]');
@@ -584,8 +583,6 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   // (revision unresolved, draft) must be cleared, or "Save settings block" and Cancel stay disabled for ever.
   for (const refused of ["unavailable", "access"] as const) {
     it(`Codex 4488223260: a ${refused} refresh after a save that first LOST its answer clears every hold the host was given`, async () => {
-      const onRevisionUnresolved = vi.fn();
-      const onRevisionDraft = vi.fn();
       actions.recordSetupSubmissionAction.mockClear();
       actions.recordSetupSubmissionAction
         .mockRejectedValueOnce(new Error("lost") as never)
@@ -594,38 +591,32 @@ describe("an existing area's reading entry reports its unsaved draft to the host
       await mount({
         blockId: "b1",
         savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
-        onRevisionUnresolved,
-        onRevisionDraft,
       });
       for (const [i, el] of fields().entries()) await type(el, String(10 + i));
       await saveEntry();
-      expect(onRevisionUnresolved, "the lost answer held the host").toHaveBeenCalledWith(true);
-      expect(onRevisionDraft).toHaveBeenCalledWith(true);
+      expect(view.current.anyUnresolved, "the lost answer held the host").toBe(true);
+      expect(view.current.anyDraft).toBe(true);
       await saveEntry();
       expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(2);
       expect(host!.querySelector(`[data-testid="${refused === "access" ? "machine-access-refused" : "machine-record-unavailable"}"]`)).not.toBeNull();
-      expect(onRevisionUnresolved, "the unresolved hold is released").toHaveBeenLastCalledWith(false);
-      expect(onRevisionDraft, "the draft hold is released").toHaveBeenLastCalledWith(false);
+      expect(view.current.anyUnresolved, "the unresolved hold is released").toBe(false);
+      expect(view.current.anyDraft, "the draft hold is released").toBe(false);
     });
   }
 
   it("Codex 4488223260: unmounting the wrapper by ANY path releases the holds", async () => {
-    const onRevisionUnresolved = vi.fn();
-    const onRevisionDraft = vi.fn();
     actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("lost") as never);
     await mount({
       blockId: "b1",
       savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
-      onRevisionUnresolved,
-      onRevisionDraft,
     });
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
-    expect(onRevisionUnresolved).toHaveBeenLastCalledWith(true);
-    await act(async () => root!.unmount());
-    root = null;
-    expect(onRevisionUnresolved).toHaveBeenLastCalledWith(false);
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
+    expect(view.current.anyUnresolved).toBe(true);
+    // The wrapper goes (the host and its registry stay): the owner removes its own flags.
+    await act(async () => root!.render(withRegistry(view, createElement("div"))));
+    expect(view.current.anyUnresolved).toBe(false);
+    expect(view.current.anyDraft).toBe(false);
   });
 
   // THE HOST'S REAL CONTRACT, mounted: block-setup-form disables "Save settings block" and Cancel while `revisionUnresolved` is set (pinned
@@ -633,21 +624,26 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   // after a successful save leaves BOTH enabled.
   it("Codex 4488223260 REGRESSION: a refused refresh after a successful save leaves the host's Save and Cancel ENABLED", async () => {
     const form = readFileSync(path.resolve(__dirname, "../../app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"), "utf8");
-    expect(form).toMatch(/onRevisionUnresolved=\{setRevisionUnresolved\}/);
+    expect(form).toMatch(/const revisionUnresolved = draftRegistry\.view\.anyUnresolved;/);
     for (const testid of ["save-treatment-area", "cancel-treatment-area"]) {
       const at = form.indexOf(`data-testid="${testid}"`);
       expect(at, testid).toBeGreaterThan(0);
       expect(form.slice(Math.max(0, at - 1600), at + 200), `${testid} is disabled by revisionUnresolved`).toContain("revisionUnresolved ||");
     }
-    const { useState } = await import("react");
+    const { DraftRegistryProvider, useDraftRegistryState } = await import("@/components/machines/draft-registry");
     function Host(props: Record<string, unknown>) {
-      const [unresolved, setUnresolved] = useState(false);
+      const registry = useDraftRegistryState();
+      const unresolved = registry.view.anyUnresolved;
       return createElement(
-        "div",
-        null,
-        createElement(MachineFirstSetupConnected, { ...props, onRevisionUnresolved: setUnresolved } as never),
-        createElement("button", { "data-testid": "save-treatment-area", disabled: unresolved }, "Save settings block"),
-        createElement("button", { "data-testid": "cancel-treatment-area", disabled: unresolved }, "Cancel"),
+        DraftRegistryProvider,
+        { api: registry.api, view: registry.view },
+        createElement(
+          "div",
+          null,
+          createElement(MachineFirstSetupConnected, props as never),
+          createElement("button", { "data-testid": "save-treatment-area", disabled: unresolved }, "Save settings block"),
+          createElement("button", { "data-testid": "cancel-treatment-area", disabled: unresolved }, "Cancel"),
+        ),
       );
     }
     actions.recordSetupSubmissionAction.mockClear();
@@ -681,23 +677,21 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   });
 
   it("Codex 4488223260 NEGATIVE CONTROL: with no refusal the holds follow the entry (a lost answer still holds)", async () => {
-    const onRevisionUnresolved = vi.fn();
     actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("lost") as never);
     await mount({
       blockId: "b1",
       savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" },
-      onRevisionUnresolved,
     });
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
-    expect(onRevisionUnresolved).toHaveBeenLastCalledWith(true);
+    expect(view.current.anyUnresolved).toBe(true);
   });
 
   it("F6-2: an UNAVAILABLE record (transient lineage error, block deleted in another tab) gets neutral wording, not an access accusation", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false, refused: "unavailable" } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     const notice = host!.querySelector('[data-testid="machine-record-unavailable"]');
@@ -715,7 +709,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     const another = host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-record-change"]')!;
@@ -731,7 +725,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   it("RC-1 NEGATIVE CONTROL: after a SUCCESSFUL refresh a second capture can be started and saved", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValue({ ok: true, submissionId: "sub-x", captures: 1, written: 2, reused: false } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     const another = host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-record-change"]')!;
@@ -747,7 +741,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   it("R3-2 NEGATIVE CONTROL: a transient failure (no refusal flag) keeps the entry and shows no access notice", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     expect(host!.querySelector('[data-testid="machine-access-refused"]')).toBeNull();
@@ -756,7 +750,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
 
   it("NEGATIVE CONTROL: a refresh that SUCCEEDS shows Saved and no note", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
-    await mountExisting(vi.fn());
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     expect(host!.querySelector('[data-testid="machine-reading-saved"]')).not.toBeNull();
@@ -765,23 +759,20 @@ describe("an existing area's reading entry reports its unsaved draft to the host
 
   it("NEGATIVE CONTROL: a REFUSED save keeps the draft (it is still unsaved)", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, code: "rejected", error: "Refused." } as never);
-    const onRevisionDraft = vi.fn();
-    await mountExisting(onRevisionDraft);
+    await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
     await saveEntry();
     expect(host!.querySelector('[data-testid="machine-reading-saved"]')).toBeNull();
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
+    expect(view.current.anyDraft).toBe(true);
   });
 
   it("the draft is released when the entry unmounts", async () => {
-    const onRevisionDraft = vi.fn();
-    await mountExisting(onRevisionDraft);
+    await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
     await type(input, "7");
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(true);
-    await act(async () => root!.unmount());
-    expect(onRevisionDraft).toHaveBeenLastCalledWith(false);
-    root = null;
+    expect(view.current.anyDraft).toBe(true);
+    await act(async () => root!.render(withRegistry(view, createElement("div"))));
+    expect(view.current.anyDraft).toBe(false);
   });
 });
 
@@ -1029,13 +1020,12 @@ describe("a lost identity-write answer is recovered by its key", () => {
       .mockResolvedValueOnce(unknown)
       .mockResolvedValueOnce({ ok: true, reused: true, updatedAt: "v2-own", identity: STORED } as never);
     actions.recordSetupSubmissionAction.mockClear();
-    const onRevisionDraft = vi.fn();
     const onBlockVersion = vi.fn();
-    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion, onRevisionDraft });
-    onRevisionDraft.mockClear();
+    await mount({ blockId: "b1", savedIdentity: STORED, blockVersion: "v1", onBlockVersion });
+    expect(view.current.anyDraft, "nothing is typed").toBe(false);
     await pickValue("room-9");
     expect(onBlockVersion).toHaveBeenCalledTimes(1);
-    expect(onRevisionDraft, "the typed-readings draft hold is not touched by the recovery").not.toHaveBeenCalled();
+    expect(view.current.anyDraft, "the recovery does not invent a draft hold").toBe(false);
     expect(actions.recordSetupSubmissionAction).not.toHaveBeenCalled();
   });
 
@@ -1112,7 +1102,7 @@ describe("a lost identity-write answer is recovered by its key", () => {
     rerender = (v) =>
       act(() => {
         root!.render(
-          createElement(MachineFirstSetupConnected, { clientId: "c", sessionId: "s", load: vi.fn(async () => CTX), blockId: "b1", savedIdentity: STORED, blockVersion: v, onBlockVersion } as never),
+          connectedEl({ clientId: "c", sessionId: "s", load: vi.fn(async () => CTX), blockId: "b1", savedIdentity: STORED, blockVersion: v, onBlockVersion } as never),
         );
       }) as unknown as void;
     await pickValue("legacy:xcell"); // B
@@ -1277,7 +1267,7 @@ describe("an unrelated draft field survives each lost-answer recovery, and the n
         null,
         createElement("input", { "data-testid": "host-note", type: "text", "aria-label": "note", value: text, onChange: (e: { target: { value: string } }) => setText(e.target.value) }),
         createElement("span", { "data-testid": "host-held-version" }, version),
-        createElement(MachineFirstSetupConnected, {
+        connectedEl({
           clientId: "c",
           sessionId: "s",
           blockId: "b1",
