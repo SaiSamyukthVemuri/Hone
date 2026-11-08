@@ -3,7 +3,7 @@
   "migrations": {
     "count": 261,
     "last": "0324_waitlist_atomic_send_allowance.sql",
-    "sha256": "354ca222ae98932d674e715996599e5d42cde67b0c5701b229b6612d28df3b5a"
+    "sha256": "4f99085a9265f824de35de1fc2f80d5d9d3f8abc92adfb2a6a94afa419d6da4e"
   },
   "public": {
     "tables": [
