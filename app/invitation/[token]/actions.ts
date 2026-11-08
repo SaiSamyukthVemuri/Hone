@@ -98,7 +98,12 @@ import type { BeginProofOutcome } from "@/lib/booking/waitlist-invitation";
 // first, and the first then simply asks for proof again.
 
 const CAPABILITY_COOKIE = "wl_proof_capability";
-/** The database owns the capability's 30 minutes; this only bounds the cookie. */
+/**
+ * The database owns the capability's lifetime; this only bounds the cookie. The
+ * SQL source is the assignment `proof_capability_expires_at = v_now + interval
+ * '30 minutes'` in the LATEST migration that sets it (0192 at the time of
+ * writing), and tests/app/invitation/recipient-actions.test.ts compares the two.
+ */
 const CAPABILITY_COOKIE_MAX_AGE_SECONDS = 30 * 60;
 
 // P3-A. The cookie is SIGNED and BOUND to one invitation.
@@ -147,6 +152,11 @@ function bindingFor(
   return createHmac("sha256", secret).update(bound).digest("hex");
 }
 
+// DESIGN: the proof is a SELF-CONTAINED SIGNED COOKIE, not a server session. A
+// successful booking clears it only in the browser that booked. A second browser
+// that had already proven keeps its cookie, so it keeps the booked view of a
+// spent invitation until that cookie expires (30 minutes at most). This is
+// intended; the database's own check at every mutation is what authorises.
 async function readCapability(rawToken: string): Promise<string | null> {
   const secret = proofSecret();
   // No secret configured is a FAIL-CLOSED condition, not a bypass: without it

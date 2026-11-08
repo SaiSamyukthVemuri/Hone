@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InvitationViewState } from "@/lib/waitlist/invitation-offer";
 import { createHash, createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // WAIT-03 B3 — the recipient's server actions.
@@ -1661,11 +1661,26 @@ describe("HON-7: reopening a spent invitation", () => {
     expect((await loadInvitationAction(TOKEN)).kind).toBe("booked");
   });
 
-  it("the cookie lifetime equals the database's 30-minute capability TTL", () => {
-    const src = readFileSync(path.join(__dirname, "../../../app/invitation/[token]/actions.ts"), "utf8");
-    expect(src).toMatch(/CAPABILITY_COOKIE_MAX_AGE_SECONDS = 30 \* 60;/);
-    const db = readFileSync(path.join(__dirname, "../../../supabase/migrations/0192_waitlist_recipient_proof_authority.sql"), "utf8");
-    expect(db).toMatch(/proof_capability_expires_at = v_now \+ interval '30 minutes'/);
+  it("the cookie lifetime equals the TTL the LATEST migration setting it gives the capability", () => {
+    const root = path.join(__dirname, "../../..");
+    const dir = path.join(root, "supabase/migrations");
+    const ASSIGN = /proof_capability_expires_at\s*=\s*[\w.]+\s*\+\s*interval\s*'(\d+)\s*(second|minute|hour)s?'/gi;
+    const hits = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
+      .map((f) => ({ f, found: [...readFileSync(path.join(dir, f), "utf8").matchAll(ASSIGN)] }))
+      .filter((h) => h.found.length > 0);
+    // NONE is a failure (the source moved), and so is more than one assignment in
+    // the latest file (which one is the TTL?).
+    expect(hits.length, "no migration sets the capability expiry").toBeGreaterThan(0);
+    const latest = hits[hits.length - 1];
+    expect(latest.found.length, `${latest.f} sets the expiry more than once`).toBe(1);
+    const [, n, unit] = latest.found[0];
+    const seconds = Number(n) * ({ second: 1, minute: 60, hour: 3600 } as Record<string, number>)[unit.toLowerCase()];
+    const src = readFileSync(path.join(root, "app/invitation/[token]/actions.ts"), "utf8");
+    const m = src.match(/CAPABILITY_COOKIE_MAX_AGE_SECONDS = (\d+) \* (\d+);/);
+    expect(m, "cookie max-age constant not found").not.toBeNull();
+    expect(Number((m as RegExpMatchArray)[1]) * Number((m as RegExpMatchArray)[2])).toBe(seconds);
   });
 
   it("OLD (flag-OFF) PATH, appointment since CANCELLED: no link row exists, so nobody is ever told 'You're booked'", async () => {
