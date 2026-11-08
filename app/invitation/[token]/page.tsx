@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { loadInvitationAction } from "./actions";
 import { InvitationContainer } from "./InvitationContainer";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
@@ -37,5 +38,6 @@ export default async function InvitationPage({
       token={token}
       initial={initial}
       timesFeedback={waitlistTimesFeedbackEnabled()}
+      declineAnswers={waitlistDeclineAnswersEnabled()}
     />;
 }

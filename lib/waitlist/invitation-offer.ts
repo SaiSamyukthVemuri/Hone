@@ -352,7 +352,7 @@ export type InvitationViewState =
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
   /** `keptOnList` is true only when 0319 returned the entry to waiting. */
-  | { kind: "declined"; keptOnList?: boolean }
+  | { kind: "declined"; keptOnList?: boolean; answered?: "answers" | "withdrawal" }
   | { kind: "error"; retryable: boolean };
 
 /**

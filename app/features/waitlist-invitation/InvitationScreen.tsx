@@ -13,6 +13,9 @@ import type {
   UnprovenProofStage,
 } from "@/lib/waitlist/invitation-offer";
 import { CONTROL_MIN_TOUCH, FOCUS_RING } from "@/components/ui/control-base";
+import { DECLINE_CONFIRMATION, WITHDRAWAL_CONFIRMATION } from "@/lib/waitlist/decline-copy";
+import type { NoTimesWorkAnswers } from "@/lib/waitlist/decline-responses";
+import { NoTimesWorkForm } from "./NoTimesWorkForm";
 
 // WAIT-03 B3 — the recipient's invitation screen. PRESENTATION ONLY.
 //
@@ -44,6 +47,9 @@ type Props = {
   onDecline: () => void;
   /** 0319: when present, the footer offers "These times don't work" with optional text. */
   onTimesDontWork?: (note: string) => void;
+  /** 0325: both answers required. When present with onNoLongerNeed, replaces the footer below. */
+  onNoTimesWork?: (answers: NoTimesWorkAnswers) => void;
+  onNoLongerNeed?: () => void;
   onRetry: () => void;
   /** B1.5c proof exchange, both supplied by the container. */
   onRequestCode: () => void;
@@ -63,6 +69,8 @@ export function InvitationScreen({
   onBook,
   onDecline,
   onTimesDontWork,
+  onNoTimesWork,
+  onNoLongerNeed,
   onRetry,
   onRequestCode,
   onSubmitCode,
@@ -87,7 +95,7 @@ export function InvitationScreen({
       case "error":
         return <ErrorView retryable={state.retryable} onRetry={onRetry} />;
       case "declined":
-        return <DeclinedView keptOnList={state.keptOnList === true} />;
+        return <DeclinedView keptOnList={state.keptOnList === true} answered={state.answered} />;
       case "closed":
         return <ClosedView reason={state.reason} presentation={state.presentation} />;
       case "booked":
@@ -128,6 +136,8 @@ export function InvitationScreen({
             onBook={onBook}
             onDecline={onDecline}
             onTimesDontWork={onTimesDontWork}
+            onNoTimesWork={onNoTimesWork}
+            onNoLongerNeed={onNoLongerNeed}
             onRetry={onRetry}
             pending={pending}
           />
@@ -195,7 +205,23 @@ function ErrorView({ retryable, onRetry }: { retryable: boolean; onRetry: () => 
   );
 }
 
-function DeclinedView({ keptOnList }: { keptOnList: boolean }) {
+function DeclinedView({ keptOnList, answered }: { keptOnList: boolean; answered?: "answers" | "withdrawal" }) {
+  if (answered === "answers") {
+    return (
+      <div className="flex flex-col gap-4" data-testid="declined-answers">
+        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved</h1>
+        <p className="text-sm text-[#6B6B6B]">{DECLINE_CONFIRMATION}</p>
+      </div>
+    );
+  }
+  if (answered === "withdrawal") {
+    return (
+      <div className="flex flex-col gap-4" data-testid="declined-withdrawal">
+        <h1 className="text-xl text-[#0A0A0A]">Thanks</h1>
+        <p className="text-sm text-[#6B6B6B]">{WITHDRAWAL_CONFIRMATION}</p>
+      </div>
+    );
+  }
   if (keptOnList) {
     return (
       <div className="flex flex-col gap-4">
@@ -359,6 +385,8 @@ function OfferView({
   onBook,
   onDecline,
   onTimesDontWork,
+  onNoTimesWork,
+  onNoLongerNeed,
   onRetry,
   pending,
 }: {
@@ -377,6 +405,9 @@ function OfferView({
   onBook: () => void;
   onDecline: () => void;
   onTimesDontWork?: (note: string) => void;
+  /** 0325: both answers required. When present with onNoLongerNeed, replaces the footer below. */
+  onNoTimesWork?: (answers: NoTimesWorkAnswers) => void;
+  onNoLongerNeed?: () => void;
   onRetry: () => void;
   pending: boolean;
 }) {
@@ -554,7 +585,9 @@ function OfferView({
           peer of it: declining is unrecoverable for the recipient, so a
           mis-tap must be hard rather than merely undone. */}
       <footer className="mt-4 flex flex-col gap-3 border-t border-[#E7E2D8] pt-4">
-        {onTimesDontWork ? (
+        {onNoTimesWork && onNoLongerNeed ? (
+          <NoTimesWorkForm pending={pending} onSubmit={onNoTimesWork} onNoLongerNeed={onNoLongerNeed} />
+        ) : onTimesDontWork ? (
           <div className="flex flex-col gap-2">
             <label htmlFor="times-dont-work-note" className="text-sm text-[#0A0A0A]">
               These times don’t work for me

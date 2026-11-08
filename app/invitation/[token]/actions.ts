@@ -18,16 +18,22 @@
 //                         with no business in browser state)
 
 import { cookies, headers } from "next/headers";
+import { after } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { TIMES_FEEDBACK_NOTE_MAX, waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
+import { validateNoTimesWork } from "@/lib/waitlist/decline-responses";
+import { dispatchDeclineOwnerEmail } from "@/lib/waitlist/decline-owner-email";
 import { waitlistBookingCommandEnabled } from "@/lib/booking/waitlist-booking-command";
 import {
   beginRecipientProof,
   completeRecipientProof,
   declineInvitation,
   declineTimesUnsuitable,
+  declineWithAnswers,
+  requestWithdrawal,
   resolveInvitation,
   type ResolveOutcome,
 } from "@/lib/booking/waitlist-invitation";
@@ -1200,6 +1206,99 @@ export async function declineInvitationAction(
     booked: null,
     declined: false,
     proofNotice: notice,
+  });
+}
+
+/**
+ * 0325 — "None of these times work": BOTH answers required. Behind WAITLIST_DECLINE_ANSWERS (off by default; the off path re-reads the offer and
+ * writes nothing). The database command saves the answers, closes the invitation, returns the SAME entry to waiting in its original place, writes
+ * the bell row and one held email row per verified owner, all in one transaction. After it commits, and only on `declined`, the owner emails are
+ * handed to the dispatcher. That call never throws and is not awaited past the response (`after`), so an email problem can never undo or delay
+ * the decline; the daily cron is the safety net. The invitation id never reaches the browser.
+ */
+export async function noTimesWorkAction(rawToken: string, why: string, better: string): Promise<InvitationViewState> {
+  if (!waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
+  const gate = await limitPublicSlots({ headers: await headers(), slug: "invitation-no-times-work" });
+  if (!gate.allowed) return { kind: "error", retryable: true };
+  const capability = await readCapability(rawToken);
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
+  if (!capability) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
+  // The same rules as the form, re-checked here: the browser is not trusted. The database validates again.
+  const checked = validateNoTimesWork({ why, better });
+  if (!checked.ok) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
+  const out = await declineWithAnswers({
+    rawToken,
+    rawCapability: capability,
+    whyNotWork: checked.answers.why,
+    betterTimes: checked.answers.better,
+  });
+  if (out.kind === "declined") {
+    await clearCapability();
+    const invitationId = out.invitationId;
+    after(async () => {
+      await dispatchDeclineOwnerEmail({ admin: createAdminClient() }, { invitationId });
+    });
+    return { kind: "declined", keptOnList: true, answered: "answers" };
+  }
+  if (out.kind === "already_declined") {
+    await clearCapability();
+    return { kind: "declined", keptOnList: true, answered: "answers" };
+  }
+  const after_ = await loadContext(rawToken);
+  if (!after_.ok) return after_.state;
+  if (out.kind === "invalid_input" || out.kind === "unavailable") {
+    return offerState(
+      rawToken,
+      after_.resolve,
+      after_.studio,
+      { kind: "proven" },
+      out.kind === "invalid_input" ? "note_invalid" : "feedback_unavailable",
+    );
+  }
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve: after_.resolve,
+    presentation: after_.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
+  });
+}
+
+/**
+ * 0325 — "I no longer need an appointment". Same gate and capability rules. The database answers one neutral `recorded` for every non-proof
+ * outcome, so the confirmation says nothing about the studio's state. Withdrawals do not email in V1 (bell only).
+ */
+export async function noLongerNeedAction(rawToken: string): Promise<InvitationViewState> {
+  if (!waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
+  const gate = await limitPublicSlots({ headers: await headers(), slug: "invitation-withdrawal" });
+  if (!gate.allowed) return { kind: "error", retryable: true };
+  const capability = await readCapability(rawToken);
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
+  if (!capability) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
+  const out = await requestWithdrawal({ rawToken, rawCapability: capability });
+  if (out.kind === "recorded") {
+    await clearCapability();
+    return { kind: "declined", answered: "withdrawal" };
+  }
+  const after_ = await loadContext(rawToken);
+  if (!after_.ok) return after_.state;
+  if (out.kind === "unavailable" || out.kind === "invalid_token") {
+    return offerState(rawToken, after_.resolve, after_.studio, { kind: "proven" }, "feedback_unavailable");
+  }
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve: after_.resolve,
+    presentation: after_.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
   });
 }
 

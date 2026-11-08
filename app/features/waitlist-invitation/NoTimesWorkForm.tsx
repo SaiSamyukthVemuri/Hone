@@ -6,6 +6,7 @@ import {
   ANSWER_PROBLEM_COPY,
   DECLINE_ANSWER_MAX,
   NO_TIMES_WORK_LABELS,
+  NO_TIMES_WORK_NOTICE,
   validateNoTimesWork,
   type NoTimesWorkAnswers,
   type NoTimesWorkValidation,
@@ -67,9 +68,11 @@ export function NoTimesWorkForm({
 
   return (
     <div className="flex flex-col gap-3" data-testid="no-times-work-form">
-      <p className="text-sm text-[#6B6B6B]">Please don’t include health or personal details.</p>
       {field("why", NO_TIMES_WORK_LABELS.why, why, setWhy)}
       {field("better", NO_TIMES_WORK_LABELS.better, better, setBetter)}
+      <p className="text-sm text-[#6B6B6B]" data-testid="no-times-notice">
+        {NO_TIMES_WORK_NOTICE}
+      </p>
       <button
         type="button"
         onClick={submit}
