@@ -52,6 +52,8 @@ export function NoTimesWorkForm({
         aria-invalid={shown[id] ? "true" : undefined}
         aria-describedby={shown[id] ? `no-times-${id}-error` : undefined}
         maxLength={DECLINE_ANSWER_MAX}
+        autoComplete="off"
+        spellCheck={false}
         rows={3}
         value={value}
         onChange={(e) => set(e.target.value)}

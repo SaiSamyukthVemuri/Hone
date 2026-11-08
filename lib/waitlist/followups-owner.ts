@@ -30,6 +30,12 @@ export type FollowUpRow = {
   eraseBy: string | null;
 };
 
+/** The columns `read_waitlist_followups` returns (0325 contract). erase_by, submitted_at and closed_at are contract fields, not extras; a test pins that each is read below. */
+export const FOLLOWUP_READ_COLUMNS = [
+  "followup_id", "kind", "entry_id", "invitation_id", "client_name", "opened_at", "status",
+  "why_not_work", "better_times", "answers_erased_at", "submitted_at", "closed_at", "erase_by",
+] as const;
+
 export type FollowUpList = { kind: "unknown" } | { kind: "ok"; rows: FollowUpRow[] };
 
 const STATUSES = new Set(["open", "handled", "kept", "booked", "removed"]);

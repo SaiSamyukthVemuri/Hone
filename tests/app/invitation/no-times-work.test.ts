@@ -51,6 +51,9 @@ describe("the form", () => {
     expect(html).toContain("Why don&#x27;t these times work?");
     expect(html).toContain(NO_TIMES_WORK_LABELS.better);
     expect((html.match(/required=""/g) ?? []).length).toBe(2);
+    // free text that may hold health detail: no browser autofill history, no spellcheck service
+    expect((html.match(/autocomplete="off"/gi) ?? []).length).toBe(2);
+    expect((html.match(/spellcheck="false"/gi) ?? []).length).toBe(2);
     expect(html).toContain(NO_TIMES_WORK_LABELS.noLongerNeed);
     expect(html).toContain("None of these times work");
   });

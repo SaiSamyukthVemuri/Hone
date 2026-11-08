@@ -8,7 +8,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({
       return h.rpc(...a);
     },
   }) }));
-import { eraseAnswers, keepWithdrawal, linkFollowUpAppointment, markDeclineHandled, readFollowUps, readFollowUpStatus } from "@/lib/waitlist/followups-owner";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { FOLLOWUP_READ_COLUMNS, eraseAnswers, keepWithdrawal, linkFollowUpAppointment, markDeclineHandled, readFollowUps, readFollowUpStatus } from "@/lib/waitlist/followups-owner";
 
 const S = "11111111-1111-4111-8111-111111111111";
 const A = "22222222-2222-4222-8222-222222222222";
@@ -94,4 +96,12 @@ describe("the owner commands", () => {
       expect(await call()).toBe("unavailable");
     });
   }
+});
+
+describe("the read's contract fields", () => {
+  it("lists erase_by, submitted_at and closed_at, and the adapter reads every listed column", () => {
+    for (const c of ["erase_by", "submitted_at", "closed_at"]) expect(FOLLOWUP_READ_COLUMNS).toContain(c);
+    const src = readFileSync(join(process.cwd(), "lib/waitlist/followups-owner.ts"), "utf8");
+    for (const c of FOLLOWUP_READ_COLUMNS) expect(src, c).toMatch(new RegExp(`r\\.${c}\\b`));
+  });
 });

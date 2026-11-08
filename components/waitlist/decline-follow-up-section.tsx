@@ -36,6 +36,24 @@ function eraseDate(iso: string | null, timeZone: string): string | null {
 const BUTTON =
   "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
 
+/** Two-step erase with no client JavaScript, the same pattern as Remove: the confirm button is not in the DOM until the disclosure is opened. */
+function EraseControl({ id }: { id: string }) {
+  return (
+    <details data-testid="erase-control">
+      <summary className={`${BUTTON} cursor-pointer list-none select-none`}>Erase answers</summary>
+      <form action={eraseAnswersAction} className="mt-2 flex flex-col gap-2">
+        <Hidden id={id} />
+        <p className="break-words text-neutral-600 dark:text-neutral-400">
+          Erase their answers now? This cannot be undone. The response itself stays, so you can still follow up.
+        </p>
+        <button type="submit" className={BUTTON}>
+          Yes, erase the answers
+        </button>
+      </form>
+    </details>
+  );
+}
+
 function Hidden({ id }: { id: string }) {
   return <input type="hidden" name="followupId" value={id} />;
 }
@@ -85,6 +103,7 @@ export function DeclineFollowUpSection({
       <ul className="mt-2 flex flex-col gap-4">
         {rows.map((r) => {
           const erased = r.answersErasedAt !== null;
+          const hasAnswers = r.whyNotWork !== null || r.betterTimes !== null;
           const when = eraseDate(r.eraseBy, timeZone);
           const counts = outbox ? ((r.invitationId ? outbox.get(r.invitationId) : undefined) ?? emptyOutboxCounts()) : null;
           const emailLine = r.kind === "decline" ? emailStatusLine(emailEnabled, counts) : null;
@@ -102,9 +121,9 @@ export function DeclineFollowUpSection({
                   <dd className="whitespace-pre-wrap">{r.betterTimes}</dd>
                 </dl>
               ) : null}
-              {!erased && when ? (
+              {!erased && hasAnswers ? (
                 <p className="mt-1 text-neutral-600 dark:text-neutral-400" data-testid="erase-by">
-                  Answers will be erased on {when}.
+                  {when ? `Answers will be erased on ${when}.` : "Erase date unavailable. You can erase these answers now, or contact support."}
                 </p>
               ) : null}
               {r.kind === "decline" ? (
@@ -145,14 +164,6 @@ export function DeclineFollowUpSection({
                         </button>
                       </form>
                     )}
-                    {!erased && (r.whyNotWork !== null || r.betterTimes !== null) ? (
-                      <form action={eraseAnswersAction}>
-                        <Hidden id={r.followupId} />
-                        <button type="submit" className={BUTTON}>
-                          Erase answers
-                        </button>
-                      </form>
-                    ) : null}
                   </div>
                   <p className="text-neutral-600 dark:text-neutral-400">
                     Book now opens the calendar. After you book, the appointment appears here to link, which also covers someone who booked elsewhere.
@@ -161,6 +172,11 @@ export function DeclineFollowUpSection({
               ) : (
                 <p className="mt-1 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
               )}
+              {!erased && hasAnswers ? (
+                <div className="mt-2">
+                  <EraseControl id={r.followupId} />
+                </div>
+              ) : null}
             </li>
           );
         })}

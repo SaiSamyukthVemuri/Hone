@@ -73,6 +73,34 @@ describe("the owner follow-up section", () => {
     expect(html).not.toContain("WHYMARK");
     expect(html).not.toContain("Answers will be erased on");
   });
+  it("Erase answers is offered on open, handled and closed rows while answers exist, and only behind a confirm step", () => {
+    for (const status of ["open", "handled", "kept", "booked", "removed"] as const) {
+      const html = render([row({ status })]);
+      expect(html, status).toContain('data-testid="erase-control"');
+      // the summary opens the disclosure; the submit button lives inside the same <details>, so it is not a one-click action
+      const d = html.slice(html.indexOf("<details"), html.indexOf("</details>"));
+      expect(d).toContain("<summary");
+      expect(d).toContain("This cannot be undone");
+      expect(d).toContain("Yes, erase the answers");
+      expect(html.match(/Yes, erase the answers/g)).toHaveLength(1);
+    }
+  });
+  it("Erase answers is hidden once the answers are erased, for every status", () => {
+    for (const status of ["open", "handled", "removed"] as const) {
+      const html = render([row({ status, whyNotWork: null, betterTimes: null, answersErasedAt: "2026-11-20T10:00:00Z" })]);
+      expect(html, status).not.toContain("erase-control");
+    }
+  });
+  it("a withdrawal with no answers has nothing to erase", () => {
+    expect(render([row({ kind: "withdrawal", whyNotWork: null, betterTimes: null })])).not.toContain("erase-control");
+  });
+  it("a missing erase date shows a neutral fallback, not nothing; a present one shows the date", () => {
+    const html = render([row({ eraseBy: null })]);
+    expect(html).toContain("Erase date unavailable. You can erase these answers now, or contact support.");
+    expect(html).not.toContain("Answers will be erased on");
+    expect(render([row({ eraseBy: "not a date" })])).toContain("Erase date unavailable");
+    expect(render([row()])).not.toContain("Erase date unavailable");
+  });
   it("never renders an email address", () => {
     expect(render([row()])).not.toContain("@");
   });
