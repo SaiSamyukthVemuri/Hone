@@ -20,10 +20,19 @@ vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The real `redirect` throws a NEXT_REDIRECT control-flow error; the fake does the same with the
+// target, so a test can tell "redirected to X" from "threw a refusal".
+vi.mock("next/navigation", () => ({
+  redirect: vi.fn((to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`);
+  }),
+}));
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { STALE_STATE_NOTICES, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import {
   claimNextWaitlistEntriesAction,
   claimWaitlistEntryAction,
@@ -143,7 +152,7 @@ describe("the browser supplies identity, never authority", () => {
     arrangeRpc({ data: "not_found" });
     await expect(
       claimWaitlistEntryAction(entryForm("44444444-4444-4444-4444-444444444444")),
-    ).rejects.toThrow(/no longer exists/);
+    ).rejects.toThrow("NEXT_REDIRECT:/settings/waitlist?notice=claim.not_found");
     expect(calls[0]!.args.p_studio_id).toBe(STUDIO);
   });
 });
@@ -203,29 +212,101 @@ describe("a refusal is never read as a success", () => {
   }
 });
 
-describe("named refusals reach the operator; the rest stay generic", () => {
-  const CASES: ReadonlyArray<[(fd: FormData) => Promise<void>, string, RegExp]> = [
-    [claimWaitlistEntryAction, "not_waiting", /no longer waiting/],
-    [releaseWaitlistEntryAction, "not_releasable", /claimed or invited/],
-    [releaseWaitlistEntryAction, "already_redeemed", /already been used/],
-    [expireWaitlistInvitationAction, "not_invited", /no live invitation/],
-    [expireWaitlistInvitationAction, "not_expired", /has not run out yet/],
-    [requeueWaitlistEntryAction, "not_requeueable", /released or expired/],
-    [requeueWaitlistEntryAction, "already_active", /already on the waitlist again/],
+describe("a stale-state refusal redirects with a notice; every other refusal still throws", () => {
+  const STALE: ReadonlyArray<[(fd: FormData) => Promise<void>, string, string]> = [
+    [claimWaitlistEntryAction, "not_waiting", "claim.not_waiting"],
+    [releaseWaitlistEntryAction, "not_releasable", "release.not_releasable"],
+    [releaseWaitlistEntryAction, "already_redeemed", "release.already_redeemed"],
+    [expireWaitlistInvitationAction, "not_invited", "expire.not_invited"],
+    [expireWaitlistInvitationAction, "not_expired", "expire.not_expired"],
+    [requeueWaitlistEntryAction, "not_requeueable", "requeue.not_requeueable"],
+    [requeueWaitlistEntryAction, "already_active", "requeue.already_active"],
   ];
 
-  for (const [run, code, expected] of CASES) {
-    it(`${code} gets its own copy`, async () => {
+  for (const [run, code, key] of STALE) {
+    it(`${code} redirects with ${key}, revalidates, and moves nothing else`, async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
       arrangeRpc({ data: code });
-      await expect(run(entryForm())).rejects.toThrow(expected);
+      await expect(run(entryForm())).rejects.toThrow(`NEXT_REDIRECT:/settings/waitlist?notice=${encodeURIComponent(key)}`);
+      expect(vi.mocked(redirect)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/settings/waitlist");
+      // One command, once: no retry, no second rpc.
+      expect(calls).toHaveLength(1);
+      // A warning with the outcome, not an error: this is not a fault.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain(code);
+      expect(error).not.toHaveBeenCalled();
+      warn.mockRestore();
+      error.mockRestore();
     });
   }
 
-  it("an UNKNOWN code falls back to the generic message", async () => {
-    arrangeRpc({ data: "a_code_nobody_mapped" });
-    await expect(claimWaitlistEntryAction(entryForm())).rejects.toThrow(
-      /Could not claim that entry/,
-    );
+  const THROWN: ReadonlyArray<[(fd: FormData) => Promise<void>, string, RegExp]> = [
+    [releaseWaitlistEntryAction, "not_owner", /Only studio owners/],
+    [releaseWaitlistEntryAction, "not_a_member", /Only studio owners/],
+    [claimWaitlistEntryAction, "a_code_nobody_mapped", /Could not claim that entry/],
+  ];
+  for (const [run, code, expected] of THROWN) {
+    it(`${code} is still thrown, never redirected`, async () => {
+      arrangeRpc({ data: code });
+      await expect(run(entryForm())).rejects.toThrow(expected);
+      expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a transport error that carries a stale-looking code is still thrown", async () => {
+    // `error` wins: the answer is not trusted when the call itself failed.
+    arrangeRpc({ data: "not_releasable", error: { code: "57014" } });
+    await expect(releaseWaitlistEntryAction(entryForm())).rejects.toThrow(/^(?!NEXT_REDIRECT)/);
+    expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+  });
+
+  it("a stale code for ANOTHER action is not a notice for this one", async () => {
+    // `not_releasable` belongs to release; claim has no such stale state.
+    arrangeRpc({ data: "not_releasable" });
+    await expect(claimWaitlistEntryAction(entryForm())).rejects.toThrow(/Could not claim that entry/);
+    expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+  });
+});
+
+describe("the notice table is the only text a notice can render", () => {
+  it("every key resolves to its own fixed sentence", () => {
+    for (const [key, copy] of Object.entries(STALE_STATE_NOTICES)) {
+      expect(lifecycleNoticeCopy(key)).toEqual({ tone: "refusal", text: copy });
+    }
+  });
+
+  it("the two outcome notices carry their own tone", () => {
+    expect(lifecycleNoticeCopy("remove.removed")).toEqual({ tone: "success", text: "Removed from the waitlist." });
+    expect(lifecycleNoticeCopy("remove.unconfirmed")?.tone).toBe("unconfirmed");
+  });
+
+  it("anything else renders nothing and is never echoed", () => {
+    for (const hostile of [
+      "<script>alert(1)</script>",
+      "release.not_releasable ",
+      "RELEASE.NOT_RELEASABLE",
+      "__proto__",
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "",
+      undefined,
+      null,
+      42,
+      ["release.not_releasable"],
+      { toString: () => "release.not_releasable" },
+    ]) {
+      expect(lifecycleNoticeCopy(hostile), JSON.stringify(hostile)).toBeNull();
+    }
+  });
+
+  it("each refusal map's copy for a stale code IS the notice table's (one source)", () => {
+    const SRC = readFileSync(join(process.cwd(), "app/(app)/settings/waitlist/actions.ts"), "utf8");
+    for (const key of Object.keys(STALE_STATE_NOTICES)) {
+      expect(SRC, key).toContain(`STALE_STATE_NOTICES["${key}"]`);
+    }
   });
 });
 
@@ -319,7 +400,7 @@ describe("source contract", () => {
   });
 
   it("logs no prospect PII", () => {
-    const logs = [...CODE.matchAll(/console\.error\(([\s\S]*?)\);/g)].map((m) => m[1]!);
+    const logs = [...CODE.matchAll(/console\.(?:error|warn)\(([\s\S]*?)\);/g)].map((m) => m[1]!);
     expect(logs.length).toBeGreaterThanOrEqual(2);
     for (const log of logs) {
       for (const pii of ["name", "email", "phone", "entryId", "entry_id"]) {

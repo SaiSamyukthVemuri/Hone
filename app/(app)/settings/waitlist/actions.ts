@@ -1,9 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { readEntryStatus } from "@/lib/waitlist/entry-status-readback";
+import {
+  LIFECYCLE_NOTICE_PARAM,
+  STALE_STATE_NOTICES,
+  lifecycleNoticeKey,
+  type LifecycleNoticeAction,
+} from "@/lib/waitlist/lifecycle-notice";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR REMOVAL (WAIT-02 surface, 0188 command)
@@ -72,10 +80,10 @@ type RemoveWaitlistEntryResult =
 const REFUSAL_MESSAGES: Readonly<
   Record<Exclude<RemoveWaitlistEntryResult, "removed" | "invalid_input">, string>
 > = {
-  not_found: "That waitlist entry no longer exists.",
-  already_removed: "That entry has already been removed.",
-  release_required: "That entry has been claimed or invited. Release it before removing it.",
-  not_removable: "That person is already a client. Converted entries stay in waitlist history.",
+  not_found: STALE_STATE_NOTICES["remove.not_found"],
+  already_removed: STALE_STATE_NOTICES["remove.already_removed"],
+  release_required: STALE_STATE_NOTICES["remove.release_required"],
+  not_removable: STALE_STATE_NOTICES["remove.not_removable"],
   not_owner: "Only studio owners can change the waitlist.",
   not_a_member: "Only studio owners can change the waitlist.",
 };
@@ -110,10 +118,17 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
     p_actor_user_id: actorUserId,
   });
 
-  if (error || data !== "removed") {
-    const outcome =
-      error?.code ?? (typeof data === "string" ? data : "unknown");
-    console.error(
+  if (!error && data === "removed") {
+    revalidatePath("/settings/waitlist");
+    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent("remove.removed")}`);
+  }
+
+  const outcome =
+    error?.code ?? (typeof data === "string" ? data : "unknown");
+  // A refusal from the command is a clean answer that the row is not where the page assumed.
+  const staleKey = !error && typeof data === "string" ? lifecycleNoticeKey("remove", data) : null;
+  if (staleKey) {
+    console.warn(
       JSON.stringify({
         event: "waitlist_remove_failed",
         studioId: studio.id,
@@ -121,14 +136,38 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
         timestamp: new Date().toISOString(),
       }),
     );
-    const known =
-      typeof data === "string"
-        ? REFUSAL_MESSAGES[data as keyof typeof REFUSAL_MESSAGES]
-        : undefined;
-    throw new Error(known ?? "Could not remove that entry. Please try again.");
+    revalidatePath("/settings/waitlist");
+    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent(staleKey)}`);
   }
 
-  revalidatePath("/settings/waitlist");
+  console.error(
+    JSON.stringify({
+      event: "waitlist_remove_failed",
+      studioId: studio.id,
+      outcome,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  // A CERTAIN refusal that is not a stale state (the authority codes, or invalid_input): the command
+  // answered cleanly and moved nothing, so there is nothing to read back.
+  if (!error && typeof data === "string" && (data === "invalid_input" || data in REFUSAL_MESSAGES)) {
+    throw new Error(
+      REFUSAL_MESSAGES[data as keyof typeof REFUSAL_MESSAGES] ?? "Could not remove that entry. Please try again.",
+    );
+  }
+  // UNCERTAIN: the call failed or answered something unmapped, so the entry may or may not have been
+  // removed. Read it back before offering a retry. Removed -> say so. Still there -> a retry is honest.
+  // Cannot read -> do not offer a retry at all.
+  const back = await readEntryStatus(studio.id, entryId);
+  if (back.known && back.status === "removed") {
+    revalidatePath("/settings/waitlist");
+    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent("remove.removed")}`);
+  }
+  if (!back.known) {
+    revalidatePath("/settings/waitlist");
+    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent("remove.unconfirmed")}`);
+  }
+  throw new Error("Could not remove that entry. Please try again.");
 }
 
 // ===========================================================================
@@ -182,6 +221,8 @@ const AUTHORITY_REFUSALS = {
  * line, and the revalidate.
  */
 async function runEntryLifecycleCommand(options: {
+  /** Names the command's stale-state refusals in lib/waitlist/lifecycle-notice.ts. */
+  action: LifecycleNoticeAction;
   rpc: string;
   entryId: string;
   /**
@@ -225,14 +266,37 @@ async function runEntryLifecycleCommand(options: {
       : options.successCode;
   if (error || typeof data !== "string" || !succeeded.includes(data)) {
     const outcome = error?.code ?? (typeof data === "string" ? data : "unknown");
-    console.error(
-      JSON.stringify({
-        event: options.event,
-        studioId: studio.id,
-        outcome,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    // A STALE-STATE REFUSAL IS NOT A FAULT. The row moved since the page was drawn
+    // (a second tab, a double click, the person declining), so the command moved
+    // nothing and said why. Only a clean answer from the command can be one: a
+    // transport error, a non-string or an unmapped code is still thrown below.
+    const staleKey = !error && typeof data === "string" ? lifecycleNoticeKey(options.action, data) : null;
+    // Two literal calls rather than one shared string: the PII source guard reads each log call's
+    // own arguments, and both must be visibly free of prospect data.
+    if (staleKey) {
+      console.warn(
+        JSON.stringify({
+          event: options.event,
+          studioId: studio.id,
+          outcome,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } else {
+      console.error(
+        JSON.stringify({
+          event: options.event,
+          studioId: studio.id,
+          outcome,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+    if (staleKey) {
+      revalidatePath("/settings/waitlist");
+      // The KEY goes in the URL, never the sentence; the page resolves it against a fixed table.
+      redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent(staleKey)}`);
+    }
     const known = typeof data === "string" ? options.refusals[data] : undefined;
     throw new Error(known ?? options.genericError);
   }
@@ -280,13 +344,14 @@ type ClaimEntryResult = "claimed" | "not_found" | "not_waiting" | OwnerResolutio
 const CLAIM_REFUSALS: Readonly<
   Record<Exclude<ClaimEntryResult, "claimed" | "invalid_input">, string>
 > = {
-  not_found: "That waitlist entry no longer exists.",
-  not_waiting: "That entry is no longer waiting, so it cannot be claimed.",
+  not_found: STALE_STATE_NOTICES["claim.not_found"],
+  not_waiting: STALE_STATE_NOTICES["claim.not_waiting"],
   ...AUTHORITY_REFUSALS,
 };
 
 export async function claimWaitlistEntryAction(formData: FormData): Promise<void> {
   await runEntryLifecycleCommand({
+    action: "claim",
     rpc: "claim_new_client_waitlist_entry",
     entryId: requiredEntryId(formData),
     successCode: "claimed",
@@ -308,13 +373,14 @@ type ReleaseEntryResult =
 const RELEASE_REFUSALS: Readonly<
   Record<Exclude<ReleaseEntryResult, "released" | "invalid_input">, string>
 > = {
-  already_redeemed: "That invitation has already been used. It cannot be released.",
-  not_releasable: "Only a claimed or invited entry can be released.",
+  already_redeemed: STALE_STATE_NOTICES["release.already_redeemed"],
+  not_releasable: STALE_STATE_NOTICES["release.not_releasable"],
   ...AUTHORITY_REFUSALS,
 };
 
 export async function releaseWaitlistEntryAction(formData: FormData): Promise<void> {
   await runEntryLifecycleCommand({
+    action: "release",
     rpc: "release_new_client_waitlist_entry",
     entryId: requiredEntryId(formData),
     successCode: "released",
@@ -340,14 +406,15 @@ type ExpireInvitationResult =
 const EXPIRE_REFUSALS: Readonly<
   Record<Exclude<ExpireInvitationResult, "expired" | "invalid_input">, string>
 > = {
-  already_redeemed: "That invitation has already been used.",
-  not_invited: "There is no live invitation on that entry.",
-  not_expired: "That invitation has not run out yet. Release it instead to take it back.",
+  already_redeemed: STALE_STATE_NOTICES["expire.already_redeemed"],
+  not_invited: STALE_STATE_NOTICES["expire.not_invited"],
+  not_expired: STALE_STATE_NOTICES["expire.not_expired"],
   ...AUTHORITY_REFUSALS,
 };
 
 export async function expireWaitlistInvitationAction(formData: FormData): Promise<void> {
   await runEntryLifecycleCommand({
+    action: "expire",
     rpc: "expire_new_client_waitlist_invitation",
     entryId: requiredEntryId(formData),
     successCode: "expired",
@@ -380,18 +447,18 @@ type RequeueEntryResult =
 const REQUEUE_REFUSALS: Readonly<
   Record<Exclude<RequeueEntryResult, "requeued" | "invalid_input">, string>
 > = {
-  already_active: "That person is already on the waitlist again under the same email.",
-  not_requeueable: "Only a released or expired entry can be returned to the queue.",
+  already_active: STALE_STATE_NOTICES["requeue.already_active"],
+  not_requeueable: STALE_STATE_NOTICES["requeue.not_requeueable"],
   // NAMES THE REMEDY, like every other refusal on this surface. Removal accepts
   // `released`, and the public form accepts them again once this entry leaves
   // the active set.
-  already_redeemed:
-    "They already used an invitation, so this entry cannot go back on the waitlist. Remove it — they can join again themselves.",
+  already_redeemed: STALE_STATE_NOTICES["requeue.already_redeemed"],
   ...AUTHORITY_REFUSALS,
 };
 
 export async function requeueWaitlistEntryAction(formData: FormData): Promise<void> {
   await runEntryLifecycleCommand({
+    action: "requeue",
     rpc: "requeue_new_client_waitlist_entry",
     entryId: requiredEntryId(formData),
     successCode: "requeued",
@@ -451,12 +518,11 @@ type CloseUnbookedInvitationResult =
 const CLOSE_REFUSALS: Readonly<
   Record<Exclude<CloseUnbookedInvitationResult, "closed" | "invalid_input">, string>
 > = {
-  not_found: "That waitlist entry no longer exists.",
-  not_invited: "There is no used invitation on that entry to close.",
-  not_redeemed:
-    "That invitation has not been used yet. Cancel it instead to end it early.",
-  already_booked: "They have already booked, so there is nothing to close.",
-  already_closed: "That invitation has already been closed.",
+  not_found: STALE_STATE_NOTICES["close.not_found"],
+  not_invited: STALE_STATE_NOTICES["close.not_invited"],
+  not_redeemed: STALE_STATE_NOTICES["close.not_redeemed"],
+  already_booked: STALE_STATE_NOTICES["close.already_booked"],
+  already_closed: STALE_STATE_NOTICES["close.already_closed"],
   ...AUTHORITY_REFUSALS,
 };
 
@@ -464,6 +530,7 @@ export async function closeUnbookedWaitlistInvitationAction(
   formData: FormData,
 ): Promise<void> {
   await runEntryLifecycleCommand({
+    action: "close",
     rpc: "close_unbooked_new_client_waitlist_invitation",
     entryId: requiredEntryId(formData),
     // ONE SUCCESS CODE AGAIN, after 0201 retired the repair path. The runner

@@ -124,6 +124,7 @@ function capacityQuery(): QueryShape {
 const rpcCalls: RpcCall[] = [];
 const revalidated: string[] = [];
 const consoleErrors: string[] = [];
+const consoleWarns: string[] = [];
 
 const scenario = {
   role: "owner" as string,
@@ -176,6 +177,8 @@ function reset() {
   rpcCalls.length = 0;
   revalidated.length = 0;
   consoleErrors.length = 0;
+  consoleWarns.length = 0;
+  readback.value = { known: false };
   Object.assign(scenario, {
     role: "owner",
     userId: USER_ID,
@@ -256,6 +259,21 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
 
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
+}));
+
+// The real `redirect` throws a NEXT_REDIRECT control-flow error; this one does too, carrying the target.
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`);
+  },
+}));
+
+// What the owner's own session reads back when a remove answer is uncertain. `known: false` is a failed read.
+const readback: { value: { known: true; status: string | null } | { known: false } } = {
+  value: { known: false },
+};
+vi.mock("@/lib/waitlist/entry-status-readback", () => ({
+  readEntryStatus: async () => readback.value,
 }));
 
 vi.mock("@/lib/supabase/queries", () => {
@@ -483,7 +501,7 @@ const { removeWaitlistEntryAction } = await import(
  * opens /settings/waitlist.
  */
 const render = async (
-  searchParams: { section?: string | string[]; page?: string | string[] } = {},
+  searchParams: { section?: string | string[]; page?: string | string[]; notice?: string | string[] } = {},
 ) =>
   renderToStaticMarkup(
     await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
@@ -525,11 +543,15 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 let errSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   reset();
   errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
     consoleErrors.push(a.map(String).join(" "));
+  });
+  warnSpy = vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
+    consoleWarns.push(a.map(String).join(" "));
   });
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-08-23T09:00:00.000Z"));
@@ -537,6 +559,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   errSpy.mockRestore();
+  warnSpy.mockRestore();
 });
 
 describe("authority", () => {
@@ -1233,7 +1256,9 @@ describe("removal", () => {
   it("goes through the command with a SERVER-DERIVED tenant and actor", async () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
-    await removeWaitlistEntryAction(fd);
+    await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+      "NEXT_REDIRECT:/settings/waitlist?notice=remove.removed",
+    );
 
     expect(rpcCalls).toEqual([
       {
@@ -1272,7 +1297,7 @@ describe("removal", () => {
     fd.set("p_studio_id", "attacker-studio");
     fd.set("actor_user_id", "attacker-user");
     fd.set("role", "owner");
-    await removeWaitlistEntryAction(fd);
+    await expect(removeWaitlistEntryAction(fd)).rejects.toThrow("NEXT_REDIRECT");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_entry_id: "entry-1",
@@ -1283,10 +1308,8 @@ describe("removal", () => {
   it.each([
     ["not_found", "That waitlist entry no longer exists."],
     ["already_removed", "That entry has already been removed."],
-    // The two outcomes 0188 added so the operator could be told what to do.
-    // Reachable here even though the queue page renders only `waiting` rows: a
-    // second operator can claim, invite or convert the entry between the page
-    // render and this submit.
+    // The two outcomes 0188 added so the operator could be told what to do. Reachable because a second
+    // tab, a recipient's decline or a booking can move the entry between the page render and this submit.
     [
       "release_required",
       "That entry has been claimed or invited. Release it before removing it.",
@@ -1295,11 +1318,27 @@ describe("removal", () => {
       "not_removable",
       "That person is already a client. Converted entries stay in waitlist history.",
     ],
-    // Kept despite the route's own role check: the command re-derives membership
-    // and role in the database, so a change committed in between lands here.
+  ])("a stale-state refusal `%s` redirects with its notice and the page shows that exact copy", async (code, message) => {
+    scenario.removeResult = code;
+    const fd = new FormData();
+    fd.set("entry_id", "entry-1");
+    await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+      `NEXT_REDIRECT:/settings/waitlist?notice=remove.${code}`,
+    );
+    expect(revalidated).toEqual(["/settings/waitlist"]);
+    // A clean refusal is a warning, not a fault, and nothing was read back.
+    expect(consoleErrors).toHaveLength(0);
+    expect(consoleWarns.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
+    const html = await render({ notice: `remove.${code}` });
+    expect(html).toContain(message);
+  });
+
+  // Kept despite the route's own role check: the command re-derives membership and role in the
+  // database, so a change committed in between lands here. Authority is never softened to a notice.
+  it.each([
     ["not_owner", "Only studio owners can change the waitlist."],
     ["not_a_member", "Only studio owners can change the waitlist."],
-  ])("maps the command refusal `%s` to copy an owner can act on", async (code, message) => {
+  ])("the authority refusal `%s` is still thrown", async (code, message) => {
     scenario.removeResult = code;
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
@@ -1358,6 +1397,8 @@ describe("removal", () => {
     // honest answer. Everything else must say something specific.
     const GENERIC = "Could not remove that entry. Please try again.";
     const DELIBERATELY_GENERIC = new Set(["invalid_input"]);
+    // Clean "the row is not where the page assumed" answers become a notice, not a throw.
+    const NOTICED = new Set(["already_removed", "not_found", "not_removable", "release_required"]);
 
     for (const code of deployedRemovalCodes()) {
       if (code === "removed") continue;
@@ -1372,26 +1413,71 @@ describe("removal", () => {
       expect(error, `${code} did not refuse`).not.toBeNull();
       if (DELIBERATELY_GENERIC.has(code)) {
         expect(error!.message, `${code} should be deliberately generic`).toBe(GENERIC);
+      } else if (NOTICED.has(code)) {
+        expect(error!.message, `${code} should redirect with a notice`).toBe(
+          `NEXT_REDIRECT:/settings/waitlist?notice=remove.${code}`,
+        );
       } else {
         expect(error!.message, `${code} falls through to the generic error`).not.toBe(GENERIC);
       }
-      expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
+      if (!NOTICED.has(code)) expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
     }
   });
 
-  it("an unrecognised outcome or a database error is generic, never a raw code", async () => {
-    for (const setup of [
-      () => { scenario.removeResult = "some_future_code"; },
-      () => { scenario.removeError = { code: "57014" }; },
-    ]) {
-      reset();
-      setup();
-      const fd = new FormData();
-      fd.set("entry_id", "entry-1");
-      await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-        "Could not remove that entry. Please try again.",
-      );
+  describe("an UNCERTAIN outcome reads the entry back before any retry is offered", () => {
+    const UNCERTAIN: ReadonlyArray<[string, () => void]> = [
+      ["an unrecognised code", () => { scenario.removeResult = "some_future_code"; }],
+      ["a database error", () => { scenario.removeError = { code: "57014" }; }],
+    ];
+    for (const [label, arrange] of UNCERTAIN) {
+      it(`${label}: the row is already removed -> success notice, no retry`, async () => {
+        arrange();
+        readback.value = { known: true, status: "removed" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+          "NEXT_REDIRECT:/settings/waitlist?notice=remove.removed",
+        );
+      });
+      it(`${label}: the row is verifiably still there -> the generic error, a retry is honest`, async () => {
+        arrange();
+        readback.value = { known: true, status: "waiting" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+          "Could not remove that entry. Please try again.",
+        );
+      });
+      it(`${label}: the row cannot be read -> an unconfirmed notice that offers no retry`, async () => {
+        arrange();
+        readback.value = { known: false };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+          "NEXT_REDIRECT:/settings/waitlist?notice=remove.unconfirmed",
+        );
+        const html = await render({ notice: "remove.unconfirmed" });
+        expect(html).toContain("We could not confirm whether that entry was removed.");
+        expect(html).not.toMatch(/try again\./i);
+      });
+      it(`${label}: is logged as a fault with no contact detail`, async () => {
+        arrange();
+        readback.value = { known: true, status: "waiting" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow();
+        expect(consoleErrors.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
+      });
     }
+  });
+
+  it("a removal notice renders from the fixed table only: success, and a hand-edited value shows nothing", async () => {
+    const ok = await render({ notice: "remove.removed" });
+    expect(ok).toContain("Removed from the waitlist.");
+    expect(ok).not.toContain("Nothing was changed");
+    const hostile = await render({ notice: "<b>owned</b>" });
+    expect(hostile).not.toContain("owned");
+    expect(hostile).not.toContain('data-testid="lifecycle-notice"');
   });
 
   it("logs the outcome without any contact detail", async () => {
@@ -1399,7 +1485,7 @@ describe("removal", () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
     await expect(removeWaitlistEntryAction(fd)).rejects.toThrow();
-    const line = consoleErrors.find((l) => l.includes("waitlist_remove_failed"));
+    const line = consoleWarns.find((l) => l.includes("waitlist_remove_failed"));
     expect(JSON.parse(line!)).toMatchObject({ studioId: STUDIO_ID, outcome: "not_found" });
     expect(line).not.toContain("jo@example.com");
   });

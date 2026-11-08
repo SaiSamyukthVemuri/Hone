@@ -82,6 +82,7 @@ import {
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
 import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
+import { lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
@@ -349,7 +350,7 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[] }>;
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; notice?: string | string[] }>;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
@@ -368,6 +369,10 @@ export default async function WaitlistSettingsPage({
     SECTIONS.find(({ status }) => status === requestedSection)?.status ?? null;
   // `page` is meaningless without a section, so it is only read alongside one.
   const pageNumber = focusedStatus ? parsePageNumber(firstParam(params.page)) : 1;
+  // A LIFECYCLE NOTICE NAMES ONE FIXED SENTENCE OR NOTHING. The value is looked up
+  // in a closed table and only the table's own text is rendered; an unknown or
+  // hand-edited value shows no banner and is never echoed.
+  const lifecycleNotice = lifecycleNoticeCopy(firstParam(params.notice));
 
   // RLS-scoped user client, NOT the service-role client: the read is genuinely
   // gated by `is_studio_owner` at the database rather than by this page having
@@ -830,6 +835,16 @@ export default async function WaitlistSettingsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {lifecycleNotice && (
+        <p
+          role="status"
+          data-testid="lifecycle-notice"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+        >
+          {lifecycleNotice.text}
+          {lifecycleNotice.tone === "refusal" && " Nothing was changed. The list below is up to date."}
+        </p>
+      )}
       {/* Absent only on a row read before 0206; the column defaults FALSE, so
           absent displays as OFF. */}
       <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
