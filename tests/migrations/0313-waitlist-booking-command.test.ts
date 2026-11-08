@@ -76,7 +76,7 @@ describe("0313 — shape", () => {
     expect(iRedeem).toBeGreaterThan(iEntry);
   });
 
-  it("does not edit 0192, 0195 or 0228 and writes no row of its own", () => {
+  it("does not redefine the 0192, 0195 or 0228 commands", () => {
     const e = exec(M);
     expect(e).not.toMatch(/create or replace function public\.(redeem_new_client_waitlist_invitation_verified|create_waitlist_public_appointment|create_public_appointment_for_new_client)\(/);
   });

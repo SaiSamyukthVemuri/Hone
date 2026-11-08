@@ -82,6 +82,7 @@ import {
 } from "@/lib/booking/marketing-consent";
 import { dispatchBookingConversion } from "@/lib/conversion/dispatch";
 import { normalizeWaitlistBookingResult } from "@/lib/booking/waitlist-atomic-result";
+import { waitlistBookingCommandEnabled } from "@/lib/booking/waitlist-booking-command";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { captureServerEvent } from "@/lib/analytics/server";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
@@ -934,7 +935,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // same round, a shared household address, an entry requeued after a release.
   // So the id travels from the command that spent it, and nowhere else.
   let redeemedEntryId: string | null = null;
-  if (invitationAuth?.kind === "authorized") {
+  // 0313. WITH THE FLAG ON, NOTHING IS REDEEMED HERE. The command below redeems
+  // and books in one transaction, so a refused booking leaves the invitation
+  // live. Flag off, the redeem-first path that follows is unchanged.
+  const invitedCommand =
+    invitationAuth?.kind === "authorized" && waitlistBookingCommandEnabled()
+      ? invitationAuth
+      : null;
+  if (invitationAuth?.kind === "authorized" && !invitedCommand) {
     const redeemed = await consumeInvitationForBooking(
       invitationAuth,
       invitationCapability,
@@ -1229,7 +1237,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // AN EXISTING CLIENT IS UNTOUCHED. `clientType` is the branch, and the
   // existing-client path reaches the same commands it always did with the same
   // arguments, consulting no admission authority at any point.
-  const { data: rpcRows, error: rpcErr } = clientType === "new"
+  const { data: rpcRows, error: rpcErr } = invitedCommand
+    ? await admin.rpc("redeem_and_book_waitlist_invitation", {
+        p_raw_token: invitedCommand.rawToken,
+        p_raw_capability: invitationCapability,
+        p_studio_id: studio.id,
+        p_client_id: resolvedClientId,
+        p_client_name: clientName,
+        p_client_email: email,
+        p_client_phone: clientPhone,
+        p_sms_consent_at: resolvedClientId ? null : clientSmsConsentAt,
+        p_service_id: serviceId,
+        p_starts_at: start.toISOString(),
+        p_cancellation_token_hash: commitArgs.p_cancellation_token_hash,
+        p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
+        p_notes: notes,
+        p_referral_source: referralSource,
+      })
+    : clientType === "new"
     ? await admin.rpc("create_public_appointment_for_new_client", {
         ...commitArgs,
         p_client_name: clientName,
@@ -1254,6 +1279,72 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     : await admin.rpc("create_public_appointment", commitArgs);
   const commandRow = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
   const rawCommandResult = (commandRow?.result as string | undefined) ?? null;
+
+  // 0313. THE UNCERTAIN OUTCOME, AND THE REFUSALS THAT LEAVE THE INVITATION LIVE.
+  //
+  // An error from the command is not a verdict: the transaction may have
+  // committed before the answer was lost. Ask the database, which is the only
+  // authority, before saying anything. `live` means nothing happened and the
+  // invitation is still usable. Anything else is reported as unknown and leaves a
+  // durable item for the owner (idempotent per invitation); the derived
+  // "Needs your attention" list is the safety net if even that write fails.
+  if (invitedCommand && rpcErr) {
+    // FAIL CLOSED when the flag is on but the command does not exist (0313 not
+    // applied): never fall back to redeem-first. Nothing ran, nothing was spent.
+    if (rpcErr.code === "PGRST202" || rpcErr.code === "42883") {
+      console.error(
+        JSON.stringify({
+          event: "waitlist_booking_command_missing",
+          studioId: studio.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error:
+          "Booking from this invitation isn't available right now. Please contact the studio.",
+      };
+    }
+    consumedInvitationId = invitedCommand.invitation.invitationId;
+    let bookingState: string | null = null;
+    try {
+      const { data: st } = await admin.rpc("waitlist_invitation_booking_state", {
+        p_raw_token: invitedCommand.rawToken,
+      });
+      bookingState = typeof st === "string" ? st : null;
+    } catch {
+      bookingState = null;
+    }
+    if (bookingState === "live") {
+      return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+    }
+    if (bookingState !== "booked") {
+      try {
+        await admin.rpc("record_waitlist_invitation_followup", {
+          p_raw_token: invitedCommand.rawToken,
+          p_reason: "booking_outcome_unknown",
+        });
+      } catch {
+        // Best effort: the derived list still shows this entry.
+      }
+    }
+    return invitationBookingIndeterminate("command_error");
+  }
+  if (
+    invitedCommand &&
+    rawCommandResult !== null &&
+    (rawCommandResult.startsWith("redeem_") ||
+      rawCommandResult === "invalid_token" ||
+      rawCommandResult === "invalid_input")
+  ) {
+    // Nothing was written and the invitation is as it was.
+    return {
+      ok: false,
+      error:
+        "We couldn't confirm your invitation. Please reopen the link from your email and try again.",
+      code: "invitation_refused",
+    };
+  }
 
   // THE COMMIT-TIME REFUSALS, answered before anything was written.
   //
@@ -1332,7 +1423,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // unreachable — `consumedInvitationId` and `redeemedEntryId` are assigned
   // together, so the consumed-without-booking exit returns first. The unwrapped
   // code's observable effect today is the word in that operator log line.
-  const normalized = atomicEntryId
+  const normalized = atomicEntryId || invitedCommand
     ? normalizeWaitlistBookingResult(rawCommandResult)
     : null;
   // THE VERDICT IS THE MAPPER'S, AND IT IS NOT RE-DERIVED FROM A STRING.
