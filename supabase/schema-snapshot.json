@@ -3,7 +3,7 @@
   "migrations": {
     "count": 259,
     "last": "0319_waitlist_times_unsuitable.sql",
-    "sha256": "28896fe9022c3893aba1fea5a73f1da0476a8d50a88d33321bff69638f2f9a88"
+    "sha256": "4ac9ec19c2a507da60ebb130ed48694682d4d55fcdb43bb24b607eedb7aeecd0"
   },
   "public": {
     "tables": [

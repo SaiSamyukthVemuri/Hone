@@ -12,6 +12,7 @@ import {
   INVITATION_DELIVERY_COPY,
   type InvitationDeliveryState,
 } from "@/lib/waitlist/invite-to-book-contract";
+import Link from "next/link";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -21,6 +22,8 @@ import {
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
 import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
+import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
+import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -677,6 +680,10 @@ export default async function WaitlistSettingsPage({
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   const attention = await loadNeedsAttention(supabase, studio.id);
+  // Count only: no text is read on this page. Skipped entirely while the flag is off.
+  const replies = waitlistTimesFeedbackEnabled()
+    ? await countTimesFeedback(studio.id, practitioner.user_id)
+    : ({ kind: "unknown" } as const);
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (cycleIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
@@ -906,6 +913,27 @@ export default async function WaitlistSettingsPage({
               </section>
             );
           })()}
+
+          {replies.kind === "ok" && replies.n > 0 && (
+            <section
+              aria-labelledby="replies-heading"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+            >
+              <h2 id="replies-heading" className="font-medium">
+                Replies to review ({replies.n})
+              </h2>
+              <p className="mt-1">
+                {replies.n === 1 ? "Someone" : "Some people"} told us the offered times
+                don&rsquo;t work. {replies.n === 1 ? "They keep" : "They keep"} their original join
+                date.
+              </p>
+              <p className="mt-2">
+                <Link href="/settings/waitlist/replies" className="underline">
+                  Open the replies
+                </Link>
+              </p>
+            </section>
+          )}
 
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
