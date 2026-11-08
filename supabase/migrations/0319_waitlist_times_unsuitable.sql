@@ -28,6 +28,7 @@
 -- TEXT. Trimmed; empty means none; at most 500 characters; angle brackets and
 -- control characters are refused (no markup); the FIRST text for an invitation
 -- is kept and a repeat is refused as not_live because the invitation is closed.
+-- Bidirectional-control and zero-width characters are refused too (hygiene).
 -- A repeat never echoes or overwrites. Every refusal uses the 0192 vocabulary so
 -- the command is not an existence oracle for tokens.
 
@@ -95,6 +96,7 @@ begin
        pg_catalog.char_length(v_note) > 500
        or v_note ~ '[<>]'
        or v_note ~ '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'
+       or v_note ~ '[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]'
      ) then
     return 'invalid_note';
   end if;
@@ -179,7 +181,7 @@ create or replace function public.list_waitlist_times_feedback(
   p_studio_id     uuid,
   p_actor_user_id uuid
 )
-returns table (result text, entry_id uuid, entry_name text, note text, created_at timestamptz)
+returns table (result text, invitation_id uuid, entry_id uuid, entry_name text, note text, created_at timestamptz)
 language plpgsql stable security definer
 set search_path = pg_catalog, pg_temp
 as $$
@@ -188,10 +190,10 @@ begin
   select o.practitioner_id, o.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) o;
   if v_code <> 'ok' then
-    return query select v_code, null::uuid, null::text, null::text, null::timestamptz; return;
+    return query select v_code, null::uuid, null::uuid, null::text, null::text, null::timestamptz; return;
   end if;
   return query
-    select 'ok'::text, f.entry_id, e.name, f.note, f.created_at
+    select 'ok'::text, f.invitation_id, f.entry_id, e.name, f.note, f.created_at
       from public.waitlist_times_feedback f
       join public.new_client_waitlist_entries e
         on e.id = f.entry_id and e.studio_id = f.studio_id
@@ -203,7 +205,7 @@ $$;
 
 create or replace function public.acknowledge_waitlist_times_feedback(
   p_studio_id     uuid,
-  p_entry_id      uuid,
+  p_invitation_id uuid,
   p_actor_user_id uuid
 )
 returns text
@@ -215,10 +217,11 @@ begin
   select o.practitioner_id, o.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) o;
   if v_code <> 'ok' then return v_code; end if;
-  if p_entry_id is null then return 'invalid_input'; end if;
+  if p_invitation_id is null then return 'invalid_input'; end if;
+  -- Keyed by INVITATION id: a later invitation's feedback is not cleared with this one.
   update public.waitlist_times_feedback f
      set acknowledged_at = now()
-   where f.studio_id = p_studio_id and f.entry_id = p_entry_id and f.acknowledged_at is null;
+   where f.studio_id = p_studio_id and f.invitation_id = p_invitation_id and f.acknowledged_at is null;
   get diagnostics v_n = row_count;
   return case when v_n > 0 then 'acknowledged' else 'not_found' end;
 end;

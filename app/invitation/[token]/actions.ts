@@ -1090,6 +1090,13 @@ export async function timesDontWorkAction(
   note: string,
 ): Promise<InvitationViewState> {
   if (!waitlistTimesFeedbackEnabled()) return loadInvitationAction(rawToken);
+  // THROTTLED BEFORE THE FIRST DATABASE READ, like proof submission: a wrong
+  // capability would otherwise drive unlimited locked lookups on a public path.
+  const gate = await limitPublicSlots({
+    headers: await headers(),
+    slug: "invitation-times-feedback",
+  });
+  if (!gate.allowed) return { kind: "error", retryable: true };
   const capability = await readCapability(rawToken);
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
@@ -1097,7 +1104,7 @@ export async function timesDontWorkAction(
     return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
   }
   const trimmed = typeof note === "string" ? note.trim() : "";
-  if (trimmed.length > TIMES_FEEDBACK_NOTE_MAX || /[<>]/.test(trimmed)) {
+  if (trimmed.length > TIMES_FEEDBACK_NOTE_MAX || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/.test(trimmed)) {
     return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
   }
   const out = await declineTimesUnsuitable({

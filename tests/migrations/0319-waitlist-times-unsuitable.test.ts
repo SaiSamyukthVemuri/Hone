@@ -8,6 +8,7 @@ import { countVersion, isRepoMax } from "./helpers/migration-state";
 
 const M = readFileSync(join(__dirname, "..", "..", "supabase/migrations/0319_waitlist_times_unsuitable.sql"), "utf8");
 const exec = (sql: string) => sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+const DOWN = readFileSync(join(__dirname, "..", "..", "supabase/rollbacks/0319_waitlist_times_unsuitable.down.sql"), "utf8");
 const E = exec(M);
 
 describe("0319 — migration state", () => {
@@ -64,5 +65,28 @@ describe("0319 — shape", () => {
 
   it("owner commands are gated by the owner resolver", () => {
     expect((E.match(/new_client_waitlist_resolve_owner/g) ?? []).length).toBe(3);
+  });
+});
+
+describe("0319 — hygiene and rollback", () => {
+  it("refuses bidirectional and zero-width characters", () => {
+    expect(E).toContain("\\u202a-\\u202e");
+    expect(E).toContain("\\u200b-\\u200f");
+  });
+
+  it("acknowledge is keyed by invitation id, not entry id", () => {
+    const fn = E.slice(E.indexOf("function public.acknowledge_waitlist_times_feedback"));
+    expect(fn).toMatch(/f\.invitation_id = p_invitation_id/);
+    expect(fn).not.toMatch(/f\.entry_id = /);
+  });
+
+  it("has a held down file that refuses while rows exist and never lands in migrations", () => {
+    const d = exec(DOWN);
+    expect(d).toMatch(/if exists \(select 1 from public\.waitlist_times_feedback\)/);
+    expect(d).toMatch(/errcode = '55000'/);
+    for (const fn of ["acknowledge_waitlist_times_feedback", "list_waitlist_times_feedback", "count_waitlist_times_feedback", "decline_waitlist_invitation_times_unsuitable"]) {
+      expect(d).toContain(`drop function if exists public.${fn}(`);
+    }
+    expect(d).toMatch(/drop table if exists public\.waitlist_times_feedback;/);
   });
 });

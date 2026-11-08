@@ -122,7 +122,7 @@ describe("0319 decline_waitlist_invitation_times_unsuitable", () => {
   it("refuses markup, control characters and over-long text, leaving the invitation live", async () => {
     const f = await fixture("bad");
     const p = await invitedEntry(f, "x");
-    for (const bad of ["<b>hi</b>", "a\u0001b", "x".repeat(501)]) {
+    for (const bad of ["<b>hi</b>", "a\u0001b", "a\u007fb", "a\u0008b", "a\u202eb", "a\u200bb", "a\ufeffb", "x".repeat(501)]) {
       expect((await q<{ r: string }>(DECLINE, [p.token, p.cap, bad]))[0].r).toBe("invalid_note");
     }
     expect((await invitation(p.entryId)).declined_at).toBeNull();
@@ -154,19 +154,20 @@ describe("0319 decline_waitlist_invitation_times_unsuitable", () => {
     const p = await invitedEntry(f, "o");
     await q(DECLINE, [p.token, p.cap, "Mornings"]);
 
+    const l0 = await q<any>(`select * from public.list_waitlist_times_feedback($1,$2)`, [f.studioId, f.userId]);
     const wrong = await q<any>(`select * from public.count_waitlist_times_feedback($1,$2)`, [f.studioId, other.userId]);
     expect(wrong[0].result).not.toBe("ok");
     const wrongList = await q<any>(`select * from public.list_waitlist_times_feedback($1,$2)`, [f.studioId, other.userId]);
     expect(wrongList[0].result).not.toBe("ok");
     expect(wrongList[0].note).toBeNull();
     expect(await q<{ r: string }>(
-      `select public.acknowledge_waitlist_times_feedback($1,$2,$3) as r`, [f.studioId, p.entryId, other.userId],
+      `select public.acknowledge_waitlist_times_feedback($1,$2,$3) as r`, [f.studioId, l0[0].invitation_id, other.userId],
     )).not.toEqual([{ r: "acknowledged" }]);
 
     const l = await q<any>(`select * from public.list_waitlist_times_feedback($1,$2)`, [f.studioId, f.userId]);
     expect(l[0]).toMatchObject({ result: "ok", note: "Mornings", entry_id: p.entryId });
     const ack = await q<{ r: string }>(
-      `select public.acknowledge_waitlist_times_feedback($1,$2,$3) as r`, [f.studioId, p.entryId, f.userId],
+      `select public.acknowledge_waitlist_times_feedback($1,$2,$3) as r`, [f.studioId, l[0].invitation_id, f.userId],
     );
     expect(ack[0].r).toBe("acknowledged");
     const c = await q<any>(`select * from public.count_waitlist_times_feedback($1,$2)`, [f.studioId, f.userId]);

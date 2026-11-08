@@ -37,6 +37,12 @@ describe("0319 times-don't-work wiring", () => {
     expect(k - guard).toBeLessThan(120);
   });
 
+  it("is throttled before any read, and refuses control characters in the app too", () => {
+    expect(action.indexOf('slug: "invitation-times-feedback"')).toBeGreaterThan(0);
+    expect(action.indexOf('slug: "invitation-times-feedback"')).toBeLessThan(action.indexOf("loadContext("));
+    expect(action).toContain("\\u0000-\\u0008");
+  });
+
   it("never logs or echoes the recipient's text", () => {
     expect(action).not.toMatch(/console\.|logger|log\w*\(/);
     expect(action).not.toMatch(/note\s*[:,]\s*trimmed[^\n]*kind:/);
@@ -51,7 +57,10 @@ describe("0319 times-don't-work wiring", () => {
 
   it("the screen caps the text at the database cap and states the original place is kept", () => {
     expect(SCREEN).toMatch(/maxLength=\{500\}/);
-    expect(SCREEN).toContain("original place");
+    expect(SCREEN).toContain("You keep your original join date");
+    expect(SCREEN).toContain("Please don’t include health");
+    expect(SCREEN).toContain("your reply is saved for the studio");
+    expect(SCREEN).not.toContain("we’ve let the studio know");
     expect(SCREEN).toContain("nothing is booked or held in the meantime");
   });
 

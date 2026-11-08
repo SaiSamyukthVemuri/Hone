@@ -1725,9 +1725,9 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   waitlist_times_feedback: {
     kind: "pending",
     ticket: "TRUTH-01B",
-    tier: 2,
+    tier: 1,
     reason:
-      "Owner-only record that an invited prospect said the offered times do not work, draft migration 0319 (HON-7). One row per invitation (unique) with an optional free-text note of at most 500 characters written by the recipient, plus created and acknowledged instants. The note is client-supplied text, so it is PENDING review of retention and export shape, not exported by default and never selected by a count. Rows are erased with the studio or the entry. No export surface ships in 0319.",
+      "Owner-only record that an invited prospect said the offered times do not work, draft migration 0319 (HON-7). One row per invitation (unique) with an optional free-text note of at most 500 characters written by the recipient, beside the prospect's name on the entry, plus created and acknowledged instants. Client-supplied free text, so tier 1 and PENDING review of retention and export shape: not exported by default and never selected by a count. Rows are erased with the STUDIO only: an invited entry cannot be deleted on its own (invitations are append-only), so person-level erasure of this text is not possible yet (open item L1). No export surface ships in 0319.",
   },
   studio_waitlist_admission_rounds: {
     kind: "pending",

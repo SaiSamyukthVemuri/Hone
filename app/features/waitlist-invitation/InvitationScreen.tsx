@@ -150,7 +150,7 @@ const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {
   slot_taken: "That time was taken while you were choosing. Please pick another.",
   not_permitted: "Your invitation doesn't cover that time. Please choose one of the times shown.",
   unavailable: "We couldn't complete that booking. Please try again in a moment.",
-  note_invalid: "Your message can't include < or > characters. Please remove them and try again.",
+  note_invalid: "Your message can’t be saved as written. Please use plain text and try again.",
   feedback_unavailable: "We couldn't save that just now. Nothing has changed, so please try again.",
 };
 
@@ -196,11 +196,11 @@ function DeclinedView({ keptOnList }: { keptOnList: boolean }) {
   if (keptOnList) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-xl text-[#0A0A0A]">Thanks — we’ve let the studio know</h1>
+        <h1 className="text-xl text-[#0A0A0A]">Thanks — your reply is saved for the studio</h1>
         <p className="text-sm text-[#6B6B6B]">
-          You’re still on the waiting list with your original place. This invitation is closed, so
-          these times can’t be booked from this link. The studio may send you a new invitation
-          when something suits you better; nothing is booked or held in the meantime.
+          You keep your original join date. This invitation is closed, so these times can’t be
+          booked from this link. The studio decides who is invited next and may send you a new
+          invitation; nothing is booked or held in the meantime.
         </p>
       </div>
     );
@@ -500,8 +500,8 @@ function OfferView({
               These times don’t work for me
             </label>
             <p className="text-sm text-[#6B6B6B]">
-              Optional: tell the studio what would suit you better. You’ll stay on the waiting
-              list with your original place.
+              Optional: tell the studio what would suit you better. Please don’t include health
+              or personal details. You keep your original join date.
             </p>
             <textarea
               id="times-dont-work-note"

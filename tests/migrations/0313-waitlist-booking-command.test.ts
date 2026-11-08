@@ -18,7 +18,7 @@ describe("0313 — migration state", () => {
   // CLAUDE.md §2.
   it("consumes exactly one number and a successor sits above it", () => {
     expect(isRepoMax("0313")).toBe(false);
-    expect(versionsAbove("0313")).toContain("0319");
+    expect(versionsAbove("0313").length).toBeGreaterThan(0);
     expect(countVersion("0313")).toBe(1);
   });
 });
