@@ -12,15 +12,21 @@
 // EXACTLY ONCE. Each row carries dedupe_key appointment_cancelled:<appointment_id>:<recipient_id>, so a retry or a client cancel racing a staff
 // cancel conflicts on the 0154 unique index (23505 = already recorded). Both cancel commands also refuse a non-confirmed appointment.
 //
-// HARD CONTRACT: never throws and never awaits the insert (the recorder is fire-and-forget), so a failure here cannot undo or delay the cancel.
+// HARD CONTRACT: never throws, so a failure here cannot undo the cancel. It AWAITS the insert (the fire-and-forget recorder detached it, and a
+// serverless function can return before a detached write runs, which drops the bell silently), so it resolves only after every insert was attempted.
+// The free-text reason is excluded from the bell; the client's chosen reason LABEL (a fixed list) is included on a client cancel.
 // RLS still lets any studio member read every bell row through the API; that limit is the HELD policy migration, not this module.
 
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { recordPractitionerNotificationAndWait } from "@/lib/notifications/practitioner-notifications";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { localTimeString12h } from "@/lib/booking/tz";
 
-export const CANCEL_DEDUPE_PREFIX = "appointment_cancelled:";
+import { CANCEL_RECIPIENT_KEY_PREFIX } from "@/lib/notifications/owner-only-events";
+
+// The reader gives recipient semantics to rows with this prefix only (owner-only-events.ts); legacy cancellation rows stay studio-wide.
+export const CANCEL_DEDUPE_PREFIX = CANCEL_RECIPIENT_KEY_PREFIX;
 
 type Row = Record<string, unknown> | null;
 
@@ -33,17 +39,31 @@ async function readOne(admin: SupabaseClient, table: string, columns: string, id
   }
 }
 
-async function readOwners(admin: SupabaseClient, studioId: string): Promise<Array<{ id: string }>> {
+// An ERROR is not an EMPTY list: on an error nothing is written (no fallback row), and only a PII-free code is logged.
+async function readOwners(admin: SupabaseClient, studioId: string): Promise<{ ok: true; owners: Array<{ id: string }> } | { ok: false }> {
   try {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("practitioners")
       .select("id")
       .eq("studio_id", studioId)
       .eq("active", true)
       .eq("role", "owner");
-    return Array.isArray(data) ? data.filter((r): r is { id: string } => typeof r?.id === "string") : [];
+    if (error || !Array.isArray(data)) {
+      logOwnerReadFailure(error ? dbErrorCode(error) : "no_rows_payload");
+      return { ok: false };
+    }
+    return { ok: true, owners: data.filter((r): r is { id: string } => typeof r?.id === "string") };
   } catch {
-    return [];
+    logOwnerReadFailure("threw");
+    return { ok: false };
+  }
+}
+
+function logOwnerReadFailure(code: string): void {
+  try {
+    console.error(JSON.stringify({ event: "cancel_bell_owner_read_failed", code, timestamp: new Date().toISOString() }));
+  } catch {
+    // best effort
   }
 }
 
@@ -74,7 +94,7 @@ export async function recordAppointmentCancelNotifications(
       clientId ? readOne(admin, "clients", "name", clientId) : null,
       serviceId ? readOne(admin, "services", "name", serviceId) : null,
       readOne(admin, "studios", "timezone", studioId),
-      input.actorPractitionerId ? readOne(admin, "practitioners", "display_name, email", input.actorPractitionerId) : null,
+      input.actorPractitionerId ? readOne(admin, "practitioners", "display_name", input.actorPractitionerId) : null,
       readOwners(admin, studioId),
     ]);
     const clientName = str(client?.name);
@@ -92,7 +112,7 @@ export async function recordAppointmentCancelNotifications(
     const reason = input.reasonLabel ? ` Reason: ${input.reasonLabel}.` : "";
     // A staff cancel names the staff member, the client and the service. A client's own cancel names the client.
     const body = input.actorPractitionerId
-      ? `${str(actor?.display_name) ?? str(actor?.email) ?? "A team member"} cancelled ${clientName ? `${clientName}'s ` : "a client's "}${what}${when}.${reason}`
+      ? `${str(actor?.display_name) ?? "A team member"} cancelled ${clientName ? `${clientName}'s ` : "a client's "}${what}${when}.${reason}`
       : `${clientName ?? "A client"} cancelled ${what}${when}.${reason}`;
 
     const base = {
@@ -104,17 +124,21 @@ export async function recordAppointmentCancelNotifications(
       clientId,
       href: `/calendar/${input.appointmentId}`,
     };
-    const recipients = owners.filter((o) => o.id !== input.actorPractitionerId);
+    // On an owner-read ERROR write nothing at all: neither a per-owner row nor the studio-wide fallback.
+    if (!owners.ok) return;
+    const recipients = owners.owners.filter((o) => o.id !== input.actorPractitionerId);
     if (recipients.length > 0) {
-      for (const owner of recipients) {
-        recordPractitionerNotification({ ...base, practitionerId: owner.id, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:${owner.id}` });
-      }
+      await Promise.all(
+        recipients.map((owner) =>
+          recordPractitionerNotificationAndWait({ ...base, practitionerId: owner.id, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:${owner.id}` }),
+        ),
+      );
       return;
     }
-    // No owner could be established. Only an actorless (client) cancel falls back to one studio-wide row; with an actor, a studio-wide row
-    // could be seen by the very person who must not be notified, and the actor is not an owner we can prove here, so write nothing.
+    // The read succeeded and the studio has NO active owner (not expected for a live studio). Only an actorless (client) cancel then falls back to one
+    // studio-wide row, which the reader shows to owners only; with an actor, a studio-wide row could reach the very person who must not be notified.
     if (!input.actorPractitionerId) {
-      recordPractitionerNotification({ ...base, practitionerId: null, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:studio` });
+      await recordPractitionerNotificationAndWait({ ...base, practitionerId: null, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:studio` });
     }
   } catch {
     // The cancellation is already committed; the bell is best effort and must never surface.

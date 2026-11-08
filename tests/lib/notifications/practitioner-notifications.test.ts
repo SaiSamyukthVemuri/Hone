@@ -78,9 +78,10 @@ describe("helper enforces the never-throws contract", () => {
     // around the createAdminClient + insert. We pin the shape; the
     // catch arm logs and fires an ops_alerts entry (also fire-and-
     // forget).
+    // HON-7: the try/catch lives in the shared write function that the IIFE (and the awaitable variant) call.
     const iife =
       SOURCE.match(
-        /void \(async \(\) => \{[\s\S]*?\}\)\(\);/,
+        /async function writePractitionerNotification[\s\S]*?\n\}\n/,
       )?.[0] ?? "";
     expect(iife).toMatch(/try \{/);
     expect(iife).toMatch(/\} catch \(err\) \{/);
@@ -274,7 +275,7 @@ describe("public cancel action calls the helper after the cancel RPC succeeds", 
 
   it("the writer records eventType: 'appointment_cancelled' through the helper", () => {
     expect(CANCEL_BELL).toMatch(/eventType:\s*"appointment_cancelled"/);
-    expect(CANCEL_BELL).toMatch(/import \{ recordPractitionerNotification \} from "@\/lib\/notifications\/practitioner-notifications"/);
+    expect(CANCEL_BELL).toMatch(/import \{ recordPractitionerNotificationAndWait \} from "@\/lib\/notifications\/practitioner-notifications"/);
   });
 
   it("the call appears AFTER the public_cancel_appointment_with_token RPC", () => {
@@ -285,8 +286,10 @@ describe("public cancel action calls the helper after the cancel RPC succeeds", 
     expect(helperIdx).toBeGreaterThan(rpcIdx);
   });
 
-  it("the insert is NOT awaited (the writer awaits only its own reads)", () => {
-    expect(CANCEL_BELL).not.toMatch(/await recordPractitionerNotification\(/);
+  it("the writer awaits the insert (awaitable variant) and never the detached recorder", () => {
+    // HON-7 (review B1): the writer AWAITS the insert through the awaitable variant, and never uses the detached recorder.
+    expect(CANCEL_BELL).toMatch(/await recordPractitionerNotificationAndWait\(/);
+    expect(CANCEL_BELL).not.toMatch(/\brecordPractitionerNotification\(/);
     expect(ACTIONS).not.toMatch(/await recordPractitionerNotification\(/);
   });
 });

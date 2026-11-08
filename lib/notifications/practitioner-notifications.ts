@@ -89,17 +89,75 @@ export type RecordPractitionerNotificationInput = {
   dedupeKey?: string | null;
 };
 
-// Fire-and-forget recorder. The caller MUST NOT await the returned
-// promise; the function returns void on purpose. Two layers of
-// safety: (1) the IIFE's outer try/catch swallows everything; (2)
-// even the recordOpsAlert fallback never throws (PR #153). A
-// failure at any point of the helper logs to stderr via console
-// (sanitised) and to ops_alerts when the alert path itself is
-// reachable. Net effect: a booking / cancel / reschedule cannot
-// fail because the notification insert failed.
-export function recordPractitionerNotification(
+// The write itself: never throws. Shared by the fire-and-forget recorder and the awaitable variant.
+async function writePractitionerNotification(
   input: RecordPractitionerNotificationInput,
-): void {
+): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    const { error } = await admin
+      .from("practitioner_notifications")
+      .insert({
+        studio_id: input.studioId,
+        practitioner_id: input.practitionerId,
+        event_type: input.eventType,
+        title: input.title,
+        body: input.body,
+        appointment_id: input.appointmentId,
+        client_id: input.clientId,
+        href: input.href,
+        ...(input.dedupeKey ? { dedupe_key: input.dedupeKey } : {}),
+      });
+    // A unique violation on a keyed write is the idempotent repeat: the row exists.
+    if (error && input.dedupeKey && error.code === "23505") return;
+    if (error) {
+      logSilently({
+        event: "practitioner_notification_insert_failed",
+        code: dbErrorCode(error),
+        event_type: input.eventType,
+        studio_id: input.studioId,
+        appointment_id: input.appointmentId,
+      });
+      fireAndForgetOpsAlert({
+        severity: "warning",
+        event: "practitioner_notification_insert_failed",
+        message: `Practitioner notification insert failed for ${input.eventType}. The core mutation already committed.`,
+        studioId: input.studioId,
+        appointmentId: input.appointmentId,
+        safeDetails: {
+          event_type: input.eventType,
+          code: error.code ?? null,
+        },
+      });
+    }
+  } catch (err) {
+    // createAdminClient throws synchronously when SUPABASE_SERVICE
+    // _ROLE_KEY / NEXT_PUBLIC_SUPABASE_URL are missing; the insert
+    // call itself can throw on a network failure. Either way the
+    // caller's mutation already committed; we only log.
+    logSilently({
+      event: "practitioner_notification_insert_threw",
+      err_class: thrownErrorClass(err),
+      event_type: input.eventType,
+      studio_id: input.studioId,
+      appointment_id: input.appointmentId,
+    });
+    fireAndForgetOpsAlert({
+      severity: "warning",
+      event: "practitioner_notification_insert_threw",
+      message: `Practitioner notification helper threw for ${input.eventType}. The core mutation already committed.`,
+      studioId: input.studioId,
+      appointmentId: input.appointmentId,
+      safeDetails: {
+        event_type: input.eventType,
+        err_message: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+}
+
+// Returns false (after logging) for an event type outside the allowlist.
+function eventTypeAllowed(input: RecordPractitionerNotificationInput): boolean {
   // Validate the event type synchronously so a misuse at the call
   // site (e.g. a typo in eventType) is logged with the actual call
   // origin and does not silently disappear. We still do not throw;
@@ -119,75 +177,41 @@ export function recordPractitionerNotification(
       appointmentId: input.appointmentId,
       safeDetails: { input_event_type: input.eventType },
     });
-    return;
+    return false;
   }
+  return true;
+}
+
+// Fire-and-forget recorder. The caller MUST NOT await the returned
+// promise; the function returns void on purpose. Two layers of
+// safety: (1) the IIFE's outer try/catch swallows everything; (2)
+// even the recordOpsAlert fallback never throws (PR #153). A
+// failure at any point of the helper logs to stderr via console
+// (sanitised) and to ops_alerts when the alert path itself is
+// reachable. Net effect: a booking / cancel / reschedule cannot
+// fail because the notification insert failed.
+export function recordPractitionerNotification(
+  input: RecordPractitionerNotificationInput,
+): void {
+  if (!eventTypeAllowed(input)) return;
   // Same shape as PR #155 logSmsFailure: wrap the entire async body
   // in a void IIFE so the caller's await chain is not extended and
   // any throw from the admin client or the insert itself is
   // contained.
   void (async () => {
-    try {
-      const admin = createAdminClient();
-      const { error } = await admin
-        .from("practitioner_notifications")
-        .insert({
-          studio_id: input.studioId,
-          practitioner_id: input.practitionerId,
-          event_type: input.eventType,
-          title: input.title,
-          body: input.body,
-          appointment_id: input.appointmentId,
-          client_id: input.clientId,
-          href: input.href,
-          ...(input.dedupeKey ? { dedupe_key: input.dedupeKey } : {}),
-        });
-      // A unique violation on a keyed write is the idempotent repeat: the row exists.
-      if (error && input.dedupeKey && error.code === "23505") return;
-      if (error) {
-        logSilently({
-          event: "practitioner_notification_insert_failed",
-          code: dbErrorCode(error),
-          event_type: input.eventType,
-          studio_id: input.studioId,
-          appointment_id: input.appointmentId,
-        });
-        fireAndForgetOpsAlert({
-          severity: "warning",
-          event: "practitioner_notification_insert_failed",
-          message: `Practitioner notification insert failed for ${input.eventType}. The core mutation already committed.`,
-          studioId: input.studioId,
-          appointmentId: input.appointmentId,
-          safeDetails: {
-            event_type: input.eventType,
-            code: error.code ?? null,
-          },
-        });
-      }
-    } catch (err) {
-      // createAdminClient throws synchronously when SUPABASE_SERVICE
-      // _ROLE_KEY / NEXT_PUBLIC_SUPABASE_URL are missing; the insert
-      // call itself can throw on a network failure. Either way the
-      // caller's mutation already committed; we only log.
-      logSilently({
-        event: "practitioner_notification_insert_threw",
-        err_class: thrownErrorClass(err),
-        event_type: input.eventType,
-        studio_id: input.studioId,
-        appointment_id: input.appointmentId,
-      });
-      fireAndForgetOpsAlert({
-        severity: "warning",
-        event: "practitioner_notification_insert_threw",
-        message: `Practitioner notification helper threw for ${input.eventType}. The core mutation already committed.`,
-        studioId: input.studioId,
-        appointmentId: input.appointmentId,
-        safeDetails: {
-          event_type: input.eventType,
-          err_message: err instanceof Error ? err.message : String(err),
-        },
-      });
-    }
+    await writePractitionerNotification(input);
   })();
+}
+
+// HON-7. The AWAITABLE variant, for a caller that must not return before the insert has been attempted. The fire-and-forget recorder
+// above detaches its insert, so a serverless function can return first and the runtime may drop the write silently (a cancellation
+// bell was lost that way). This resolves only AFTER the insert was attempted, and like the recorder it NEVER throws: a failure is
+// logged and alerted, not propagated, so it cannot undo the mutation that already committed.
+export async function recordPractitionerNotificationAndWait(
+  input: RecordPractitionerNotificationInput,
+): Promise<void> {
+  if (!eventTypeAllowed(input)) return;
+  await writePractitionerNotification(input);
 }
 
 // Durable, AWAITED notification writer for webhook use. Unlike the

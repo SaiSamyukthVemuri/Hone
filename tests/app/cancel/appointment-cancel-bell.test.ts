@@ -39,6 +39,11 @@ const scenario = {
   seenKeys: new Set<string>(),
   // active owners of the studio (ids), and the active actor's display name for staff cancels
   owners: [OWNER_A] as string[],
+  ownersError: false,
+  // the staff member has no display name, only an email
+  actorNoName: false,
+  // the insert completes only after this many ms (proves the writer waits for it)
+  insertDelayMs: 0,
 };
 
 function studioRow() {
@@ -56,8 +61,19 @@ function makeQuery(table: string) {
       return chain;
     },
     then(resolve: (v: { error: { code: string } | null }) => void) {
-      if (table === "practitioners" && columns === "id") return resolve({ data: scenario.owners.map((id) => ({ id })), error: null } as never);
+      if (table === "practitioners" && columns === "id") {
+        return resolve(
+          (scenario.ownersError ? { data: null, error: { code: "XX000", message: "PRIVATE owner read" } } : { data: scenario.owners.map((id) => ({ id })), error: null }) as never,
+        );
+      }
       if (table !== "practitioner_notifications" || !pending) return resolve({ error: null });
+      if (scenario.insertDelayMs > 0) {
+        const row = pending;
+        return void setTimeout(() => {
+          inserts.push(row);
+          resolve({ error: null });
+        }, scenario.insertDelayMs);
+      }
       const key = typeof pending.dedupe_key === "string" ? pending.dedupe_key : null;
       if (key && scenario.seenKeys.has(key)) return resolve({ error: { code: "23505" } });
       if (key) scenario.seenKeys.add(key);
@@ -82,7 +98,7 @@ function makeQuery(table: string) {
       if (table === "services") return { data: scenario.serviceReadNull ? null : { name: "Full Face" }, error: null };
       // Only the bell's own timezone read is emptied; the self-service gate reads the full studio row.
       if (table === "studios") return { data: scenario.studioReadNull && columns === "timezone" ? null : studioRow(), error: null };
-      if (table === "practitioners" && columns === "display_name, email") return { data: { display_name: "Syn Staff", email: "staff@example.invalid" }, error: null };
+      if (table === "practitioners" && columns === "display_name") return { data: { display_name: scenario.actorNoName ? null : "Syn Staff" }, error: null };
       if (table === "practitioners") return { data: { display_name: "Synthetic owner", email: "owner@example.invalid" }, error: null };
       return { data: null, error: null };
     },
@@ -134,6 +150,9 @@ beforeEach(() => {
     studioReadNull: false,
     seenKeys: new Set<string>(),
     owners: [OWNER_A],
+    ownersError: false,
+    actorNoName: false,
+    insertDelayMs: 0,
   });
 });
 
@@ -283,7 +302,7 @@ describe("who is notified (per-recipient rows, the actor never)", () => {
     expect(inserts).toHaveLength(1);
   });
 
-  it("with no owner readable: a client cancel falls back to one studio-wide row; a staff cancel writes nothing", async () => {
+  it("the studio has NO active owner (read succeeded, empty): a client cancel falls back to one studio-wide row; a staff cancel writes nothing", async () => {
     scenario.owners = [];
     await call(null);
     expect(inserts).toHaveLength(1);
@@ -293,10 +312,43 @@ describe("who is notified (per-recipient rows, the actor never)", () => {
     await call(STAFF);
     expect(inserts).toHaveLength(0);
   });
+
+  it("an owner-read ERROR writes NOTHING (no per-owner row, no studio-wide fallback) and logs only a code", async () => {
+    scenario.ownersError = true;
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => void logged.push(String(m)));
+    try {
+      await call(null);
+      await call(STAFF);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(inserts).toHaveLength(0);
+    const line = logged.find((l) => l.includes("cancel_bell_owner_read_failed")) ?? "";
+    expect(line).toContain("XX000");
+    expect(line).not.toContain("PRIVATE");
+    expect(line).not.toContain(STUDIO);
+    expect(line).not.toContain(APPT);
+  });
+
+  it("the staff name is the display name, then 'A team member'; the email is never used", async () => {
+    scenario.actorNoName = true;
+    await call(STAFF);
+    expect(inserts).toHaveLength(1);
+    expect(String(inserts[0].body)).toMatch(/^A team member cancelled /);
+    expect(String(inserts[0].body)).not.toContain("example.invalid");
+  });
+
+  it("the writer's promise resolves only AFTER the insert was attempted (a detached insert could be dropped by a serverless runtime)", async () => {
+    scenario.insertDelayMs = 30;
+    await recordAppointmentCancelNotifications(admin as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
+    // no flush: if the writer had detached the insert, nothing would be recorded yet
+    expect(inserts).toHaveLength(1);
+  });
 });
 
 describe("the in-app cancel action", () => {
-  it("records the bell after the RPC succeeds, as the signed-in practitioner, never with free text", () => {
+  it("records the bell after the RPC succeeds, as the signed-in practitioner, with the free-text reason excluded", () => {
     const src = readFileSync(join(process.cwd(), "app/(app)/calendar/actions.ts"), "utf8");
     const rpc = src.indexOf('"practitioner_cancel_appointment"');
     const call = src.indexOf("recordAppointmentCancelNotifications(admin");
