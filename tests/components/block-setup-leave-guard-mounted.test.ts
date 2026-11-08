@@ -185,16 +185,55 @@ describe("the leave guard on a CREATE saved without any edit", () => {
     await act(async () => settle({ ok: false, error: "No." }));
   });
 
-  it("LOST RESPONSE: still armed, the key is kept (no second create is possible) and Save stays closed", async () => {
-    blockActions.createTreatmentAreaWithEntryAction.mockRejectedValue(new Error("network"));
+  const saveBtn = () => host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!;
+  const cancelBtn = () => host!.querySelector<HTMLButtonElement>('[data-testid="cancel-treatment-area"]')!;
+  const keyOf = (n: number) => (blockActions.createTreatmentAreaWithEntryAction.mock.calls[n][0] as { createKey: string | null }).createKey;
+
+  it("LOST RESPONSE: still armed, and Save is ENABLED: pressing it again sends the SAME createKey, exactly once more", async () => {
+    blockActions.createTreatmentAreaWithEntryAction.mockRejectedValueOnce(new Error("network")).mockResolvedValue({ ok: true });
     await mount(true);
     await save();
     await act(async () => undefined);
-    const first = blockActions.createTreatmentAreaWithEntryAction.mock.calls[0][0] as { createKey: string | null };
-    expect(first.createKey, "the create was keyed").toEqual(expect.any(String));
+    expect(keyOf(0), "the create was keyed").toEqual(expect.any(String));
     expect(leaveIsHeld(), "armed through the lost answer").toBe(true);
-    expect(host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!.disabled, "no retry that could duplicate").toBe(true);
-    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+    expect(host!.textContent, "she is told to press Save again").toContain("Press Save again without changing anything");
+    expect(saveBtn().disabled, "create mode's recovery IS pressing Save again (INITIAL_SAVE_UNRESOLVED)").toBe(false);
+    await save();
+    await act(async () => undefined);
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(2);
+    expect(keyOf(1), "the retry key is preserved, so a committed first attempt answers with the same area").toBe(keyOf(0));
+    expect(leaveIsHeld(), "confirmed by the retry").toBe(false);
+  });
+
+  it("R1: a REFUSAL after a lost answer keeps the guard armed and the key, and Save stays enabled", async () => {
+    blockActions.createTreatmentAreaWithEntryAction.mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce({ ok: false, error: "Refused." });
+    await mount(true);
+    await save();
+    await act(async () => undefined);
+    await save();
+    await act(async () => undefined);
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(host!.textContent, "read as already saved, not as nothing committed").toContain("This area may already be saved");
+    expect(leaveIsHeld(), "the first attempt may have committed: leaving drops the key").toBe(true);
+    expect(saveBtn().disabled, "a further retry stays possible").toBe(false);
+  });
+
+  it("R2: the create owner never feeds anyUnresolved, so Cancel is not frozen by it beyond saveUnresolved's own rule", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
+    expect(src).toMatch(/useReportDraft\(\{ draft: createAttemptOpen, unresolved: false \}, draftRegistry\.api\)/);
+    // the consumers of anyUnresolved are ENUMERATED: the host's revisionUnresolved (Save, Cancel) and the panel's identityFrozen. A new one is loud.
+    const dirs = ["components/machines", "app/(app)/clients/[id]/sessions/[sessionId]"];
+    const { readdirSync } = await import("node:fs");
+    const readers = dirs
+      .flatMap((d) => readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => `${d}/${f}`))
+      .filter((f) => !f.endsWith("draft-registry.tsx") && /anyUnresolved/.test(readFileSync(f, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n")))
+      .sort();
+    expect(readers).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
+      "components/machines/machine-first-setup-panel.tsx",
+    ]);
   });
 
   it("A DEFINITIVE REFUSAL with no lost answer is a confirmed outcome: nothing committed, nothing to protect", async () => {

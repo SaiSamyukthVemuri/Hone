@@ -1044,9 +1044,12 @@ export function BlockSetupForm({
   // (not in the URL) and recreating could duplicate a committed save. From submit until a CONFIRMED outcome the attempt is both an unsaved
   // draft and unresolved: in flight (`pending`) or held after a lost answer or a refusal that follows one (`saveUnresolved`). A definitive
   // refusal with no lost answer is a confirmed outcome (nothing committed, key dropped), and a confirmed success closes the form, whose
-  // unmount removes this key. Registered like every other owner, so the guard and `anyUnresolved` derive from it.
+  // unmount removes this key. Registered like every other owner, so the guard derives from it.
+  // `unresolved` IS DELIBERATELY FALSE (Insurance final437 F1): `anyUnresolved` is `revisionUnresolved`, which disables Save and Cancel, and in
+  // CREATE mode pressing Save again unchanged IS the recovery (INITIAL_SAVE_UNRESOLVED; the retry key makes it safe). `saveUnresolved`
+  // already freezes the draft. The guard needs only the draft flag.
   const createAttemptOpen = !block && (pending || saveUnresolved);
-  useReportDraft({ draft: createAttemptOpen, unresolved: createAttemptOpen }, draftRegistry.api);
+  useReportDraft({ draft: createAttemptOpen, unresolved: false }, draftRegistry.api);
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
