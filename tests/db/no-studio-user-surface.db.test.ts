@@ -46,7 +46,7 @@ import {
 //             does not call a membership/ownership/uid check.
 //   storage   buckets and storage.objects policies applicable to authenticated.
 
-// WHAT THIS DOES NOT CLAIM. The 47 pinned functions are the set that RAN for a no-studio user in
+// WHAT THIS DOES NOT CLAIM. The 51 pinned functions are the set that RAN for a no-studio user in
 // the seeded local fixture. That is a reviewed list, not a proof that they are harmless, and the
 // census does not scrub or otherwise vouch for the report it writes. Behavioural role-check
 // proofs (valid fixture ids, an asserted refusal, a rolled-back scratch copy that stops
@@ -57,6 +57,8 @@ import {
 // Covered by SOURCE READING ONLY, no behavioural proof here: archive_treatment_image,
 // set_treatment_image_note, edit_client_pinned_note, reconcile_my_pending_invitation,
 // realtime.send (S1, hosted read), graphql_public.graphql (S2, hosted read).
+// The four 0298 dismissal functions (dismiss/restore/restore_if_latest/list_dismissed_attention) have
+// behavioural proofs in the S5 block at the end of this file.
 
 
 /**
@@ -812,10 +814,12 @@ const PINNED: string[] = [
   "fn public.audit_actor_is_caller(target_actor_id uuid, target_studio_id uuid)",
   "fn public.can_read_client_legal_identity(target_studio_id uuid)",
   "fn public.can_use_client_legal_identity(target_studio_id uuid)",
+  "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
   "fn public.is_studio_member(target_studio_id uuid)",
   "fn public.is_studio_owner(target_studio_id uuid)",
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",
+  "fn public.list_dismissed_attention(p_studio uuid)",
   "fn public.member_owns_scoped_timed_block(p_studio_id uuid, p_practitioner_id uuid)",
   "fn public.my_pending_invitation()",
   "fn public.receptionist_cancel_appointment(p_studio_id uuid, p_appointment_id uuid, p_reason text)",
@@ -823,6 +827,8 @@ const PINNED: string[] = [
   "fn public.receptionist_move_appointment(p_studio_id uuid, p_appointment_id uuid, p_target_practitioner_id uuid, p_expected_starts_at timestamp ",
   "fn public.reconcile_my_pending_invitation()",
   "fn public.record_appointment_settlement(p_studio_id uuid, p_appointment_id uuid, p_method text, p_amount_cents integer, p_note text, p_livemode",
+  "fn public.restore_attention_item(p_studio uuid, p_item_key text)",
+  "fn public.restore_attention_item_if_latest(p_studio uuid, p_item_key text, p_observed_seq bigint)",
   "fn public.session_is_visible(target_session_id uuid)",
   "fn public.set_new_client_admission_mode(p_studio_id uuid, p_mode text)",
   "fn public.set_own_calendar_feed_token_hash(p_studio_id uuid, p_token_hash text)",
@@ -984,6 +990,152 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
       // The real function is unchanged after the rollback.
       expect(isRefusal(c, await run(S, c))).toBe(true);
       void owner;
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S5: the four 0298 dashboard-dismissal functions are reachable by a no-studio user (they are
+// SECURITY DEFINER and granted to authenticated) but each stops at the same first check,
+// `v_user is null or p_studio is null or not public.is_studio_owner(p_studio)` (0298 lines 77-80,
+// 112-115, 148-151, 181-184), and answers only {ok:false, code:'refused'}. Proven here:
+//   1. the stranger gets exactly that answer for the owner's real studio, a random studio and a
+//      NULL studio (so the answer is no oracle for which studios exist, and echoes no studio id);
+//   2. the stranger's calls add no event row, counted on the SAME connection inside the transaction
+//      (reset role, count, back to the savepoint), so a call that did insert would be seen; the scratch
+//      probe below shows the count moving when the ownership check is removed from dismiss_attention_item;
+//   3. after the OWNER dismissed an item (same transaction, claims then switched to the stranger),
+//      the stranger gets the refused answer and no item key or token. The refused answer is the
+//      discriminating assertion here: events are scoped to the caller, so a stranger without the gate
+//      would see an empty list too and the absence of the key alone would not tell the cases apart;
+//   4. a member who is not an owner, and the owner of a different studio, are refused the same way; the owner is not (control);
+//   5. a rolled-back scratch copy of each function without the ownership check no longer refuses the
+//      stranger (the probe can fail);
+//   6. anon, public and service_role cannot execute them.
+// The scratch-copy probe (5) runs CREATE OR REPLACE FUNCTION inside a transaction it always rolls back. It is
+// local-stack only: this file must never be pointed at a hosted database (the harness refuses a non-loopback pair).
+// ---------------------------------------------------------------------------
+describe("S5: the 0298 dismissal functions refuse a no-studio user at the ownership check and leak nothing", () => {
+  const KEY = "unpaid:s5-probe";
+  const REFUSED = JSON.stringify({ ok: false, code: "refused" });
+  type Fn = { name: string; sql: (studio: string | null) => string };
+  const lit = (studio: string | null) => (studio === null ? "null::uuid" : `'${studio}'::uuid`);
+  const FNS: Fn[] = [
+    { name: "dismiss_attention_item", sql: (st) => `select public.dismiss_attention_item(${lit(st)}, '${KEY}', 'tok-1') r` },
+    { name: "restore_attention_item", sql: (st) => `select public.restore_attention_item(${lit(st)}, '${KEY}') r` },
+    { name: "restore_attention_item_if_latest", sql: (st) => `select public.restore_attention_item_if_latest(${lit(st)}, '${KEY}', 1) r` },
+    { name: "list_dismissed_attention", sql: (st) => `select public.list_dismissed_attention(${lit(st)}) r` },
+  ];
+  const as = async (c: Client, userId: string) => {
+    await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+  };
+  const call = async (c: Client, f: Fn, studio: string | null) => (await callCounting(c, f, studio)).answer;
+  // The answer plus how many events the call left in the studio, counted on the same connection before the
+  // savepoint is rolled back (the table is closed to authenticated, so the count runs as the owner role).
+  const callCounting = async (c: Client, f: Fn, studio: string | null) => {
+    await c.query("savepoint s5");
+    try {
+      const answer = JSON.stringify((await c.query(f.sql(studio))).rows[0].r);
+      await c.query("reset role");
+      const added = Number((await c.query("select count(*)::int n from public.dashboard_attention_events where studio_id = $1", [A.studioId])).rows[0].n);
+      return { answer, added };
+    } finally { await c.query("rollback to savepoint s5"); }
+  };
+  const withTx = async <T,>(fn: (c: Client) => Promise<T>): Promise<T> => {
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("set local role authenticated");
+      return await fn(c);
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+  };
+
+  it("the stranger gets exactly {ok:false, code:refused} for a real, a random and a NULL studio, and no studio id is echoed", async () => {
+    await withTx(async (c) => {
+      await as(c, S);
+      for (const f of FNS) {
+        for (const st of [A.studioId, randomUUID(), null]) {
+          const { answer, added } = await callCounting(c, f, st);
+          expect(answer, `${f.name}(${st === null ? "null" : "studio"})`).toBe(REFUSED);
+          expect(answer).not.toContain(A.studioId);
+          expect(added, `${f.name}: a refused stranger call must leave no event in the studio`).toBe(0);
+        }
+      }
+    });
+  });
+
+  it("an item the owner dismissed is not visible to the stranger, and the stranger's restores change nothing", async () => {
+    await withTx(async (c) => {
+      await as(c, A.userId);
+      const d = await c.query(`select public.dismiss_attention_item('${A.studioId}'::uuid, '${KEY}', 'tok-1') r`);
+      expect(d.rows[0].r).toEqual({ ok: true, changed: true });
+      const own = await c.query(`select public.list_dismissed_attention('${A.studioId}'::uuid) r`);
+      expect(JSON.stringify(own.rows[0].r), "control: the owner sees the dismissal").toContain(KEY);
+      await as(c, S);
+      for (const f of FNS) {
+        const r = await call(c, f, A.studioId);
+        expect(r, f.name).toBe(REFUSED);
+        expect(r).not.toContain(KEY);
+        expect(r).not.toContain("tok-1");
+      }
+      await as(c, A.userId);
+      const after = await c.query(`select public.list_dismissed_attention('${A.studioId}'::uuid) r`);
+      expect(JSON.stringify(after.rows[0].r), "the stranger's restores left the owner's dismissal in place").toContain(KEY);
+    });
+  });
+
+  it("a member who is not an owner is refused the same way; the owner is not (control)", async () => {
+    await withTx(async (c) => {
+      for (const f of FNS) {
+        await as(c, M.userId);
+        expect(await call(c, f, A.studioId), `member ${f.name}`).toBe(REFUSED);
+        await as(c, A.userId);
+        expect(await call(c, f, A.studioId), `owner ${f.name}`).not.toBe(REFUSED);
+      }
+    });
+  });
+
+  it("the owner of a DIFFERENT studio, calling with this studio's id, is refused and leaves no event", async () => {
+    const B = await seedStudio("nsu-other-owner");
+    await withTx(async (c) => {
+      await as(c, B.userId);
+      for (const f of FNS) {
+        const { answer, added } = await callCounting(c, f, A.studioId);
+        expect(answer, `other-studio owner ${f.name}`).toBe(REFUSED);
+        expect(added, `${f.name}: no event in the other studio`).toBe(0);
+      }
+    });
+  });
+
+  for (const f of FNS) {
+    it(`${f.name}: a scratch copy without the ownership check no longer refuses the stranger (can fail)`, async () => {
+      const def = (await adminQuery(`select pg_get_functiondef(p.oid) d from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=$1`, [f.name])).rows[0].d as string;
+      const gate = /or not public\.is_studio_owner\(p_studio\)/;
+      expect(def, "the ownership check must be present (else this probe is stale)").toMatch(gate);
+      const out = await withTx(async (c) => {
+        await c.query("reset role");
+        await c.query(def.replace(gate, ""));
+        await c.query("set local role authenticated");
+        await as(c, S);
+        return callCounting(c, f, A.studioId);
+      });
+      expect(out.answer, "with the ownership check removed the stranger is no longer refused").not.toBe(REFUSED);
+      // The event count moves too, for the command that writes unconditionally (the restores have nothing to restore).
+      if (f.name === "dismiss_attention_item") expect(out.added, "the stranger's dismissal is written once the check is gone").toBe(1);
+      // the real function is unchanged after the rollback
+      await withTx(async (c) => { await as(c, S); expect(await call(c, f, A.studioId)).toBe(REFUSED); });
+    });
+
+    it(`${f.name}: not executable by anon, public or service_role`, async () => {
+      const r = await adminQuery(
+        `select has_function_privilege('anon', p.oid, 'execute') a, has_function_privilege('service_role', p.oid, 'execute') s, has_function_privilege('authenticated', p.oid, 'execute') u,
+                exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x where x.grantee = 0) pub
+           from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=$1`, [f.name]);
+      expect(r.rows[0]).toEqual({ a: false, s: false, u: true, pub: false });
     });
   }
 });
