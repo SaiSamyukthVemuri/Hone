@@ -22,8 +22,22 @@
 --      and i.expires_at > now()
 --    group by s.id;
 --
--- Zero rows: the rollback changes nothing anyone can see. Any row: decide first (wait out the 48h
--- lifetime, or ask the owner to release those invitations); do not roll back over them unannounced.
+-- CLASS R, a second READ-ONLY query: invitations already REDEEMED whose person is not yet booked
+-- (the entry is still `invited`). A legacy-path rollback strands exactly these, because the redemption
+-- is not undone when a later booking is refused:
+--
+--   select s.id as studio_id, count(*) as redeemed_unbooked
+--     from public.new_client_waitlist_invitations i
+--     join public.new_client_waitlist_entries e on e.id = i.entry_id and e.studio_id = i.studio_id
+--     join public.studios s on s.id = i.studio_id
+--    where s.new_client_admission_mode = 'closed'
+--      and i.redeemed_at is not null
+--      and e.status = 'invited'
+--    group by s.id;
+--
+-- Zero rows from BOTH queries: the rollback changes nothing anyone can see. Any row: decide first
+-- (wait out the 48h lifetime, or ask the owner to release those invitations; for class R, wait for the
+-- booking or have the owner close the row without booking); do not roll back over them unannounced.
 begin;
 set local lock_timeout = '5s';
 

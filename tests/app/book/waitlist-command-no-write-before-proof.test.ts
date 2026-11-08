@@ -173,6 +173,7 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
 // a behavioural fact rather than a reading of the source.
 const authorizeCalls: unknown[] = [];
 let authorizeResult: "authorized" | "scope_refused" = "authorized";
+let consumeRefused = false;
 
 vi.mock("@/lib/booking/waitlist-invitation", async (orig) => {
   const actual =
@@ -190,11 +191,14 @@ vi.mock("@/lib/booking/waitlist-invitation", async (orig) => {
         invitation: { invitationId: "inv-1", entryId: "entry-1" },
       } as never;
     }),
-    consumeInvitationForBooking: vi.fn(async () => ({
+    consumeInvitationForBooking: vi.fn(async () =>
+      consumeRefused
+        ? ({ kind: "capability_refused" } as never)
+        : {
       kind: "redeemed",
       studioId: STUDIO_ID,
       entryId: "entry-1",
-    })),
+    }),
   };
 });
 
@@ -299,6 +303,7 @@ beforeEach(() => {
   admissionOverride = null;
   authorizeCalls.length = 0;
   authorizeResult = "authorized";
+  consumeRefused = false;
   logged.length = 0;
   errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(" ")); });
 });
@@ -440,6 +445,34 @@ describe("0323: a CLOSED studio books an invited person through publicBookAppoin
       expectNothingMutated();
     },
   );
+
+  // The both-halves check is a PRESENCE check, not proof. A real token with a garbage capability
+  // reaches the proof, which refuses; nothing is written on either path.
+  it("marker applied + a real token but a GARBAGE capability, flag ON: the command refuses and nothing is written", async () => {
+    admissionOverride = CLOSED;
+    scenario.marker = "applied";
+    scenario.rpcResult = "redeem_proof_invalid";
+    const r = await publicBookAppointmentAction(invitedForm({ invitation_capability: "garbage" }));
+    expect(r.ok).toBe(false);
+    expect(dbWrites, "no row may be written").toEqual([]);
+    expect(confirmationEmails).toEqual([]);
+    expect(smsCalls).toEqual([]);
+    expect(conversions).toEqual([]);
+  });
+
+  it("marker applied + a real token but a GARBAGE capability, LEGACY path: the proof refuses before any write", async () => {
+    vi.stubEnv("WAITLIST_BOOKING_COMMAND", "");
+    admissionOverride = CLOSED;
+    scenario.marker = "applied";
+    consumeRefused = true;
+    const r = await publicBookAppointmentAction(invitedForm({ invitation_capability: "garbage" }));
+    expect(r.ok).toBe(false);
+    expect(rpcCalls, "no booking command may be issued").toEqual([]);
+    expect(dbWrites, "no row may be written").toEqual([]);
+    expect(confirmationEmails).toEqual([]);
+    expect(smsCalls).toEqual([]);
+    expect(conversions).toEqual([]);
+  });
 
   it("marker applied but only ONE half presented: refused as closed, invitation never consulted", async () => {
     admissionOverride = CLOSED;

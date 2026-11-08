@@ -455,6 +455,13 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
 export const INVITE_ADMISSION_CLOSED_COPY =
   "No invitation was created. New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
 
+/**
+ * Shown, as neutral information, when admission is Closed and invitations can book (0323 applied).
+ * Keeps the three facts together: Closed; no public booking or joining; invitees can book.
+ */
+export const INVITE_CLOSED_INVITED_ONLY_COPY =
+  "New-client admission is Closed. The public can’t book or join your waitlist. People you invite here can still book, using the link and code in their invitation.";
+
 /** The owner's banner / composer reason while admission is Closed. Its own text, not a slice of the notice. */
 export const INVITE_ADMISSION_CLOSED_BANNER_COPY =
   "New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";

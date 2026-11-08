@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_ADMISSION_UNREADABLE_COPY,
+  INVITE_CLOSED_INVITED_ONLY_COPY,
+} from "@/lib/waitlist/invite-to-book-contract";
+import {
   CAPACITY_EXHAUSTED_COPY,
   CAPACITY_PANEL,
 } from "@/lib/waitlist/invitation-capacity";
@@ -2883,7 +2888,29 @@ describe("closed admission blocks the owner's invite until 0323 is applied (0204
     admissionHolder.rule = "applied";
     scenario.rows = [entry({ id: "w1", status: "waiting" })];
     scenario.count = 1;
-    expect(await render()).not.toContain("invites-blocked-admission");
+    const html = await render();
+    expect(html).not.toContain("invites-blocked-admission");
+    // Neutral information, not a warning: it names all three facts.
+    expect(html).toContain('data-testid="invites-closed-invited-only"');
+    expect(html).toContain(INVITE_CLOSED_INVITED_ONLY_COPY);
+    expect(html).toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*neutral/);
+    expect(html).not.toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*amber/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toContain("Closed");
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/public can’t book or join/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/invite here can still book/);
+    // Send is not withheld for admission: neither blocked copy reaches the composer.
+    expect(html).not.toContain(INVITE_ADMISSION_CLOSED_BANNER_COPY);
+    expect(html).not.toContain(INVITE_ADMISSION_UNREADABLE_COPY);
+  });
+
+  it("the information note is absent whenever Closed is blocked, unreadable, or not Closed", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    for (const [stored, rule] of [["closed", "absent"], ["closed", "error"], ["not-a-mode", "applied"], ["waitlist", "applied"], ["open", "applied"]] as const) {
+      admissionHolder.stored = stored;
+      admissionHolder.rule = rule;
+      expect(await render(), `${stored}/${rule}`).not.toContain("invites-closed-invited-only");
+    }
   });
 
   it("a marker failure other than 'absent' pauses invitations without claiming Closed", async () => {

@@ -29,6 +29,7 @@ import {
 } from "@/lib/booking/new-client-admission";
 import {
   INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_CLOSED_INVITED_ONLY_COPY,
   INVITE_ADMISSION_UNREADABLE_COPY,
 } from "@/lib/waitlist/invite-to-book-contract";
 import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
@@ -692,10 +693,12 @@ export default async function WaitlistSettingsPage({
   const declined = await loadDeclinedAttention(supabase, studio.id);
   // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
   // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
-  const invitesBlockedKind = await invitedBookingRefusalKind(
-    await getNewClientAdmissionMode(studio),
-  );
+  const admissionForInvites = await getNewClientAdmissionMode(studio);
+  const invitesBlockedKind = await invitedBookingRefusalKind(admissionForInvites);
   const invitesBlockedByAdmission = invitesBlockedKind !== null;
+  // Closed and NOT blocked means the 0323 marker answered true: say plainly what Closed now means.
+  const invitesClosedInvitedOnly =
+    admissionForInvites.ok && admissionForInvites.mode === "closed" && !invitesBlockedByAdmission;
   const invitesBlockedCopy =
     invitesBlockedKind === "closed"
       ? INVITE_ADMISSION_CLOSED_BANNER_COPY
@@ -860,6 +863,16 @@ export default async function WaitlistSettingsPage({
           the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
           of this file. `claim_new_client_waitlist_entries` and its server action
           are untouched and still tested; nothing on this page invokes them. */}
+
+      {invitesClosedInvitedOnly && (
+        <section
+          role="note"
+          data-testid="invites-closed-invited-only"
+          className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+        >
+          <p>{INVITE_CLOSED_INVITED_ONLY_COPY}</p>
+        </section>
+      )}
 
       {invitesBlockedByAdmission && (
         <section
