@@ -88,7 +88,7 @@ describe("Codex P2 4476375641: a reset or adoption preview does not outlive an e
 describe("editing is disabled while a save, reset, adopt or read-back is in flight", () => {
   const SRC = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
   it("the busy window is the whole 'saving' feedback state and turns every row read-only", () => {
-    expect(SRC).toContain('const busy = feedback.state.kind === "saving" || refreshing;');
+    expect(SRC).toContain('const busy = feedback.state.kind === "saving" || refreshing || activating;');
     expect(SRC).toContain("const readOnly = !props.writable || busy;");
   });
   it("the edit entry points refuse while busy", () => {
@@ -111,7 +111,7 @@ describe("the busy window outlasts the refresh and a rejected promise ends it", 
   it("B-1: router.refresh runs inside a transition and busy includes it (refresh() returns void, so awaiting it would hold nothing)", () => {
     expect(SRC).toContain("const [refreshing, startRefresh] = useTransition();");
     expect(SRC).toContain("const refreshNow = () => startRefresh(() => router.refresh());");
-    expect(SRC).toContain('const busy = feedback.state.kind === "saving" || refreshing;');
+    expect(SRC).toContain('const busy = feedback.state.kind === "saving" || refreshing || activating;');
     // the reset/adopt, the reload-failure and the activation paths all go through it; the people panel's own refresh is unrelated to the draft
     expect(SRC.match(/router\.refresh\(\)/g)?.length).toBe(3); // refreshNow + the People panel + a comment
   });
