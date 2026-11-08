@@ -57,3 +57,22 @@ export function estimateCapacity(fit: number, outstanding: number): CapacityEsti
 
 export const CAPACITY_NOTE =
   "Availability can change at any time. Nothing is reserved for an invitation until the person books.";
+
+/**
+ * The words beside the number. "At least", never "exactly": the count treats the
+ * studio as one calendar, so it never over-promises but may under-count.
+ */
+export function capacityLines(c: CapacityEstimate): string[] {
+  const lines = [
+    c.fit === 0
+      ? "No consultation times fit this window right now."
+      : `At least ${c.fit} consultation${c.fit === 1 ? " fits" : "s fit"} this window.`,
+  ];
+  if (c.outstanding > 0) {
+    lines.push(
+      `${c.outstanding} invitation${c.outstanding === 1 ? " is" : "s are"} already out and not yet booked, so about ${c.open} more could be offered.`,
+    );
+  }
+  lines.push(CAPACITY_NOTE);
+  return lines;
+}

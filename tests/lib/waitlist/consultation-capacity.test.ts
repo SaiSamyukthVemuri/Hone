@@ -43,3 +43,20 @@ describe("estimateCapacity", () => {
     expect(CAPACITY_NOTE).toMatch(/Availability can change/);
   });
 });
+
+import { capacityLines } from "@/lib/waitlist/consultation-capacity";
+
+describe("capacityLines", () => {
+  it("says 'at least', mentions outstanding invitations, and ends with the not-reserved note", () => {
+    const l = capacityLines({ fit: 5, outstanding: 2, open: 3 });
+    expect(l[0]).toBe("At least 5 consultations fit this window.");
+    expect(l[1]).toMatch(/2 invitations are already out and not yet booked, so about 3 more/);
+    expect(l[l.length - 1]).toMatch(/Nothing is reserved/);
+  });
+
+  it("is honest when nothing fits and never presents a lower bound as exact", () => {
+    expect(capacityLines({ fit: 0, outstanding: 0, open: 0 })[0]).toMatch(/No consultation times fit/);
+    expect(capacityLines({ fit: 1, outstanding: 0, open: 1 })[0]).toBe("At least 1 consultation fits this window.");
+    for (const f of [1, 2, 9]) expect(capacityLines({ fit: f, outstanding: 0, open: f })[0]).not.toMatch(/exactly/i);
+  });
+});

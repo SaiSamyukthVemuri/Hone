@@ -1715,6 +1715,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  waitlist_invitation_followups: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The owner's durable follow-up item for a waitlist invitation that was used without a confirmed booking, draft migration 0313 (HON-7). One row per invitation (unique), with a closed reason code, created and resolved instants and the entry it belongs to. Studio-owned operational history, so PENDING rather than EXCLUDED, decided with new_client_waitlist_entries. It holds no client text, name, contact or appointment time; any free-text response a client later leaves is a separate owner-only column that is not registered here. Rows are erased with the studio. No export surface ships in 0313.",
+  },
   studio_waitlist_admission_rounds: {
     kind: "pending",
     ticket: "TRUTH-01B",

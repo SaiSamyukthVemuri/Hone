@@ -19,6 +19,7 @@ import {
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
@@ -1298,6 +1299,7 @@ export default async function WaitlistSettingsPage({
                                 entryName={row.name}
                                 draft={emptyDraft()}
                                 services={bookableServices}
+                                estimateCapacity={estimateWindowCapacityAction}
                                 // NO CAPACITY, NO OFFERED SEND. The composer
                                 // still opens for inspection; what it must not
                                 // do is present Send as valid and fail only
