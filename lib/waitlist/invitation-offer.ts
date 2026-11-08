@@ -408,7 +408,7 @@ export function groupSlotsByDay(
 function openUntil(expiresAt: string, tz: string): { inviteOpenUntil?: string } {
   const at = new Date(expiresAt);
   if (Number.isNaN(at.getTime())) return {};
-  return { inviteOpenUntil: `${formatSlotDayLabel(localDateString(at, tz))} at ${localTimeString12h(at, tz)}` };
+  return { inviteOpenUntil: `${formatSlotDayLabel(localDateString(at, tz))} at ${localTimeString12h(at, tz)} (studio time)` };
 }
 
 /** "Mon, Sep 7" -- short enough for a phone, unambiguous across a week. */

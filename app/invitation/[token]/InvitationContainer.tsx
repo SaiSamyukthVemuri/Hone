@@ -47,6 +47,8 @@ export function InvitationContainer({
    */
   const [typedPhone, setTypedPhone] = useState("");
   const [pending, startTransition] = useTransition();
+  /** Bumped by every user action; a background read must land in the epoch it began in. */
+  const epoch = useRef(0);
 
   /** Adopt a fresh view state, dropping a selection the new offer no longer lists. */
   const applyState = useCallback((next: InvitationViewState) => {
@@ -73,6 +75,9 @@ export function InvitationContainer({
   /** Every action funnels through here so `pending` can never be left stuck on. */
   const run = useCallback(
     (op: () => Promise<InvitationViewState>) => {
+      // Every user action starts a new epoch, so a background read begun before
+      // it can be recognised as stale when it lands.
+      epoch.current += 1;
       startTransition(async () => {
         try {
           applyState(await op());
@@ -96,8 +101,9 @@ export function InvitationContainer({
   //   * A FAILED background read KEEPS WHAT IS ON SCREEN. Only an explicit
   //     "Check again" may replace the offer with the retry error: a recipient
   //     who is halfway through typing must not lose the page to a blip.
-  //   * A result that lands after an action started is DISCARDED, so a stale
-  //     read cannot overwrite a booking or decline in flight.
+  //   * A result that lands after an action started or finished is DISCARDED
+  //     (per-action epoch, and the screen must still be an offer), so a stale
+  //     read cannot overwrite a booking or decline.
   const latest = useRef({ kind: state.kind, pending });
   latest.current = { kind: state.kind, pending };
   const lastRefreshAt = useRef(0);
@@ -108,11 +114,16 @@ export function InvitationContainer({
       const now = Date.now();
       if (now - lastRefreshAt.current < REFRESH_MIN_INTERVAL_MS) return;
       lastRefreshAt.current = now;
+      const began = epoch.current;
       void (async () => {
         try {
           const next = await loadInvitationAction(token);
           if (next.kind === "error") return;
-          if (latest.current.pending) return;
+          // STALE IF an action started since (new epoch), one is running, or the
+          // screen is no longer an offer: a booked or declined screen must never
+          // be overwritten by a read that began before it.
+          if (epoch.current !== began) return;
+          if (latest.current.pending || latest.current.kind !== "offer") return;
           applyState(next);
         } catch {
           // keep the current offer

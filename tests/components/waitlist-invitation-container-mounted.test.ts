@@ -8,8 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const load = vi.fn();
 const timesDontWork = vi.fn();
+const bookAction = vi.fn();
 vi.mock("@/app/invitation/[token]/actions", () => ({
-  bookInvitationSlotAction: vi.fn(),
+  bookInvitationSlotAction: (...a: unknown[]) => bookAction(...a),
   declineInvitationAction: vi.fn(),
   loadInvitationAction: (...a: unknown[]) => load(...a),
   requestInvitationProofAction: vi.fn(),
@@ -48,6 +49,7 @@ let now = 1_000_000;
 beforeEach(() => {
   load.mockReset();
   timesDontWork.mockReset();
+  bookAction.mockReset();
   vi.spyOn(Date, "now").mockImplementation(() => now);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -125,6 +127,37 @@ describe("InvitationContainer background refresh", () => {
     load.mockRejectedValueOnce(new Error("network"));
     await returnToTab();
     expect(host.querySelector('[data-testid="availability-note"]')).not.toBeNull();
+  });
+
+  it("a read that began BEFORE a booking and lands AFTER it does not overwrite the booked screen", async () => {
+    await mount();
+    let landLate!: (v: unknown) => void;
+    load.mockReturnValueOnce(new Promise((r) => (landLate = r)));
+    await returnToTab(); // background read begins, unresolved
+    expect(load).toHaveBeenCalledTimes(1);
+
+    const slotBtn = host.querySelector('button[aria-label="Mon, Sep 7 at 10:00 AM"]') as HTMLButtonElement;
+    await act(async () => {
+      slotBtn.click();
+    });
+    bookAction.mockResolvedValueOnce({
+      kind: "booked",
+      presentation: PRESENTATION,
+      startLabel: "10:00 AM",
+      dateLabel: "Mon, Sep 7",
+    });
+    const book = [...host.querySelectorAll("button")].find((b) => b.textContent === "Book this time")!;
+    await act(async () => {
+      book.click();
+    });
+    expect(host.textContent).toContain("10:00 AM");
+    expect(host.querySelector("textarea")).toBeNull(); // no longer an offer
+
+    await act(async () => {
+      landLate(offer({ noTimeDays: ["Tue, Sep 8"] }));
+    });
+    expect(host.querySelector("textarea")).toBeNull();
+    expect(host.querySelector('[data-testid="availability-note"]')).toBeNull();
   });
 
   it("is throttled: a second return inside the interval does not read again", async () => {
