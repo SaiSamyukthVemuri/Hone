@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // 0313 — waitlist booking command. STATIC contract. Behaviour is proved against a
 // real database in tests/db/waitlist-booking-command.db.test.ts and the lock
@@ -14,8 +14,11 @@ const DOWN = read("supabase/rollbacks/0313_waitlist_booking_command.down.sql");
 const exec = (sql: string) => sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
 
 describe("0313 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0313")).toBe(true);
+  // A successor (0319) was authored, so this is no longer the maximum, per
+  // CLAUDE.md §2.
+  it("consumes exactly one number and a successor sits above it", () => {
+    expect(isRepoMax("0313")).toBe(false);
+    expect(versionsAbove("0313")).toContain("0319");
     expect(countVersion("0313")).toBe(1);
   });
 });
