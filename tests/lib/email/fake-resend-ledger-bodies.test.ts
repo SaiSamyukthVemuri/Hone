@@ -99,19 +99,40 @@ describe("what the fake writes", () => {
 });
 
 describe("bodies are stored for harness recipients only", () => {
-  it("a recipient off @harness.local gets hashes and hrefs but NO text or html", async () => {
+  it("a recipient off @harness.local gets the hashes ONLY: no text, no html, no hrefs", async () => {
     arm({ HONE_E2E_FAKE_RESEND_LEDGER_BODIES: "1" });
     await createFakeResendTransport().emails.send({ ...PAYLOAD, to: "someone@example.invalid" });
     const r = rows()[0];
-    expect("text" in r || "html" in r).toBe(false);
+    expect("text" in r || "html" in r || "hrefs" in r).toBe(false);
     expect(r.text_sha256).toBe(sha(TEXT));
     expect(r.html_sha256).toBe(sha(HTML));
-    expect(r.hrefs.length).toBe(1);
+    expect(readFileSync(file, "utf8").includes("app.example.invalid")).toBe(false);
     expect(readFileSync(file, "utf8").includes("Review response")).toBe(false);
+  });
+  it.each([
+    "real@x.com,someone@harness.local",
+    "someone@harness.local;real@x.com",
+    "someone@harness.local real@x.com",
+    "Real <real@x.com>",
+    "<someone@harness.local>",
+    " someone@harness.local",
+    "someone@harness.local\n",
+    "a@b@harness.local",
+  ])("%j is not a single exact harness address: hashes only", async (to) => {
+    expect(isHarnessRecipient(to)).toBe(false);
+    arm({ HONE_E2E_FAKE_RESEND_LEDGER_BODIES: "1" });
+    await createFakeResendTransport().emails.send({ ...PAYLOAD, to });
+    const r = rows()[0];
+    expect("text" in r || "html" in r || "hrefs" in r).toBe(false);
+    expect(r.html_sha256).toBe(sha(HTML));
+  });
+  it("a non-string or array recipient is never a harness recipient", () => {
+    for (const v of [["someone@harness.local"], null, undefined, 7, { toString: () => "a@harness.local" }]) expect(isHarnessRecipient(v)).toBe(false);
   });
   it("recognises the harness domain exactly", () => {
     expect(isHarnessRecipient("success+a@harness.local")).toBe(true);
     expect(isHarnessRecipient("a@harness.local.evil.example")).toBe(false);
+    expect(isHarnessRecipient("A+tag@HARNESS.LOCAL")).toBe(true);
     expect(isHarnessRecipient("a@notharness.local")).toBe(false);
   });
 });
