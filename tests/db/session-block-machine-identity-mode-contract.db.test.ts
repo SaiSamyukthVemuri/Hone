@@ -162,3 +162,98 @@ describe("the other identity entrypoints go through the same validation", () => 
     expect(n).toBe(0);
   });
 });
+
+// Builds the 31-argument call of create_block_with_initial_setup_and_identity: only the identity-bearing positions are named.
+const CREATE_SQL = `select public.create_block_with_initial_setup_and_identity(
+  $1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9,$10,$11,$12,$13,$14,
+  $15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+  $27,$28,$29,$30::jsonb,$31) as r`;
+
+const create = (s: SeededStudio, sessionId: string, over: { machine?: string | null; mode?: string | null; key?: string | null; profile?: string | null }) =>
+  asUser(s.userId, async (q) => {
+    const args: unknown[] = new Array(31).fill(null);
+    args[0] = sessionId;
+    args[1] = s.clientId;
+    args[2] = JSON.stringify({ block_name: "Mode", primary_area: "jaw" });
+    args[3] = JSON.stringify({});
+    args[4] = JSON.stringify([]);
+    args[5] = false;
+    args[26] = over.machine ?? null;
+    args[27] = over.mode ?? null;
+    args[28] = over.key ?? null;
+    args[29] = JSON.stringify([{ new_group_ref: "g1", channels: [1], readings: [{ field_key: "current", value: "9", observation_source: "practitioner-entered" }] }]);
+    args[30] = over.profile ?? null;
+    const r = await q(CREATE_SQL, args);
+    return r.rows[0].r as { block_id: string; reused: boolean };
+  });
+
+describe("the create and setup-submission entrypoints refuse a mode the contract does not publish", () => {
+  it("create_block_with_initial_setup_and_identity refuses an unknown mode and leaves no block behind", async () => {
+    await publish();
+    const s = await seedStudio("mc-create-unknown");
+    const machine = await register(s, [OPTION]);
+    const { sessionId } = await seedSession(s);
+    const before = (await adminQuery(`select count(*)::int as n from public.session_blocks where session_id = $1`, [sessionId])).rows[0].n;
+    const e = await refused(create(s, sessionId, { machine, mode: "not-published", key: `c-${randomUUID()}` }));
+    expect(e?.code).toBe("23514");
+    const after = (await adminQuery(`select count(*)::int as n from public.session_blocks where session_id = $1`, [sessionId])).rows[0].n;
+    expect(after).toBe(before);
+  });
+
+  it("record_setup_submission_with_identity refuses an unknown mode and records nothing", async () => {
+    await publish();
+    const s = await seedStudio("mc-sub-unknown");
+    const machine = await register(s, [OPTION]);
+    const { sessionId, blockId } = await seedSession(s);
+    const groups = [{ new_group_ref: "g1", channels: [1], readings: [{ field_key: "current", value: "9", observation_source: "practitioner-entered" }] }];
+    const e = await refused(
+      asUser(s.userId, (q) =>
+        q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7,$8::timestamptz)`, [
+          blockId, machine, "not-published", `sub-${randomUUID()}`, JSON.stringify(groups), sessionId, s.clientId, null,
+        ]),
+      ),
+    );
+    expect(e?.code).toBe("23514");
+    expect((await stored(blockId)).machine_mode_key).toBeNull();
+    const n = (await adminQuery(`select count(*)::int as n from public.treatment_setup_captures where session_block_id = $1`, [blockId])).rows[0].n;
+    expect(n).toBe(0);
+  });
+
+  it("a committed create-kind receipt replays its stored answer after the unit loses the option", async () => {
+    await publish();
+    const s = await seedStudio("mc-create-replay");
+    const machine = await register(s, [OPTION]);
+    const { sessionId } = await seedSession(s);
+    const key = `create-replay-${randomUUID()}`;
+    const first = await create(s, sessionId, { machine, mode: "gated", key });
+    expect(first.reused).toBe(false);
+    await adminQuery(`update public.studio_machines set installed_options = '{}' where id = $1`, [machine]);
+    const second = await create(s, sessionId, { machine, mode: "gated", key });
+    expect(second.reused).toBe(true);
+    expect(second.block_id).toBe(first.block_id);
+    expect((await stored(first.block_id)).machine_mode_key).toBe("gated");
+  });
+});
+
+describe("only apply_block_machine_identity writes machine_mode_key", () => {
+  it("no other function in the public schema assigns the column", async () => {
+    const rows = (
+      await adminQuery(
+        `select p.proname, pg_get_functiondef(p.oid) as d
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public' and p.prokind = 'f' and p.proname <> 'apply_block_machine_identity'
+            and pg_get_functiondef(p.oid) ~* 'machine_mode_key'`,
+      )
+    ).rows as { proname: string; d: string }[];
+    // A write is an assignment target (`machine_mode_key =` after set/comma) or an insert column list entry on session_blocks.
+    const writes = rows.filter((r) => {
+      const body = r.d.replace(/--[^\n]*/g, "");
+      return /(\bset|,)\s*machine_mode_key\s*=/i.test(body) || /insert\s+into\s+(public\.)?session_blocks\b[^;]*machine_mode_key/i.test(body);
+    });
+    // block_write_receipts keeps its own copy of the column; that insert is not a block write and is excluded above by the table name.
+    expect(writes.map((w) => w.proname)).toEqual([]);
+    const own = (await adminQuery(`select pg_get_functiondef(p.oid) as d from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'apply_block_machine_identity'`)).rows;
+    expect(own).toHaveLength(1);
+    expect(own[0].d).toMatch(/update\s+public\.session_blocks[\s\S]*machine_mode_key\s*=\s*v_mode/i);
+  });
+});
