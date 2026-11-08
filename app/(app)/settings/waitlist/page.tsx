@@ -924,8 +924,8 @@ export default async function WaitlistSettingsPage({
               </h2>
               <p className="mt-1">
                 {replies.n === 1 ? "Someone" : "Some people"} told us the offered times
-                don&rsquo;t work. {replies.n === 1 ? "They keep" : "They keep"} their original join
-                date.
+                don&rsquo;t work. {replies.n === 1 ? "They were" : "Each was"} returned to the
+                waiting list with their original join date when they replied.
               </p>
               <p className="mt-2">
                 <Link href="/settings/waitlist/replies" className="underline">

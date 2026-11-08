@@ -43,6 +43,16 @@ describe("0319 times-don't-work wiring", () => {
     expect(action).toContain("\\u0000-\\u0008");
   });
 
+  it("refuses line separators and invisible format characters in the app", () => {
+    for (const u of ["\\u2028", "\\u2029", "\\u0085", "\\u00ad", "\\u061c", "\\u180e"]) expect(action).toContain(u);
+  });
+
+  it("the limiter is keyed by the caller's hashed address plus the slug, so one caller cannot spend another's budget", () => {
+    const lim = readFileSync(join(ROOT, "lib/rate-limit/public.ts"), "utf8");
+    const fn = lim.slice(lim.indexOf("export async function limitPublicSlots"));
+    expect(fn.slice(0, 700)).toContain("limiter.limit(`${hashId(ip)}:${args.slug}`)");
+  });
+
   it("never logs or echoes the recipient's text", () => {
     expect(action).not.toMatch(/console\.|logger|log\w*\(/);
     expect(action).not.toMatch(/note\s*[:,]\s*trimmed[^\n]*kind:/);

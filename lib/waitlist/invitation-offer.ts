@@ -306,6 +306,14 @@ export type InvitationViewState =
        * not after.
        */
       phoneRequired?: boolean;
+      /**
+       * HON-7. Server-resolved text the recipient must see BEFORE booking, when
+       * the studio's free-consultation rule says this appointment can be
+       * cancelled but not self-service rescheduled. The screen renders the
+       * string and decides nothing: the policy module owns both the rule and the
+       * words, so this surface cannot promise what the cancel page refuses.
+       */
+      bookingNotice?: string;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
@@ -458,6 +466,8 @@ export type RecipientContext = {
    * one is the invited person's own datum.
    */
   phoneNeeded?: boolean;
+  /** HON-7: see the offer variant's `bookingNotice`. */
+  bookingNotice?: string;
 };
 
 /**
@@ -560,6 +570,7 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
         // number the studio already holds would be a worse surface than the
         // silent failure this replaces.
         ...(ctx.phoneNeeded ? { phoneRequired: true } : {}),
+        ...(ctx.bookingNotice ? { bookingNotice: ctx.bookingNotice } : {}),
       };
     }
   }

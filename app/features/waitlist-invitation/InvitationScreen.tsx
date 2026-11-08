@@ -118,6 +118,7 @@ export function InvitationScreen({
             windowDescription={state.windowDescription}
             refusal={state.refusal}
             phoneRequired={state.phoneRequired === true}
+            bookingNotice={state.bookingNotice}
             typedPhone={typedPhone}
             onTypedPhoneChange={onTypedPhoneChange}
             selectedSlotStart={selectedSlotStart}
@@ -325,6 +326,7 @@ function OfferView({
   windowDescription,
   refusal,
   phoneRequired,
+  bookingNotice,
   typedPhone,
   onTypedPhoneChange,
   selectedSlotStart,
@@ -340,6 +342,7 @@ function OfferView({
   windowDescription: string;
   refusal?: BookingRefusal;
   phoneRequired: boolean;
+  bookingNotice?: string;
   typedPhone: string;
   onTypedPhoneChange?: (value: string) => void;
   selectedSlotStart: string | null;
@@ -378,7 +381,7 @@ function OfferView({
       {/* THE OFFERED HORIZON, STATED. The recipient should never have to infer
           what they were offered from which buttons happen to exist. */}
       <section className="flex flex-col gap-1 bg-[#F5F2EB] p-4">
-        <h2 className="text-sm text-[#0A0A0A]">Times held for you</h2>
+        <h2 className="text-sm text-[#0A0A0A]">Available consultation times</h2>
         {/* Already resolved through B2's weekday contract. This layer holds no
             weekday semantics of its own and must not acquire any. */}
         <p className="text-sm text-[#6B6B6B]">{windowDescription}</p>
@@ -387,7 +390,7 @@ function OfferView({
       {empty ? (
         <section className="flex flex-col gap-3" aria-live="polite">
           <p className="text-sm text-[#6B6B6B]">
-            Nothing is open in the times held for you right now. This can change — try again, or
+            Nothing is open in these times right now. This can change — try again, or
             let the studio know this doesn’t work.
           </p>
           <button
@@ -401,6 +404,17 @@ function OfferView({
       ) : (
         <section className="flex flex-col gap-5">
           <h2 className="text-sm text-[#0A0A0A]">Choose a time</h2>
+          <p className="text-sm text-[#6B6B6B]" data-testid="availability-note">
+            Times can change, and nothing is held for you until you book.{" "}
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={pending}
+              className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} inline-flex items-center underline disabled:opacity-60`}
+            >
+              Check again
+            </button>
+          </p>
           {/* GROUPED BY DAY, because an offer spanning Mondays AND Wednesdays
               renders "9:00 AM" twice otherwise and the recipient cannot tell
               which day they are booking. The heading names the day visually and
@@ -469,6 +483,12 @@ function OfferView({
             className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm disabled:opacity-60`}
           />
         </div>
+      ) : null}
+
+      {!empty && bookingNotice ? (
+        <p className="rounded-md bg-[#F5F2EB] px-3 py-2 text-sm text-[#0A0A0A]" data-testid="booking-notice">
+          {bookingNotice}
+        </p>
       ) : null}
 
       {!empty ? (
@@ -590,7 +610,7 @@ function ProofView({
       </header>
 
       <section className="flex flex-col gap-1 bg-[#F5F2EB] p-4">
-        <h2 className="text-sm text-[#0A0A0A]">Times held for you</h2>
+        <h2 className="text-sm text-[#0A0A0A]">Available consultation times</h2>
         <p className="text-sm text-[#6B6B6B]">{windowDescription}</p>
       </section>
 

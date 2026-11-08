@@ -48,6 +48,10 @@ import {
 // window with it exhausts the caller's own quota and silently drops the tail.
 // The range helper is throttled ONCE by this surface instead.
 import { isBookableByNewClient } from "@/lib/booking/consultation";
+import {
+  FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
+  isFreeConsultWaitlistOnlyReschedule,
+} from "@/lib/booking/free-consult-reschedule-policy";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
@@ -252,6 +256,11 @@ type StudioContext = {
    * retry something that will never work.
    */
   bookableByNewClient: boolean;
+  /**
+   * HON-7. The cancellation consequence to disclose before booking, or null.
+   * Resolved by the policy module from the server-read slug and service row.
+   */
+  bookingNotice: string | null;
 };
 
 /** First row of a `returns table` RPC payload, whatever shape the driver used. */
@@ -422,7 +431,7 @@ async function loadStudioContext(
       // loader answers that with a RETRYABLE error — telling the recipient to
       // try again on an offer that is permanently unusable. The row is read
       // whatever its state and judged one line down.
-      .select("name, default_duration_minutes, modality, active")
+      .select("name, default_duration_minutes, modality, active, price_cents")
       .eq("id", serviceId)
       .eq("studio_id", studioId)
       .maybeSingle(),
@@ -452,6 +461,16 @@ async function loadStudioContext(
     // an invitation scoped to an ordinary treatment, or to a service since
     // deactivated, rendered selectable times that the booking command would
     // then refuse.
+    bookingNotice: isFreeConsultWaitlistOnlyReschedule({
+      studioSlug: studio.slug as string,
+      service: {
+        name: service.name as string,
+        modality: (service.modality as string | null) ?? null,
+        price_cents: (service.price_cents as number | null) ?? null,
+      },
+    })
+      ? FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING
+      : null,
     bookableByNewClient: isBookableByNewClient({
       name: service.name as string,
       modality: (service.modality as string | null) ?? null,
@@ -746,6 +765,7 @@ async function offerState(
     // recipient to supply one the studio may already hold. It stays false, the
     // Book attempt then fails closed, and the booking path reports it.
     phoneNeeded: identity.kind === "resolved" && identity.identity.phone === null,
+    ...(studio.bookingNotice ? { bookingNotice: studio.bookingNotice } : {}),
   });
 }
 
@@ -1104,7 +1124,7 @@ export async function timesDontWorkAction(
     return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
   }
   const trimmed = typeof note === "string" ? note.trim() : "";
-  if (trimmed.length > TIMES_FEEDBACK_NOTE_MAX || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/.test(trimmed)) {
+  if (trimmed.length > TIMES_FEEDBACK_NOTE_MAX || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u0085\u00ad\u061c\u180e\u2028\u2029]/.test(trimmed)) {
     return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
   }
   const out = await declineTimesUnsuitable({

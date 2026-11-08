@@ -90,7 +90,7 @@ describe("the offer screen", () => {
   const html = render({ kind: "offer", presentation: PRESENTATION, days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const }], windowDescription: WINDOW_DESCRIPTION });
 
   it("states the offered horizon in words, as the state layer resolved it", () => {
-    expect(html).toContain("Times held for you");
+    expect(html).toContain("Available consultation times");
     // Rendered verbatim: the screen holds no weekday semantics of its own.
     expect(html).toContain("Mondays, Wednesdays, Sep 7, 2026");
   });
@@ -250,7 +250,7 @@ describe("possession shows the offer and no times", () => {
 
   it("shows WHAT was offered", () => {
     expect(html).toContain("Consultation");
-    expect(html).toContain("Times held for you");
+    expect(html).toContain("Available consultation times");
     expect(html).toContain("Mondays, Wednesdays");
   });
 
@@ -418,7 +418,7 @@ describe("verifying is busy and non-interactive", () => {
   });
 
   it("still shows what was offered", () => {
-    expect(html).toContain("Times held for you");
+    expect(html).toContain("Available consultation times");
     expect(html).toContain("Consultation");
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 import { InvitationScreen } from "@/app/features/waitlist-invitation/InvitationScreen";
 import type { InvitationViewState } from "@/lib/waitlist/invitation-offer";
@@ -76,6 +76,22 @@ export function InvitationContainer({
       }
     });
   }, []);
+
+  // REFRESH ON RETURN. A tab left open while the recipient decides can show times
+  // that have since gone. Coming back to it re-reads the offer (a fresh
+  // availability read on the server); it never fires while an action is running,
+  // and only on an offer, so a proof or terminal screen is not disturbed.
+  const latest = useRef({ kind: state.kind, pending });
+  latest.current = { kind: state.kind, pending };
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (latest.current.kind !== "offer" || latest.current.pending) return;
+      run(() => loadInvitationAction(token));
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [run, token]);
 
   /**
    * The masked contact and expiry the recipient is currently looking at. A code
