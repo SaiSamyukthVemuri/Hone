@@ -176,3 +176,27 @@ describe("a stored mode the unit does not offer is never re-sent, mounted (#1369
     expect(host.querySelector('[data-testid="machine-reading-entry"]'), "no entry form is mounted for the first mode").toBeNull();
   });
 });
+
+describe("the host save and the reading save never overlap, mounted (#1369 Codex 4505116958)", () => {
+  it("readings typed while the host save is pending: Save is disabled, nothing is sent, and the typed readings are kept and usable afterwards", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const onRecord = vi.fn(() => new Promise<never>(() => {}));
+    const render = (extra: Record<string, unknown>) =>
+      act(() => root!.render(createElement(MachineFirstSetupPanel, props({ onRecord, ...extra }) as never)));
+    render({ settingDraftFrozen: true });
+    fill("reading-current", "120");
+    fill("reading-duration", "1.5");
+    const save = () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!;
+    expect(save().disabled, "Save these settings is held while the host save is pending").toBe(true);
+    act(() => save().click());
+    expect(onRecord, "a held save sends nothing").not.toHaveBeenCalled();
+    render({ settingDraftFrozen: false });
+    expect(host!.querySelector<HTMLInputElement>('[data-testid="reading-current"]')!.value, "the typed reading was not discarded").toBe("120");
+    expect(host!.querySelector<HTMLInputElement>('[data-testid="reading-duration"]')!.value).toBe("1.5");
+    expect(save().disabled, "the hold lifts when the host save settles").toBe(false);
+    act(() => save().click());
+    expect(onRecord, "after the hold lifts the save goes out once").toHaveBeenCalledTimes(1);
+  });
+});

@@ -1099,7 +1099,9 @@ export function MachineFirstSetupPanel({
               onUnresolvedChange={setRevisionUnresolved}
               onDraftChange={onRevisionDraft}
               onRecord={recordAndCount!}
-              submissionHeld={selectionPending || submissionBlocked}
+              // The host's own save (`settingDraftFrozen`) holds the same block version this save would send: if both went out, the host save
+              // wins, this one is rejected as stale, and the editor closes with the typed readings discarded (#1369 Codex 4505116958).
+              submissionHeld={selectionPending || submissionBlocked || settingDraftFrozen}
             />
           ) : (
             groups.map((group) => (
