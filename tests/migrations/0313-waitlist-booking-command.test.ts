@@ -92,3 +92,33 @@ describe("0313 — held rollback", () => {
     expect(DOWN).toMatch(/not a migration|NOT a migration/);
   });
 });
+
+describe("0313 — the explicit invitation -> appointment link", () => {
+  const E = exec(M);
+
+  it("has a link table with RLS on, no policy and no grants", () => {
+    expect(E).toMatch(/create table if not exists public\.waitlist_invitation_bookings/);
+    expect(E).toMatch(/alter table public\.waitlist_invitation_bookings enable row level security;/);
+    expect(E).toMatch(/revoke all on public\.waitlist_invitation_bookings from public, anon, authenticated, service_role;/);
+    expect(E).not.toMatch(/create policy[^;]*waitlist_invitation_bookings/);
+  });
+
+  it("the command writes the link INSIDE the protected block, after the booking and before the handler", () => {
+    const book = E.indexOf("create_public_appointment_for_new_client(");
+    const link = E.indexOf("insert into public.waitlist_invitation_bookings");
+    const handler = E.indexOf("exception\n    when sqlstate 'WA313'");
+    expect(book).toBeGreaterThan(0);
+    expect(link).toBeGreaterThan(book);
+    expect(handler).toBeGreaterThan(link);
+  });
+
+  it("the state function reads the link and infers nothing from timestamps", () => {
+    const fn = E.slice(E.indexOf("function public.waitlist_invitation_booking_state"));
+    expect(fn).toMatch(/from public\.waitlist_invitation_bookings b/);
+    expect(fn).not.toMatch(/interval '60 seconds'|converted_at|a\.created_at/);
+  });
+
+  it("the held down file drops the link table too", () => {
+    expect(exec(DOWN)).toMatch(/drop table if exists public\.waitlist_invitation_bookings;/);
+  });
+});

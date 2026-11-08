@@ -1722,6 +1722,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The owner's durable follow-up item for a waitlist invitation that was used without a confirmed booking, draft migration 0313 (HON-7). One row per invitation (unique), with a closed reason code, created and resolved instants and the entry it belongs to. Studio-owned operational history, so PENDING rather than EXCLUDED, decided with new_client_waitlist_entries. It holds no client text, name, contact or appointment time; any free-text response a client later leaves is a separate owner-only column that is not registered here. Rows are erased with the studio. No export surface ships in 0313.",
   },
+  waitlist_invitation_bookings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Evidence link from a waitlist invitation to the appointment its booking command created, draft migration 0313 (HON-7). One row per invitation (primary key), with the studio, the appointment and a created instant. It holds no client text, name or contact; it exists so a reopened, already-used invitation can show the time that was actually booked rather than infer it. Studio-owned operational history, so PENDING, decided with new_client_waitlist_invitations. Rows are erased with the invitation, the appointment or the studio. No export surface ships in 0313.",
+  },
   waitlist_times_feedback: {
     kind: "pending",
     ticket: "TRUTH-01B",

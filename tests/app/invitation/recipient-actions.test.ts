@@ -183,6 +183,7 @@ const serviceFixture = {
  * and capability it presented, since passing the wrong pair would be a real
  * authorisation defect that a shape-only assertion would miss.
  */
+const bookingStateFixture: { rows: Array<Record<string, unknown>> } = { rows: [] };
 const identityRpcCalls: Array<{ fn: string; token: string; capability: string }> = [];
 
 /**
@@ -216,6 +217,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     // therefore yields no identity here exactly as it does in the database —
     // proved against real PostgreSQL in tests/db/waitlist-recipient-proof.
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      // HON-7 / 0313: the reopen lookup. Answered from a fixture, never recorded as
+      // an identity call (it carries no capability).
+      if (fn === "waitlist_invitation_booking_state") {
+        return { data: bookingStateFixture.rows, error: null };
+      }
       identityRpcCalls.push({
         fn,
         token: String(args?.p_raw_token),
@@ -1550,5 +1556,51 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
       await loadInvitationAction(TOKEN);
       expect(fetchPublicSlotsForDates).toHaveBeenCalled();
     });
+  });
+});
+
+
+describe("HON-7: reopening a spent invitation (0313 booking command on)", () => {
+  const BOOKED_ROW = {
+    state: "booked",
+    starts_at: "2026-10-15T14:00:00.000Z",
+    studio_id: STUDIO,
+    service_id: SERVICE,
+  };
+
+  beforeEach(() => {
+    resolveInvitation.mockResolvedValue({ kind: "already_redeemed" });
+    process.env.WAITLIST_BOOKING_COMMAND = "1";
+  });
+  afterEach(() => {
+    delete process.env.WAITLIST_BOOKING_COMMAND;
+    bookingStateFixture.rows = [];
+  });
+
+  it("shows the BOOKED screen with the time the database holds, not 'we couldn't confirm'", async () => {
+    bookingStateFixture.rows = [BOOKED_ROW];
+    const view = await loadInvitationAction(TOKEN);
+    expect(view.kind).toBe("booked");
+    if (view.kind === "booked") {
+      expect(view.startLabel).toBe("10:00 AM");
+      expect(view.dateLabel).toBe("2026-10-15");
+    }
+  });
+
+  it.each([
+    ["no recorded time (cancelled, or no link)", [{ ...BOOKED_ROW, starts_at: null }]],
+    ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
+    ["no answer", []],
+  ])("keeps the honest 'couldn't confirm' screen when the database cannot name the time: %s", async (_label, rows) => {
+    bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
+    const view = await loadInvitationAction(TOKEN);
+    expect(view).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
+  });
+
+  it("with the flag OFF the lookup is never made and the previous screen stands", async () => {
+    delete process.env.WAITLIST_BOOKING_COMMAND;
+    bookingStateFixture.rows = [BOOKED_ROW];
+    const view = await loadInvitationAction(TOKEN);
+    expect(view).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
   });
 });

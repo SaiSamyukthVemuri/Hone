@@ -1,5 +1,5 @@
 -- ROLLBACK for 0313 (DRAFT; NOT a migration; never placed in supabase/migrations).
--- Drops the four commands and the follow-ups table. Apply only as a NEW forward
+-- Drops the four commands, the follow-ups table and the booking-link table. Apply only as a NEW forward
 -- migration under its own approval, and only while the app no longer calls
 -- redeem_and_book_waitlist_invitation (the previous release path redeems first
 -- and books second, which is the defect 0313 repairs). It REFUSES (55000) while
@@ -21,5 +21,8 @@ drop function if exists public.record_waitlist_invitation_followup(text, text);
 drop function if exists public.waitlist_invitation_booking_state(text);
 drop function if exists public.redeem_and_book_waitlist_invitation(text, text, uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text);
 drop table if exists public.waitlist_invitation_followups;
+-- The link table is derived evidence of what the command booked; the appointments
+-- themselves are untouched. Dropping it only removes the reopen-time lookup.
+drop table if exists public.waitlist_invitation_bookings;
 
 commit;

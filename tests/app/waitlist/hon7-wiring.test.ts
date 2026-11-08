@@ -67,3 +67,16 @@ describe("the window estimate action", () => {
     expect(CAPACITY).not.toMatch(/input\.studio/);
   });
 });
+
+describe("HON-7 C1: the capacity count reads invitations as the owner, not as service_role", () => {
+  const SRC = readFileSync(join(__dirname, "..", "..", "..", "app/(app)/settings/waitlist/window-capacity-actions.ts"), "utf8");
+
+  it("issues the invitations select through the session client, never the admin client", () => {
+    const at = SRC.indexOf('.from("new_client_waitlist_invitations")');
+    expect(at).toBeGreaterThan(0);
+    const before = SRC.slice(Math.max(0, at - 160), at);
+    expect(before).toContain("session");
+    expect(before).not.toContain("admin");
+    expect(SRC).toContain('from "@/lib/supabase/server"');
+  });
+});

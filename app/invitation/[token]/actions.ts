@@ -22,6 +22,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { TIMES_FEEDBACK_NOTE_MAX, waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
+import { waitlistBookingCommandEnabled } from "@/lib/booking/waitlist-booking-command";
 import {
   beginRecipientProof,
   completeRecipientProof,
@@ -480,6 +481,45 @@ async function loadStudioContext(
   };
 }
 
+/**
+ * The booked screen for a spent invitation, or null when the database cannot
+ * name the appointment's time (no link, cancelled, unreadable). Never throws.
+ */
+async function bookedViewOnReopen(
+  rawToken: string,
+  resolved: ResolveOutcome,
+): Promise<InvitationViewState | null> {
+  try {
+    const { data } = await createAdminClient().rpc("waitlist_invitation_booking_state", {
+      p_raw_token: rawToken,
+    });
+    const row = Array.isArray(data) ? data[0] : data;
+    if (
+      row?.state !== "booked" ||
+      typeof row.starts_at !== "string" ||
+      typeof row.studio_id !== "string" ||
+      typeof row.service_id !== "string"
+    ) {
+      return null;
+    }
+    const studio = await loadStudioContext(row.studio_id, row.service_id);
+    if (!studio) return null;
+    const at = new Date(row.starts_at);
+    if (Number.isNaN(at.getTime())) return null;
+    const tz = studio.presentation.studioTimezone;
+    return deriveInvitationViewState({
+      resolve: resolved,
+      presentation: studio.presentation,
+      proof: { kind: "required" },
+      slots: [],
+      booked: { startLabel: localTimeString12h(at, tz), dateLabel: localDateString(at, tz) },
+      declined: false,
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve plus presentation, or a view state describing why we cannot. */
 async function loadContext(
   rawToken: string,
@@ -492,6 +532,16 @@ async function loadContext(
   | { ok: false; state: InvitationViewState }
 > {
   const resolved = await resolveInvitation(rawToken);
+  // REOPEN AFTER A BOOKING. A spent invitation used to land on "we couldn't
+  // confirm your booking" even when the booking had just succeeded, because
+  // nothing here could see the appointment. With the 0313 command on, the
+  // database holds an explicit invitation -> appointment link, and only a
+  // booked state WITH a time is shown as booked: anything else keeps the honest
+  // "couldn't confirm" screen.
+  if (resolved.kind === "already_redeemed" && waitlistBookingCommandEnabled()) {
+    const reopened = await bookedViewOnReopen(rawToken, resolved);
+    if (reopened) return { ok: false, state: reopened };
+  }
   if (resolved.kind !== "live") {
     return {
       ok: false,

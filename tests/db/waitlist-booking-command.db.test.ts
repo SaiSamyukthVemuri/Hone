@@ -140,70 +140,82 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     expect(await apptCount(f.studioId)).toBe(2);
   });
 
-  it("the booked time is the appointment THIS conversion created, not a later or cancelled one", async () => {
+  it("reopen after a booking reports the booked time through the EXPLICIT link, whatever the appointment's timestamps say", async () => {
     const f = await fixture("bt");
-    const [t1, t2, t3] = await slots(f, 3);
+    const [t1, t2] = await slots(f, 2);
     const p = await provenEntry(f, "bt");
     const r = await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, t1, tokenHash("bt1")]);
     expect(r[0].result).toBe("created_and_converted");
     const when = () =>
-      q<{ state: string; starts_at: string | null }>(
-        `select state, starts_at from public.waitlist_invitation_booking_state($1)`, [p.token],
+      q<{ state: string; starts_at: string | null; studio_id: string; service_id: string }>(
+        `select * from public.waitlist_invitation_booking_state($1)`, [p.token],
       ).then((x) => x[0]);
     const iso = (v: string | null) => (v === null ? null : new Date(v).toISOString());
+
+    const first = await when();
+    expect(first.state).toBe("booked");
+    expect(iso(first.starts_at)).toBe(new Date(t1).toISOString());
+    expect(first.studio_id).toBe(f.studioId);
+    expect(first.service_id).toBe(f.serviceId);
+    const link = await q<{ appointment_id: string }>(
+      `select appointment_id from public.waitlist_invitation_bookings where studio_id=$1`, [f.studioId],
+    );
+    expect(link).toEqual([{ appointment_id: r[0].appointment_id }]);
+
+    // THE OLD GUESS FAILED HERE: the appointment's created_at is nowhere near the
+    // conversion (a reopen days later, a restored row, a clock correction). The
+    // link does not care.
+    await q(`update public.appointments set created_at = created_at - interval '3 days' where id=$1`, [r[0].appointment_id]);
     expect(iso((await when()).starts_at)).toBe(new Date(t1).toISOString());
 
-    // A LATER appointment for the same client (made hours after the conversion).
+    // A LATER appointment for the same client never changes the answer.
     const later = await q<any>(
       `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
       [f.studioId, r[0].client_id, f.serviceId, t2, tokenHash("bt2")],
     );
     expect(later[0].result).toBe("created");
-    await q(`update public.appointments set created_at = created_at + interval '3 hours' where id=$1`, [later[0].appointment_id]);
     expect(iso((await when()).starts_at)).toBe(new Date(t1).toISOString());
 
-    // The original booking is CANCELLED and only the later one remains: unknown, never the later time.
-    const originalStatus = (await q<{ status: string }>(`select status from public.appointments where id=$1`, [r[0].appointment_id]))[0].status;
+    // The original booking is CANCELLED: still booked, but no time is shown.
     await q(`update public.appointments set status = 'cancelled' where id=$1`, [r[0].appointment_id]);
-    const after = await when();
-    expect(after.state).toBe("booked");
-    expect(after.starts_at).toBeNull();
-
-    // Two live candidates inside the window: ambiguous, so unknown.
-    const twin = await q<any>(
-      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
-      [f.studioId, r[0].client_id, f.serviceId, t3, tokenHash("bt3")],
-    );
-    expect(twin[0].result).toBe("created");
-    await q(`update public.appointments set created_at = $2::timestamptz where id=$1`, [
-      twin[0].appointment_id,
-      (await q<{ c: string }>(`select converted_at::text as c from public.new_client_waitlist_entries where id=$1`, [p.entryId]))[0].c,
-    ]);
-    await q(`update public.appointments set status = $3, created_at = (select converted_at from public.new_client_waitlist_entries where id=$2) where id=$1`, [r[0].appointment_id, p.entryId, originalStatus]);
-    expect((await when()).starts_at).toBeNull();
+    const cancelled = await when();
+    expect(cancelled.state).toBe("booked");
+    expect(cancelled.starts_at).toBeNull();
   });
 
-  it("the window edges: 59s before the conversion is included, 61s before is excluded", async () => {
-    const f = await fixture("edge");
+  it("a conversion with NO link row (made before the command, or flag off) has no known time and none is inferred", async () => {
+    const f = await fixture("nolink");
     const [t1] = await slots(f, 1);
-    const p = await provenEntry(f, "edge");
-    const r = await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, t1, tokenHash("edge1")]);
+    const p = await provenEntry(f, "nolink");
+    const r = await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, t1, tokenHash("nl1")]);
     expect(r[0].result).toBe("created_and_converted");
-    const read = () =>
-      q<{ starts_at: string | null }>(
-        `select starts_at from public.waitlist_invitation_booking_state($1)`, [p.token],
-      ).then((x) => x[0].starts_at);
-    const setAge = (secs: number) =>
-      q(
-        `update public.appointments
-            set created_at = (select converted_at from public.new_client_waitlist_entries where id=$2) - ($3 || ' seconds')::interval
-          where id=$1`,
-        [r[0].appointment_id, p.entryId, String(secs)],
-      );
-    await setAge(59);
-    expect(await read()).not.toBeNull();
-    await setAge(61);
-    expect(await read()).toBeNull();
+    await q(`delete from public.waitlist_invitation_bookings where studio_id=$1`, [f.studioId]);
+    const st = await q<{ state: string; starts_at: string | null }>(
+      `select state, starts_at from public.waitlist_invitation_booking_state($1)`, [p.token],
+    );
+    expect(st[0].state).toBe("booked");
+    expect(st[0].starts_at).toBeNull();
+  });
+
+  it("if the link cannot be written the BOOKING rolls back too: no appointment without a reportable time", async () => {
+    const f = await fixture("linkfail");
+    const [t1, t2] = await slots(f, 2);
+    const a = await provenEntry(f, "a");
+    const b = await provenEntry(f, "b");
+    const win = await q<any>(BOOK, [a.token, a.cap, f.studioId, a.email, f.serviceId, t1, tokenHash("lf1")]);
+    expect(win[0].result).toBe("created_and_converted");
+    // Occupy b's link slot so the command's own insert collides (23505).
+    const invB = await q<{ id: string }>(`select id from public.new_client_waitlist_invitations where entry_id=$1`, [b.entryId]);
+    await q(
+      `insert into public.waitlist_invitation_bookings (invitation_id, studio_id, appointment_id) values ($1,$2,$3)`,
+      [invB[0].id, f.studioId, win[0].appointment_id],
+    );
+    await expect(
+      q(BOOK, [b.token, b.cap, f.studioId, b.email, f.serviceId, t2, tokenHash("lf2")]),
+    ).rejects.toMatchObject({ code: "23505" });
+    expect(await apptCount(f.studioId)).toBe(1);
+    expect((await invitationOf(b.entryId)).redeemed_at).toBeNull();
+    expect(await entryStatus(b.entryId)).toBe("invited");
   });
 
   it("any other exception (a forced unique violation) propagates, rolls the redeem back and leaves the invitation live", async () => {

@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { localDateString } from "@/lib/booking/tz";
@@ -72,7 +73,14 @@ export async function estimateWindowCapacityAction(input: {
     // calendar, so an invitation for another service competes for the same
     // window. Sent, not expired, not redeemed, not released, not declined. A booked one is already an
     // appointment in the slot list and is not counted again.
-    const live = await admin
+    //
+    // READ THROUGH THE OWNER'S OWN SESSION, NOT THE ADMIN CLIENT. service_role has
+    // no SELECT on this table (0188 grants it to `authenticated` alone, behind
+    // the owner policy), so the admin path answered 42501 every time and the
+    // panel always said "couldn't check". The session client is scoped by RLS to
+    // the owner's studio; the explicit studio_id filter is belt and braces.
+    const session = await createClient();
+    const live = await session
       .from("new_client_waitlist_invitations")
       .select("id", { count: "exact", head: true })
       .eq("studio_id", studio.id)

@@ -25,8 +25,11 @@
 --   * waitlist_invitation_followups: one durable row per invitation that needs the
 --     owner (idempotent: unique on invitation_id), written only through a
 --     command, read by no list query beyond its reason.
+--   * waitlist_invitation_bookings: the EXPLICIT invitation -> appointment link,
+--     written by the booking command in its own transaction.
 --   * waitlist_invitation_booking_state(token): the EXISTING-APPOINTMENT CHECK a
---     caller runs before it believes an uncertain booking failed.
+--     caller runs before it believes an uncertain booking failed, and on reopen.
+--     Reads the link; never infers a time.
 --   * record_/resolve_waitlist_invitation_followup: write and clear the item.
 --
 -- LOCK ORDER (documented against every writer that can touch the same rows).
@@ -95,6 +98,25 @@ create index if not exists waitlist_invitation_followups_open_idx
 alter table public.waitlist_invitation_followups enable row level security;
 -- No policy and no grant: the table is reached only through the commands below.
 revoke all on public.waitlist_invitation_followups from public, anon, authenticated, service_role;
+
+-- The EXPLICIT LINK from an invitation to the appointment its booking created,
+-- written by the booking command in the SAME transaction as the booking. It
+-- replaces an earlier time-window guess (created_at near converted_at), which
+-- could not answer reliably after the fact. No guess exists any more: a booking
+-- made through this command has exactly one link row, and a conversion with no
+-- link row (made before this command existed, or through the flag-off path)
+-- simply has no known time.
+create table if not exists public.waitlist_invitation_bookings (
+  invitation_id  uuid primary key
+    references public.new_client_waitlist_invitations (id) on delete cascade,
+  studio_id      uuid not null references public.studios(id) on delete cascade,
+  appointment_id uuid not null references public.appointments(id) on delete cascade,
+  created_at     timestamptz not null default now()
+);
+
+alter table public.waitlist_invitation_bookings enable row level security;
+-- No policy and no grant: written and read only by the commands in this file.
+revoke all on public.waitlist_invitation_bookings from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- 2. The booking command.
@@ -195,6 +217,14 @@ begin
     if v_row.appointment_id is null then
       raise exception 'refused:%', coalesce(v_row.result, 'no_result') using errcode = 'WA313';
     end if;
+
+    -- THE EXPLICIT LINK, in this transaction. A failure here is NOT a WA313
+    -- refusal: it propagates and rolls back the booking too, so there is never a
+    -- booking whose time the invitation cannot report.
+    insert into public.waitlist_invitation_bookings (invitation_id, studio_id, appointment_id)
+    select i.id, i.studio_id, v_row.appointment_id
+      from public.new_client_waitlist_invitations i
+     where i.token_hash = v_hash;
   exception
     when sqlstate 'WA313' then
       -- The redeem and anything the inner command wrote are rolled back. The
@@ -217,7 +247,7 @@ $$;
 -- 3. The existing-appointment check.
 -- ---------------------------------------------------------------------------
 create or replace function public.waitlist_invitation_booking_state(p_raw_token text)
-returns table (state text, starts_at timestamptz)
+returns table (state text, starts_at timestamptz, studio_id uuid, service_id uuid)
 language plpgsql
 stable
 security definer
@@ -227,54 +257,43 @@ declare
   v_inv    record;
   v_entry  record;
   v_start  timestamptz;
-  v_n      integer;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$' then
-    return query select 'invalid_token'::text, null::timestamptz; return;
+    return query select 'invalid_token'::text, null::timestamptz, null::uuid, null::uuid; return;
   end if;
-  select i.entry_id, i.studio_id, i.redeemed_at, i.expired_at, i.released_at, i.declined_at, i.expires_at
+  select i.id, i.entry_id, i.studio_id, i.scope_service_id, i.redeemed_at, i.expired_at,
+         i.released_at, i.declined_at, i.expires_at
     into v_inv
     from public.new_client_waitlist_invitations i
    where i.token_hash = encode(extensions.digest(p_raw_token, 'sha256'), 'hex');
   if v_inv.entry_id is null then
-    return query select 'invalid_token'::text, null::timestamptz; return;
+    return query select 'invalid_token'::text, null::timestamptz, null::uuid, null::uuid; return;
   end if;
-  select e.status, e.converted_client_id, e.converted_at into v_entry
+  select e.status into v_entry
     from public.new_client_waitlist_entries e
    where e.id = v_inv.entry_id and e.studio_id = v_inv.studio_id;
   if v_entry.status = 'converted' then
-    -- THE TIME OF THE APPOINTMENT THIS CONVERSION CREATED, or NULL.
-    --
-    -- 0195 commits the appointment and the conversion in ONE transaction but
-    -- stores no appointment id on the entry, so the link is by time and client.
-    -- The appointment's created_at is the transaction START (now()) and the
-    -- conversion is stamped later in the same transaction (clock_timestamp()),
-    -- so the appointment lies a few milliseconds BEFORE converted_at. The
-    -- window is therefore [converted_at - 60 seconds, converted_at + 1 second],
-    -- cancelled bookings excluded.
-    --
-    -- EXACTLY ONE CANDIDATE, otherwise NULL. A later appointment for the same
-    -- client is outside the window; a cancelled booking is excluded; two
-    -- candidates are ambiguous. In each of those cases the caller gets NULL and
-    -- shows the "couldn't confirm" copy rather than a time that might be wrong.
-    select count(*)::int, min(a.starts_at) into v_n, v_start
-      from public.appointments a
-     where a.studio_id = v_inv.studio_id
-       and a.client_id = v_entry.converted_client_id
-       and a.status is distinct from 'cancelled'
-       and a.created_at >= v_entry.converted_at - interval '60 seconds'
-       and a.created_at <= v_entry.converted_at + interval '1 second';
-    if v_n is distinct from 1 then v_start := null; end if;
-    return query select 'booked'::text, v_start; return;
+    -- THE TIME OF THE APPOINTMENT THIS INVITATION'S BOOKING CREATED, or NULL.
+    -- Read through the explicit link row the booking command wrote in the same
+    -- transaction. NULL when there is no link (a conversion that predates this
+    -- command or came through the flag-off path) or the appointment was
+    -- cancelled: the caller then says it could not confirm the time, and never
+    -- shows one it inferred.
+    select a.starts_at into v_start
+      from public.waitlist_invitation_bookings b
+      join public.appointments a on a.id = b.appointment_id and a.studio_id = b.studio_id
+     where b.invitation_id = v_inv.id
+       and a.status is distinct from 'cancelled';
+    return query select 'booked'::text, v_start, v_inv.studio_id, v_inv.scope_service_id; return;
   end if;
   if v_inv.redeemed_at is not null then
-    return query select 'redeemed_unbooked'::text, null::timestamptz; return;
+    return query select 'redeemed_unbooked'::text, null::timestamptz, v_inv.studio_id, v_inv.scope_service_id; return;
   end if;
   if v_inv.expired_at is not null or v_inv.released_at is not null
      or v_inv.declined_at is not null or v_inv.expires_at <= clock_timestamp() then
-    return query select 'closed'::text, null::timestamptz; return;
+    return query select 'closed'::text, null::timestamptz, v_inv.studio_id, v_inv.scope_service_id; return;
   end if;
-  return query select 'live'::text, null::timestamptz;
+  return query select 'live'::text, null::timestamptz, v_inv.studio_id, v_inv.scope_service_id;
 end;
 $$;
 
