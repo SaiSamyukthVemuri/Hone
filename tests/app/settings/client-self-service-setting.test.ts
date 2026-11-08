@@ -201,7 +201,7 @@ describe("0252 portal switch: what the copy may claim", () => {
   });
   it("the switch row renders only when the studio row carries the column", () => {
     const f = readFileSync("app/(app)/settings/studio/ClientSelfServiceForm.tsx", "utf8");
-    const page = readFileSync("app/(app)/settings/studio/page.tsx", "utf8");
+    const page = readFileSync("app/(app)/settings/studio/client-self-service/page.tsx", "utf8");
     expect(f).toContain("portalSwitchAvailable ? [...ROWS, PORTAL_ROW] : ROWS");
     expect(f).toContain('if (portalSwitchAvailable) fd.set("client_portal_enabled"');
     expect(page).toContain('portalSwitchAvailable={typeof studio.client_portal_enabled === "boolean"}');
