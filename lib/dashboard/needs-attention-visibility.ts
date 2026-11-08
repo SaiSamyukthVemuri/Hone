@@ -131,3 +131,41 @@ export function applyDismissals(
 export function headingCount(needs: NeedsAttention): { clients: number; items: number } {
   return { clients: needs.clients.length, items: needs.itemCount };
 }
+
+/**
+ * Keys of the studio reminders that are ALWAYS in studioItems when live: the setup reminder, no services, and one per expiring supply.
+ * (AP2-2) intake_review:studio and records_details:studio are deliberately NOT here: they can be absent from studioItems while still
+ * true (folded into client rows), and an absent item must not be read as resolved. Client and unpaid keys are never here.
+ */
+const STUDIO_REMINDER_KEY = /^(?:[a-z]+_setup:studio|no_services:studio|supply_expiry:[A-Za-z0-9_.-]+)$/;
+/** At most this many stored dismissals are cleared in one page load. */
+export const RESOLVED_CLEAR_CAP = 25;
+
+/**
+ * Privacy AP2. A studio reminder's dismissal is keyed by the reminder and the state it reported. When the reminder RESOLVES (it is no longer
+ * live) the stored dismissal is dead weight that would hide the SAME state if it came back later (setup undone, a supply re-entered with the
+ * same expiry). These are the stored studio-reminder keys that no live studio item carries, to be restored (the existing restore command).
+ *
+ * Supplies are the only studio source whose read has an uncounted cap (AP4: getExpiringSterileItems, 50), which is why only they take
+ * `suppliesMayBeCapped`; the other studio items come from uncapped reads.
+ *
+ * Fail safe: nothing is returned unless every check was readable and nothing was capped away, because a reminder missing from an incomplete
+ * list has not resolved, it is unknown. The expiring-supplies read is capped and its cut is not counted in notReturnedCount, so when it
+ * may have been cut (`suppliesMayBeCapped`) no supply dismissal is cleared: a supply beyond the cap is not provably resolved.
+ * Client and unpaid dismissals are never touched here.
+ */
+export function resolvedStudioDismissalKeys(
+  needs: NeedsAttention,
+  dismissals: ReadonlyArray<StoredDismissal>,
+  options: { suppliesMayBeCapped?: boolean } = {},
+): string[] {
+  if (needs.unavailableChecks.length > 0 || needs.notReturnedCount > 0) return [];
+  const live = new Set(needs.studioItems.map((i) => i.id));
+  const keys = new Set<string>();
+  for (const d of dismissals) {
+    if (!STUDIO_REMINDER_KEY.test(d.itemKey) || live.has(d.itemKey)) continue;
+    if (options.suppliesMayBeCapped && d.itemKey.startsWith("supply_expiry:")) continue;
+    keys.add(d.itemKey);
+  }
+  return [...keys].sort().slice(0, RESOLVED_CLEAR_CAP);
+}
