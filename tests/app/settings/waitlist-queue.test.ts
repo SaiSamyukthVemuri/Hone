@@ -960,6 +960,94 @@ describe("rendered rows", () => {
     });
   });
 
+  // The expanded Invite-to-book composer used to sit INSIDE the row's controls column. Opening it
+  // widened that column to the form's natural width, so the name and email were squeezed into a
+  // sliver and the controls were drawn over the form. The composer is now its own full-width band.
+  describe("row layout: the composer is a full-width band, not part of the controls column", () => {
+    /** The end index of the <div> that opens at `start`, by counting nested <div> tags. */
+    const divEnd = (html: string, start: number): number => {
+      let depth = 0;
+      for (const m of html.slice(start).matchAll(/<div\b|<\/div>/g)) {
+        depth += m[0] === "</div>" ? -1 : 1;
+        if (depth === 0) return start + m.index! + m[0].length;
+      }
+      throw new Error("unbalanced <div>");
+    };
+    const openTagStart = (html: string, marker: string): number => {
+      const at = html.indexOf(marker);
+      expect(at, `${marker} is not rendered`).toBeGreaterThan(-1);
+      return html.lastIndexOf("<div", at);
+    };
+
+    const service = (over: Record<string, unknown> = {}) => ({
+      id: "svc-1",
+      name: "Consultation",
+      modality: "consultation",
+      active: true,
+      ...over,
+    });
+    const LONG_NAME = "Alexandria-Bartholomew Montgomery-Featherstonehaugh the Third";
+    const LONG_EMAIL = "alexandria.bartholomew.montgomery.featherstonehaugh.the.third@a-very-long-subdomain.example.invalid";
+
+    it("the composer is outside the controls column, and the controls column cannot grow with it", async () => {
+      scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
+      scenario.count = 1;
+      scenario.services = [service()];
+      const html = await render();
+      const start = openTagStart(html, 'data-testid="row-controls"');
+      const end = divEnd(html, start);
+      const controls = html.slice(start, end);
+      expect(controls).not.toContain('data-testid="row-invite"');
+      expect(controls).not.toContain("composer");
+      // The controls still carry Remove, and the composer follows them in the same row.
+      expect(controls).toContain("Remove");
+      const invite = html.indexOf('data-testid="row-invite"');
+      expect(invite).toBeGreaterThan(end);
+      // A FIXED width at the breakpoint where the columns sit side by side: it can no longer
+      // take its width from whatever is inside it.
+      const tag = html.slice(start, html.indexOf(">", start) + 1);
+      expect(tag).toContain("sm:w-56");
+      expect(tag).not.toContain("sm:w-auto");
+      expect(tag).toContain("min-w-0");
+    });
+
+    it("the row is a plain column; only its first band is a side-by-side row", async () => {
+      scenario.rows = [entry()];
+      scenario.count = 1;
+      scenario.services = [service()];
+      const html = await render();
+      const li = html.slice(html.indexOf("<li"), html.indexOf(">", html.indexOf("<li")) + 1);
+      expect(li).toContain("flex-col");
+      expect(li).not.toContain("sm:flex-row");
+      const band = html.slice(html.indexOf("<li"), html.indexOf('data-testid="row-controls"'));
+      expect(band).toContain("sm:flex-row");
+    });
+
+    it("a long name and a long email wrap inside their own column instead of widening the row", async () => {
+      scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
+      scenario.count = 1;
+      const html = await render();
+      const name = html.indexOf(LONG_NAME);
+      const nameTag = html.slice(html.lastIndexOf("<p", name), name);
+      expect(nameTag).toContain("break-words");
+      const email = html.indexOf(LONG_EMAIL);
+      const emailTag = html.slice(html.lastIndexOf("<p", email), email);
+      expect(emailTag).toContain("break-all");
+      // The info column may shrink below its content (min-w-0) and takes the remaining width.
+      const infoOpen = html.slice(html.lastIndexOf("<div", name), name);
+      expect(infoOpen).toContain("min-w-0");
+      expect(infoOpen).toContain("flex-1");
+    });
+
+    it("a row with no composer (not an invitable state) has the same two-band shape", async () => {
+      scenario.rows = [entry({ status: "released" })];
+      scenario.count = 1;
+      const html = await render({ section: "released" });
+      expect(html).toContain('data-testid="row-controls"');
+      expect(html).not.toContain('data-testid="row-invite"');
+    });
+  });
+
   it("promises no queue position or capacity", async () => {
     scenario.rows = [entry()];
     scenario.count = 1;
