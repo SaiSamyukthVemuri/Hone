@@ -1234,6 +1234,23 @@ function ActivationSection({
   const [message, setMessage] = useState<string | null>(null);
   // A late preview from an earlier click is ignored, so the owner never confirms a list that is not the one being committed.
   const seq = useRef(0);
+  // Codex P2 on #1335: an edit made AFTER the preview opened (or while it loads) must not leave a confirmable activation. Activating
+  // refreshes the page and its version-keyed editor would drop the unsaved draft, so the preview is dropped and the commit refused.
+  const draftRef = useRef(blockedByDraft);
+  draftRef.current = blockedByDraft;
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  useEffect(() => {
+    if (!blockedByDraft) return;
+    seq.current += 1;
+    if (reviewRef.current !== null || busyRef.current) setMessage(ACTIVATION_DRAFT_LINE);
+    setReview(null);
+    setReason("");
+    setConfirmed(false);
+    setBusy(false);
+  }, [blockedByDraft]);
   if (pending.length === 0) return null;
 
   async function open() {
@@ -1247,6 +1264,10 @@ function ActivationSection({
     const r = await previewActivation(pending.map((p) => p.key));
     if (mine !== seq.current) return;
     setBusy(false);
+    if (draftRef.current) {
+      setMessage(ACTIVATION_DRAFT_LINE);
+      return;
+    }
     if (r.ok) {
       setReview(r.preview);
       setReason("");
@@ -1267,6 +1288,10 @@ function ActivationSection({
 
   async function commit() {
     if (!review) return;
+    if (draftRef.current) {
+      setMessage(ACTIVATION_DRAFT_LINE);
+      return;
+    }
     setBusy(true);
     setMessage(null);
     // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
@@ -1282,7 +1307,7 @@ function ActivationSection({
   }
 
   const needsConfirm = review?.confirmationRequired === true;
-  const canCommit = review !== null && !busy && writable && reasonAcceptable("adopt", false, reason) && (!needsConfirm || confirmed);
+  const canCommit = review !== null && !busy && writable && !blockedByDraft && reasonAcceptable("adopt", false, reason) && (!needsConfirm || confirmed);
   return (
     <section data-testid="activation-pending" aria-label="Settings waiting for activation" className="flex min-w-0 flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
       <h3 className="font-medium">Pending activation</h3>
