@@ -1,13 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { readEntryStatus } from "@/lib/waitlist/entry-status-readback";
 import {
-  LIFECYCLE_NOTICE_PARAM,
+  LIFECYCLE_NOTICE_COOKIE,
+  LIFECYCLE_NOTICE_MAX_AGE_SECONDS,
   STALE_STATE_NOTICES,
   lifecycleNoticeKey,
   type LifecycleNoticeAction,
@@ -120,7 +122,7 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
 
   if (!error && data === "removed") {
     revalidatePath("/settings/waitlist");
-    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent("remove.removed")}`);
+    await redirectWithNotice("remove.removed");
   }
 
   const outcome =
@@ -137,7 +139,7 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
       }),
     );
     revalidatePath("/settings/waitlist");
-    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent(staleKey)}`);
+    await redirectWithNotice(staleKey);
   }
 
   console.error(
@@ -161,11 +163,12 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
   const back = await readEntryStatus(studio.id, entryId);
   if (back.known && back.status === "removed") {
     revalidatePath("/settings/waitlist");
-    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent("remove.removed")}`);
+    await redirectWithNotice("remove.removed");
   }
-  if (!back.known) {
+  // A read that returns no status (the row is not visible to this session) is not a confirmation either.
+  if (!back.known || back.status === null) {
     revalidatePath("/settings/waitlist");
-    redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent("remove.unconfirmed")}`);
+    await redirectWithNotice("remove.unconfirmed");
   }
   throw new Error("Could not remove that entry. Please try again.");
 }
@@ -210,6 +213,25 @@ const AUTHORITY_REFUSALS = {
   not_owner: "Only studio owners can change the waitlist.",
   not_a_member: "Only studio owners can change the waitlist.",
 } as const;
+
+/**
+ * Leave the owner on the waitlist page with ONE outcome notice. The key rides in a flash cookie, not in
+ * the URL, so the only way to get a banner is to have just performed the action: a crafted link, a
+ * bookmark or a shared URL shows nothing. 20 seconds, httpOnly, scoped to the page, and the page maps
+ * the key through a closed table. (A refresh inside the window re-shows the same TRUE outcome; it cannot
+ * be forged.)
+ */
+async function redirectWithNotice(key: string): Promise<never> {
+  const jar = await cookies();
+  jar.set(LIFECYCLE_NOTICE_COOKIE, key, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/settings/waitlist",
+    maxAge: LIFECYCLE_NOTICE_MAX_AGE_SECONDS,
+  });
+  redirect("/settings/waitlist");
+}
 
 /**
  * Shared plumbing for the four single-entry commands.
@@ -295,7 +317,7 @@ async function runEntryLifecycleCommand(options: {
     if (staleKey) {
       revalidatePath("/settings/waitlist");
       // The KEY goes in the URL, never the sentence; the page resolves it against a fixed table.
-      redirect(`/settings/waitlist?${LIFECYCLE_NOTICE_PARAM}=${encodeURIComponent(staleKey)}`);
+      await redirectWithNotice(staleKey);
     }
     const known = typeof data === "string" ? options.refusals[data] : undefined;
     throw new Error(known ?? options.genericError);

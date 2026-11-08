@@ -178,6 +178,8 @@ function reset() {
   revalidated.length = 0;
   consoleErrors.length = 0;
   consoleWarns.length = 0;
+  flash.sets = [];
+  flash.value = undefined;
   readback.value = { known: false };
   Object.assign(scenario, {
     role: "owner",
@@ -261,6 +263,22 @@ vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
 }));
 
+// The flash cookie: what the action sets, and what the page reads on its next render.
+const flash: { sets: Array<{ name: string; value: string }>; value: string | undefined } = { sets: [], value: undefined };
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    set: (name: string, value: string) => {
+      flash.sets.push({ name, value });
+    },
+    get: (name: string) =>
+      name === "hone_waitlist_notice" && flash.value !== undefined ? { name, value: flash.value } : undefined,
+  }),
+}));
+/** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
+async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  expect(flash.sets).toEqual([{ name: "hone_waitlist_notice", value: key }]);
+}
 // The real `redirect` throws a NEXT_REDIRECT control-flow error; this one does too, carrying the target.
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
@@ -501,7 +519,7 @@ const { removeWaitlistEntryAction } = await import(
  * opens /settings/waitlist.
  */
 const render = async (
-  searchParams: { section?: string | string[]; page?: string | string[]; notice?: string | string[] } = {},
+  searchParams: { section?: string | string[]; page?: string | string[] } = {},
 ) =>
   renderToStaticMarkup(
     await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
@@ -1256,9 +1274,7 @@ describe("removal", () => {
   it("goes through the command with a SERVER-DERIVED tenant and actor", async () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
-    await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-      "NEXT_REDIRECT:/settings/waitlist?notice=remove.removed",
-    );
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
 
     expect(rpcCalls).toEqual([
       {
@@ -1297,7 +1313,7 @@ describe("removal", () => {
     fd.set("p_studio_id", "attacker-studio");
     fd.set("actor_user_id", "attacker-user");
     fd.set("role", "owner");
-    await expect(removeWaitlistEntryAction(fd)).rejects.toThrow("NEXT_REDIRECT");
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_entry_id: "entry-1",
@@ -1322,14 +1338,14 @@ describe("removal", () => {
     scenario.removeResult = code;
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
-    await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-      `NEXT_REDIRECT:/settings/waitlist?notice=remove.${code}`,
-    );
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), `remove.${code}`);
     expect(revalidated).toEqual(["/settings/waitlist"]);
     // A clean refusal is a warning, not a fault, and nothing was read back.
     expect(consoleErrors).toHaveLength(0);
     expect(consoleWarns.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
-    const html = await render({ notice: `remove.${code}` });
+    // The page reads the cookie the action just set, and shows exactly that copy.
+    flash.value = flash.sets[0]!.value;
+    const html = await render();
     expect(html).toContain(message);
   });
 
@@ -1414,9 +1430,8 @@ describe("removal", () => {
       if (DELIBERATELY_GENERIC.has(code)) {
         expect(error!.message, `${code} should be deliberately generic`).toBe(GENERIC);
       } else if (NOTICED.has(code)) {
-        expect(error!.message, `${code} should redirect with a notice`).toBe(
-          `NEXT_REDIRECT:/settings/waitlist?notice=remove.${code}`,
-        );
+        expect(error!.message, `${code} should redirect with a notice`).toBe("NEXT_REDIRECT:/settings/waitlist");
+        expect(flash.sets.at(-1)?.value, `${code} notice key`).toBe(`remove.${code}`);
       } else {
         expect(error!.message, `${code} falls through to the generic error`).not.toBe(GENERIC);
       }
@@ -1435,9 +1450,7 @@ describe("removal", () => {
         readback.value = { known: true, status: "removed" };
         const fd = new FormData();
         fd.set("entry_id", "entry-1");
-        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-          "NEXT_REDIRECT:/settings/waitlist?notice=remove.removed",
-        );
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
       });
       it(`${label}: the row is verifiably still there -> the generic error, a retry is honest`, async () => {
         arrange();
@@ -1448,15 +1461,21 @@ describe("removal", () => {
           "Could not remove that entry. Please try again.",
         );
       });
+      it(`${label}: a read that returns NO status is not a confirmation either -> unconfirmed, no retry`, async () => {
+        arrange();
+        readback.value = { known: true, status: null };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.unconfirmed");
+      });
       it(`${label}: the row cannot be read -> an unconfirmed notice that offers no retry`, async () => {
         arrange();
         readback.value = { known: false };
         const fd = new FormData();
         fd.set("entry_id", "entry-1");
-        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-          "NEXT_REDIRECT:/settings/waitlist?notice=remove.unconfirmed",
-        );
-        const html = await render({ notice: "remove.unconfirmed" });
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.unconfirmed");
+        flash.value = "remove.unconfirmed";
+        const html = await render();
         expect(html).toContain("We could not confirm whether that entry was removed.");
         expect(html).not.toMatch(/try again\./i);
       });
@@ -1471,13 +1490,30 @@ describe("removal", () => {
     }
   });
 
-  it("a removal notice renders from the fixed table only: success, and a hand-edited value shows nothing", async () => {
-    const ok = await render({ notice: "remove.removed" });
+  it("a removal notice renders from the fixed table only, in its own style, and a hand-edited value shows nothing", async () => {
+    flash.value = "remove.removed";
+    const ok = await render();
     expect(ok).toContain("Removed from the waitlist.");
     expect(ok).not.toContain("Nothing was changed");
-    const hostile = await render({ notice: "<b>owned</b>" });
+    // Success is styled apart from a refusal.
+    expect(ok).toMatch(/data-tone="success"[^>]*emerald/);
+    flash.value = "release.not_releasable";
+    const refusal = await render();
+    expect(refusal).toMatch(/data-tone="refusal"[^>]*amber/);
+    expect(refusal).not.toContain("emerald-300");
+    flash.value = "<b>owned</b>";
+    const hostile = await render();
     expect(hostile).not.toContain("owned");
     expect(hostile).not.toContain('data-testid="lifecycle-notice"');
+  });
+
+  it("a crafted LINK cannot forge a banner: the URL parameter is not read at all", async () => {
+    flash.value = undefined;
+    for (const forged of ["remove.removed", "release.not_releasable", "<b>owned</b>"]) {
+      const html = await render({ notice: forged } as never);
+      expect(html, forged).not.toContain('data-testid="lifecycle-notice"');
+      expect(html, forged).not.toContain("Removed from the waitlist.");
+    }
   });
 
   it("logs the outcome without any contact detail", async () => {

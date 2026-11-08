@@ -8,9 +8,11 @@
 //
 // THE COPY LIVES HERE AND NOWHERE ELSE. The action's refusal maps read these
 // strings, and the page renders only a string found in this table. The notice
-// travels in the URL as a KEY (`release.not_releasable`), never as text, and the
-// page looks the key up by exact own-property match: whatever the browser sends
-// either names one fixed sentence below or renders nothing. Nothing is echoed.
+// travels in a short-lived httpOnly FLASH COOKIE set by the action, as a KEY
+// (`release.not_releasable`), never as text. A URL parameter is not read at all, so a
+// crafted or bookmarked link cannot show a banner the owner's own action did not
+// produce. The page looks the key up by exact own-property match: whatever the cookie
+// holds either names one fixed sentence below or renders nothing. Nothing is echoed.
 
 export const STALE_STATE_NOTICES = {
   "claim.not_found": "That waitlist entry no longer exists.",
@@ -51,8 +53,9 @@ export type LifecycleNoticeAction = "claim" | "release" | "expire" | "requeue" |
 
 export type OutcomeNoticeKey = keyof typeof OUTCOME_NOTICES;
 
-/** The query parameter the action redirects with and the page reads. */
-export const LIFECYCLE_NOTICE_PARAM = "notice";
+/** The flash cookie the action sets and the page reads. Scoped to the waitlist page, httpOnly, 20 s. */
+export const LIFECYCLE_NOTICE_COOKIE = "hone_waitlist_notice";
+export const LIFECYCLE_NOTICE_MAX_AGE_SECONDS = 20;
 
 function isNoticeKey(value: unknown): value is LifecycleNoticeKey {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(STALE_STATE_NOTICES, value);

@@ -22,6 +22,15 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // The real `redirect` throws a NEXT_REDIRECT control-flow error; the fake does the same with the
 // target, so a test can tell "redirected to X" from "threw a refusal".
+// The flash cookie the action leaves for the page. Records what was set.
+const flash: { sets: Array<{ name: string; value: string; options: Record<string, unknown> }> } = { sets: [] };
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    set: (name: string, value: string, options: Record<string, unknown>) => {
+      flash.sets.push({ name, value, options });
+    },
+  }),
+}));
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((to: string) => {
     throw new Error(`NEXT_REDIRECT:${to}`);
@@ -72,7 +81,19 @@ function entryForm(entryId = ENTRY): FormData {
   return fd;
 }
 
+/** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
+async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  expect(flash.sets).toHaveLength(1);
+  expect(flash.sets[0]).toMatchObject({
+    name: "hone_waitlist_notice",
+    value: key,
+    options: { httpOnly: true, sameSite: "lax", path: "/settings/waitlist", maxAge: 20 },
+  });
+}
+
 beforeEach(() => {
+  flash.sets = [];
   calls = [];
   arrangeActor();
 });
@@ -150,9 +171,10 @@ describe("the browser supplies identity, never authority", () => {
     // trusted — it is scoped by (id, studio_id) inside the command, which is
     // why a foreign id resolves to `not_found` rather than to someone's row.
     arrangeRpc({ data: "not_found" });
-    await expect(
+    await expectNoticeRedirect(
       claimWaitlistEntryAction(entryForm("44444444-4444-4444-4444-444444444444")),
-    ).rejects.toThrow("NEXT_REDIRECT:/settings/waitlist?notice=claim.not_found");
+      "claim.not_found",
+    );
     expect(calls[0]!.args.p_studio_id).toBe(STUDIO);
   });
 });
@@ -228,7 +250,7 @@ describe("a stale-state refusal redirects with a notice; every other refusal sti
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       arrangeRpc({ data: code });
-      await expect(run(entryForm())).rejects.toThrow(`NEXT_REDIRECT:/settings/waitlist?notice=${encodeURIComponent(key)}`);
+      await expectNoticeRedirect(run(entryForm()), key);
       expect(vi.mocked(redirect)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/settings/waitlist");
       // One command, once: no retry, no second rpc.
@@ -252,6 +274,7 @@ describe("a stale-state refusal redirects with a notice; every other refusal sti
       arrangeRpc({ data: code });
       await expect(run(entryForm())).rejects.toThrow(expected);
       expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+      expect(flash.sets).toHaveLength(0);
     });
   }
 
@@ -399,6 +422,9 @@ describe("source contract", () => {
     }
   });
 
+  // A TRIPWIRE, NOT A PROOF. It reads the text of each console.error / console.warn call in this file and
+  // refuses the common ways prospect data gets logged (a contact field name, an entry id). It cannot see a
+  // value that reaches a log through a variable or a helper, so it catches the usual mistake, not every one.
   it("logs no prospect PII", () => {
     const logs = [...CODE.matchAll(/console\.(?:error|warn)\(([\s\S]*?)\);/g)].map((m) => m[1]!);
     expect(logs.length).toBeGreaterThanOrEqual(2);
