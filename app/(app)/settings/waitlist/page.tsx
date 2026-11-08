@@ -23,7 +23,12 @@ import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
 import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
-import { loadDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
+import { loadDeclineEmailStatus, loadOutboxCounts } from "@/lib/waitlist/decline-owner-email";
+import { declineOwnerEmailActivation } from "@/lib/waitlist/decline-owner-email-gate";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
+import { readFollowUps } from "@/lib/waitlist/followups-owner";
+import { loadLinkableAppointments } from "@/lib/waitlist/followup-linkable";
+import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
 import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
 import {
   getNewClientAdmissionMode,
@@ -353,7 +358,7 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[] }>;
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[] }>;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
@@ -701,7 +706,18 @@ export default async function WaitlistSettingsPage({
   const attention = await loadNeedsAttention(supabase, studio.id);
   const declined = await loadDeclinedAttention(supabase, studio.id);
   // The outbox has no policy for the user client (0325), so its status is read inside this helper, which builds its own server-only client. This page's data reads stay on the RLS client.
-  const declineEmail = await loadDeclineEmailStatus(studio.id);
+  const declineEmail = await loadDeclineEmailStatus(studio.id, practitioner.user_id);
+  // 0325: the follow-up section is read only behind its own flag (the commands do not exist until the migration is applied).
+  const declineAnswersOn = waitlistDeclineAnswersEnabled();
+  const followUps = declineAnswersOn ? await readFollowUps(studio.id, practitioner.user_id) : null;
+  const followUpOpenRows = followUps?.kind === "ok" ? followUps.rows : [];
+  const linkable = await loadLinkableAppointments(supabase, studio.id, followUpOpenRows, studio.timezone ?? "UTC");
+  const outbox = await loadOutboxCounts(
+    studio.id,
+    followUpOpenRows.flatMap((r) => (r.invitationId ? [r.invitationId] : [])),
+  );
+  const fuParam = firstParam(params.fu);
+  const followUpNotice = fuParam === "done" || fuParam === "already" || fuParam === "refused" || fuParam === "failed" ? fuParam : null;
   // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
   // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
   const admissionForInvites = await getNewClientAdmissionMode(studio);
@@ -967,6 +983,21 @@ export default async function WaitlistSettingsPage({
             );
           })()}
 
+          {declineAnswersOn &&
+            (followUps?.kind === "ok" ? (
+              <DeclineFollowUpSection
+                rows={followUps.rows}
+                timeZone={studio.timezone ?? "UTC"}
+                emailEnabled={declineOwnerEmailActivation().enabled}
+                outbox={outbox}
+                linkable={linkable}
+                notice={followUpNotice}
+              />
+            ) : (
+              <p id="follow-up" className="text-sm text-neutral-600 dark:text-neutral-400" role="status">
+                We couldn&rsquo;t load the waitlist responses. Reload to try again.
+              </p>
+            ))}
           {declineEmail.kind === "ok" && <DeclineEmailFailedNotice failed={declineEmail.failed} />}
           {declined.kind === "ok" && declined.total > 0 && (
             <section
@@ -1414,7 +1445,7 @@ export default async function WaitlistSettingsPage({
                               <input type="hidden" name="entry_id" value={row.id} />
                               <p className="text-sm break-words text-neutral-500">
                                 Take {row.name} off the waitlist? This cannot be
-                                undone from here.
+                                undone from here.{declineAnswersOn && " Removing also erases any answers they gave."}
                               </p>
                               <button
                                 type="submit"

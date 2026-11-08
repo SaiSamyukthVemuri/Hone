@@ -69,6 +69,17 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "count_waitlist_times_feedback",
   },
   {
+    path: "lib/waitlist/followups-owner.ts",
+    purpose: "HON-7 (0325): the owner's decline and withdrawal follow-up reads and commands.",
+    why:
+      "Every function passes the studio and the verified actor user id to a service_role-only command that re-derives " +
+      "the owner role inside (new_client_waitlist_resolve_owner). The callers take both from the session (getUser), " +
+      "never from a form field, and each refuses a non-owner before calling. Only readFollowUps returns the " +
+      "recipient's answers, and only to the owner-gated settings page; the status read returns no name and no " +
+      "answer. An unreadable result is unknown, never an empty list, and nothing here logs a row or an error body.",
+    scopeGuard: "p_actor_user_id",
+  },
+  {
     path: "lib/waitlist/decline-owner-email.ts",
     purpose: "HON-7 item 4: send, retry and report the owner email on a waitlist decline.",
     why:
@@ -76,7 +87,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
       "update only, and inserts happen inside the decline function. The module touches ids, statuses, counts and dates, " +
       "never the invitee, and re-resolves each recipient as an active owner of the row's own studio with a confirmed " +
       "email before sending. The only reader outside the cron route is the owner-gated settings page, through " +
-      "loadDeclineEmailStatus(studio.id) after its role refusal; the studio id comes from the session. Off unless " +
+      "loadDeclineEmailStatus(studio.id, actor) after its role refusal; the studio id comes from the session. Off unless " +
       "HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED is exactly \"true\" and a SINCE instant is set.",
     scopeGuard: "recipient_practitioner_id",
   },

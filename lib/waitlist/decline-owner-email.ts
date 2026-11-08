@@ -4,10 +4,11 @@ import { sendWaitlistEmailIdempotent, type IdempotentEmailTransport } from "@/li
 import { buildWaitlistDeclineOwnerEmail } from "@/lib/email/templates/waitlist-decline-owner";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { readFollowUpStatus } from "./followups-owner";
+import { emptyOutboxCounts, type OutboxCounts } from "./decline-status-lines";
 import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
   DECLINE_OWNER_EMAIL_BATCH_SIZE,
-  DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS,
   DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS,
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
   DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES,
@@ -280,32 +281,65 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
 
 export type DeclineEmailStatus = { kind: "unknown" } | { kind: "ok"; failed: number };
 
-/** Owners see a failure in Hone. A count only: no recipient, no error text. */
-export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, now: Date = new Date()): Promise<DeclineEmailStatus> {
+/**
+ * The failed-email notice: how many owner emails FAILED for responses that are still OPEN. A failed send for a response the owner has already
+ * dealt with (handled, booked, removed) is not shown, so the notice goes away on its own. Open/closed comes from the STATUS-ONLY read (0325),
+ * which returns no name and no answer, so counting never loads personal text. A count only: no recipient, no error text.
+ */
+export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, actorUserId: string | null): Promise<DeclineEmailStatus> {
   try {
     const activation = declineOwnerEmailActivation();
     if (!activation.enabled) return { kind: "ok", failed: 0 };
-    // Only `failed` rows, only since activation, and only recent ones: the outbox cannot yet say a response was handled, so the notice ages out.
-    const recent = new Date(now.getTime() - DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS * 86_400_000);
-    const from = recent > activation.since ? recent : activation.since;
-    const { count, error } = await admin
+    if (!actorUserId) return { kind: "unknown" };
+    const { data, error } = await admin
       .from("waitlist_decline_owner_emails")
-      .select("id", { count: "exact", head: true })
+      .select("invitation_id")
       .eq("studio_id", studioId)
       .eq("status", "failed")
-      .gte("created_at", from.toISOString());
-    if (error || typeof count !== "number") return { kind: "unknown" };
-    return { kind: "ok", failed: count };
+      .gte("created_at", activation.since.toISOString())
+      .limit(500);
+    if (error || !Array.isArray(data)) return { kind: "unknown" };
+    const invitations = [...new Set((data as Array<{ invitation_id?: unknown }>).flatMap((r) => (typeof r.invitation_id === "string" ? [r.invitation_id] : [])))];
+    let open = 0;
+    for (const invitationId of invitations) {
+      const st = await readFollowUpStatus(studioId, actorUserId, invitationId);
+      if (st.kind !== "ok") return { kind: "unknown" };
+      if (st.status === "open") open += 1;
+    }
+    return { kind: "ok", failed: open };
   } catch {
     return { kind: "unknown" };
   }
 }
 
 /** For the owner page, after its role check. The service-role client stays inside this module; an unbuildable client is `unknown`. */
-export async function loadDeclineEmailStatus(studioId: string): Promise<DeclineEmailStatus> {
+export async function loadDeclineEmailStatus(studioId: string, actorUserId: string | null): Promise<DeclineEmailStatus> {
   try {
-    return await getDeclineEmailStatus(createAdminClient(), studioId);
+    return await getDeclineEmailStatus(createAdminClient(), studioId, actorUserId);
   } catch {
     return { kind: "unknown" };
+  }
+}
+
+/** Outbox counts per invitation, for the follow-up card's email line. Ids and counts only. null = could not be read. */
+export async function loadOutboxCounts(studioId: string, invitationIds: string[]): Promise<Map<string, OutboxCounts> | null> {
+  const out = new Map<string, OutboxCounts>();
+  if (invitationIds.length === 0) return out;
+  try {
+    const { data, error } = await createAdminClient()
+      .from("waitlist_decline_owner_emails")
+      .select("invitation_id,status")
+      .eq("studio_id", studioId)
+      .in("invitation_id", invitationIds.slice(0, 200));
+    if (error || !Array.isArray(data)) return null;
+    for (const r of data as Array<{ invitation_id?: unknown; status?: unknown }>) {
+      if (typeof r.invitation_id !== "string" || typeof r.status !== "string") continue;
+      const c = out.get(r.invitation_id) ?? emptyOutboxCounts();
+      if (r.status in c) c[r.status as keyof OutboxCounts] += 1;
+      out.set(r.invitation_id, c);
+    }
+    return out;
+  } catch {
+    return null;
   }
 }

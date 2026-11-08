@@ -1,26 +1,64 @@
-import type { FollowUpRow } from "@/lib/waitlist/decline-follow-up-adapter";
-import { bellStatusLine, DECLINE_CARD_SAVED, emailStatusLine, type OutboxCounts } from "@/lib/waitlist/decline-status-lines";
+import type { FollowUpRow } from "@/lib/waitlist/followups-owner";
+import type { LinkableAppointment } from "@/lib/waitlist/followup-linkable";
+import { bellStatusLine, DECLINE_CARD_SAVED, emailStatusLine, emptyOutboxCounts, type OutboxCounts } from "@/lib/waitlist/decline-status-lines";
 import { NO_TIMES_WORK_LABELS } from "@/lib/waitlist/decline-responses";
+import {
+  eraseAnswersAction,
+  keepWithdrawalAction,
+  linkAppointmentAction,
+  markHandledAction,
+  type FollowUpNotice,
+} from "@/app/(app)/settings/waitlist/follow-up-actions";
 
 // HON-7 (b). The owner's follow-up section: the target of the `#follow-up` anchor the email, the bell and the sign-in return all land on.
-// OWNER-ONLY BY CONSTRUCTION: this component renders the recipient's answers, so it must only ever be rendered after the page's owner check
-// (a test pins the call site's order). It takes its data as props and performs no reads itself.
-//
-// The actions (mark handled, book manually, booked elsewhere) are passed in as server-action forms so this stays presentational and testable;
-// they are wired to the adapter when the 0325 contract lands.
-export type FollowUpActionForm = (row: FollowUpRow) => React.ReactNode;
+// OWNER-ONLY BY CONSTRUCTION: it renders the recipient's answers, so it must only ever be rendered after the page's owner check (a test pins the
+// call site's order). Data comes in as props; this performs no reads. Nothing here says "delivered", "queued" or "pending" about the email, and
+// nothing auto-resolves: the owner's own action closes a response.
+
+const NOTICE_COPY: Record<FollowUpNotice, string> = {
+  done: "Done.",
+  already: "Already done.",
+  refused: "That could not be done. Check the response and try again.",
+  failed: "That did not go through. Nothing was changed, so please try again.",
+};
+
+function eraseDate(iso: string | null, timeZone: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" }).format(d);
+  } catch {
+    return null;
+  }
+}
+
+const BUTTON =
+  "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
+
+function Hidden({ id }: { id: string }) {
+  return <input type="hidden" name="followupId" value={id} />;
+}
 
 export function DeclineFollowUpSection({
   rows,
+  timeZone,
   emailEnabled,
+  outbox,
+  linkable,
+  notice,
   justSaved = false,
-  actions,
 }: {
   rows: FollowUpRow[];
+  timeZone: string;
   emailEnabled: boolean;
+  /** Outbox counts by invitation id; null when they could not be read. */
+  outbox: Map<string, OutboxCounts> | null;
+  /** This person's own appointments the owner may link, by follow-up id. */
+  linkable: Map<string, LinkableAppointment[]>;
+  notice: FollowUpNotice | null;
   /** True when the owner arrived straight from a response being saved. */
   justSaved?: boolean;
-  actions?: { markHandled?: FollowUpActionForm; bookManually?: FollowUpActionForm; bookedElsewhere?: FollowUpActionForm };
 }) {
   const open = rows.filter((r) => r.status === "open");
   return (
@@ -33,35 +71,99 @@ export function DeclineFollowUpSection({
       <h2 id="follow-up-heading" className="font-medium">
         Waitlist responses ({open.length})
       </h2>
-      {justSaved ? <p className="mt-1" role="status">{DECLINE_CARD_SAVED}</p> : null}
+      {justSaved ? (
+        <p className="mt-1" role="status">
+          {DECLINE_CARD_SAVED}
+        </p>
+      ) : null}
+      {notice ? (
+        <p className="mt-1" role="status" data-testid="follow-up-notice">
+          {NOTICE_COPY[notice]}
+        </p>
+      ) : null}
       {rows.length === 0 ? <p className="mt-1">No responses need follow-up.</p> : null}
-      <ul className="mt-2 flex flex-col gap-3">
-        {rows.map((r) => (
-          <li key={r.id} className="border-t border-amber-200 pt-2 first:border-t-0 first:pt-0" data-status={r.status}>
-            <p className="font-medium">{r.name}</p>
-            {r.kind === "no_longer_needed" ? (
-              <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p>
-            ) : (
-              <dl className="mt-1">
-                <dt className="text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.why}</dt>
-                <dd className="whitespace-pre-wrap">{r.why}</dd>
-                <dt className="mt-1 text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.better}</dt>
-                <dd className="whitespace-pre-wrap">{r.better}</dd>
-              </dl>
-            )}
-            <p className="mt-1 text-neutral-600 dark:text-neutral-400">{bellStatusLine()}</p>
-            <p className="text-neutral-600 dark:text-neutral-400">{emailStatusLine(emailEnabled, r.emailRows as OutboxCounts | null)}</p>
-            {r.status === "open" ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {actions?.bookManually?.(r)}
-                {actions?.bookedElsewhere?.(r)}
-                {actions?.markHandled?.(r)}
-              </div>
-            ) : (
-              <p className="mt-1 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
-            )}
-          </li>
-        ))}
+      <ul className="mt-2 flex flex-col gap-4">
+        {rows.map((r) => {
+          const erased = r.answersErasedAt !== null;
+          const when = eraseDate(r.eraseBy, timeZone);
+          const counts = outbox ? ((r.invitationId ? outbox.get(r.invitationId) : undefined) ?? emptyOutboxCounts()) : null;
+          const emailLine = r.kind === "decline" ? emailStatusLine(emailEnabled, counts) : null;
+          return (
+            <li key={r.followupId} className="border-t border-amber-200 pt-3 first:border-t-0 first:pt-0" data-status={r.status} data-kind={r.kind}>
+              <p className="font-medium">{r.clientName || "A person on the waitlist"}</p>
+              {r.kind === "withdrawal" ? <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
+              {erased ? (
+                <p className="text-neutral-600 dark:text-neutral-400">Their answers have been erased.</p>
+              ) : r.whyNotWork !== null || r.betterTimes !== null ? (
+                <dl className="mt-1">
+                  <dt className="text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.why}</dt>
+                  <dd className="whitespace-pre-wrap">{r.whyNotWork}</dd>
+                  <dt className="mt-1 text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.better}</dt>
+                  <dd className="whitespace-pre-wrap">{r.betterTimes}</dd>
+                </dl>
+              ) : null}
+              {!erased && when ? (
+                <p className="mt-1 text-neutral-600 dark:text-neutral-400" data-testid="erase-by">
+                  Answers will be erased on {when}.
+                </p>
+              ) : null}
+              {r.kind === "decline" ? (
+                <>
+                  <p className="mt-1 text-neutral-600 dark:text-neutral-400">{bellStatusLine()}</p>
+                  <p className="text-neutral-600 dark:text-neutral-400">{emailLine}</p>
+                </>
+              ) : (
+                <p className="mt-1 text-neutral-600 dark:text-neutral-400">{bellStatusLine()}</p>
+              )}
+              {r.status === "open" ? (
+                <div className="mt-2 flex flex-col gap-2">
+                  {(linkable.get(r.followupId) ?? []).map((a) => (
+                    <form key={a.id} action={linkAppointmentAction}>
+                      <Hidden id={r.followupId} />
+                      <input type="hidden" name="appointmentId" value={a.id} />
+                      <button type="submit" className={BUTTON}>
+                        Link booking: {a.label}
+                      </button>
+                    </form>
+                  ))}
+                  <div className="flex flex-wrap gap-2">
+                    <a href="/calendar" className={BUTTON}>
+                      Book now
+                    </a>
+                    {r.kind === "decline" ? (
+                      <form action={markHandledAction}>
+                        <Hidden id={r.followupId} />
+                        <button type="submit" className={BUTTON}>
+                          Mark handled
+                        </button>
+                      </form>
+                    ) : (
+                      <form action={keepWithdrawalAction}>
+                        <Hidden id={r.followupId} />
+                        <button type="submit" className={BUTTON}>
+                          Keep on the waitlist
+                        </button>
+                      </form>
+                    )}
+                    {!erased && (r.whyNotWork !== null || r.betterTimes !== null) ? (
+                      <form action={eraseAnswersAction}>
+                        <Hidden id={r.followupId} />
+                        <button type="submit" className={BUTTON}>
+                          Erase answers
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
+                  <p className="text-neutral-600 dark:text-neutral-400">
+                    Book now opens the calendar. After you book, the appointment appears here to link, which also covers someone who booked elsewhere.
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-1 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -69,6 +171,7 @@ export function DeclineFollowUpSection({
 
 const STATUS_COPY: Record<Exclude<FollowUpRow["status"], "open">, string> = {
   handled: "Handled.",
-  booked_manually: "Booked from the follow-up.",
-  booked_elsewhere: "Booked elsewhere.",
+  kept: "Kept on the waitlist.",
+  booked: "Booked and linked.",
+  removed: "Removed from the waitlist.",
 };
