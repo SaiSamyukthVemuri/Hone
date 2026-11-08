@@ -538,8 +538,9 @@ describe("the query the page asks", () => {
     // across every state. A shared cap lets a busy section crowd another off
     // the page entirely, taking that section's only actions with it.
     // The owner's needs-attention card (0313) makes its own COMPLETE read of the
-    // invited entries (id,name); it is a sixth, separate read, not a section.
-    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns !== "id,name");
+    // invited entries (id,name); it is a sixth, separate read, not a section. The
+    // declined-times card reads released entries (id,name,released_at) the same way.
+    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns !== "id,name" && x.columns !== "id,name,released_at");
     expect(pageReads).toHaveLength(5);
     expect(queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns === "id,name")).toHaveLength(1);
     const q = pageReads.find((x) =>
@@ -1693,7 +1694,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     await render();
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
     // Five section reads, plus the needs-attention card's own read (id,name).
-    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name")).toHaveLength(5);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns === "id,name")).toHaveLength(1);
   });
 
@@ -1718,7 +1719,8 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-rel", status: "released" })];
     scenario.count = 1;
     await render();
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at");
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -2042,7 +2044,7 @@ describe("the focused view keeps the headline honest", () => {
 
     // Five section reads either way; only the focused one asks for rows. (The
     // needs-attention card's own id,name read is not a section.)
-    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name");
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at");
     expect(reads).toHaveLength(5);
     const listed = reads.filter((q) => q.options.head === false);
     expect(listed).toHaveLength(1);
@@ -2094,7 +2096,7 @@ describe("a browser-supplied section or page can never mislead", () => {
     // declares, because `section` is MATCHED against them rather than passed
     // through.
     const statuses = queries
-      .filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name")
+      .filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")
       .map((q) => q.filters.find((f) => f[0] === "eq" && f[1] === "status")?.[2]);
     expect(statuses).toEqual(["waiting", "claimed", "invited", "expired", "released"]);
   });

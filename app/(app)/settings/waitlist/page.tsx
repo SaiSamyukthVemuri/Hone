@@ -22,6 +22,7 @@ import {
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
 import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
+import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
 import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { inviteToBookAction } from "./invite-actions";
@@ -680,6 +681,7 @@ export default async function WaitlistSettingsPage({
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   const attention = await loadNeedsAttention(supabase, studio.id);
+  const declined = await loadDeclinedAttention(supabase, studio.id);
   // Count only: no text is read on this page. Skipped entirely while the flag is off.
   const replies = waitlistTimesFeedbackEnabled()
     ? await countTimesFeedback(studio.id, practitioner.user_id)
@@ -914,6 +916,40 @@ export default async function WaitlistSettingsPage({
             );
           })()}
 
+          {declined.kind === "ok" && declined.total > 0 && (
+            <section
+              aria-labelledby="declined-heading"
+              data-testid="declined-card"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+            >
+              <h2 id="declined-heading" className="font-medium">
+                Declined the offered times ({declined.total})
+              </h2>
+              <p className="mt-1">
+                {declined.total === 1 ? "This person said" : "These people said"} none of the offered times
+                suit them. {declined.total === 1 ? "They are" : "Each is"} off the waitlist for now and
+                nobody has been told. Return {declined.total === 1 ? "them" : "each one"} to the waitlist to
+                restore their original place. The same window can&rsquo;t be offered again, so send a
+                different one.
+              </p>
+              <ul className="mt-2 list-disc pl-5">
+                {declined.shown.map((r) => (
+                  <li key={r.id}>{r.name}</li>
+                ))}
+              </ul>
+              {declined.total > declined.shown.length && (
+                <p className="mt-1">
+                  Showing {declined.shown.length} of {declined.total}.
+                </p>
+              )}
+              <p className="mt-2">
+                <WaitlistNavLink href={sectionHref("released")} className="underline">
+                  Open the Released group
+                </WaitlistNavLink>{" "}
+                to return each one.
+              </p>
+            </section>
+          )}
           {replies.kind === "ok" && replies.n > 0 && (
             <section
               aria-labelledby="replies-heading"
@@ -1179,6 +1215,7 @@ export default async function WaitlistSettingsPage({
                                 invitationElapsed: elapsed,
                                 invitationRedeemed: redeemed,
                                 invitationFactsUnknown: cycleByEntry === null,
+                                declinedByRecipient: declined.kind === "ok" && declined.ids.has(row.id),
                               })}
                             </p>
                           )}

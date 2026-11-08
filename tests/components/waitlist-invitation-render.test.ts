@@ -374,7 +374,8 @@ describe("declining promises only what decline does", () => {
     // it back. Promising automatic follow-up would be untrue.
     expect(html.toLowerCase()).not.toContain("still on the studio");
     expect(html.toLowerCase()).not.toContain("be in touch");
-    expect(html).toContain("contact the studio directly");
+    expect(html).toContain("Nothing is booked.");
+    expect(html).toContain("please contact the studio; they can put you back on the waiting list in your original place.");
     expect(html.toLowerCase()).not.toMatch(/been (told|notified|informed)|let (them|the studio) know/);
   });
 });

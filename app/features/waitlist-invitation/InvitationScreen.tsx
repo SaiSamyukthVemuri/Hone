@@ -218,8 +218,8 @@ function DeclinedView({ keptOnList }: { keptOnList: boolean }) {
           Nor does declining notify the studio (no message, owner card or
           dashboard item is written), so the copy claims no notification. */}
       <p className="text-sm text-[#6B6B6B]">
-        You’ve declined these times. If you’d still like to be seen, please contact the studio
-        directly.
+        You’ve declined these times. Nothing is booked. If you’d still like to be seen, please
+        contact the studio; they can put you back on the waiting list in your original place.
       </p>
     </div>
   );
