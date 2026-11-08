@@ -82,6 +82,8 @@ import {
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
 import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
+import { cookies } from "next/headers";
+import { LIFECYCLE_NOTICE_COOKIE, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
@@ -368,6 +370,11 @@ export default async function WaitlistSettingsPage({
     SECTIONS.find(({ status }) => status === requestedSection)?.status ?? null;
   // `page` is meaningless without a section, so it is only read alongside one.
   const pageNumber = focusedStatus ? parsePageNumber(firstParam(params.page)) : 1;
+  // A LIFECYCLE NOTICE NAMES ONE FIXED SENTENCE OR NOTHING. It comes ONLY from the flash cookie the owner's
+  // own action just set (never from the URL, so a crafted or bookmarked link shows nothing), is looked up in
+  // a closed table, and only the table's own text is rendered; an unknown value shows no banner and is
+  // never echoed.
+  const lifecycleNotice = lifecycleNoticeCopy((await cookies()).get(LIFECYCLE_NOTICE_COOKIE)?.value);
 
   // RLS-scoped user client, NOT the service-role client: the read is genuinely
   // gated by `is_studio_owner` at the database rather than by this page having
@@ -830,6 +837,21 @@ export default async function WaitlistSettingsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {lifecycleNotice && (
+        <p
+          role="status"
+          data-testid="lifecycle-notice"
+          data-tone={lifecycleNotice.tone}
+          className={
+            lifecycleNotice.tone === "success"
+              ? "rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-700 dark:bg-emerald-950"
+              : "rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+          }
+        >
+          {lifecycleNotice.text}
+          {lifecycleNotice.tone === "refusal" && " Nothing was changed. The list below is up to date."}
+        </p>
+      )}
       {/* Absent only on a row read before 0206; the column defaults FALSE, so
           absent displays as OFF. */}
       <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
