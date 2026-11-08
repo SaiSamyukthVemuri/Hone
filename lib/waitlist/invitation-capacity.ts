@@ -10,7 +10,7 @@
 
 /** The round could not be rotated when it filled. Rare: the plumbing round holds 100 invitations. */
 export const CAPACITY_EXHAUSTED_COPY =
-  "We couldn't open a new batch of invitations just now. Please try again.";
+  "We couldn't prepare invitations just now. Please try again.";
 
 /** Shown when the consultation times in the offered dates are already covered by invitations still out (0324). */
 export const NO_CAPACITY_COPY =

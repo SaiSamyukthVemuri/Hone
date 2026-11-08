@@ -437,7 +437,7 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
     // when no capacity is open, but a capacity closed between render and press
     // still lands here, and it must read the same way.
     case "no_admission_round":
-      return "Set your invitation capacity before inviting someone to book.";
+      return CAPACITY_EXHAUSTED_COPY;
     case "admission_round_full":
       return CAPACITY_EXHAUSTED_COPY;
     case "no_capacity":

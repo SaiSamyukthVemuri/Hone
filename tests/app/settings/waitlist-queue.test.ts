@@ -1088,7 +1088,7 @@ describe("rendered rows", () => {
     // this strips exactly those sentences and nothing else — the bare word stays
     // forbidden everywhere else in the queue.
     const OWNER_CAPACITY_COPY = [
-      "Set your invitation capacity before inviting someone to book.",
+      "We couldn't prepare invitations just now. Please try again.",
       CAPACITY_EXHAUSTED_COPY,
       "We couldn't check your invitation capacity just now. Reload the page before inviting.",
     ];

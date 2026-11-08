@@ -120,6 +120,8 @@ declare
   v_svc_name     text;
   v_email    text;
   v_competing integer;
+  v_round_id  uuid;
+  v_round_allowance integer;
   v_name     text;
 begin
   -- 1. AUTHORITY. Membership and owner role are re-derived in the database from
@@ -305,6 +307,43 @@ begin
   -- 4-9. THE MUTATING HALF, in a subtransaction. Everything from here either
   -- commits together or leaves no trace.
   begin
+    -- A FULL ADMISSION ROUND DOES NOT GATE A SEND. It is rotated here, in this transaction.
+    --
+    -- This runs AFTER the fit guard above, so `no_capacity` always takes precedence over a full
+    -- round, and inside the subtransaction, so a send refused for any later reason (service, scope,
+    -- already invited ...) rotates nothing.
+    --
+    -- IT DELIBERATELY BYPASSES 0192's `live_offers_outstanding` RULE. 0192 refuses to close a round
+    -- while an offer it authorised is still live, because the round was then the only place that
+    -- offer's seat was counted. That is no longer true: the fit guard above counts live invitations
+    -- STUDIO-WIDE, across every round (count_waitlist_competing_invitations_internal never joins to
+    -- rounds). An offer left behind in the closed round therefore still counts against the next
+    -- send, and redeem and book never read the round's `closed_at`. THIS IS SAFE ONLY BECAUSE THAT
+    -- COUNT IS STUDIO-WIDE. If it were ever narrowed to one round, this block would have to go.
+    --
+    -- CONDITIONAL, under the locks this command already holds (studio, then the open round FOR
+    -- UPDATE): only when the open round's consumed count has reached its allowance. A concurrent
+    -- second sender therefore never closes a fresh, healthy round. Close first, then insert, so the
+    -- partial unique index (one open round per studio) never sees two open rows. The actor is the
+    -- owner this command derived at its top, never a parameter. 0192 is unchanged.
+    --
+    -- ACCEPTED RESIDUE: the new round's allowance (100) is plumbing, not a real ceiling. The
+    -- studio-wide fit above is the only limit that means anything.
+    select r.id, r.allowance into v_round_id, v_round_allowance
+      from public.studio_waitlist_admission_rounds r
+     where r.studio_id = p_studio_id and r.closed_at is null;
+    if v_round_id is not null
+       and public.waitlist_admission_round_consumed(v_round_id) >= v_round_allowance then
+      update public.studio_waitlist_admission_rounds r
+         set closed_at = clock_timestamp(),
+             closed_by_practitioner_id = v_actor,
+             updated_at = clock_timestamp()
+       where r.id = v_round_id and r.closed_at is null;
+      insert into public.studio_waitlist_admission_rounds
+        (studio_id, allowance, opened_at, opened_by_practitioner_id, updated_at)
+      values (p_studio_id, 100, clock_timestamp(), v_actor, clock_timestamp());
+    end if;
+
     if v_needs_claim then
       v_claim := public.claim_new_client_waitlist_entry(p_studio_id, p_entry_id, p_actor_user_id);
       if v_claim <> 'claimed' then

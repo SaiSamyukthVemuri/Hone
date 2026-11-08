@@ -109,50 +109,49 @@ describe("the fit is computed at send, from the exact selections being sent", ()
 });
 
 describe("the admission round is plumbing", () => {
-  it("opens a round at the maximum allowance before admitting, with no owner input", async () => {
+  it("opens NO round before the send: the first thing called is the send itself", async () => {
     admitReplies = [{ data: [{ result: "no_capacity" }], error: null }];
     await admissionCommandAdapter.inviteToBook(INPUT);
-    expect(names().slice(0, 2)).toEqual(["open_new_client_waitlist_admission_round", "admit_new_client_waitlist_entry"]);
-    expect(calls[0].args).toMatchObject({ p_studio_id: "studio-1", p_actor_user_id: "user-1", p_allowance: 100 });
+    expect(names()).toEqual(["admit_new_client_waitlist_entry"]);
   });
 
-  it("an already-open round is fine", async () => {
-    openReply = { data: [{ result: "round_already_open" }], error: null };
-    admitReplies = [{ data: [{ result: "no_capacity" }], error: null }];
-    await admissionCommandAdapter.inviteToBook(INPUT);
-    expect(admitCalls()).toHaveLength(1);
-  });
-
-  it("a round that cannot be opened sends nothing", async () => {
-    openReply = { data: [{ result: "not_owner" }], error: null };
-    const out = await admissionCommandAdapter.inviteToBook(INPUT);
-    expect(admitCalls()).toHaveLength(0);
-    expect(out).toMatchObject({ state: "indeterminate" });
-  });
-
-  it("a full round is rotated once and the send retried on the fresh round", async () => {
+  it("no_round_open opens a round at the maximum allowance, with no owner input, then retries the send once", async () => {
     admitReplies = [
-      { data: [{ result: "round_full" }], error: null },
+      { data: [{ result: "no_round_open" }], error: null },
       { data: [{ result: "no_capacity" }], error: null },
     ];
     const out = await admissionCommandAdapter.inviteToBook(INPUT);
     expect(names()).toEqual([
-      "open_new_client_waitlist_admission_round",
       "admit_new_client_waitlist_entry",
-      "close_new_client_waitlist_admission_round",
       "open_new_client_waitlist_admission_round",
       "admit_new_client_waitlist_entry",
     ]);
+    expect(calls[1].args).toMatchObject({ p_studio_id: "studio-1", p_actor_user_id: "user-1", p_allowance: 100 });
     expect(out).toEqual({ state: "refused", code: "no_capacity" });
   });
 
-  it("an absent send command (0324 not applied) is a definite 'not yet available', not a lost answer", async () => {
+  it("a round that cannot be opened sends nothing more and says the round was not available", async () => {
+    admitReplies = [{ data: [{ result: "no_round_open" }], error: null }];
+    openReply = { data: [{ result: "not_owner" }], error: null };
+    const out = await admissionCommandAdapter.inviteToBook(INPUT);
+    expect(admitCalls()).toHaveLength(1);
+    expect(out).toEqual({ state: "refused", code: "no_admission_round" });
+  });
+
+  it("a full round is NOT rotated or retried by the app: admit rotates it itself", async () => {
+    admitReplies = [{ data: [{ result: "round_full" }], error: null }];
+    const out = await admissionCommandAdapter.inviteToBook(INPUT);
+    expect(names()).toEqual(["admit_new_client_waitlist_entry"]);
+    expect(out).toEqual({ state: "refused", code: "admission_round_full" });
+  });
+
+  it("an absent send command (0324 not applied) opens NO round and is 'not yet available'", async () => {
     for (const code of ["PGRST202", "42883"]) {
       calls.length = 0;
       admitReplies = [{ data: null, error: { code } }];
       const out = await admissionCommandAdapter.inviteToBook(INPUT);
       expect(out).toEqual({ state: "refused", code: "not_yet_available" });
-      expect(admitCalls()).toHaveLength(1);
+      expect(names()).toEqual(["admit_new_client_waitlist_entry"]);
     }
   });
 
@@ -193,6 +192,11 @@ describe("source tripwire: no browser input path can name a fit", () => {
     const input = CONTRACT.match(/export type InviteToBookInput = \{[\s\S]*?\n\};/)?.[0] ?? "";
     expect(input, "InviteToBookInput not found").not.toBe("");
     expect(input).not.toMatch(/\bfit\b|\bp_fit\b|allowance|capacity/i);
+  });
+
+  it("no application code closes or rotates a round: 0324's admit does it under its own lock", () => {
+    expect(ADAPTER).not.toMatch(/close_new_client_waitlist_admission_round|rotateRound/);
+    expect(read("lib/waitlist/auto-round.ts")).not.toMatch(/close_new_client_waitlist_admission_round|rotateRound/);
   });
 
   it("the shared fit module imports no admin client and takes none from a caller's input", () => {

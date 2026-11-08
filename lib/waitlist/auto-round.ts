@@ -6,8 +6,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //
 // 0192 will not issue an invitation without an open admission round, and every
 // invitation carries the round's id. The owner never chooses a number: a send
-// opens a round at the maximum allowance when none is open, and rotates it when
-// it fills. The limit that actually applies is 0324's guard, which counts the
+// opens a round at the maximum allowance when none is open. A round that fills is
+// rotated INSIDE 0324's admit, in the same transaction, so nothing here rotates.
+// The limit that actually applies is 0324's guard, which counts the
 // consultations that fit against live competing invitations under the studio
 // lock.
 //
@@ -39,14 +40,4 @@ export async function ensureOpenRound(admin: Rpc, studioId: string, actorUserId:
   if (error) return false;
   const result = resultOf(data);
   return result === "opened" || result === "round_already_open";
-}
-
-/** Close the full round and open a fresh one. True when a round is open afterwards. */
-export async function rotateRound(admin: Rpc, studioId: string, actorUserId: string): Promise<boolean> {
-  const { error } = await admin.rpc("close_new_client_waitlist_admission_round", {
-    p_studio_id: studioId,
-    p_actor_user_id: actorUserId,
-  });
-  if (error) return false;
-  return ensureOpenRound(admin, studioId, actorUserId);
 }

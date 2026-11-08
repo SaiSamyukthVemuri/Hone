@@ -12,7 +12,7 @@ import { sendWaitlistInvitationSms } from "@/lib/waitlist/delivery/sms";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
-import { ensureOpenRound, rotateRound } from "@/lib/waitlist/auto-round";
+import { ensureOpenRound } from "@/lib/waitlist/auto-round";
 import {
   type BookingScope,
   type DefiniteInviteToBookRefusal,
@@ -587,9 +587,10 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     });
     if (!fit.ok) return refusedOrIndeterminate("unavailable");
 
-    // The admission round is plumbing the owner never sees (lib/waitlist/auto-round.ts).
-    if (!(await ensureOpenRound(admin, studioId, actorUserId))) return refusedOrIndeterminate("unavailable");
-
+    // The admission round is plumbing the owner never sees (lib/waitlist/auto-round.ts). It is NOT opened
+    // before the send: when 0324 is not applied the send answers "not yet available" and a round opened
+    // beforehand would be a write for a send that cannot happen. A missing round is opened only on the
+    // send's own `no_round_open` answer, below.
     const admit = () =>
       admin.rpc("admit_new_client_waitlist_entry", {
         p_studio_id: studioId,
@@ -606,16 +607,14 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
         p_fit: fit.fit,
       });
     let { data, error } = await admit();
-    // A full or just-closed round is refused BEFORE anything is created, so one retry on a fresh round
-    // cannot double-issue.
+    // A FULL ROUND IS NO LONGER RETRIED HERE: 0324's admit rotates a full round itself, under its own
+    // studio lock, so `round_full` cannot come back from it (any remaining one maps to a truthful
+    // "couldn't prepare invitations" message). Only a missing round is retried, once: it is refused BEFORE
+    // anything is created, so the retry cannot double-issue.
     if (!error) {
       const first = (Array.isArray(data) ? data[0] : data) as { result?: unknown } | null;
-      if (first?.result === "round_full" || first?.result === "no_round_open") {
-        const rotated =
-          first.result === "round_full"
-            ? await rotateRound(admin, studioId, actorUserId)
-            : await ensureOpenRound(admin, studioId, actorUserId);
-        if (rotated) ({ data, error } = await admit());
+      if (first?.result === "no_round_open") {
+        if (await ensureOpenRound(admin, studioId, actorUserId)) ({ data, error } = await admit());
       }
     }
 
