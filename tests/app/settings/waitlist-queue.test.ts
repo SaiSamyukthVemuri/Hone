@@ -124,6 +124,7 @@ function capacityQuery(): QueryShape {
 const rpcCalls: RpcCall[] = [];
 const revalidated: string[] = [];
 const consoleErrors: string[] = [];
+const consoleWarns: string[] = [];
 
 const scenario = {
   role: "owner" as string,
@@ -176,6 +177,10 @@ function reset() {
   rpcCalls.length = 0;
   revalidated.length = 0;
   consoleErrors.length = 0;
+  consoleWarns.length = 0;
+  flash.sets = [];
+  flash.value = undefined;
+  readback.value = { known: false };
   Object.assign(scenario, {
     role: "owner",
     userId: USER_ID,
@@ -256,6 +261,37 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
 
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
+}));
+
+// The flash cookie: what the action sets, and what the page reads on its next render.
+const flash: { sets: Array<{ name: string; value: string }>; value: string | undefined } = { sets: [], value: undefined };
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    set: (name: string, value: string) => {
+      flash.sets.push({ name, value });
+    },
+    get: (name: string) =>
+      name === "hone_waitlist_notice" && flash.value !== undefined ? { name, value: flash.value } : undefined,
+  }),
+}));
+/** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
+async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  expect(flash.sets).toEqual([{ name: "hone_waitlist_notice", value: key }]);
+}
+// The real `redirect` throws a NEXT_REDIRECT control-flow error; this one does too, carrying the target.
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`);
+  },
+}));
+
+// What the owner's own session reads back when a remove answer is uncertain. `known: false` is a failed read.
+const readback: { value: { known: true; status: string | null } | { known: false } } = {
+  value: { known: false },
+};
+vi.mock("@/lib/waitlist/entry-status-readback", () => ({
+  readEntryStatus: async () => readback.value,
 }));
 
 vi.mock("@/lib/supabase/queries", () => {
@@ -525,11 +561,15 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 let errSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   reset();
   errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
     consoleErrors.push(a.map(String).join(" "));
+  });
+  warnSpy = vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
+    consoleWarns.push(a.map(String).join(" "));
   });
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-08-23T09:00:00.000Z"));
@@ -537,6 +577,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   errSpy.mockRestore();
+  warnSpy.mockRestore();
 });
 
 describe("authority", () => {
@@ -919,6 +960,94 @@ describe("rendered rows", () => {
     });
   });
 
+  // The expanded Invite-to-book composer used to sit INSIDE the row's controls column. Opening it
+  // widened that column to the form's natural width, so the name and email were squeezed into a
+  // sliver and the controls were drawn over the form. The composer is now its own full-width band.
+  describe("row layout: the composer is a full-width band, not part of the controls column", () => {
+    /** The end index of the <div> that opens at `start`, by counting nested <div> tags. */
+    const divEnd = (html: string, start: number): number => {
+      let depth = 0;
+      for (const m of html.slice(start).matchAll(/<div\b|<\/div>/g)) {
+        depth += m[0] === "</div>" ? -1 : 1;
+        if (depth === 0) return start + m.index! + m[0].length;
+      }
+      throw new Error("unbalanced <div>");
+    };
+    const openTagStart = (html: string, marker: string): number => {
+      const at = html.indexOf(marker);
+      expect(at, `${marker} is not rendered`).toBeGreaterThan(-1);
+      return html.lastIndexOf("<div", at);
+    };
+
+    const service = (over: Record<string, unknown> = {}) => ({
+      id: "svc-1",
+      name: "Consultation",
+      modality: "consultation",
+      active: true,
+      ...over,
+    });
+    const LONG_NAME = "Alexandria-Bartholomew Montgomery-Featherstonehaugh the Third";
+    const LONG_EMAIL = "alexandria.bartholomew.montgomery.featherstonehaugh.the.third@a-very-long-subdomain.example.invalid";
+
+    it("the composer is outside the controls column, and the controls column cannot grow with it", async () => {
+      scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
+      scenario.count = 1;
+      scenario.services = [service()];
+      const html = await render();
+      const start = openTagStart(html, 'data-testid="row-controls"');
+      const end = divEnd(html, start);
+      const controls = html.slice(start, end);
+      expect(controls).not.toContain('data-testid="row-invite"');
+      expect(controls).not.toContain("composer");
+      // The controls still carry Remove, and the composer follows them in the same row.
+      expect(controls).toContain("Remove");
+      const invite = html.indexOf('data-testid="row-invite"');
+      expect(invite).toBeGreaterThan(end);
+      // A FIXED width at the breakpoint where the columns sit side by side: it can no longer
+      // take its width from whatever is inside it.
+      const tag = html.slice(start, html.indexOf(">", start) + 1);
+      expect(tag).toContain("sm:w-56");
+      expect(tag).not.toContain("sm:w-auto");
+      expect(tag).toContain("min-w-0");
+    });
+
+    it("the row is a plain column; only its first band is a side-by-side row", async () => {
+      scenario.rows = [entry()];
+      scenario.count = 1;
+      scenario.services = [service()];
+      const html = await render();
+      const li = html.slice(html.indexOf("<li"), html.indexOf(">", html.indexOf("<li")) + 1);
+      expect(li).toContain("flex-col");
+      expect(li).not.toContain("sm:flex-row");
+      const band = html.slice(html.indexOf("<li"), html.indexOf('data-testid="row-controls"'));
+      expect(band).toContain("sm:flex-row");
+    });
+
+    it("a long name and a long email wrap inside their own column instead of widening the row", async () => {
+      scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
+      scenario.count = 1;
+      const html = await render();
+      const name = html.indexOf(LONG_NAME);
+      const nameTag = html.slice(html.lastIndexOf("<p", name), name);
+      expect(nameTag).toContain("break-words");
+      const email = html.indexOf(LONG_EMAIL);
+      const emailTag = html.slice(html.lastIndexOf("<p", email), email);
+      expect(emailTag).toContain("break-all");
+      // The info column may shrink below its content (min-w-0) and takes the remaining width.
+      const infoOpen = html.slice(html.lastIndexOf("<div", name), name);
+      expect(infoOpen).toContain("min-w-0");
+      expect(infoOpen).toContain("flex-1");
+    });
+
+    it("a row with no composer (not an invitable state) has the same two-band shape", async () => {
+      scenario.rows = [entry({ status: "released" })];
+      scenario.count = 1;
+      const html = await render({ section: "released" });
+      expect(html).toContain('data-testid="row-controls"');
+      expect(html).not.toContain('data-testid="row-invite"');
+    });
+  });
+
   it("promises no queue position or capacity", async () => {
     scenario.rows = [entry()];
     scenario.count = 1;
@@ -1233,7 +1362,7 @@ describe("removal", () => {
   it("goes through the command with a SERVER-DERIVED tenant and actor", async () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
-    await removeWaitlistEntryAction(fd);
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
 
     expect(rpcCalls).toEqual([
       {
@@ -1272,7 +1401,7 @@ describe("removal", () => {
     fd.set("p_studio_id", "attacker-studio");
     fd.set("actor_user_id", "attacker-user");
     fd.set("role", "owner");
-    await removeWaitlistEntryAction(fd);
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_entry_id: "entry-1",
@@ -1283,10 +1412,8 @@ describe("removal", () => {
   it.each([
     ["not_found", "That waitlist entry no longer exists."],
     ["already_removed", "That entry has already been removed."],
-    // The two outcomes 0188 added so the operator could be told what to do.
-    // Reachable here even though the queue page renders only `waiting` rows: a
-    // second operator can claim, invite or convert the entry between the page
-    // render and this submit.
+    // The two outcomes 0188 added so the operator could be told what to do. Reachable because a second
+    // tab, a recipient's decline or a booking can move the entry between the page render and this submit.
     [
       "release_required",
       "That entry has been claimed or invited. Release it before removing it.",
@@ -1295,11 +1422,27 @@ describe("removal", () => {
       "not_removable",
       "That person is already a client. Converted entries stay in waitlist history.",
     ],
-    // Kept despite the route's own role check: the command re-derives membership
-    // and role in the database, so a change committed in between lands here.
+  ])("a stale-state refusal `%s` redirects with its notice and the page shows that exact copy", async (code, message) => {
+    scenario.removeResult = code;
+    const fd = new FormData();
+    fd.set("entry_id", "entry-1");
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), `remove.${code}`);
+    expect(revalidated).toEqual(["/settings/waitlist"]);
+    // A clean refusal is a warning, not a fault, and nothing was read back.
+    expect(consoleErrors).toHaveLength(0);
+    expect(consoleWarns.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
+    // The page reads the cookie the action just set, and shows exactly that copy.
+    flash.value = flash.sets[0]!.value;
+    const html = await render();
+    expect(html).toContain(message);
+  });
+
+  // Kept despite the route's own role check: the command re-derives membership and role in the
+  // database, so a change committed in between lands here. Authority is never softened to a notice.
+  it.each([
     ["not_owner", "Only studio owners can change the waitlist."],
     ["not_a_member", "Only studio owners can change the waitlist."],
-  ])("maps the command refusal `%s` to copy an owner can act on", async (code, message) => {
+  ])("the authority refusal `%s` is still thrown", async (code, message) => {
     scenario.removeResult = code;
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
@@ -1358,6 +1501,8 @@ describe("removal", () => {
     // honest answer. Everything else must say something specific.
     const GENERIC = "Could not remove that entry. Please try again.";
     const DELIBERATELY_GENERIC = new Set(["invalid_input"]);
+    // Clean "the row is not where the page assumed" answers become a notice, not a throw.
+    const NOTICED = new Set(["already_removed", "not_found", "not_removable", "release_required"]);
 
     for (const code of deployedRemovalCodes()) {
       if (code === "removed") continue;
@@ -1372,25 +1517,90 @@ describe("removal", () => {
       expect(error, `${code} did not refuse`).not.toBeNull();
       if (DELIBERATELY_GENERIC.has(code)) {
         expect(error!.message, `${code} should be deliberately generic`).toBe(GENERIC);
+      } else if (NOTICED.has(code)) {
+        expect(error!.message, `${code} should redirect with a notice`).toBe("NEXT_REDIRECT:/settings/waitlist");
+        expect(flash.sets.at(-1)?.value, `${code} notice key`).toBe(`remove.${code}`);
       } else {
         expect(error!.message, `${code} falls through to the generic error`).not.toBe(GENERIC);
       }
-      expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
+      if (!NOTICED.has(code)) expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
     }
   });
 
-  it("an unrecognised outcome or a database error is generic, never a raw code", async () => {
-    for (const setup of [
-      () => { scenario.removeResult = "some_future_code"; },
-      () => { scenario.removeError = { code: "57014" }; },
-    ]) {
-      reset();
-      setup();
-      const fd = new FormData();
-      fd.set("entry_id", "entry-1");
-      await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-        "Could not remove that entry. Please try again.",
-      );
+  describe("an UNCERTAIN outcome reads the entry back before any retry is offered", () => {
+    const UNCERTAIN: ReadonlyArray<[string, () => void]> = [
+      ["an unrecognised code", () => { scenario.removeResult = "some_future_code"; }],
+      ["a database error", () => { scenario.removeError = { code: "57014" }; }],
+    ];
+    for (const [label, arrange] of UNCERTAIN) {
+      it(`${label}: the row is already removed -> success notice, no retry`, async () => {
+        arrange();
+        readback.value = { known: true, status: "removed" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
+      });
+      it(`${label}: the row is verifiably still there -> the generic error, a retry is honest`, async () => {
+        arrange();
+        readback.value = { known: true, status: "waiting" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+          "Could not remove that entry. Please try again.",
+        );
+      });
+      it(`${label}: a read that returns NO status is not a confirmation either -> unconfirmed, no retry`, async () => {
+        arrange();
+        readback.value = { known: true, status: null };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.unconfirmed");
+      });
+      it(`${label}: the row cannot be read -> an unconfirmed notice that offers no retry`, async () => {
+        arrange();
+        readback.value = { known: false };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.unconfirmed");
+        flash.value = "remove.unconfirmed";
+        const html = await render();
+        expect(html).toContain("We could not confirm whether that entry was removed.");
+        expect(html).not.toMatch(/try again\./i);
+      });
+      it(`${label}: is logged as a fault with no contact detail`, async () => {
+        arrange();
+        readback.value = { known: true, status: "waiting" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow();
+        expect(consoleErrors.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
+      });
+    }
+  });
+
+  it("a removal notice renders from the fixed table only, in its own style, and a hand-edited value shows nothing", async () => {
+    flash.value = "remove.removed";
+    const ok = await render();
+    expect(ok).toContain("Removed from the waitlist.");
+    expect(ok).not.toContain("Nothing was changed");
+    // Success is styled apart from a refusal.
+    expect(ok).toMatch(/data-tone="success"[^>]*emerald/);
+    flash.value = "release.not_releasable";
+    const refusal = await render();
+    expect(refusal).toMatch(/data-tone="refusal"[^>]*amber/);
+    expect(refusal).not.toContain("emerald-300");
+    flash.value = "<b>owned</b>";
+    const hostile = await render();
+    expect(hostile).not.toContain("owned");
+    expect(hostile).not.toContain('data-testid="lifecycle-notice"');
+  });
+
+  it("a crafted LINK cannot forge a banner: the URL parameter is not read at all", async () => {
+    flash.value = undefined;
+    for (const forged of ["remove.removed", "release.not_releasable", "<b>owned</b>"]) {
+      const html = await render({ notice: forged } as never);
+      expect(html, forged).not.toContain('data-testid="lifecycle-notice"');
+      expect(html, forged).not.toContain("Removed from the waitlist.");
     }
   });
 
@@ -1399,7 +1609,7 @@ describe("removal", () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
     await expect(removeWaitlistEntryAction(fd)).rejects.toThrow();
-    const line = consoleErrors.find((l) => l.includes("waitlist_remove_failed"));
+    const line = consoleWarns.find((l) => l.includes("waitlist_remove_failed"));
     expect(JSON.parse(line!)).toMatchObject({ studioId: STUDIO_ID, outcome: "not_found" });
     expect(line).not.toContain("jo@example.com");
   });
