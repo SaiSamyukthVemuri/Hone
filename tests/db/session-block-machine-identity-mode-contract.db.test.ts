@@ -169,7 +169,7 @@ const CREATE_SQL = `select public.create_block_with_initial_setup_and_identity(
   $15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
   $27,$28,$29,$30::jsonb,$31) as r`;
 
-const create = (s: SeededStudio, sessionId: string, over: { machine?: string | null; mode?: string | null; key?: string | null; profile?: string | null }) =>
+const create = (s: SeededStudio, sessionId: string, over: { machine?: string | null; mode?: string | null; key?: string | null; profile?: string | null; readings?: boolean }) =>
   asUser(s.userId, async (q) => {
     const args: unknown[] = new Array(31).fill(null);
     args[0] = sessionId;
@@ -181,7 +181,9 @@ const create = (s: SeededStudio, sessionId: string, over: { machine?: string | n
     args[26] = over.machine ?? null;
     args[27] = over.mode ?? null;
     args[28] = over.key ?? null;
-    args[29] = JSON.stringify([{ new_group_ref: "g1", channels: [1], readings: [{ field_key: "current", value: "9", observation_source: "practitioner-entered" }] }]);
+    // Readings are off by default: with readings, 0223's own per-mode field contract refuses an unpublished mode first and the
+    // identity check is never what refuses (observed on the 0301 definition), so an identity-only call is what isolates 0310.
+    args[29] = over.readings === false || over.readings === undefined ? null : JSON.stringify([{ new_group_ref: "g1", channels: [1], readings: [{ field_key: "current", value: "9", observation_source: "practitioner-entered" }] }]);
     args[30] = over.profile ?? null;
     const r = await q(CREATE_SQL, args);
     return r.rows[0].r as { block_id: string; reused: boolean };
@@ -200,6 +202,8 @@ describe("the create and setup-submission entrypoints refuse a mode the contract
     expect(after).toBe(before);
   });
 
+  // NOT a 0310 discriminator: a submission always carries readings, and 0223's field contract refuses an unpublished mode before the
+  // identity step runs (the case passes on the 0301 definition too). It pins that the end-to-end answer stays a refusal.
   it("record_setup_submission_with_identity refuses an unknown mode and records nothing", async () => {
     await publish();
     const s = await seedStudio("mc-sub-unknown");
@@ -225,10 +229,10 @@ describe("the create and setup-submission entrypoints refuse a mode the contract
     const machine = await register(s, [OPTION]);
     const { sessionId } = await seedSession(s);
     const key = `create-replay-${randomUUID()}`;
-    const first = await create(s, sessionId, { machine, mode: "gated", key });
+    const first = await create(s, sessionId, { machine, mode: "gated", key, readings: true });
     expect(first.reused).toBe(false);
     await adminQuery(`update public.studio_machines set installed_options = '{}' where id = $1`, [machine]);
-    const second = await create(s, sessionId, { machine, mode: "gated", key });
+    const second = await create(s, sessionId, { machine, mode: "gated", key, readings: true });
     expect(second.reused).toBe(true);
     expect(second.block_id).toBe(first.block_id);
     expect((await stored(first.block_id)).machine_mode_key).toBe("gated");
