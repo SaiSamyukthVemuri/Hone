@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 
@@ -17,8 +18,12 @@ afterAll(async () => {
   await closePool();
 });
 
-const tokenHash = (seed: string): string =>
-  Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16]).join("");
+// Per-run salt: the cancellation hash is unique across the whole database, so a
+// fixed seed collides with another suite or a re-run.
+const tokenHash = (seed: string): string => {
+  const salted = `${seed}-${randomUUID()}`;
+  return Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(salted.charCodeAt(i % salted.length) + i) % 16]).join("");
+};
 
 type Fixture = { studioId: string; userId: string; serviceId: string };
 
@@ -200,14 +205,14 @@ describe("0313 durable follow-up item", () => {
     expect((await q<any>(`select public.record_waitlist_invitation_followup($1,'not_a_reason') as r`, [p.token]))[0].r).toBe("invalid_input");
   });
 
-  it("is erased with its entry", async () => {
+  it("is erased with its studio (an invited entry cannot be deleted alone: invitations are append-only)", async () => {
     const f = await fixture("er");
     const p = await provenEntry(f, "er");
     await q(`select * from public.redeem_new_client_waitlist_invitation_verified($1,$2)`, [p.token, p.cap]);
     await q(`select public.record_waitlist_invitation_followup($1,'booking_not_completed')`, [p.token]);
-    await q(`delete from public.new_client_waitlist_entries where id=$1`, [p.entryId]);
+    await q(`delete from public.studios where id=$1`, [f.studioId]);
     const n = await q<{ n: number }>(
-      `select count(*)::int as n from public.waitlist_invitation_followups where studio_id=$1`, [f.studioId],
+      `select count(*)::int as n from public.waitlist_invitation_followups where entry_id=$1`, [p.entryId],
     );
     expect(n[0].n).toBe(0);
   });

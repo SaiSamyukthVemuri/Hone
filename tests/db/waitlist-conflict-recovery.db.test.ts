@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 
@@ -27,8 +28,12 @@ afterAll(async () => {
   await closePool();
 });
 
-const tokenHash = (seed: string): string =>
-  Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16]).join("");
+// Per-run salt: the cancellation hash is unique across the whole database, so a
+// fixed seed collides with another suite or a re-run.
+const tokenHash = (seed: string): string => {
+  const salted = `${seed}-${randomUUID()}`;
+  return Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(salted.charCodeAt(i % salted.length) + i) % 16]).join("");
+};
 
 type Fixture = { studioId: string; userId: string; serviceId: string };
 
