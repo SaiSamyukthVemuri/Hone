@@ -126,3 +126,41 @@ describe("activation cannot be confirmed over an unsaved permission draft", () =
     expect(q('[data-testid="activation-pending"]')!.textContent).toMatch(/unsaved changes/i);
   });
 });
+
+// Codex P2 on #1335 (401cbff82): once the owner confirms an activation, editing is locked until the request has settled, so a change made
+// in that window cannot be dropped when the page is replaced with the saved state.
+describe("permission editing is locked while an activation is in flight", () => {
+  const radios = () => [...host!.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
+  const snapshot = () => radios().map((r) => `${r.name}=${r.value}:${r.checked}`).join("|");
+  // an input inside a disabled fieldset still reports disabled=false; :disabled is the effective state
+  const enabledCount = () => radios().filter((r) => !r.matches(":disabled")).length;
+
+  it("every permission control is disabled until activate settles; the draft is unchanged on return", async () => {
+    let settle!: (v: { ok: false; error: { code: "refused" } }) => void;
+    const activate = vi.fn(() => new Promise<{ ok: false; error: { code: "refused" } }>((r) => (settle = r)));
+    await mount({ activate });
+    await openActivationPreview();
+    await typeReason();
+    const before = snapshot();
+    expect(enabledCount(), "control: editable before the commit").toBeGreaterThan(0);
+    await act(async () => commit()!.click());
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(enabledCount(), "no permission control is editable while activation is pending").toBe(0);
+    // an attempted edit through the DOM changes nothing
+    const target = radios().find((r) => !r.checked)!;
+    await act(async () => target.click());
+    expect(snapshot()).toBe(before);
+    await act(async () => settle({ ok: false, error: { code: "refused" } }));
+    expect(enabledCount(), "editable again once the request has settled").toBeGreaterThan(0);
+    expect(snapshot(), "the draft is unchanged on return").toBe(before);
+  });
+
+  it("a rejected activation request also unlocks the editor, with a visible message", async () => {
+    await mount({ activate: () => Promise.reject(new Error("network down")) });
+    await openActivationPreview();
+    await typeReason();
+    await act(async () => commit()!.click());
+    expect(q('[data-testid="activation-pending"]')!.textContent).toMatch(/could not confirm/i);
+    expect(enabledCount()).toBeGreaterThan(0);
+  });
+});

@@ -134,7 +134,10 @@ export function RolesEditor(props: RolesEditorProps) {
   // Codex P2 4477378035: while a save, reset, adopt or the read-back after it is in flight, the draft must not change: the read-back replaces
   // it with the saved policy, so an edit made in that window would be silently lost. Editing is disabled for the whole window (feedback
   // stays "saving" until the read-back has been applied), and the edit entry points refuse as well.
-  const busy = feedback.state.kind === "saving" || refreshing;
+  // Codex P2 on #1335 (401cbff82): the same window applies to an activation in flight: confirming it replaces the page with the saved state,
+  // so the draft is locked from the moment the owner confirms until the request (and the refresh it triggers) has settled.
+  const [activating, setActivating] = useState(false);
+  const busy = feedback.state.kind === "saving" || refreshing || activating;
   const readOnly = !props.writable || busy;
 
   const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
@@ -470,6 +473,7 @@ export function RolesEditor(props: RolesEditorProps) {
             blockedByDraft={dirty}
             previewActivation={props.previewActivation}
             activate={props.activate}
+            onInFlight={setActivating}
             onActivated={() => refreshNow()}
             onDiscard={stageBasisChoice}
           />
@@ -1215,6 +1219,7 @@ function ActivationSection({
   blockedByDraft,
   previewActivation,
   activate,
+  onInFlight,
   onActivated,
   onDiscard,
 }: {
@@ -1223,6 +1228,7 @@ function ActivationSection({
   blockedByDraft: boolean;
   previewActivation: RolesEditorProps["previewActivation"];
   activate: RolesEditorProps["activate"];
+  onInFlight: (inFlight: boolean) => void;
   onActivated: () => void;
   onDiscard: (role: Role, key: string, basis: Scope) => void;
 }): ReactNode {
@@ -1294,15 +1300,25 @@ function ActivationSection({
     }
     setBusy(true);
     setMessage(null);
-    // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
-    const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
-    setBusy(false);
-    if (r.ok) {
-      cancel();
+    onInFlight(true);
+    try {
+      // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
+      const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
+      setBusy(false);
+      if (r.ok) {
+        cancel();
+        onActivated();
+      } else {
+        setMessage(roleErrorMessage(r.error));
+        if (r.error.code === "unexpected" || r.error.code === "stale_version" || r.error.code === "stale_preview") onActivated();
+      }
+    } catch {
+      // A rejected promise must never leave the editor locked: say so and re-read the saved state.
+      setBusy(false);
+      setMessage("Could not confirm the activation. Reload the page to see the saved state.");
       onActivated();
-    } else {
-      setMessage(roleErrorMessage(r.error));
-      if (r.error.code === "unexpected" || r.error.code === "stale_version" || r.error.code === "stale_preview") onActivated();
+    } finally {
+      onInFlight(false);
     }
   }
 
