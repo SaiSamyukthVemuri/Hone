@@ -20,10 +20,35 @@ vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The real `redirect` throws a NEXT_REDIRECT control-flow error; the fake does the same with the
+// target, so a test can tell "redirected to X" from "threw a refusal".
+// The flash cookie the action leaves for the page. Records what was set.
+const flash: {
+  sets: Array<{ name: string; value: string; options: Record<string, unknown> }>;
+  live: Map<string, string>;
+} = { sets: [], live: new Map() };
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    set: (name: string, value: string, options: Record<string, unknown>) => {
+      flash.sets.push({ name, value, options });
+      flash.live.set(name, value);
+    },
+    delete: (target: { name: string } | string) => {
+      flash.live.delete(typeof target === "string" ? target : target.name);
+    },
+  }),
+}));
+vi.mock("next/navigation", () => ({
+  redirect: vi.fn((to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`);
+  }),
+}));
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { STALE_STATE_NOTICES, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import {
   claimNextWaitlistEntriesAction,
   claimWaitlistEntryAction,
@@ -63,7 +88,20 @@ function entryForm(entryId = ENTRY): FormData {
   return fd;
 }
 
+/** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
+async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  expect(flash.sets).toHaveLength(1);
+  expect(flash.sets[0]).toMatchObject({
+    name: "hone_waitlist_notice",
+    value: key,
+    options: { httpOnly: true, sameSite: "lax", path: "/settings/waitlist", maxAge: 5 },
+  });
+}
+
 beforeEach(() => {
+  flash.sets = [];
+  flash.live = new Map();
   calls = [];
   arrangeActor();
 });
@@ -141,9 +179,10 @@ describe("the browser supplies identity, never authority", () => {
     // trusted — it is scoped by (id, studio_id) inside the command, which is
     // why a foreign id resolves to `not_found` rather than to someone's row.
     arrangeRpc({ data: "not_found" });
-    await expect(
+    await expectNoticeRedirect(
       claimWaitlistEntryAction(entryForm("44444444-4444-4444-4444-444444444444")),
-    ).rejects.toThrow(/no longer exists/);
+      "claim.not_found",
+    );
     expect(calls[0]!.args.p_studio_id).toBe(STUDIO);
   });
 });
@@ -203,29 +242,102 @@ describe("a refusal is never read as a success", () => {
   }
 });
 
-describe("named refusals reach the operator; the rest stay generic", () => {
-  const CASES: ReadonlyArray<[(fd: FormData) => Promise<void>, string, RegExp]> = [
-    [claimWaitlistEntryAction, "not_waiting", /no longer waiting/],
-    [releaseWaitlistEntryAction, "not_releasable", /claimed or invited/],
-    [releaseWaitlistEntryAction, "already_redeemed", /already been used/],
-    [expireWaitlistInvitationAction, "not_invited", /no live invitation/],
-    [expireWaitlistInvitationAction, "not_expired", /has not run out yet/],
-    [requeueWaitlistEntryAction, "not_requeueable", /released or expired/],
-    [requeueWaitlistEntryAction, "already_active", /already on the waitlist again/],
+describe("a stale-state refusal redirects with a notice; every other refusal still throws", () => {
+  const STALE: ReadonlyArray<[(fd: FormData) => Promise<void>, string, string]> = [
+    [claimWaitlistEntryAction, "not_waiting", "claim.not_waiting"],
+    [releaseWaitlistEntryAction, "not_releasable", "release.not_releasable"],
+    [releaseWaitlistEntryAction, "already_redeemed", "release.already_redeemed"],
+    [expireWaitlistInvitationAction, "not_invited", "expire.not_invited"],
+    [expireWaitlistInvitationAction, "not_expired", "expire.not_expired"],
+    [requeueWaitlistEntryAction, "not_requeueable", "requeue.not_requeueable"],
+    [requeueWaitlistEntryAction, "already_active", "requeue.already_active"],
   ];
 
-  for (const [run, code, expected] of CASES) {
-    it(`${code} gets its own copy`, async () => {
+  for (const [run, code, key] of STALE) {
+    it(`${code} redirects with ${key}, revalidates, and moves nothing else`, async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
       arrangeRpc({ data: code });
-      await expect(run(entryForm())).rejects.toThrow(expected);
+      await expectNoticeRedirect(run(entryForm()), key);
+      expect(vi.mocked(redirect)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/settings/waitlist");
+      // One command, once: no retry, no second rpc.
+      expect(calls).toHaveLength(1);
+      // A warning with the outcome, not an error: this is not a fault.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain(code);
+      expect(error).not.toHaveBeenCalled();
+      warn.mockRestore();
+      error.mockRestore();
     });
   }
 
-  it("an UNKNOWN code falls back to the generic message", async () => {
-    arrangeRpc({ data: "a_code_nobody_mapped" });
-    await expect(claimWaitlistEntryAction(entryForm())).rejects.toThrow(
-      /Could not claim that entry/,
-    );
+  const THROWN: ReadonlyArray<[(fd: FormData) => Promise<void>, string, RegExp]> = [
+    [releaseWaitlistEntryAction, "not_owner", /Only studio owners/],
+    [releaseWaitlistEntryAction, "not_a_member", /Only studio owners/],
+    [claimWaitlistEntryAction, "a_code_nobody_mapped", /Could not claim that entry/],
+  ];
+  for (const [run, code, expected] of THROWN) {
+    it(`${code} is still thrown, never redirected`, async () => {
+      arrangeRpc({ data: code });
+      await expect(run(entryForm())).rejects.toThrow(expected);
+      expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+      expect(flash.sets).toHaveLength(0);
+    });
+  }
+
+  it("a transport error that carries a stale-looking code is still thrown", async () => {
+    // `error` wins: the answer is not trusted when the call itself failed.
+    arrangeRpc({ data: "not_releasable", error: { code: "57014" } });
+    await expect(releaseWaitlistEntryAction(entryForm())).rejects.toThrow(/^(?!NEXT_REDIRECT)/);
+    expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+  });
+
+  it("a stale code for ANOTHER action is not a notice for this one", async () => {
+    // `not_releasable` belongs to release; claim has no such stale state.
+    arrangeRpc({ data: "not_releasable" });
+    await expect(claimWaitlistEntryAction(entryForm())).rejects.toThrow(/Could not claim that entry/);
+    expect(vi.mocked(redirect)).not.toHaveBeenCalled();
+  });
+});
+
+describe("the notice table is the only text a notice can render", () => {
+  it("every key resolves to its own fixed sentence", () => {
+    for (const [key, copy] of Object.entries(STALE_STATE_NOTICES)) {
+      expect(lifecycleNoticeCopy(key)).toEqual({ tone: "refusal", text: copy });
+    }
+  });
+
+  it("the two outcome notices carry their own tone", () => {
+    expect(lifecycleNoticeCopy("remove.removed")).toEqual({ tone: "success", text: "Removed from the waitlist." });
+    expect(lifecycleNoticeCopy("remove.unconfirmed")?.tone).toBe("unconfirmed");
+  });
+
+  it("anything else renders nothing and is never echoed", () => {
+    for (const hostile of [
+      "<script>alert(1)</script>",
+      "release.not_releasable ",
+      "RELEASE.NOT_RELEASABLE",
+      "__proto__",
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "",
+      undefined,
+      null,
+      42,
+      ["release.not_releasable"],
+      { toString: () => "release.not_releasable" },
+    ]) {
+      expect(lifecycleNoticeCopy(hostile), JSON.stringify(hostile)).toBeNull();
+    }
+  });
+
+  it("each refusal map's copy for a stale code IS the notice table's (one source)", () => {
+    const SRC = readFileSync(join(process.cwd(), "app/(app)/settings/waitlist/actions.ts"), "utf8");
+    for (const key of Object.keys(STALE_STATE_NOTICES)) {
+      expect(SRC, key).toContain(`STALE_STATE_NOTICES["${key}"]`);
+    }
   });
 });
 
@@ -318,8 +430,11 @@ describe("source contract", () => {
     }
   });
 
+  // A TRIPWIRE, NOT A PROOF. It reads the text of each console.error / console.warn call in this file and
+  // refuses the common ways prospect data gets logged (a contact field name, an entry id). It cannot see a
+  // value that reaches a log through a variable or a helper, so it catches the usual mistake, not every one.
   it("logs no prospect PII", () => {
-    const logs = [...CODE.matchAll(/console\.error\(([\s\S]*?)\);/g)].map((m) => m[1]!);
+    const logs = [...CODE.matchAll(/console\.(?:error|warn)\(([\s\S]*?)\);/g)].map((m) => m[1]!);
     expect(logs.length).toBeGreaterThanOrEqual(2);
     for (const log of logs) {
       for (const pii of ["name", "email", "phone", "entryId", "entry_id"]) {
@@ -392,5 +507,23 @@ describe("the result vocabularies are the DATABASE's", () => {
     expect(M0189).not.toContain(
       "create or replace function public.requeue_new_client_waitlist_entry(",
     );
+  });
+});
+
+describe("an earlier outcome notice never re-shows after an unrelated action", () => {
+  it("release after remove leaves no remove notice behind", async () => {
+    // A notice from a previous action is still inside its window.
+    flash.live.set("hone_waitlist_notice", "remove.removed");
+    arrangeRpc({ data: "released" });
+    await releaseWaitlistEntryAction(entryForm());
+    // The release succeeded without a redirect, and the stale notice was cleared first.
+    expect(flash.live.has("hone_waitlist_notice")).toBe(false);
+  });
+
+  it("a stale-state refusal replaces the earlier notice with its own", async () => {
+    flash.live.set("hone_waitlist_notice", "remove.removed");
+    arrangeRpc({ data: "not_releasable" });
+    await expectNoticeRedirect(releaseWaitlistEntryAction(entryForm()), "release.not_releasable");
+    expect(flash.live.get("hone_waitlist_notice")).toBe("release.not_releasable");
   });
 });
