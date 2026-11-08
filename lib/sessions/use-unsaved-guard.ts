@@ -86,7 +86,7 @@ export function shouldInterceptClick(
   return isLeavingNavigation(anchor, current);
 }
 
-type Registered = { attempt: { current: (proceed: () => void) => void } };
+type Registered = { attempt: { current: (proceed: () => void, dirtyCount: number) => void } };
 
 /**
  * ONE COORDINATOR FOR EVERY DIRTY FORM (Codex, #1369 4505287597, after four rounds on per-form listeners).
@@ -106,7 +106,7 @@ export function registeredGuardCount(): number {
 
 function askFirst(proceed: () => void) {
   const first = registry.values().next().value as Registered | undefined;
-  first?.attempt.current(proceed);
+  first?.attempt.current(proceed, registry.size);
 }
 
 function installCoordinator(): () => void {
@@ -237,11 +237,12 @@ function installCoordinator(): () => void {
  * dialog and calls `proceed` only if the practitioner chooses to leave. A
  * native confirm is not used (it is retired repo-wide, and iOS Safari can
  * suppress it). With several dirty forms only the first-registered form's
- * `onLeaveAttempt` is called, once per departure.
+ * `onLeaveAttempt` is called, once per departure, and it is told how many forms are dirty
+ * so its dialog can speak for all of them.
  */
 export function useUnsavedGuard(
   dirty: boolean,
-  onLeaveAttempt: (proceed: () => void) => void,
+  onLeaveAttempt: (proceed: () => void, dirtyCount: number) => void,
 ): void {
   const attemptRef = useRef(onLeaveAttempt);
   attemptRef.current = onLeaveAttempt;

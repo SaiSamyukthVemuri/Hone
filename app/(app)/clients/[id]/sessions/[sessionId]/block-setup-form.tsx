@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SaveStatus } from "@/components/sessions/save-status";
 import type { SaveState } from "@/lib/sessions/save-state";
 import { useHeldBlockVersion } from "@/lib/sessions/use-held-block-version";
+import { leaveDialogCopy } from "@/lib/sessions/leave-dialog-copy";
 import { useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 import {
   APILUS_MODALITIES_BY_MODE,
@@ -1041,14 +1042,14 @@ export function BlockSetupForm({
     revisionDraft ||
     identityDirty;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
-  const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void } | null>(null);
+  const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);
   // ARMED UNTIL A SAVE IS CONFIRMED (Codex #1369 4493497730). It used to be disarmed while "Saving…" was pending, so closing, reloading or
   // following a link mid-save could lose the unconfirmed draft and, for a create, the retry key that keeps a lost answer from becoming a
   // second area. The request is in flight, its outcome is not known, and the draft is not saved: the guard stays armed through the request,
   // through an unknown or lost reply, and through a definitive refusal (the draft is still unsaved). It is bypassed only here, after a
   // CONFIRMED success (`saveConfirmed`, set just before the form closes).
   const [saveConfirmed, setSaveConfirmed] = useState(false);
-  useUnsavedGuard(leaveGuardArmed(dirty, saveConfirmed), (proceed) => setLeaveAttempt({ proceed }));
+  useUnsavedGuard(leaveGuardArmed(dirty, saveConfirmed), (proceed, dirtyCount) => setLeaveAttempt({ proceed, dirtyCount }));
 
   /**
    * The collector's report, plus the key's lifetime rule.
@@ -1880,8 +1881,8 @@ export function BlockSetupForm({
     <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
       <ConfirmDialog
         open={leaveAttempt !== null}
-        title="Leave without saving?"
-        description="You have unsaved changes. If you leave, they will be lost."
+        title={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).title}
+        description={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).description}
         confirmLabel="Leave"
         cancelLabel="Stay"
         onConfirm={() => {
