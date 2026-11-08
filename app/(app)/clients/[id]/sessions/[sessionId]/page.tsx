@@ -971,9 +971,17 @@ export default async function SessionDetailPage({
             (finishState.completion.kind === "ready" ||
               finishState.completion.kind === "before_start") &&
             !canCompleteAppointment(practitioner, apptContext?.assignedPractitionerId) && (
-              <span className="text-xs text-neutral-500" data-testid="completion-not-assigned">
-                Only the assigned practitioner or the studio owner can mark this appointment completed.
-              </span>
+              /* When the appointment could not be read (apptContext null) we do not know who it is
+                 assigned to, so the assignment sentence would be a claim we cannot back. */
+              apptContext ? (
+                <span className="text-xs text-neutral-500" data-testid="completion-not-assigned">
+                  Only the assigned practitioner or the studio owner can mark this appointment completed.
+                </span>
+              ) : (
+                <span className="text-xs text-neutral-500" data-testid="completion-unavailable">
+                  Completion unavailable right now.
+                </span>
+              )
             )}
           {!isFinalized &&
             linkedAppointmentId &&
