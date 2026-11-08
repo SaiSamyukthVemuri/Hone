@@ -16,6 +16,22 @@ export function declineOwnerEmailActivation(): { enabled: false } | { enabled: t
   return { enabled: true, since };
 }
 
+/**
+ * THE per-row eligibility rule, shared by the dispatcher (which uses the lower bound as its query filter) and the card (which classifies a held row
+ * with it), so what the card says "will send" can never drift from what the sweep will actually claim. A row is eligible only if it was created at
+ * or after the activation instant AND is still inside the retry window measured from its own creation.
+ */
+export function declineOwnerEmailEarliestEligible(since: Date, now: Date): Date {
+  const windowStart = new Date(now.getTime() - DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS * 3_600_000);
+  return windowStart > since ? windowStart : since;
+}
+
+export function declineOwnerEmailRowEligible(createdAt: string, since: Date, now: Date): boolean {
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return false;
+  return created >= declineOwnerEmailEarliestEligible(since, now);
+}
+
 // Retention of outbox rows is undecided (Sam, HON-7). The purge period lives in this one constant and nothing deletes with it yet.
 export const DECLINE_OWNER_EMAIL_PURGE_DAYS = 90;
 

@@ -16,6 +16,8 @@ import {
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
   DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES,
   declineOwnerEmailActivation,
+  declineOwnerEmailEarliestEligible,
+  declineOwnerEmailRowEligible,
 } from "./decline-owner-email-gate";
 
 // The owner email on a waitlist decline (HON-7 item 4): the sender. The decline transaction (migration 0325, Willow) inserts ONE
@@ -226,7 +228,7 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
     // Nothing is attempted after the window, and a row that never got its turn inside it becomes `failed` (shown in Hone) rather than
     // lingering `held`. The window is measured from the row's own creation, so it holds whatever the cron cadence.
     const windowStart = new Date(now.getTime() - DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS * 3_600_000);
-    const earliest = windowStart > activation.since ? windowStart : activation.since;
+    const earliest = declineOwnerEmailEarliestEligible(activation.since, now);
     await expireUnsent(deps.admin, activation.since, windowStart, staleBefore, now);
 
     // Batches are walked by a KEYSET on `id` so every row is visited at most once per run. Without it a row that just failed would still be
@@ -345,20 +347,26 @@ export async function loadDeclineEmailStatus(studioId: string, actorUserId: stri
 }
 
 /** Outbox counts per invitation, for the follow-up card's email line. Ids and counts only. null = could not be read. */
-export async function loadOutboxCounts(studioId: string, invitationIds: string[]): Promise<Map<string, OutboxCounts> | null> {
+export async function loadOutboxCounts(studioId: string, invitationIds: string[], now: Date = new Date()): Promise<Map<string, OutboxCounts> | null> {
   const out = new Map<string, OutboxCounts>();
   if (invitationIds.length === 0) return out;
   try {
+    const activation = declineOwnerEmailActivation();
     const { data, error } = await createAdminClient()
       .from("waitlist_decline_owner_emails")
-      .select("invitation_id,status")
+      .select("invitation_id,status,created_at")
       .eq("studio_id", studioId)
       .in("invitation_id", invitationIds.slice(0, 200));
     if (error || !Array.isArray(data)) return null;
-    for (const r of data as Array<{ invitation_id?: unknown; status?: unknown }>) {
+    for (const r of data as Array<{ invitation_id?: unknown; status?: unknown; created_at?: unknown }>) {
       if (typeof r.invitation_id !== "string" || typeof r.status !== "string") continue;
       const c = out.get(r.invitation_id) ?? emptyOutboxCounts();
-      if (r.status in c) c[r.status as keyof OutboxCounts] += 1;
+      // A held row the sweep will never claim (created before activation, or past its window) is "not sent", never "sending".
+      if (r.status === "held" && activation.enabled && !(typeof r.created_at === "string" && declineOwnerEmailRowEligible(r.created_at, activation.since, now))) {
+        c.notSent += 1;
+      } else if (r.status in c && r.status !== "notSent") {
+        c[r.status as keyof OutboxCounts] += 1;
+      }
       out.set(r.invitation_id, c);
     }
     return out;

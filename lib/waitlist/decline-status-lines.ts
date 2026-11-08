@@ -7,10 +7,11 @@
 //   * Counts only. No name, no address, no provider text.
 export const DECLINE_CARD_SAVED = "Response saved. Review the follow-up below.";
 
-export type OutboxCounts = { held: number; sending: number; sent: number; failed: number; cancelled: number };
+/** `notSent` is a held row the sweep will never claim (created before activation, or past its window); see declineOwnerEmailRowEligible. */
+export type OutboxCounts = { held: number; sending: number; sent: number; failed: number; cancelled: number; notSent: number };
 
 export function emptyOutboxCounts(): OutboxCounts {
-  return { held: 0, sending: 0, sent: 0, failed: 0, cancelled: 0 };
+  return { held: 0, sending: 0, sent: 0, failed: 0, cancelled: 0, notSent: 0 };
 }
 
 const owners = (n: number): string => (n === 1 ? "1 owner" : `${n} owners`);
@@ -32,6 +33,7 @@ export function emailStatusLine(emailEnabled: boolean, counts: OutboxCounts | nu
   if (counts.sending > 0 || counts.held > 0) parts.push(`sending to ${owners(counts.sending + counts.held)}`);
   if (counts.failed > 0) parts.push(`could not be sent to ${owners(counts.failed)}`);
   if (counts.cancelled > 0) parts.push(`not sent to ${owners(counts.cancelled)} (no longer a verified owner)`);
+  if (counts.notSent > 0) parts.push(parts.length === 0 ? "not sent" : `not sent to ${owners(counts.notSent)}`);
   if (parts.length === 0) return "Email: no recipients.";
   return `Email: ${parts.join("; ")}.`;
 }

@@ -41,3 +41,17 @@ describe("the follow-up card's status lines", () => {
     expect(emailStatusLine(true, null)).toBe("Email: status unavailable.");
   });
 });
+
+describe("held rows the sweep will never claim read 'not sent', never 'sending'", () => {
+  it("a held row that is not eligible is 'Email: not sent.'", () => {
+    expect(emailStatusLine(true, c({ notSent: 1 }))).toBe("Email: not sent.");
+  });
+  it("alongside other states it names the count, and never says sending for it", () => {
+    const line = emailStatusLine(true, c({ sent: 1, notSent: 2 }));
+    expect(line).toContain("not sent to 2 owners");
+    expect(line).not.toMatch(/sending/);
+  });
+  it("an eligible held row is still 'sending'", () => {
+    expect(emailStatusLine(true, c({ held: 1 }))).toBe("Email: sending to 1 owner.");
+  });
+});

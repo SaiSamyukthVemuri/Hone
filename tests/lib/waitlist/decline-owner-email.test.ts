@@ -8,6 +8,7 @@ vi.mock("server-only", () => ({}));
 const status = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/waitlist/followups-owner", () => ({ readFollowUpStatuses: status }));
 import { dispatchDeclineOwnerEmail, getDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
+import { declineOwnerEmailRowEligible } from "@/lib/waitlist/decline-owner-email-gate";
 import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
 import { buildWaitlistDeclineOwnerEmail, WAITLIST_DECLINE_OWNER_BODY, WAITLIST_DECLINE_OWNER_SUBJECT } from "@/lib/email/templates/waitlist-decline-owner";
 
@@ -486,5 +487,19 @@ describe("status shown in Hone, answers flag OFF (exactly as shipped in #1407; 0
   it("a read error is still unknown, not zero", async () => {
     const bad = { from: () => { throw new Error("x"); } } as unknown as SupabaseClient;
     expect(await getDeclineEmailStatus(bad, STUDIO, null, NOW)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("the sweep and the card share one eligibility rule", () => {
+  beforeEach(() => ON());
+  it.each([
+    ["before activation", "2026-11-08T23:00:00.000Z", false],
+    ["at activation", SINCE, true],
+    ["after activation, inside the window", "2026-11-09T11:00:00.000Z", true],
+  ])("a held row created %s is sent exactly when the shared helper says eligible", async (_n, created, eligible) => {
+    const w = world(); w.owner({ created });
+    expect(declineOwnerEmailRowEligible(created, new Date(SINCE), NOW)).toBe(eligible);
+    await w.run();
+    expect(w.sends.length > 0).toBe(eligible);
   });
 });

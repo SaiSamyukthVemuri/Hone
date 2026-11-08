@@ -3,7 +3,7 @@ import type { FollowUpRow } from "./followups-owner";
 
 // 0325 — which of a person's EXISTING appointments an owner may link to their open follow-up. Read with the owner's RLS-scoped client, after the
 // page's owner check. The database decides eligibility (same studio, same client email as the entry, not cancelled, not already linked); this only
-// offers the person's own upcoming, non-cancelled appointments so the owner never types an id. Labels are a date and time only: no name, no service.
+// matches clients on clients.normalized_email (0032: case-folded, trimmed), so a stored mixed-case address still matches; it offers the person's own upcoming, non-cancelled appointments so the owner never types an id. Labels are a date and time only: no name, no service.
 export type LinkableAppointment = { id: string; label: string };
 
 const CAP_ROWS = 20;
@@ -28,12 +28,12 @@ export async function loadLinkableAppointments(
     }
     const emails = [...new Set(emailByEntry.values())];
     if (emails.length === 0) return out;
-    const clients = await db.from("clients").select("id,email").eq("studio_id", studioId).in("email", emails);
+    const clients = await db.from("clients").select("id,normalized_email").eq("studio_id", studioId).in("normalized_email", emails);
     if (clients.error || !Array.isArray(clients.data)) return out;
     const clientIdsByEmail = new Map<string, string[]>();
-    for (const c of clients.data as Array<{ id?: unknown; email?: unknown }>) {
-      if (typeof c.id !== "string" || typeof c.email !== "string") continue;
-      const k = c.email.trim().toLowerCase();
+    for (const c of clients.data as Array<{ id?: unknown; normalized_email?: unknown }>) {
+      if (typeof c.id !== "string" || typeof c.normalized_email !== "string") continue;
+      const k = c.normalized_email;
       clientIdsByEmail.set(k, [...(clientIdsByEmail.get(k) ?? []), c.id]);
     }
     const allClientIds = [...clientIdsByEmail.values()].flat();
