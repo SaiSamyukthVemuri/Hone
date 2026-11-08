@@ -134,6 +134,16 @@ describe("one email to each current verified owner", () => {
     expect(b.row.status).toBe("sent");
     expect(new Set(w.sends.map((s) => s.key)).size).toBe(2);
   });
+  it("the idempotency key names the invitation AND the recipient, not only the payload", async () => {
+    const w = world(); const a = w.owner();
+    await w.run();
+    expect(w.sends[0].key).toContain(`decline-owner/${INV}/${a.pid}`);
+  });
+  it("two overlapping invocations send once per row", async () => {
+    const w = world(); w.owner(); w.owner();
+    await Promise.all([w.run(), w.run()]);
+    expect(w.sends).toHaveLength(2);
+  });
   it("a second sweep sends nothing more", async () => {
     const w = world(); w.owner(); w.owner();
     await w.run(); await w.run();
