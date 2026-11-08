@@ -126,7 +126,7 @@ describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
   it("says at the top of Permissions what this release enforces", () => {
     const html = render({ initialView: "permissions" });
     expect(html).toContain('data-testid="enforcement-scope"');
-    expect(html).toContain("This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.");
+    expect(html).toContain("Enforced in the app once you activate them: appointments, clinical viewing, photos, availability; other areas are shown for planning.");
   });
   it("fails SAFE: a key with no enforcement in the catalog reads Not enforced yet", () => {
     const r = row(withEnforcement({ "appt.move": undefined }, () => render({ initialView: "permissions" })), "appt.move");

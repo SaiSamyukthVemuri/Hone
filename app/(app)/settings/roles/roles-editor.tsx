@@ -597,7 +597,7 @@ export function RolesEditor(props: RolesEditorProps) {
             </button>
             <SaveStatus state={feedback.state} />
           </div>
-          <p className="text-xs text-neutral-500">A saved change applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
+          <p className="text-xs text-neutral-500">Once activated, a saved change applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
         </div>
       )}
     </div>
@@ -787,7 +787,7 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
     <section data-testid="roles-history" className="flex min-w-0 flex-col gap-3">
       <h3 className="text-base font-medium">Change history</h3>
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        Every role and permission change: who made it, when, who or what it affected, and the before and after. Staff cannot edit or delete it.
+        Every change made on this page: who made it, when, who or what it affected, and the before and after. Staff cannot edit or delete it.
       </p>
       {state.kind === "loading" && <p className="text-sm text-neutral-500">Loading&hellip;</p>}
       {state.kind === "error" && (
@@ -1165,6 +1165,7 @@ function ReasonField({ id, value, onChange, required }: { id: string; value: str
       />
       <span id={`${id}-hint`} className="text-xs text-neutral-500">
         {required ? "Required: say why in your own words. " : ""}The before and after are recorded automatically; your reason is kept with them in the change history.
+        {" "}Please don&rsquo;t include client names or clinical details.
       </span>
     </label>
   );
@@ -1305,6 +1306,12 @@ function ActivationSection({
       // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
       const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
       setBusy(false);
+      // Insurance N1: the draft is locked while this runs, but a result must never be applied over one that became dirty anyway.
+      if (draftRef.current && r.ok) {
+        setMessage(ACTIVATION_DRAFT_LINE);
+        onActivated();
+        return;
+      }
       if (r.ok) {
         cancel();
         onActivated();

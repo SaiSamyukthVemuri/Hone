@@ -164,3 +164,18 @@ describe("permission editing is locked while an activation is in flight", () => 
     expect(enabledCount()).toBeGreaterThan(0);
   });
 });
+
+// Privacy Q3/Q4 on #1335: the reason box asks owners to keep client names and clinical details out of it, and History says what it covers.
+describe("copy: reason hint and History scope", () => {
+  it("the activation reason box carries the no-client-details line", async () => {
+    await mount({});
+    await openActivationPreview();
+    expect(q('[data-testid="activation-pending"]')!.textContent).toMatch(/Please don.t include client names or clinical details\./);
+  });
+  it("History describes the changes made on this page, not every role write", async () => {
+    await mount({ initialView: "history" });
+    const text = q('[data-testid="roles-history"]')!.textContent ?? "";
+    expect(text).toContain("Every change made on this page");
+    expect(text).not.toContain("Every role and permission change");
+  });
+});
