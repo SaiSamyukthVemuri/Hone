@@ -48,9 +48,9 @@ const scope = (t: Fake, owner: boolean, viewer: string): Fake =>
 const seed = (): Row[] => [
   { id: "1", event_type: "new_booking", practitioner_id: STAFF, read_at: null },
   { id: "2", event_type: "new_booking", practitioner_id: null, read_at: null },
-  { id: "3", event_type: "appointment_cancelled", practitioner_id: OWNER_A, read_at: null, dedupe_key: "appointment_cancelled:a1:" + OWNER_A },
-  { id: "4", event_type: "appointment_cancelled", practitioner_id: OWNER_B, read_at: null, dedupe_key: "appointment_cancelled:a1:" + OWNER_B },
-  { id: "5", event_type: "appointment_cancelled", practitioner_id: null, read_at: null, dedupe_key: "appointment_cancelled:a2:studio" },
+  { id: "3", event_type: "appointment_cancelled", practitioner_id: OWNER_A, read_at: null, dedupe_key: "appointment_cancelled:a1:" + OWNER_A + ":1762614000123" },
+  { id: "4", event_type: "appointment_cancelled", practitioner_id: OWNER_B, read_at: null, dedupe_key: "appointment_cancelled:a1:" + OWNER_B + ":1762614000123" },
+  { id: "5", event_type: "appointment_cancelled", practitioner_id: null, read_at: null, dedupe_key: "appointment_cancelled:a2:studio:1762614000123" },
   // LEGACY rows (written before the recipient key existed): practitioner_id is the APPOINTMENT's practitioner, studio-wide visibility, null key.
   { id: "9", event_type: "appointment_cancelled", practitioner_id: STAFF, read_at: null },
   { id: "10", event_type: "appointment_cancelled", practitioner_id: OWNER_B, read_at: null },

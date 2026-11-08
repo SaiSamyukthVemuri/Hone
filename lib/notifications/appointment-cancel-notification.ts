@@ -9,8 +9,14 @@
 // could leave no bell. Here it depends only on the committed appointment id: each display field comes from its own small read and degrades to
 // neutral wording, and the row is written regardless.
 //
-// EXACTLY ONCE. Each row carries dedupe_key appointment_cancelled:<appointment_id>:<recipient_id>, so a retry or a client cancel racing a staff
-// cancel conflicts on the 0154 unique index (23505 = already recorded). Both cancel commands also refuse a non-confirmed appointment.
+// EXACTLY ONCE PER CANCELLATION. Each row carries dedupe_key appointment_cancelled:<appointment_id>:<recipient_id>:<occurrence>, so a retry or a client
+// cancel racing a staff cancel conflicts on the 0154 unique index (23505 = already recorded). Both cancel commands also refuse a non-confirmed appointment.
+//
+// THE OCCURRENCE is the appointment's own cancelled_at, as committed. Every cancel command stamps it, and revert_appointment_outcome (0220) clears it
+// and restores the appointment to confirmed while leaving the bell rows in place. So the SAME cancellation always reads the same cancelled_at (a retry
+// reads the committed row, not the clock), while a cancel after a restore stamps a new one and gets a new key instead of being dropped as a "retry".
+// It is read at write time, after the commit. If it cannot be read the occurrence is "na": that is the old behaviour (one row per appointment and
+// owner), chosen over dropping the bell. The reader looks only at the prefix, so legacy rows stay studio-wide and new rows stay per-recipient.
 //
 // HARD CONTRACT: never throws, so a failure here cannot undo the cancel. It AWAITS the insert (the fire-and-forget recorder detached it, and a
 // serverless function can return before a detached write runs, which drops the bell silently), so it resolves only after every insert was attempted.
@@ -67,6 +73,12 @@ function logOwnerReadFailure(code: string): void {
   }
 }
 
+// Epoch milliseconds of the committed cancelled_at, so the same instant always renders the same text whatever offset the driver used.
+function occurrenceOf(v: unknown): string {
+  const t = typeof v === "string" ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? String(t) : "na";
+}
+
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 function dayLabel(d: Date, tz: string): string {
@@ -84,7 +96,7 @@ export async function recordAppointmentCancelNotifications(
   },
 ): Promise<void> {
   try {
-    const appt = await readOne(admin, "appointments", "studio_id, client_id, practitioner_id, starts_at, service_id", input.appointmentId);
+    const appt = await readOne(admin, "appointments", "studio_id, client_id, practitioner_id, starts_at, service_id, cancelled_at", input.appointmentId);
     const studioId = input.studioId ?? str(appt?.studio_id);
     // The table requires a studio. Without one there is nothing safe to write.
     if (!studioId) return;
@@ -109,6 +121,7 @@ export async function recordAppointmentCancelNotifications(
         when = "";
       }
     }
+    const occurrence = occurrenceOf(appt?.cancelled_at);
     const reason = input.reasonLabel ? ` Reason: ${input.reasonLabel}.` : "";
     // A staff cancel names the staff member, the client and the service. A client's own cancel names the client.
     const body = input.actorPractitionerId
@@ -130,7 +143,7 @@ export async function recordAppointmentCancelNotifications(
     if (recipients.length > 0) {
       await Promise.all(
         recipients.map((owner) =>
-          recordPractitionerNotificationAndWait({ ...base, practitionerId: owner.id, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:${owner.id}` }),
+          recordPractitionerNotificationAndWait({ ...base, practitionerId: owner.id, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:${owner.id}:${occurrence}` }),
         ),
       );
       return;
@@ -138,7 +151,7 @@ export async function recordAppointmentCancelNotifications(
     // The read succeeded and the studio has NO active owner (not expected for a live studio). Only an actorless (client) cancel then falls back to one
     // studio-wide row, which the reader shows to owners only; with an actor, a studio-wide row could reach the very person who must not be notified.
     if (!input.actorPractitionerId) {
-      await recordPractitionerNotificationAndWait({ ...base, practitionerId: null, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:studio` });
+      await recordPractitionerNotificationAndWait({ ...base, practitionerId: null, dedupeKey: `${CANCEL_DEDUPE_PREFIX}${input.appointmentId}:studio:${occurrence}` });
     }
   } catch {
     // The cancellation is already committed; the bell is best effort and must never surface.

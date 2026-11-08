@@ -19,6 +19,8 @@ const SERVICE = "44444444-4444-4444-8444-444444444444";
 const STARTS_AT = "2026-11-09T19:30:00.000Z";
 const OWNER_A = "bbbbbbbb-0000-4000-8000-00000000000a";
 const OWNER_B = "bbbbbbbb-0000-4000-8000-00000000000b";
+// 2026-11-08T15:00:00.123Z as epoch milliseconds
+const OCCURRENCE = "1794150000123";
 const STAFF = "bbbbbbbb-0000-4000-8000-0000000000cc";
 
 type Insert = Record<string, unknown>;
@@ -37,6 +39,8 @@ const scenario = {
   serviceReadNull: false,
   studioReadNull: false,
   seenKeys: new Set<string>(),
+  // the appointment's committed cancelled_at (a restore clears it; the next cancel stamps a new one)
+  cancelledAt: "2026-11-08T15:00:00.123456+00:00" as string | null,
   // active owners of the studio (ids), and the active actor's display name for staff cancels
   owners: [OWNER_A] as string[],
   ownersError: false,
@@ -90,7 +94,7 @@ function makeQuery(table: string) {
         if (columns.startsWith("studio_id, client_id")) {
           return scenario.appointmentReadNull
             ? { data: null, error: null }
-            : { data: { studio_id: STUDIO, client_id: CLIENT, practitioner_id: null, starts_at: STARTS_AT, service_id: SERVICE }, error: null };
+            : { data: { studio_id: STUDIO, client_id: CLIENT, practitioner_id: null, starts_at: STARTS_AT, service_id: SERVICE, cancelled_at: scenario.cancelledAt }, error: null };
         }
         return { data: { id: APPT, studio_id: STUDIO, client_id: CLIENT, practitioner_id: null, status: "confirmed", starts_at: STARTS_AT, duration_minutes: 45, cancellation_token_hash: "a".repeat(64), studio: studioRow(), service: { name: "Full Face", modality: "electrolysis", price_cents: 9000 }, client: { name: "Test Client" } }, error: null };
       }
@@ -149,6 +153,7 @@ beforeEach(() => {
     serviceReadNull: false,
     studioReadNull: false,
     seenKeys: new Set<string>(),
+    cancelledAt: "2026-11-08T15:00:00.123456+00:00",
     owners: [OWNER_A],
     ownersError: false,
     actorNoName: false,
@@ -171,7 +176,7 @@ describe("a client cancel through the link", () => {
       client_id: CLIENT,
       href: `/calendar/${APPT}`,
       practitioner_id: OWNER_A,
-      dedupe_key: `appointment_cancelled:${APPT}:${OWNER_A}`,
+      dedupe_key: `appointment_cancelled:${APPT}:${OWNER_A}:${OCCURRENCE}`,
     });
   });
 
@@ -260,6 +265,60 @@ describe("the booking notification is unchanged", () => {
   });
 });
 
+describe("one bell per cancellation, not per appointment (revert_appointment_outcome restores and clears cancelled_at)", () => {
+  const call = async (actor: string | null = null) => {
+    await recordAppointmentCancelNotifications(admin as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: actor });
+    await flush();
+  };
+
+  it("a retry of the SAME cancellation produces the same key and one row", async () => {
+    await call();
+    await call();
+    await call(STAFF);
+    expect(inserts).toHaveLength(1);
+  });
+
+  it("cancel, restore, cancel again: two rows, distinct keys, the second one new and unread", async () => {
+    await call();
+    scenario.cancelledAt = "2026-11-08T16:30:00.500000+00:00";
+    await call();
+    expect(inserts).toHaveLength(2);
+    expect(new Set(inserts.map((r) => r.dedupe_key)).size).toBe(2);
+    expect(inserts[1]).toMatchObject({ practitioner_id: OWNER_A, event_type: "appointment_cancelled" });
+    expect(inserts[1].read_at ?? null).toBeNull();
+  });
+
+  it("the same instant written with a different offset is the same occurrence", async () => {
+    await call();
+    scenario.cancelledAt = "2026-11-08T10:00:00.123456-05:00";
+    await call();
+    expect(inserts).toHaveLength(1);
+  });
+
+  it("the studio-wide fallback key carries the occurrence too", async () => {
+    scenario.owners = [];
+    await call();
+    expect(inserts[0].dedupe_key).toBe(`appointment_cancelled:${APPT}:studio:${OCCURRENCE}`);
+    scenario.cancelledAt = "2026-11-08T16:30:00.500000+00:00";
+    await call();
+    expect(inserts).toHaveLength(2);
+  });
+
+  it("every key keeps the prefix the reader uses to give recipient semantics", async () => {
+    scenario.owners = [OWNER_A, OWNER_B];
+    await call();
+    for (const r of inserts) expect(String(r.dedupe_key).startsWith("appointment_cancelled:")).toBe(true);
+  });
+
+  it("an unreadable or missing cancelled_at still writes the bell (occurrence na) rather than dropping it", async () => {
+    scenario.cancelledAt = null;
+    await call();
+    await call();
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].dedupe_key).toBe(`appointment_cancelled:${APPT}:${OWNER_A}:na`);
+  });
+});
+
 describe("who is notified (per-recipient rows, the actor never)", () => {
   const call = async (actor: string | null) => {
     await recordAppointmentCancelNotifications(admin as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: actor });
@@ -270,7 +329,7 @@ describe("who is notified (per-recipient rows, the actor never)", () => {
     scenario.owners = [OWNER_A, OWNER_B];
     await call(null);
     expect(inserts.map((r) => r.practitioner_id).sort()).toEqual([OWNER_A, OWNER_B]);
-    expect(inserts.map((r) => r.dedupe_key).sort()).toEqual([`appointment_cancelled:${APPT}:${OWNER_A}`, `appointment_cancelled:${APPT}:${OWNER_B}`]);
+    expect(inserts.map((r) => r.dedupe_key).sort()).toEqual([`appointment_cancelled:${APPT}:${OWNER_A}:${OCCURRENCE}`, `appointment_cancelled:${APPT}:${OWNER_B}:${OCCURRENCE}`]);
   });
 
   it("another staff member's cancel notifies the owner once, naming the staff member, the client, the service and the time", async () => {
