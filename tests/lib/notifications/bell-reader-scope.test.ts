@@ -91,3 +91,13 @@ describe("scopeNotificationsToViewer", () => {
     expect(() => scope(table(seed()), true, "x,practitioner_id.is.null")).toThrow();
   });
 });
+
+describe("waitlist_offer_declined wording and link (the decline command writes the row; these are the strings its DB test pins)", () => {
+  it("title and link are exactly the agreed strings, with a straight apostrophe", async () => {
+    const m = await import("@/lib/notifications/waitlist-offer-declined");
+    expect(m.WAITLIST_OFFER_DECLINED_EVENT).toBe("waitlist_offer_declined");
+    expect(m.WAITLIST_OFFER_DECLINED_TITLE_WITH_NAME("Syn Invitee")).toBe("Syn Invitee couldn't make the offered times.");
+    expect(m.WAITLIST_OFFER_DECLINED_TITLE_WITH_NAME("Syn Invitee")).not.toMatch(/[‘’]/);
+    expect(m.WAITLIST_OFFER_DECLINED_HREF).toBe("/settings/waitlist#follow-up");
+  });
+});
