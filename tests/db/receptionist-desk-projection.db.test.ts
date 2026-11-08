@@ -50,7 +50,7 @@ beforeAll(async () => {
   ids.maggie = a.clientId;
   await adminQuery("insert into public.client_legal_identities (client_id, studio_id, legal_given_name, legal_family_name, updated_by) values ($1,$2,'Marguerite',$3,$4)", [a.clientId, a.studioId, LEGAL, a.practitionerId]);
   await addClient(a, "plain", "Plain Person", null, "+1 555 0102", "plain@harness.local");
-  const archived = await addClient(a, "archived", "Archived Person", null, null, null);
+  const archived = await addClient(a, "archived", "Archived Person", "Archived Pat", null, null);
   await adminQuery("update public.clients set archived_at = now() where id=$1", [archived]);
   await addClient(b, "other", "Other Studio Person", null, null, null);
   await addAppt(a, ids.maggie, "confirmed", "2031-03-04T15:00:00Z");
@@ -87,12 +87,13 @@ describe("the payload", () => {
       "next_appointment_at", "last_visit_on", "intake_state", "consent_signed", "total_count",
     ]);
   });
-  it("shows the preferred name, labels the fallback, and never the stored name or legal name", async () => {
+  it("shows the preferred name, else the literal Name on file, and never the stored name or legal name", async () => {
     const r = await dir(aDesk, a.studioId);
     const byId = new Map(r.rows.map((x) => [x.client_id, x]));
     expect(byId.get(ids.maggie)).toMatchObject({ display_name: "Maggie", name_on_file: false });
-    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Plain Person", name_on_file: true });
+    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Name on file", name_on_file: true }); // 0280: the label, never the stored name
     expect(JSON.stringify(r.rows)).not.toContain("Margaret");
+    expect(JSON.stringify(r.rows)).not.toContain("Plain Person");
     expect(JSON.stringify(r.rows)).not.toContain(LEGAL);
     expect(byId.has(ids.archived)).toBe(false);
     expect(byId.has(ids.other)).toBe(false);
@@ -223,7 +224,7 @@ describe("R2: no enumeration", () => {
   });
   it("a studio larger than the cap cannot be walked: the last reachable row is at most 200", async () => {
     for (let i = 0; i < 230; i += 1) {
-      await adminQuery("insert into public.clients(id,studio_id,name) values (gen_random_uuid(),$1,$2)", [b.studioId, `Walk Client ${String(i).padStart(3, "0")}`]);
+      await adminQuery("insert into public.clients(id,studio_id,name,preferred_name) values (gen_random_uuid(),$1,$2,$2)", [b.studioId, `Walk Client ${String(i).padStart(3, "0")}`]);
     }
     const seen = new Set<string>();
     for (let off = 0; off < 200; off += 50) {
@@ -308,7 +309,7 @@ describe("Privacy C2 and Insurance L7 (reviews of 0274 at 236e34d6)", () => {
   });
 
   it("L7: a client with ONLY a live session and no completed appointment reads an empty desk last visit (the narrowing, pinned)", async () => {
-    const only = await addClient(a, "sessiononly", "Session Only", null, null, null);
+    const only = await addClient(a, "sessiononly", "Session Only", "Session Only", null, null);
     await adminQuery(
       `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values (gen_random_uuid(), $1, $2, $3, 'electrolysis')`,
       [a.studioId, only, a.practitionerId],
