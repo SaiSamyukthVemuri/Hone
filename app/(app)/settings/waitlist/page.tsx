@@ -1155,9 +1155,14 @@ export default async function WaitlistSettingsPage({
                         // still has to be identifiable.
                         data-entry-id={row.id}
                         data-entry-status={row.status}
-                        className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between"
+                        className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
                       >
-                        <div className="flex min-w-0 flex-col gap-1">
+                        {/* THE ROW HAS TWO BANDS. The first holds the person and the row's own controls side by side;
+                            the second is the Invite-to-book composer, full width. The composer used to sit INSIDE the
+                            controls column, so opening it widened that column to the form's natural width and squeezed
+                            the name and email into a sliver with the controls drawn over the form. */}
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <p className="font-medium break-words">{row.name}</p>
                           <p className="text-sm break-all text-neutral-600 dark:text-neutral-400">
                             {row.email}
@@ -1272,7 +1277,10 @@ export default async function WaitlistSettingsPage({
                           )}
                         </div>
 
-                        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto">
+                        <div
+                          data-testid="row-controls"
+                          className="flex w-full min-w-0 shrink-0 flex-col gap-2 sm:w-56"
+                        >
                           {/* CLAIM IS NOT IN THIS LIST. Claiming is an internal
                               transition, not a practitioner's job — the model
                               still rules on it and the command is untouched,
@@ -1377,7 +1385,7 @@ export default async function WaitlistSettingsPage({
                               className="mt-2 flex flex-col gap-2"
                             >
                               <input type="hidden" name="entry_id" value={row.id} />
-                              <p className="text-sm text-neutral-500">
+                              <p className="text-sm break-words text-neutral-500">
                                 Take {row.name} off the waitlist? This cannot be
                                 undone from here.
                               </p>
@@ -1390,6 +1398,8 @@ export default async function WaitlistSettingsPage({
                             </form>
                           </details>
                           )}
+                        </div>
+                        </div>
                           {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
                               #683 ships the composer and #685 ships `admit_`;
                               they are siblings off production, so this binding
@@ -1406,7 +1416,7 @@ export default async function WaitlistSettingsPage({
                               disabled state is about the DRAFT, not about
                               whether this person can be invited. */}
                           {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
-                            <details className="mt-2">
+                            <details className="w-full min-w-0" data-testid="row-invite">
                               <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
                                 Invite to book
                               </summary>
@@ -1434,7 +1444,6 @@ export default async function WaitlistSettingsPage({
                               />
                             </details>
                           )}
-                        </div>
                       </li>
                     );
                   })}
