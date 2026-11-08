@@ -447,12 +447,21 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
 }
 
 /**
+ * Shown when new-client admission is Closed (or unreadable). 0204 refuses an INVITED
+ * booking in that state, so an invitation sent now would list times the invitee cannot
+ * book. Nothing was created. Tied to the check by
+ * tests/source-guards/invited-booking-refusal-copy.test.ts.
+ */
+export const INVITE_ADMISSION_CLOSED_COPY =
+  "No invitation was created. New-client admission is set to Closed, so people you invite couldn’t book. Set it to Waitlist (or Open) in Settings → Booking first.";
+
+/**
  * Map the structured result onto what to show. Pure, total, and the ONLY place
  * this translation happens.
  */
 export function invitationNoticeFor(
   outcome: InvitationOutcome | null,
-  reason?: "malformed_submission",
+  reason?: "malformed_submission" | "admission_closed",
 ): InvitationNotice {
   if (outcome === null) {
     return {
@@ -462,7 +471,9 @@ export function invitationNoticeFor(
       message:
         reason === "malformed_submission"
           ? "No invitation was created: the form was incomplete. Check the service and try again."
-          : "No invitation was created.",
+          : reason === "admission_closed"
+            ? INVITE_ADMISSION_CLOSED_COPY
+            : "No invitation was created.",
       invitationExists: false,
     };
   }

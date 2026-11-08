@@ -162,6 +162,7 @@ describe("terminal states offer nothing to press", () => {
     "consumed_without_booking",
     "booking_outcome_unknown",
     "unsupported_offer",
+    "admission_closed",
     "declined",
   ] as const) {
     it(`${reason} renders NO booking or decline control at all`, () => {
@@ -181,6 +182,21 @@ describe("terminal states offer nothing to press", () => {
   it("revoked does not blame the recipient", () => {
     const html = render({ kind: "closed", reason: "revoked", presentation: PRESENTATION });
     expect(html).toContain("no longer available");
+  });
+
+  describe("admission_closed", () => {
+    const html = render({ kind: "closed", reason: "admission_closed", presentation: PRESENTATION });
+    it("says plainly the studio is not taking new-client bookings and to contact it", () => {
+      expect(html).toContain("isn’t taking new-client bookings right now");
+      expect(html).toContain("contact the studio");
+    });
+    it("shows no times and does not say 'try again'", () => {
+      expect(html.toLowerCase()).not.toContain("try again");
+      expect(html).not.toContain("Available consultation times");
+    });
+    it("says the invitation has not been used", () => {
+      expect(html).toContain("hasn’t been used");
+    });
   });
 
   // P2-A. An offer naming a service the booking path cannot accept.

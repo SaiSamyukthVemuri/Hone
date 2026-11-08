@@ -198,6 +198,9 @@ function reset() {
 // NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
 // Delegating to the REAL resolver with no stored value routes it through the
 // transition bridge, so the env stubbing below keeps meaning what it meant.
+// Null keeps the legacy-bridge behaviour every pre-existing test relies on; a test sets a
+// STORED mode to exercise the closed-admission invite block.
+const admissionHolder = vi.hoisted(() => ({ stored: null as string | null }));
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
@@ -205,8 +208,8 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     ...actual,
     getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
       actual.resolveAdmission({
-        storedMode: null,
-          storedSetAt: null,
+        storedMode: admissionHolder.stored,
+        storedSetAt: admissionHolder.stored ? "2026-09-01T00:00:00.000Z" : null,
         readFailed: false,
         studioSlug: studio.slug,
       }),
@@ -2838,5 +2841,30 @@ describe("0208 — each row states its SMS standing, as recorded", () => {
     ]) {
       expect(entriesQuery().columns).not.toContain(column);
     }
+  });
+});
+
+describe("closed admission blocks the owner's invite (0204 invited_book refuses it)", () => {
+  afterEach(() => {
+    admissionHolder.stored = null;
+  });
+
+  it("says so, names Settings → Booking, and links to it", async () => {
+    admissionHolder.stored = "closed";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("New-client admission is set to Closed");
+    expect(html).toContain("Settings → Booking");
+    expect(html).toContain('href="/settings/booking#new-client-admission"');
+    expect(html).not.toContain("No invitation was created");
+  });
+
+  it.each(["waitlist", "open"])("shows no block under %s", async (mode) => {
+    admissionHolder.stored = mode;
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    expect(await render()).not.toContain("invites-blocked-admission");
   });
 });

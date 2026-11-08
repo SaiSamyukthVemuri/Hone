@@ -1,6 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getNewClientAdmissionMode,
+  newClientAdmissionRefusesInvitedBooking,
+} from "@/lib/booking/new-client-admission";
 import {
   inviteSubmissionFromFormData,
   WINDOW_DAYS_MAX,
@@ -57,7 +62,7 @@ import type { InvitationOutcome } from "@/lib/waitlist/invite-to-book-contract";
  */
 export type InviteActionResult =
   | { outcome: InvitationOutcome }
-  | { outcome: null; reason: "malformed_submission" };
+  | { outcome: null; reason: "malformed_submission" | "admission_closed" };
 
 /**
  * Has a service actually been chosen?
@@ -166,6 +171,20 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // clearer message, never the guarantee.
   if (validateInviteInput(input)) {
     return { outcome: null, reason: "malformed_submission" };
+  }
+
+  // CLOSED ADMISSION BLOCKS THE SEND. 0204 refuses an invited booking while new-client
+  // admission is closed (or unreadable), so an invitation created now could only fail at
+  // Book. Refused BEFORE the command, so nothing is created or counted against capacity.
+  // Fails closed: an unreadable studio or mode is a refusal, not a send.
+  try {
+    const { studio } = await getCurrentPractitionerWithStudio();
+    const admission = await getNewClientAdmissionMode(studio);
+    if (newClientAdmissionRefusesInvitedBooking(admission)) {
+      return { outcome: null, reason: "admission_closed" };
+    }
+  } catch {
+    return { outcome: null, reason: "admission_closed" };
   }
 
   const outcome = await admissionCommandAdapter.inviteToBook(input);

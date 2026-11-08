@@ -361,6 +361,19 @@ export function newClientAdmissionRefusesOutright(
   return !a.ok || a.mode === "closed";
 }
 
+/**
+ * Is an INVITED new-client booking refused? Mirrors 0204 `assert_new_client_admission`
+ * op 'invited_book': ok for open and waitlist, refused for closed and unreadable.
+ * The invitation screen and the owner's invite composer both ask THIS, so neither can
+ * hold a different opinion from the database. Tied to the copy by
+ * tests/source-guards/invited-booking-refusal-copy.test.ts.
+ */
+export function newClientAdmissionRefusesInvitedBooking(
+  a: NewClientAdmission,
+): boolean {
+  return newClientAdmissionRefusesOutright(a);
+}
+
 export function newClientMayBook(a: NewClientAdmission): boolean {
   return a.ok && a.mode === "open";
 }

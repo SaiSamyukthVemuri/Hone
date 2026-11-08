@@ -280,6 +280,12 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // is the only one offered.
     body: "This offer is for a service we can’t book through this link. Please contact the studio and they can arrange your appointment.",
   },
+  admission_closed: {
+    title: "The studio isn’t taking new-client bookings right now",
+    // Shown INSTEAD of times: a time listed here could not be booked. Nothing was
+    // used up, and nothing is promised beyond contacting the studio.
+    body: "The studio isn’t taking new-client bookings right now, so you can’t book through this link yet. Your invitation hasn’t been used. Please contact the studio.",
+  },
   declined: {
     title: "You’ve already declined this offer",
     body: "If you’d still like an appointment, please contact the studio directly.",

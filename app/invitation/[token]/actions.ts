@@ -51,6 +51,11 @@ import {
 // The range helper is throttled ONCE by this surface instead.
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
+  NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+  getNewClientAdmissionMode,
+  newClientAdmissionRefusesInvitedBooking,
+} from "@/lib/booking/new-client-admission";
+import {
   FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
   isFreeConsultWaitlistOnlyReschedule,
 } from "@/lib/booking/free-consult-reschedule-policy";
@@ -617,6 +622,23 @@ async function loadContext(
   // exchange, and sending a real person a verification code for an offer that
   // can never be booked is the surface this is removing, not one to keep. The
   // operator releases the invitation from their side; the copy says so.
+  // ADMISSION, ASKED ON THE SAME FUNNEL. 0204 refuses an invited booking while the
+  // studio is closed (or its mode is unreadable), so listing times here would offer
+  // what Book can only fail. Nothing is consumed: this is a read.
+  const admission = await getNewClientAdmissionMode({
+    id: resolved.invitation.studioId,
+    slug: studio.slug,
+  });
+  if (newClientAdmissionRefusesInvitedBooking(admission)) {
+    return {
+      ok: false,
+      state: {
+        kind: "closed",
+        reason: "admission_closed",
+        presentation: studio.presentation,
+      },
+    };
+  }
   if (!studio.bookableByNewClient) {
     return {
       ok: false,
@@ -1332,6 +1354,15 @@ export async function bookInvitationSlotAction(
     return {
       kind: "closed",
       reason: "booking_outcome_unknown",
+      presentation: ctx.studio.presentation,
+    };
+  }
+  // The studio closed new-client admission between the load and the tap. The
+  // commit refused BEFORE any redeem, so the invitation is intact; say why, not "try again".
+  if (!booked.ok && booked.code === NEW_CLIENT_ADMISSION_REFUSAL_CODE) {
+    return {
+      kind: "closed",
+      reason: "admission_closed",
       presentation: ctx.studio.presentation,
     };
   }

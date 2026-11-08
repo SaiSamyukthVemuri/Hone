@@ -160,7 +160,12 @@ const entryFixture = { phone: "555 0100" as string | null };
 // actually arrives when nobody has set one -- so those tests keep reading the
 // default. P2-B sets it explicitly, because a horizon the runtime is supposed
 // to READ must not be the same number it would have FALLEN BACK to.
-const studioFixture = { timezone: "America/Toronto", horizonMonths: null as number | null };
+const studioFixture = {
+  timezone: "America/Toronto",
+  horizonMonths: null as number | null,
+  /** The stored admission mode; undefined models a row that carries no admission columns. */
+  admissionMode: undefined as string | undefined,
+};
 /**
  * The service the invitation is scoped to.
  *
@@ -290,6 +295,12 @@ vi.mock("@/lib/supabase/admin-server", () => ({
                   name: "Studio A",
                   timezone: studioFixture.timezone,
                   public_booking_horizon_months: studioFixture.horizonMonths,
+                  ...(studioFixture.admissionMode
+                    ? {
+                        new_client_admission_mode: studioFixture.admissionMode,
+                        new_client_admission_mode_set_at: "2026-09-01T00:00:00.000Z",
+                      }
+                    : {}),
                 },
                 error: null,
               }
@@ -376,6 +387,7 @@ beforeEach(() => {
   entryFixture.phone = "555 0100";
   studioFixture.timezone = "America/Toronto";
   studioFixture.horizonMonths = null;
+  studioFixture.admissionMode = undefined;
   serviceFixture.name = "Consultation";
   serviceFixture.modality = "consultation";
   serviceFixture.active = true;
@@ -1434,6 +1446,51 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
     ["decline", () => declineInvitationAction(TOKEN)],
     ["book", () => bookInvitationSlotAction(TOKEN, SLOT)],
   ];
+
+  // 0204 `invited_book` refuses even a valid invitation while admission is closed, so the
+  // screen must not list times it cannot book, and a late refusal must not read as "try again".
+  describe("new-client admission is CLOSED", () => {
+    beforeEach(() => {
+      studioFixture.admissionMode = "closed";
+      cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    });
+
+    it.each(everyAction)("closes %s as admission_closed", async (_label, run) => {
+      const out = await run();
+      expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      expect(out.reason).toBe("admission_closed");
+    });
+
+    it("lists NO times and never reaches the booking action or the proof email", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      expect(out).not.toHaveProperty("days");
+      expect(fetchPublicSlotsForDates).not.toHaveBeenCalled();
+      await bookInvitationSlotAction(TOKEN, SLOT);
+      await requestInvitationProofAction(TOKEN);
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+      expect(beginRecipientProof).not.toHaveBeenCalled();
+    });
+
+    it.each(["waitlist", "open"])("%s admission leaves the offer open", async (mode) => {
+      studioFixture.admissionMode = mode;
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("closed");
+    });
+
+    it("a refusal at commit (mode closed after load) says so instead of 'try again'", async () => {
+      studioFixture.admissionMode = "waitlist";
+      publicBookAppointmentAction.mockResolvedValue({
+        ok: false,
+        error: "This studio is not accepting new-client bookings right now.",
+        code: "new_client_admission_closed",
+      });
+      const out = await bookInvitationSlotAction(TOKEN, SLOT);
+      expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      expect(out.reason).toBe("admission_closed");
+    });
+  });
 
   describe("an ACTIVE, same-studio, NON-CONSULTATION service", () => {
     beforeEach(() => {

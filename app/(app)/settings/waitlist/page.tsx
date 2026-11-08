@@ -23,6 +23,11 @@ import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
 import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
+import {
+  getNewClientAdmissionMode,
+  newClientAdmissionRefusesInvitedBooking,
+} from "@/lib/booking/new-client-admission";
+import { INVITE_ADMISSION_CLOSED_COPY } from "@/lib/waitlist/invite-to-book-contract";
 import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { inviteToBookAction } from "./invite-actions";
@@ -682,6 +687,11 @@ export default async function WaitlistSettingsPage({
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   const attention = await loadNeedsAttention(supabase, studio.id);
   const declined = await loadDeclinedAttention(supabase, studio.id);
+  // 0204 refuses an INVITED booking while admission is Closed (or unreadable), so Send is
+  // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
+  const invitesBlockedByAdmission = newClientAdmissionRefusesInvitedBooking(
+    await getNewClientAdmissionMode(studio),
+  );
   // Count only: no text is read on this page. Skipped entirely while the flag is off.
   const replies = waitlistTimesFeedbackEnabled()
     ? await countTimesFeedback(studio.id, practitioner.user_id)
@@ -842,6 +852,21 @@ export default async function WaitlistSettingsPage({
           the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
           of this file. `claim_new_client_waitlist_entries` and its server action
           are untouched and still tested; nothing on this page invokes them. */}
+
+      {invitesBlockedByAdmission && (
+        <section
+          role="status"
+          data-testid="invites-blocked-admission"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+        >
+          <p>
+            {INVITE_ADMISSION_CLOSED_COPY.replace("No invitation was created. ", "")}{" "}
+            <WaitlistNavLink href="/settings/booking#new-client-admission" className="underline">
+              Open Settings → Booking
+            </WaitlistNavLink>
+          </p>
+        </section>
+      )}
 
       {active === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
@@ -1371,11 +1396,15 @@ export default async function WaitlistSettingsPage({
                                 // after submission. Usability, not authority —
                                 // the command re-checks regardless.
                                 capabilities={
-                                  canOfferInvite(capacity)
+                                  canOfferInvite(capacity) && !invitesBlockedByAdmission
                                     ? admissionCommandAdapter.capabilities
                                     : null
                                 }
-                                unavailableReason={inviteUnavailableReason(capacity)}
+                                unavailableReason={
+                                  invitesBlockedByAdmission
+                                    ? "New-client admission is Closed, so invitees couldn’t book. Set it to Waitlist (or Open) in Settings → Booking."
+                                    : inviteUnavailableReason(capacity)
+                                }
                               />
                             </details>
                           )}

@@ -245,6 +245,12 @@ export type InvitationClosedReason =
    * help: the service will still be the wrong service on the next tap.
    */
   | "unsupported_offer"
+  /**
+   * The studio is not taking NEW-client bookings at all (admission `closed`, or
+   * unreadable). 0204's `invited_book` refuses even a valid invitation there, so
+   * no times are shown and nothing is consumed. Says nothing about the offer.
+   */
+  | "admission_closed"
   | "declined";
 
 export type InvitationViewState =
