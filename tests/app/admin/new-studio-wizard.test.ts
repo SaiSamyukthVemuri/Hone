@@ -48,6 +48,13 @@ describe("operator-only access (reuses the existing isAdmin gate)", () => {
   });
 });
 
+describe("owner-invite duplicate pre-check fails closed on a full candidate page (#1390)", () => {
+  it("uses emailCandidateState and refuses when inconclusive", () => {
+    expect(ACTION_CODE).toMatch(/emailCandidateState\(dupInvites, input\.ownerEmail\)/);
+    expect(ACTION_CODE).toMatch(/dupState === "inconclusive"\) fail\(/);
+  });
+});
+
 describe("the two service-role writes mirror the manual runbook", () => {
   it("uses the service-role admin client for the privileged inserts", () => {
     expect(ACTION).toMatch(/from "@\/lib\/supabase\/admin-server"/);

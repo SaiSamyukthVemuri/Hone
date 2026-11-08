@@ -31,7 +31,7 @@ const PAGE_CODE = codeOnly(PAGE);
 describe("magic-link server action: invite-gated signup", () => {
   it("looks up a pending invitation case-insensitively before the OTP call", () => {
     expect(ACTION_CODE).toMatch(
-      /\.from\("pending_invitations"\)\s*\n?\s*\.select\("id"\)\s*\n?\s*\.ilike\("email", normalized\)\s*\n?\s*\.eq\("status", "pending"\)/,
+      /\.from\("pending_invitations"\)\s*\n?\s*\.select\("id, email"\)\s*\n?\s*\.ilike\("email", emailIlikePattern\(normalized\)\)\s*\n?\s*\.eq\("status", "pending"\)/,
     );
     const lookupIdx = ACTION_CODE.indexOf('"pending_invitations"');
     const otpIdx = ACTION_CODE.indexOf("signInWithOtp");
