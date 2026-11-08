@@ -15,3 +15,7 @@ export const CAPACITY_EXHAUSTED_COPY =
 /** Shown when the consultation times in the offered dates are already covered by invitations still out (0324). */
 export const NO_CAPACITY_COPY =
   "No invitation was created: the consultation times in these dates are already covered by invitations that are still out. Availability can change; invitations don't reserve appointments.";
+
+/** Shown while the database has not yet been given the send command this release needs. Nothing was sent. */
+export const NOT_YET_AVAILABLE_COPY =
+  "No invitation was created: inviting is not available yet. Nothing was sent, and nothing needs to be undone.";

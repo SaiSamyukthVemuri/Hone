@@ -548,6 +548,8 @@ export function validateInviteInput(input: InviteToBookInput): InviteToBookFailu
   return null;
 }
 
+const SEND_COMMAND_ABSENT = new Set(["PGRST202", "42883"]);
+
 class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
   readonly capabilities = {
     // `admit_` carries serviceId, the date window and allowedWeekdays into the
@@ -633,6 +635,11 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // that inference wrong — and nothing here correlates an attempt with a row.
     // Until an attempt-correlated mechanism exists, indeterminate is the honest
     // answer and the copy sends the practitioner to look at the waitlist.
+    // THE COMMAND IS NOT THERE (0324 not applied yet). PostgREST answers PGRST202 and Postgres 42883 BEFORE
+    // any function runs, so nothing can have been created: that is a definite refusal, not a lost answer.
+    if (error && SEND_COMMAND_ABSENT.has(String((error as { code?: unknown }).code))) {
+      return { state: "refused", code: "not_yet_available" };
+    }
     if (error) return INDETERMINATE_ADMISSION;
 
     const row = Array.isArray(data) ? data[0] : data;

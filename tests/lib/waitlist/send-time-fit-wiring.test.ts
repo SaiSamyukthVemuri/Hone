@@ -146,6 +146,16 @@ describe("the admission round is plumbing", () => {
     expect(out).toEqual({ state: "refused", code: "no_capacity" });
   });
 
+  it("an absent send command (0324 not applied) is a definite 'not yet available', not a lost answer", async () => {
+    for (const code of ["PGRST202", "42883"]) {
+      calls.length = 0;
+      admitReplies = [{ data: null, error: { code } }];
+      const out = await admissionCommandAdapter.inviteToBook(INPUT);
+      expect(out).toEqual({ state: "refused", code: "not_yet_available" });
+      expect(admitCalls()).toHaveLength(1);
+    }
+  });
+
   it("a lost answer is never retried (the invitation may already exist)", async () => {
     admitReplies = [{ data: null, error: { code: "XX000" } }];
     const out = await admissionCommandAdapter.inviteToBook(INPUT);

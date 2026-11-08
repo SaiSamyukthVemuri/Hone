@@ -92,7 +92,7 @@
  * contract. `AdapterCapabilities.enforcesScope` exists so that such an adapter
  * has to say so, and so the surface can refuse to imply otherwise.
  */
-import { CAPACITY_EXHAUSTED_COPY, NO_CAPACITY_COPY } from "@/lib/waitlist/invitation-capacity";
+import { CAPACITY_EXHAUSTED_COPY, NO_CAPACITY_COPY, NOT_YET_AVAILABLE_COPY } from "@/lib/waitlist/invitation-capacity";
 
 export type BookingScope = {
   /**
@@ -220,6 +220,9 @@ export const INVITE_TO_BOOK_FAILURES = [
   "admission_round_full",
   // 0324: the consultations that fit are already spoken for by live invitations.
   "no_capacity",
+  // The send command this release calls is not in the database yet (0324 not applied). The call was
+  // refused BEFORE it ran, so nothing was created: a definite answer, not a lost one.
+  "not_yet_available",
   "previously_declined",
   // The scope the practitioner expressed could not be honoured. NEW: no
   // shipped command can answer this yet, and it is the one code this contract
@@ -439,6 +442,8 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
       return CAPACITY_EXHAUSTED_COPY;
     case "no_capacity":
       return NO_CAPACITY_COPY;
+    case "not_yet_available":
+      return NOT_YET_AVAILABLE_COPY;
     default:
       // TRUE FOR EVERY CODE IN THIS ARM BY CONSTRUCTION — `refused` means the
       // admission did not commit. Naming the code keeps the message honest

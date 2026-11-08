@@ -200,6 +200,8 @@ describe("every failure the adapter may report is one a command can produce", ()
       // 0324: the consultations that fit are covered by live invitations.
       "no_capacity",
       "not_admissible",
+      // Before 0324 is applied the send command does not exist; refused before it runs.
+      "not_yet_available",
       "previously_declined",
       // The contract's own: no shipped command carries a service or booking
       // window yet, so an adapter that cannot honour one needs a way to refuse
