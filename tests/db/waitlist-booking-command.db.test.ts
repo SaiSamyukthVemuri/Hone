@@ -112,6 +112,41 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     expect(await apptCount(f.studioId)).toBe(1);
   });
 
+  it("COMMITTED, RESPONSE LOST: the database answers 'booked' with the time, no follow-up is written, and a retry cannot double-book", async () => {
+    // The caller sees a transport error AFTER the transaction committed. The
+    // test commits through the real command and DISCARDS its answer, then runs
+    // the three reads the app makes on an error (booking-state, the follow-up
+    // write it must not need, and the retry the recipient may attempt).
+    const f = await fixture("lost");
+    const p = await provenEntry(f, "lost");
+    const [slot] = await slots(f, 1);
+    await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, slot, tokenHash("lost")]);
+
+    const st = await q<any>(`select * from public.waitlist_invitation_booking_state($1)`, [p.token]);
+    expect(st[0].state).toBe("booked");
+    expect(new Date(st[0].starts_at).toISOString()).toBe(new Date(slot).toISOString());
+
+    // A late write of the uncertain-outcome item must leave nothing for the owner
+    // to chase: the booking exists.
+    await q(`select public.record_waitlist_invitation_followup($1,'booking_outcome_unknown')`, [p.token]);
+    const open = await q<{ n: number }>(
+      `select count(*)::int as n from public.waitlist_invitation_followups where entry_id=$1 and resolved_at is null`,
+      [p.entryId],
+    );
+    expect(open[0].n).toBe(0);
+
+    const retry = await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, slot, tokenHash("lost2")]);
+    expect(retry[0].appointment_id).toBeNull();
+    expect(await apptCount(f.studioId)).toBe(1);
+  });
+
+  it("COMMITTED-NOTHING, RESPONSE LOST (the other half): a live invitation reads 'live' and writes no follow-up", async () => {
+    const f = await fixture("lost2");
+    const p = await provenEntry(f, "lost2");
+    expect(await state(p.token)).toBe("live");
+    expect((await q<any>(`select public.record_waitlist_invitation_followup($1,'booking_outcome_unknown') as r`, [p.token]))[0].r).toBe("not_redeemed");
+  });
+
   it("a contested time leaves the loser's invitation LIVE, and the loser can book another time", async () => {
     const f = await fixture("loser");
     const [t1, t2] = await slots(f, 2);
@@ -179,7 +214,7 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     // The original booking is CANCELLED: still booked, but no time is shown.
     await q(`update public.appointments set status = 'cancelled' where id=$1`, [r[0].appointment_id]);
     const cancelled = await when();
-    expect(cancelled.state).toBe("booked");
+    expect(cancelled.state).toBe("booked_cancelled");
     expect(cancelled.starts_at).toBeNull();
   });
 

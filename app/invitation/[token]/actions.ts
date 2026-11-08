@@ -482,8 +482,10 @@ async function loadStudioContext(
 }
 
 /**
- * The booked screen for a spent invitation, or null when the database cannot
- * name the appointment's time (no link, cancelled, unreadable). Never throws.
+ * The booked screen for a spent invitation whose entry the database says is
+ * converted, with the appointment's time only when the explicit link names a
+ * live one. Null when the state is anything else or cannot be read (including a
+ * database without the 0313 function). Never throws.
  */
 async function bookedViewOnReopen(
   rawToken: string,
@@ -495,8 +497,7 @@ async function bookedViewOnReopen(
     });
     const row = Array.isArray(data) ? data[0] : data;
     if (
-      row?.state !== "booked" ||
-      typeof row.starts_at !== "string" ||
+      (row?.state !== "booked" && row?.state !== "booked_cancelled") ||
       typeof row.studio_id !== "string" ||
       typeof row.service_id !== "string"
     ) {
@@ -504,15 +505,26 @@ async function bookedViewOnReopen(
     }
     const studio = await loadStudioContext(row.studio_id, row.service_id);
     if (!studio) return null;
-    const at = new Date(row.starts_at);
-    if (Number.isNaN(at.getTime())) return null;
+    // A booking whose appointment was cancelled is NOT shown as booked.
+    if (row.state === "booked_cancelled") {
+      return { kind: "closed", reason: "used_appointment_cancelled", presentation: studio.presentation };
+    }
+    // The entry is converted, so a booking exists. The TIME is shown only when
+    // the explicit link names a live appointment; otherwise none (no link, as for
+    // a booking made before the link existed or through the old path, or a
+    // cancelled appointment). Nothing is inferred from timestamps.
+    const at = typeof row.starts_at === "string" ? new Date(row.starts_at) : null;
     const tz = studio.presentation.studioTimezone;
+    const booked =
+      at && !Number.isNaN(at.getTime())
+        ? { startLabel: localTimeString12h(at, tz), dateLabel: localDateString(at, tz) }
+        : { startLabel: null, dateLabel: null };
     return deriveInvitationViewState({
       resolve: resolved,
       presentation: studio.presentation,
       proof: { kind: "required" },
       slots: [],
-      booked: { startLabel: localTimeString12h(at, tz), dateLabel: localDateString(at, tz) },
+      booked,
       declined: false,
     });
   } catch {
@@ -534,11 +546,11 @@ async function loadContext(
   const resolved = await resolveInvitation(rawToken);
   // REOPEN AFTER A BOOKING. A spent invitation used to land on "we couldn't
   // confirm your booking" even when the booking had just succeeded, because
-  // nothing here could see the appointment. With the 0313 command on, the
-  // database holds an explicit invitation -> appointment link, and only a
-  // booked state WITH a time is shown as booked: anything else keeps the honest
-  // "couldn't confirm" screen.
-  if (resolved.kind === "already_redeemed" && waitlistBookingCommandEnabled()) {
+  // nothing here could see the appointment. This runs whichever booking path
+  // made the booking (the flag gates the booking, not this read-only check): a
+  // converted entry is shown as booked, with the time only when the explicit
+  // 0313 link has one. Anything else keeps the honest "couldn't confirm" screen.
+  if (resolved.kind === "already_redeemed") {
     const reopened = await bookedViewOnReopen(rawToken, resolved);
     if (reopened) return { ok: false, state: reopened };
   }

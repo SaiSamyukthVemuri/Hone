@@ -595,6 +595,19 @@ describe("HON-7 offer: the whole window and the invitation's own close", () => {
     expect(html).toContain("Book by Thu, Sep 10 at 3:00 PM (studio time)");
   });
 
+  it("a booked screen with no known time names none and sends the reader to the confirmation", () => {
+    const html = render({ kind: "booked", presentation: base.presentation, startLabel: null, dateLabel: null } as never);
+    expect(html).toContain("You’re booked");
+    expect(html).not.toMatch(/ at null| at undefined|null/);
+    expect(html).toContain("Check your confirmation email for the time");
+  });
+
+  it("a cancelled-appointment closure says the invitation was used, claims no booking and offers no rebooking", () => {
+    const html = render({ kind: "closed", reason: "used_appointment_cancelled", presentation: base.presentation } as never);
+    expect(html).toContain("This invitation has already been used. Please contact the studio about your appointment.");
+    expect(html).not.toMatch(/You’re booked|is booked|confirmation|book again|rebook/i);
+  });
+
   it("a lost race says the time was just taken and names nobody", () => {
     const html = render({ ...base, refusal: "slot_taken" } as never);
     expect(html).toContain("That time was just taken. Please pick another time.");

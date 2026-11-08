@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { countTimesFeedback, listTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { acknowledgeReplyAction } from "./actions";
@@ -13,7 +13,7 @@ export default async function RepliesPage({
 }: {
   searchParams?: Promise<{ ack?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
       <main className="mx-auto max-w-2xl p-4 text-sm">

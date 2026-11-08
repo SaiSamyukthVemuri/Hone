@@ -1560,7 +1560,7 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
 });
 
 
-describe("HON-7: reopening a spent invitation (0313 booking command on)", () => {
+describe("HON-7: reopening a spent invitation", () => {
   const BOOKED_ROW = {
     state: "booked",
     starts_at: "2026-10-15T14:00:00.000Z",
@@ -1587,20 +1587,40 @@ describe("HON-7: reopening a spent invitation (0313 booking command on)", () => 
     }
   });
 
+  it("a CANCELLED linked appointment makes no booked claim and offers no rebooking", async () => {
+    bookingStateFixture.rows = [{ ...BOOKED_ROW, state: "booked_cancelled", starts_at: null }];
+    const view = await loadInvitationAction(TOKEN);
+    expect(view).toMatchObject({ kind: "closed", reason: "used_appointment_cancelled" });
+  });
+
   it.each([
-    ["no recorded time (cancelled, or no link)", [{ ...BOOKED_ROW, starts_at: null }]],
+    ["no link (a booking from the old path, flag OFF, or one that predates the link)"],
+  ])("a converted entry with no link shows 'booked' and NO time, never a guess: %s", async () => {
+    bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
+    const view = await loadInvitationAction(TOKEN);
+    expect(view.kind).toBe("booked");
+    if (view.kind === "booked") {
+      expect(view.startLabel).toBeNull();
+      expect(view.dateLabel).toBeNull();
+    }
+  });
+
+  it.each([
     ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
-    ["no answer", []],
-  ])("keeps the honest 'couldn't confirm' screen when the database cannot name the time: %s", async (_label, rows) => {
+    ["no answer (function missing or unreadable)", []],
+  ])("keeps the honest 'couldn't confirm' screen when the entry is not converted: %s", async (_label, rows) => {
     bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
     const view = await loadInvitationAction(TOKEN);
     expect(view).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
   });
 
-  it("with the flag OFF the lookup is never made and the previous screen stands", async () => {
+  it("works with the booking-command flag OFF too: the old path's booking is shown as booked", async () => {
     delete process.env.WAITLIST_BOOKING_COMMAND;
-    bookingStateFixture.rows = [BOOKED_ROW];
+    bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
     const view = await loadInvitationAction(TOKEN);
-    expect(view).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
+    expect(view.kind).toBe("booked");
+    bookingStateFixture.rows = [BOOKED_ROW];
+    const withTime = await loadInvitationAction(TOKEN);
+    expect(withTime.kind === "booked" && withTime.startLabel).toBe("10:00 AM");
   });
 });

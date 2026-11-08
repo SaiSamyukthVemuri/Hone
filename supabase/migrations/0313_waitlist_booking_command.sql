@@ -257,6 +257,7 @@ declare
   v_inv    record;
   v_entry  record;
   v_start  timestamptz;
+  v_cancelled boolean := false;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$' then
     return query select 'invalid_token'::text, null::timestamptz, null::uuid, null::uuid; return;
@@ -275,15 +276,21 @@ begin
   if v_entry.status = 'converted' then
     -- THE TIME OF THE APPOINTMENT THIS INVITATION'S BOOKING CREATED, or NULL.
     -- Read through the explicit link row the booking command wrote in the same
-    -- transaction. NULL when there is no link (a conversion that predates this
-    -- command or came through the flag-off path) or the appointment was
-    -- cancelled: the caller then says it could not confirm the time, and never
-    -- shows one it inferred.
-    select a.starts_at into v_start
+    -- transaction. THREE ANSWERS, never inferred from timestamps:
+    --   * a link to a live appointment -> 'booked' with its time;
+    --   * a link whose appointment is CANCELLED -> 'booked_cancelled' (the caller
+    --     must not claim an appointment exists);
+    --   * no link (a conversion that predates this command or came through the
+    --     flag-off path) -> 'booked' with a NULL time: the entry is converted, so
+    --     a booking happened, but this function cannot say when.
+    select a.starts_at, (a.status is not distinct from 'cancelled')
+      into v_start, v_cancelled
       from public.waitlist_invitation_bookings b
       join public.appointments a on a.id = b.appointment_id and a.studio_id = b.studio_id
-     where b.invitation_id = v_inv.id
-       and a.status is distinct from 'cancelled';
+     where b.invitation_id = v_inv.id;
+    if v_cancelled then
+      return query select 'booked_cancelled'::text, null::timestamptz, v_inv.studio_id, v_inv.scope_service_id; return;
+    end if;
     return query select 'booked'::text, v_start, v_inv.studio_id, v_inv.scope_service_id; return;
   end if;
   if v_inv.redeemed_at is not null then

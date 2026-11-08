@@ -192,6 +192,12 @@ export type InvitationClosedReason =
   | "revoked"
   | "already_redeemed"
   /**
+   * The invitation's booking was made and its appointment has since been
+   * CANCELLED. Says only that the invitation is spent; it claims no appointment
+   * and offers no rebooking (the studio decides).
+   */
+  | "used_appointment_cancelled"
+  /**
    * The redeem committed and the appointment did not.
    *
    * DISTINCT FROM `already_redeemed`, which is not a near-synonym here. That one
@@ -328,7 +334,7 @@ export type InvitationViewState =
       inviteOpenUntil?: string;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
-  | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
+  | { kind: "booked"; presentation: OfferPresentation; startLabel: string | null; dateLabel: string | null }
   /** `keptOnList` is true only when 0319 returned the entry to waiting. */
   | { kind: "declined"; keptOnList?: boolean }
   | { kind: "error"; retryable: boolean };
@@ -467,7 +473,7 @@ export type RecipientContext = {
   proof: ProofStage;
   slots: readonly OfferedSlot[];
   /** Set once a redeem has succeeded. */
-  booked: { startLabel: string; dateLabel: string } | null;
+  booked: { startLabel: string | null; dateLabel: string | null } | null;
   /** Set once a decline has succeeded. */
   declined: boolean;
   /**
