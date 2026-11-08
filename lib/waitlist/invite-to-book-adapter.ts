@@ -11,6 +11,8 @@ import {
 import { sendWaitlistInvitationSms } from "@/lib/waitlist/delivery/sms";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
+import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
+import { ensureOpenRound, rotateRound } from "@/lib/waitlist/auto-round";
 import {
   type BookingScope,
   type DefiniteInviteToBookRefusal,
@@ -570,19 +572,50 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
 
     const { start, end } = windowToDates(input.scope, timezone, new Date());
     const admin = createAdminClient();
-    const { data, error } = await admin.rpc("admit_new_client_waitlist_entry", {
-      p_studio_id: studioId,
-      p_actor_user_id: actorUserId,
-      p_entry_id: input.entryId,
-      p_service_id: input.scope.serviceId,
-      p_start_date: start,
-      p_end_date: end,
-      p_allowed_weekdays: weekdays === null ? null : [...weekdays],
-      // THE ONE FIXED WINDOW, supplied here and named by nobody. There is no
-      // `input.expiresInHours` to read: the contract no longer has the field,
-      // so this cannot silently fall back to a caller's value.
-      p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
+
+    // THE FIT IS COMPUTED HERE, AT SEND TIME, from the slot engine and the exact selections being
+    // sent. It is never read from the browser: no field of `input` carries one. 0324's guard
+    // enforces this number under the studio lock. Not computable -> nothing is sent.
+    const fit = await computeConsultationFit({
+      admin,
+      studioId,
+      serviceId: input.scope.serviceId,
+      windowDays: input.scope.windowDays,
+      allowedWeekdays: weekdays,
     });
+    if (!fit.ok) return refusedOrIndeterminate("unavailable");
+
+    // The admission round is plumbing the owner never sees (lib/waitlist/auto-round.ts).
+    if (!(await ensureOpenRound(admin, studioId, actorUserId))) return refusedOrIndeterminate("unavailable");
+
+    const admit = () =>
+      admin.rpc("admit_new_client_waitlist_entry", {
+        p_studio_id: studioId,
+        p_actor_user_id: actorUserId,
+        p_entry_id: input.entryId,
+        p_service_id: input.scope.serviceId,
+        p_start_date: start,
+        p_end_date: end,
+        p_allowed_weekdays: weekdays === null ? null : [...weekdays],
+        // THE ONE FIXED WINDOW, supplied here and named by nobody. There is no
+        // `input.expiresInHours` to read: the contract no longer has the field,
+        // so this cannot silently fall back to a caller's value.
+        p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
+        p_fit: fit.fit,
+      });
+    let { data, error } = await admit();
+    // A full or just-closed round is refused BEFORE anything is created, so one retry on a fresh round
+    // cannot double-issue.
+    if (!error) {
+      const first = (Array.isArray(data) ? data[0] : data) as { result?: unknown } | null;
+      if (first?.result === "round_full" || first?.result === "no_round_open") {
+        const rotated =
+          first.result === "round_full"
+            ? await rotateRound(admin, studioId, actorUserId)
+            : await ensureOpenRound(admin, studioId, actorUserId);
+        if (rotated) ({ data, error } = await admit());
+      }
+    }
 
     // A LOST ANSWER IS NOT A REFUSAL, AND THIS IS THE WHOLE REASON THE THIRD
     // STATE EXISTS.

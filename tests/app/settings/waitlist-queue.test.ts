@@ -4,10 +4,7 @@ import {
   INVITE_ADMISSION_UNREADABLE_COPY,
   INVITE_CLOSED_INVITED_ONLY_COPY,
 } from "@/lib/waitlist/invite-to-book-contract";
-import {
-  CAPACITY_EXHAUSTED_COPY,
-  CAPACITY_PANEL,
-} from "@/lib/waitlist/invitation-capacity";
+import { CAPACITY_EXHAUSTED_COPY } from "@/lib/waitlist/invitation-capacity";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -150,6 +147,8 @@ const scenario = {
   // the honest default: most of this suite predates capacity and a studio that
   // has never opened one is the ordinary state. A row here is what the owner
   // RLS policy would return.
+  // The allowance estimate the page shows (the real action needs a second client and the slot engine).
+  allowance: { ok: true, fit: 4, outstanding: 1, open: 3, outstandingScope: "window" } as Record<string, unknown>,
   openRound: null as Record<string, unknown> | null,
   roundsError: null as { code: string } | null,
   // Deliberately answerable as a SECOND row, so the impossible-shape branch can
@@ -192,12 +191,14 @@ function reset() {
     sectionTotals: null,
     preferences: [],
     preferencesError: null,
+    allowance: { ok: true, fit: 4, outstanding: 1, open: 3, outstandingScope: "window" },
     openRound: null,
     roundsError: null,
     extraOpenRound: null,
     roundConsumed: 0,
     ignoreRange: false,
   });
+  estimateCalls.length = 0;
 }
 
 // NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
@@ -254,6 +255,13 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   };
 });
 
+const estimateCalls: unknown[] = [];
+vi.mock("@/app/(app)/settings/waitlist/window-capacity-actions", () => ({
+  estimateWindowCapacityAction: async (input: unknown) => {
+    estimateCalls.push(input);
+    return scenario.allowance;
+  },
+}));
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
 }));
@@ -805,7 +813,6 @@ describe("rendered rows", () => {
       "Record consent",
       "Remove",
       "Send invitation",
-      "Start inviting",
       "They asked today",
       "They were already waiting",
       "switch: Waitlist texts",
@@ -957,7 +964,7 @@ describe("rendered rows", () => {
       "We couldn't check your invitation capacity just now. Reload the page before inviting.",
     ];
     let queueOnly = html.replace(
-      /<section[^>]*data-testid="invitation-capacity"[\s\S]*?<\/section>/,
+      /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/,
       "",
     );
     // WAIT-04A — THE ADD/IMPORT PANEL IS EXCISED FOR THE SAME REASON, AND ONLY
@@ -977,49 +984,14 @@ describe("rendered rows", () => {
     expect(queueOnly, "the add/import panel was not excised").not.toContain(
       "add-to-waitlist",
     );
+    queueOnly = queueOnly.replace(/<span[^>]*data-testid="row-allowance"[\s\S]*?<\/span>/g, "");
     for (const c of OWNER_CAPACITY_COPY) queueOnly = queueOnly.split(c).join("");
-    expect(queueOnly, "the owner panel was not excised").not.toContain("invitation-capacity");
+    expect(queueOnly, "the owner panel was not excised").not.toContain("invitation-allowance");
     // Non-vacuity: the strip must not have emptied the queue it is scanning.
     expect(queueOnly).toContain("Invite to book");
     for (const forbidden of [/position/i, /\brank/i, /capacity/i]) {
       expect(queueOnly, `forbidden vocabulary: ${forbidden}`).not.toMatch(forbidden);
     }
-  });
-
-  it("reads the capacity with the page's OWN client, scoped and narrow", async () => {
-    // THE READ'S SHAPE IS THE GUARD. A capacity read that quietly became broad
-    // would still render correctly for this studio while exposing every other
-    // studio's rounds to the query planner -- and RLS is the authority, not the
-    // thing that makes a careless query safe to write.
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    await render();
-
-    const cap = capacityQuery();
-    // ONE CLIENT. The capacity read is recorded by the SAME fake that records
-    // the queue read, which is only possible if the page used its existing
-    // instance. A second client would not appear in `queries` at all.
-    expect(queries.filter((q) => q.table === "studio_waitlist_admission_rounds")).toHaveLength(1);
-
-    // ONLY THE COLUMNS IT RENDERS.
-    expect(cap.columns).toBe("id,allowance,opened_at");
-    expect(cap.columns).not.toContain("*");
-    // Never the practitioner ids or the close stamps: the panel shows none of
-    // them, and a column list is the cheapest place to keep that true.
-    for (const col of ["opened_by_practitioner_id", "closed_by_practitioner_id", "closed_at"]) {
-      expect(cap.columns).not.toContain(col);
-    }
-
-    // THIS STUDIO, EXPLICITLY. Defence in depth behind the owner RLS policy.
-    expect(cap.filters).toContainEqual(["eq", "studio_id", STUDIO_ID]);
-    // AND ONLY AN OPEN ROUND. Without this the page would see closed history
-    // and could present a spent capacity as live.
-    expect(cap.filters).toContainEqual(["is", "closed_at", null]);
-
-    // BOUNDED. The database guarantees at most one open round; asking for two
-    // is how the page detects that guarantee being violated rather than
-    // silently using the first row.
-    expect(cap.limit).toBe(2);
   });
 
   it("P2 4020704242 — the page builds exactly ONE owner-scoped client", async () => {
@@ -1030,8 +1002,6 @@ describe("rendered rows", () => {
     // so the instance is what gets counted.
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 2, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 1;
     await render();
 
     expect(clientInstances, "the page must build exactly one createClient()").toHaveLength(1);
@@ -1046,8 +1016,8 @@ describe("rendered rows", () => {
     // NON-VACUITY. If the page issued no capacity read at all, the set above
     // would trivially be one. Both reads must actually be present.
     expect(queries.some((q) => q.table === "new_client_waitlist_entries")).toBe(true);
-    expect(queries.some((q) => q.table === "studio_waitlist_admission_rounds")).toBe(true);
-    expect(capacityQuery().clientId).toBe(entriesQuery().clientId);
+    // The admission round is plumbing: the page never reads it (0324, auto-round).
+    expect(queries.some((q) => q.table === "studio_waitlist_admission_rounds")).toBe(false);
   });
 
   it("NEGATIVE CONTROL — a second client makes that assertion fail", async () => {
@@ -1069,108 +1039,56 @@ describe("rendered rows", () => {
     expect(clientInstances.length === 1).toBe(false);
   });
 
-  it("an unreadable capacity withholds the send — it never reads as 'none'", async () => {
-    // FAIL CLOSED. "Could not read" and "no capacity" would produce the same
-    // sentence but a different fact, and treating an error as "none" would let
-    // a real open capacity be hidden -- or worse, invert later.
+  it("shows the allowance above the waitlist, with nothing to type", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.roundsError = { code: "42501" };
+    scenario.allowance = { ok: true, fit: 5, outstanding: 2, open: 3, outstandingScope: "window" };
     const html = await render();
-    expect(html).toContain(esc("We couldn't check your invitation capacity just now."));
-    expect(html).not.toContain(esc(CAPACITY_PANEL.emptyBody));
+    const panel = /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    expect(panel, "the allowance panel did not render").not.toBe("");
+    expect(panel).toContain(esc("5 consultation slots available \u00b7 You can invite 3 more people."));
+    expect(panel).toContain(esc("Availability can change; invitations don't reserve appointments."));
+    // Chloe never types a capacity, and never sees a round.
+    expect(panel).not.toMatch(/<input/);
     expect(html).not.toContain("Start inviting");
+    expect(html).not.toContain('data-testid="capacity-allowance"');
+    // ABOVE the waitlist heading.
+    expect(html.indexOf('data-testid="invitation-allowance"')).toBeLessThan(html.indexOf(">Waitlist</h2>"));
   });
 
-  it("a second open round is impossible, so it is treated as unknown", async () => {
-    // The one-open-round index forbids this. If it is ever seen, an assumption
-    // here is wrong -- picking a row would be guessing which capacity is real.
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 3, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.extraOpenRound = { id: "round-b", allowance: 9, opened_at: "2026-09-11T00:00:00.000Z" };
-    const html = await render();
-    expect(html).toContain(esc("We couldn't check your invitation capacity just now."));
-    expect(html).not.toContain("0 of 3 used");
-    expect(html).not.toContain("0 of 9 used");
-    expect(consoleErrors.join("\n")).toContain("waitlist_capacity_impossible_shape");
-  });
-
-  it("an unreadable consumed count is unknown capacity, not zero used", async () => {
-    // Zero-used would present a full capacity as fully available.
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 2, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = null;
-    const html = await render();
-    expect(html).toContain(esc("We couldn't check your invitation capacity just now."));
-    expect(html).not.toContain("0 of 2 used");
-  });
-
-  it("MATRIX 1 — no capacity: the panel explains, and no send is offered", async () => {
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    const html = await render();
-    expect(html).toContain(esc(CAPACITY_PANEL.title));
-    expect(html).toContain(esc(CAPACITY_PANEL.emptyBody));
-    expect(html).toContain(esc(CAPACITY_PANEL.startLabel));
-    // The send is unavailable BEFORE submission, and says why -- the whole point
-    // is that the practitioner does not discover this only after pressing.
-    expect(html).toContain(esc("Set your invitation capacity before inviting someone to book."));
-    expect(html).toMatch(/data-testid="composer-send"[^>]*disabled/);
-    // And the reason shown is the CAPACITY one, not the composer's ordinary
-    // "choose a service" state that would disable it anyway.
-    expect(html).toMatch(
-      /data-testid="composer-send-reason"[^>]*>Set your invitation capacity before inviting someone to book\./,
-    );
-    // No close control when nothing is open.
-    expect(html).not.toContain(esc(CAPACITY_PANEL.closeLabel));
-  });
-
-  it("MATRIX 2/3 — an open capacity shows usage and offers the send", async () => {
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    // An ELIGIBLE service, because the composer refuses a send without one for
-    // its own reasons. Without it this test would assert capacity while the
-    // button stayed disabled for an unrelated cause.
+  it("repeats the allowance beside each Invite to book", async () => {
     scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
-    scenario.openRound = { id: "round-a", allowance: 1, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 0;
-    let html = await render();
-    expect(html).toContain("0 of 1 used");
-    expect(html).toContain("1 invitation remaining");
-    expect(html).toContain(esc(CAPACITY_PANEL.closeLabel));
-    // CAPACITY IS NO LONGER WHAT BLOCKS THE SEND. The button is still disabled
-    // on a fresh composer -- no service is chosen yet, which is the composer's
-    // own rule and not this feature's -- so asserting `not disabled` here would
-    // be asserting something untrue. What must be gone is the capacity REASON.
-    expect(html).not.toContain(esc("Set your invitation capacity before inviting someone to book."));
-    expect(html).not.toContain(esc(CAPACITY_EXHAUSTED_COPY));
-
-    // After one invitation is spent, the database's count moves and so does the
-    // panel. The page reads that count; it never derives it.
-    reset();
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 1, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 1;
-    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
-    html = await render();
-    expect(html).toContain("1 of 1 used");
+    scenario.allowance = { ok: true, fit: 5, outstanding: 2, open: 3, outstandingScope: "window" };
+    const html = await render();
+    expect(html).toMatch(/data-testid="row-allowance"[^>]*>You can invite 3 more people</);
   });
 
-  it("MATRIX 4 — a full capacity offers no send and never starts another", async () => {
+  it("an unreadable estimate says so and never shows a number", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 1, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 1;
+    scenario.allowance = { ok: false };
     const html = await render();
-    expect(html).toContain("0 invitations remaining");
-    expect(html).toContain(esc(CAPACITY_EXHAUSTED_COPY));
-    expect(html).toMatch(/data-testid="composer-send"[^>]*disabled/);
-    expect(html).toMatch(/data-testid="composer-send-reason"[^>]*>You&#x27;ve used all invitations/);
-    // NOT AUTOMATICALLY REOPENED. The next capacity is the owner's decision.
-    expect(html).toContain(esc(CAPACITY_PANEL.closeLabel));
+    expect(html).toContain('data-testid="allowance-unavailable"');
+    expect(html).not.toContain('data-testid="allowance-headline"');
+    expect(html).not.toContain('data-testid="row-allowance"');
+  });
+
+  it("estimates the default window: the next two weeks, every day", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    await render();
+    expect(estimateCalls).toEqual([{ serviceId: expect.any(String), windowDays: 14, allowedWeekdays: null }]);
+  });
+
+  it("opens no round and offers no capacity control (the round is plumbing)", async () => {
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    await render();
     expect(rpcCalls.filter((c) => c.fn === "open_new_client_waitlist_admission_round")).toHaveLength(0);
   });
 
@@ -1204,20 +1122,17 @@ describe("rendered rows", () => {
     }
   });
 
-  it("the owner capacity panel forecasts nothing to a prospect", async () => {
-    // The panel may say "Invitation capacity" — that is the practitioner
-    // wording. What it must NOT do is the thing the queue guard forbids:
-    // promise a position, a rank, or when a slot will exist.
+  it("the owner allowance forecasts nothing to a prospect", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
     scenario.rows = [entry()];
     scenario.count = 1;
+    scenario.allowance = { ok: true, fit: 5, outstanding: 2, open: 3, outstandingScope: "window" };
     const html = await render();
-    const panel =
-      /<section[^>]*data-testid="invitation-capacity"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
-    expect(panel, "the capacity panel did not render").not.toBe("");
+    const panel = /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    expect(panel, "the allowance panel did not render").not.toBe("");
     for (const forbidden of [/position/i, /\brank/i, /spots? left/i, /estimated/i, /your turn/i]) {
-      expect(panel, `capacity panel forecast: ${forbidden}`).not.toMatch(forbidden);
+      expect(panel, `allowance panel forecast: ${forbidden}`).not.toMatch(forbidden);
     }
-    // And it never speaks the database's word for itself.
     expect(panel).not.toMatch(/admission round/i);
   });
 

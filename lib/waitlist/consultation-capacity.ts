@@ -58,16 +58,39 @@ export function estimateCapacity(fit: number, outstanding: number): CapacityEsti
 export const CAPACITY_NOTE =
   "Availability can change at any time. Nothing is reserved for an invitation until the person books.";
 
+const slots = (n: number) => `${n} consultation slot${n === 1 ? "" : "s"}`;
+const people = (n: number) => `${n} more ${n === 1 ? "person" : "people"}`;
+
 /**
- * The words beside the number. "At least", never "exactly": the count treats the
- * studio as one calendar, so it never over-promises but may under-count.
+ * The allowance, in the owner's words: "N consultation slots available · You can invite M more people."
+ *
+ * Both numbers are lower bounds. The slot count treats the studio as one calendar (it never
+ * over-promises but may under-count), and when 0323 is not applied the competing count covers every
+ * live invitation whatever its dates, so M can only be too small. The note says so rather than
+ * presenting a minimum as exact.
+ */
+export function allowanceHeadline(
+  c: CapacityEstimate,
+  outstandingScope: "window" | "all" = "window",
+): { headline: string; short: string; note: string } {
+  const headline = `${slots(c.fit)} available \u00b7 You can invite ${people(c.open)}.`;
+  const short = `You can invite ${people(c.open)}`;
+  const lowerBound =
+    outstandingScope === "all"
+      ? "These are minimums, and the invitations already out are counted whatever dates they cover."
+      : "These are minimums: the count never over-promises but may under-count.";
+  return {
+    headline,
+    short,
+    note: `Next 14 days, any day or time. ${lowerBound} Availability can change; invitations don't reserve appointments.`,
+  };
+}
+
+/**
+ * The words beside the number in the composer, for the dates and days actually chosen.
  */
 export function capacityLines(c: CapacityEstimate, outstandingScope: "window" | "all" = "window"): string[] {
-  const lines = [
-    c.fit === 0
-      ? "No consultation times fit this window right now."
-      : `At least ${c.fit} consultation${c.fit === 1 ? " fits" : "s fit"} this window.`,
-  ];
+  const lines = [allowanceHeadline(c, outstandingScope).headline];
   if (c.outstanding > 0) {
     lines.push(
       outstandingScope === "all"

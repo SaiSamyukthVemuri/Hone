@@ -1,12 +1,6 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
-import { InvitationCapacityPanel } from "@/components/waitlist/invitation-capacity-panel";
-import {
-  canOfferInvite,
-  inviteUnavailableReason,
-  type InvitationCapacity,
-} from "@/lib/waitlist/invitation-capacity";
-import { closeInvitationsFormAction, startInvitingFormAction } from "./capacity-actions";
-import { readRoundConsumed } from "@/lib/waitlist/round-consumption-server";
+import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
+import { DEFAULT_BOOKING_WINDOW_DAYS } from "@/lib/waitlist/b4-invitation-draft";
 import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
 import {
   INVITATION_DELIVERY_COPY,
@@ -389,73 +383,6 @@ export default async function WaitlistSettingsPage({
   // database itself puts after page 1. Nothing here re-sorts or re-ranks.
   const supabase = await createClient();
 
-  // ===========================================================================
-  // INVITATION CAPACITY — read with THIS page's client, not another one
-  // ===========================================================================
-  //
-  // ONE CLIENT. The queue above and this read share the single owner-scoped
-  // instance the page already built. A second client would be a second identity
-  // to keep in step and a second thing to mock; 0192 grants `authenticated` a
-  // COLUMN-LEVEL SELECT on this table behind the owner RLS policy
-  // `studio_waitlist_admission_rounds_owner_select`, so the owner's own session
-  // is the designed reader. Service-role would bypass that policy and move the
-  // tenant scope into application code.
-  //
-  // `studio_id` is still filtered explicitly as DEFENCE IN DEPTH — RLS is the
-  // authority, this is the belt. `closed_at is null` asks only for the open
-  // round, which the database already guarantees is at most one per studio.
-  //
-  // ONE VALUE, SHARED. The panel and the send guard must never disagree about
-  // whether a capacity is open, so both read this and neither asks again.
-  //
-  // FAILS CLOSED, NEVER TO "none". An unreadable capacity is `unknown`, which
-  // withholds the send. Reading it as "no capacity" would be the same sentence
-  // to the practitioner but a different fact, and a SECOND row -- which the
-  // one-open-round index forbids -- means something is wrong with an assumption
-  // here, not that the first row is fine to use.
-  const capacityRead = await supabase
-    .from("studio_waitlist_admission_rounds")
-    .select("id,allowance,opened_at")
-    .eq("studio_id", studio.id)
-    .is("closed_at", null)
-    .limit(2);
-
-  const capacity: InvitationCapacity = await (async () => {
-    if (capacityRead.error) return { state: "unknown" } as const;
-    const rows = capacityRead.data ?? [];
-    if (rows.length > 1) {
-      console.error(
-        JSON.stringify({
-          event: "waitlist_capacity_impossible_shape",
-          studioId: studio.id,
-          openRounds: rows.length,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-      return { state: "unknown" } as const;
-    }
-    const row = rows[0];
-    if (!row) return { state: "none" } as const;
-    const allowance = Number(row.allowance);
-    if (!Number.isFinite(allowance)) return { state: "unknown" } as const;
-    // The database's own definition of "used". Null means it could not be
-    // established, which is unknown capacity -- not zero.
-    // BOTH IDS FROM SERVER STATE: the studio this page is already scoped to, and
-    // the round its OWN owner/RLS-scoped read just returned. The 0197 gateway
-    // validates the pair again regardless.
-    const used = await readRoundConsumed(studio.id, String(row.id));
-    if (used === null) return { state: "unknown" } as const;
-    return {
-      state: "open",
-      capacity: {
-        roundId: String(row.id),
-        allowance,
-        used,
-        openedAt: String(row.opened_at),
-      },
-    } as const;
-  })();
-
   const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
   const sectionReads = await Promise.all(
     SECTIONS.map(async ({ status }) => {
@@ -666,6 +593,20 @@ export default async function WaitlistSettingsPage({
     )
     .map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
 
+  // THE ALLOWANCE, FROM THE SAME ESTIMATOR THE COMPOSER USES. Default view: the next two weeks, every
+  // day, every time. The owner never types a capacity; the number is the consultations that fit minus
+  // live invitations competing for those dates. It is re-computed on the server at SEND (0324 enforces
+  // it under the studio lock), so this display is information, never authority.
+  const allowanceService = bookableServices[0];
+  const allowance = allowanceService
+    ? await estimateWindowCapacityAction({
+        serviceId: allowanceService.id,
+        windowDays: DEFAULT_BOOKING_WINDOW_DAYS,
+        allowedWeekdays: null,
+      })
+    : null;
+  const allowanceText = allowance && allowance.ok ? allowanceHeadline(allowance, allowance.outstandingScope) : null;
+
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
   //
   // "Record expired" may only be offered once `expires_at` has actually
@@ -833,15 +774,30 @@ export default async function WaitlistSettingsPage({
       {/* Absent only on a row read before 0206; the column defaults FALSE, so
           absent displays as OFF. */}
       <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
-      <InvitationCapacityPanel
-        capacity={capacity}
-        startAction={startInvitingFormAction}
-        closeAction={closeInvitationsFormAction}
-      />
-      {/* WAIT-04A. BELOW CAPACITY, ABOVE THE QUEUE. Capacity is the decision
-          that gates inviting anyone at all, so it stays first; adding a person
-          is the next thing an operator does and belongs beside the list it
-          changes rather than buried under five sections of it. */}
+      {/* THE ALLOWANCE, ABOVE THE WAITLIST. Nothing to type: it is read from availability. */}
+      <section
+        data-testid="invitation-allowance"
+        aria-label="Invitation allowance"
+        className="rounded-lg border border-line bg-surface px-4 py-3"
+      >
+        {allowanceText ? (
+          <>
+            <p data-testid="allowance-headline" className="text-sm font-medium">
+              {allowanceText.headline}
+            </p>
+            <p data-testid="allowance-note" className="mt-1 text-sm text-fg-muted">
+              {allowanceText.note}
+            </p>
+          </>
+        ) : (
+          <p data-testid="allowance-unavailable" className="text-sm text-fg-muted">
+            We couldn&rsquo;t check availability just now. Reload the page to see how many people you can invite.
+            Availability can change; invitations don&rsquo;t reserve appointments.
+          </p>
+        )}
+      </section>
+      {/* WAIT-04A. ABOVE THE QUEUE: adding a person is the next thing an operator does and belongs
+          beside the list it changes rather than buried under five sections of it. */}
       <AddToWaitlistPanel
         addAction={addWaitlistEntryFormAction}
         importAction={importLegacyWaitlistEntryFormAction}
@@ -1409,6 +1365,11 @@ export default async function WaitlistSettingsPage({
                             <details className="mt-2">
                               <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
                                 Invite to book
+                                {allowanceText && (
+                                  <span data-testid="row-allowance" className="ml-2 font-normal text-fg-muted">
+                                    {allowanceText.short}
+                                  </span>
+                                )}
                               </summary>
                               <InviteComposer
                                 entryId={row.id}
@@ -1422,14 +1383,14 @@ export default async function WaitlistSettingsPage({
                                 // after submission. Usability, not authority —
                                 // the command re-checks regardless.
                                 capabilities={
-                                  canOfferInvite(capacity) && !invitesBlockedByAdmission
+                                  !invitesBlockedByAdmission
                                     ? admissionCommandAdapter.capabilities
                                     : null
                                 }
                                 unavailableReason={
                                   invitesBlockedByAdmission
                                     ? invitesBlockedCopy
-                                    : inviteUnavailableReason(capacity)
+                                    : null
                                 }
                               />
                             </details>

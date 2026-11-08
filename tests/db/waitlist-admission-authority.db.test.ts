@@ -31,7 +31,7 @@ const COMMANDS = [
   // the migration's source matrix, so a drift in its posture would have been
   // proved by nothing: the behavioural tests below call it through the ADMIN
   // connection, which says nothing about which roles may execute it.
-  "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer)",
+  "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer)",
   "public.create_practitioner_waitlist_entry(uuid,uuid,text,text,text,text)",
   "public.import_legacy_waitlist_entry(uuid,uuid,text,text,timestamptz,text,text)",
   "public.set_waitlist_entry_availability(uuid,uuid,uuid,text)",
@@ -2557,7 +2557,7 @@ describe("issuing a grant cannot deadlock against admission", () => {
       expect(issued.rows[0].result).toBe("issued");
 
       const admitting = b.client
-        .query(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`, [
+        .query(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,1000)`, [
           studio.studioId, studio.userId, entryId, service.rows[0].id, "2026-10-01", "2026-10-31",
         ])
         .then((r) => ({ ok: true as const, v: r.rows[0].result as string }))
@@ -2964,7 +2964,7 @@ describe("0193 writers do not deadlock the historical lifecycle writers", () => 
   }
 
   const ISSUE = `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`;
-  const ADMIT = `select ar.result from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72) ar`;
+  const ADMIT = `select ar.result from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,1000) ar`;
 
   it("claim vs grant issue settles with no 40P01", async () => {
     const { studio, mk } = await scenario("lc-claim-issue");
@@ -3252,7 +3252,7 @@ describe("the admission round lock names the open round and nothing else", () =>
       await admitter.client.query("set local statement_timeout = '4s'");
       const res = await admitter.client
         .query(
-          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000)`,
           [
             studio.studioId, studio.userId, entry.rows[0].entry_id,
             service.rows[0].id, "2026-10-01", "2026-10-31", null, 72,
@@ -3305,7 +3305,7 @@ describe("the admission round lock names the open round and nothing else", () =>
 
       const admitting = admitter.client
         .query(
-          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000)`,
           [
             studio.studioId, studio.userId, entry.rows[0].entry_id,
             service.rows[0].id, "2026-10-01", "2026-10-31", null, 72,
@@ -3355,7 +3355,7 @@ describe("the admission round lock names the open round and nothing else", () =>
 
     // Seat one: issued and still live.
     const first = await adminQuery(
-      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000)`,
       [
         studio.studioId, studio.userId, await mk("a"), service.rows[0].id,
         "2026-10-01", "2026-10-31", null, 72,
@@ -3385,7 +3385,7 @@ describe("the admission round lock names the open round and nothing else", () =>
 
       const admitting = admitter.client
         .query(
-          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000)`,
           [
             studio.studioId, studio.userId, secondEntry, service.rows[0].id,
             "2026-10-01", "2026-10-31", null, 72,
@@ -3458,7 +3458,7 @@ describe("service eligibility is held through admission commit", () => {
   }
 
   const ADMIT_SQL =
-    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,'2026-10-01','2026-10-31',null,72)`;
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,'2026-10-01','2026-10-31',null,72,1000)`;
 
   async function expectNoResidue(entryId: string) {
     const state = await adminQuery(

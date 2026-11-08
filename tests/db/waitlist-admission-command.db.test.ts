@@ -18,7 +18,7 @@ afterAll(async () => {
   await closePool();
 });
 
-const ADMIT = `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`;
+const ADMIT = `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000)`;
 const START = "2026-10-01";
 const END = "2026-10-31";
 
@@ -736,7 +736,7 @@ describe("admission returns the database-owned invitation instants", () => {
            to_char(a.issued_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_at_us,
            to_char(a.expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_at_us,
            a.delivery_email, a.delivery_name
-      from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8) a`;
+      from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000) a`;
 
   async function admitOne(label: string, ttlHours = 72) {
     const studio = await seedStudio(label);
