@@ -122,9 +122,10 @@ export function fakeResendModeForRecipient(
 // never an attachment. Same fail-closed gate as the transport itself (marker
 // on, no deployed-runtime signal), and a write error can never change a send.
 //
-// BODIES (HON-7 acceptance): a SECOND explicit switch, HONE_E2E_FAKE_RESEND_LEDGER_BODIES=1, additionally records the text body, the html body
-// (each truncated to LEDGER_BODY_MAX_CHARS), the href targets found in the html and the text, and a sha256 of each FULL body, so a browser spec can
-// prove what an email says and links to without the ledger growing with the body. Same gate as the ledger itself (fake marker on, ledger path valid,
+// BODIES (HON-7 acceptance): a SECOND explicit switch, HONE_E2E_FAKE_RESEND_LEDGER_BODIES=1, additionally records the href targets found in the html and
+// the text and a sha256 of each FULL body, so a browser spec can prove what an email links to and that its bytes did not change. The text and html
+// bodies themselves (each truncated to LEDGER_BODY_MAX_CHARS) are stored ONLY when the recipient is on @harness.local, so a mistake in a lane's data
+// can never put a real person's mail body on disk. Same gate as the ledger itself (fake marker on, ledger path valid,
 // no deployed-runtime signal); with the switch off a line is exactly {t, pid, mode, to, subject} as before. Nothing here is on the real Resend path.
 export type FakeResendLedgerRecord = {
   t: string;
@@ -143,6 +144,11 @@ export const LEDGER_BODY_MAX_CHARS = 20_000;
 
 export function fakeResendLedgerBodiesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.HONE_E2E_FAKE_RESEND_LEDGER_BODIES === "1" && fakeResendLedgerPath(env) !== null;
+}
+
+/** Every recipient (the transport sends to one address) must be on the harness domain for a body to be stored. */
+export function isHarnessRecipient(to: string): boolean {
+  return /@harness\.local$/i.test(to.trim());
 }
 
 const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
@@ -181,8 +187,9 @@ export function recordFakeResendSend(
   const file = fakeResendLedgerPath(env);
   if (!file) return;
   try {
-    mkdirSync(path.dirname(file), { recursive: true });
-    appendFileSync(file, `${JSON.stringify(record)}\n`);
+    // 0700 / 0600: the ledger may carry bodies (harness recipients only), so it is private to the user that runs the lane.
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    appendFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600 });
   } catch {
     // The ledger observes; it never decides the outcome of a send.
   }
@@ -243,8 +250,9 @@ export function createFakeResendTransport(): MinimalEmailTransport {
         const mode = fakeResendModeForRecipient(to);
         const bodies = fakeResendLedgerBodiesEnabled()
           ? {
-              text: String(text ?? "").slice(0, LEDGER_BODY_MAX_CHARS),
-              html: String(html ?? "").slice(0, LEDGER_BODY_MAX_CHARS),
+              ...(isHarnessRecipient(to)
+                ? { text: String(text ?? "").slice(0, LEDGER_BODY_MAX_CHARS), html: String(html ?? "").slice(0, LEDGER_BODY_MAX_CHARS) }
+                : {}),
               hrefs: extractLedgerHrefs(String(html ?? ""), String(text ?? "")),
               text_sha256: sha256(String(text ?? "")),
               html_sha256: sha256(String(html ?? "")),

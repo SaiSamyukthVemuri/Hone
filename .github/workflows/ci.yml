@@ -1598,7 +1598,7 @@ jobs:
 
       - name: Clean run-scoped fake ledger temp files
         if: always()
-        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.config.json || true
+        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.config.json "${TMPDIR:-/tmp}"/hone-e2e-resend/*.jsonl || true
 
       - name: Upload Playwright traces on failure
         if: failure()
@@ -1858,7 +1858,7 @@ jobs:
 
       - name: Clean run-scoped fake ledger temp files
         if: always()
-        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.config.json || true
+        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-stripe-*.config.json "${TMPDIR:-/tmp}"/hone-e2e-resend/*.jsonl || true
 
       - name: Upload Playwright traces on failure
         if: failure()
@@ -2121,7 +2121,7 @@ jobs:
 
       - name: Clean run-scoped fake ledger temp files
         if: always()
-        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-google-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-google-*.json || true
+        run: rm -f "${TMPDIR:-/tmp}"/hone-e2e-google-*.jsonl "${TMPDIR:-/tmp}"/hone-e2e-google-*.json "${TMPDIR:-/tmp}"/hone-e2e-resend/*.jsonl || true
 
       - name: Upload Playwright traces on failure
         if: failure()

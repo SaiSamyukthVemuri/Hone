@@ -4,7 +4,8 @@ import { E2E_WEB_SERVER_ENV } from "./local-env";
 // SCH-001. Reads what the lane's server tried to email, as recorded by the fake
 // Resend transport. The file is append-only and outlives a run, so a reader
 // takes a MARK (the file's length) before acting and reads only what was
-// appended after it. Recipient and subject only; there is no body to read.
+// appended after it. Recipient and subject always; when the lane arms HONE_E2E_FAKE_RESEND_LEDGER_BODIES=1 a line also carries link targets and body
+// hashes, and the text/html bodies for @harness.local recipients only. The file is 0600 in a 0700 directory.
 
 export type ResendLedgerRecord = {
   t: string;
@@ -12,6 +13,11 @@ export type ResendLedgerRecord = {
   mode: "success" | "reject" | "throw" | "failonce" | "hold";
   to: string;
   subject: string;
+  text?: string;
+  html?: string;
+  hrefs?: string[];
+  text_sha256?: string;
+  html_sha256?: string;
 };
 
 export type ResendLedgerMark = { offset: number };

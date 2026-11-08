@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import {
   LEDGER_BODY_MAX_CHARS,
   createFakeResendTransport,
   extractLedgerHrefs,
+  isHarnessRecipient,
   fakeResendLedgerBodiesEnabled,
 } from "@/lib/email/e2e-fake-resend";
 
@@ -62,15 +63,16 @@ describe("what the fake writes", () => {
     arm();
     await createFakeResendTransport().emails.send(PAYLOAD);
     expect(Object.keys(rows()[0]).sort()).toEqual(["mode", "pid", "subject", "t", "to"]);
-    expect(readFileSync(file, "utf8")).not.toContain("Review response");
+    expect(readFileSync(file, "utf8").includes("Review response")).toBe(false);
   });
 
-  it("with the switch ON it adds text, html, the link targets and a sha256 of each full body", async () => {
+  it("with the switch ON and a harness recipient it adds text, html, the link targets and a sha256 of each full body (asserted by marker and hash, never by printing a body)", async () => {
     arm({ HONE_E2E_FAKE_RESEND_LEDGER_BODIES: "1" });
     await createFakeResendTransport().emails.send(PAYLOAD);
     const r = rows()[0];
-    expect(r.text).toBe(TEXT);
-    expect(r.html).toBe(HTML);
+    expect(sha(r.text)).toBe(sha(TEXT));
+    expect(sha(r.html)).toBe(sha(HTML));
+    expect(String(r.html).includes("Review response")).toBe(true);
     expect(r.text_sha256).toBe(sha(TEXT));
     expect(r.html_sha256).toBe(sha(HTML));
     expect(r.hrefs).toEqual(["https://app.example.invalid/settings/waitlist?followup=1&x=2"]);
@@ -82,7 +84,7 @@ describe("what the fake writes", () => {
     const long = "x".repeat(LEDGER_BODY_MAX_CHARS + 500);
     await createFakeResendTransport().emails.send({ ...PAYLOAD, to: "reject+o@harness.local", html: long });
     const r = rows()[0];
-    expect(r.html).toHaveLength(LEDGER_BODY_MAX_CHARS);
+    expect(String(r.html).length).toBe(LEDGER_BODY_MAX_CHARS);
     expect(r.html_sha256).toBe(sha(long));
     expect(r.mode).toBe("reject");
   });
@@ -96,6 +98,35 @@ describe("what the fake writes", () => {
   });
 });
 
+describe("bodies are stored for harness recipients only", () => {
+  it("a recipient off @harness.local gets hashes and hrefs but NO text or html", async () => {
+    arm({ HONE_E2E_FAKE_RESEND_LEDGER_BODIES: "1" });
+    await createFakeResendTransport().emails.send({ ...PAYLOAD, to: "someone@example.invalid" });
+    const r = rows()[0];
+    expect("text" in r || "html" in r).toBe(false);
+    expect(r.text_sha256).toBe(sha(TEXT));
+    expect(r.html_sha256).toBe(sha(HTML));
+    expect(r.hrefs.length).toBe(1);
+    expect(readFileSync(file, "utf8").includes("Review response")).toBe(false);
+  });
+  it("recognises the harness domain exactly", () => {
+    expect(isHarnessRecipient("success+a@harness.local")).toBe(true);
+    expect(isHarnessRecipient("a@harness.local.evil.example")).toBe(false);
+    expect(isHarnessRecipient("a@notharness.local")).toBe(false);
+  });
+});
+
+describe("the ledger is private to the user", () => {
+  it("creates the directory 0700 and the file 0600", async () => {
+    const nested = path.join(dir, "hone-e2e-resend-private");
+    process.env.HONE_E2E_FAKE_RESEND = "1";
+    process.env.HONE_E2E_FAKE_RESEND_LEDGER = path.join(nested, "l.jsonl");
+    await createFakeResendTransport().emails.send(PAYLOAD);
+    expect((statSync(nested).mode & 0o777).toString(8)).toBe("700");
+    expect((statSync(path.join(nested, "l.jsonl")).mode & 0o777).toString(8)).toBe("600");
+  });
+});
+
 describe("extractLedgerHrefs", () => {
   it("finds attribute hrefs and bare urls once each, in first-seen order", () => {
     expect(extractLedgerHrefs('<a href="https://a.example.invalid/x">x</a><a href=\'https://b.example.invalid/\'>y</a>', "see https://a.example.invalid/x and https://c.example.invalid/z")).toEqual([
@@ -106,20 +137,19 @@ describe("extractLedgerHrefs", () => {
   });
 });
 
-describe("the real Resend path is untouched", () => {
+// A TRIPWIRE, not a proof: it reads source text for names of the new switch and fields. It says nothing about behaviour. Assertions are booleans so a failure never prints a source file.
+describe("tripwire: the real Resend path does not mention the body capture", () => {
   const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
   it("nothing outside the fake module mentions the bodies switch or the new ledger fields", () => {
     for (const p of ["lib/email/client.ts", "lib/email/send-appointment.ts", "lib/email/send-welcome.ts", "lib/email/new-client-waitlist-send.ts"]) {
       const src = read(p);
-      expect(src, p).not.toContain("LEDGER_BODIES");
-      expect(src, p).not.toContain("text_sha256");
-      expect(src, p).not.toContain("extractLedgerHrefs");
+      expect(["LEDGER_BODIES", "text_sha256", "extractLedgerHrefs"].some((marker) => src.includes(marker)), p).toBe(false);
     }
   });
   it("the body capture sits only inside the fake transport, behind the helper that checks the gate", () => {
     const src = read("lib/email/e2e-fake-resend.ts");
-    expect(src).toContain('import "server-only"');
+    expect(src.includes('import "server-only"')).toBe(true);
     const fake = src.slice(src.indexOf("export function createFakeResendTransport"));
-    expect(fake).toContain("fakeResendLedgerBodiesEnabled()");
+    expect(fake.includes("fakeResendLedgerBodiesEnabled()")).toBe(true);
   });
 });
