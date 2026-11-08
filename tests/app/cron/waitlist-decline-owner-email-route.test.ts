@@ -36,6 +36,15 @@ describe("the backstop route", () => {
     const crons = JSON.parse(read("vercel.json")).crons as Array<{ path: string; schedule: string }>;
     expect(crons.filter((c) => c.path === "/api/cron/waitlist-decline-owner-email")).toHaveLength(1);
   });
+  it("every cron runs at most once a day: the Vercel plan is Hobby, which rejects a sub-daily schedule and can fail the whole deploy", () => {
+    const crons = JSON.parse(read("vercel.json")).crons as Array<{ path: string; schedule: string }>;
+    for (const c of crons) {
+      const [minute, hour, dom, month, dow] = c.schedule.trim().split(/\s+/);
+      expect(`${c.path} ${c.schedule}`).toMatch(/^\S+ \d{1,2} \d{1,2} \* \* \*$/);
+      expect(dom + month + dow).toBe("***");
+      expect(/^\d+$/.test(minute) && /^\d+$/.test(hour)).toBe(true);
+    }
+  });
 });
 
 describe("what the owner sees when a send failed", () => {

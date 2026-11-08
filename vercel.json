@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/cron/waitlist-decline-owner-email",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 10 * * *"
     }
   ]
 }
