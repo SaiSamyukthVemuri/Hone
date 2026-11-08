@@ -447,7 +447,9 @@ describe("0323: a CLOSED studio books an invited person through publicBookAppoin
   );
 
   // The both-halves check is a PRESENCE check, not proof. A real token with a garbage capability
-  // reaches the proof, which refuses; nothing is written on either path.
+  // reaches the proof, which refuses; nothing is written on either path. What is pinned HERE is the
+  // app side only (no write, no email, no SMS, no conversion after a refusal); the real redeem's
+  // refusal of a garbage capability is pinned by the 0313 DB tests.
   it("marker applied + a real token but a GARBAGE capability, flag ON: the command refuses and nothing is written", async () => {
     admissionOverride = CLOSED;
     scenario.marker = "applied";

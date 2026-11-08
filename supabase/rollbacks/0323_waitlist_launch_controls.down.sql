@@ -26,7 +26,7 @@
 -- (the entry is still `invited`). A legacy-path rollback strands exactly these, because the redemption
 -- is not undone when a later booking is refused:
 --
---   select s.id as studio_id, count(*) as redeemed_unbooked
+--   select s.id as studio_id, count(distinct e.id) as redeemed_unbooked
 --     from public.new_client_waitlist_invitations i
 --     join public.new_client_waitlist_entries e on e.id = i.entry_id and e.studio_id = i.studio_id
 --     join public.studios s on s.id = i.studio_id
@@ -34,6 +34,9 @@
 --      and i.redeemed_at is not null
 --      and e.status = 'invited'
 --    group by s.id;
+--
+-- count(distinct e.id) counts people, not invitations, but it is still an UPPER BOUND: a raw count here can
+-- include a person who is handled outside the app, so read each row before acting on the number.
 --
 -- Zero rows from BOTH queries: the rollback changes nothing anyone can see. Any row: decide first
 -- (wait out the 48h lifetime, or ask the owner to release those invitations; for class R, wait for the

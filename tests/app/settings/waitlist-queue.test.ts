@@ -2896,7 +2896,7 @@ describe("closed admission blocks the owner's invite until 0323 is applied (0204
     expect(html).toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*neutral/);
     expect(html).not.toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*amber/);
     expect(INVITE_CLOSED_INVITED_ONLY_COPY).toContain("Closed");
-    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/public can’t book or join/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/New clients can’t book or join your waitlist online/);
     expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/invite here can still book/);
     // Send is not withheld for admission: neither blocked copy reaches the composer.
     expect(html).not.toContain(INVITE_ADMISSION_CLOSED_BANNER_COPY);

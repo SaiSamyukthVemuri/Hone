@@ -460,7 +460,7 @@ export const INVITE_ADMISSION_CLOSED_COPY =
  * Keeps the three facts together: Closed; no public booking or joining; invitees can book.
  */
 export const INVITE_CLOSED_INVITED_ONLY_COPY =
-  "New-client admission is Closed. The public can’t book or join your waitlist. People you invite here can still book, using the link and code in their invitation.";
+  "New-client admission is Closed. New clients can’t book or join your waitlist online. People you invite here can still book, using the link and code in their invitation.";
 
 /** The owner's banner / composer reason while admission is Closed. Its own text, not a slice of the notice. */
 export const INVITE_ADMISSION_CLOSED_BANNER_COPY =
