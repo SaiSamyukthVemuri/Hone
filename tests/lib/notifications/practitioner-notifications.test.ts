@@ -261,27 +261,32 @@ describe("public booking action calls the helper after appointment insert", () =
 });
 
 describe("public cancel action calls the helper after the cancel RPC succeeds", () => {
+  // HON-7: the action no longer calls the recorder itself; it awaits recordAppointmentCancelNotifications
+  // (never throws, fire-and-forget insert), which composes the row from the committed appointment id.
   const ACTIONS = read("app/cancel/[token]/actions.ts");
+  const CANCEL_BELL = read("lib/notifications/appointment-cancel-notification.ts");
 
-  it("imports the helper", () => {
+  it("imports the cancel-bell writer", () => {
     expect(ACTIONS).toMatch(
-      /import \{ recordPractitionerNotification \} from "@\/lib\/notifications\/practitioner-notifications"/,
+      /import \{ recordAppointmentCancelNotifications \} from "@\/lib\/notifications\/appointment-cancel-notification"/,
     );
   });
 
-  it("calls the helper with eventType: 'appointment_cancelled'", () => {
-    expect(ACTIONS).toMatch(/eventType:\s*"appointment_cancelled"/);
+  it("the writer records eventType: 'appointment_cancelled' through the helper", () => {
+    expect(CANCEL_BELL).toMatch(/eventType:\s*"appointment_cancelled"/);
+    expect(CANCEL_BELL).toMatch(/import \{ recordPractitionerNotification \} from "@\/lib\/notifications\/practitioner-notifications"/);
   });
 
   it("the call appears AFTER the public_cancel_appointment_with_token RPC", () => {
     const rpcIdx = ACTIONS.indexOf('"public_cancel_appointment_with_token"');
-    const helperIdx = ACTIONS.indexOf("recordPractitionerNotification({");
+    const helperIdx = ACTIONS.indexOf("recordAppointmentCancelNotifications(admin");
     expect(rpcIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(rpcIdx);
   });
 
-  it("the call is NOT awaited", () => {
+  it("the insert is NOT awaited (the writer awaits only its own reads)", () => {
+    expect(CANCEL_BELL).not.toMatch(/await recordPractitionerNotification\(/);
     expect(ACTIONS).not.toMatch(/await recordPractitionerNotification\(/);
   });
 });

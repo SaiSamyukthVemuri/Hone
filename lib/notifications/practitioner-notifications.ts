@@ -59,6 +59,7 @@ const ALLOWED_EVENT_TYPES: ReadonlySet<PractitionerNotificationEventType> =
     // for the same successful SetupIntent still produce one notification.
     "card_added",
     "card_replaced",
+    "waitlist_offer_declined",
   ]);
 
 export type RecordPractitionerNotificationInput = {
@@ -82,6 +83,10 @@ export type RecordPractitionerNotificationInput = {
   // /calendar/<appointment_id>). Composed server-side; no part of
   // it should come from visitor input.
   href: string | null;
+  // Optional internal idempotency key (never rendered). When set, a second write
+  // with the same key for the same studio conflicts on the 0154 partial unique
+  // index and is treated as already recorded, not as a failure.
+  dedupeKey?: string | null;
 };
 
 // Fire-and-forget recorder. The caller MUST NOT await the returned
@@ -134,7 +139,10 @@ export function recordPractitionerNotification(
           appointment_id: input.appointmentId,
           client_id: input.clientId,
           href: input.href,
+          ...(input.dedupeKey ? { dedupe_key: input.dedupeKey } : {}),
         });
+      // A unique violation on a keyed write is the idempotent repeat: the row exists.
+      if (error && input.dedupeKey && error.code === "23505") return;
       if (error) {
         logSilently({
           event: "practitioner_notification_insert_failed",
