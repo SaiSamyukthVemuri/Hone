@@ -261,11 +261,14 @@ describe("the emailed link and the emailed code, end to end", () => {
     const { mail } = await sendInvitation(p);
     const token = linkTokens(mail.payload.text)[0];
     expect(token).toBeTruthy();
-    // One character different, same length and alphabet. The FIRST character is flipped: the last
-    // character of a base64url string can carry padding bits, so changing it might not change the
-    // decoded value.
+    // One character different, same length and alphabet. A raw token is 64 lowercase hex characters
+    // (the commands accept only that shape, `^[a-f0-9]{64}$`), so the control must be a WELL-FORMED
+    // hex string that is simply not the invitation's token. Anything else would be refused by the
+    // shape check before the hash is ever compared, and the control would prove nothing about it.
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
     const first = token[0];
-    const corrupt = (first === "A" ? "B" : "A") + token.slice(1);
+    const corrupt = (first === "a" ? "b" : "a") + token.slice(1);
+    expect(corrupt).toMatch(/^[a-f0-9]{64}$/);
     expect(corrupt).not.toBe(token);
     // The corrupt value cannot be the stored hash's preimage.
     const stored = await adminQuery(
