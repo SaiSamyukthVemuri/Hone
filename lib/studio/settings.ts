@@ -43,6 +43,7 @@ export const STUDIO_SETTINGS = {
   send_waitlist_invitation_sms: { default: false, kind: "preference", readAt: "send-time" },
   client_cancellation_enabled: { default: true, kind: "preference", readAt: "action" },
   client_reschedule_enabled: { default: true, kind: "preference", readAt: "action" },
+  client_portal_enabled: { default: true, kind: "preference", readAt: "action" },
   practitioner_capacity_enabled: { default: false, kind: "preference", readAt: "action" },
   practitioner_capacity_booking_enabled: { default: false, kind: "rollout", readAt: "action" },
   google_calendar_connection_enabled: { default: false, kind: "preference", readAt: "action" },

@@ -1,0 +1,6 @@
+{
+  "pr": 1134,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0252_client_portal_controls.sql"],
+  "release_receipt": "01-ops/1134-release-receipt.json"
+}

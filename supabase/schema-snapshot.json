@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 257,
+    "count": 258,
     "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "c50d8ed203ac0ce2ea93085649e2d8b592a4544997b740bdbd71438b033151d5"
+    "sha256": "82e4fb52a29ed133d17956d9f31ae1478e5806efe1c88a01bbc4b87833bafbee"
   },
   "public": {
     "tables": [
@@ -220,6 +220,7 @@
       "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
+      "client_portal_access_guard",
       "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
