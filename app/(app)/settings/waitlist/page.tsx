@@ -1000,7 +1000,7 @@ export default async function WaitlistSettingsPage({
                 We couldn&rsquo;t load the waitlist responses. Reload to try again.
               </p>
             ))}
-          {declineEmail.kind === "ok" && <DeclineEmailFailedNotice failed={declineEmail.failed} />}
+          {declineEmail.kind === "ok" && <DeclineEmailFailedNotice failed={declineEmail.failed} atLeast={declineEmail.atLeast === true} />}
           {declined.kind === "ok" && declined.total > 0 && (
             <section
               aria-labelledby="declined-heading"

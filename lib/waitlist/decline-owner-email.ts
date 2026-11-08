@@ -4,10 +4,13 @@ import { sendWaitlistEmailIdempotent, type IdempotentEmailTransport } from "@/li
 import { buildWaitlistDeclineOwnerEmail } from "@/lib/email/templates/waitlist-decline-owner";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { readFollowUpStatus } from "./followups-owner";
+import { readFollowUpStatuses } from "./followups-owner";
+import { waitlistDeclineAnswersEnabled } from "./decline-answers-gate";
 import { emptyOutboxCounts, type OutboxCounts } from "./decline-status-lines";
 import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS,
   DECLINE_OWNER_EMAIL_BATCH_SIZE,
   DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS,
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
@@ -279,17 +282,33 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
   return summary;
 }
 
-export type DeclineEmailStatus = { kind: "unknown" } | { kind: "ok"; failed: number };
+export type DeclineEmailStatus = { kind: "unknown" } | { kind: "ok"; failed: number; atLeast?: boolean };
 
 /**
- * The failed-email notice: how many owner emails FAILED for responses that are still OPEN. A failed send for a response the owner has already
- * dealt with (handled, booked, removed) is not shown, so the notice goes away on its own. Open/closed comes from the STATUS-ONLY read (0325),
- * which returns no name and no answer, so counting never loads personal text. A count only: no recipient, no error text.
+ * Owners see a failure in Hone. A count only: no recipient, no error text.
+ *
+ * Two modes, chosen by the answers flag so the 0325 function is never called (and never required) while the flag is off:
+ *   * OFF: exactly as shipped in #1407. Failed rows since activation and within the last DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS days; the outbox
+ *     cannot say a response was handled, so the notice ages out.
+ *   * ON: failed rows since activation whose follow-up is still OPEN, read in ONE status-only call (no name, no answer). Past the cap it says
+ *     "at least" rather than truncating silently.
  */
-export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, actorUserId: string | null): Promise<DeclineEmailStatus> {
+export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, actorUserId: string | null, now: Date = new Date()): Promise<DeclineEmailStatus> {
   try {
     const activation = declineOwnerEmailActivation();
     if (!activation.enabled) return { kind: "ok", failed: 0 };
+    if (!waitlistDeclineAnswersEnabled()) {
+      const recent = new Date(now.getTime() - DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS * 86_400_000);
+      const from = recent > activation.since ? recent : activation.since;
+      const { count, error } = await admin
+        .from("waitlist_decline_owner_emails")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studioId)
+        .eq("status", "failed")
+        .gte("created_at", from.toISOString());
+      if (error || typeof count !== "number") return { kind: "unknown" };
+      return { kind: "ok", failed: count };
+    }
     if (!actorUserId) return { kind: "unknown" };
     const { data, error } = await admin
       .from("waitlist_decline_owner_emails")
@@ -297,16 +316,20 @@ export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: str
       .eq("studio_id", studioId)
       .eq("status", "failed")
       .gte("created_at", activation.since.toISOString())
-      .limit(500);
+      .order("id", { ascending: true })
+      .limit(DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP + 1);
     if (error || !Array.isArray(data)) return { kind: "unknown" };
-    const invitations = [...new Set((data as Array<{ invitation_id?: unknown }>).flatMap((r) => (typeof r.invitation_id === "string" ? [r.invitation_id] : [])))];
+    // More rows than the cap means we cannot know the distinct count: say so below instead of counting a silent prefix.
+    const rowsTruncated = data.length > DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP;
+    const all = [...new Set((data as Array<{ invitation_id?: unknown }>).flatMap((r) => (typeof r.invitation_id === "string" ? [r.invitation_id] : [])))];
+    const invitations = all.slice(0, DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP);
+    const truncated = rowsTruncated || all.length > invitations.length;
+    if (invitations.length === 0) return { kind: "ok", failed: 0 };
+    const st = await readFollowUpStatuses(studioId, actorUserId, invitations);
+    if (st.kind !== "ok") return { kind: "unknown" };
     let open = 0;
-    for (const invitationId of invitations) {
-      const st = await readFollowUpStatus(studioId, actorUserId, invitationId);
-      if (st.kind !== "ok") return { kind: "unknown" };
-      if (st.status === "open") open += 1;
-    }
-    return { kind: "ok", failed: open };
+    for (const id of invitations) if (st.byInvitation.get(id) === "open") open += 1;
+    return truncated ? { kind: "ok", failed: open, atLeast: true } : { kind: "ok", failed: open };
   } catch {
     return { kind: "unknown" };
   }

@@ -38,5 +38,10 @@ export const DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS = 25_000;
 export const DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS = 60;
 export const DECLINE_OWNER_EMAIL_BATCH_SIZE = 50;
 
+/** With the answers flag OFF the outbox cannot say a response was handled, so a failed-send notice ages out after this many days (as shipped in #1407). */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
+/** With the answers flag ON the notice counts open follow-ups; past this many distinct failed responses it says "500+" instead of a silently truncated count. */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP = 500;
+
 /** A row left in `sending` longer than this was abandoned by a dead invocation and may be claimed again. */
 export const DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES = 10;

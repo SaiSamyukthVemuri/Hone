@@ -6,9 +6,9 @@ import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-s
 
 vi.mock("server-only", () => ({}));
 const status = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/waitlist/followups-owner", () => ({ readFollowUpStatus: status }));
+vi.mock("@/lib/waitlist/followups-owner", () => ({ readFollowUpStatuses: status }));
 import { dispatchDeclineOwnerEmail, getDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
-import { DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
+import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
 import { buildWaitlistDeclineOwnerEmail, WAITLIST_DECLINE_OWNER_BODY, WAITLIST_DECLINE_OWNER_SUBJECT } from "@/lib/email/templates/waitlist-decline-owner";
 
 // HON-7 item 4. Synthetic ids and addresses only. The fake below models the outbox table, the practitioners table and the auth user read.
@@ -382,19 +382,25 @@ describe("what is written and logged", () => {
   });
 });
 
-describe("status shown in Hone (tied to the OPEN follow-up, via the status-only read)", () => {
+describe("status shown in Hone, answers flag ON (tied to the OPEN follow-up, via ONE status-only read)", () => {
   const ACTOR = "dddddddd-0000-4000-8000-000000000001";
-  const setStatus = (m: Record<string, "open" | "handled" | "booked" | "removed" | "none" | "unknown">) =>
-    status.mockImplementation(async (_s: string, _a: string | null, inv: string) => {
-      const v = m[inv] ?? "none";
-      return v === "unknown" ? { kind: "unknown" } : { kind: "ok", status: v };
+  const setStatus = (m: Record<string, "open" | "handled" | "booked" | "removed" | "unknown">) =>
+    status.mockImplementation(async (_s: string, _a: string | null, ids: string[]) => {
+      if (ids.some((id) => m[id] === "unknown")) return { kind: "unknown" };
+      return { kind: "ok", byInvitation: new Map(ids.flatMap((id) => (m[id] && m[id] !== "unknown" ? [[id, m[id]] as const] : []))) };
     });
   const failedRow = (w: ReturnType<typeof world>, inv: string, created = "2026-11-09T11:00:00.000Z") => {
     const o = w.owner({ status: "failed", created });
     o.row.invitation_id = inv;
     return o;
   };
-  beforeEach(() => status.mockReset());
+  beforeEach(() => {
+    status.mockReset();
+    process.env.WAITLIST_DECLINE_ANSWERS = "1";
+  });
+  afterEach(() => {
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+  });
 
   it("counts failed rows for responses that are still OPEN, once per response", async () => {
     const w = world();
@@ -404,20 +410,32 @@ describe("status shown in Hone (tied to the OPEN follow-up, via the status-only 
     expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 1 });
   });
   it("goes away once the response is handled, booked or removed, or has no follow-up", async () => {
-    for (const st of ["handled", "booked", "removed", "none"] as const) {
+    for (const st of ["handled", "booked", "removed", undefined] as const) {
       const w = world(); failedRow(w, "inv-1");
-      setStatus({ "inv-1": st });
+      setStatus(st ? { "inv-1": st } : {});
       expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
     }
   });
-  it("uses the status-only read with the verified actor, never the full follow-up read", async () => {
-    const w = world(); failedRow(w, "inv-1");
-    setStatus({ "inv-1": "open" });
-    await getDeclineEmailStatus(w.admin, STUDIO, ACTOR);
-    expect(status).toHaveBeenCalledWith(STUDIO, ACTOR, "inv-1");
+  it("makes ONE status call for all failed responses, with the verified actor, never the full follow-up read", async () => {
+    const w = world(); failedRow(w, "inv-1"); failedRow(w, "inv-2"); failedRow(w, "inv-3");
+    setStatus({ "inv-1": "open", "inv-2": "open", "inv-3": "handled" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 2 });
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(status).toHaveBeenCalledWith(STUDIO, ACTOR, expect.arrayContaining(["inv-1", "inv-2", "inv-3"]));
     const src = readFileSync(join(process.cwd(), "lib/waitlist/decline-owner-email.ts"), "utf8");
-    expect(src).toContain("readFollowUpStatus");
+    expect(src).toContain("readFollowUpStatuses");
     expect(src).not.toMatch(/readFollowUps\b|read_waitlist_followups/);
+  });
+  it("does not call the status read when there are no failed rows", async () => {
+    const w = world(); w.owner({ status: "sent" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+  });
+  it("past the cap it says 'at least' rather than counting a silent prefix", async () => {
+    const w = world();
+    for (let i = 0; i <= DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP; i += 1) failedRow(w, `inv-${i}`);
+    status.mockImplementation(async (_s: string, _a: string | null, ids: string[]) => ({ kind: "ok", byInvitation: new Map(ids.map((id) => [id, "open"] as const)) }));
+    const out = await getDeclineEmailStatus(w.admin, STUDIO, ACTOR);
+    expect(out).toEqual({ kind: "ok", failed: DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, atLeast: true });
   });
   it("ignores rows from before activation", async () => {
     const w = world(); failedRow(w, "inv-1", "2026-11-08T00:00:00.000Z");
@@ -428,6 +446,7 @@ describe("status shown in Hone (tied to the OPEN follow-up, via the status-only 
     delete process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED;
     const w = world(); failedRow(w, "inv-1");
     expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+    expect(status).not.toHaveBeenCalled();
   });
   it("an unreadable status, a read error or no actor is unknown, not zero", async () => {
     const w = world(); failedRow(w, "inv-1");
@@ -436,5 +455,36 @@ describe("status shown in Hone (tied to the OPEN follow-up, via the status-only 
     expect(await getDeclineEmailStatus(w.admin, STUDIO, null)).toEqual({ kind: "unknown" });
     const bad = { from: () => { throw new Error("x"); } } as unknown as SupabaseClient;
     expect(await getDeclineEmailStatus(bad, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("status shown in Hone, answers flag OFF (exactly as shipped in #1407; 0325 may be absent)", () => {
+  const ACTOR = "dddddddd-0000-4000-8000-000000000001";
+  beforeEach(() => {
+    status.mockReset();
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+  });
+  it("counts failed rows only, since activation, and nothing else, without calling the 0325 function or needing an actor", async () => {
+    const w = world(); w.owner({ status: "failed" }); w.owner({ status: "sent" }); w.owner({ status: "cancelled" }); w.owner({ status: "held" }); w.owner({ status: "failed", created: "2026-11-08T00:00:00.000Z" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, null, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(status).not.toHaveBeenCalled();
+  });
+  it("a failure ages out of the notice after 14 days (the outbox cannot say it was handled)", async () => {
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-10-01T00:00:00.000Z";
+    const w = world(); w.owner({ status: "failed", created: "2026-10-26T11:00:00.000Z" }); w.owner({ status: "failed", created: "2026-10-27T12:00:00.000Z" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS).toBe(14);
+  });
+  it("owner email on, answers off, 0325 absent: no 'unknown' and no call to the 0325 function", async () => {
+    status.mockResolvedValue({ kind: "unknown" });
+    const w = world(); w.owner({ status: "failed" });
+    const out = await getDeclineEmailStatus(w.admin, STUDIO, ACTOR, NOW);
+    expect(out.kind).toBe("ok");
+    expect(status).not.toHaveBeenCalled();
+  });
+  it("a read error is still unknown, not zero", async () => {
+    const bad = { from: () => { throw new Error("x"); } } as unknown as SupabaseClient;
+    expect(await getDeclineEmailStatus(bad, STUDIO, null, NOW)).toEqual({ kind: "unknown" });
   });
 });

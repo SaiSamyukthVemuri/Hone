@@ -77,23 +77,29 @@ export async function readFollowUps(studioId: string, actorUserId: string | null
 }
 
 /**
- * Is this invitation's follow-up still open? Uses the STATUS-ONLY read, which returns no name and no answer, so a count in the failed-email
- * notice never loads personal text. `none` = zero rows.
+ * The status of many invitations' follow-ups in ONE call, from the STATUS-ONLY read, which returns no name and no answer, so counting never
+ * loads personal text. An invitation with no follow-up has no row (`none`, absent from the map).
+ * TODO(0325): the batched signature `read_waitlist_followup_status(p_studio_id, p_actor_user_id, p_invitation_ids uuid[])` is Willow's pending
+ * change to the contract; confirm the final argument name against CONTRACT.md before binding.
  */
-export type FollowUpStatusRead = { kind: "unknown" } | { kind: "ok"; status: FollowUpStatus | "none" };
+export type FollowUpStatusesRead = { kind: "unknown" } | { kind: "ok"; byInvitation: Map<string, FollowUpStatus> };
 
-export async function readFollowUpStatus(studioId: string, actorUserId: string | null, invitationId: string): Promise<FollowUpStatusRead> {
+export async function readFollowUpStatuses(studioId: string, actorUserId: string | null, invitationIds: string[]): Promise<FollowUpStatusesRead> {
   if (!actorUserId) return { kind: "unknown" };
+  if (invitationIds.length === 0) return { kind: "ok", byInvitation: new Map() };
   try {
     const { data, error } = await createAdminClient().rpc("read_waitlist_followup_status", {
       p_studio_id: studioId,
       p_actor_user_id: actorUserId,
-      p_invitation_id: invitationId,
+      p_invitation_ids: invitationIds,
     });
     if (error || !Array.isArray(data)) return { kind: "unknown" };
-    if (data.length === 0) return { kind: "ok", status: "none" };
-    const s = (data[0] as { status?: unknown }).status;
-    return typeof s === "string" && STATUSES.has(s) ? { kind: "ok", status: s as FollowUpStatus } : { kind: "unknown" };
+    const byInvitation = new Map<string, FollowUpStatus>();
+    for (const r of data as Array<{ invitation_id?: unknown; status?: unknown }>) {
+      if (typeof r.invitation_id !== "string" || typeof r.status !== "string" || !STATUSES.has(r.status)) return { kind: "unknown" };
+      byInvitation.set(r.invitation_id, r.status as FollowUpStatus);
+    }
+    return { kind: "ok", byInvitation };
   } catch {
     return { kind: "unknown" };
   }

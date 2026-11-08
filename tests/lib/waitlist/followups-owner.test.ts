@@ -10,7 +10,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({
   }) }));
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { FOLLOWUP_READ_COLUMNS, eraseAnswers, keepWithdrawal, linkFollowUpAppointment, markDeclineHandled, readFollowUps, readFollowUpStatus } from "@/lib/waitlist/followups-owner";
+import { FOLLOWUP_READ_COLUMNS, eraseAnswers, keepWithdrawal, linkFollowUpAppointment, markDeclineHandled, readFollowUps, readFollowUpStatuses } from "@/lib/waitlist/followups-owner";
 
 const S = "11111111-1111-4111-8111-111111111111";
 const A = "22222222-2222-4222-8222-222222222222";
@@ -55,15 +55,21 @@ describe("the owner reads", () => {
     h.rpc.mockResolvedValue({ data: [], error: null });
     expect(await readFollowUps(S, A)).toEqual({ kind: "ok", rows: [] });
   });
-  it("the status read passes the invitation and returns a status only", async () => {
-    h.rpc.mockResolvedValue({ data: [{ invitation_id: "i1", status: "open" }], error: null });
-    expect(await readFollowUpStatus(S, A, "i1")).toEqual({ kind: "ok", status: "open" });
-    expect(h.rpc).toHaveBeenCalledWith("read_waitlist_followup_status", { p_studio_id: S, p_actor_user_id: A, p_invitation_id: "i1" });
-    h.rpc.mockResolvedValue({ data: [], error: null });
-    expect(await readFollowUpStatus(S, A, "i1")).toEqual({ kind: "ok", status: "none" });
-    h.rpc.mockResolvedValue({ data: [{ status: "wat" }], error: null });
-    expect(await readFollowUpStatus(S, A, "i1")).toEqual({ kind: "unknown" });
-    expect(await readFollowUpStatus(S, null, "i1")).toEqual({ kind: "unknown" });
+  it("the status read is ONE call for many invitations, returns a status only, and treats a missing row as none", async () => {
+    h.rpc.mockResolvedValue({ data: [{ invitation_id: "i1", status: "open" }, { invitation_id: "i2", status: "handled" }], error: null });
+    const out = await readFollowUpStatuses(S, A, ["i1", "i2", "i3"]);
+    expect(out).toEqual({ kind: "ok", byInvitation: new Map([["i1", "open"], ["i2", "handled"]]) });
+    expect(h.rpc).toHaveBeenCalledTimes(1);
+    expect(h.rpc).toHaveBeenCalledWith("read_waitlist_followup_status", { p_studio_id: S, p_actor_user_id: A, p_invitation_ids: ["i1", "i2", "i3"] });
+    h.rpc.mockResolvedValue({ data: [{ invitation_id: "i1", status: "wat" }], error: null });
+    expect(await readFollowUpStatuses(S, A, ["i1"])).toEqual({ kind: "unknown" });
+    h.rpc.mockResolvedValue({ data: null, error: { code: "x" } });
+    expect(await readFollowUpStatuses(S, A, ["i1"])).toEqual({ kind: "unknown" });
+    expect(await readFollowUpStatuses(S, null, ["i1"])).toEqual({ kind: "unknown" });
+  });
+  it("no invitations means no call", async () => {
+    expect(await readFollowUpStatuses(S, A, [])).toEqual({ kind: "ok", byInvitation: new Map() });
+    expect(h.rpc).not.toHaveBeenCalled();
   });
 });
 
