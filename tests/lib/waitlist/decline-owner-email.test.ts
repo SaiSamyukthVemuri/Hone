@@ -36,7 +36,8 @@ function world() {
         writes.push(patch);
         for (const r of hit) Object.assign(r, patch);
       }
-      return hit.slice(0, limit);
+      // Copies, like a database: a reader must not see a row change under it.
+      return hit.slice(0, limit).map((r) => ({ ...r }));
     };
     q.select = () => q;
     q.update = (p: Record<string, unknown>) => { patch = p; return q; };
