@@ -1057,6 +1057,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // only consent_at can be stamped from this public surface.
   let clientSmsConsentAt: string | null = null;
   let clientSmsOptedOutAt: string | null = null;
+  // Set only on the 0313 command path; run strictly after a committed booking.
+  let deferredConsentStamp: (() => Promise<void>) | null = null;
 
   // No-enumeration gate for the existing-client path. When the
   // visitor said "I am an existing client" but the studio has no
@@ -1101,47 +1103,59 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     clientSmsConsentAt = existingClient.sms_consent_at ?? null;
     clientSmsOptedOutAt = existingClient.sms_opted_out_at ?? null;
 
-    // SMS consent stamp for existing clients is gated by two rules:
-    //   1. The client must not already be opted out (STOP is sticky).
-    //   2. The submitted phone must normalize to the same digits as
-    //      the stored phone. Without this, anyone who knows a real
-    //      client's email could opt them into SMS by typing a
-    //      different phone number on the public form.
-    // We also do not overwrite an already-set sms_consent_at; the
-    // earlier source-of-truth wins.
-    if (
-      smsConsent &&
-      clientSmsOptedOutAt == null &&
-      clientSmsConsentAt == null
-    ) {
-      const submittedDigits = normalizePhoneForMatch(phone);
-      const storedDigits = normalizePhoneForMatch(existingClient.phone);
+    // 0313. WITH THE FLAG ON, THIS WRITE MUST NOT PRECEDE PROOF. The invitation is
+    // `authorized` here only by the recipient's email hash; the CAPABILITY is
+    // proved inside redeem_and_book_waitlist_invitation. Stamping consent first
+    // let a holder of a live link, a bogus capability and a known email and phone
+    // record write-once SMS consent on an existing client that the later refusal
+    // could not undo. So with the flag on the stamp is DEFERRED until the command
+    // has returned a committed booking (`deferredConsentStamp`, below). Flag off,
+    // the invitation was already redeemed above (proof first), so it keeps its place.
+    const stampExistingClientConsent = async (): Promise<void> => {
+      // SMS consent stamp for existing clients is gated by two rules:
+      //   1. The client must not already be opted out (STOP is sticky).
+      //   2. The submitted phone must normalize to the same digits as
+      //      the stored phone. Without this, anyone who knows a real
+      //      client's email could opt them into SMS by typing a
+      //      different phone number on the public form.
+      // We also do not overwrite an already-set sms_consent_at; the
+      // earlier source-of-truth wins.
       if (
-        submittedDigits.length > 0 &&
-        submittedDigits === storedDigits
+        smsConsent &&
+        clientSmsOptedOutAt == null &&
+        clientSmsConsentAt == null
       ) {
-        // G3 / 0211: consent is write-once, so the stamp is a conditional
-        // FIRST write; an overlapping booking that got there first, or a STOP
-        // that landed meanwhile, is adopted from the row rather than lost
-        // (lib/booking/public-consent-stamp.ts).
-        const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
-        if (stamp.result === "error") {
-          // Soft fail. The booking and the email path must not break
-          // because of a consent-stamp error; future bookings can
-          // re-attempt. We log a sanitized error and proceed.
-          // PR #261: sqlstate code + studioId + salted email
-          // fingerprint; drop raw DB message.
-          logInternalBookingError("public_booking_sms_consent_update_failed", {
-            code: stamp.code,
-            studioId: studio.id,
-            emailFingerprint: hashFingerprint(normalizedEmail),
-          });
-        } else {
-          clientSmsConsentAt = stamp.smsConsentAt;
-          clientSmsOptedOutAt = stamp.smsOptedOutAt;
+        const submittedDigits = normalizePhoneForMatch(phone);
+        const storedDigits = normalizePhoneForMatch(existingClient.phone);
+        if (
+          submittedDigits.length > 0 &&
+          submittedDigits === storedDigits
+        ) {
+          // G3 / 0211: consent is write-once, so the stamp is a conditional
+          // FIRST write; an overlapping booking that got there first, or a STOP
+          // that landed meanwhile, is adopted from the row rather than lost
+          // (lib/booking/public-consent-stamp.ts).
+          const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
+          if (stamp.result === "error") {
+            // Soft fail. The booking and the email path must not break
+            // because of a consent-stamp error; future bookings can
+            // re-attempt. We log a sanitized error and proceed.
+            // PR #261: sqlstate code + studioId + salted email
+            // fingerprint; drop raw DB message.
+            logInternalBookingError("public_booking_sms_consent_update_failed", {
+              code: stamp.code,
+              studioId: studio.id,
+              emailFingerprint: hashFingerprint(normalizedEmail),
+            });
+          } else {
+            clientSmsConsentAt = stamp.smsConsentAt;
+            clientSmsOptedOutAt = stamp.smsOptedOutAt;
+          }
         }
       }
-    }
+    };
+    if (invitedCommand) deferredConsentStamp = stampExistingClientConsent;
+    else await stampExistingClientConsent();
   } else {
     // DEFERRED TO THE COMMIT TRANSACTION, and that is the whole point.
     //
@@ -1597,6 +1611,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
+
+  // 0313 command path only: the capability was proved and the booking committed, so the
+  // existing client's write-once SMS consent may now be recorded. Soft-fail, as before.
+  // `clientSms*` hold the COMMITTED values (overwritten from the command's row above),
+  // so an already-recorded consent or a STOP is respected.
+  if (deferredConsentStamp) await deferredConsentStamp();
 
   // The appointment is COMMITTED (create_public_appointment returned 'created'),
   // together with its audit row. Everything from here on is a post-commit,
