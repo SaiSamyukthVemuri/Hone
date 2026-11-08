@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+// SPELLING-BASED TRIPWIRE, NOT PROOF. It reads source text for an update/upsert call that names date_of_birth.
+// Blind spot: a payload built through a property access or a call result (for example .update(plan.patch) or
+// .update(build())) is not seen. The database function's own tests, not this file, prove the atomic behaviour.
+//
 // HON-58: an existing client's date_of_birth is changed only through update_client_profile_if_unchanged (0281), which
 // compares the value the caller loaded with the stored one in the same statement. A direct UPDATE or upsert that names
 // date_of_birth is a blind overwrite. New-client inserts and the intake sync RPC are different writes and are not matched.
@@ -15,8 +19,8 @@ const files = execFileSync("git", ["ls-files", "app", "lib", "components"], { en
 
 const WRITE = /\.(update|upsert)\(\s*(\{[^}]*\}|[A-Za-z_$][\w$.]*)/gs;
 
-describe("date_of_birth write authority", () => {
-  it("no direct update or upsert names date_of_birth in app, lib or components", () => {
+describe("date_of_birth write authority (spelling-based tripwire, not proof)", () => {
+  it("tripwire: no direct update or upsert call spells date_of_birth in app, lib or components", () => {
     const offenders: string[] = [];
     for (const f of files) {
       const src = readFileSync(f, "utf8");
