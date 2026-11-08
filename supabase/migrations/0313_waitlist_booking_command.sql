@@ -56,6 +56,14 @@
 -- no cycle exists. tests/db/waitlist-booking-command.db.test.ts exercises the
 -- redeem/close/release interleavings with waitUntilBlocked.
 --
+-- THE FOLLOW-UPS TABLE IS EVIDENCE ONLY. The owner's real surface is the list
+-- DERIVED from entry and invitation state (an `invited` entry whose invitation
+-- was redeemed), which clears by itself when the entry converts or is closed. A
+-- follow-up row is therefore read as RESOLVED whenever its entry is no longer
+-- `invited`, whatever resolved_at says; resolved_at is a courtesy stamp written
+-- by the owner's close action. The redeem is spent once, so no later booking can
+-- succeed for the same invitation: a closed or converted entry is how a row ends.
+--
 -- NOT IN THIS FILE: "These times don't work" storage, capacity, notifications.
 
 begin;
@@ -219,6 +227,7 @@ declare
   v_inv    record;
   v_entry  record;
   v_start  timestamptz;
+  v_n      integer;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$' then
     return query select 'invalid_token'::text, null::timestamptz; return;
@@ -230,16 +239,32 @@ begin
   if v_inv.entry_id is null then
     return query select 'invalid_token'::text, null::timestamptz; return;
   end if;
-  select e.status, e.converted_client_id into v_entry
+  select e.status, e.converted_client_id, e.converted_at into v_entry
     from public.new_client_waitlist_entries e
    where e.id = v_inv.entry_id and e.studio_id = v_inv.studio_id;
   if v_entry.status = 'converted' then
-    -- The start of the converted client's most recent appointment, so a caller
-    -- that lost the response can confirm the booking instead of guessing.
-    select a.starts_at into v_start
+    -- THE TIME OF THE APPOINTMENT THIS CONVERSION CREATED, or NULL.
+    --
+    -- 0195 commits the appointment and the conversion in ONE transaction but
+    -- stores no appointment id on the entry, so the link is by time and client.
+    -- The appointment's created_at is the transaction START (now()) and the
+    -- conversion is stamped later in the same transaction (clock_timestamp()),
+    -- so the appointment lies a few milliseconds BEFORE converted_at. The
+    -- window is therefore [converted_at - 60 seconds, converted_at + 1 second],
+    -- cancelled bookings excluded.
+    --
+    -- EXACTLY ONE CANDIDATE, otherwise NULL. A later appointment for the same
+    -- client is outside the window; a cancelled booking is excluded; two
+    -- candidates are ambiguous. In each of those cases the caller gets NULL and
+    -- shows the "couldn't confirm" copy rather than a time that might be wrong.
+    select count(*)::int, min(a.starts_at) into v_n, v_start
       from public.appointments a
-     where a.studio_id = v_inv.studio_id and a.client_id = v_entry.converted_client_id
-     order by a.created_at desc limit 1;
+     where a.studio_id = v_inv.studio_id
+       and a.client_id = v_entry.converted_client_id
+       and a.status is distinct from 'cancelled'
+       and a.created_at >= v_entry.converted_at - interval '60 seconds'
+       and a.created_at <= v_entry.converted_at + interval '1 second';
+    if v_n is distinct from 1 then v_start := null; end if;
     return query select 'booked'::text, v_start; return;
   end if;
   if v_inv.redeemed_at is not null then

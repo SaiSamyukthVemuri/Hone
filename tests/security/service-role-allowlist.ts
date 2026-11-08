@@ -44,7 +44,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "HON-7 owner-only estimate of how many consultations fit the window being offered.",
     why:
       "Reads the studio's slug, timezone and buffer, the canonical public slot list for the " +
-      "selected service and dates, and a COUNT of live invitations for that service. It writes " +
+      "selected service and dates, and a COUNT of live invitations across all services. It writes " +
       "nothing and reserves nothing. The studio comes from getCurrentPractitionerWithStudio() " +
       "and the action returns { ok: false } for any non-owner before it constructs the admin " +
       "client; the browser supplies only a service id, a window length and weekdays, each " +

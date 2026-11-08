@@ -241,11 +241,22 @@ async function runEntryLifecycleCommand(options: {
   // never anything the browser sent. Best effort: before 0313 is applied the
   // command does not exist, and the close itself has already committed.
   if (options.rpc === "close_unbooked_new_client_waitlist_invitation") {
-    await admin.rpc("resolve_waitlist_invitation_followup", {
+    const { error: resolveError } = await admin.rpc("resolve_waitlist_invitation_followup", {
       p_studio_id: studio.id,
       p_entry_id: options.entryId,
       p_actor_user_id: actorUserId,
     });
+    if (resolveError) {
+      // Code and event only: no details, no ids beyond the studio.
+      console.error(
+        JSON.stringify({
+          event: "waitlist_followup_resolve_failed",
+          studioId: studio.id,
+          code: resolveError.code ?? "unknown",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
   }
 
   revalidatePath("/settings/waitlist");

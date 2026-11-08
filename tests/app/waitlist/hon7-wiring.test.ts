@@ -45,6 +45,18 @@ describe("L6 — the owner settings page is owner-gated before it reads prospect
   });
 });
 
+describe("N3/N4 — the estimate counts every service; a failed resolve is logged without detail", () => {
+  it("does not filter live invitations by service (the studio is one calendar)", () => {
+    expect(CAPACITY).not.toMatch(/scope_service_id/);
+  });
+  it("logs a failed resolve by code only", () => {
+    const m = ACTIONS.match(/waitlist_followup_resolve_failed[\s\S]*?\}\),/);
+    expect(m).not.toBeNull();
+    expect(m![0]).toMatch(/code: resolveError\.code/);
+    expect(m![0]).not.toMatch(/resolveError\.(message|details|hint)/);
+  });
+});
+
 describe("the window estimate action", () => {
   it("refuses a non-owner before it builds the admin client", () => {
     expect(CAPACITY.indexOf('practitioner.role !== "owner"')).toBeGreaterThan(0);

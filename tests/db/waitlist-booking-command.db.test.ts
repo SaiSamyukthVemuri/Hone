@@ -140,6 +140,49 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     expect(await apptCount(f.studioId)).toBe(2);
   });
 
+  it("the booked time is the appointment THIS conversion created, not a later or cancelled one", async () => {
+    const f = await fixture("bt");
+    const [t1, t2, t3] = await slots(f, 3);
+    const p = await provenEntry(f, "bt");
+    const r = await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, t1, tokenHash("bt1")]);
+    expect(r[0].result).toBe("created_and_converted");
+    const when = () =>
+      q<{ state: string; starts_at: string | null }>(
+        `select state, starts_at from public.waitlist_invitation_booking_state($1)`, [p.token],
+      ).then((x) => x[0]);
+    const iso = (v: string | null) => (v === null ? null : new Date(v).toISOString());
+    expect(iso((await when()).starts_at)).toBe(new Date(t1).toISOString());
+
+    // A LATER appointment for the same client (made hours after the conversion).
+    const later = await q<any>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, r[0].client_id, f.serviceId, t2, tokenHash("bt2")],
+    );
+    expect(later[0].result).toBe("created");
+    await q(`update public.appointments set created_at = created_at + interval '3 hours' where id=$1`, [later[0].appointment_id]);
+    expect(iso((await when()).starts_at)).toBe(new Date(t1).toISOString());
+
+    // The original booking is CANCELLED and only the later one remains: unknown, never the later time.
+    const originalStatus = (await q<{ status: string }>(`select status from public.appointments where id=$1`, [r[0].appointment_id]))[0].status;
+    await q(`update public.appointments set status = 'cancelled' where id=$1`, [r[0].appointment_id]);
+    const after = await when();
+    expect(after.state).toBe("booked");
+    expect(after.starts_at).toBeNull();
+
+    // Two live candidates inside the window: ambiguous, so unknown.
+    const twin = await q<any>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, r[0].client_id, f.serviceId, t3, tokenHash("bt3")],
+    );
+    expect(twin[0].result).toBe("created");
+    await q(`update public.appointments set created_at = $2::timestamptz where id=$1`, [
+      twin[0].appointment_id,
+      (await q<{ c: string }>(`select converted_at::text as c from public.new_client_waitlist_entries where id=$1`, [p.entryId]))[0].c,
+    ]);
+    await q(`update public.appointments set status = $3, created_at = (select converted_at from public.new_client_waitlist_entries where id=$2) where id=$1`, [r[0].appointment_id, p.entryId, originalStatus]);
+    expect((await when()).starts_at).toBeNull();
+  });
+
   it("any other exception (a forced unique violation) propagates, rolls the redeem back and leaves the invitation live", async () => {
     const f = await fixture("uv");
     const [t1, t2] = await slots(f, 2);

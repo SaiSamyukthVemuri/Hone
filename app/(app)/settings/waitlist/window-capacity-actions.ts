@@ -68,14 +68,14 @@ export async function estimateWindowCapacityAction(input: {
     });
     if (!range.ok) return { ok: false };
 
-    // LIVE invitations for this service, from every batch: sent, not expired,
-    // not redeemed, not released, not declined. A booked one is already an
+    // LIVE invitations for EVERY service, from every batch: the studio is one
+    // calendar, so an invitation for another service competes for the same
+    // window. Sent, not expired, not redeemed, not released, not declined. A booked one is already an
     // appointment in the slot list and is not counted again.
     const live = await admin
       .from("new_client_waitlist_invitations")
       .select("id", { count: "exact", head: true })
       .eq("studio_id", studio.id)
-      .eq("scope_service_id", input.serviceId)
       .is("redeemed_at", null)
       .is("expired_at", null)
       .is("released_at", null)
