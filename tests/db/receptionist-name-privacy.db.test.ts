@@ -42,7 +42,9 @@ async function observe(): Promise<unknown> {
   out.byPhoneNext = (await dir(deskA, a, "555", "next")).rows;
   out.pages = [];
   for (let off = 0; off < 4; off++) (out.pages as unknown[]).push((await dir(deskA, a, "555", "name", off, 1)).rows);
-  for (const term of [...STORED_TERMS, "Caz", "Dee", "Name on", "Abe", "Zed"]) out[`term:${term}`] = (await dir(deskA, a, term)).rows;
+  // Keyed by position: a term-named key would put the searched word into the serialized value itself.
+  const terms = [...STORED_TERMS, "Caz", "Dee", "Name on", "Abe", "Zed"];
+  for (let i = 0; i < terms.length; i++) out[`term${i}`] = (await dir(deskA, a, terms[i])).rows;
   out.calendar = (await cal(deskA, a)).rows;
   return out;
 }
@@ -200,5 +202,40 @@ describe("direct reads by the receptionist reach no name", () => {
     await expect(asUser(deskA, (x) => x("select * from public.receptionist_client_contacts_v2($1,null,25)", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
     await expect(asUser(deskA, (x) => x("select * from public.receptionist_client_contacts($1,null,25)", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
     await expect(asUser(deskA, (x) => x("select * from public.receptionist_calendar($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+  });
+});
+
+// B: the census as a guard. A new receptionist-reachable function that reads clients, or any callable one that mentions the stored
+// name, fails here until someone has decided how it shows a name. The behavioural proof above is what shows a listed function is safe;
+// this only makes sure the list cannot grow unseen.
+describe("every receptionist-reachable function that reads clients is accounted for", () => {
+  const roles = ["anon", "authenticated", "service_role"];
+  it("the callable ones that read clients are exactly the directory and the v2 schedule, and none of them mentions the stored name", async () => {
+    const r = await adminQuery(
+      `select p.proname, p.prosrc ~* '\\m(c|clients)\\.name\\M' as stored_name_ref,
+              (select bool_or(has_function_privilege(role, p.oid, 'EXECUTE')) from unnest($1::text[]) role) as callable
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.prosrc ilike '%receptionist_actor_id%' and p.prosrc ~* '\\mclients\\M'
+        order by 1`,
+      [roles],
+    );
+    const callable = r.rows.filter((x) => x.callable);
+    expect(callable.map((x) => x.proname)).toEqual(["receptionist_calendar_v2", "receptionist_client_directory"]);
+    expect(callable.filter((x) => x.stored_name_ref)).toEqual([]);
+  });
+  it("the three functions that do still mention the stored name are closed to every role", async () => {
+    const r = await adminQuery(
+      `select p.proname, bool_or(has_function_privilege(role, p.oid, 'EXECUTE')) as callable
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        cross join unnest($1::text[]) role
+        where n.nspname = 'public' and p.prosrc ilike '%receptionist_actor_id%' and p.prosrc ~* '\\m(c|clients)\\.name\\M'
+        group by p.proname order by 1`,
+      [roles],
+    );
+    expect(r.rows.map((x) => [x.proname, x.callable])).toEqual([
+      ["receptionist_calendar", false],
+      ["receptionist_client_contacts", false],
+      ["receptionist_client_contacts_v2", false],
+    ]);
   });
 });
