@@ -30,4 +30,15 @@ describe("the host form's dirty flag", () => {
   it("an EXPLICIT machine pick still counts (identityDirty is kept)", () => {
     expect(dirty).toContain("identityDirty");
   });
+  // Codex 4476240831: an EXISTING area's reading draft must count as unsaved. Source pin (the form has no component harness): dropping
+  // the `revisionDraft` term would leave typed readings unprotected by the leave guard with nothing else going red.
+  it("an existing area's reading draft counts (revisionDraft is kept in the dirty flag)", () => {
+    expect(dirty).toMatch(/\|\|\s*revisionDraft\s*\|\|/);
+  });
+  // Codex 4482278089: the automatic switch to a native machine clears prefilled legacy fields; the dirty BASELINE is rebased through the
+  // same transform so an untouched form does not read "Unsaved". Source pin of the rebase.
+  it("the dirty baseline is rebased through the same cleared() transform on the automatic kind switch", () => {
+    expect(FORM).toMatch(/initialDraftJson\.current\s*=\s*JSON\.stringify\(cleared\(JSON\.parse\(initialDraftJson\.current\) as Draft\)\)/);
+    expect(FORM).toMatch(/setDraftRef\.current\(cleared\);/);
+  });
 });

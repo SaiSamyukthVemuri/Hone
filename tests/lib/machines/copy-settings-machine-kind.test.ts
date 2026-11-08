@@ -52,4 +52,9 @@ describe("a valid client-last machine wins over an unavailable remembered prefer
   it("the unavailable-selection notice is dropped when client-last was applied", () => {
     expect(conn).toContain("unavailableSelection={newAreaLast ? null : ctx.rememberedUnavailable}");
   });
+  // Codex 4478497436: the client-last machine is only applied on a NEW area with no hold, and it comes from the server-validated
+  // `clientLastMachine`; with the notice rule above, an unavailable remembered preference cannot override it. Source pin, not a mounted proof.
+  it("client-last applies only on a new area, from the validated clientLastMachine, and the first-pick order puts it ahead of the remembered one", () => {
+    expect(conn).toContain("const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;");
+  });
 });
