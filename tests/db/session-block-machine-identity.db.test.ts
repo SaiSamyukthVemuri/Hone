@@ -633,7 +633,11 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     const studio = await seedStudio("identity-lock-profile");
     const { sessionId, blockId } = await seedSession(studio);
     await setBlock(studio, blockId, `energy_level = 3`);
-    await expect(record(studio, sessionId, blockId, PROFILE, null, null)).rejects.toThrow(REFUSED);
+    // 0310 refuses a unitless non-xCell profile at its contract check, before the xCell-readings check is reached, so the
+    // refusal is the 0310 one exactly (a regression to the 0301 path would answer differently) and nothing is stored.
+    await expect(record(studio, sessionId, blockId, PROFILE, null, null)).rejects.toThrow(
+      /A machine without a registered unit must be the xCell Pur machine\./,
+    );
     expect((await identity(blockId)).machine_profile_id).toBeNull();
   });
 
