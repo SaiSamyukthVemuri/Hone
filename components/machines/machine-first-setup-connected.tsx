@@ -599,8 +599,12 @@ export function MachineFirstSetupConnected({
   // the client's, not the practitioner's last pick anywhere. The remembered preference is the fallback, and
   // an area that already has a saved identity is never touched.
   const hasSaved = Boolean(savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId));
-  // NEW AREAS ONLY (Insurance N-7): an existing identity-less area (pre-0301 data) opens exactly as before.
-  const hold = holdAutoSelect && !blockId;
+  // EVERY AREA WITHOUT A SAVED UNIT (Insurance final448 retired the N-7 new-area-only carve-out): an area with no entered or persisted legacy settings opens as before.
+  // ONE PREDICATE FOR EVERY AUTOMATIC SOURCE (Codex #1369 4506474412, Insurance final448): client-last, the remembered preference, the loader's
+  // restored selection and the remembered-unavailable note are read ONLY through `hold`, on EVERY area. It used to be new areas only
+  // (`&& !blockId`), so an existing area with legacy settings entered auto-selected the remembered native machine and the kind switch
+  // cleared them. A SAVED unit still wins first (below), and an EXPLICIT pick is not a source: it clears, and panel and host agree.
+  const hold = holdAutoSelect;
   const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;
   const autoRemembered = hold ? null : (ctx.remembered ?? null);
 
@@ -629,7 +633,7 @@ export function MachineFirstSetupConnected({
       // the stale preference is only stated when nothing better was chosen for this new area.
       // An area SAVED AS THE EXISTING WORKFLOW states no remembered-unavailable note either (Insurance final429 C2): the note is about the
       // practitioner's preference, not this area, and beside the legacy option it reads as if the area's machine were retired.
-      unavailableSelection={newAreaLast || (hasSaved && !savedIdentity?.deviceId) ? null : ctx.rememberedUnavailable}
+      unavailableSelection={newAreaLast || hold || (hasSaved && !savedIdentity?.deviceId) ? null : ctx.rememberedUnavailable}
       // The unit this client's last setup used, offered (not selected) when
       // nothing is remembered. Forwarded here or it is inert in the real route.
       suggestedMachine={ctx.suggestedMachine}

@@ -461,3 +461,19 @@ export function legacySettingsEntered(draft: {
     draft.unitsOfLye,
   ].some((v) => v.trim() !== "");
 }
+
+/**
+ * WHETHER AUTOMATIC MACHINE SELECTION IS HELD (Codex #1369 4479490063, 4506474412): the draft carries legacy settings the practitioner entered
+ * or the area already persists, and a native machine selected on her behalf would clear them. A studio-default frequency that was merely
+ * PREFILLED is not entered work, but a frequency the area PERSISTS always counts, even when it equals the default (Insurance final448 F2):
+ * otherwise an existing area's saved frequency is ignored, the remembered native machine is seeded, and the host refuses it.
+ */
+export function autoSelectHeld(
+  draft: Parameters<typeof legacySettingsEntered>[0],
+  defaultMachineFrequency: string | null | undefined,
+  persistedMachineFrequency: string | null | undefined,
+): boolean {
+  const prefilledOnly =
+    !(persistedMachineFrequency ?? "").trim() && draft.machineFrequency.trim() === (defaultMachineFrequency?.trim() ?? "");
+  return legacySettingsEntered({ ...draft, machineFrequency: prefilledOnly ? "" : draft.machineFrequency });
+}

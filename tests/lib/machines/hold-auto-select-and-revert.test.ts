@@ -23,15 +23,50 @@ const panel = readFileSync("components/machines/machine-first-setup-panel.tsx", 
 const form = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
 
 describe("auto-resolution is held while legacy values are entered", () => {
-  it("the host passes the flag, and a studio-default frequency does not count", () => {
-    expect(form).toContain("holdAutoSelect={legacySettingsEntered(");
-    expect(form).toMatch(/draft\.machineFrequency\.trim\(\) === \(defaultMachineFrequency\?\.trim\(\) \?\? ""\)/);
+  it("the host passes the flag through autoSelectHeld, which counts a PERSISTED frequency but not a prefilled default", () => {
+    expect(form).toContain("holdAutoSelect={autoSelectHeld(draft, defaultMachineFrequency, block?.machine_frequency)}");
+    expect(form).not.toContain("holdAutoSelect={legacySettingsEntered(");
   });
-  it("the connected panel drops client-last, remembered and restored selections while held (new area only)", () => {
-    expect(conn).toContain("const hold = holdAutoSelect && !blockId;");
+  it("the connected panel drops client-last, remembered and restored selections and the retired note while held, on EVERY area", () => {
+    expect(conn).toContain("const hold = holdAutoSelect;");
+    expect(conn).not.toContain("holdAutoSelect && !blockId");
     expect(conn).toContain("!hasSaved && !blockId && !hold");
     expect(conn).toContain("const autoRemembered = hold ? null : (ctx.remembered ?? null);");
     expect(conn).toMatch(/: hasSaved \|\| hold\s+\? null\s+: ctx\.restoredSelection/);
+    expect(conn).toContain("unavailableSelection={newAreaLast || hold ||");
+  });
+  it("TRIPWIRE: the ctx fields that carry a device id are a CLOSED list, and each automatic one is read once, through the predicate", async () => {
+    const { readFileSync } = await import("node:fs");
+    const type = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts", "utf8");
+    const body = type.slice(type.indexOf("export type MachineSetupContext = {"));
+    const decl = body.slice(0, body.indexOf("\n};"));
+    // The context is a CLOSED list. Named types hide which fields carry a device id, so every field is classified here by hand:
+    // AUTOMATIC sources are gated by the predicate, SUGGESTED is a button, the rest carry no unit choice.
+    const fields = [...decl.matchAll(/^  (\w+)\??:/gm)].map((m) => m[1]).sort();
+    expect(fields, "a new ctx field must be classified (automatic / button-only / no unit) before it is added").toEqual(
+      [
+        // automatic: gated by `hold`
+        "clientLastMachine", "remembered", "rememberedUnavailable", "restoredSelection",
+        // button-only
+        "suggestedMachine",
+        // no unit choice
+        "canManageMachines", "catalogue", "devices", "inventoryReason", "legacyMachine", "persistence", "priorSetup",
+        "priorSetupUnavailable", "recordedSetup", "recordedSetupUnavailable", "scope", "unitNames",
+      ].sort(),
+    );
+    for (const f of ["clientLastMachine", "remembered", "rememberedUnavailable", "restoredSelection"]) {
+      expect((conn.match(new RegExp(`ctx\\.${f}\\b`, "g")) ?? []).length, `ctx.${f} is read exactly once`).toBe(1);
+    }
+    expect(conn.match(/ctx\.suggestedMachine\b/g)?.length, "suggested is offered, never selected: the panel renders a button").toBe(1);
+  });
+  it("autoSelectHeld: entered work holds; a prefilled default does not; a PERSISTED frequency always does", async () => {
+    const { autoSelectHeld } = await import("@/lib/machines/pending-setup");
+    const empty = { mode: "", apilusModality: "", energyLevel: "", machineFrequency: "", thermolysisIntensityPercent: "", thermolysisDurationSeconds: "", galvanicMa: "", galvanicDurationSeconds: "", unitsOfLye: "" };
+    expect(autoSelectHeld(empty, "13.56 MHz", null)).toBe(false);
+    expect(autoSelectHeld({ ...empty, machineFrequency: "13.56 MHz" }, "13.56 MHz", null), "prefilled default, not persisted").toBe(false);
+    expect(autoSelectHeld({ ...empty, machineFrequency: "13.56 MHz" }, "13.56 MHz", "13.56 MHz"), "persisted, equal to the default").toBe(true);
+    expect(autoSelectHeld({ ...empty, machineFrequency: "27.12 MHz" }, "13.56 MHz", null), "typed, different from the default").toBe(true);
+    expect(autoSelectHeld({ ...empty, galvanicMa: "5" }, null, null)).toBe(true);
   });
   it("NEGATIVE CONTROL: an explicit pick is not held (the panel's own chooseDevice path is unchanged)", () => {
     expect(panel).toContain("const chooseDevice = async");

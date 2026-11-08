@@ -118,7 +118,7 @@ import {
   prepareHandoff,
   copyPatchForMachine,
   copySourceMatchesMachine,
-  legacySettingsEntered,
+  autoSelectHeld,
   type PendingSetupIdentity,
 } from "@/lib/machines/pending-setup";
 import {
@@ -1973,11 +1973,8 @@ export function BlockSetupForm({
         // below can be frozen by it (Codex, #860 4302176844).
         onIdentityWritePending={setIdentityWritePending}
         // A studio-default frequency is prefilled, not typed: it does not count as entered work.
-        holdAutoSelect={legacySettingsEntered({
-          ...draft,
-          machineFrequency:
-            draft.machineFrequency.trim() === (defaultMachineFrequency?.trim() ?? "") ? "" : draft.machineFrequency,
-        })}
+        // A persisted frequency counts even when it equals the default (autoSelectHeld).
+        holdAutoSelect={autoSelectHeld(draft, defaultMachineFrequency, block?.machine_frequency)}
         // THE SAVED CHOICE of this area (the record), not a preference.
         savedIdentity={
           block
