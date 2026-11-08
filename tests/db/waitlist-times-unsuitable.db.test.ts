@@ -179,11 +179,17 @@ describe("0319 decline_waitlist_invitation_times_unsuitable", () => {
     await q(DECLINE, [p.token, p.cap, null]);
     const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-    const a = await q<any>(
-      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`,
-      [f.studioId, f.userId, p.entryId, f.serviceId, from, to],
-    );
-    expect(a[0].result).toBe("admitted");
+    const admit = (end: string) =>
+      q<any>(
+        `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`,
+        [f.studioId, f.userId, p.entryId, f.serviceId, from, end],
+      );
+    // 0192 refuses only the IDENTICAL offer to an entry that declined it; the
+    // person's return to waiting does not make the same offer reissuable.
+    expect((await admit(to))[0].result).toBe("already_declined_offer");
+    // A different window is a new offer and is admitted.
+    const later = new Date(Date.now() + 31 * 86_400_000).toISOString().slice(0, 10);
+    expect((await admit(later))[0].result).toBe("admitted");
   });
 
   it("is service_role-only, table included, and erased with the studio", async () => {

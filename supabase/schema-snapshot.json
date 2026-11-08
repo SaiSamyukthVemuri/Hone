@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 258,
-    "last": "0313_waitlist_booking_command.sql",
-    "sha256": "96d8c8885e942215302af569d2988b2de6aaf17713b2f004b2505fb859feefbc"
+    "count": 259,
+    "last": "0319_waitlist_times_unsuitable.sql",
+    "sha256": "28896fe9022c3893aba1fea5a73f1da0476a8d50a88d33321bff69638f2f9a88"
   },
   "public": {
     "tables": [
@@ -129,7 +129,8 @@
       "treatment_setup_readings",
       "treatment_setup_submissions",
       "waitlist",
-      "waitlist_invitation_followups"
+      "waitlist_invitation_followups",
+      "waitlist_times_feedback"
     ],
     "functions": [
       "_acquire_payment_method_tuple_xact_lock",
@@ -144,6 +145,7 @@
       "_touch_manual_fee_charge_attempts_updated_at",
       "_whole_session_copy_fingerprint",
       "_whole_session_copy_source_id",
+      "acknowledge_waitlist_times_feedback",
       "acquire_studio_capacity_lock",
       "add_electrolysis_pass",
       "add_studio_receptionist",
@@ -234,6 +236,7 @@
       "consume_payment_recovery_tokens_for_charge_attempt",
       "copy_session_setup",
       "correct_finalized_session",
+      "count_waitlist_times_feedback",
       "create_appointment_core",
       "create_block_with_entry",
       "create_block_with_initial_setup",
@@ -256,6 +259,7 @@
       "current_terms_version",
       "dashboard_attention_events_immutable",
       "decline_new_client_waitlist_invitation",
+      "decline_waitlist_invitation_times_unsuitable",
       "default_eligibility_for_practitioner",
       "default_eligibility_for_service",
       "delete_availability_day_locked",
@@ -335,6 +339,7 @@
       "latest_setup_for_client",
       "link_invited_membership",
       "list_dismissed_attention",
+      "list_waitlist_times_feedback",
       "lock_appointment_for_command",
       "lock_structural_calendar_source_mutation",
       "lock_studio_and_assert_owner",
