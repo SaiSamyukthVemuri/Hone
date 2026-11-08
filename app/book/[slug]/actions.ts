@@ -60,6 +60,7 @@ import {
   NEW_CLIENT_ADMISSION_REFUSAL_CODE,
   newClientAdmissionRefusesOutright,
   newClientMayBook,
+  readClosedInvitedBookingRule,
 } from "@/lib/booking/new-client-admission";
 import {
   clientManagePageAllowed,
@@ -655,8 +656,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //   waitlist -> the ORDINARY path refuses, and a valid scoped invitation is
   //               the ONE exception that may authorise. This is the WAIT
   //               invitation lifecycle and it is preserved unchanged below.
-  //   closed   -> NOBODY new books. A previously issued invitation must not
-  //               override a studio its owner has closed.
+  //   closed   -> no PUBLIC new-client booking. Until 0323 is applied, nobody new
+  //               books: a previously issued invitation must not override a
+  //               studio its owner has closed. Once 0323 is applied (the marker
+  //               answers true) a person presenting BOTH halves of an invitation
+  //               is sent on to authorizeInvitationForBooking like a waitlist
+  //               studio's invitee; everyone else is still refused here.
   //   unknown  -> fail closed. A failed read must not be recoverable by
   //               presenting credentials.
   //
@@ -674,7 +679,22 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // EXISTING CLIENTS ARE OUTSIDE THIS AUTHORITY: the condition is
   // clientType === "new", exactly as the ordinary gate below.
-  if (clientType === "new" && newClientAdmissionRefusesOutright(admission)) {
+  //
+  // 0323: the ONLY exception is a CLOSED studio, both invitation halves presented, and the
+  // database rule applied (the marker). The marker is read only in that case. A failed or absent
+  // marker, an unreadable mode, and any request without both halves keep the refusal below.
+  const closedInvitedBookingAllowed =
+    clientType === "new" &&
+    admission.ok &&
+    admission.mode === "closed" &&
+    Boolean(invitationToken) &&
+    Boolean(invitationCapability) &&
+    (await readClosedInvitedBookingRule()) === "applied";
+  if (
+    clientType === "new" &&
+    newClientAdmissionRefusesOutright(admission) &&
+    !closedInvitedBookingAllowed
+  ) {
     return {
       ok: false,
       error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,

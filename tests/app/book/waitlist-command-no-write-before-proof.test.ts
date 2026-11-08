@@ -46,7 +46,10 @@ const scenario = {
   rpcResult: "created" as string,
   rpcClientId: null as string | null,
   rpcError: null as { code: string; message: string } | null,
+  /** 0323 marker: applied | absent (not yet applied) | error (any other failure). */
+  marker: "absent" as "applied" | "absent" | "error",
 };
+let markerReads = 0;
 const eqCalls: Array<[string, unknown]> = [];
 
 function makeChain(table: string) {
@@ -119,6 +122,12 @@ function makeChain(table: string) {
 const admin = {
   from: (table: string) => makeChain(table),
   rpc: async (fn: string) => {
+    // The 0323 marker is a read, not a command: answered from the scenario, never recorded as one.
+    if (fn === "waitlist_closed_invited_booking_enabled") {
+      markerReads += 1;
+      if (scenario.marker === "applied") return { data: true, error: null };
+      return { data: null, error: { code: scenario.marker === "absent" ? "PGRST202" : "XX000", message: "x" } };
+    }
     rpcCalls.push(fn);
     events.push(`rpc:${fn}`);
     if (scenario.rpcError) return { data: null, error: scenario.rpcError };
@@ -285,6 +294,8 @@ beforeEach(() => {
   scenario.rpcResult = "created";
   scenario.rpcClientId = null;
   scenario.rpcError = null;
+  scenario.marker = "absent";
+  markerReads = 0;
   admissionOverride = null;
   authorizeCalls.length = 0;
   authorizeResult = "authorized";
@@ -386,5 +397,78 @@ describe("0313 command path: no write precedes proof of the capability", () => {
     const cmd = events.findIndex((e) => e.startsWith("rpc:create_"));
     expect(stamp, "the flag-off stamp still runs").toBeGreaterThanOrEqual(0);
     expect(cmd).toBeGreaterThan(stamp);
+  });
+});
+
+describe("0323: a CLOSED studio books an invited person through publicBookAppointmentAction", () => {
+  const CLOSED = { ok: true, mode: "closed", source: "persisted" } as never;
+  const UNKNOWN = { ok: false } as never;
+  beforeEach(() => {
+    vi.stubEnv("WAITLIST_BOOKING_COMMAND", "1");
+    scenario.rpcResult = "created_and_converted";
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("marker applied + both halves: the invitation is authorized and the booking command runs", async () => {
+    admissionOverride = CLOSED;
+    scenario.marker = "applied";
+    const r = await publicBookAppointmentAction(invitedForm());
+    expect(r.ok).toBe(true);
+    expect(authorizeCalls).toHaveLength(1);
+    expect(rpcCalls).toContain("redeem_and_book_waitlist_invitation");
+  });
+
+  it("marker applied but the invitation is not authorized: refused as an invitation refusal, no command", async () => {
+    admissionOverride = CLOSED;
+    scenario.marker = "applied";
+    authorizeResult = "scope_refused";
+    const r = await publicBookAppointmentAction(invitedForm());
+    expect(r.ok).toBe(false);
+    expect(authorizeCalls).toHaveLength(1);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it.each([["absent"], ["error"]] as const)(
+    "marker %s: still refused as closed, before the invitation is consulted",
+    async (marker) => {
+      admissionOverride = CLOSED;
+      scenario.marker = marker;
+      const r = await publicBookAppointmentAction(invitedForm());
+      expect(r.ok).toBe(false);
+      expect(r.ok === false && r.code).toBe("new_client_admission_closed");
+      expect(authorizeCalls).toEqual([]);
+      expectNothingMutated();
+    },
+  );
+
+  it("marker applied but only ONE half presented: refused as closed, invitation never consulted", async () => {
+    admissionOverride = CLOSED;
+    scenario.marker = "applied";
+    for (const half of [{ invitation_token: "raw-token" }, { invitation_capability: "cap-under-test" }, {}] as Record<string, string>[]) {
+      authorizeCalls.length = 0;
+      const r = await publicBookAppointmentAction(form(half));
+      expect(r.ok).toBe(false);
+      expect(r.ok === false && r.code).toBe("new_client_admission_closed");
+      expect(authorizeCalls).toEqual([]);
+    }
+  });
+
+  it("an ordinary public booking (no invitation) under Closed is refused and the marker is not even read", async () => {
+    admissionOverride = CLOSED;
+    scenario.marker = "applied";
+    const r = await publicBookAppointmentAction(form());
+    expect(r.ok).toBe(false);
+    expect(markerReads).toBe(0);
+    expectNothingMutated();
+  });
+
+  it("an UNKNOWN mode refuses even with both halves and the marker applied; the marker is not read", async () => {
+    admissionOverride = UNKNOWN;
+    scenario.marker = "applied";
+    const r = await publicBookAppointmentAction(invitedForm());
+    expect(r.ok).toBe(false);
+    expect(markerReads).toBe(0);
+    expect(authorizeCalls).toEqual([]);
+    expectNothingMutated();
   });
 });
