@@ -1501,7 +1501,9 @@ export type PractitionerNotificationEventType =
   // every other role's reads (lib/notifications/owner-only-events.ts). Deduped on
   // the mode-scoped SetupIntent business key.
   | "card_added"
-  | "card_replaced";
+  | "card_replaced"
+  // Written by the waitlist decline command (HON-7), owner-only like the card events.
+  | "waitlist_offer_declined";
 
 export type PractitionerNotification = {
   id: string;
