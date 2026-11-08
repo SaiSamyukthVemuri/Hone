@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
-import { adminQuery, asRole, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
 import { waitUntilBlocked } from "./helpers/waitlist-concurrency";
 
 const q = async <T>(text: string, params: unknown[] = []): Promise<T[]> =>
@@ -158,7 +158,12 @@ describe("0324 an invitation stops counting the moment it stops being live", () 
 
   it("expired", async () => {
     const { f, a, b } = await withOne("exp");
-    await q(`update public.new_client_waitlist_invitations set expires_at = now() - interval '1 minute' where entry_id = $1`, [a]);
+    // The window is immutable (a trigger refuses it), so the clock is moved past the deadline the way a real
+    // elapsed offer looks: expires_at in the past, nothing recorded yet.
+    await adminTx(async (query) => {
+      await query(`set local session_replication_role = replica`);
+      await query(`update public.new_client_waitlist_invitations set issued_at = now() - interval '49 hours', expires_at = now() - interval '1 hour' where entry_id = $1`, [a]);
+    });
     expect((await admit(f, b, 1)).result).toBe("admitted");
   });
 

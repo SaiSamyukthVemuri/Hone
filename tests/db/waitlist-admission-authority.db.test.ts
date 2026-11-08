@@ -128,7 +128,13 @@ const GRANTED_IN_MIGRATION = (() => {
   while ((m = re.exec(MIGRATION_SQL)) !== null) {
     found.push(`${m[1]}(${m[2]!.split(",").map((a) => a.trim()).join(",")})`);
   }
-  return found;
+  // 0324 REPLACED admit_ at a wider signature (a ninth argument, the send-time fit) and dropped the
+  // 0193 one, so 0193's own text names a signature the applied chain no longer holds.
+  return found.map((sig) =>
+    sig === "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer)"
+      ? "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer)"
+      : sig,
+  );
 })();
 
 type LiveFunction = {
@@ -2710,7 +2716,7 @@ describe("the studio lock mode is compatible with FK key-share", () => {
     // The primary product seam. Its OUTER lock is the one the runtime races
     // could not see at all: removing it left the suite fully green.
     ["admit_new_client_waitlist_entry",
-     "p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_service_id uuid, p_start_date date, p_end_date date, p_allowed_weekdays smallint[], p_ttl_hours integer"],
+     "p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_service_id uuid, p_start_date date, p_end_date date, p_allowed_weekdays smallint[], p_ttl_hours integer, p_fit integer"],
   ];
 
   /**
