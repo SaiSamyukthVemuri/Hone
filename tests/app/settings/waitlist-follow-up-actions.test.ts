@@ -17,7 +17,8 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/waitlist/followups-owner", () => ({
   markDeclineHandled: h.cmd.mark, keepWithdrawal: h.cmd.keep, eraseAnswers: h.cmd.erase, linkFollowUpAppointment: h.cmd.link,
 }));
-import { eraseAnswersAction, keepWithdrawalAction, linkAppointmentAction, markHandledAction, noticeFor } from "@/app/(app)/settings/waitlist/follow-up-actions";
+import { eraseAnswersAction, keepWithdrawalAction, linkAppointmentAction, markHandledAction } from "@/app/(app)/settings/waitlist/follow-up-actions";
+import { noticeFor } from "@/lib/waitlist/follow-up-notice";
 
 const STUDIO = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -72,6 +73,14 @@ describe("the owner follow-up commands", () => {
   it("link also refuses a bad appointment id", async () => {
     expect(await target(linkAppointmentAction(form({ followupId: F, appointmentId: "nope" })))).toContain("fu=refused");
     expect(h.cmd.link).not.toHaveBeenCalled();
+  });
+  it("the \"use server\" file exports only async functions and types: Next refuses anything else at build", () => {
+    for (const f of ["app/(app)/settings/waitlist/follow-up-actions.ts", "app/invitation/[token]/actions.ts"]) {
+      const src = readFileSync(join(process.cwd(), f), "utf8");
+      expect(src.trimStart().startsWith('"use server"'), f).toBe(true);
+      const bad = src.split("\n").filter((l) => /^export /.test(l) && !/^export (async function|type|interface) /.test(l));
+      expect(bad, f).toEqual([]);
+    }
   });
   it("every outcome maps to a closed notice", () => {
     expect(noticeFor("done")).toBe("done");

@@ -58,6 +58,9 @@ export const DECLINE_OWNER_EMAIL_BATCH_SIZE = 50;
 export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
 /** With the answers flag ON the notice counts open follow-ups; past this many distinct failed responses it says "500+" instead of a silently truncated count. */
 export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP = 500;
+/** Failed rows are read in pages of this many (never more than one status call's worth of ids), at most this many pages per render. */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS = 500;
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES = 20;
 
 /** A row left in `sending` longer than this was abandoned by a dead invocation and may be claimed again. */
 export const DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES = 10;

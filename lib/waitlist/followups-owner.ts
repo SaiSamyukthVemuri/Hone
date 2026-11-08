@@ -79,20 +79,23 @@ export async function readFollowUps(studioId: string, actorUserId: string | null
 /**
  * The status of many invitations' follow-ups in ONE call, from the STATUS-ONLY read, which returns no name and no answer, so counting never
  * loads personal text. An invitation with no follow-up has no row (`none`, absent from the map).
- * TODO(0325): the batched signature `read_waitlist_followup_status(p_studio_id, p_actor_user_id, p_invitation_ids uuid[])` is Willow's pending
- * change to the contract; confirm the final argument name against CONTRACT.md before binding.
+ * Contract: `read_waitlist_followup_status(p_studio_id, p_actor_user_id, p_invitation_ids uuid[])`, at most 500 ids; more is REFUSED by the database
+ * (errcode 22023), never truncated, so this refuses to call with more and reports `too_many`.
  */
-export type FollowUpStatusesRead = { kind: "unknown" } | { kind: "ok"; byInvitation: Map<string, FollowUpStatus> };
+export const FOLLOWUP_STATUS_MAX_IDS = 500;
+export type FollowUpStatusesRead = { kind: "unknown" } | { kind: "too_many" } | { kind: "ok"; byInvitation: Map<string, FollowUpStatus> };
 
 export async function readFollowUpStatuses(studioId: string, actorUserId: string | null, invitationIds: string[]): Promise<FollowUpStatusesRead> {
   if (!actorUserId) return { kind: "unknown" };
   if (invitationIds.length === 0) return { kind: "ok", byInvitation: new Map() };
+  if (invitationIds.length > FOLLOWUP_STATUS_MAX_IDS) return { kind: "too_many" };
   try {
     const { data, error } = await createAdminClient().rpc("read_waitlist_followup_status", {
       p_studio_id: studioId,
       p_actor_user_id: actorUserId,
       p_invitation_ids: invitationIds,
     });
+    if (error?.code === "22023") return { kind: "too_many" };
     if (error || !Array.isArray(data)) return { kind: "unknown" };
     const byInvitation = new Map<string, FollowUpStatus>();
     for (const r of data as Array<{ invitation_id?: unknown; status?: unknown }>) {

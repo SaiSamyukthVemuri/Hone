@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { FollowUpRow } from "@/lib/waitlist/followups-owner";
 import type { LinkableAppointment } from "@/lib/waitlist/followup-linkable";
 import { bellStatusLine, DECLINE_CARD_SAVED, emailStatusLine, emptyOutboxCounts, type OutboxCounts } from "@/lib/waitlist/decline-status-lines";
@@ -7,8 +8,8 @@ import {
   keepWithdrawalAction,
   linkAppointmentAction,
   markHandledAction,
-  type FollowUpNotice,
 } from "@/app/(app)/settings/waitlist/follow-up-actions";
+import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
 
 // HON-7 (b). The owner's follow-up section: the target of the `#follow-up` anchor the email, the bell and the sign-in return all land on.
 // OWNER-ONLY BY CONSTRUCTION: it renders the recipient's answers, so it must only ever be rendered after the page's owner check (a test pins the
@@ -146,9 +147,9 @@ export function DeclineFollowUpSection({
                     </form>
                   ))}
                   <div className="flex flex-wrap gap-2">
-                    <a href="/calendar" className={BUTTON}>
+                    <Link href="/calendar" className={BUTTON}>
                       Book now
-                    </a>
+                    </Link>
                     {r.kind === "decline" ? (
                       <form action={markHandledAction}>
                         <Hidden id={r.followupId} />

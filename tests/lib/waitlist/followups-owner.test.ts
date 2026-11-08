@@ -67,6 +67,13 @@ describe("the owner reads", () => {
     expect(await readFollowUpStatuses(S, A, ["i1"])).toEqual({ kind: "unknown" });
     expect(await readFollowUpStatuses(S, null, ["i1"])).toEqual({ kind: "unknown" });
   });
+  it("more than 500 ids is never sent: too_many without a call; a 22023 refusal is too_many, not unknown", async () => {
+    const many = Array.from({ length: 501 }, (_, i) => `i${i}`);
+    expect(await readFollowUpStatuses(S, A, many)).toEqual({ kind: "too_many" });
+    expect(h.rpc).not.toHaveBeenCalled();
+    h.rpc.mockResolvedValue({ data: null, error: { code: "22023" } });
+    expect(await readFollowUpStatuses(S, A, ["i1"])).toEqual({ kind: "too_many" });
+  });
   it("no invitations means no call", async () => {
     expect(await readFollowUpStatuses(S, A, [])).toEqual({ kind: "ok", byInvitation: new Map() });
     expect(h.rpc).not.toHaveBeenCalled();

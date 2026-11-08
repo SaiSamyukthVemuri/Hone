@@ -14,7 +14,6 @@ export { NO_TIMES_WORK_NOTICE };
 
 export const DECLINE_ANSWER_MAX = 1000;
 
-// eslint-disable-next-line no-control-regex
 const FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 export type NoTimesWorkAnswers = { why: string; better: string };

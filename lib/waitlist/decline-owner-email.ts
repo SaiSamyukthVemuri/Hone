@@ -11,6 +11,8 @@ import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
   DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP,
   DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS,
   DECLINE_OWNER_EMAIL_BATCH_SIZE,
   DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS,
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
@@ -312,26 +314,46 @@ export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: str
       return { kind: "ok", failed: count };
     }
     if (!actorUserId) return { kind: "unknown" };
-    const { data, error } = await admin
-      .from("waitlist_decline_owner_emails")
-      .select("invitation_id")
-      .eq("studio_id", studioId)
-      .eq("status", "failed")
-      .gte("created_at", activation.since.toISOString())
-      .order("id", { ascending: true })
-      .limit(DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP + 1);
-    if (error || !Array.isArray(data)) return { kind: "unknown" };
-    // More rows than the cap means we cannot know the distinct count: say so below instead of counting a silent prefix.
-    const rowsTruncated = data.length > DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP;
-    const all = [...new Set((data as Array<{ invitation_id?: unknown }>).flatMap((r) => (typeof r.invitation_id === "string" ? [r.invitation_id] : [])))];
-    const invitations = all.slice(0, DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP);
-    const truncated = rowsTruncated || all.length > invitations.length;
-    if (invitations.length === 0) return { kind: "ok", failed: 0 };
-    const st = await readFollowUpStatuses(studioId, actorUserId, invitations);
-    if (st.kind !== "ok") return { kind: "unknown" };
+    // The OPEN filter is applied BEFORE any cap: failed rows are walked in pages by id, each page's new invitations go through ONE status call, and
+    // only open ones are counted. A cap on the failed rows themselves could pick only handled responses and hide real open ones.
+    // Stops as soon as the open count reaches the cap ("500+"), or the rows are exhausted (an exact count). If the page budget runs out first the
+    // answer is "at least what was found" when something open was found, and unknown otherwise: zero is never rendered beside "at least".
+    const seen = new Set<string>();
     let open = 0;
-    for (const id of invitations) if (st.byInvitation.get(id) === "open") open += 1;
-    return truncated ? { kind: "ok", failed: open, atLeast: true } : { kind: "ok", failed: open };
+    let after: string | null = null;
+    for (let page = 0; page < DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES; page += 1) {
+      let q = admin
+        .from("waitlist_decline_owner_emails")
+        .select("id,invitation_id")
+        .eq("studio_id", studioId)
+        .eq("status", "failed")
+        .gte("created_at", activation.since.toISOString())
+        .order("id", { ascending: true })
+        .limit(DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS);
+      if (after) q = q.gt("id", after);
+      const { data, error } = await q;
+      if (error || !Array.isArray(data)) return { kind: "unknown" };
+      const rows = data as Array<{ id?: unknown; invitation_id?: unknown }>;
+      const fresh: string[] = [];
+      for (const r of rows) {
+        if (typeof r.invitation_id === "string" && !seen.has(r.invitation_id)) {
+          seen.add(r.invitation_id);
+          fresh.push(r.invitation_id);
+        }
+      }
+      if (fresh.length > 0) {
+        const st = await readFollowUpStatuses(studioId, actorUserId, fresh);
+        // A page never carries more ids than one call accepts, so a refusal for size is a contract surprise: unknown, not a count.
+        if (st.kind !== "ok") return { kind: "unknown" };
+        for (const id of fresh) if (st.byInvitation.get(id) === "open") open += 1;
+        if (open >= DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP) return { kind: "ok", failed: DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, atLeast: true };
+      }
+      if (rows.length < DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS) return { kind: "ok", failed: open };
+      const last = rows[rows.length - 1]?.id;
+      if (typeof last !== "string") return { kind: "unknown" };
+      after = last;
+    }
+    return open > 0 ? { kind: "ok", failed: open, atLeast: true } : { kind: "unknown" };
   } catch {
     return { kind: "unknown" };
   }

@@ -9,8 +9,8 @@ import {
   keepWithdrawal,
   linkFollowUpAppointment,
   markDeclineHandled,
-  type CommandOutcome,
 } from "@/lib/waitlist/followups-owner";
+import { noticeFor, type FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
 
 // 0325 — the owner's follow-up commands. STUDIO AND ACTOR COME FROM THE VERIFIED SESSION (getCurrentPractitionerWithStudio reads getUser),
 // never the form; the form carries only ids, each checked as a UUID before it is used. The database re-derives the owner role regardless.
@@ -18,22 +18,6 @@ import {
 // response was handled. No answer text, name or id is put in the redirect.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BACK = "/settings/waitlist";
-
-export type FollowUpNotice = "done" | "already" | "refused" | "failed";
-
-/** The closed code carried in `?fu=`. Exported for the page, which maps it to copy. */
-export function noticeFor(outcome: CommandOutcome): FollowUpNotice {
-  switch (outcome) {
-    case "done":
-      return "done";
-    case "already":
-      return "already";
-    case "unavailable":
-      return "failed";
-    default:
-      return "refused";
-  }
-}
 
 function field(formData: FormData, name: string): string | null {
   const v = formData.get(name);

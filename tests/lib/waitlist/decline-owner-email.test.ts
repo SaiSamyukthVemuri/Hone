@@ -9,7 +9,7 @@ const status = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/waitlist/followups-owner", () => ({ readFollowUpStatuses: status }));
 import { dispatchDeclineOwnerEmail, getDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
 import { declineOwnerEmailRowEligible } from "@/lib/waitlist/decline-owner-email-gate";
-import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
+import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES, DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
 import { buildWaitlistDeclineOwnerEmail, WAITLIST_DECLINE_OWNER_BODY, WAITLIST_DECLINE_OWNER_SUBJECT } from "@/lib/email/templates/waitlist-decline-owner";
 
 // HON-7 item 4. Synthetic ids and addresses only. The fake below models the outbox table, the practitioners table and the auth user read.
@@ -431,12 +431,38 @@ describe("status shown in Hone, answers flag ON (tied to the OPEN follow-up, via
     const w = world(); w.owner({ status: "sent" });
     expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
   });
-  it("past the cap it says 'at least' rather than counting a silent prefix", async () => {
-    const w = world();
-    for (let i = 0; i <= DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP; i += 1) failedRow(w, `inv-${i}`);
-    status.mockImplementation(async (_s: string, _a: string | null, ids: string[]) => ({ kind: "ok", byInvitation: new Map(ids.map((id) => [id, "open"] as const)) }));
-    const out = await getDeclineEmailStatus(w.admin, STUDIO, ACTOR);
-    expect(out).toEqual({ kind: "ok", failed: DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, atLeast: true });
+  const manyFailed = (w: ReturnType<typeof world>, n: number) => {
+    for (let i = 0; i < n; i += 1) failedRow(w, `inv-${String(i).padStart(4, "0")}`);
+  };
+  const statusBy = (isOpen: (id: string) => boolean) =>
+    status.mockImplementation(async (_s: string, _a: string | null, ids: string[]) => {
+      expect(ids.length).toBeLessThanOrEqual(DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP);
+      return { kind: "ok", byInvitation: new Map(ids.map((id) => [id, isOpen(id) ? "open" : "handled"] as const)) };
+    });
+  it("600 failed rows, 550 handled FIRST and 50 open: shows 50, not zero and not a prefix", async () => {
+    const w = world(); manyFailed(w, 600);
+    statusBy((id) => Number(id.slice(4)) >= 550);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 50 });
+  });
+  it("600 failed rows all open: caps at 500+ without ever claiming a smaller exact number", async () => {
+    const w = world(); manyFailed(w, 600);
+    statusBy(() => true);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, atLeast: true });
+  });
+  it("600 failed rows all handled: exactly zero, with no 'at least'", async () => {
+    const w = world(); manyFailed(w, 600);
+    statusBy(() => false);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+  });
+  it("never renders zero beside 'at least': if the page budget runs out with nothing open it is unknown", async () => {
+    const w = world(); manyFailed(w, DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS * DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES + 1);
+    statusBy(() => false);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
+  });
+  it("a size refusal from the database on a page of at most 500 ids is a contract surprise: unknown, never a count", async () => {
+    const w = world(); failedRow(w, "inv-1");
+    status.mockResolvedValue({ kind: "too_many" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
   });
   it("ignores rows from before activation", async () => {
     const w = world(); failedRow(w, "inv-1", "2026-11-08T00:00:00.000Z");
