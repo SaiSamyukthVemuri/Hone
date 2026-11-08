@@ -235,6 +235,49 @@ describe("a saved machine identity, through the connected wrapper", () => {
 // ===========================================================================
 // THE PANEL TRACKS ITS OWN SUCCESSFUL IDENTITY WRITES (Codex, #1369 4475581937; Photos R2)
 // ===========================================================================
+// WHICH UNIT AND MODE OPEN (Codex #1369 4505565741): saved, restored and remembered are three sources of one decision, and a saved unit wins.
+// Sources: connected `restoredSelection` (saved identity > loader's restored > none), `initialDeviceId`/`initialModeKey` (remembered; they
+// only seed the PERSISTED preference once a restored selection exists) and the panel's seed (restored, else unusable, else initial).
+describe("which unit opens: a saved unit always wins", () => {
+  const DEVICE_B: StudioDevice = { ...DEVICE, deviceId: "room-7", displayName: "Room 7 unit" };
+  const B_CTX = {
+    devices: [DEVICE, DEVICE_B],
+    remembered: { deviceId: "room-7", modeKey: "second" },
+    restoredSelection: { deviceId: "room-7", modeKey: "second" },
+  };
+  const selected = () => host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value;
+  const entry = () => host!.querySelector('[data-testid="machine-reading-entry"]');
+
+  it("saved A with a NULL mode while B is remembered and restored: A is shown, mode unset, no reading form, nothing is written", async () => {
+    await mount({ blockId: "b1", ctx: B_CTX, savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: null } });
+    expect(selected(), "the saved unit, not the remembered one").toBe("room-9");
+    expect(host!.querySelector('[data-testid="machine-mode-unresolved"]'), "the mode-unset state is shown").not.toBeNull();
+    expect(host!.textContent).toContain("No mode is recorded for this machine on this area");
+    expect(entry(), "no reading form for ANY unit until a mode is chosen").toBeNull();
+    expect(actions.recordBlockMachineIdentityAction, "opening writes nothing").not.toHaveBeenCalled();
+    expect(actions.recordSetupSubmissionAction).not.toHaveBeenCalled();
+  });
+
+  it("saved A with a mode is unchanged: A and its mode, even with B remembered", async () => {
+    await mount({ blockId: "b1", ctx: B_CTX, savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: "galvanic" } });
+    expect(selected()).toBe("room-9");
+    expect(host!.querySelector('[data-testid="machine-mode-unresolved"]')).toBeNull();
+    expect(entry(), "its reading form mounts").not.toBeNull();
+  });
+
+  it("no saved unit: the existing fallback still applies (restored, then remembered)", async () => {
+    await mount({ blockId: "b1", ctx: B_CTX, savedIdentity: null });
+    // an identity-less existing area opens only on a click; the fallback is the loader's restored selection
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(selected(), "restored selection wins over nothing").toBe("room-7");
+    await act(async () => root!.unmount());
+    host!.remove();
+    await mount({ blockId: "b1", ctx: { ...B_CTX, restoredSelection: null }, savedIdentity: null });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(selected(), "remembered applies when nothing is restored").toBe("room-7");
+  });
+});
+
 describe("the component follows its own identity writes", () => {
   const pick = async (value: string) => {
     const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;

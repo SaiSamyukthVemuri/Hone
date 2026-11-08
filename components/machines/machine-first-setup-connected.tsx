@@ -633,10 +633,17 @@ export function MachineFirstSetupConnected({
       suggestedMachine={ctx.suggestedMachine}
       // A reopened visit's last saved unit and mode. Forwarded here or it is
       // inert in the real route.
+      // WHICH UNIT AND MODE OPEN, ONE PRECEDENCE (Codex #1369 4505565741). Three sources decide it: the area's SAVED identity (this prop),
+      // the loader's restored selection (the client's last saved unit) and the practitioner's remembered preference (initialDeviceId /
+      // initialModeKey above). A SAVED UNIT ALWAYS WINS, and it is never replaced by another machine: a saved unit with a NULL mode (a
+      // supported state: checkDeviceChoice and both identity RPCs allow it) used to fall through to the restored or remembered machine,
+      // whose reading form then saved against an identity nobody chose. It now opens on its own unit with the mode UNSET, which the panel
+      // shows as "choose a mode" (an empty key is its existing set-but-not-offered state) and mounts no reading form for.
+      // Only an area with no saved unit consults the restored selection, and a held new area consults nothing.
       restoredSelection={
-        savedIdentity?.deviceId && savedIdentity.modeKey
-          ? { deviceId: savedIdentity.deviceId, modeKey: savedIdentity.modeKey }
-          : hold
+        savedIdentity?.deviceId
+          ? { deviceId: savedIdentity.deviceId, modeKey: savedIdentity.modeKey ?? "" }
+          : hasSaved || hold
             ? null
             : ctx.restoredSelection
       }

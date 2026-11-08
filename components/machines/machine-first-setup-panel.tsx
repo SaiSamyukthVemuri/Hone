@@ -767,7 +767,9 @@ function MachineFirstSetupPanelImpl({
       )}
       {modeUnresolved && (
         <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-mode-unresolved">
-          Recorded mode not available on this machine. Choose a mode to continue.
+          {modeKey === ""
+            ? "No mode is recorded for this machine on this area. Choose a mode to continue."
+            : "Recorded mode not available on this machine. Choose a mode to continue."}
         </p>
       )}
       {savedUnavailable && (

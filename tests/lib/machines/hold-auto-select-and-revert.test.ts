@@ -31,7 +31,7 @@ describe("auto-resolution is held while legacy values are entered", () => {
     expect(conn).toContain("const hold = holdAutoSelect && !blockId;");
     expect(conn).toContain("!hasSaved && !blockId && !hold");
     expect(conn).toContain("const autoRemembered = hold ? null : (ctx.remembered ?? null);");
-    expect(conn).toMatch(/: hold\s+\? null\s+: ctx\.restoredSelection/);
+    expect(conn).toMatch(/: hasSaved \|\| hold\s+\? null\s+: ctx\.restoredSelection/);
   });
   it("NEGATIVE CONTROL: an explicit pick is not held (the panel's own chooseDevice path is unchanged)", () => {
     expect(panel).toContain("const chooseDevice = async");
