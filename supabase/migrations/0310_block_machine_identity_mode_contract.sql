@@ -144,7 +144,12 @@ begin
       from public.studio_machines m
      where m.id = p_studio_machine_id
        and m.studio_id = p_studio_id
-       and m.retired_at is null;
+       and m.retired_at is null
+       -- LOCK THE UNIT BEFORE ACCEPTING IT (Codex 4487384239). retire_studio_machine serialises only through its UPDATE row lock, so an
+       -- unlocked read here could see retired_at null, lose the race to a committed retire, and then record a retired unit on the block.
+       -- FOR SHARE (taken after the session and block locks, so the order stays session, block, unit) makes a concurrent retire wait, and
+       -- under READ COMMITTED the predicate is then re-evaluated against the committed row: a retired unit is refused below.
+       for share of m;
     if v_unit_profile is null then
       raise exception 'That machine is not available in this studio.'
         using errcode = 'check_violation';

@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
+import { Client } from "pg";
 
-import { adminQuery, asUser, closePool, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, asUser, closePool, resolveLocalDbUrl, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { expectBlockedOn } from "./helpers/waitlist-concurrency";
 
 // ===========================================================================
 // #1369 / 0301 FOLLOW-UP: THE IDENTITY ENTRYPOINTS VALIDATE THE MODE AGAINST THE PUBLISHED CONTRACT
@@ -259,5 +261,83 @@ describe("only apply_block_machine_identity writes machine_mode_key", () => {
     const own = (await adminQuery(`select pg_get_functiondef(p.oid) as d from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'apply_block_machine_identity'`)).rows;
     expect(own).toHaveLength(1);
     expect(own[0].d).toMatch(/update\s+public\.session_blocks[\s\S]*machine_mode_key\s*=\s*v_mode/i);
+  });
+});
+
+// ===========================================================================
+// THE UNIT IS LOCKED BEFORE IT IS ACCEPTED (Codex 4487384239).
+// retire_studio_machine serialises only through its UPDATE row lock, so an UNLOCKED read of `retired_at` in the core could see the unit
+// live, lose the race to a committed retire, and then record a retired unit on the block. The core takes the unit FOR SHARE after the
+// session and block locks, so a concurrent retire either goes first (the unit is refused) or waits.
+// ===========================================================================
+async function party(userId: string): Promise<{ c: Client; pid: number }> {
+  const c = new Client({ connectionString: resolveLocalDbUrl() });
+  await c.connect();
+  await c.query("begin");
+  await c.query("set local role authenticated");
+  await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+  const pid = Number((await c.query("select pg_backend_pid() as pid")).rows[0].pid);
+  return { c, pid };
+}
+
+type Settled = { ok: true } | { ok: false; code: string; message: string };
+// The handler is attached at creation so a rejection that lands while the test is waiting is never an unhandled rejection.
+const settle = (p: Promise<unknown>): Promise<Settled> =>
+  p.then(
+    () => ({ ok: true as const }),
+    (e: { code?: string; message?: string }) => ({ ok: false as const, code: e.code ?? "?", message: e.message ?? String(e) }),
+  );
+
+const recordOn = (c: Client, s: SeededStudio, sessionId: string, blockId: string, machine: string) =>
+  c.query(`select public.record_block_machine_identity($1,$2,$3,$4,$5,$6,$7,$8::timestamptz) as r`, [
+    blockId, sessionId, s.clientId, null, machine, "galvanic", `race-${randomUUID()}`, null,
+  ]);
+
+describe("the unit is locked before it is accepted: a concurrent retire serialises with the identity write", () => {
+  it("RETIRE the unit (uncommitted), then record: the write PARKS on the unit, then is REFUSED", async () => {
+    await publish();
+    const s = await seedStudio("mc-race-ret");
+    const machine = await register(s, []);
+    const { sessionId, blockId } = await seedSession(s);
+    const ret = await party(s.userId);
+    const rec = await party(s.userId);
+    try {
+      await ret.c.query(`select public.retire_studio_machine($1)`, [machine]);
+      const recording = settle(recordOn(rec.c, s, sessionId, blockId, machine));
+      const wait = await expectBlockedOn(rec.pid, "the identity write must park acquiring the unit lock the retirement holds");
+      expect(wait).toMatch(/^Lock\//);
+      await ret.c.query("commit");
+      const out = await recording;
+      expect(out.ok, "recording a unit that has just been retired must be refused").toBe(false);
+      expect(!out.ok && out.message).toMatch(/That machine is not available in this studio/);
+      expect(!out.ok && out.code, "a refusal, never a deadlock abort").not.toBe("40P01");
+      await rec.c.query("rollback");
+      expect((await stored(blockId)).studio_machine_id, "nothing was recorded").toBeNull();
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
+  });
+
+  it("POSITIVE CONTROL: a retirement that ROLLS BACK does not refuse the write", async () => {
+    await publish();
+    const s = await seedStudio("mc-race-roll");
+    const machine = await register(s, []);
+    const { sessionId, blockId } = await seedSession(s);
+    const ret = await party(s.userId);
+    const rec = await party(s.userId);
+    try {
+      await ret.c.query(`select public.retire_studio_machine($1)`, [machine]);
+      const recording = settle(recordOn(rec.c, s, sessionId, blockId, machine));
+      await expectBlockedOn(rec.pid, "the identity write must park on the unit lock");
+      await ret.c.query("rollback");
+      const out = await recording;
+      expect(out.ok, `the write must succeed: ${!out.ok && out.message}`).toBe(true);
+      await rec.c.query("commit");
+      expect((await stored(blockId)).studio_machine_id).toBe(machine);
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
   });
 });
