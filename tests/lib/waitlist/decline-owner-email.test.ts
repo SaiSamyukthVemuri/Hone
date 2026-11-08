@@ -214,6 +214,14 @@ describe("one email to each current verified owner", () => {
     expect(w.sends).toHaveLength(3);
     expect(w.outbox.every((r) => r.attempt_count === 1)).toBe(true);
   });
+  it("with more failing rows than one batch, each is still tried once in a run (the walk is keyset, not 'whatever is eligible next')", async () => {
+    const w = world();
+    for (let i = 0; i < 60; i++) w.owner();
+    w.setMode("reject");
+    await w.run();
+    expect(w.sends).toHaveLength(60);
+    expect(w.outbox.every((r) => r.attempt_count === 1 && r.status === "failed")).toBe(true);
+  });
   it("two overlapping invocations send once per row", async () => {
     const w = world(); w.owner(); w.owner();
     await Promise.all([w.run(), w.run()]);
