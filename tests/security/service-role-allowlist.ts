@@ -69,6 +69,26 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "count_waitlist_times_feedback",
   },
   {
+    path: "lib/waitlist/decline-owner-email.ts",
+    purpose: "HON-7 item 4: send, retry and report the owner email on a waitlist decline.",
+    why:
+      "waitlist_decline_owner_emails (0325) has RLS on, no policy and no browser grant; service_role may select and " +
+      "update only, and inserts happen inside the decline function. The module touches ids, statuses, counts and dates, " +
+      "never the invitee, and re-resolves each recipient as an active owner of the row's own studio with a confirmed " +
+      "email before sending. The only reader outside the cron route is the owner-gated settings page, through " +
+      "loadDeclineEmailStatus(studio.id) after its role refusal; the studio id comes from the session. Off unless " +
+      "HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED is exactly \"true\" and a SINCE instant is set.",
+    scopeGuard: "recipient_practitioner_id",
+  },
+  {
+    path: "app/api/cron/waitlist-decline-owner-email/route.ts",
+    purpose: "HON-7 item 4: cron backstop for the owner decline email.",
+    why:
+      "Rejects any request without the CRON_SECRET bearer (isAuthorizedCronRequest) before building a client, then calls " +
+      "dispatchDeclineOwnerEmail, which is inert while the flag is off. It returns counts only.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/(app)/settings/waitlist/capacity-actions.ts",
     purpose: "Owner's invitation-capacity open/close commands.",
     why:

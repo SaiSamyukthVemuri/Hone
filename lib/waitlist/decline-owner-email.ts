@@ -19,7 +19,6 @@ import {
 //     stored or logged. The only text that leaves is the fixed template, to an address resolved here and never stored.
 //   * One row, one recipient, one idempotency scope (invitation id + recipient id). A retry replays at the provider rather than sending twice.
 
-const TABLE = "waitlist_decline_owner_emails";
 
 export type ErrorCode =
   | "provider_rejected"
@@ -65,7 +64,7 @@ const COLUMNS = "id,studio_id,invitation_id,recipient_practitioner_id,status,att
 /** Compare-and-swap claim: only one invocation can move a row to `sending`. */
 async function claim(admin: SupabaseClient, row: Row, now: Date): Promise<Row | null> {
   let q = admin
-    .from(TABLE)
+    .from("waitlist_decline_owner_emails")
     .update({ status: "sending", attempt_count: row.attempt_count + 1, claimed_at: now.toISOString(), updated_at: now.toISOString() })
     .eq("id", row.id)
     .eq("status", row.status)
@@ -84,7 +83,7 @@ async function settle(
 ): Promise<void> {
   // Guarded by the claim we hold: attempt_count identifies this invocation's claim.
   await admin
-    .from(TABLE)
+    .from("waitlist_decline_owner_emails")
     .update({ ...patch, updated_at: now.toISOString() })
     .eq("id", row.id)
     .eq("status", "sending")
@@ -173,7 +172,7 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
     const staleBefore = new Date(now.getTime() - DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES * 60_000).toISOString();
 
     let q = deps.admin
-      .from(TABLE)
+      .from("waitlist_decline_owner_emails")
       .select(COLUMNS)
       .gte("created_at", activation.since.toISOString())
       .lt("attempt_count", DECLINE_OWNER_EMAIL_MAX_ATTEMPTS)
@@ -208,7 +207,7 @@ export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: str
     const activation = declineOwnerEmailActivation();
     if (!activation.enabled) return { kind: "ok", failed: 0 };
     const { count, error } = await admin
-      .from(TABLE)
+      .from("waitlist_decline_owner_emails")
       .select("id", { count: "exact", head: true })
       .eq("studio_id", studioId)
       .eq("status", "failed")
