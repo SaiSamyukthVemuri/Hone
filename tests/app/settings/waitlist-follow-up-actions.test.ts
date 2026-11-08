@@ -28,6 +28,7 @@ const target = async (p: Promise<void>) => { try { await p; } catch (e) { return
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "1");
   h.session.mockResolvedValue({ practitioner: { role: "owner", user_id: USER }, studio: { id: STUDIO } });
   for (const c of Object.values(h.cmd)) c.mockResolvedValue("done");
 });
@@ -51,6 +52,12 @@ describe("the owner follow-up commands", () => {
       expect(await target(action(form(fields)))).toContain("fu=refused");
       h.session.mockResolvedValue({ practitioner: { role: "owner", user_id: USER }, studio: { id: STUDIO } });
       expect(await target(action(form({ ...fields, followupId: "not-a-uuid" })))).toContain("fu=refused");
+      expect(cmd).not.toHaveBeenCalled();
+    });
+    it(`${name}: refuses before reading a session or calling anything while the answers flag is off`, async () => {
+      vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "");
+      expect(await target(action(form(fields)))).toContain("fu=refused");
+      expect(h.session).not.toHaveBeenCalled();
       expect(cmd).not.toHaveBeenCalled();
     });
     it(`${name}: a failure is shown, never silent`, async () => {

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import {
   eraseAnswers,
   keepWithdrawal,
@@ -40,6 +41,8 @@ function field(formData: FormData, name: string): string | null {
 }
 
 async function ownerSession() {
+  // The commands exist only once 0325 is applied and the flag is on; with it off nothing is called and no session is read.
+  if (!waitlistDeclineAnswersEnabled()) return null;
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner" || !practitioner.user_id) return null;
   return { studioId: studio.id, actorUserId: practitioner.user_id };

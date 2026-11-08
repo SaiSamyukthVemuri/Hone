@@ -256,7 +256,12 @@ export type InvitationClosedReason =
    * and must not claim the studio is closed.
    */
   | "admission_unreadable"
-  | "declined";
+  | "declined"
+  /**
+   * 0325: the answers command said the invitation is not live (or the token is not valid) although the page could still read it. Says only that
+   * it is no longer active: not that it expired, was revoked, used or declined, and nothing about proof.
+   */
+  | "no_longer_active";
 
 export type InvitationViewState =
   | { kind: "loading" }

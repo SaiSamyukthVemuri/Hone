@@ -75,6 +75,8 @@ const resolveInvitation = vi.fn();
 const beginRecipientProof = vi.fn();
 const completeRecipientProof = vi.fn();
 const declineInvitation = vi.fn();
+const declineWithAnswers = vi.fn();
+const requestWithdrawal = vi.fn();
 vi.mock("@/lib/booking/waitlist-invitation", async (orig) => {
   const actual = await (orig() as Promise<Record<string, unknown>>);
   return {
@@ -83,6 +85,8 @@ vi.mock("@/lib/booking/waitlist-invitation", async (orig) => {
     beginRecipientProof: (...a: unknown[]) => beginRecipientProof(...a),
     completeRecipientProof: (...a: unknown[]) => completeRecipientProof(...a),
     declineInvitation: (...a: unknown[]) => declineInvitation(...a),
+    declineWithAnswers: (...a: unknown[]) => declineWithAnswers(...a),
+    requestWithdrawal: (...a: unknown[]) => requestWithdrawal(...a),
   };
 });
 
@@ -331,6 +335,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 const {
   bookInvitationSlotAction,
   declineInvitationAction,
+  noLongerNeedAction,
+  noTimesWorkAction,
   loadInvitationAction,
   requestInvitationProofAction,
   submitInvitationProofAction,
@@ -380,7 +386,7 @@ beforeEach(() => {
   cookieJar.clear();
   cookiesReadonly.on = false;
   for (const m of [resolveInvitation, beginRecipientProof, completeRecipientProof,
-                   declineInvitation, fetchPublicSlotsAction, publicBookAppointmentAction]) m.mockReset();
+                   declineInvitation, declineWithAnswers, requestWithdrawal, fetchPublicSlotsAction, publicBookAppointmentAction]) m.mockReset();
   // Calls only — `mockReset` would discard the shim's implementation, and a
   // test reading `mock.calls[0]` must see THIS test's first call, not a
   // previous one's.
@@ -1059,6 +1065,35 @@ describe("P3-A — the render gate is the authority gate", () => {
 });
 
 // P3-B. A failed decline used to return the proof screen with no explanation.
+describe("0325 — an answers command that says the invitation is not live says so neutrally, never 'proof lapsed'", () => {
+  beforeEach(() => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "1");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["not_live", "invalid_token"])("noTimesWorkAction: %s is a closed 'no longer active' screen, with the capability dropped", async (kind) => {
+    declineWithAnswers.mockResolvedValue({ kind });
+    const out = await noTimesWorkAction(TOKEN, "Mornings are impossible for me", "Thursday afternoons");
+    expect(out.kind).toBe("closed");
+    if (out.kind !== "closed") throw new Error("unreachable");
+    expect(out.reason).toBe("no_longer_active");
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+  });
+  it("noLongerNeedAction: invalid_token is the same neutral closed screen", async () => {
+    requestWithdrawal.mockResolvedValue({ kind: "invalid_token" });
+    const out = await noLongerNeedAction(TOKEN);
+    expect(out.kind).toBe("closed");
+    if (out.kind !== "closed") throw new Error("unreachable");
+    expect(out.reason).toBe("no_longer_active");
+  });
+  it("a real proof problem is still the proof screen", async () => {
+    declineWithAnswers.mockResolvedValue({ kind: "proof_expired" });
+    const out = await noTimesWorkAction(TOKEN, "Mornings are impossible for me", "Thursday afternoons");
+    expect(out.kind).toBe("proof");
+  });
+});
+
 describe("P3-B — a failed decline says why", () => {
   beforeEach(() => { cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY)); });
 

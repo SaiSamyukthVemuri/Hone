@@ -219,6 +219,9 @@ export const INVITE_TO_BOOK_FAILURES = [
   "no_admission_round",
   "admission_round_full",
   "previously_declined",
+  // 0325: the person has a decline or withdrawal response still waiting for the owner's review, and the admit command refuses to invite them
+  // again until the owner has dealt with it. A definite refusal; the answer is to follow up first.
+  "pending_owner_review",
   // The scope the practitioner expressed could not be honoured. NEW: no
   // shipped command can answer this yet, and it is the one code this contract
   // ADDS rather than derives. It exists so an adapter that cannot carry a
@@ -400,6 +403,10 @@ export type InvitationNotice = {
   invitationExists: boolean;
 };
 
+/** Shown when the admit command refuses because the person's reply is waiting for the owner. Neutral: no name, no answer, no reason. */
+export const PENDING_OWNER_REVIEW_COPY =
+  "This person has a response waiting for your review. Follow up below before inviting them again.";
+
 /**
  * A refusal the server actually gave. The invitation was NOT created.
  *
@@ -435,6 +442,9 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
       return "Set your invitation capacity before inviting someone to book.";
     case "admission_round_full":
       return CAPACITY_EXHAUSTED_COPY;
+    // 0325: not a failure to retry. The person replied to an earlier invitation and the reply is waiting for the owner.
+    case "pending_owner_review":
+      return PENDING_OWNER_REVIEW_COPY;
     default:
       // TRUE FOR EVERY CODE IN THIS ARM BY CONSTRUCTION — `refused` means the
       // admission did not commit. Naming the code keeps the message honest
@@ -639,6 +649,10 @@ export const ADMIT_SERVER_REFUSALS = [
   "already_invited",
   "invalid_ttl",
   "not_claimed",
+
+  // --- 0325, carried by the admit command itself (appended on top of the final 0324 body) ----------------------------------------------
+  /** The entry has an open decline or withdrawal follow-up the owner has not dealt with. */
+  "pending_owner_review",
 ] as const;
 
 export type AdmitServerRefusal = (typeof ADMIT_SERVER_REFUSALS)[number];
@@ -693,6 +707,8 @@ export const ADMIT_REFUSAL_PRESENTATION: Record<
   no_round_open: "no_admission_round",
   round_full: "admission_round_full",
   already_declined_offer: "previously_declined",
+  // The owner can act on this one: the response is waiting in the follow-up section.
+  pending_owner_review: "pending_owner_review",
 };
 
 /**

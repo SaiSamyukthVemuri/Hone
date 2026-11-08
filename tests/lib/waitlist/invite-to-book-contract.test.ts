@@ -23,6 +23,8 @@ import {
   RESEND_MINTS_A_NEW_LINK,
   adapterMissingReason,
   admitResultToOutcome,
+  invitationNoticeFor,
+  PENDING_OWNER_REVIEW_COPY,
   isWireInstant,
   deliveryStateFrom,
   INVITATION_DELIVERY_COPY,
@@ -198,6 +200,8 @@ describe("every failure the adapter may report is one a command can produce", ()
       "admission_round_full",
       "no_admission_round",
       "not_admissible",
+      // 0325: admit refuses while the person's decline or withdrawal response is waiting for the owner.
+      "pending_owner_review",
       "previously_declined",
       // The contract's own: no shipped command carries a service or booking
       // window yet, so an adapter that cannot honour one needs a way to refuse
@@ -367,6 +371,8 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
       "not_claimed",
       "not_found",
     ],
+    // 0325 (appended on top of the final 0324 body): carried by admit itself, after the callees' refusals above.
+    fromOwnerReview0325: ["pending_owner_review"],
   } as const;
 
   const expectedRefusals = [
@@ -375,13 +381,14 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
       ...EXPECTED_ADMIT_RESULTS.fromClaim,
       ...EXPECTED_ADMIT_RESULTS.fromIssueScoped,
       ...EXPECTED_ADMIT_RESULTS.fromIssueScopedPassthrough,
+      ...EXPECTED_ADMIT_RESULTS.fromOwnerReview0325,
     ]),
   ].sort();
 
   it("types every refusal known at the reviewed #685 head", () => {
     // Non-vacuity: the union must be genuinely larger than the command's own
     // literals, or the derivation collapsed back to reading `return query`.
-    expect(expectedRefusals.length).toBe(14);
+    expect(expectedRefusals.length).toBe(15);
     expect(EXPECTED_ADMIT_RESULTS.own.length).toBeLessThan(expectedRefusals.length);
 
     expect(ADMIT_SERVER_SUCCESS).toBe(EXPECTED_ADMIT_RESULTS.success);
@@ -1004,5 +1011,20 @@ describe("a blank identifier is not a chosen service", () => {
     expect(validateDraft(valid).ok).toBe(true);
     expect(validateDraft(valid, { serviceIds: ["svc-1"] }).ok).toBe(true);
     expect(draftToInviteInput("e1", valid)?.scope.serviceId).toBe("svc-1");
+  });
+});
+
+describe("0325 — admit refuses while a response is waiting for the owner", () => {
+  it("maps pending_owner_review to a definite refusal, not 'try again' and not indeterminate", () => {
+    const outcome = admitResultToOutcome("pending_owner_review", null, undefined);
+    expect(outcome).toEqual({ state: "refused", code: "pending_owner_review" });
+  });
+  it("shows neutral owner copy: nothing was created, no name, no answer, no code", () => {
+    const notice = invitationNoticeFor(admitResultToOutcome("pending_owner_review", null, undefined));
+    expect(notice.tone).toBe("error");
+    expect(notice.invitationExists).toBe(false);
+    expect(notice.message).toBe("This person has a response waiting for your review. Follow up below before inviting them again.");
+    expect(notice.message).toBe(PENDING_OWNER_REVIEW_COPY);
+    expect(notice.message).not.toMatch(/pending_owner_review|try again|answer/i);
   });
 });

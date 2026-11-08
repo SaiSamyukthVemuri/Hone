@@ -1259,6 +1259,11 @@ export async function noTimesWorkAction(rawToken: string, why: string, better: s
       out.kind === "invalid_input" ? "note_invalid" : "feedback_unavailable",
     );
   }
+  if (out.kind === "not_live" || out.kind === "invalid_token") {
+    // Not a proof problem: the invitation is simply not active. Say that, neutrally, and keep the capability out of it.
+    await clearCapability();
+    return { kind: "closed", reason: "no_longer_active", presentation: after_.studio.presentation };
+  }
   await clearCapability();
   return deriveInvitationViewState({
     resolve: after_.resolve,
@@ -1290,8 +1295,12 @@ export async function noLongerNeedAction(rawToken: string): Promise<InvitationVi
   }
   const after_ = await loadContext(rawToken);
   if (!after_.ok) return after_.state;
-  if (out.kind === "unavailable" || out.kind === "invalid_token") {
+  if (out.kind === "unavailable") {
     return offerState(rawToken, after_.resolve, after_.studio, { kind: "proven" }, "feedback_unavailable");
+  }
+  if (out.kind === "invalid_token") {
+    await clearCapability();
+    return { kind: "closed", reason: "no_longer_active", presentation: after_.studio.presentation };
   }
   await clearCapability();
   return deriveInvitationViewState({

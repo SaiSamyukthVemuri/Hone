@@ -321,6 +321,10 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     title: "You’ve already declined this offer",
     body: "If you’d still like an appointment, please contact the studio directly.",
   },
+  no_longer_active: {
+    title: "This invitation is no longer active",
+    body: "This invitation is no longer active. If you’d still like an appointment, please contact the studio.",
+  },
 };
 
 function ClosedView({
