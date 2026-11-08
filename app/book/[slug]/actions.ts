@@ -474,7 +474,13 @@ export type PublicBookResult =
          * booking committed. Structurally separate from `invitation_consumed`,
          * which asserts no appointment exists.
          */
-        | "invitation_booking_indeterminate";
+        | "invitation_booking_indeterminate"
+        /**
+         * 0313. The response was lost but the database confirms the booking
+         * committed. Carries the appointment start it holds.
+         */
+        | "invitation_already_booked";
+      startsAt?: string;
     };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -1307,16 +1313,29 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }
     consumedInvitationId = invitedCommand.invitation.invitationId;
     let bookingState: string | null = null;
+    let bookedStartsAt: string | null = null;
     try {
       const { data: st } = await admin.rpc("waitlist_invitation_booking_state", {
         p_raw_token: invitedCommand.rawToken,
       });
-      bookingState = typeof st === "string" ? st : null;
+      const stRow = Array.isArray(st) ? st[0] : st;
+      bookingState = typeof stRow?.state === "string" ? stRow.state : null;
+      bookedStartsAt = typeof stRow?.starts_at === "string" ? stRow.starts_at : null;
     } catch {
       bookingState = null;
     }
     if (bookingState === "live") {
       return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+    }
+    // The answer was lost but the booking committed: say so, with the time the
+    // database holds, instead of the "couldn't confirm" copy.
+    if (bookingState === "booked" && bookedStartsAt) {
+      return {
+        ok: false,
+        error: "Your appointment is booked.",
+        code: "invitation_already_booked",
+        startsAt: bookedStartsAt,
+      };
     }
     if (bookingState !== "booked") {
       try {

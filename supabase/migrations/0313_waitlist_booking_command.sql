@@ -32,8 +32,9 @@
 -- LOCK ORDER (documented against every writer that can touch the same rows).
 --   this command    studios FOR NO KEY UPDATE -> admission round FOR UPDATE ->
 --                   entry FOR UPDATE -> (redeem) round, invitation FOR UPDATE ->
---                   (0195) client FOR SHARE -> (create_public_appointment) studios
---                   FOR UPDATE.
+--                   (0195) client FOR SHARE -> the booking chain's own studios lock,
+--                   which is FOR NO KEY UPDATE (0204:403) and so already held in a
+--                   compatible mode by this command's first statement.
 --   0193 admit      studios FOR NO KEY UPDATE (:1612) -> round FOR UPDATE
 --                   (:1645-1648) -> entry FOR UPDATE (:1655). SAME ORDER.
 --   0192 redeem     round FOR UPDATE (:1114) -> invitation FOR UPDATE (:1122), no
@@ -45,6 +46,9 @@
 --   0192 conversion entry FOR UPDATE (:1810) -> invitation (:1849).
 --   0192 release    entry FOR UPDATE (:1708), invitation (:1728).
 --   0200 close/requeue  entry FOR UPDATE (:393, :465) after the owner check.
+--   record_waitlist_invitation_followup  entry FOR UPDATE only, so it cannot read an
+--                   entry's status while a conversion is in flight (the conversion
+--                   holds the entry); it takes nothing else.
 -- STUDIOS FOR NO KEY UPDATE conflicts with itself, so every writer above that
 -- takes it first (this command, admit, 0195) is SERIALISED at the studio before
 -- it can interleave on round or entry. The writers that do not take it (redeem,
@@ -120,7 +124,7 @@ returns table (
 language plpgsql
 volatile
 security definer
-set search_path = pg_catalog, public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_hash   text;
@@ -205,34 +209,47 @@ $$;
 -- 3. The existing-appointment check.
 -- ---------------------------------------------------------------------------
 create or replace function public.waitlist_invitation_booking_state(p_raw_token text)
-returns text
+returns table (state text, starts_at timestamptz)
 language plpgsql
 stable
 security definer
-set search_path = pg_catalog, public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_inv record;
-  v_status text;
+  v_inv    record;
+  v_entry  record;
+  v_start  timestamptz;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$' then
-    return 'invalid_token';
+    return query select 'invalid_token'::text, null::timestamptz; return;
   end if;
   select i.entry_id, i.studio_id, i.redeemed_at, i.expired_at, i.released_at, i.declined_at, i.expires_at
     into v_inv
     from public.new_client_waitlist_invitations i
    where i.token_hash = encode(extensions.digest(p_raw_token, 'sha256'), 'hex');
-  if v_inv.entry_id is null then return 'invalid_token'; end if;
-  select e.status into v_status
+  if v_inv.entry_id is null then
+    return query select 'invalid_token'::text, null::timestamptz; return;
+  end if;
+  select e.status, e.converted_client_id into v_entry
     from public.new_client_waitlist_entries e
    where e.id = v_inv.entry_id and e.studio_id = v_inv.studio_id;
-  if v_status = 'converted' then return 'booked'; end if;
-  if v_inv.redeemed_at is not null then return 'redeemed_unbooked'; end if;
+  if v_entry.status = 'converted' then
+    -- The start of the converted client's most recent appointment, so a caller
+    -- that lost the response can confirm the booking instead of guessing.
+    select a.starts_at into v_start
+      from public.appointments a
+     where a.studio_id = v_inv.studio_id and a.client_id = v_entry.converted_client_id
+     order by a.created_at desc limit 1;
+    return query select 'booked'::text, v_start; return;
+  end if;
+  if v_inv.redeemed_at is not null then
+    return query select 'redeemed_unbooked'::text, null::timestamptz; return;
+  end if;
   if v_inv.expired_at is not null or v_inv.released_at is not null
      or v_inv.declined_at is not null or v_inv.expires_at <= clock_timestamp() then
-    return 'closed';
+    return query select 'closed'::text, null::timestamptz; return;
   end if;
-  return 'live';
+  return query select 'live'::text, null::timestamptz;
 end;
 $$;
 
@@ -247,7 +264,7 @@ returns text
 language plpgsql
 volatile
 security definer
-set search_path = pg_catalog, public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_inv record;
@@ -262,9 +279,13 @@ begin
     from public.new_client_waitlist_invitations i
    where i.token_hash = encode(extensions.digest(p_raw_token, 'sha256'), 'hex');
   if v_inv.id is null or v_inv.redeemed_at is null then return 'not_redeemed'; end if;
+  -- LOCKED, so a conversion in flight is waited for and the status read here is
+  -- the committed one: an item cannot be written for an entry that converts a
+  -- moment later.
   select e.status into v_status
     from public.new_client_waitlist_entries e
-   where e.id = v_inv.entry_id and e.studio_id = v_inv.studio_id;
+   where e.id = v_inv.entry_id and e.studio_id = v_inv.studio_id
+     for update;
   if v_status is distinct from 'invited' then return 'not_invited'; end if;
   insert into public.waitlist_invitation_followups (studio_id, entry_id, invitation_id, reason)
   values (v_inv.studio_id, v_inv.entry_id, v_inv.id, p_reason)
@@ -283,7 +304,7 @@ returns text
 language plpgsql
 volatile
 security definer
-set search_path = pg_catalog, public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_actor uuid;

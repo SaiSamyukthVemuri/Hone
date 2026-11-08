@@ -27,10 +27,10 @@ describe("0313 — shape", () => {
     expect(e.endsWith("commit;")).toBe(true);
   });
 
-  it("every function pins its search_path", () => {
+  it("every definer function pins search_path to pg_catalog, pg_temp (every reference is schema-qualified)", () => {
     const fns = exec(M).match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
     expect(fns).toHaveLength(4);
-    for (const f of fns) expect(f).toMatch(/set search_path = pg_catalog, public, pg_temp/);
+    for (const f of fns) expect(f).toMatch(/set search_path = pg_catalog, pg_temp/);
   });
 
   it("revokes from all default grantees by name and grants service_role only", () => {

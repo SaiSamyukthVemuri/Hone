@@ -40,6 +40,19 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "record_waitlist_sms_consent_by_practitioner",
   },
   {
+    path: "app/(app)/settings/waitlist/window-capacity-actions.ts",
+    purpose: "HON-7 owner-only estimate of how many consultations fit the window being offered.",
+    why:
+      "Reads the studio's slug, timezone and buffer, the canonical public slot list for the " +
+      "selected service and dates, and a COUNT of live invitations for that service. It writes " +
+      "nothing and reserves nothing. The studio comes from getCurrentPractitionerWithStudio() " +
+      "and the action returns { ok: false } for any non-owner before it constructs the admin " +
+      "client; the browser supplies only a service id, a window length and weekdays, each " +
+      "validated. This is a \"use server\" module, so it exposes the estimate and nothing else; " +
+      "the live-invitation read is a head count scoped by studio_id from the session.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/settings/waitlist/capacity-actions.ts",
     purpose: "Owner's invitation-capacity open/close commands.",
     why:

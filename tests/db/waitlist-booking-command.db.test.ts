@@ -87,7 +87,7 @@ const entryStatus = (id: string) =>
 const apptCount = (sid: string) =>
   q<{ n: number }>(`select count(*)::int as n from public.appointments where studio_id=$1`, [sid]).then((r) => r[0].n);
 const state = (token: string) =>
-  q<{ s: string }>(`select public.waitlist_invitation_booking_state($1) as s`, [token]).then((r) => r[0].s);
+  q<{ s: string }>(`select state as s from public.waitlist_invitation_booking_state($1)`, [token]).then((r) => r[0].s);
 
 describe("0313 redeem_and_book_waitlist_invitation", () => {
   it("books once, converts the entry and spends the invitation", async () => {
@@ -100,6 +100,10 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     expect(await entryStatus(p.entryId)).toBe("converted");
     expect((await invitationOf(p.entryId)).redeemed_at).not.toBeNull();
     expect(await state(p.token)).toBe("booked");
+    const when = await q<{ starts_at: string | null }>(
+      `select starts_at from public.waitlist_invitation_booking_state($1)`, [p.token],
+    );
+    expect(new Date(when[0].starts_at as string).toISOString()).toBe(new Date(slot).toISOString());
     expect(await apptCount(f.studioId)).toBe(1);
 
     // IDEMPOTENT: the same invitation cannot book a second time.
@@ -134,6 +138,23 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     const retry = await q<any>(BOOK, [b.token, b.cap, f.studioId, b.email, f.serviceId, t2, tokenHash("lb2")]);
     expect(retry[0].result).toBe("created_and_converted");
     expect(await apptCount(f.studioId)).toBe(2);
+  });
+
+  it("any other exception (a forced unique violation) propagates, rolls the redeem back and leaves the invitation live", async () => {
+    const f = await fixture("uv");
+    const [t1, t2] = await slots(f, 2);
+    const a = await provenEntry(f, "a");
+    const b = await provenEntry(f, "b");
+    const shared = tokenHash("uv-shared");
+    const win = await q<any>(BOOK, [a.token, a.cap, f.studioId, a.email, f.serviceId, t1, shared]);
+    expect(win[0].result).toBe("created_and_converted");
+    // The SAME cancellation hash for a different, free time: appointments_cancellation_token_hash_uniq.
+    await expect(
+      q(BOOK, [b.token, b.cap, f.studioId, b.email, f.serviceId, t2, shared]),
+    ).rejects.toMatchObject({ code: "23505" });
+    expect((await invitationOf(b.entryId)).redeemed_at).toBeNull();
+    expect(await state(b.token)).toBe("live");
+    expect(await apptCount(f.studioId)).toBe(1);
   });
 
   it("a bad capability is refused and the invitation stays live", async () => {

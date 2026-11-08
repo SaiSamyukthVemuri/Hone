@@ -1160,6 +1160,24 @@ export async function bookInvitationSlotAction(
       presentation: ctx.studio.presentation,
     };
   }
+  if (!booked.ok && booked.code === "invitation_already_booked" && booked.startsAt) {
+    // The response was lost and the database confirmed the booking. Show the
+    // booked state with the time the database holds, not the requested one.
+    await clearCapability();
+    const tz = ctx.studio.presentation.studioTimezone;
+    const at = new Date(booked.startsAt);
+    return deriveInvitationViewState({
+      resolve: ctx.resolve,
+      presentation: ctx.studio.presentation,
+      proof: { kind: "proven" },
+      slots: [],
+      booked: {
+        startLabel: localTimeString12h(at, tz),
+        dateLabel: localDateString(at, tz),
+      },
+      declined: false,
+    });
+  }
   if (!booked.ok && booked.code === "invitation_consumed") {
     // P2-A. THE OFFER IS SPENT. The redeem committed and the appointment did
     // not, so re-rendering the offer would show live, selectable times for an

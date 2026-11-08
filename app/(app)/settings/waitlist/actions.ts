@@ -236,6 +236,18 @@ async function runEntryLifecycleCommand(options: {
     throw new Error(known ?? options.genericError);
   }
 
+  // 0313. Closing an unbooked invitation resolves the owner's follow-up item for
+  // it. The actor is the SIGNED-IN owner's user id taken from the session above,
+  // never anything the browser sent. Best effort: before 0313 is applied the
+  // command does not exist, and the close itself has already committed.
+  if (options.rpc === "close_unbooked_new_client_waitlist_invitation") {
+    await admin.rpc("resolve_waitlist_invitation_followup", {
+      p_studio_id: studio.id,
+      p_entry_id: options.entryId,
+      p_actor_user_id: actorUserId,
+    });
+  }
+
   revalidatePath("/settings/waitlist");
 }
 
