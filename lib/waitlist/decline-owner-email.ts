@@ -6,6 +6,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
+  DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
   DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES,
   declineOwnerEmailActivation,
 } from "./decline-owner-email-gate";
@@ -159,6 +160,36 @@ async function sendOne(deps: Deps, row: Row, now: Date): Promise<RowResult> {
   return "failed";
 }
 
+/** After the window: held rows, and rows abandoned mid-send, that were never delivered become `failed`. Rows before activation are untouched. */
+async function expireUnsent(admin: SupabaseClient, since: Date, windowStart: Date, staleBefore: string, now: Date): Promise<void> {
+  const patch = { status: "failed", last_error_code: "unknown" satisfies ErrorCode, updated_at: now.toISOString() };
+  try {
+    await admin
+      .from("waitlist_decline_owner_emails")
+      .update(patch)
+      .eq("status", "held")
+      .gte("created_at", since.toISOString())
+      .lt("created_at", windowStart.toISOString());
+    await admin
+      .from("waitlist_decline_owner_emails")
+      .update(patch)
+      .eq("status", "sending")
+      .lt("claimed_at", staleBefore)
+      .gte("created_at", since.toISOString())
+      .lt("created_at", windowStart.toISOString());
+    // A row abandoned mid-send on its LAST attempt can never be claimed again (the ceiling), so it must not stay `sending` forever.
+    await admin
+      .from("waitlist_decline_owner_emails")
+      .update(patch)
+      .eq("status", "sending")
+      .lt("claimed_at", staleBefore)
+      .gte("created_at", since.toISOString())
+      .gte("attempt_count", DECLINE_OWNER_EMAIL_MAX_ATTEMPTS);
+  } catch {
+    log("decline_owner_email_expire_failed", { code: "unknown" });
+  }
+}
+
 /**
  * Send what is owed. With `invitationId` it handles that decline's rows (called after the decline commits); without, it sweeps
  * recent rows (the cron backstop). Rows created before the activation instant are never touched.
@@ -171,10 +202,16 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
     const now = (deps.now ?? (() => new Date()))();
     const staleBefore = new Date(now.getTime() - DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES * 60_000).toISOString();
 
+    // Nothing is attempted after the window, and a row that never got its turn inside it becomes `failed` (shown in Hone) rather than
+    // lingering `held`. The window is measured from the row's own creation, so it holds whatever the cron cadence.
+    const windowStart = new Date(now.getTime() - DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS * 3_600_000);
+    const earliest = windowStart > activation.since ? windowStart : activation.since;
+    await expireUnsent(deps.admin, activation.since, windowStart, staleBefore, now);
+
     let q = deps.admin
       .from("waitlist_decline_owner_emails")
       .select(COLUMNS)
-      .gte("created_at", activation.since.toISOString())
+      .gte("created_at", earliest.toISOString())
       .lt("attempt_count", DECLINE_OWNER_EMAIL_MAX_ATTEMPTS)
       .or(`status.in.(held,failed),and(status.eq.sending,claimed_at.lt.${staleBefore})`)
       .order("created_at", { ascending: true })

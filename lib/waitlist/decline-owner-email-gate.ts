@@ -19,8 +19,12 @@ export function declineOwnerEmailActivation(): { enabled: false } | { enabled: t
 // Retention of outbox rows is undecided (Sam, HON-7). The purge period lives in this one constant and nothing deletes with it yet.
 export const DECLINE_OWNER_EMAIL_PURGE_DAYS = 90;
 
-/** Attempts after which a failed row stops being retried and is only shown in Hone. */
-export const DECLINE_OWNER_EMAIL_MAX_ATTEMPTS = 5;
+/**
+ * The reviewed retry budget: at most this many attempts, all within the window below of the row's creation. After either limit the row is
+ * `failed` and is only shown in Hone. Both are counted from the row, never from cron ticks, so the backstop behaves the same at any cadence.
+ */
+export const DECLINE_OWNER_EMAIL_MAX_ATTEMPTS = 3;
+export const DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS = 24;
 
 /** A row left in `sending` longer than this was abandoned by a dead invocation and may be claimed again. */
 export const DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES = 10;

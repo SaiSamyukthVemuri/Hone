@@ -4,6 +4,7 @@ import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-s
 
 vi.mock("server-only", () => ({}));
 import { dispatchDeclineOwnerEmail, getDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
+import { DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
 import { buildWaitlistDeclineOwnerEmail, WAITLIST_DECLINE_OWNER_BODY, WAITLIST_DECLINE_OWNER_SUBJECT } from "@/lib/email/templates/waitlist-decline-owner";
 
 // HON-7 item 4. Synthetic ids and addresses only. The fake below models the outbox table, the practitioners table and the auth user read.
@@ -43,8 +44,13 @@ function world() {
     q.update = (p: Record<string, unknown>) => { patch = p; return q; };
     q.eq = (c: string, v: unknown) => { f.push((r) => r[c] === v); return q; };
     q.is = (c: string, v: unknown) => { f.push((r) => r[c] === v); return q; };
-    q.gte = (c: string, v: string) => { f.push((r) => String(r[c]) >= v); return q; };
-    q.lt = (c: string, v: number) => { f.push((r) => Number(r[c]) < v); return q; };
+    const cmp = (a: unknown, b: unknown): number | null => {
+      if (a === null || a === undefined) return null; // SQL: a comparison with NULL is never true
+      if (typeof a === "number" && typeof b === "number") return a - b;
+      return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+    };
+    q.gte = (c: string, v: unknown) => { f.push((r) => { const d = cmp(r[c], v); return d !== null && d >= 0; }); return q; };
+    q.lt = (c: string, v: unknown) => { f.push((r) => { const d = cmp(r[c], v); return d !== null && d < 0; }); return q; };
     // the real filter string is `status.in.(held,failed),and(status.eq.sending,claimed_at.lt.<iso>)`
     q.or = (expr: string) => {
       const stale = /claimed_at\.lt\.([^)]+)\)/.exec(expr)?.[1] ?? "";
@@ -205,12 +211,56 @@ describe("failure, retry, and no duplicates", () => {
     expect(o.row.status).toBe("sent");
     expect(w.sends[w.sends.length - 1].key).toBe(firstKey);
   });
-  it("stops retrying after the attempt ceiling and stays failed", async () => {
+  it("the reviewed retry budget is 3 attempts within 24 hours, as single constants", () => {
+    expect(DECLINE_OWNER_EMAIL_MAX_ATTEMPTS).toBe(3);
+    expect(DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS).toBe(24);
+  });
+  it("stops after 3 attempts however many sweeps run, and stays failed", async () => {
     const w = world(); const o = w.owner(); w.setMode("reject");
-    for (let i = 0; i < 8; i++) await w.run();
-    expect(o.row.attempt_count).toBe(5);
+    for (let i = 0; i < 12; i++) await w.run();
+    expect(o.row.attempt_count).toBe(3);
     expect(o.row.status).toBe("failed");
-    expect(w.sends).toHaveLength(5);
+    expect(w.sends).toHaveLength(3);
+  });
+  it("makes no attempt after 24 hours from the row's creation, and a never-sent held row becomes failed", async () => {
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
+    const w = world(); const o = w.owner({ created: "2026-11-08T11:59:00.000Z" });
+    await w.run();
+    expect(w.sends).toHaveLength(0);
+    expect(o.row).toMatchObject({ status: "failed", attempt_count: 0 });
+  });
+  it("a row just inside the window is still attempted", async () => {
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
+    const w = world(); const o = w.owner({ created: "2026-11-08T12:01:00.000Z" });
+    await w.run();
+    expect(o.row.status).toBe("sent");
+  });
+  it("a failed row older than the window is not retried", async () => {
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
+    const w = world(); const o = w.owner({ status: "failed", created: "2026-11-08T11:00:00.000Z" });
+    o.row.attempt_count = 1;
+    await w.run();
+    expect(w.sends).toHaveLength(0);
+    expect(o.row.attempt_count).toBe(1);
+  });
+  it("a row abandoned mid-send on its last attempt does not stay sending forever", async () => {
+    const w = world(); const o = w.owner({ status: "sending" });
+    o.row.attempt_count = 3; o.row.claimed_at = "2026-11-09T11:00:00.000Z";
+    await w.run();
+    expect(w.sends).toHaveLength(0);
+    expect(o.row.status).toBe("failed");
+  });
+  it("rows from before activation are not expired either", async () => {
+    const w = world(); const o = w.owner({ created: "2026-11-01T00:00:00.000Z" });
+    await w.run();
+    expect(o.row.status).toBe("held");
+  });
+  it("is the same at any cadence: the outcome depends on the row, not on how many sweeps ran", async () => {
+    const a = world(); const oa = a.owner(); a.setMode("reject");
+    for (let i = 0; i < 3; i++) await a.run();
+    const b = world(); const ob = b.owner(); b.setMode("reject");
+    for (let i = 0; i < 40; i++) await b.run();
+    expect([oa.row.status, oa.row.attempt_count]).toEqual([ob.row.status, ob.row.attempt_count]);
   });
   it("a row abandoned mid-send is reclaimed only after the stale window", async () => {
     const w = world(); const o = w.owner({ status: "sending" });
