@@ -25,15 +25,22 @@ const INVITED_CAP = 1000;
 
 export async function loadNeedsAttention(db: SupabaseClient, studioId: string): Promise<NeedsAttention> {
   try {
-    const invited: { data: Array<{ id: string; name: string }> | null; error: unknown } = await db
+    // An EXACT count rides on the same request. The server's own row ceiling
+    // (PostgREST max_rows) can cut the response below INVITED_CAP + 1 rows, so
+    // the length of the data alone cannot show that rows were left out.
+    const invited: { data: Array<{ id: string; name: string }> | null; count?: number | null; error: unknown } = await db
       .from("new_client_waitlist_entries")
-      .select("id,name")
+      .select("id,name", { count: "exact" })
       .eq("studio_id", studioId)
       .eq("status", "invited")
       .order("joined_at", { ascending: true })
       .order("id", { ascending: true })
       .limit(INVITED_CAP + 1);
     if (invited.error || !invited.data || invited.data.length > INVITED_CAP) return { kind: "unknown" };
+    // No count, or more rows than were returned: the list is not complete.
+    if (typeof invited.count !== "number" || invited.count > INVITED_CAP || invited.count > invited.data.length) {
+      return { kind: "unknown" };
+    }
     if (invited.data.length === 0) return { kind: "ok", total: 0, shown: [] };
     const ids = invited.data.map((r) => r.id);
     const redeemed: { data: Array<{ entry_id: string }> | null; error: unknown } = await db

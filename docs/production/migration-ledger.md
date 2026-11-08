@@ -15,7 +15,26 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` and `0319` are MIGRATION-FIRST PENDING and NOT applied; this tree's record of hosted lags the real hosted state)
+
+> **CURRENT RELATIONSHIP: repo > hosted by the pending `0313` and `0319`, as this tree records hosted.** This tree's declared hosted max is `0300` (below, unchanged here), and it deliberately does NOT restate any later hosted fact: this tree's record of hosted lags the real hosted state for the versions carried by other held pull requests, so the structured lists are not a statement about them. The two pending files are sealed and unapplied: `0313_waitlist_booking_command.sql` (sha256 `cfd892618b95965403c9515a528f02cd039a139ce893004876a8299508010fb1`) and `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). Both flags (`WAITLIST_BOOKING_COMMAND`, `WAITLIST_TIMES_FEEDBACK`) are OFF. Applying either file is a separate approval of the exact bytes; this record applies nothing.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0300**, as declared in `docs/production/migration-state.json` on this tree. Unchanged by this change. |
+| **Repo migration max** | **0319** (`0319_waitlist_times_unsuitable.sql`), derived from the source files on this tree. |
+| **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
+| **Pending migrations** | **`0298`, `0313` and `0319`.** `0313` and `0319` are MIGRATION-FIRST PENDING: sealed (sha256 `cfd89261…` and `3aa52473…`), NOT applied, flags OFF; `0319` is ordered after `0313`. `0298` is in this tree and is still listed unhosted by the structured lists here although this tree's record of hosted lags that fact (see the earlier states below). The numbers `0301`-`0312` and `0314`-`0318` have no file on this tree and are declared in `reserved_unallocated_above_hosted`: a repository-structure declaration that they are carried by other held work, not a statement about hosted. |
+| **Next free number** | Next free number is **0320** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Project ref** | Canonical Hone production project. |
+
+### What the two pending migrations are (no hosted claim)
+
+- **`0313`** adds two empty tables (a follow-up item table and an invitation-to-appointment link table, both RLS on, no policy, no API-role privilege) and four service-role-only functions; nothing writes to them until the booking flag is switched on.
+- **`0319`** adds one empty table and four service-role-only functions for the "times don't work" reply; nothing writes to it until its flag is switched on.
+- Both are above this tree's declared hosted max, so each would be a plain push. Neither migration changes an existing table, column or row.
+
+## Previous state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
 > **CURRENT RELATIONSHIP: repo == hosted at `0300`, with `0281` applied below the max (an out-of-order apply, declared in `hosted_out_of_order`), and `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0280`, `0282`-`0296`, `0298` and `0299` declared unhosted.** The single sealed migration `0281_identity_revisions_audit_atomic_save.sql` (sha256 `7fe0b10a973103393718ed1ac4fd94e42e23fac87b295ed9c67c0e2ce0c9dff2`) was APPLIED to production by ONE push of one file with `--include-all` inside the sealed stage, by Sam under his own-words authorization (`01-ops/SAM-AUTHORIZATION-0281-b01-20261105T020553Z.txt`, sha256 `853d7783681d81885f9aaafdeae064be68add10c51bed53dae01115623e9ec73`). Carrier PR #1358 head `3f6c8d25563ac561d5679e5de99ec251b142e013` at the apply; stage `stage-0281-b01-mac` (internal stage id `0281-b00`), `SHA256SUMS.txt` sha256 `a0c40670db8d588e2209f8581c5a827276ca39f4b2f0459b7ccf6bf546e829a3`.
 

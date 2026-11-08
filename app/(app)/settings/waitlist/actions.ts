@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
@@ -252,7 +253,7 @@ async function runEntryLifecycleCommand(options: {
         JSON.stringify({
           event: "waitlist_followup_resolve_failed",
           studioId: studio.id,
-          code: resolveError.code ?? "unknown",
+          outcome: dbErrorCode(resolveError),
           timestamp: new Date().toISOString(),
         }),
       );

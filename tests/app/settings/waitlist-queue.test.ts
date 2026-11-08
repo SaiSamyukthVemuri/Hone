@@ -537,8 +537,11 @@ describe("the query the page asks", () => {
     // ONE BOUNDED READ PER SECTION — five of them — rather than one cap shared
     // across every state. A shared cap lets a busy section crowd another off
     // the page entirely, taking that section's only actions with it.
-    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries");
+    // The owner's needs-attention card (0313) makes its own COMPLETE read of the
+    // invited entries (id,name); it is a sixth, separate read, not a section.
+    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns !== "id,name");
     expect(pageReads).toHaveLength(5);
+    expect(queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns === "id,name")).toHaveLength(1);
     const q = pageReads.find((x) =>
       x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "waiting"),
     )!;
@@ -1689,7 +1692,9 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
-    expect(queries.filter((q) => q.table === "new_client_waitlist_entries")).toHaveLength(5);
+    // Five section reads, plus the needs-attention card's own read (id,name).
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name")).toHaveLength(5);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns === "id,name")).toHaveLength(1);
   });
 
   it("and IS read when a row is invited", async () => {
@@ -1697,11 +1702,13 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
     await render();
-    // TWO invitation reads: the live-cycle predicate and the redeemed one.
-    // Identity comes from the 0189 unique index, never from ordering — so
-    // neither read carries an `order`.
+    // THREE invitation reads: the live-cycle predicate and the redeemed one the
+    // page makes, plus the needs-attention card's own redeemed-invitation read
+    // (0313), which exists only because an invited entry does. Identity comes
+    // from the 0189 unique index, never from ordering — so none of them
+    // carries an `order`.
     const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
-    expect(inv).toHaveLength(2);
+    expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
 
@@ -2033,8 +2040,9 @@ describe("the focused view keeps the headline honest", () => {
     scenario.rows = [...seedSection("claimed", 150), ...seedSection("waiting", 7)];
     const html = await render({ section: "claimed", page: "1" });
 
-    // Five reads either way; only the focused one asks for rows.
-    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries");
+    // Five section reads either way; only the focused one asks for rows. (The
+    // needs-attention card's own id,name read is not a section.)
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name");
     expect(reads).toHaveLength(5);
     const listed = reads.filter((q) => q.options.head === false);
     expect(listed).toHaveLength(1);
@@ -2086,7 +2094,7 @@ describe("a browser-supplied section or page can never mislead", () => {
     // declares, because `section` is MATCHED against them rather than passed
     // through.
     const statuses = queries
-      .filter((q) => q.table === "new_client_waitlist_entries")
+      .filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name")
       .map((q) => q.filters.find((f) => f[0] === "eq" && f[1] === "status")?.[2]);
     expect(statuses).toEqual(["waiting", "claimed", "invited", "expired", "released"]);
   });

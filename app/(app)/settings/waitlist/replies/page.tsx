@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { countTimesFeedback, listTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
@@ -15,11 +16,7 @@ export default async function RepliesPage({
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    return (
-      <main className="mx-auto max-w-2xl p-4 text-sm">
-        <p>This page is for the studio owner.</p>
-      </main>
-    );
+    return <OwnerOnlyNotice>Only studio owners can see replies to the waitlist.</OwnerOnlyNotice>;
   }
   if (!waitlistTimesFeedbackEnabled()) {
     return (

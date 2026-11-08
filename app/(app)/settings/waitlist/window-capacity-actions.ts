@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
-import { localDateString } from "@/lib/booking/tz";
+import { addDays, localDateString } from "@/lib/booking/tz";
 import { consultationsThatFit, estimateCapacity } from "@/lib/waitlist/consultation-capacity";
 
 // ===========================================================================
@@ -51,12 +51,15 @@ export async function estimateWindowCapacityAction(input: {
       .maybeSingle();
     if (error || !row) return { ok: false };
 
-    // STUDIO-LOCAL dates from tomorrow forward, the same days an invitation's
-    // scope would permit.
+    // The days an invitation's scope would permit: the SAME inclusive
+    // studio-local calendar-date range the invitation is issued over (today
+    // through today + windowDays - 1, see windowToDates). Stepping calendar
+    // dates, not epoch milliseconds, keeps a DST change from skipping or
+    // repeating a day.
     const dates: string[] = [];
-    const now = Date.now();
-    for (let i = 1; i <= input.windowDays; i += 1) {
-      const d = localDateString(new Date(now + i * 86_400_000), row.timezone as string);
+    const first = localDateString(new Date(), row.timezone as string);
+    for (let i = 0; i < input.windowDays; i += 1) {
+      const d = addDays(first, i);
       const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
       if (weekdays === null || weekdays.length === 0 || weekdays.includes(dow)) dates.push(d);
     }

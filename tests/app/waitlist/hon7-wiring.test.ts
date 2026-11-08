@@ -52,12 +52,21 @@ describe("N3/N4 — the estimate counts every service; a failed resolve is logge
   it("logs a failed resolve by code only", () => {
     const m = ACTIONS.match(/waitlist_followup_resolve_failed[\s\S]*?\}\),/);
     expect(m).not.toBeNull();
-    expect(m![0]).toMatch(/code: resolveError\.code/);
+    // The classified code (dbErrorCode), never the raw one: the log contract forbids a raw `.code`.
+    expect(m![0]).toMatch(/outcome: dbErrorCode\(resolveError\)/);
+    expect(m![0]).not.toMatch(/resolveError\.code/);
     expect(m![0]).not.toMatch(/resolveError\.(message|details|hint)/);
   });
 });
 
 describe("the window estimate action", () => {
+  it("estimates over the SAME inclusive studio-local dates the invitation is issued over", () => {
+    // Today through today + windowDays - 1 (windowToDates), stepped as calendar
+    // dates: epoch-millisecond arithmetic shifts or repeats a day across DST.
+    expect(CAPACITY).toMatch(/addDays\(first, i\)/);
+    expect(CAPACITY).toMatch(/for \(let i = 0; i < input\.windowDays; i \+= 1\)/);
+    expect(CAPACITY).not.toMatch(/86_400_000/);
+  });
   it("refuses a non-owner before it builds the admin client", () => {
     expect(CAPACITY.indexOf('practitioner.role !== "owner"')).toBeGreaterThan(0);
     expect(CAPACITY.indexOf('practitioner.role !== "owner"')).toBeLessThan(CAPACITY.indexOf("createAdminClient()"));
