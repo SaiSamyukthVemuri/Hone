@@ -53,9 +53,9 @@ export type LifecycleNoticeAction = "claim" | "release" | "expire" | "requeue" |
 
 export type OutcomeNoticeKey = keyof typeof OUTCOME_NOTICES;
 
-/** The flash cookie the action sets and the page reads. Scoped to the waitlist page, httpOnly, 20 s. */
+/** The flash cookie the action sets and the page reads. Scoped to the waitlist page, httpOnly, 5 s. */
 export const LIFECYCLE_NOTICE_COOKIE = "hone_waitlist_notice";
-export const LIFECYCLE_NOTICE_MAX_AGE_SECONDS = 20;
+export const LIFECYCLE_NOTICE_MAX_AGE_SECONDS = 5;
 
 function isNoticeKey(value: unknown): value is LifecycleNoticeKey {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(STALE_STATE_NOTICES, value);

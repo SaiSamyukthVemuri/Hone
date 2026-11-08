@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getNewClientAdmissionMode,
@@ -139,6 +140,8 @@ function rejectSubmission(s: InviteSubmission): "malformed_submission" | null {
  * -> #683 `InvitationOutcome`.
  */
 export async function inviteToBookAction(formData: FormData): Promise<InviteActionResult> {
+  // An outcome notice from an earlier action must not re-show after this one.
+  await clearLifecycleNotice();
   const parsed = inviteSubmissionFromFormData(formData);
   // The parser's ONE failure: an allowed-days preset it does not recognise.
   // There is nowhere safe to put that, because `null` days is a real answer

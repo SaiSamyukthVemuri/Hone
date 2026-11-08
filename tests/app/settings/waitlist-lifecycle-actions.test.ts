@@ -23,11 +23,18 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // The real `redirect` throws a NEXT_REDIRECT control-flow error; the fake does the same with the
 // target, so a test can tell "redirected to X" from "threw a refusal".
 // The flash cookie the action leaves for the page. Records what was set.
-const flash: { sets: Array<{ name: string; value: string; options: Record<string, unknown> }> } = { sets: [] };
+const flash: {
+  sets: Array<{ name: string; value: string; options: Record<string, unknown> }>;
+  live: Map<string, string>;
+} = { sets: [], live: new Map() };
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     set: (name: string, value: string, options: Record<string, unknown>) => {
       flash.sets.push({ name, value, options });
+      flash.live.set(name, value);
+    },
+    delete: (target: { name: string } | string) => {
+      flash.live.delete(typeof target === "string" ? target : target.name);
     },
   }),
 }));
@@ -88,12 +95,13 @@ async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
   expect(flash.sets[0]).toMatchObject({
     name: "hone_waitlist_notice",
     value: key,
-    options: { httpOnly: true, sameSite: "lax", path: "/settings/waitlist", maxAge: 20 },
+    options: { httpOnly: true, sameSite: "lax", path: "/settings/waitlist", maxAge: 5 },
   });
 }
 
 beforeEach(() => {
   flash.sets = [];
+  flash.live = new Map();
   calls = [];
   arrangeActor();
 });
@@ -499,5 +507,23 @@ describe("the result vocabularies are the DATABASE's", () => {
     expect(M0189).not.toContain(
       "create or replace function public.requeue_new_client_waitlist_entry(",
     );
+  });
+});
+
+describe("an earlier outcome notice never re-shows after an unrelated action", () => {
+  it("release after remove leaves no remove notice behind", async () => {
+    // A notice from a previous action is still inside its window.
+    flash.live.set("hone_waitlist_notice", "remove.removed");
+    arrangeRpc({ data: "released" });
+    await releaseWaitlistEntryAction(entryForm());
+    // The release succeeded without a redirect, and the stale notice was cleared first.
+    expect(flash.live.has("hone_waitlist_notice")).toBe(false);
+  });
+
+  it("a stale-state refusal replaces the earlier notice with its own", async () => {
+    flash.live.set("hone_waitlist_notice", "remove.removed");
+    arrangeRpc({ data: "not_releasable" });
+    await expectNoticeRedirect(releaseWaitlistEntryAction(entryForm()), "release.not_releasable");
+    expect(flash.live.get("hone_waitlist_notice")).toBe("release.not_releasable");
   });
 });

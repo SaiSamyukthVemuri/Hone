@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
+import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
 import { redirect } from "next/navigation";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -91,6 +92,7 @@ const REFUSAL_MESSAGES: Readonly<
 };
 
 export async function removeWaitlistEntryAction(formData: FormData): Promise<void> {
+  await clearLifecycleNotice();
   const entryId = formData.get("entry_id");
   if (typeof entryId !== "string" || !entryId) {
     throw new Error("Missing waitlist entry.");
@@ -217,7 +219,7 @@ const AUTHORITY_REFUSALS = {
 /**
  * Leave the owner on the waitlist page with ONE outcome notice. The key rides in a flash cookie, not in
  * the URL, so the only way to get a banner is to have just performed the action: a crafted link, a
- * bookmark or a shared URL shows nothing. 20 seconds, httpOnly, scoped to the page, and the page maps
+ * bookmark or a shared URL shows nothing. 5 seconds, httpOnly, scoped to the page, and the page maps
  * the key through a closed table. (A refresh inside the window re-shows the same TRUE outcome; it cannot
  * be forged.)
  */
@@ -263,6 +265,7 @@ async function runEntryLifecycleCommand(options: {
   refusals: Readonly<Record<string, string>>;
   genericError: string;
 }): Promise<void> {
+  await clearLifecycleNotice();
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   // Route-level authority. Deliberately NOT the only check: the command
   // re-derives the same fact from the database, so this early refusal is a
@@ -588,6 +591,7 @@ const CLAIM_MANY_REFUSALS: Readonly<
 };
 
 export async function claimNextWaitlistEntriesAction(formData: FormData): Promise<void> {
+  await clearLifecycleNotice();
   const raw = formData.get("count");
   const count = typeof raw === "string" ? Number(raw.trim()) : NaN;
   // Bounded before the call so an absurd value never becomes a query. The
