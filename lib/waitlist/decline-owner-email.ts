@@ -6,6 +6,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS,
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
   DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES,
   declineOwnerEmailActivation,
@@ -79,7 +80,7 @@ async function claim(admin: SupabaseClient, row: Row, now: Date): Promise<Row | 
 async function settle(
   admin: SupabaseClient,
   row: Row,
-  patch: { status: "sent" | "failed" | "cancelled"; last_error_code?: ErrorCode; provider_message_id?: string; sent_at?: string },
+  patch: { status: "sent" | "failed" | "cancelled"; last_error_code?: ErrorCode; provider_message_id?: string; sent_at?: string; attempt_count?: number },
   now: Date,
 ): Promise<void> {
   // Guarded by the claim we hold: attempt_count identifies this invocation's claim.
@@ -147,12 +148,21 @@ async function sendOne(deps: Deps, row: Row, now: Date): Promise<RowResult> {
     subject: mail.subject,
     html: mail.html,
     text: mail.text,
+    // EVENT-ONLY KEY. The default key hashes the payload, so an address or origin change between an ambiguous send and its retry would mint
+    // a new key and the provider could deliver twice. The key is the outbox row's identity (invitation + recipient) and nothing else.
+    eventOnlyKey: true,
     ...(deps.transport !== undefined ? { transport: deps.transport } : {}),
   });
 
   if (outcome.status === "accepted") {
     await settle(deps.admin, claimed, { status: "sent", provider_message_id: outcome.messageId, sent_at: now.toISOString() }, now);
     return "sent";
+  }
+  // The provider refused THIS payload under a key it already holds for different bytes: the first attempt was taken, and may have been
+  // delivered. It is a closed outcome, never a new send, and never retried (the budget is spent so the sweep leaves the row alone).
+  if (outcome.status === "rejected" && outcome.code === "invalid_idempotent_request") {
+    await settle(deps.admin, claimed, { status: "failed", last_error_code: "provider_rejected", attempt_count: DECLINE_OWNER_EMAIL_MAX_ATTEMPTS }, now);
+    return "failed";
   }
   // `ambiguous` may have been delivered: it is retryable under the SAME key, which replays instead of sending twice.
   const code: ErrorCode = outcome.status === "ambiguous" ? "timeout" : "provider_rejected";
@@ -239,16 +249,19 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
 export type DeclineEmailStatus = { kind: "unknown" } | { kind: "ok"; failed: number };
 
 /** Owners see a failure in Hone. A count only: no recipient, no error text. */
-export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string): Promise<DeclineEmailStatus> {
+export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, now: Date = new Date()): Promise<DeclineEmailStatus> {
   try {
     const activation = declineOwnerEmailActivation();
     if (!activation.enabled) return { kind: "ok", failed: 0 };
+    // Only `failed` rows, only since activation, and only recent ones: the outbox cannot yet say a response was handled, so the notice ages out.
+    const recent = new Date(now.getTime() - DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS * 86_400_000);
+    const from = recent > activation.since ? recent : activation.since;
     const { count, error } = await admin
       .from("waitlist_decline_owner_emails")
       .select("id", { count: "exact", head: true })
       .eq("studio_id", studioId)
       .eq("status", "failed")
-      .gte("created_at", activation.since.toISOString());
+      .gte("created_at", from.toISOString());
     if (error || typeof count !== "number") return { kind: "unknown" };
     return { kind: "ok", failed: count };
   } catch {

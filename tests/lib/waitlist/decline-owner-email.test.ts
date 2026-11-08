@@ -4,7 +4,7 @@ import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-s
 
 vi.mock("server-only", () => ({}));
 import { dispatchDeclineOwnerEmail, getDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
-import { DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
+import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
 import { buildWaitlistDeclineOwnerEmail, WAITLIST_DECLINE_OWNER_BODY, WAITLIST_DECLINE_OWNER_SUBJECT } from "@/lib/email/templates/waitlist-decline-owner";
 
 // HON-7 item 4. Synthetic ids and addresses only. The fake below models the outbox table, the practitioners table and the auth user read.
@@ -78,12 +78,13 @@ function world() {
     },
   } as unknown as SupabaseClient;
 
-  let mode: "accept" | "reject" | "ambiguous" = "accept";
+  let mode: "accept" | "reject" | "ambiguous" | "conflict" = "accept";
   const transport: IdempotentEmailTransport = {
     emails: {
       send: async (payload, options) => {
         sends.push({ to: payload.to, subject: payload.subject, text: payload.text, html: payload.html, key: options?.idempotencyKey ?? "" });
         if (mode === "reject") return { data: null, error: { name: "validation_error", message: "synthetic" } };
+        if (mode === "conflict") return { data: null, error: { name: "invalid_idempotent_request", message: "synthetic" } };
         if (mode === "ambiguous") return { data: null, error: { name: "concurrent_idempotent_requests" } };
         return { data: { id: `msg-${sends.length}` }, error: null };
       },
@@ -102,7 +103,7 @@ function world() {
   }
   const run = (scope: { invitationId?: string } = {}) =>
     dispatchDeclineOwnerEmail({ admin, transport, now: () => NOW, appOrigin: () => "https://hone.example.test" }, scope);
-  return { admin, outbox, pracs, users, sends, writes, owner, run, setMode: (m: typeof mode) => { mode = m; } };
+  return { admin, transport, outbox, pracs, users, sends, writes, owner, run, setMode: (m: typeof mode) => { mode = m; } };
 }
 
 const ON = () => { process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED = "true"; process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = SINCE; };
@@ -146,6 +147,34 @@ describe("one email to each current verified owner", () => {
     await w.run();
     expect(w.sends[0].key).toContain(`decline-owner/${INV}/${a.pid}`);
   });
+  it("a changed address or app origin between an ambiguous send and its retry keeps the SAME key", async () => {
+    const w = world(); const o = w.owner(); w.setMode("ambiguous");
+    await w.run();
+    const firstKey = w.sends[0].key;
+    expect(firstKey).toMatch(/\/no-payload-digest$/);
+    w.users.get(o.uid)!.email = "changed-address@example.test"; // the owner changed their confirmed address
+    w.setMode("accept");
+    await dispatchDeclineOwnerEmail({ admin: w.admin, transport: w.transport, now: () => NOW, appOrigin: () => "https://other-origin.example.test" });
+    const last = w.sends[w.sends.length - 1];
+    expect(last.to).toBe("changed-address@example.test");
+    expect(last.text).toContain("other-origin.example.test");
+    expect(last.key).toBe(firstKey);
+    expect(w.sends.every((x) => x.key === firstKey)).toBe(true);
+  });
+  it("the key carries no hash of the payload (nothing in it varies with the address or text)", async () => {
+    const w = world(); w.owner(); w.owner();
+    await w.run();
+    for (const m of w.sends) expect(m.key).not.toMatch(/[0-9a-f]{64}/);
+  });
+  it("a provider refusal of a changed payload under the same key is a closed failure: no new send, no retry", async () => {
+    const w = world(); const o = w.owner(); w.setMode("conflict");
+    expect(await w.run()).toMatchObject({ failed: 1, sent: 0 });
+    expect(o.row).toMatchObject({ status: "failed", last_error_code: "provider_rejected", attempt_count: 3 });
+    w.setMode("accept");
+    for (let i = 0; i < 5; i++) await w.run();
+    expect(w.sends).toHaveLength(1);
+    expect(o.row.status).toBe("failed");
+  });
   it("two overlapping invocations send once per row", async () => {
     const w = world(); w.owner(); w.owner();
     await Promise.all([w.run(), w.run()]);
@@ -163,7 +192,7 @@ describe("one email to each current verified owner", () => {
     expect(m.subject).toBe("A waitlist response needs your attention");
     expect(m.text).toContain(WAITLIST_DECLINE_OWNER_BODY);
     expect(m.html).toContain("Review response");
-    expect(m.text).toContain("https://hone.example.test/settings/waitlist?followup=1");
+    expect(m.text).toContain("https://hone.example.test/settings/waitlist?followup=1#follow-up");
     const b = buildWaitlistDeclineOwnerEmail({ appOrigin: "https://hone.example.test/" });
     expect(b.subject).toBe(WAITLIST_DECLINE_OWNER_SUBJECT);
     expect(b.text).toBe(buildWaitlistDeclineOwnerEmail({ appOrigin: "https://hone.example.test" }).text);
@@ -211,9 +240,9 @@ describe("failure, retry, and no duplicates", () => {
     expect(o.row.status).toBe("sent");
     expect(w.sends[w.sends.length - 1].key).toBe(firstKey);
   });
-  it("the reviewed retry budget is 3 attempts within 24 hours, as single constants", () => {
+  it("the reviewed retry budget is 3 attempts within 23 hours (inside the provider's ~24h key life), as single constants", () => {
     expect(DECLINE_OWNER_EMAIL_MAX_ATTEMPTS).toBe(3);
-    expect(DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS).toBe(24);
+    expect(DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS).toBe(23);
   });
   it("stops after 3 attempts however many sweeps run, and stays failed", async () => {
     const w = world(); const o = w.owner(); w.setMode("reject");
@@ -222,22 +251,22 @@ describe("failure, retry, and no duplicates", () => {
     expect(o.row.status).toBe("failed");
     expect(w.sends).toHaveLength(3);
   });
-  it("makes no attempt after 24 hours from the row's creation, and a never-sent held row becomes failed", async () => {
+  it("makes no attempt after 23 hours from the row's creation, and a never-sent held row becomes failed", async () => {
     process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
-    const w = world(); const o = w.owner({ created: "2026-11-08T11:59:00.000Z" });
+    const w = world(); const o = w.owner({ created: "2026-11-08T12:59:00.000Z" });
     await w.run();
     expect(w.sends).toHaveLength(0);
     expect(o.row).toMatchObject({ status: "failed", attempt_count: 0 });
   });
   it("a row just inside the window is still attempted", async () => {
     process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
-    const w = world(); const o = w.owner({ created: "2026-11-08T12:01:00.000Z" });
+    const w = world(); const o = w.owner({ created: "2026-11-08T13:01:00.000Z" });
     await w.run();
     expect(o.row.status).toBe("sent");
   });
   it("a failed row older than the window is not retried", async () => {
     process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
-    const w = world(); const o = w.owner({ status: "failed", created: "2026-11-08T11:00:00.000Z" });
+    const w = world(); const o = w.owner({ status: "failed", created: "2026-11-08T12:00:00.000Z" });
     o.row.attempt_count = 1;
     await w.run();
     expect(w.sends).toHaveLength(0);
@@ -304,8 +333,14 @@ describe("what is written and logged", () => {
 
 describe("status shown in Hone", () => {
   it("counts failed rows only, since activation, and nothing else", async () => {
-    const w = world(); w.owner({ status: "failed" }); w.owner({ status: "sent" }); w.owner({ status: "failed", created: "2026-11-08T00:00:00.000Z" });
-    expect(await getDeclineEmailStatus(w.admin, STUDIO)).toEqual({ kind: "ok", failed: 1 });
+    const w = world(); w.owner({ status: "failed" }); w.owner({ status: "sent" }); w.owner({ status: "cancelled" }); w.owner({ status: "held" }); w.owner({ status: "failed", created: "2026-11-08T00:00:00.000Z" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, NOW)).toEqual({ kind: "ok", failed: 1 });
+  });
+  it("a failure ages out of the notice after 14 days (the outbox cannot yet say it was handled)", async () => {
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-10-01T00:00:00.000Z";
+    const w = world(); w.owner({ status: "failed", created: "2026-10-26T11:00:00.000Z" }); w.owner({ status: "failed", created: "2026-10-27T12:00:00.000Z" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS).toBe(14);
   });
   it("is zero while the feature is off", async () => {
     delete process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED;

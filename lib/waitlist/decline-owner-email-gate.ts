@@ -24,7 +24,15 @@ export const DECLINE_OWNER_EMAIL_PURGE_DAYS = 90;
  * `failed` and is only shown in Hone. Both are counted from the row, never from cron ticks, so the backstop behaves the same at any cadence.
  */
 export const DECLINE_OWNER_EMAIL_MAX_ATTEMPTS = 3;
-export const DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS = 24;
+// 23, not 24: the provider honours an idempotency key for about 24 hours, so an attempt at the very edge of a 24-hour window could fall outside
+// it and be delivered a second time. The last attempt must stay inside the key's life.
+export const DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS = 23;
+
+/**
+ * How long a failed send is shown to the owner. The outbox (0325) has no "follow-up handled" column, so the notice cannot yet be tied to the
+ * response being dealt with; until it can (migration b), it ages out instead of staying forever.
+ */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
 
 /** A row left in `sending` longer than this was abandoned by a dead invocation and may be claimed again. */
 export const DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES = 10;

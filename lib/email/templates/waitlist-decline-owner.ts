@@ -12,7 +12,8 @@ export const WAITLIST_DECLINE_OWNER_SUBJECT = "A waitlist response needs your at
 export const WAITLIST_DECLINE_OWNER_BODY =
   "Someone responded to your consultation invitation. Sign in to review their response and follow up.";
 export const WAITLIST_DECLINE_OWNER_BUTTON = "Review response";
-export const WAITLIST_DECLINE_OWNER_PATH = "/settings/waitlist?followup=1";
+// The query lets #1406's sign-in return work for a signed-out owner (a fragment never reaches the server); the fragment scrolls a signed-in owner.
+export const WAITLIST_DECLINE_OWNER_PATH = "/settings/waitlist?followup=1#follow-up";
 
 export function buildWaitlistDeclineOwnerEmail(input: { appOrigin: string }): { subject: string; html: string; text: string } {
   const url = `${input.appOrigin.replace(/\/+$/, "")}${WAITLIST_DECLINE_OWNER_PATH}`;
