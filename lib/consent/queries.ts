@@ -23,14 +23,38 @@ import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 // projection optimisation isn't worth the duplication.
 export type ConsentFormTemplateForPractitioner = ConsentFormTemplate;
 
+// Payment-signal fence. A viewer who may not see the card-authorization state (the client profile
+// for a non-owner: OPS ruling, no practitioner financial signal) passes
+// `{ includeCardAuthorization: false }` and the QUERY excludes those templates; they are never read.
+// REQUIRED, no default: a caller must say whether its viewer may see card authorization, so a new
+// caller cannot read those rows by omission.
+export type CardAuthorizationScope = { includeCardAuthorization: boolean };
+
+const CARD_AUTHORIZATION_FORM_TYPE = "card_authorization";
+
+// Allow-list for a viewer who may not see card authorization. A row is visible only when its
+// template is on this list; a missing template or a form_type added later is hidden (fail closed),
+// which a deny-list on "card_authorization" would not do.
+const NON_FINANCE_FORM_TYPES = [
+  "general",
+  "treatment_consent",
+  "policy_acknowledgement",
+  "photo_consent",
+] as const;
+
 export async function getConsentTemplatesForStudio(
   studioId: string,
+  scope: CardAuthorizationScope,
 ): Promise<ConsentFormTemplateForPractitioner[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let query = admin
     .from("consent_form_templates")
     .select("*")
-    .eq("studio_id", studioId)
+    .eq("studio_id", studioId);
+  if (scope.includeCardAuthorization !== true) {
+    query = query.in("form_type", [...NON_FINANCE_FORM_TYPES]);
+  }
+  const { data, error } = await query
     .order("status", { ascending: true })
     .order("created_at", { ascending: false });
   if (error) {
@@ -164,16 +188,60 @@ export type PractitionerSignatureSummary = Pick<
 export async function getLatestSignaturesForPractitionerView(
   studioId: string,
   clientId: string,
+  scope: CardAuthorizationScope,
 ): Promise<PractitionerSignatureSummary[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let allowedTemplateIds: string[] | null = null;
+  let authorizedSignatureIds: string[] = [];
+  if (scope.includeCardAuthorization !== true) {
+    // Ids only (nothing returned to the caller). A signature is classified by what was signed, not
+    // by its template's current form_type alone: any signature a card-on-file row points at is card
+    // authorization evidence, whatever its template is now called (a member can edit form_type).
+    const [templates, cards] = await Promise.all([
+      admin
+        .from("consent_form_templates")
+        .select("id")
+        .eq("studio_id", studioId)
+        .in("form_type", [...NON_FINANCE_FORM_TYPES]),
+      admin
+        .from("client_payment_methods")
+        .select("card_authorization_signature_id")
+        .eq("studio_id", studioId)
+        .eq("client_id", clientId)
+        .not("card_authorization_signature_id", "is", null),
+    ]);
+    const classifyError = templates.error ?? cards.error;
+    if (classifyError) {
+      // Fail closed: without the classification, return no signatures rather than risk the signal.
+      console.error(
+        JSON.stringify({
+          event: "consent_signatures_for_practitioner_failed",
+          code: dbErrorCode(classifyError),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return [];
+    }
+    allowedTemplateIds = (templates.data ?? []).map((t) => (t as { id: string }).id);
+    authorizedSignatureIds = (cards.data ?? []).map(
+      (c) => (c as { card_authorization_signature_id: string }).card_authorization_signature_id,
+    );
+    if (allowedTemplateIds.length === 0) return [];
+  }
+  let query = admin
     .from("client_consent_signatures")
     .select(
       "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response, template_body_snapshot, response_label_snapshot, template_hash, created_at",
     )
     .eq("studio_id", studioId)
-    .eq("client_id", clientId)
-    .order("signed_at", { ascending: false });
+    .eq("client_id", clientId);
+  if (allowedTemplateIds) {
+    query = query.in("template_id", allowedTemplateIds);
+  }
+  if (authorizedSignatureIds.length > 0) {
+    query = query.not("id", "in", `(${authorizedSignatureIds.join(",")})`);
+  }
+  const { data, error } = await query.order("signed_at", { ascending: false });
   if (error) {
     console.error(
       JSON.stringify({

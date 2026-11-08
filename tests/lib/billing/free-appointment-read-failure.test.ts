@@ -34,7 +34,7 @@ const responses: Record<string, Rows> = {
 };
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+  createClient: async () => ((globalThis as { __mkSb?: () => unknown }).__mkSb = () => ({
     from: (table: string) => {
       const q: Record<string, unknown> = {};
       const chain = () => q;
@@ -46,7 +46,11 @@ vi.mock("@/lib/supabase/server", () => ({
       q.then = (resolve: (v: Rows) => unknown) => resolve(responses[table]);
       return q;
     },
-  }),
+  }))(),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  // 0303: client_pricing reads run on the service role; serve the same fake as the user client.
+  createAdminClient: () => (globalThis as { __mkSb?: () => unknown }).__mkSb!(),
 }));
 
 import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-state";
@@ -85,7 +89,7 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 async function stateFor(): Promise<string> {
-  const states = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+  const states = await getAppointmentPaymentStates("studio-1", [APPT], TZ, true);
   return states.get(APPT) ?? "no_session";
 }
 
@@ -315,7 +319,7 @@ describe("a failed settlement read is UNAVAILABLE, never 'not settled'", () => {
   it("does not fall through to Checkout when the settlement read fails", async () => {
     baseRows(3000);
     responses.appointment_settlements = { data: null, error: { message: "boom" } };
-    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ, true);
     expect(out.get(APPT)).toBe("unavailable");
   });
 
@@ -335,7 +339,7 @@ describe("a failed settlement read is UNAVAILABLE, never 'not settled'", () => {
       ],
       error: null,
     };
-    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ, true);
     expect(out.get(APPT)).toBe("settled_cash");
   });
 
@@ -360,7 +364,7 @@ describe("a failed settlement read is UNAVAILABLE, never 'not settled'", () => {
       ],
       error: null,
     };
-    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ, true);
     // Paid, not "Still owes": the charge is the stronger fact, and the older
     // record is neither contradicted nor rewritten.
     expect(out.get(APPT)).toBe("paid");

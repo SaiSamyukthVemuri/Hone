@@ -110,7 +110,7 @@ describe("Day tab", () => {
 describe("team day page path", () => {
   const day = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
 
-  it("is offered by one rule for every studio: capacity on and more than one active practitioner", () => {
+  it("is offered to any studio with an active practitioner; only OPENING on it stays a team rule", () => {
     // The one rule moved to initial-view.ts with HON-48's default view, so the
     // page and the Day view's own guard share it.
     expect(readFileSync(path.join(ROOT, "app/(app)/calendar/initial-view.ts"), "utf8")).toContain(
@@ -118,7 +118,17 @@ describe("team day page path", () => {
     );
     expect(PAGE).toContain("isTeamCalendar");
     expect(PAGE).not.toMatch(/studio\.id\s*===/);
-    expect(day).toContain("if (!isTeamCalendar(capacityEnabled, activePractitioners))");
+    expect(day).toContain("if (!hasDayView(capacityEnabled, activePractitioners))");
+    // The week and month renderers load the active list for EVERY studio, so a solo capacity-off
+    // studio is offered the Day tab; the availability input stays capacity-gated as before.
+    expect(PAGE).not.toMatch(/practitioner_capacity_enabled === true \? getPractitionersForStudio/);
+    expect((PAGE.match(/hasDayView\(studio\.practitioner_capacity_enabled === true, activePractitioners\)/g) ?? []).length).toBe(2);
+    expect(day).not.toContain("if (!capacityEnabled) redirect");
+    // The real capacity flag reaches the column and the block scope names, never a hard-coded true.
+    expect(day).toContain("practitionerCapacityEnabled={capacityEnabled}");
+    expect(day).toContain("blockScopeNamesFor(capacityEnabled, activePractitioners)");
+    // Hours follow the same flag: capacity OFF reads studio-wide rows only, as the slot engine does.
+    expect(day).toMatch(/buildTeamDay\(\{[\s\S]*?capacityEnabled,\s*\}\);/);
   });
 
   it("reads through the week view's own studio-scoped loaders, nothing new", () => {
@@ -135,7 +145,10 @@ describe("team day page path", () => {
   });
 
   it("a member may book only their own column; owners any active one", () => {
-    expect(day).toContain("allowCreate: c.active && (isOwner || c.practitionerId === practitioner.id)");
+    // The rule lives in teamColumnAllowsCreate (capacity on: own column or owner; capacity off: any
+    // active column, as the week grid allows); its cases are in capacity-off-scoped-sources.test.ts.
+    expect(day).toContain("allowCreate: teamColumnAllowsCreate({");
+    expect(day).toContain("viewerPractitionerId: practitioner.id");
   });
 
   it("returns appointment details to the same day", () => {

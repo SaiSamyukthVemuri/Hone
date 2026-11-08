@@ -57,7 +57,7 @@ describe("mobile navigation: today / prev day / next day / week strip", () => {
   it("switches day within the loaded week with no fetch, and crosses weeks via ?day=", () => {
     expect(MOBILE).toMatch(/setSelectedDate\(days\[idx - 1\]\.date\)/);
     expect(MOBILE).toMatch(/setSelectedDate\(days\[idx \+ 1\]\.date\)/);
-    expect(MOBILE).toMatch(/router\.push\(`\/calendar\?day=\$\{addDays/);
+    expect(MOBILE).toMatch(/router\.push\(withSelection\(`\/calendar\?day=\$\{addDays/);
   });
   it("page anchors the week to ?day= and computes the initial selected day (tz-safe strings)", () => {
     expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);
@@ -118,7 +118,7 @@ describe("month view tapping a date preserves the EXACT date (not the week start
   it("day cell navigates with ?day=<exact date>, so the tapped day is not snapped to week start", () => {
     // The bug: tapping Thu the 23rd opened the week start (Sun the 19th). The day
     // href must carry the exact cellDate via ?day= (the mobile selected-day param).
-    expect(MONTHVIEW).toMatch(/const dayHref = `\/calendar\?view=week&week=\$\{startOfWeek\(cellDate\)\}&day=\$\{cellDate\}`/);
+    expect(MONTHVIEW).toMatch(/const dayHref = withSelection\(\s*`\/calendar\?view=week&week=\$\{startOfWeek\(cellDate\)\}&day=\$\{cellDate\}`,\s*selectionParam,?\s*\)/);
     expect(MONTHVIEW).not.toMatch(/href=\{weekHref\}/); // old week-only href is gone
     expect(MONTHVIEW).toMatch(/href=\{dayHref\}/);
   });

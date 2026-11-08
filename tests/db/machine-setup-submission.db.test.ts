@@ -914,6 +914,14 @@ describe("0223 · a session retired MID-SAVE records nothing", () => {
         ],
       );
 
+      // The refusal can reach this client BEFORE the commit's own reply does (the
+      // server aborts the waiting statement the moment the lock frees), i.e.
+      // before the allSettled below has attached a handler. An unattended
+      // rejection is reported by Vitest as an unhandled error and fails the
+      // lane with every test green (CI db integration, 1 Nov, twice). This
+      // marks it handled; `run` itself still rejects for the assertions below.
+      run.catch(() => undefined);
+
       // IT MUST ACTUALLY BLOCK. If it does not, the `for share` is not doing
       // its job and the rest of this test would pass for the wrong reason.
       //

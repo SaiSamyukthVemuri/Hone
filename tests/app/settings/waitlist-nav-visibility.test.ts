@@ -54,6 +54,10 @@ const admissionScenario: {
 // `newClientAdmissionIsCutOver` from this module - so a mock that supplied only
 // the read would leave the bridge calling `undefined`. Stub the READ, keep
 // every pure predicate real: they are the thing under test here.
+// WS-D: the layout also reads launch readiness for an owner (to show or hide "Setup"). That read is not what this file measures, so it is stubbed
+// as "unknown" (never complete); it must not add reads to the presence-read counts asserted below.
+vi.mock("@/lib/booking/new-client-readiness", () => ({ getNewClientReadiness: async () => ({ status: "unknown", unavailable: [] }) }));
+
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
@@ -159,7 +163,7 @@ async function waitlistTabShown(): Promise<boolean> {
   const { default: SettingsLayout } = await import("@/app/(app)/settings/layout");
   const tree = await SettingsLayout({ children: null });
   const items = findItems(tree);
-  expect(items, "layout must hand SettingsNav its items").not.toBeNull();
+  expect(items, "layout must hand the Settings shell its items").not.toBeNull();
   return items!.some((i) => i.href === "/settings/waitlist" && i.label === "Waitlist");
 }
 
@@ -262,7 +266,8 @@ describe("Settings → Waitlist tab visibility", () => {
 
 describe("the presence rule stays navigation-only", () => {
   const ROOT = path.resolve(__dirname, "../../..");
-  const LAYOUT = readFileSync(path.join(ROOT, "app/(app)/settings/layout.tsx"), "utf8");
+  // The presence rule moved from the layout into the nav registry unchanged.
+  const LAYOUT = readFileSync(path.join(ROOT, "lib/settings/nav-registry.ts"), "utf8");
   const HELPER = readFileSync(
     path.join(ROOT, "lib/waitlist/operator-queue-presence.ts"),
     "utf8",

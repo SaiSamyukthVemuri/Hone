@@ -13,7 +13,7 @@ const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
 
 const AVAIL_PAGE = read("app/(app)/settings/availability/page.tsx");
 const CAL_PAGE = read("app/(app)/settings/calendar/page.tsx");
-const LAYOUT = read("app/(app)/settings/layout.tsx");
+const LAYOUT = read("lib/settings/nav-registry.ts");
 const RECURRING = read("app/(app)/settings/availability/RecurringBreaksSection.tsx");
 const TIMED = read("app/(app)/settings/availability/TimedBlocksSection.tsx");
 
@@ -61,13 +61,13 @@ describe("Availability is the home for hours, breaks, and blocks", () => {
 describe("the separate Breaks & blocks tab is removed + the route is safe", () => {
   it("removes the Breaks & blocks nav item", () => {
     expect(LAYOUT).not.toMatch(/Breaks & blocks/);
-    expect(LAYOUT).not.toMatch(/"\/settings\/calendar"/);
   });
 
-  it("/settings/calendar redirects to /settings/availability (safe deep link)", () => {
-    expect(CAL_PAGE).toMatch(/import \{ redirect \} from "next\/navigation"/);
-    expect(CAL_PAGE).toMatch(/redirect\("\/settings\/availability"\)/);
-    // The old data-loading / section rendering is gone from the route.
+  it("/settings/calendar is the Calendar page now, not a redirect to Availability", () => {
+    // D2 (settings redesign): the route was reused. Every internal link that meant
+    // Availability points at /settings/availability directly.
+    expect(CAL_PAGE).not.toMatch(/redirect\("\/settings\/availability"\)/);
+    // Breaks and blocks stay on Availability only.
     expect(CAL_PAGE).not.toMatch(/RecurringBreaksSection|TimedBlocksSection|getUpcomingTimedBlocks/);
   });
 });

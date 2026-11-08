@@ -55,6 +55,11 @@ export type MissingRecordItem = {
   actionLabel: "Chart appointment" | "Review session" | "Open client";
   // Short status chip.
   chip: string;
+  // Structured source ids so a consumer can group by client + session without
+  // parsing `id` or `href`. Exactly one of the two is set for a session or
+  // appointment item; both are null for the client-level intake item.
+  sessionId?: string | null;
+  appointmentId?: string | null;
 };
 
 // A completed appointment with no charted session (next-action's
@@ -94,6 +99,14 @@ export type MissingRecordsInput = {
 
 export type MissingRecordsAssistant = {
   items: MissingRecordItem[];
+  // Every distinct gap in the same priority/recency order, NOT collapsed to one
+  // per (client, type), capped at the same display limit. The To-do `items`
+  // above are unchanged; this is what lets a grouped view keep two sessions of
+  // one client apart. Additive: no consumer of `items` reads it.
+  allItems?: MissingRecordItem[];
+  // How many gaps exist before that cap, so a grouped view can say honestly
+  // that some were not returned.
+  allTotal?: number;
   hasItems: boolean;
   // Distinct gaps found before the display cap, so the UI can say
   // "showing N of M" honestly. Never a compliance score.
@@ -138,6 +151,8 @@ export function buildMissingRecordsAssistant(
       href: `${clientHref(a.clientId)}/sessions/new?appointment_id=${a.appointmentId}`,
       actionLabel: "Chart appointment",
       chip: "Charting needed",
+      sessionId: null,
+      appointmentId: a.appointmentId,
     });
   }
 
@@ -155,6 +170,8 @@ export function buildMissingRecordsAssistant(
         href: sessionHref,
         actionLabel: "Review session",
         chip: "Aftercare not marked",
+        sessionId: s.sessionId,
+        appointmentId: null,
       });
     }
     if (s.hasTreatmentArea && s.probeLotMissing) {
@@ -169,6 +186,8 @@ export function buildMissingRecordsAssistant(
         href: sessionHref,
         actionLabel: "Review session",
         chip: "Probe lot missing",
+        sessionId: s.sessionId,
+        appointmentId: null,
       });
     }
     // DASH-TRUTH-01: a recorded for-next-visit note with no upcoming
@@ -192,6 +211,8 @@ export function buildMissingRecordsAssistant(
       href: clientHref(i.clientId),
       actionLabel: "Open client",
       chip: "Intake incomplete",
+      sessionId: null,
+      appointmentId: null,
     });
   }
 
@@ -219,6 +240,8 @@ export function buildMissingRecordsAssistant(
 
   return {
     items: deduped.slice(0, limit),
+    allItems: ordered.slice(0, limit),
+    allTotal: ordered.length,
     hasItems: deduped.length > 0,
     totalFound: deduped.length,
   };

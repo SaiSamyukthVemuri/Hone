@@ -6,6 +6,11 @@ import {
 } from "@/lib/supabase/queries";
 import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
+import { baselineFromRow } from "@/lib/clients/profile-baseline";
+import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
+import { readLegalIdentity } from "@/lib/clients/legal-identity";
+import { LegalIdentityForm } from "@/components/legal-identity-form";
+import { createClient } from "@/lib/supabase/server";
 import { updateClientAction, unarchiveClientAction } from "../actions";
 import { ArchiveClientControl } from "./ArchiveClientControl";
 
@@ -20,8 +25,11 @@ export default async function EditClientPage({
   if (!data) notFound();
 
   const c = data.client;
+  // HON-58: getClientById reads "*", so the column arrives when the database has it.
+  const preferredName = (c as WithPreferredName).preferred_name ?? "";
   const initial: ClientFormValues = {
     name: c.name ?? "",
+    preferred_name: preferredName,
     pronouns: c.pronouns ?? "",
     date_of_birth: c.date_of_birth ?? "",
     phone: c.phone ?? "",
@@ -36,6 +44,11 @@ export default async function EditClientPage({
 
   const isArchived = c.archived_at != null;
 
+  // HON-58: the legal identity, read with the signed-in client (only an owner or
+  // practitioner can see the table). A failed read is shown as unavailable, not
+  // as an empty form, so staff never overwrite a legal name they could not see.
+  const legal = await readLegalIdentity(await createClient(), id);
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8">
       <div>
@@ -43,7 +56,7 @@ export default async function EditClientPage({
           href={`/clients/${id}`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {c.name}
+          ← {clientDisplayName({ name: c.name, preferred_name: preferredName })}
         </Link>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Edit client</h1>
       </div>
@@ -55,8 +68,33 @@ export default async function EditClientPage({
         pendingLabel="Saving…"
         cancelHref={`/clients/${id}`}
         hiddenFields={{ client_id: id }}
+        baseline={baselineFromRow(c as unknown as Record<string, unknown>)}
         saveAnywayLabel="Save changes anyway"
       />
+
+      {legal.ok ? (
+        <LegalIdentityForm
+          clientId={id}
+          initial={{
+            given: legal.value?.legal_given_name ?? "",
+            middle: legal.value?.legal_middle_name ?? "",
+            family: legal.value?.legal_family_name ?? "",
+          }}
+          stored={
+            legal.value
+              ? {
+                  given: legal.value.legal_given_name ?? null,
+                  middle: legal.value.legal_middle_name ?? null,
+                  family: legal.value.legal_family_name ?? null,
+                }
+              : null
+          }
+        />
+      ) : (
+        <p className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-neutral-800">
+          The legal name could not be loaded right now. Reload the page to try again.
+        </p>
+      )}
 
       {/* Archive / unarchive sits at the bottom of the edit page so a
           practitioner editing a client cannot accidentally hit it

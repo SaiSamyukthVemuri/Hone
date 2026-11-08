@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isInitialCalendarEntry, isTeamCalendar } from "@/app/(app)/calendar/initial-view";
+import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "@/app/(app)/calendar/initial-view";
 
 // HON-48 (Sam decision 17): Day is the INITIAL view for a team studio. The rule
 // is the pure pair in initial-view.ts; the page applies it only to an entry with
@@ -39,9 +39,28 @@ describe("what counts as a team calendar", () => {
   });
 });
 
+describe("who has a Day view at all (one compact column for a lone practitioner)", () => {
+  const one = [{ id: "a" }];
+  const many = [{ id: "a" }, { id: "b" }];
+  it("capacity ON: any studio with at least one active practitioner", () => {
+    expect(hasDayView(true, one)).toBe(true);
+    expect(hasDayView(true, many)).toBe(true);
+    expect(hasDayView(true, [])).toBe(false);
+  });
+  it("capacity OFF: only a studio with EXACTLY one active practitioner", () => {
+    expect(hasDayView(false, one)).toBe(true);
+    expect(hasDayView(false, many)).toBe(false); // keeps today's week grid
+    expect(hasDayView(false, [])).toBe(false);
+  });
+  it("does not change which studios OPEN on the Day view", () => {
+    expect(isTeamCalendar(true, one)).toBe(false);
+    expect(isTeamCalendar(false, one)).toBe(false);
+  });
+});
+
 describe("the page applies the rule to the initial entry only", () => {
   it("overrides the view only for an initial entry on a capacity-on studio, through the shared helpers", () => {
-    expect(PAGE).toContain('import { isInitialCalendarEntry, isTeamCalendar } from "./initial-view";');
+    expect(PAGE).toContain('import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";');
     expect(PAGE).toMatch(
       /if \(isInitialCalendarEntry\(params\) && studio\.practitioner_capacity_enabled === true\) \{\s*const active = await getPractitionersForStudio\(studio\.id\);\s*if \(isTeamCalendar\(true, active\)\) view = "day";\s*\}/,
     );
@@ -54,21 +73,21 @@ describe("the page applies the rule to the initial entry only", () => {
   });
 
   it("a week-view 'Today' names the week, or a team studio would be sent to the Day view", () => {
-    expect(PAGE).toContain('todayHref="/calendar?view=week"');
+    expect(PAGE).toContain('todayHref={withSelection("/calendar?view=week", sidebar.param)}');
     expect(PAGE).not.toMatch(/todayHref="\/calendar"/);
-    expect(MOBILE).toContain('router.push("/calendar?view=week")');
+    expect(MOBILE).toContain('router.push(withSelection("/calendar?view=week", selectionParam))');
     expect(MOBILE).not.toContain('router.push("/calendar")');
   });
 
   it("every other in-page link already carries a parameter, so none re-enters the default", () => {
-    const hrefs = [...PAGE.matchAll(/(?:weekHref|monthHref|dayHref|prevHref|todayHref|nextHref)=\{?[`"]([^`"]+)[`"]/g)].map((m) => m[1]);
+    const hrefs = [...PAGE.matchAll(/(?:weekHref|monthHref|dayHref|prevHref|todayHref|nextHref)=\{?(?:withSelection\()?[`"]([^`"]+)[`"]/g)].map((m) => m[1]);
     expect(hrefs.length).toBeGreaterThan(8);
     for (const h of hrefs) expect(h, h).toMatch(/^\/calendar\?/);
   });
 
   it("the Day view's non-team redirect and Week tab keep a parameter, so there is no redirect loop", () => {
     expect(PAGE).toContain("redirect(`/calendar?day=${date}`)");
-    expect(PAGE).toContain("weekHref={`/calendar?day=${date}`}");
+    expect(PAGE).toContain("weekHref={withSelection(`/calendar?day=${date}`, sidebar.param)}");
   });
 
   it("permissions are not read here: no role or owner check decides the initial view", () => {

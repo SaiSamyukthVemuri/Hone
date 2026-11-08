@@ -80,10 +80,8 @@ export function ClientSelfServiceForm({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 id="client-self-service" className="scroll-mt-24 text-lg font-medium">
-          Client self-service
-        </h2>
-        <p className="mt-1 text-sm text-neutral-500">
+        {/* The view heading (Client self-service) comes from the route. */}
+        <p className="text-sm text-neutral-500">
           Choose what clients can change themselves from their email links. Reminders and
           aftercare emails keep sending either way; only the cancel and reschedule options change. {portalSwitchAvailable
             ? "The client portal has its own switch below."

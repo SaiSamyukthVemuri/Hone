@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
 import {
@@ -41,11 +42,22 @@ type Row = {
   supersedes_id: string | null;
 };
 
+/**
+ * `viewerIsOwner` is the caller's explicit owner context (HON-44, migration
+ * 0254). Since 0254 `appointment_settlements` is owner-readable only, so for a
+ * non-owner an RLS-filtered SELECT returns zero rows WITH NO ERROR, which this
+ * loader would otherwise report as `ok: true` with nothing settled: a paid or
+ * waived visit read as "chargeable". A non-owner therefore gets the explicit
+ * "could not find out" answer and no query is issued. The caller derives the
+ * flag from the authenticated practitioner's role, never from client input.
+ */
 export async function getAppointmentSettlements(
   studioId: string,
   appointmentIds: ReadonlyArray<string>,
+  viewerIsOwner: boolean,
 ): Promise<AppointmentSettlementLoad> {
   const byAppointmentId = new Map<string, AppointmentSettlement>();
+  if (!viewerIsOwner) return { ok: false };
   const ids = [...new Set(appointmentIds)].filter(Boolean);
   if (ids.length === 0) return { ok: true, byAppointmentId };
 
@@ -130,7 +142,10 @@ export async function resolveAppointmentQuotedAmountCents(
   studioId: string,
   appointmentId: string,
   studioTimezone: string,
+  viewerIsOwner: boolean,
 ): Promise<number | null> {
+  // Closed refusal BEFORE any read: a non-owner gets no quote.
+  if (viewerIsOwner !== true) return null;
   const supabase = await createClient();
   const { data: appt, error: apptError } = await supabase
     .from("appointments")
@@ -147,8 +162,11 @@ export async function resolveAppointmentQuotedAmountCents(
   if (!svc?.name) return null;
 
   const clientId = (appt as { client_id: string | null }).client_id;
+  // client_pricing becomes owner-only through the Data API (0303), so this read uses the service role. Membership
+  // and scope are proven by the RLS-scoped reads above (same studio; the client comes from that row, never from an
+  // argument). OWNERSHIP is this function's own `viewerIsOwner` refusal at the top, not the scoped reads.
   const { data: pricingRows, error: pricingError } = clientId
-    ? await supabase
+    ? await createAdminClient()
         .from("client_pricing")
         .select("service_name, price_cents, notes, effective_from")
         .eq("studio_id", studioId)

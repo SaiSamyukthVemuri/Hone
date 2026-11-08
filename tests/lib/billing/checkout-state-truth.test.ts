@@ -26,7 +26,7 @@ vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => true }));
 
 // Honours .eq()/.in() like PostgREST (same harness as appointment-payment-state).
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+  createClient: async () => ((globalThis as { __mkSb?: () => unknown }).__mkSb = () => ({
     from: (table: string) => {
       const eqs: Array<[string, unknown]> = [];
       const ins: Array<[string, readonly unknown[]]> = [];
@@ -55,7 +55,11 @@ vi.mock("@/lib/supabase/server", () => ({
       };
       return q;
     },
-  }),
+  }))(),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  // 0303: client_pricing reads run on the service role; serve the same fake as the user client.
+  createAdminClient: () => (globalThis as { __mkSb?: () => unknown }).__mkSb!(),
 }));
 
 const { getAppointmentPaymentStates } = await import("@/lib/billing/appointment-payment-state");
@@ -109,7 +113,7 @@ function scenario(opts: {
   };
 }
 
-const state = async () => (await getAppointmentPaymentStates(STUDIO, [APPT], TZ)).get(APPT);
+const state = async () => (await getAppointmentPaymentStates(STUDIO, [APPT], TZ, true)).get(APPT);
 
 describe("HON-11 #2: after a FULL refund, a recorded outcome is the row's current state", () => {
   it("full refund + paid_cash → settled_cash (was: refunded_full forever)", async () => {

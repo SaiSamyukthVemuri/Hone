@@ -94,6 +94,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "revert_appointment_outcome",
   },
   {
+    path: "app/(app)/calendar/check-practitioner/actions.ts",
+    purpose: "Owner-only explicit practitioner correction for one open appointment (the 'check the practitioner' list).",
+    why: "The action resolves the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and refuses any non-owner before any read; the browser supplies only an appointment id and a target practitioner id, both UUID-validated. The appointment, and its live linked sessions (a treatment record refuses the change), are read through the admin client filtered by BOTH id and the server-derived studio_id, and the only write is the move_or_reassign_appointment RPC (service_role-only), which independently re-validates the owner, the target (same studio, active) and the appointment state, and writes the audit row. This file performs no appointment DML of its own, sends no client email and writes no payment data.",
+    scopeGuard: "move_or_reassign_appointment",
+  },
+  {
     path: "app/(app)/calendar/move-appointment-actions.ts",
     purpose: "Practitioner Move/reassign appointment — authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
     // PR B1 CORRECTION. This entry previously named `practitioner_move_appointment`
@@ -799,7 +805,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "app/(app)/settings/tracking/page.tsx",
+    path: "app/(app)/settings/integrations/marketing/page.tsx",
     purpose: "Authenticated OWNER settings page (redacted status read).",
     why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
     scopeGuard: "requirePractitionerWithStudio",
@@ -809,5 +815,23 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Sign this visit's treatment photos for the session chart page (FETT photos, read-only).",
     why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). Rows are first read through the RLS client scoped to the caller's studio + client + session, unarchived, and each path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
     scopeGuard: "validateTreatmentImagePath",
+  },
+  {
+    path: "lib/billing/appointment-payment-state.ts",
+    purpose: "Owner display path: read the visible appointments' clients' custom prices for the free-visit determination.",
+    why: "client_pricing is owner-only through the Data API (0303). The loader refuses a non-owner viewer before any read, then reads the studio and client taken from an RLS-scoped row (never an argument) on the service role.",
+    scopeGuard: "viewerIsOwner",
+  },
+  {
+    path: "lib/billing/appointment-settlement.ts",
+    purpose: "Owner-only quote: read one visible appointment's client's custom price.",
+    why: "client_pricing is owner-only through the Data API (0303). The loader refuses a non-owner viewer before any read, then reads the studio and client taken from an RLS-scoped row (never an argument) on the service role.",
+    scopeGuard: "viewerIsOwner !== true",
+  },
+  {
+    path: "lib/billing/authoritative-session-payment.ts",
+    purpose: "Owner-only authoritative amount: read the scoped session's client's custom price.",
+    why: "client_pricing is owner-only through the Data API (0303). The loader refuses a non-owner viewer before any read, then reads the studio and client taken from an RLS-scoped row (never an argument) on the service role.",
+    scopeGuard: "viewerIsOwner !== true",
   },
 ];

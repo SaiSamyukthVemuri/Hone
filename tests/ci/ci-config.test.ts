@@ -946,8 +946,11 @@ describe("PR CI — path-aware lane selection", () => {
     // ceiling killed the job, skipping Build, Unit tests and every safety gate.
     // No assertion failed -- most were never run. Lower bound 8 so a revert
     // turns this red.
+    // 15 -> 25 (NODE-HEAP-01, 1 Nov): with typecheck and the build no longer
+    // OOMing, PR runs reached 15.0 min mid-`npm test` with every test that ran
+    // passing (setup + build 5.2 min, tests 9.7+ min). The lower bound stays 8.
     expect(budget("validate")).toBeGreaterThan(8);
-    expect(budget("validate")).toBeLessThanOrEqual(15);
+    expect(budget("validate")).toBeLessThanOrEqual(25);
     // db-integration: TARGET unchanged, HARD TIMEOUT 12. It carried a single 8
     // that served as both, which is the same shape as the payment lane below.
     // The lane historically finished at 6.1-7.5 min — the ceiling and the
@@ -2952,5 +2955,42 @@ describe("G4 — docs-only changes run the unit tests that read them", () => {
     expect(exec("tests/a.test.ts; tests/b.test.ts")).toEqual({ code: 0, out: "[tests/a.test.ts]\n[tests/b.test.ts]\n" });
     expect(exec("").code).not.toBe(0);
     expect(exec(" ; ").code).not.toBe(0);
+  });
+});
+
+describe("NODE-HEAP-01: typecheck and the webServer build keep a 4 GB Node heap", () => {
+  // The default ~2 GB old-space limit OOM-killed typecheck and the Playwright
+  // webServer `next build` PR-wide on 2026-11-01 (exit 134, no test ran).
+  const heap = (text: string) => Number(/--max-old-space-size=(\d+)/.exec(text)?.[1] ?? 0);
+  it("the workflow-level env sets the heap, so every job inherits it", () => {
+    const top = /^env:\n((?:  .*\n|\s*\n)+)/m.exec(CI)?.[1] ?? "";
+    expect(heap(/^  NODE_OPTIONS: (.*)$/m.exec(top)?.[1] ?? "")).toBeGreaterThanOrEqual(4096);
+  });
+  it("the Build step's own NODE_OPTIONS replaces the inherited one, so it repeats the flag and keeps the font gate", () => {
+    const build = /- name: Build\n[\s\S]*?\n\s+NODE_OPTIONS: (.*)\n/.exec(CI)?.[1] ?? "";
+    expect(build).toMatch(/--require \.\/scripts\/block-google-fonts\.cjs/);
+    expect(heap(build)).toBeGreaterThanOrEqual(4096);
+  });
+});
+
+describe("runner image is explicit", () => {
+  // `ubuntu-latest` moved to Ubuntu 26.04 between two runs on 2026-11-03: the
+  // playwright-system-deps CONTROL case failed on every branch and Playwright
+  // refused webkit ("does not support webkit on ubuntu26.04-x64"). An image that
+  // moves under the repo is the same class of problem as a mutable action tag,
+  // so every job names its image, like the SHA-pinned actions. Moving to a new
+  // image is a deliberate change of this constant, with its own proof.
+  const RUNNER = "ubuntu-24.04";
+
+  it("every job in every workflow runs on the pinned image, never a -latest label", () => {
+    const bad: string[] = [];
+    const workflows = readWorkflowDir();
+    expect(workflows.length, "no workflow found").toBeGreaterThan(0);
+    for (const [name, body] of workflows) {
+      for (const m of body.matchAll(/^\s*runs-on:\s*(.+?)\s*$/gm)) {
+        if (m[1] !== RUNNER) bad.push(`${name}: runs-on: ${m[1]}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });

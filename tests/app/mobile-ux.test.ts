@@ -74,7 +74,8 @@ describe("app shell: responsive navigation", () => {
     }
     // `md:px-8` / `md:py-10` are PADDING, not mode, and deliberately stay.
     expect(LAYOUT).toMatch(/px-4 py-3 md:px-8/);
-    expect(LAYOUT).toMatch(/px-5 py-8 md:px-8 md:py-10/);
+    // The page container padding moved with the width rule into lib/calendar/page-width.ts (APP_MAIN_NORMAL).
+    expect(readFileSync("lib/calendar/page-width.ts", "utf8")).toMatch(/px-5 py-8 md:px-8 md:py-10/);
   });
 
   it("the mobile menu is a client component with an accessible, stateful button", () => {

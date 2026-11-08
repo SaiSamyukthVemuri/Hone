@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
@@ -234,8 +235,11 @@ async function getFreeAppointmentIds(
     serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
   }
 
+  // client_pricing becomes owner-only through the Data API (0303), so this read uses the service role. Membership
+  // and scope are proven by the RLS-scoped reads above (same studio; the client comes from that row, never from an
+  // argument). OWNERSHIP is getAppointmentPaymentStates' `viewerIsOwner` refusal, which runs before this loader is reached.
   const { data: pricingRows, error: pricingError } = clientIds.length
-    ? await supabase
+    ? await createAdminClient()
         .from("client_pricing")
         .select("client_id, service_name, price_cents, notes, effective_from")
         .eq("studio_id", studioId)
@@ -283,10 +287,23 @@ export async function getAppointmentPaymentStates(
   studioId: string,
   appointmentIds: ReadonlyArray<string>,
   studioTimezone: string,
+  viewerIsOwner: boolean,
 ): Promise<Map<string, AppointmentPaymentState>> {
   const out = new Map<string, AppointmentPaymentState>();
   const ids = [...new Set(appointmentIds)].filter(Boolean);
   if (ids.length === 0) return out;
+
+  // HON-44 / migration 0254: payment_charge_attempts and appointment_settlements
+  // are owner-readable only. For a non-owner those reads return zero rows WITH
+  // NO ERROR, which is indistinguishable from "no payment exists" and would
+  // render a paid visit as chargeable or free. A non-owner is therefore told
+  // `unavailable` for every id and no query is issued. `viewerIsOwner` is the
+  // caller's explicit owner context, derived from the authenticated
+  // practitioner's role and nowhere else.
+  if (!viewerIsOwner) {
+    for (const apptId of ids) out.set(apptId, "unavailable");
+    return out;
+  }
 
   const supabase = await createClient();
 
@@ -347,7 +364,10 @@ export async function getAppointmentPaymentStates(
       .eq("studio_id", studioId)
       .eq("charge_reason", "session_payment")
       .eq("stripe_livemode", inferStripeLivemode())
-      .in("session_id", sessionIds);
+      .in("session_id", sessionIds)
+      // HON-65: the reducer returns on the FIRST succeeded row, so the order must be fixed. The dashboard's unpaid check reads in the same order.
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
     if (attemptError) attemptsUntrusted = true;
     for (const a of (attemptRows ?? []) as Array<{
       session_id: string;
@@ -395,7 +415,7 @@ export async function getAppointmentPaymentStates(
   // settled": an absence produced by a failed query is not a fact, and
   // rendering Checkout over a visit already recorded as paid in cash is exactly
   // the double-collection prompt this release removes.
-  const settlementLoad = await getAppointmentSettlements(studioId, ids);
+  const settlementLoad = await getAppointmentSettlements(studioId, ids, viewerIsOwner);
 
   const freeLoad = await getFreeAppointmentIds(studioId, ids, studioTimezone);
 

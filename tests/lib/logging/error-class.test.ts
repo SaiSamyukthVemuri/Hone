@@ -197,6 +197,38 @@ describe("boundedErrorLabel: what may be STORED for a failed unit of work", () =
     expect(leaks(boundedErrorLabel(error))).toBe(false);
   });
 
+  // The setup_intent.succeeded webhook throws `<step>_failed:${dbErrorCode(e)}`.
+  // A SQLSTATE or PostgREST code with uppercase letters used to degrade the
+  // whole label to handler_failed:error, hiding which step failed.
+  it.each([
+    "save_client_card_on_file_failed:PGRST202",
+    "customer_lineage_lookup_failed:42P01",
+    "card_change_owner_lookup_failed:22023",
+    "signature_lookup_failed:55P03",
+    "card_change_owner_lookup_failed:unknown",
+    "payment_method_retrieve_failed:network",
+  ])("keeps a deliberate label whose code segment is a database code: %s", (label) => {
+    expect(boundedErrorLabel(new Error(label))).toBe(label);
+  });
+
+  it.each([
+    ["free text after a code-bearing prefix", new Error("save_client_card_on_file_failed:PGRST202 could not find function")],
+    ["an uppercase first segment", new Error("PGRST202:save_failed")],
+    ["a code after '.' instead of ':'", new Error("save_failed.PGRST202")],
+    ["a code-shaped segment that is too long", new Error("save_failed:PGRST2020")],
+    ["a mixed-case word", new Error("save_failed:NotFound")],
+    ["a Stripe-style mixed-case id", new Error("payment_method_retrieve_failed:pm_1NqXyZAbCdEfGh")],
+    ["a UUID", new Error("customer_lineage_lookup_failed:5b0f7a52-3c1d-4c8e-9a52-0b3f6a1d2e44")],
+    ["a UUID without hyphens", new Error("customer_lineage_lookup_failed:5b0f7a523c1d4c8e9a520b3f6a1d2e44")],
+    ["a long hex token", new Error("save_failed:deadbeef0123456789abcdef")],
+    ["an email after a code", new Error("save_failed:42P01:synthetic.person@example.test")],
+    ["quotes", new Error('save_failed:"42P01"')],
+    ["an over-long code-bearing label", new Error(`save_failed${"_x".repeat(45)}:PGRST202`)],
+  ])("%s is still stored as handler_failed:<class>", (_name, error) => {
+    expect(boundedErrorLabel(error)).toBe("handler_failed:error");
+    expect(leaks(boundedErrorLabel(error))).toBe(false);
+  });
+
   it("classifies a network failure and a thrown string, and takes another fallback prefix", () => {
     expect(boundedErrorLabel(Object.assign(new Error(HOSTILE), { code: "ECONNRESET" }))).toBe("handler_failed:network");
     expect(boundedErrorLabel(HOSTILE)).toBe("handler_failed:non_error");

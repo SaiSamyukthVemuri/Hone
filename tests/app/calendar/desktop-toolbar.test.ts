@@ -52,16 +52,16 @@ describe("page wires the toolbar for both views with existing params", () => {
     expect(PAGE).toMatch(
       /<CalendarToolbar[\s\S]*?view="week"[\s\S]*?rangeLabel=\{weekRangeLabel\(weekStart, weekEnd\)\}[\s\S]*?hideStepNavOnMobile/,
     );
-    expect(PAGE).toMatch(/prevHref=\{`\/calendar\?week=\$\{prevWeek\}`\}/);
+    expect(PAGE).toMatch(/prevHref=\{withSelection\(`\/calendar\?week=\$\{prevWeek\}`, sidebar\.param\)\}/);
     // Explicit view=week: a bare /calendar is the initial entry, which opens the
     // Day view on a team studio (HON-48), so "Today" must name the week.
-    expect(PAGE).toMatch(/todayHref="\/calendar\?view=week"/);
+    expect(PAGE).toMatch(/todayHref=\{withSelection\("\/calendar\?view=week", sidebar\.param\)\}/);
   });
   it("month view passes the month label + month nav, step nav visible", () => {
     expect(PAGE).toMatch(
       /<CalendarToolbar[\s\S]*?view="month"[\s\S]*?rangeLabel=\{monthYearLabel\(monthAnchor\)\}/,
     );
-    expect(PAGE).toMatch(/prevHref=\{`\/calendar\?view=month&month=\$\{prevMonth\}`\}/);
+    expect(PAGE).toMatch(/prevHref=\{withSelection\(`\/calendar\?view=month&month=\$\{prevMonth\}`, sidebar\.param\)\}/);
     expect(PAGE).toMatch(/hideStepNavOnMobile=\{false\}/);
   });
 });

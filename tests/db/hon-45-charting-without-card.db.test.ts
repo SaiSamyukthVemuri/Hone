@@ -26,6 +26,9 @@ if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === "undefined") {
   (globalThis as { WebSocket?: unknown }).WebSocket = class WebSocketStub {};
 }
 const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// The loader now reads client_pricing on the service role (createAdminClient), which reads this at call time. Point it at the
+// LOCAL stack's key (the same one the paired guard selected), never a real credential; restored in afterAll.
+const savedServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TZ = "America/Toronto";
 import {
   cleanupPaymentScenario,
@@ -54,6 +57,8 @@ afterAll(async () => {
   for (const studioId of created) {
     await cleanupPaymentScenario(studioId).catch(() => undefined);
   }
+  if (savedServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY = savedServiceKey;
   await closePool();
 });
 
@@ -217,11 +222,12 @@ async function ownerView(who: SignedIn, studioId: string, appointmentId: string)
   // paired guard selected (as tests/db/owner-capacity.db.test.ts does).
   process.env.NEXT_PUBLIC_SUPABASE_URL = E2E_SUPABASE_URL;
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = E2E_SERVICE_ROLE_KEY;
   jar.clear();
   for (const [name, value] of who.cookies) jar.set(name, value);
   let state: string | undefined;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    state = (await getAppointmentPaymentStates(studioId, [appointmentId], TZ)).get(appointmentId);
+    state = (await getAppointmentPaymentStates(studioId, [appointmentId], TZ, true)).get(appointmentId);
     if (state !== "unavailable") return state;
     await new Promise((r) => setTimeout(r, 250));
   }

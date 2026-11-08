@@ -6,7 +6,7 @@
 // WHY THIS FILE EXISTS
 // -------------------
 // Every marketing page and component reads its copy-critical constants from
-// here so the truthful CTA label, CAD currency, plan prices, and page titles
+// here so the truthful CTA label, USD currency, plan prices, and page titles
 // stay byte-identical across the header, hero, pricing, demo, metadata,
 // JSON-LD, and tests. That consistency is a correctness requirement, not a
 // nicety:
@@ -14,9 +14,10 @@
 //     addendum §3). `/demo` is a lead-capture form, the founder replies to
 //     schedule; the visitor never selects a real appointment time, so the
 //     truthful verb is "Request", never "Book". See `DEMO_FLOW` below.
-//   - SaaS currency is CAD everywhere: prices, FAQ, metadata, JSON-LD, tests
-//     (prompt §15). This is a product-owner decision, independent of the
-//     currency a studio uses to charge its own clients.
+//   - SaaS currency is USD everywhere: prices, FAQ, metadata, JSON-LD, tests
+//     (product-owner decision, 1 Nov 2026; it was CAD before, prompt §15). It
+//     prices the Hone SOFTWARE SUBSCRIPTION only, independent of the currency a
+//     studio uses to charge its own clients and of Stripe Connect currencies.
 //   - Titles are pinned per prompt §22.
 //
 // PRODUCT-TRUTH BOUNDARY
@@ -148,7 +149,7 @@ export const POSITIONING = {
   // magic-link, LIVE_FOR_ALL_ONBOARDED/MARKET) and CSV export.
   everyPlanIncludes:
     "Included on every plan: treatment memory, charting, intake, consent, photos, follow-up, payments, a client portal and CSV export.",
-  pricingHeading: "Plans in Canadian dollars",
+  pricingHeading: "Plans in US dollars (USD)",
   recordsHeading: "How your records are kept",
   walkthroughHeading: "See it with a returning client",
   // ALREADY BURNED INTO THE FILM, so it is carried verbatim rather than
@@ -271,16 +272,19 @@ export const WALKTHROUGH = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Pricing (prompt §15/§16; addendum §1 CAD, §2 operationally-fulfillable)
+// Pricing (prompt §15/§16; addendum §2 operationally-fulfillable; USD since 1 Nov 2026)
 // ---------------------------------------------------------------------------
 //
-// Currency is CAD everywhere. No Stripe Products/Prices are created. No caps,
+// Currency is USD everywhere (labelled "US$"). No Stripe Products/Prices are
+// created; matching USD monthly prices are a separate provider step when
+// self-service checkout is configured. No caps,
 // quotas, SMS overages, automatic seat billing, annual gimmicks, or fake
 // scarcity. Core treatment memory / charting / intake / consent / records are
 // NOT crippled to build tiers, tiers differ only by who the plan is for and
 // how many practitioners it covers.
 //
-// STUDIO DECISION: published at CAD $99/month for up to three practitioners.
+// STUDIO DECISION: published at US$99/month for up to three practitioners;
+// more than three practitioners is "contact us" (no public price).
 // Rationale (recorded in the truth register): multi-practitioner studios are
 // LIVE_FOR_ALL_ONBOARDED, each practitioner charts under their own name and is
 // colour-coded on the shared calendar, and owners invite/manage/remove
@@ -290,13 +294,13 @@ export const WALKTHROUGH = {
 // public booking page attributes bookings studio-wide and availability is a
 // single studio-wide schedule, so we must NOT claim clients pick a specific
 // practitioner or that each practitioner has independent online availability.)
-export const CURRENCY = "CAD" as const;
+export const CURRENCY = "USD" as const;
 export const STUDIO_PRICE_PUBLISHED = true as const;
 
 export type PricingPlan = {
-  id: "founding-solo" | "solo" | "studio";
+  id: "solo" | "studio" | "larger";
   name: string;
-  /** Display price, e.g. "CAD $29". Null when the plan is "Talk to us". */
+  /** Display price, e.g. "US$49". Null when the plan is "Contact us". */
   priceLabel: string | null;
   cadence: string | null;
   // NO BADGE FIELD. A recommended/most-popular marker is not merely unset —
@@ -313,19 +317,9 @@ export type PricingPlan = {
 
 export const PRICING_PLANS: ReadonlyArray<PricingPlan> = [
   {
-    id: "founding-solo",
-    name: "Founding Solo",
-    priceLabel: "CAD $29",
-    cadence: "/month",
-    bestFor: "Early solo electrologists joining Hone.",
-    seats: "1 practitioner",
-    transition:
-      "CAD $29/month for the first 12 months, then CAD $39/month while continuously subscribed.",
-  },
-  {
     id: "solo",
     name: "Solo",
-    priceLabel: "CAD $49",
+    priceLabel: "US$49",
     cadence: "/month",
     bestFor: "Established solo electrologists.",
     seats: "1 practitioner",
@@ -333,10 +327,18 @@ export const PRICING_PLANS: ReadonlyArray<PricingPlan> = [
   {
     id: "studio",
     name: "Studio",
-    priceLabel: STUDIO_PRICE_PUBLISHED ? "CAD $99" : null,
+    priceLabel: STUDIO_PRICE_PUBLISHED ? "US$99" : null,
     cadence: STUDIO_PRICE_PUBLISHED ? "/month" : null,
     bestFor: "Small studios with up to three practitioners.",
     seats: "up to 3 practitioners",
+  },
+  {
+    id: "larger",
+    name: "Larger studios",
+    priceLabel: null,
+    cadence: null,
+    bestFor: "Studios with more than three practitioners. Get in touch and we'll set up a plan that fits.",
+    seats: "more than 3 practitioners",
   },
 ] as const;
 
@@ -484,7 +486,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/pricing",
     title: "Pricing | Hone",
     description:
-      "Plans in Canadian dollars. Every plan includes the full treatment workflow, with no cap on clients or appointments and no setup fee.",
+      "Plans in US dollars (USD). Every plan includes the full treatment workflow, with no cap on clients or appointments and no setup fee.",
     indexable: true,
   },
   {
@@ -554,7 +556,6 @@ export const ANALYTICS_EVENTS = {
   primaryCtaClick: "marketing:primary_cta_click",
   secondaryCtaClick: "marketing:secondary_cta_click",
   pricingPlanViewed: "marketing:pricing_plan_viewed",
-  foundingCtaClick: "marketing:founding_cta_click",
   walkthroughFormStarted: "marketing:walkthrough_form_started",
   walkthroughFormSubmitted: "marketing:walkthrough_form_submitted",
   featureCtaClick: "marketing:feature_cta_click",

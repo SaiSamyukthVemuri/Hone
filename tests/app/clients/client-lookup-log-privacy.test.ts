@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   getUser: vi.fn(), member: vi.fn(), memberFilters: [] as Array<[string, unknown]>,
-  admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
+  admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(), rpc: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidate }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.identity }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: h.getUser }, from: (table: string) => {
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: h.getUser }, rpc: h.rpc, from: (table: string) => {
   if (table === "practitioners") {
     const member = { select: () => member, eq: (key: string, value: unknown) => { h.memberFilters.push([key, value]); return member; }, maybeSingle: h.member };
     return member;
@@ -41,9 +41,15 @@ import { updateClientAction, archiveClientAction, unarchiveClientAction } from "
 
 const STUDIO = "11111111-2222-4333-8444-555555555555";
 const CLIENT = "22222222-3333-4444-8555-666666666666";
+// The values the edit page loaded: the action writes only fields that differ from these.
+const BASELINE = {
+  name: "Synthetic Client", preferred_name: null, pronouns: null, date_of_birth: null, phone: null, email: null,
+  address: null, fitzpatrick_type: null, allergies: null, emergency_contact_name: null, emergency_contact_phone: null,
+};
 function form() {
   const data = new FormData();
   data.set("client_id", CLIENT); data.set("name", "Synthetic Client");
+  data.set("baseline", JSON.stringify(BASELINE));
   return data;
 }
 beforeEach(() => {
@@ -51,7 +57,7 @@ beforeEach(() => {
   h.getUser.mockResolvedValue({ data: { user: { id: "user-A" } }, error: null });
   h.member.mockResolvedValue({ data: { id: ACTOR, user_id: "user-A", studio_id: STUDIO, active: true, role: "practitioner" }, error: null });
   h.audit.mockReset(); h.redirect.mockReset(); h.revalidate.mockReset();
-  h.identity.mockResolvedValue({ studio: { id: STUDIO } });
+  h.identity.mockResolvedValue({ practitioner: { id: ACTOR, active: true, role: "practitioner" }, studio: { id: STUDIO } });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -123,22 +129,20 @@ describe("client UPDATE failure diagnostic privacy", () => {
   function prepareUpdate(error: { code: string; message: string }) {
     h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
     h.duplicate.mockReset(); h.duplicate.mockResolvedValue({ data: [], error: null });
-    const query = { eq: vi.fn() };
-    query.eq.mockReturnValueOnce(query).mockResolvedValueOnce({ error });
-    h.writes.mockReset(); h.writes.mockReturnValue(query);
+    // 0281: one atomic function call carries the patch, the loaded values and the scope.
+    h.rpc.mockReset(); h.rpc.mockResolvedValue({ data: null, error });
     const data = form(); data.set("email", "synthetic-email@example.test");
-    return { data, updateFilters: query.eq };
+    return { data, updateFilters: h.rpc };
   }
   it("omits UPDATE error free text while preserving safe metadata, scope and generic response", async () => {
     const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
     const { data, updateFilters } = prepareUpdate({ code: "23514", message: sentinel });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
-    // Two single-row reads: visibility, then (HON-58 I1) the stored name, phone
-    // and date of birth that decide whether the probable-duplicate check runs.
-    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledTimes(2);
-    expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1); expect(h.writes).toHaveBeenCalledOnce();
-    expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    // One single-row read (visibility): what the page loaded travels with the form, so there is no second read.
+    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
+    expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1); expect(h.rpc).toHaveBeenCalledOnce();
+    expect(updateFilters.mock.calls[0]![1]).toMatchObject({ p_client_id: CLIENT, p_studio_id: STUDIO });
     expect(log).toHaveBeenCalledOnce();
     const payload = JSON.parse(String(log.mock.calls[0]![0]));
     expect(payload).toEqual({ event: "client_update_failed", clientId: "[id]", code: "23514", timestamp: expect.any(String) });
@@ -156,8 +160,8 @@ describe("client UPDATE failure diagnostic privacy", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error });
     expect(h.duplicate.mock.calls).toEqual([[1], [1]]);
-    expect(h.writes).toHaveBeenCalledOnce();
-    expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(h.rpc).toHaveBeenCalledOnce();
+    expect(updateFilters.mock.calls[0]![1]).toMatchObject({ p_client_id: CLIENT, p_studio_id: STUDIO });
     expect(log).not.toHaveBeenCalled();
   });
 });

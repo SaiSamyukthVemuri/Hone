@@ -73,7 +73,7 @@ export default async function ClinicalNotesPrintPage({
         </div>
         <div className="flex items-center gap-3 print:hidden">
           <Link
-            href={`/clients/${id}?tab=consultation`}
+            href={`/clients/${id}?tab=treatment`}
             className="text-sm font-medium text-neutral-600 underline dark:text-neutral-300"
           >
             Back

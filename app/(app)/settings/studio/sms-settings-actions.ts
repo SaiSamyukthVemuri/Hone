@@ -58,6 +58,6 @@ export async function setStudioSmsSettingsAction(
     return { ok: false, error: "Could not save settings. Please try again." };
   }
 
-  revalidatePath("/settings/studio");
+  revalidatePath("/settings/studio", "layout");
   return { ok: true };
 }

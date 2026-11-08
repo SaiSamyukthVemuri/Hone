@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { NEEDS_ATTENTION_COMPACT_COUNT } from "@/app/(app)/dashboard/needs-attention-panel";
+
+// HON-65 shared UI lesson, applied to the Needs Attention panel: no anchor
+// jumps, state and focus preserved, nothing that writes. These are source
+// guards; the real click journey (expand with the keyboard, focus stays on the
+// toggle, phone width) is a browser proof owned by Photos and is not claimed here.
+
+const SRC = readFileSync(
+  join(process.cwd(), "app/(app)/dashboard/needs-attention-panel.tsx"),
+  "utf8",
+);
+
+describe("Needs Attention panel interaction contract", () => {
+  it("the disclosure is a real button, not an anchor or hash link", () => {
+    expect(SRC).toMatch(/<button\s+type="button"/);
+    expect(SRC).not.toMatch(/href="#/);
+    expect(SRC).not.toMatch(/href=\{`#/);
+  });
+
+  it("expanding never scrolls or moves focus programmatically", () => {
+    expect(SRC).not.toMatch(/scrollIntoView|scrollTo\(|\.focus\(|window\.location|router\.(push|replace|back|prefetch)/);
+  });
+
+  it("the toggle states what it controls and whether it is open", () => {
+    expect(SRC).toContain("aria-expanded={expanded}");
+    expect(SRC).toContain('aria-controls="needs-attention-list"');
+    expect(SRC).toContain('id="needs-attention-list"');
+  });
+
+  it("the toggle stays mounted after expanding: its visibility depends on the total, not on the expansion (Codex P2)", () => {
+    expect(SRC).toMatch(/const collapsedHidden = needs\.clients\.slice\(NEEDS_ATTENTION_COMPACT_COUNT\)/);
+    expect(SRC).toMatch(/const hasOverflow = hiddenClients > 0/);
+    expect(SRC).toMatch(/\{hasOverflow && \(\s*<button/);
+    expect(SRC).not.toMatch(/hiddenCount/);
+    expect(SRC).toContain('{expanded ? "Show less"');
+  });
+
+  it("cards are keyed by the client id so expanding keeps existing rows mounted", () => {
+    expect(SRC).toContain("key={card.clientId}");
+  });
+
+  it("opening an item is navigation only; the only writes are the owner's Dismiss and Restore of a reminder", () => {
+    expect(SRC).not.toMatch(/use server|formAction|<form|fetch\(|\.rpc\(|\.from\(/);
+    const actions = [...SRC.matchAll(/\b(\w+Action)\(/g)].map((m) => m[1]);
+    expect([...new Set(actions)].sort()).toEqual(["dismissAttentionAction", "restoreAttentionAction"]);
+  });
+
+  it("Dismiss exists only for the owner, and only when the owner's dismissals could be read", () => {
+    expect(SRC).toMatch(/enabled: isOwner && dismissalsEnabled && !dismissalsUnavailable/);
+    expect(SRC).toMatch(/if \(!api\.enabled \|\| identity === null\) return null/);
+  });
+
+  it("an unknown balance reads Amount unavailable, never 0, and a known one is the authoritative figure", () => {
+    expect(SRC).toContain('return "Amount unavailable"');
+    expect(SRC).toMatch(/Hone can see \$\{formatMoney\(item\.balance\.outstandingCents/);
+  });
+
+  it("starts compact", () => {
+    expect(NEEDS_ATTENTION_COMPACT_COUNT).toBe(6);
+  });
+});

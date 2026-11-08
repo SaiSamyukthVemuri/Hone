@@ -16,8 +16,8 @@ const MOBILE = read("app/(app)/calendar/CalendarMobileDayView.tsx");
 const PAGE = read("app/(app)/calendar/page.tsx");
 
 describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy", () => {
-  it("shows the selector ONLY for a capacity-ON owner and loads eligible practitioners", () => {
-    expect(DRAWER).toMatch(/const showSelector = practitionerCapacityEnabled && isOwner/);
+  it("shows the selector ONLY for an owner (either capacity mode) and loads eligible practitioners", () => {
+    expect(DRAWER).toMatch(/const showSelector = isOwner;/);
     expect(DRAWER).toMatch(/\{showSelector && \(/);
     expect(DRAWER).toMatch(/fetchEligiblePractitionersAction/);
   });
@@ -76,13 +76,16 @@ describe("desktop + mobile thread identical targeting context", () => {
   }
   it("the calendar page feeds both render paths from the server-resolved practitioner + studio", () => {
     expect((PAGE.match(/practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/g) ?? []).length).toBe(2);
-    // HON-48: the team day view is the third path. It renders only after the
-    // capacity check redirects a non-team studio away, so it passes the flag
-    // as a literal true, with the same server-resolved acting practitioner.
+    // HON-48: the team day view is the third path, with the same server-resolved
+    // acting practitioner.
     expect((PAGE.match(/currentPractitionerId=\{practitioner\.id\}/g) ?? []).length).toBe(3);
     expect((PAGE.match(/currentPractitionerName=\{practitioner\.display_name\}/g) ?? []).length).toBe(3);
     const dayPath = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
-    expect(dayPath.indexOf("if (!capacityEnabled) redirect(")).toBeGreaterThan(-1);
-    expect(dayPath.indexOf("if (!capacityEnabled) redirect(")).toBeLessThan(dayPath.indexOf("practitionerCapacityEnabled\n"));
+    // The Day view now serves a lone practitioner with capacity off too, so the
+    // flag is the studio's REAL value, never a literal true that would show the
+    // practitioner selector to a studio that has not turned capacity on.
+    expect(dayPath).toContain("practitionerCapacityEnabled={capacityEnabled}");
+    expect(dayPath).toContain("const capacityEnabled = studio.practitioner_capacity_enabled === true;");
+    expect(dayPath).not.toMatch(/practitionerCapacityEnabled\n/);
   });
 });

@@ -33,3 +33,19 @@ export function isTeamCalendar(
 ): boolean {
   return capacityEnabled && activePractitioners.length > 1;
 }
+
+// HON-48: who gets the Day view at all. Sam's requirement is that ONE working
+// practitioner sees their name, appointments, availability and a visible slot
+// grid in a normal compact column. So the Day view is offered when capacity is on
+// and there is at least one active practitioner, or when capacity is off and there
+// is EXACTLY one (a solo studio). Capacity off with two or more active keeps the
+// week grid: changing that is a product call nobody made. It is NOT the initial
+// view for a lone practitioner (isTeamCalendar still decides that), and week and
+// month are unchanged. A studio with no active practitioner has no day to show.
+export function hasDayView(
+  capacityEnabled: boolean,
+  activePractitioners: ReadonlyArray<unknown>,
+): boolean {
+  const n = activePractitioners.length;
+  return capacityEnabled ? n >= 1 : n === 1;
+}

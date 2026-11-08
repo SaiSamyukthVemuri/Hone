@@ -3,6 +3,11 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCalendarTimedBlockAction } from "./calendar-block-actions";
+import {
+  ALL_PRACTITIONERS_LABEL,
+  ALL_PRACTITIONERS_SCOPE_VALUE,
+  type QuickBlockScope,
+} from "@/lib/calendar/block-scope";
 
 // PR #139. Quick block drawer. Opens from the drag-action chooser
 // when the practitioner picks "Block time" on a drag-created range.
@@ -12,6 +17,9 @@ import { createCalendarTimedBlockAction } from "./calendar-block-actions";
 // studio_timed_blocks row scoped to the resolved studio. No category
 // picker: the action defaults to 'other' so the row remains
 // re-categorisable from Settings -> Breaks & blocks.
+//
+// HON-48 F1 (held for Sam's rule): `scope` says who the block applies to under
+// practitioner capacity. Absent (capacity off) renders exactly as before.
 
 export type QuickBlockDraft = {
   // YYYY-MM-DD in studio local
@@ -29,16 +37,20 @@ export function QuickBlockDrawer({
   draft,
   studioTimezone,
   onClose,
+  scope,
 }: {
   open: boolean;
   draft: QuickBlockDraft | null;
   studioTimezone: string;
   onClose: () => void;
+  scope?: QuickBlockScope;
 }) {
   const router = useRouter();
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [reason, setReason] = useState("");
+  const scopeDefault = scope?.kind === "choose" ? scope.defaultValue : "";
+  const [blockScope, setBlockScope] = useState(scopeDefault);
   const [error, setError] = useState<string | null>(null);
   const [pending, startSubmit] = useTransition();
 
@@ -54,8 +66,9 @@ export function QuickBlockDrawer({
     setStart(draft.startLocal);
     setEnd(draft.endLocal);
     setReason("");
+    setBlockScope(scopeDefault);
     setError(null);
-  }, [open, draft?.localDate, draft?.startLocal, draft?.endLocal, draft]);
+  }, [open, draft?.localDate, draft?.startLocal, draft?.endLocal, draft, scopeDefault]);
 
   useEffect(() => {
     if (!open) return;
@@ -83,7 +96,12 @@ export function QuickBlockDrawer({
       setError(`Reason must be ${REASON_MAX} characters or fewer.`);
       return;
     }
+    if (scope?.kind === "choose" && !blockScope) {
+      setError("Choose who this block applies to.");
+      return;
+    }
     const fd = new FormData();
+    if (scope?.kind === "choose") fd.set("block_scope", blockScope);
     fd.set("date", draft.localDate);
     fd.set("start_local", start);
     fd.set("end_local", end);
@@ -162,6 +180,36 @@ export function QuickBlockDrawer({
             />
           </label>
         </div>
+
+        {scope?.kind === "self" && (
+          <p data-quick-block-scope="self" className="text-xs text-neutral-600 dark:text-neutral-400">
+            Blocks only your time ({scope.name}). Other practitioners stay bookable.
+          </p>
+        )}
+        {scope?.kind === "choose" && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+              Applies to
+            </span>
+            <select
+              data-quick-block-scope="choose"
+              value={blockScope}
+              onChange={(e) => setBlockScope(e.target.value)}
+              required
+              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            >
+              <option value="" disabled>
+                Choose who this blocks
+              </option>
+              <option value={ALL_PRACTITIONERS_SCOPE_VALUE}>{ALL_PRACTITIONERS_LABEL}</option>
+              {scope.options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  Only {o.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="flex flex-col gap-1">
           <span className="text-[11px] uppercase tracking-wider text-neutral-500">

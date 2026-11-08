@@ -311,7 +311,7 @@ describe("Client info birthday row", () => {
       PAGE.indexOf('{activeTab === "overview"'),
       PAGE.indexOf('{activeTab === "messages"'),
     );
-    const pinned = overview.indexOf("ClientPinnedNotesCard");
+    const pinned = overview.indexOf("{pinnedNotesCard}");
     const allergies = overview.indexOf("Allergies");
     const skin = overview.indexOf(">\n              Skin");
     const info = overview.indexOf("Client info");

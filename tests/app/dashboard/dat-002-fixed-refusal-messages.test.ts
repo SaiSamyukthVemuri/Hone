@@ -114,8 +114,9 @@ beforeEach(() => {
 });
 
 const CASES = [
-  { read: "appointments#1", message: "Failed to load today's appointments" },
-  { read: "client_intake_forms#1", message: "Failed to count intakes awaiting review" },
+  // WS-DB: appointments#1 is the upcoming-visit read for the preparation tier
+  // (started before the roster); the roster is #2. See the degrade test below.
+  { read: "appointments#2", message: "Failed to load today's appointments" },
   { read: "client_intake_forms#2", message: "Failed to load intake status" },
   { read: "clients#1", message: "Failed to load birthdays" },
 ];
@@ -136,4 +137,15 @@ describe("DAT-002 follow-up: dashboard refusals carry a fixed message", () => {
       expect(error!.message).not.toContain("synthetic");
     });
   }
+
+  it("a failed intake-awaiting-review read (client_intake_forms#1) degrades THAT count and does not refuse the page or the bundle", async () => {
+    // Insurance B2: it used to reject the whole attentionSources bundle.
+    state.fail = "client_intake_forms#1";
+    expect(await refusal()).toBeNull();
+  });
+
+  it("a failed upcoming-visit read (appointments#1) degrades the ORDER and does not refuse", async () => {
+    state.fail = "appointments#1";
+    expect(await refusal()).toBeNull();
+  });
 });

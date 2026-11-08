@@ -38,6 +38,7 @@ export async function getQuickCheckoutContextAction(
   const ctx = await resolveQuickCheckoutContext({
     studioId: studio.id,
     studioTimezone: studio.timezone,
+    viewerIsOwner: practitioner.role === "owner",
     appointmentId: typeof appointmentId === "string" ? appointmentId : "",
   });
   return { ...ctx, isOwner: practitioner.role === "owner" };

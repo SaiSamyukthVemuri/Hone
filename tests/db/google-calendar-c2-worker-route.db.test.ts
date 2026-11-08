@@ -194,6 +194,31 @@ function claimAdapter(): ClaimPort {
     return r.rows.map((row) => toClaimedJob(row as Record<string, unknown>));
   };
 }
+// §23 asserts over the rows IT created only. claim_calendar_sync_op drains the GLOBAL queue, so a claimable row left by an earlier file
+// (pending, or a lease that expired) is claimed by these drains too and used to make exact global counts flaky (claimed 3, expected 1).
+// A scoped port set records, per invocation, only the claims, executions and recordings whose outbox id is in `own`.
+function scopedPorts(own: Set<string>) {
+  const claimed: string[] = [];
+  const executions: string[] = [];
+  const recorded: string[] = [];
+  const claim: ClaimPort = async (n) => {
+    const jobs = await claimAdapter()(n);
+    for (const j of jobs) if (own.has(j.id)) claimed.push(j.id);
+    return jobs;
+  };
+  const handle: HandlePort = async (job) => {
+    if (own.has(job.id)) executions.push(job.id);
+    return { code: "ok" };
+  };
+  const rec = recordAdapter();
+  const record: RecordPort = async (p) => {
+    const r = await rec(p);
+    if (own.has(p.id)) recorded.push(p.id);
+    return r;
+  };
+  return { ports: { claim, handle, record }, claimed, executions, recorded };
+}
+
 function recordAdapter(): RecordPort {
   return async (p) => {
     const r = await adminQuery(`select public.record_calendar_sync_result($1,$2,$3,$4,$5,$6) as s`, [
@@ -280,18 +305,15 @@ describe("§23 concurrent invocations race the claim RPC (no new route lock)", (
   it("two concurrent drains: a single row is claimed + executed + recorded exactly once; the other sees no work", async () => {
     const appt = await insertAppt();
     const ob = await pendingOutbox(appt);
-    const executions: string[] = [];
-    const ledger: HandlePort = async (job) => {
-      executions.push(job.id);
-      return { code: "ok" };
-    };
-    const ports = { claim: claimAdapter(), handle: ledger, record: recordAdapter() };
-    const [a, b] = await Promise.all([drainCalendarSyncQueue(ports, NOW_OPTS()), drainCalendarSyncQueue(ports, NOW_OPTS())]);
+    const own = new Set<string>([ob.id]);
+    const A = scopedPorts(own);
+    const B = scopedPorts(own);
+    await Promise.all([drainCalendarSyncQueue(A.ports, NOW_OPTS()), drainCalendarSyncQueue(B.ports, NOW_OPTS())]);
 
-    expect(a.claimed + b.claimed).toBe(1); // exactly one invocation claimed the row
-    expect(executions).toEqual([ob.id]); // exactly one provider execution
-    expect(a.recorded_done + b.recorded_done).toBe(1); // exactly one durable transition
-    expect(a.no_work !== b.no_work).toBe(true); // exactly one reported no-work
+    expect([...A.claimed, ...B.claimed]).toEqual([ob.id]); // exactly one invocation claimed OUR row, exactly once
+    expect([A.claimed.length, B.claimed.length].sort()).toEqual([0, 1]); // the other invocation saw no work FOR THAT ROW
+    expect([...A.executions, ...B.executions]).toEqual([ob.id]); // exactly one provider execution of it
+    expect([...A.recorded, ...B.recorded]).toEqual([ob.id]); // exactly one durable transition of it
     expect((await outboxRow(ob.id)).status).toBe("done");
   });
 
@@ -301,16 +323,14 @@ describe("§23 concurrent invocations race the claim RPC (no new route lock)", (
     const obIds = new Set<string>();
     for (const a of appts) obIds.add((await pendingOutbox(a)).id);
 
-    const executions: string[] = [];
-    const ledger: HandlePort = async (job) => {
-      executions.push(job.id);
-      return { code: "ok" };
-    };
-    const ports = { claim: claimAdapter(), handle: ledger, record: recordAdapter() };
-    const [a, b] = await Promise.all([drainCalendarSyncQueue(ports, NOW_OPTS()), drainCalendarSyncQueue(ports, NOW_OPTS())]);
+    const A = scopedPorts(obIds);
+    const B = scopedPorts(obIds);
+    await Promise.all([drainCalendarSyncQueue(A.ports, NOW_OPTS()), drainCalendarSyncQueue(B.ports, NOW_OPTS())]);
 
-    expect(a.claimed + b.claimed).toBe(6);
+    const executions = [...A.executions, ...B.executions];
+    expect([...A.claimed, ...B.claimed].length).toBe(6);
     expect(new Set(executions).size).toBe(6); // no row executed twice
+    expect(executions.length).toBe(6);
     expect([...new Set(executions)].sort()).toEqual([...obIds].sort());
     const dead = await adminQuery(`select count(*)::int c from public.calendar_sync_outbox where studio_id=$1 and status<>'done'`, [studio.studioId]);
     expect(dead.rows[0].c).toBe(0); // every row converged to done

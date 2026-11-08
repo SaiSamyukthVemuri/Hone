@@ -195,7 +195,7 @@ export default function ElectrolysisSoftwarePage() {
                 <SpecRowBody>
                   <p>
                     Solo electrologists and small studios of up to three practitioners. Plans are
-                    in Canadian dollars.
+                    in US dollars (USD).
                   </p>
                 </SpecRowBody>
               </SpecRow>

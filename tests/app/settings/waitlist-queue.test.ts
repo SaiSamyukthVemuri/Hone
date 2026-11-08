@@ -1377,7 +1377,7 @@ describe("removal", () => {
 
 describe("the Settings tab is server-gated", () => {
   const LAYOUT = readFileSync(
-    path.resolve(__dirname, "../../../app/(app)/settings/layout.tsx"),
+    path.resolve(__dirname, "../../../lib/settings/nav-registry.ts"),
     "utf8",
   );
 
@@ -1393,12 +1393,12 @@ describe("the Settings tab is server-gated", () => {
     // bridge's own decision is what stops the nav and the commit point drifting
     // apart. Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, studio\.slug\);/,
+      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, ctx\.studio\.slug\);/,
     );
     expect(LAYOUT).toMatch(
-      /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*\(waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), studio\.id\)\)\);/,
+      /return \(\s*\n\s*waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), ctx\.studio\.id\)\)\s*\n\s*\);/,
     );
-    expect(LAYOUT).toContain('{ href: "/settings/waitlist", label: "Waitlist" }');
+    expect(LAYOUT).toMatch(/label: "Waitlist",\s*\n\s*href: "\/settings\/waitlist"/);
   });
 
   it("derives the mode from the SERVER-RESOLVED studio, never a browser value", () => {
@@ -1406,7 +1406,7 @@ describe("the Settings tab is server-gated", () => {
     // The property that mattered is unchanged and now stronger - the authority
     // is keyed by the server-resolved studio, and nothing browser-supplied
     // reaches it.
-    expect(LAYOUT).toContain("getNewClientAdmissionMode(studio)");
+    expect(LAYOUT).toContain("getNewClientAdmissionMode(ctx.studio)");
     expect(LAYOUT).not.toContain("isNewClientWaitlistEnabled");
     expect(LAYOUT).not.toContain("isNewClientWaitlistDurableEnabled");
     expect(LAYOUT).not.toMatch(/searchParams|useSearchParams|props\.slug/);
@@ -1422,12 +1422,9 @@ describe("the Settings tab is server-gated", () => {
     expect(PAGE).not.toMatch(/isNewClientWaitlist(Durable)?Enabled/);
   });
 
-  it("sits inside the owner-only block", () => {
-    const ownerIdx = LAYOUT.indexOf("...(isOwner");
-    const waitlistIdx = LAYOUT.indexOf('"/settings/waitlist"');
-    const closeOwnerIdx = LAYOUT.indexOf("]\n      : []");
-    expect(waitlistIdx).toBeGreaterThan(ownerIdx);
-    expect(waitlistIdx).toBeLessThan(closeOwnerIdx);
+  it("is an owner-only entry", () => {
+    expect(LAYOUT).toMatch(/href: "\/settings\/waitlist",\s*\n\s*roles: OWNER,\s*\n\s*visibleWhen: waitlistVisible/);
+    expect(LAYOUT).toMatch(/if \(ctx\.role !== "owner"\) return false;/);
   });
 
   it("the flags are genuinely consulted at runtime, and BOTH are required", async () => {

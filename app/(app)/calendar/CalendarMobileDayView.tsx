@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { withSelection } from "@/lib/calendar/practitioner-selection";
 import { useRouter } from "next/navigation";
+import { MINI_PICK_EVENT } from "@/lib/calendar/mini-pick";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -15,7 +17,7 @@ import { DragActionChooser, type DragRangeDraft } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { reconcileEditingBlock } from "@/lib/calendar/reconcile-editing-block";
 import { MobileDayTimeline } from "./MobileDayTimeline";
-import type { BlockScopeNames } from "@/lib/calendar/block-scope";
+import { quickBlockScopeFor, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import type { DayAvailability } from "./DayColumn";
 
 // Per-day slice of the week's data the calendar page already loaded. Passed as
@@ -50,6 +52,9 @@ type Props = {
   returnTo: string;
   // BLOCK-SCOPE F3: forwarded to the timeline and the block drawer.
   blockScopeNames?: BlockScopeNames;
+  // The sidebar's practitioner selection (`people` param value, undefined = everyone). Carried on
+  // every URL this component pushes so stepping past the loaded week never resets the filter.
+  selectionParam?: string;
 };
 
 // Current minute-of-day in the studio timezone (same technique as NowLine).
@@ -79,9 +84,27 @@ export function CalendarMobileDayView({
   services,
   returnTo,
   blockScopeNames,
+  selectionParam,
 }: Props) {
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(initialDate);
+  // The server's date changed (a mini-calendar pick, a toolbar step or a link keeps this component
+  // mounted): follow it. Local strip taps do not change `initialDate`, so they are never overridden.
+  const [seenInitialDate, setSeenInitialDate] = useState(initialDate);
+  if (seenInitialDate !== initialDate) {
+    setSeenInitialDate(initialDate);
+    setSelectedDate(initialDate);
+  }
+  // A mini-calendar pick of the date the server already has changes no prop; the pick is announced
+  // instead, so a strip tap made since is reset too.
+  useEffect(() => {
+    const onPick = (e: Event) => {
+      const date = (e as CustomEvent<string>).detail;
+      if (typeof date === "string" && days.some((d) => d.date === date)) setSelectedDate(date);
+    };
+    window.addEventListener(MINI_PICK_EVENT, onPick);
+    return () => window.removeEventListener(MINI_PICK_EVENT, onPick);
+  }, [days]);
   const [draft, setDraft] = useState<{
     localDate: string;
     localTime: string;
@@ -121,16 +144,16 @@ export function CalendarMobileDayView({
 
   function goPrev() {
     if (idx > 0) setSelectedDate(days[idx - 1].date);
-    else router.push(`/calendar?day=${addDays(days[0].date, -1)}`);
+    else router.push(withSelection(`/calendar?day=${addDays(days[0].date, -1)}`, selectionParam));
   }
   function goNext() {
     if (idx < days.length - 1) setSelectedDate(days[idx + 1].date);
-    else router.push(`/calendar?day=${addDays(days[days.length - 1].date, 1)}`);
+    else router.push(withSelection(`/calendar?day=${addDays(days[days.length - 1].date, 1)}`, selectionParam));
   }
   function goToday() {
     const ti = days.findIndex((d) => d.date === today);
     if (ti >= 0) setSelectedDate(today);
-    else router.push("/calendar?view=week");
+    else router.push(withSelection("/calendar?view=week", selectionParam));
   }
 
   // Floating "+" default time: on today within working hours, the next rounded
@@ -333,6 +356,7 @@ export function CalendarMobileDayView({
         draft={blockDraft}
         studioTimezone={tz}
         onClose={() => setBlockDraft(null)}
+        scope={quickBlockScopeFor({ names: blockScopeNames, isOwner, currentPractitionerId, currentPractitionerName })}
       />
       <TimedBlockEditDrawer
         block={editingBlock}

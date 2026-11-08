@@ -1,11 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { updateStudioPostcareAction } from "./actions";
 import {
   MarkdownLiteTextarea,
   PostcarePreviewButton,
 } from "./PostcareEditingHelpers";
+import { fieldControlClass } from "@/components/ui/field";
 
 // Per-studio postcare content. Saved values are sent verbatim into the
 // postcare email after the practitioner clicks "Send postcare" on the
@@ -157,9 +160,16 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
     initial.postcare_delivery_mode,
   );
   const [pending, startTransition] = useTransition();
-  const [hint, setHint] = useState<
-    { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
-  >({ kind: "idle" });
+  const snapshot = () => ({
+    aftercare, warnings, products, reviewUrl, reviewPrompt, contactEmail, deliveryMode,
+  });
+  const [saved, setSaved] = useState(snapshot);
+  const feedback = useSaveFeedback();
+  const current = snapshot();
+  const dirty = (Object.keys(current) as Array<keyof typeof current>).some(
+    (k) => current[k] !== saved[k],
+  );
+  useUnsavedChangesGuard("studio-postcare", dirty);
   // Per-field "click again to replace" confirmation. Stays local
   // until the practitioner confirms; resets when they cancel.
   const [confirming, setConfirming] = useState<SuggestKey | null>(null);
@@ -194,7 +204,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setHint({ kind: "idle" });
+    feedback.saving();
     const fd = new FormData();
     fd.set("postcare_aftercare_text", aftercare);
     fd.set("postcare_warning_signs_text", warnings);
@@ -206,13 +216,10 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
     startTransition(async () => {
       try {
         await updateStudioPostcareAction(fd);
-        setHint({ kind: "saved" });
-        window.setTimeout(() => setHint({ kind: "idle" }), 1500);
+        setSaved(snapshot());
+        feedback.saved();
       } catch (err) {
-        setHint({
-          kind: "error",
-          message: err instanceof Error ? err.message : "Failed to save.",
-        });
+        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
       }
     });
   }
@@ -374,7 +381,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
               : "e.g. hello@yourstudio.com"
           }
           autoComplete="off"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
         <span className="text-xs text-neutral-500">
           This appears at the bottom of postcare emails so clients know
@@ -402,7 +409,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
           value={reviewUrl}
           onChange={(e) => setReviewUrl(e.target.value)}
           placeholder="https://g.page/r/your-google-business/review"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false })}
         />
         <span className="text-xs text-neutral-500">
           When set, the postcare email includes a neutral review prompt
@@ -422,7 +429,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
           value={reviewPrompt}
           onChange={(e) => setReviewPrompt(e.target.value)}
           placeholder="If you had a good experience, reviews help small businesses."
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className={fieldControlClass({ fullWidth: false, className: "leading-relaxed" })}
         />
         <span className="text-xs text-neutral-500">
           This appears only when a review link is set. Keep it neutral.
@@ -439,14 +446,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
         >
           {pending ? "Saving…" : "Save postcare settings"}
         </button>
-        {hint.kind === "saved" && (
-          <span className="text-xs text-green-600 dark:text-green-400">
-            Saved.
-          </span>
-        )}
-        {hint.kind === "error" && (
-          <span className="text-xs text-red-700">{hint.message}</span>
-        )}
+        <SaveStatus state={feedback.state} />
       </div>
     </form>
   );

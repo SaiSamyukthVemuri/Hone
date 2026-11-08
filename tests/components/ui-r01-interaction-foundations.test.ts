@@ -438,10 +438,10 @@ describe("UI-R01 proof surface: the migrated controls", () => {
   });
 
   it("navigation keeps ONE authority — no second link spinner was introduced", () => {
-    // The link kinds were already proved in production (SettingsNav is a simple
+    // The link kinds were already proved in production (the Settings shell rail is a simple
     // PendingLink; the dashboard rows are PendingContainerLink). UI-R01's job
     // was not to migrate them again, it was to avoid growing a rival.
-    const nav = code("app/(app)/settings/SettingsNav.tsx");
+    const nav = code("components/settings/settings-shell.tsx");
     expect(nav).toContain("PendingLink");
     expect(nav).not.toContain('from "next/link"');
   });

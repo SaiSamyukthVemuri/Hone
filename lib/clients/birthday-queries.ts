@@ -12,6 +12,8 @@
 // app/intake/*, app/cancel/*, app/reschedule/*, app/api/cron/*, or
 // app/api/stripe/*. Audited by grep in PR #28.
 
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { createClient } from "@/lib/supabase/server";
 
 export type ClientBirthdayRow = {
@@ -29,22 +31,27 @@ export async function getClientBirthdaysForMonth(
   // PR Willow launch fixes (migration 0050): archived clients are
   // hidden from the dashboard birthday surface for the same reason
   // they are hidden from the active client list.
-  const { data, error } = await supabase
-    .from("clients")
-    .select("id, name, date_of_birth")
-    .eq("studio_id", studioId)
-    .is("archived_at", null)
-    .not("date_of_birth", "is", null)
-    .order("name");
+  // Privacy C2 (PEER-1299): the NAME staff see is the display identity
+  // (preferred, else stored) through the one identity helper, not the raw stored
+  // name. The read tolerates a database that has no preferred_name column yet.
+  const { data, error } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("clients")
+      .select(`id, name, ${preferredNameColumn(withPreferred)}date_of_birth`)
+      .eq("studio_id", studioId)
+      .is("archived_at", null)
+      .not("date_of_birth", "is", null),
+  );
   if (error) {
     // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
     throw new Error("Failed to load birthdays");
   }
 
   const out: ClientBirthdayRow[] = [];
-  for (const r of (data ?? []) as {
+  for (const r of (data ?? []) as unknown as {
     id: string;
     name: string;
+    preferred_name?: string | null;
     date_of_birth: string;
   }[]) {
     const parts = r.date_of_birth.split("-");
@@ -53,10 +60,15 @@ export async function getClientBirthdaysForMonth(
     const day = parseInt(parts[2], 10);
     if (!Number.isFinite(month) || !Number.isFinite(day)) continue;
     if (month !== monthInStudioTz) continue;
-    out.push({ id: r.id, name: r.name, month, day });
+    out.push({ id: r.id, name: clientDisplayName(r), month, day });
   }
-  // Sort by day-of-month then name so earliest-upcoming birthdays
-  // appear first.
-  out.sort((a, b) => a.day - b.day || a.name.localeCompare(b.name));
+  // Sort by day-of-month, then DISPLAY name, then id (a total, stable order), so
+  // earliest-upcoming birthdays appear first.
+  out.sort(
+    (a, b) =>
+      a.day - b.day ||
+      a.name.localeCompare(b.name) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
   return out;
 }

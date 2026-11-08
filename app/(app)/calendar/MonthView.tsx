@@ -8,6 +8,8 @@ import {
 } from "@/lib/booking/month-grid";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
+import { calendarPractitionerIdentity, type CalendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
+import { withSelection } from "@/lib/calendar/practitioner-selection";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import { displayBlockoutLabel } from "./calendar-format";
 import type { MonthDayBlocked } from "./month-blocked";
@@ -37,6 +39,9 @@ type MonthDayAppt = Pick<
   "id" | "status" | "starts_at" | "ends_at" | "service"
 > & {
   localTime: string;
+  // HON-48 sidebar: who the chip belongs to. The name is always in the accessible text and the hover
+  // title; the swatch is the practitioner's configured colour, never the only identifier.
+  practitioner: CalendarPractitionerIdentity | null;
 };
 
 const MAX_CHIPS_PER_DAY = 3;
@@ -56,12 +61,15 @@ export function MonthView({
   blockedByDate,
   today,
   isClosedDate,
+  selectionParam,
 }: {
   monthAnchor: string;
   appointmentsByDate: Map<string, MonthDayAppt[]>;
   blockedByDate: Map<string, MonthDayBlocked>;
   today: string;
   isClosedDate: ClosedDayLookup;
+  /** The sidebar selection (undefined = everyone), carried onto the day links. */
+  selectionParam?: string;
 }) {
   const cells = monthGridDates(monthAnchor);
   const monthLabel = monthYearLabel(monthAnchor);
@@ -120,7 +128,10 @@ export function MonthView({
           // renders. Fixes the bug where tapping e.g. Thu the 23rd opened the
           // week start (Sun the 19th). Works across week/month boundaries; the
           // date is a studio-tz day-key so no device-tz shift occurs.
-          const dayHref = `/calendar?view=week&week=${startOfWeek(cellDate)}&day=${cellDate}`;
+          const dayHref = withSelection(
+            `/calendar?view=week&week=${startOfWeek(cellDate)}&day=${cellDate}`,
+            selectionParam,
+          );
           return (
             <Link
               key={cellDate}
@@ -197,7 +208,7 @@ export function MonthView({
                   return (
                     <span
                       key={a.id}
-                      title={[cleanTime, serviceName, statusTag]
+                      title={[cleanTime, serviceName, a.practitioner?.name, statusTag]
                         .filter(Boolean)
                         .join(" · ")}
                       className={`truncate rounded-md border-l-[3px] px-1.5 py-0.5 text-[10px] leading-tight ${appointmentCardClasses(
@@ -212,6 +223,16 @@ export function MonthView({
                       </span>
                       {serviceName ? (
                         <span className="opacity-80"> · {serviceName}</span>
+                      ) : null}
+                      {a.practitioner ? (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            data-testid="month-chip-swatch"
+                            className={`ml-1 inline-block h-2 w-2 rounded-full align-middle ${a.practitioner.swatchClass}`}
+                          />
+                          <span className="sr-only"> with {a.practitioner.name}</span>
+                        </>
                       ) : null}
                     </span>
                   );
@@ -256,6 +277,7 @@ export function groupMonthAppointmentsByDate(
       ends_at: a.ends_at,
       service: a.service,
       localTime: localTimeForLabel(a.starts_at, tz),
+      practitioner: calendarPractitionerIdentity(a.practitioner),
     });
     byDate.set(localDate, arr);
   }

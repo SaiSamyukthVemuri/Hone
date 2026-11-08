@@ -83,8 +83,13 @@ describe("1 — the roster does not wait for the secondary stack", () => {
   it("the secondary stack sits behind exactly one Suspense boundary", () => {
     expect(PAGE_CODE).toContain("fallback={<SecondaryStackSkeleton />}");
     expect(PAGE_CODE).toContain("<SecondaryStack");
-    // ONE boundary. Spinner soup is a design failure, not a style preference.
-    expect(PAGE_CODE.match(/<Suspense\b/g)?.length ?? 0).toBe(1);
+    // WS-DB: Needs attention is the Appointments column's neighbour, so it
+    // streams behind its OWN boundary and the stack behind another. TWO
+    // boundaries, no more: one per region. Spinner soup is a design failure,
+    // not a style preference.
+    expect(PAGE_CODE.match(/<Suspense\b/g)?.length ?? 0).toBe(2);
+    expect(PAGE_CODE).toContain("fallback={<NeedsAttentionSkeleton />}");
+    expect(PAGE_CODE.match(/fallback=\{<SecondaryStackSkeleton \/>\}/g)).toHaveLength(1);
   });
 
   it("the boundary is KEYED on day and period — an unkeyed one re-blocks navigation", () => {
@@ -101,6 +106,11 @@ describe("1 — the roster does not wait for the secondary stack", () => {
     // commits at once.
     expect(PAGE_CODE).toMatch(
       /<Suspense\s+key=\{`\$\{selectedDayLocal\}:\$\{period\}`\}/,
+    );
+    // The Needs attention boundary is keyed on the same values for the same
+    // reason, with its own prefix so the two keys can never collide.
+    expect(PAGE_CODE).toMatch(
+      /<Suspense\s+key=\{`needs:\$\{selectedDayLocal\}:\$\{period\}`\}/,
     );
   });
 
@@ -217,7 +227,7 @@ describe("3 — a failed secondary read cannot speak for the clinical record", (
 
 describe("4 — nothing about what renders changed", () => {
   it("every moved card renders from the same component and props", () => {
-    expect(STACK_CODE).toContain("<DashboardTodoList todo={dashboardTodo} />");
+    expect(STACK_CODE).toContain("<NeedsAttentionPanel");
     expect(STACK_CODE).toContain("<BirthdaysThisMonth");
     expect(STACK_CODE).toContain("<PracticeSnapshot");
     expect(STACK_CODE).toContain("livemode={inferStripeLivemode()}");
@@ -232,7 +242,7 @@ describe("4 — nothing about what renders changed", () => {
       "assistant: followUpAssistant",
       "attention: clientsNeedingAttention",
       "supplies: expiringSupplies",
-      "metrics: practiceMetrics.actions",
+      "metrics: procedureActions",
       "intakesAwaitingReviewCount",
       "activeServicesCount",
       "paymentStatus",
@@ -308,8 +318,8 @@ describe("negative controls — this suite is not vacuous", () => {
     // Reverting the child to a parent await would remove this and control 1
     // would go red. Without this assertion the suite passes on a no-op.
     const stackAt = PAGE_CODE.indexOf("<SecondaryStack");
-    const suspenseAt = PAGE_CODE.indexOf("<Suspense");
-    const closeAt = PAGE_CODE.indexOf("</Suspense>");
+    const suspenseAt = PAGE_CODE.lastIndexOf("<Suspense", stackAt);
+    const closeAt = PAGE_CODE.indexOf("</Suspense>", suspenseAt);
     expect(suspenseAt).toBeGreaterThan(-1);
     expect(stackAt).toBeGreaterThan(suspenseAt);
     expect(stackAt).toBeLessThan(closeAt);
@@ -328,7 +338,7 @@ describe("negative controls — this suite is not vacuous", () => {
       "the secondary promises must start BEFORE the roster query",
     ).toBeLessThan(roster);
     for (const starter of [
-      "countIntakesAwaitingReview(",
+      "getIntakesAwaitingReview(",
       "getPracticeDashboardMetrics(",
       "getClientsNeedingAttention(",
       "getMissingRecordsAssistant(",

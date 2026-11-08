@@ -1,6 +1,7 @@
 /** Exact-model v2 contracts. Historical v1 entries remain in catalogue.ts.
  * Manufacturer-documented, never physical-device-confirmed. Activation stays held.
  */
+import { sliceViolations } from "./slice-gate";
 import type { EvidenceRef, MachineField, MachineMode, MachineProfile, OpenQuestion } from "./profile-contract";
 
 const seniorUrl = "https://academiedectro.com/wp-content/uploads/2021/04/mu_senior-3G_6080-0000349_en20.pdf";
@@ -110,6 +111,30 @@ function junior(): MachineProfile {
 
 export const APILUS_3G_PROFILES: readonly MachineProfile[] = [senior(), junior()];
 
+/**
+ * FIRST SLICE (OPS ruling 2026-10-27): the modes of the v3 contracts that the slice gate passes, by profile id. This is a closed
+ * allow-list, not a computed rule: a mode is offered only if it is named here AND tests/lib/machines/apilus-3g-first-slice.test.ts
+ * proves sliceViolations() and budgetViolations() clean for it. Everything not named stays `blocked`:
+ *   * Junior Thermolysis: the time precision is unresolved (tenths vs hundredths), see the open question on the profile;
+ *   * Junior OmniBlend: the starting-current order is contradicted (p20 vs p31) and its capture hold remains.
+ * No value is prefilled, no range is enforced, and the disputed bounds (Senior OmniBlend max H.F. 19% vs 29%; Junior Electrolysis
+ * 0.99 vs 1.99 mA) stay field notes. v1/v2 stay blocked and historical: only the highest version is ever newly published.
+ */
+export const FIRST_SLICE_ACTIVE_MODES: Readonly<Record<string, readonly string[]>> = {
+  "dectro-apilus:senior-3g": ["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"],
+  "dectro-apilus:junior-3g": ["flash", "blend", "electrolysis"],
+};
+
+/**
+ * Activates ONLY the named modes that also pass the slice gate: a capture hold, an open question naming the mode, an unverified field
+ * aspect or an enforced range each keep a mode blocked even if it is on the allowlist. The allowlist can add; it can never override a hold.
+ */
+export function applyFirstSlice(p: MachineProfile, allowed: readonly string[]): void {
+  const allow = new Set(allowed);
+  const refused = new Set(sliceViolations(p).map((v) => v.modeKey));
+  for (const m of p.modes) if (allow.has(m.key) && !refused.has(m.key)) m.availability = "active";
+}
+
 /** Additive v3 retains v1/v2 exactly: a text/choice contract is a new version. */
 export const APILUS_3G_TEXT_PROFILES: readonly MachineProfile[] = APILUS_3G_PROFILES.map((original, index) => {
   const p = structuredClone(original);
@@ -134,5 +159,11 @@ export const APILUS_3G_TEXT_PROFILES: readonly MachineProfile[] = APILUS_3G_PROF
     // Junior OmniBlend's contradictory ordering and Thermolysis precision stay
     // narrow held questions; no inherited Senior selector is added to either.
   }
+  // Activation is per mode and only for the first slice (FIRST_SLICE_ACTIVE_MODES). Registration still refuses any model without a
+  // PUBLISHED contract, and publication to production is a separate, disabled, Sam-authorised step: this flag alone enables nothing
+  // on hosted.
+  applyFirstSlice(p, FIRST_SLICE_ACTIVE_MODES[p.profileId] ?? []);
+  p.availability = "active";
+  p.availabilityReason = "First-slice native text/choice v3: only the modes named in FIRST_SLICE_ACTIVE_MODES are offered; the rest stay blocked. Physical acceptance and Sam's activation and publication authority remain separate gates.";
   return p;
 });

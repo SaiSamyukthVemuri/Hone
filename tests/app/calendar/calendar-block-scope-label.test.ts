@@ -142,7 +142,7 @@ describe("team day view columns", () => {
     const day = buildTeamDay({
       date: DATE, dayOfWeek: 1, tz: TZ,
       practitioners: [{ id: "p-ana", display_name: "Synthetic Ana", color: "teal" }, { id: "p-bo", display_name: "Synthetic Bo", color: "amber" }],
-      appointments: [], timedBlocks: [WIDE, BO_ONLY], recurringBreaks: [STERILIZATION], overrides: [],
+      appointments: [], timedBlocks: [WIDE, BO_ONLY], recurringBreaks: [STERILIZATION], overrides: [], capacityEnabled: true,
       // Studio open Monday, so neither column is a closed day (a closed day hides its breaks).
       defaults: [{ id: "d", studio_id: "s", day_of_week: 1, is_open: true, open_time: "06:00:00", close_time: "22:00:00", practitioner_id: null }] as unknown as Parameters<typeof buildTeamDay>[0]["defaults"],
     });

@@ -113,7 +113,8 @@ export default async function SessionDetailPage({
 
   const [clientData, session] = await timed("session-chart.core", () =>
     Promise.all([
-      getClientById(studio.id, id),
+      // Prices only for an owner (RBAC G-1): the loader no longer defaults to them.
+      getClientById(studio.id, id, { includePrices: practitioner.role === "owner" }),
       getSessionForClient(studio.id, id, sessionId),
     ]),
   );
@@ -187,12 +188,13 @@ export default async function SessionDetailPage({
             studioId: studio.id,
             sessionId: session.id,
             studioTimezone: studio.timezone,
+            viewerIsOwner: isOwner,
           }),
         )
       : Promise.resolve(null),
     isOwner && linkedAppointmentId
       ? timed("session-chart.settlements", () =>
-          getAppointmentSettlements(studio.id, [linkedAppointmentId]),
+          getAppointmentSettlements(studio.id, [linkedAppointmentId], isOwner),
         )
       : Promise.resolve(null),
   ]);
@@ -701,7 +703,7 @@ export default async function SessionDetailPage({
         <LastTreatmentMemoryCard
           clientId={id}
           memory={pointOfCareMemory}
-          notesHref={`/clients/${id}?tab=consultation`}
+          notesHref={`/clients/${id}?tab=treatment`}
         />
       )}
 
@@ -773,7 +775,7 @@ export default async function SessionDetailPage({
             sections={clinicalNoteSections}
             addAction={addClinicalNoteAction}
             reviseAction={reviseClinicalNoteAction}
-            profileHref={`/clients/${id}?tab=consultation`}
+            profileHref={`/clients/${id}?tab=treatment`}
             printHref={`/clients/${id}/clinical-notes/print`}
           />
         </div>

@@ -75,9 +75,10 @@ describe("no public/client-facing exposure", () => {
   it("the practitioner nav links to the images route (PR #272: in the tab bar)", () => {
     // PR #272 moved the link out of the Health tab into the client tab bar
     // (a "Treatment Photos" route link), so it is no longer buried.
-    const tabBar = read("components/profile-tab-bar.tsx");
-    expect(tabBar).toMatch(/Treatment Photos/);
-    expect(tabBar).toMatch(/\$\{pathname\}\/images/);
+    // The client profile redesign made Photos its own tab; it links to the route.
+    const page = read("app/(app)/clients/[id]/page.tsx");
+    expect(page).toMatch(/Open treatment photos/);
+    expect(page).toMatch(/\/clients\/\$\{client\.id\}\/images/);
   });
 });
 

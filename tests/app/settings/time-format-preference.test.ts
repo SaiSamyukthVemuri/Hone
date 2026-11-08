@@ -10,7 +10,7 @@ function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 const HELPER = read("lib/booking/tz.ts");
-const STUDIO_FORM = read("app/(app)/settings/studio/StudioSettingsForm.tsx");
+const STUDIO_FORM = read("app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx");
 const STUDIO_ACTION = read("app/(app)/settings/studio/actions.ts");
 const CAL_PAGE = read("app/(app)/calendar/page.tsx");
 const DAYCOL = read("app/(app)/calendar/DayColumn.tsx");
@@ -35,8 +35,10 @@ describe("settings UI + save", () => {
     expect(STUDIO_FORM).toMatch(/initialTimeFormat/);
   });
   it("save writes time_format_preference best-effort (pre-migration safe) and defaults to 12h", () => {
-    expect(STUDIO_ACTION).toMatch(/time_format_preference: timeFormat/);
-    expect(STUDIO_ACTION).toMatch(/formData\.get\("time_format"\) === "24h" \? "24h" : "12h"/);
+    // Written by the owner-only display-preferences action (settings redesign D1);
+    // an absent or unknown value is REFUSED, never defaulted over a saved one.
+    expect(STUDIO_ACTION).toMatch(/time_format_preference: rawTimeFormat/);
+    expect(STUDIO_ACTION).toMatch(/rawTimeFormat !== "12h" && rawTimeFormat !== "24h"/);
     // tolerate the missing column until 0109 is applied; surface other errors
     expect(STUDIO_ACTION).toMatch(/PGRST204|42703|time_format_preference/);
   });

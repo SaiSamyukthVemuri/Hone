@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { redirect } from "next/navigation";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { hasAftercare as studioHasAftercare, hasBothPolicies as studioHasBothPolicies, isLaunchComplete } from "@/lib/settings/launch-completion";
 import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
   getNewClientReadiness,
@@ -12,6 +14,7 @@ import {
   StatusPill,
   type StatusTone,
 } from "@/components/ui/status-pill";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 // Studio launch readiness checklist.
 //
@@ -73,6 +76,10 @@ function nonEmpty(s: string | null | undefined): boolean {
 
 export default async function LaunchChecklistPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
+  // WS-D (settings redesign): owner-only, refused BEFORE any readiness read so a non-owner's response carries no setup state.
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can view the launch checklist.</OwnerOnlyNotice>;
+  }
   // ONB-02: ask the predicate the BOOKING PATH enforces, not a second copy of
   // it. `s.modality === "consultation"` missed `isConsultationService`'s
   // name fallback, so a studio whose service is named "New Client
@@ -92,6 +99,9 @@ export default async function LaunchChecklistPage() {
   // the facts it genuinely owns: confirmation emails, intake, postcare, policies
   // and the calendar feed.
   const readiness = await getNewClientReadiness(studio);
+  // WS-D D4: once setup is complete the checklist is gone (nothing is deleted: the settings and records stay). A direct link or an old
+  // bookmark lands on Profile, never on a page that no longer exists in the nav.
+  if (isLaunchComplete(readiness, studio)) redirect("/settings/profile");
   const provenBlockers = new Set<NewClientBlockerKey>(
     readiness.status === "not_ready" ? readiness.blockers.map((b) => b.key) : [],
   );
@@ -137,10 +147,8 @@ export default async function LaunchChecklistPage() {
     return status === "needs_setup" ? "manual" : status;
   };
 
-  const hasAftercare = nonEmpty(studio.postcare_aftercare_text);
-  const hasBothPolicies =
-    nonEmpty(studio.cancellation_policy_text) &&
-    nonEmpty(studio.no_show_policy_text);
+  const hasAftercare = studioHasAftercare(studio);
+  const hasBothPolicies = studioHasBothPolicies(studio);
   // Migration 0116: feed existence is now derived from the hash (hash-only at rest).
   const hasFeedToken = nonEmpty(practitioner.calendar_feed_token_hash);
   // Kept only to BUILD the public URL. The row's status comes from the
@@ -162,7 +170,7 @@ export default async function LaunchChecklistPage() {
       detail: provenBlockers.has("studio_name")
         ? "Set the studio name."
         : "Studio name set.",
-      cta: { label: "Open Studio settings", href: "/settings/studio" },
+      cta: { label: "Open Studio settings", href: "/settings/studio/details" },
     },
     {
       title: "Public booking link",
@@ -170,9 +178,9 @@ export default async function LaunchChecklistPage() {
       detail: bookingUrl ?? "Set a booking slug to enable the public link.",
       cta: hasSlug && bookingUrl
         ? { label: "Open public booking page", href: bookingUrl }
-        : { label: "Open Studio settings", href: "/settings/studio" },
+        : { label: "Open booking settings", href: "/settings/booking/link" },
       secondaryCta: hasSlug
-        ? { label: "Open booking settings", href: "/settings/booking" }
+        ? { label: "Open booking settings", href: "/settings/booking/link" }
         : undefined,
     },
     // THE AUTHORITY OWNS THIS FACT, SO THE PAGE MUST SHOW IT. Without this row
@@ -189,7 +197,7 @@ export default async function LaunchChecklistPage() {
       detail: provenBlockers.has("booking_settings")
         ? "Set a valid time zone, appointment duration, buffer and booking horizon."
         : "Time zone, appointment duration, buffer and booking horizon are set.",
-      cta: { label: "Open booking settings", href: "/settings/booking" },
+      cta: { label: "Open booking settings", href: "/settings/booking/window" },
     },
     {
       title: "Consultation service",
@@ -264,7 +272,7 @@ export default async function LaunchChecklistPage() {
         : provenBlockers.has("admission_closed")
           ? "New clients cannot book or join a waitlist. Existing clients are unaffected."
           : "New clients are not blocked from this studio.",
-      cta: { label: "Open booking settings", href: "/settings/booking" },
+      cta: { label: "Open booking settings", href: "/settings/booking/link" },
     },
     {
       title: "Client confirmation emails",
@@ -272,7 +280,7 @@ export default async function LaunchChecklistPage() {
       detail: studio.send_confirmation_emails
         ? "Clients receive confirmation emails with the intake link."
         : "Turn on confirmation emails so clients receive the intake link after booking.",
-      cta: { label: "Open Studio settings", href: "/settings/studio" },
+      cta: { label: "Open email settings", href: "/settings/studio/email" },
     },
     {
       title: "Intake form",
@@ -280,8 +288,8 @@ export default async function LaunchChecklistPage() {
       detail:
         "Preview available. The current intake form is shown to every new client booked through Hone.",
       cta: {
-        label: "Open Forms & Policies",
-        href: "/settings/intake",
+        label: "Open Forms & postcare",
+        href: "/settings/forms/intake-preview",
       },
     },
     // Sits directly under the intake row because that is where the form is
@@ -305,7 +313,7 @@ export default async function LaunchChecklistPage() {
         : "Write aftercare text before sending postcare emails.",
       cta: {
         label: "Open Postcare editor",
-        href: "/settings/intake#postcare",
+        href: "/settings/forms/postcare",
       },
     },
     {
@@ -314,7 +322,7 @@ export default async function LaunchChecklistPage() {
       detail: hasBothPolicies
         ? "Both policies are set."
         : "Write a cancellation policy and a no-show policy before card-on-file is offered later.",
-      cta: { label: "Open Policies", href: "/settings/intake" },
+      cta: { label: "Open Policies", href: "/settings/forms/cancellation-policy" },
     },
     {
       title: "Calendar feed",
@@ -348,7 +356,7 @@ export default async function LaunchChecklistPage() {
   return (
     <section className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h2 className="text-xl font-medium">Ready for booking checklist</h2>
+        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Ready for booking checklist</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Walk this once before sending your first real client through
           Hone. Each item is a single plain-English requirement with a
