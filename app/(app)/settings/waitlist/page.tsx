@@ -606,6 +606,12 @@ export default async function WaitlistSettingsPage({
       })
     : null;
   const allowanceText = allowance && allowance.ok ? allowanceHeadline(allowance, allowance.outstandingScope) : null;
+  // "as of" is the server's render instant in the studio's own time zone: the number is a reading, not a promise.
+  const allowanceAsOf = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: studio.timezone ?? "UTC",
+  }).format(new Date());
 
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
   //
@@ -787,6 +793,12 @@ export default async function WaitlistSettingsPage({
             </p>
             <p data-testid="allowance-note" className="mt-1 text-sm text-fg-muted">
               {allowanceText.note}
+            </p>
+            <p data-testid="allowance-as-of" className="mt-1 text-xs text-fg-muted">
+              As of {allowanceAsOf}.{" "}
+              <Link href="/settings/waitlist" prefetch={false} className="underline">
+                Re-check
+              </Link>
             </p>
           </>
         ) : (
@@ -1213,7 +1225,7 @@ export default async function WaitlistSettingsPage({
                               closed, because 0200 refuses that requeue. The row
                               was therefore promising, in prose, exactly what
                               the missing control could not deliver. */}
-                          {(row.status === "invited" || row.status === "released") && (
+                          {(row.status === "invited" || row.status === "released" || row.status === "expired") && (
                             <p
                               data-testid="row-status-meaning"
                               className="text-sm text-neutral-500"
@@ -1266,7 +1278,12 @@ export default async function WaitlistSettingsPage({
                                   <button
                                     type="submit"
                                     data-testid={`waitlist-action-${action}`}
-                                    className="min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
+                                    className={
+                                      // On an expired offer, returning them is THE next step (Sam: a clear route to another offer).
+                                      action === "requeue" && row.status === "expired"
+                                        ? "min-h-[44px] w-full rounded-md border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:w-auto"
+                                        : "min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
+                                    }
                                   >
                                     {/* THE ROW DECIDES THE VERB, AND IT MAY ONLY
                                         PROMISE WHAT THE COMMAND DELIVERS.
