@@ -627,7 +627,9 @@ export function MachineFirstSetupConnected({
       // empty picker beside a claim that a machine is remembered.
       // A valid client-last machine WINS over an unavailable remembered preference (Codex, #1369 4478497436):
       // the stale preference is only stated when nothing better was chosen for this new area.
-      unavailableSelection={newAreaLast ? null : ctx.rememberedUnavailable}
+      // An area SAVED AS THE EXISTING WORKFLOW states no remembered-unavailable note either (Insurance final429 C2): the note is about the
+      // practitioner's preference, not this area, and beside the legacy option it reads as if the area's machine were retired.
+      unavailableSelection={newAreaLast || (hasSaved && !savedIdentity?.deviceId) ? null : ctx.rememberedUnavailable}
       // The unit this client's last setup used, offered (not selected) when
       // nothing is remembered. Forwarded here or it is inert in the real route.
       suggestedMachine={ctx.suggestedMachine}

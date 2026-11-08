@@ -50,7 +50,7 @@ describe("the form's copy path", () => {
 describe("a valid client-last machine wins over an unavailable remembered preference", () => {
   const conn = readFileSync("components/machines/machine-first-setup-connected.tsx", "utf8");
   it("the unavailable-selection notice is dropped when client-last was applied", () => {
-    expect(conn).toContain("unavailableSelection={newAreaLast ? null : ctx.rememberedUnavailable}");
+    expect(conn).toContain("unavailableSelection={newAreaLast || (hasSaved && !savedIdentity?.deviceId) ? null : ctx.rememberedUnavailable}");
   });
   // Codex 4478497436: the client-last machine is only applied on a NEW area with no hold, and it comes from the server-validated
   // `clientLastMachine`; with the notice rule above, an unavailable remembered preference cannot override it. Source pin, not a mounted proof.

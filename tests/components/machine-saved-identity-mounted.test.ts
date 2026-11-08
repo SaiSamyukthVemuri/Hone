@@ -278,6 +278,90 @@ describe("which unit opens: a saved unit always wins", () => {
   });
 });
 
+// C1/C2 (Insurance final429): what follows the unset-mode state, and the legacy-only saved area now that restoredSelection is null there.
+describe("a saved unit with a null mode: the click, the write, and the retired unit", () => {
+  const DEVICE_B: StudioDevice = { ...DEVICE, deviceId: "room-7", displayName: "Room 7 unit" };
+  const ONE_MODE: MachineProfile = { ...PROFILE, profileId: "fixture:single", modes: [PROFILE.modes[0]] };
+  const DEVICE_ONE: StudioDevice = { ...DEVICE, deviceId: "room-3", profileId: "fixture:single", displayName: "Room 3 unit" };
+  const B_CTX = { devices: [DEVICE, DEVICE_B, DEVICE_ONE], catalogue: [PROFILE, ONE_MODE], remembered: { deviceId: "room-7", modeKey: "second" }, restoredSelection: { deviceId: "room-7", modeKey: "second" } };
+  const click = (id: string) => act(async () => host!.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click());
+
+  it("C1: choosing a mode writes EXACTLY ONE identity, naming the SAVED unit and the chosen mode, never the remembered one", async () => {
+    await mount({ blockId: "b1", ctx: B_CTX, savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: null } });
+    expect(actions.recordBlockMachineIdentityAction, "control: nothing is written before the click").not.toHaveBeenCalled();
+    await click("machine-mode-second");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledWith(expect.objectContaining({ deviceId: "room-9", modeKey: "second" }));
+    for (const call of actions.recordBlockMachineIdentityAction.mock.calls) expect(JSON.stringify(call)).not.toContain("room-7");
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value, "still the saved unit").toBe("room-9");
+    expect(host!.querySelector('[data-testid="machine-reading-entry"]'), "the reading form now mounts, for the saved unit").not.toBeNull();
+    expect(host!.querySelector('[data-testid="machine-mode-unresolved"]')).toBeNull();
+  });
+
+  it("C1: a single-mode unit's ONE click leads to exactly one write", async () => {
+    await mount({ blockId: "b1", ctx: B_CTX, savedIdentity: { profileId: "fixture:single", deviceId: "room-3", modeKey: null } });
+    expect(host!.querySelector('[data-testid="machine-mode-unresolved"]'), "no silent first-mode guess").not.toBeNull();
+    expect(host!.querySelector('[data-testid="machine-reading-entry"]')).toBeNull();
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+    await click("machine-mode-galvanic");
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledTimes(1);
+    expect(actions.recordBlockMachineIdentityAction).toHaveBeenCalledWith(expect.objectContaining({ deviceId: "room-3", modeKey: "galvanic" }));
+  });
+
+  it("C1: a RETIRED saved unit with a null mode reaches savedUnavailable: no reading form, no mode prompt for another unit, no write", async () => {
+    await mount({
+      blockId: "b1",
+      ctx: { ...B_CTX, devices: [DEVICE_B], unitNames: { "room-9": "Room 9 unit" } },
+      savedIdentity: { profileId: "fixture:mounted", deviceId: "room-9", modeKey: null },
+    });
+    expect(host!.querySelector('[data-testid="machine-saved-unavailable"]'), "the saved-but-unavailable state").not.toBeNull();
+    expect(host!.querySelector('[data-testid="machine-reading-entry"]'), "no reading form, for room-7 or anything").toBeNull();
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("C2: a legacy-only saved area (profileId set, no deviceId)", () => {
+  const DEVICE_B: StudioDevice = { ...DEVICE, deviceId: "room-7", displayName: "Room 7 unit" };
+  const LEGACY = { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null };
+
+  it("shows the existing workflow, reports the legacy kind, mounts no native reading form and writes nothing, with B remembered", async () => {
+    const onKindChange = vi.fn();
+    await mount({
+      blockId: "b1",
+      onKindChange,
+      ctx: { devices: [DEVICE, DEVICE_B], remembered: { deviceId: "room-7", modeKey: "second" }, restoredSelection: { deviceId: "room-7", modeKey: "second" } },
+      savedIdentity: LEGACY,
+    });
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("legacy:xcell");
+    expect(onKindChange.mock.calls.at(-1)?.[0], "the host is told this is the existing workflow").toBe("legacy");
+    expect(host!.querySelector('[data-testid="machine-reading-entry"]'), "no native reading form for the remembered unit").toBeNull();
+    expect(host!.querySelector('[data-testid="machine-mode-unresolved"]')).toBeNull();
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+  });
+
+  it("with the remembered unit UNAVAILABLE the legacy display is unchanged, NO remembered-unavailable note is shown, and nothing is written", async () => {
+    await mount({
+      blockId: "b1",
+      ctx: { remembered: null, rememberedUnavailable: { deviceId: "gone-1", reason: "That machine was retired." } },
+      savedIdentity: LEGACY,
+    });
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("legacy:xcell");
+    expect(host!.querySelector('[data-testid="machine-selection-not-remembered"]'), "the note is about the preference, not this area").toBeNull();
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+  });
+
+  it("and UNCHANGED elsewhere: an area with no saved identity still states the note", async () => {
+    await mount({
+      blockId: "b1",
+      ctx: { remembered: null, rememberedUnavailable: { deviceId: "gone-1", reason: "That machine was retired." } },
+      savedIdentity: null,
+    });
+    await act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.click());
+    expect(host!.querySelector('[data-testid="machine-selection-not-remembered"]')?.textContent).toBe("That machine was retired.");
+  });
+});
+
 describe("the component follows its own identity writes", () => {
   const pick = async (value: string) => {
     const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
