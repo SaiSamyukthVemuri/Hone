@@ -24,6 +24,9 @@ import {
 // already looking at. It is not authority: possession of it reaches the offer
 // and the proof request, and nothing else.
 
+/** Background refresh on tab return runs at most this often. */
+export const REFRESH_MIN_INTERVAL_MS = 30_000;
+
 export function InvitationContainer({
   token,
   initial,
@@ -45,53 +48,80 @@ export function InvitationContainer({
   const [typedPhone, setTypedPhone] = useState("");
   const [pending, startTransition] = useTransition();
 
-  /** Every action funnels through here so `pending` can never be left stuck on. */
-  const run = useCallback((op: () => Promise<InvitationViewState>) => {
-    startTransition(async () => {
-      try {
-        const next = await op();
-        setState(next);
-        // A SELECTION MUST NOT OUTLIVE THE SLOT IT POINTS AT.
-        //
-        // Every refreshed offer is a new availability read. When the chosen
-        // instant was taken while the recipient was deciding, it is simply
-        // absent from the new day list — but `selectedSlotStart` survived the
-        // state swap, so nothing appeared selected while Book stayed enabled,
-        // and pressing it resubmitted the vanished slot for the same refusal,
-        // forever. Clearing it here rather than in the Book handler covers the
-        // retry and reload paths too, which refresh availability just as much.
-        setSelectedSlotStart((current) => {
-          if (current === null) return null;
-          if (next.kind !== "offer") return null;
-          const stillOffered = next.days.some((d) =>
-            d.slots.some((s) => s.start === current),
-          );
-          return stillOffered ? current : null;
-        });
-      } catch {
-        // A thrown action is a transport failure, not a refusal. Say so, and
-        // leave a retry path rather than a dead screen.
-        setState({ kind: "error", retryable: true });
-        setSelectedSlotStart(null);
-      }
+  /** Adopt a fresh view state, dropping a selection the new offer no longer lists. */
+  const applyState = useCallback((next: InvitationViewState) => {
+    setState(next);
+    // A SELECTION MUST NOT OUTLIVE THE SLOT IT POINTS AT.
+    //
+    // Every refreshed offer is a new availability read. When the chosen
+    // instant was taken while the recipient was deciding, it is simply
+    // absent from the new day list — but `selectedSlotStart` survived the
+    // state swap, so nothing appeared selected while Book stayed enabled,
+    // and pressing it resubmitted the vanished slot for the same refusal,
+    // forever. Clearing it here rather than in the Book handler covers the
+    // retry and reload paths too, which refresh availability just as much.
+    setSelectedSlotStart((current) => {
+      if (current === null) return null;
+      if (next.kind !== "offer") return null;
+      const stillOffered = next.days.some((d) =>
+        d.slots.some((s) => s.start === current),
+      );
+      return stillOffered ? current : null;
     });
   }, []);
 
+  /** Every action funnels through here so `pending` can never be left stuck on. */
+  const run = useCallback(
+    (op: () => Promise<InvitationViewState>) => {
+      startTransition(async () => {
+        try {
+          applyState(await op());
+        } catch {
+          // A thrown action is a transport failure, not a refusal. Say so, and
+          // leave a retry path rather than a dead screen.
+          setState({ kind: "error", retryable: true });
+          setSelectedSlotStart(null);
+        }
+      });
+    },
+    [applyState],
+  );
+
   // REFRESH ON RETURN. A tab left open while the recipient decides can show times
   // that have since gone. Coming back to it re-reads the offer (a fresh
-  // availability read on the server); it never fires while an action is running,
-  // and only on an offer, so a proof or terminal screen is not disturbed.
+  // availability read on the server).
+  //
+  //   * ONLY ON AN OFFER, never while an action is running, and at most once per
+  //     REFRESH_MIN_INTERVAL_MS, so flicking between tabs is not a read loop.
+  //   * A FAILED background read KEEPS WHAT IS ON SCREEN. Only an explicit
+  //     "Check again" may replace the offer with the retry error: a recipient
+  //     who is halfway through typing must not lose the page to a blip.
+  //   * A result that lands after an action started is DISCARDED, so a stale
+  //     read cannot overwrite a booking or decline in flight.
   const latest = useRef({ kind: state.kind, pending });
   latest.current = { kind: state.kind, pending };
+  const lastRefreshAt = useRef(0);
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       if (latest.current.kind !== "offer" || latest.current.pending) return;
-      run(() => loadInvitationAction(token));
+      const now = Date.now();
+      if (now - lastRefreshAt.current < REFRESH_MIN_INTERVAL_MS) return;
+      lastRefreshAt.current = now;
+      void (async () => {
+        try {
+          const next = await loadInvitationAction(token);
+          if (next.kind === "error") return;
+          if (latest.current.pending) return;
+          applyState(next);
+        } catch {
+          // keep the current offer
+        }
+      })();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [run, token]);
+  }, [applyState, token]);
 
   /**
    * The masked contact and expiry the recipient is currently looking at. A code

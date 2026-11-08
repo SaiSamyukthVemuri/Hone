@@ -37,6 +37,7 @@ import {
   filterSlotsToScope,
   slotWithinScope,
   groupSlotsByDay,
+  formatSlotDayLabel,
   proofStageFromBegin,
   proofStageFromComplete,
   type InvitationViewState,
@@ -469,7 +470,7 @@ async function loadStudioContext(
         price_cents: (service.price_cents as number | null) ?? null,
       },
     })
-      ? FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING
+      ? `Before you book: ${FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING}`
       : null,
     bookableByNewClient: isBookableByNewClient({
       name: service.name as string,
@@ -660,7 +661,7 @@ async function offeredDays(
   // A refusal is now the operation's refusal, and it is reported rather than
   // silently swallowed per day.
   const gate = await limitPublicSlots({ headers: await headers(), slug: studio.slug });
-  if (!gate.allowed) return { days: [], unreadable: true };
+  if (!gate.allowed) return { days: [], noTimeDays: [], unreadable: true };
 
   const range = await fetchPublicSlotsForDates({
     slug: studio.slug,
@@ -670,7 +671,7 @@ async function offeredDays(
   // ANY failure to read is UNREADABLE, not empty. Throttled, studio not found,
   // service withdrawn — none of them means "no times are open", and rendering
   // an empty offer would state that as a fact about the studio's diary.
-  if (!range.ok) return { days: [], unreadable: true };
+  if (!range.ok) return { days: [], noTimeDays: [], unreadable: true };
 
   const collected: OfferedSlot[] = range.slots.map((s) => ({
     start: s.start,
@@ -679,10 +680,12 @@ async function offeredDays(
   }));
   // Still narrowed by the same evaluator: the day filter above is an
   // optimisation, never the authority, and nothing past endDate is collected.
-  return {
-    days: groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected)),
-    unreadable: false,
-  };
+  const days = groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected));
+  // The window's other days, named: dates the offer permits that came back with
+  // nothing open. Computed from the same `dates` the fetch asked about.
+  const withTimes = new Set(days.map((d) => d.date));
+  const noTimeDays = dates.filter((d) => !withTimes.has(d)).map(formatSlotDayLabel);
+  return { days, noTimeDays, unreadable: false };
 }
 
 /**
@@ -732,7 +735,7 @@ async function offerState(
   const [offered, identity] = await Promise.all([
     proven
       ? offeredDays(resolve, studio)
-      : Promise.resolve({ days: [], unreadable: false }),
+      : Promise.resolve({ days: [], noTimeDays: [] as string[], unreadable: false }),
     capability
       ? invitedIdentity(rawToken, capability)
       : Promise.resolve<IdentityOutcome>({ kind: "unusable", reason: "no_capability" }),
@@ -766,6 +769,7 @@ async function offerState(
     // Book attempt then fails closed, and the booking path reports it.
     phoneNeeded: identity.kind === "resolved" && identity.identity.phone === null,
     ...(studio.bookingNotice ? { bookingNotice: studio.bookingNotice } : {}),
+    noTimeDays: offered.noTimeDays,
   });
 }
 

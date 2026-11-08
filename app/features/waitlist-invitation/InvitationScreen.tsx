@@ -119,6 +119,8 @@ export function InvitationScreen({
             refusal={state.refusal}
             phoneRequired={state.phoneRequired === true}
             bookingNotice={state.bookingNotice}
+            noTimeDays={state.noTimeDays}
+            inviteOpenUntil={state.inviteOpenUntil}
             typedPhone={typedPhone}
             onTypedPhoneChange={onTypedPhoneChange}
             selectedSlotStart={selectedSlotStart}
@@ -327,6 +329,8 @@ function OfferView({
   refusal,
   phoneRequired,
   bookingNotice,
+  noTimeDays,
+  inviteOpenUntil,
   typedPhone,
   onTypedPhoneChange,
   selectedSlotStart,
@@ -343,6 +347,8 @@ function OfferView({
   refusal?: BookingRefusal;
   phoneRequired: boolean;
   bookingNotice?: string;
+  noTimeDays?: string[];
+  inviteOpenUntil?: string;
   typedPhone: string;
   onTypedPhoneChange?: (value: string) => void;
   selectedSlotStart: string | null;
@@ -375,6 +381,13 @@ function OfferView({
           className="rounded-md bg-[#FDF2F2] px-3 py-2 text-sm text-[#8A2A2A]"
         >
           {BOOKING_REFUSAL_COPY[refusal]}
+        </p>
+      ) : null}
+
+      {inviteOpenUntil ? (
+        <p className="text-sm text-[#0A0A0A]" data-testid="invite-open-until">
+          Book by {inviteOpenUntil}: after that this invitation closes. The days below are the
+          days you can choose from.
         </p>
       ) : null}
 
@@ -455,6 +468,12 @@ function OfferView({
           ))}
         </section>
       )}
+
+      {!empty && noTimeDays && noTimeDays.length > 0 ? (
+        <p className="text-sm text-[#6B6B6B]" data-testid="no-time-days">
+          Nothing is open on: {noTimeDays.join(", ")}.
+        </p>
+      ) : null}
 
       {/* ASKED FOR ONLY WHERE THE STUDIO HAS NONE. Joining a waitlist makes a
           phone optional, but booking requires one, so an entry that joined

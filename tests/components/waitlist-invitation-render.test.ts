@@ -561,3 +561,34 @@ describe("the UNKNOWN-outcome terminal state claims neither outcome", () => {
     expect(html()).not.toBe(consumed);
   });
 });
+
+describe("HON-7 offer: the whole window and the invitation's own close", () => {
+  const base = {
+    kind: "offer" as const,
+    presentation: PRESENTATION,
+    days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const }],
+    windowDescription: WINDOW_DESCRIPTION,
+  };
+
+  it("names the days in the window with nothing open", () => {
+    const html = render({ ...base, noTimeDays: ["Tue, Sep 8", "Wed, Sep 9"] });
+    expect(html).toContain("Nothing is open on: Tue, Sep 8, Wed, Sep 9.");
+  });
+
+  it("says nothing about empty days when there are none", () => {
+    expect(render(base)).not.toContain("Nothing is open on:");
+  });
+
+  it("states when the invitation closes, apart from the days that may be chosen", () => {
+    const html = render({ ...base, inviteOpenUntil: "Thu, Sep 10 at 3:00 PM" });
+    expect(html).toContain("Book by Thu, Sep 10 at 3:00 PM");
+    expect(html).toContain("this invitation closes");
+    expect(html).toContain("The days below are the days you can choose from.");
+  });
+
+  it("shows a cancellation notice only when the server supplied one", () => {
+    expect(render(base)).not.toContain('data-testid="booking-notice"');
+    const html = render({ ...base, bookingNotice: "NOTICE-TEXT" });
+    expect(html).toContain("NOTICE-TEXT");
+  });
+});

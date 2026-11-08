@@ -1,4 +1,4 @@
-import { localDateString, localDayOfWeek, formatLocalDateLabel } from "@/lib/booking/tz";
+import { localDateString, localDayOfWeek, formatLocalDateLabel, localTimeString12h } from "@/lib/booking/tz";
 import {
   evaluateInvitationScope,
   type InvitationScope,
@@ -314,6 +314,18 @@ export type InvitationViewState =
        * words, so this surface cannot promise what the cancel page refuses.
        */
       bookingNotice?: string;
+      /**
+       * HON-7. Day labels inside the offered window on which NOTHING is open, so
+       * the recipient sees the whole window rather than only the days that have
+       * times. Derived from the same scan that produced `days`; never guessed.
+       */
+      noTimeDays?: string[];
+      /**
+       * HON-7. When THIS INVITATION closes (the fixed 48-hour opportunity), in
+       * the studio's own zone. It is a different thing from the booking window,
+       * which is the range of days the times may fall on; the screen says so.
+       */
+      inviteOpenUntil?: string;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
@@ -392,8 +404,15 @@ export function groupSlotsByDay(
     });
 }
 
+/** "Thu, Nov 13 at 3:00 PM" in the studio's zone, or nothing for an unreadable instant. */
+function openUntil(expiresAt: string, tz: string): { inviteOpenUntil?: string } {
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return {};
+  return { inviteOpenUntil: `${formatSlotDayLabel(localDateString(at, tz))} at ${localTimeString12h(at, tz)}` };
+}
+
 /** "Mon, Sep 7" -- short enough for a phone, unambiguous across a week. */
-function formatSlotDayLabel(ymd: string): string {
+export function formatSlotDayLabel(ymd: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
   if (!m) return ymd;
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
@@ -468,6 +487,8 @@ export type RecipientContext = {
   phoneNeeded?: boolean;
   /** HON-7: see the offer variant's `bookingNotice`. */
   bookingNotice?: string;
+  /** HON-7: see the offer variant's `noTimeDays`. */
+  noTimeDays?: string[];
 };
 
 /**
@@ -571,6 +592,8 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
         // silent failure this replaces.
         ...(ctx.phoneNeeded ? { phoneRequired: true } : {}),
         ...(ctx.bookingNotice ? { bookingNotice: ctx.bookingNotice } : {}),
+        ...(ctx.noTimeDays && ctx.noTimeDays.length > 0 ? { noTimeDays: ctx.noTimeDays } : {}),
+        ...openUntil(resolve.invitation.expiresAt, ctx.presentation.studioTimezone),
       };
     }
   }
