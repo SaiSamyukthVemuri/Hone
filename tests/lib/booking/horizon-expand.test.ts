@@ -64,7 +64,7 @@ describe("downstream bounds derive from the max horizon (no truncation)", () => 
   const RESCHED = read("app/reschedule/[token]/actions.ts");
   const CRON = read("app/api/cron/materialize-recurring-breaks/route.ts");
   const RFORM = read("app/reschedule/[token]/RescheduleForm.tsx");
-  const SETTINGS = read("app/(app)/settings/booking/page.tsx");
+  const SETTINGS = read("app/(app)/settings/booking/BookingView.tsx");
 
   it("next-available scan caps derive from maxPublicBookingHorizonDays() (cover 12 months)", () => {
     expect(BOOK).toMatch(/MAX_NEXT_AVAILABLE_SCAN_DAYS = maxPublicBookingHorizonDays\(\) \+ 14/);

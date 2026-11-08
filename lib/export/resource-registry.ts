@@ -313,6 +313,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
       { column: "portrait_image_id", reason: "pending_review", note: "0231 identification-portrait pointer to one of the client's own treatment_images rows; it travels with the treatment-photo export decision, not as a bare id." },
       { column: "preferred_name", reason: "pending_review", note: "0258 (HON-58): the name the client goes by. Studio-owned client data that belongs in this file; adding a CSV column changes the export contract (0242 file map), so it is decided with the legal identity under HON-58, not as a side effect of the migration." },
+      { column: "name_revision", reason: "internal_state", note: "0281 (HON-58): a counter that rises when the client's name changes, used only to detect a stale save; it is not a customer fact." },
+      { column: "preferred_name_revision", reason: "internal_state", note: "0281 (HON-58): the same stale-save counter for the preferred name; not a customer fact." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",
@@ -1014,6 +1016,24 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   // EXCLUDED - a decision on the record, with the reason it was made.
   // -------------------------------------------------------------------------
 
+  // derived
+  // 0298. Per-owner view state of the Dashboard "Needs attention" list: which reminder an owner chose to hide, and when. It holds record
+  // identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical
+  // content. Every reminder it hides is recomputed from records that ARE exported, and it is rebuilt by simply not dismissing.
+  // Excluded as a DECISION (Privacy: APPROVE_WITH_CONDITIONS, 5 Nov), not an omission: nothing in it is studio content a departing studio needs back,
+  // and exporting it would hand one owner's view history to whoever receives the file.
+  // MUST BE HANDLED by any client-erasure, offboarding or account-removal design (Privacy ET-2, ET-3), and listed before activation is proposed:
+  //   - client and appointment ids sit inside item_key, and the table is append-only (a trigger refuses every UPDATE, and a DELETE unless the
+  //     whole studio is already gone), so a client erasure or anonymisation cannot clear them without a governed override;
+  //   - user_id has no foreign key to the account record, so a removed or deleted account leaves its rows behind (only that user could read
+  //     them, and the studio cascade removes them with the studio).
+  dashboard_attention_events: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported.",
+  },
+
   // security
   calendar_connection_secrets: {
     kind: "excluded",
@@ -1240,6 +1260,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 1,
     reason:
       "Introduced by migration 0266 (HON-58 Q1). Append-only record of who changed the front-desk legal-name switch, when, and from what to what. Studio-owned audit history with no representation in any exported file yet.",
+  },
+  client_identity_audit: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0281 (HON-58 identity revisions). Append-only record of which concept of a client's name changed (name, preferred name or legal name), when, by which practitioner and at which revision. It stores NO name value. Studio-owned audit history with no representation in any exported file yet.",
   },
   client_intake_forms: {
     kind: "pending",

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG, parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { captureServerEvent } from "@/lib/analytics/server";
 import {
@@ -82,6 +83,10 @@ export async function createClientAction(
   if (!name) {
     return { ok: false, error: "Name is required." };
   }
+  if (name.length > CLIENT_NAME_MAX) return { ok: false, error: CLIENT_NAME_TOO_LONG };
+
+  const preferred = parsePreferredName(formData.get("preferred_name"));
+  if (!preferred.ok) return { ok: false, error: preferred.error };
 
   const email = nullableString(formData.get("email"));
 
@@ -162,6 +167,8 @@ export async function createClientAction(
     .insert({
       studio_id: studio.id,
       name,
+      // HON-58: the name the client goes by, on the SAME client record (null when blank).
+      preferred_name: preferred.value,
       pronouns: nullableString(formData.get("pronouns")),
       phone,
       email,

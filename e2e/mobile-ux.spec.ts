@@ -774,7 +774,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     // practitioner lands at the top of an eight-control form.
     await desktopPage.waitForURL(
       (url) =>
-        url.pathname === "/settings/booking" && url.hash === "#booking-horizon",
+        url.pathname === "/settings/booking/window",
     );
 
     // The real anchored control, on screen — not merely somewhere in the DOM.
@@ -807,14 +807,15 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(bufferResult).toBeVisible({ timeout: 15_000 });
     await bufferResult.click();
     await desktopPage.waitForURL(
-      (url) => url.pathname === "/settings/booking" && url.hash === "#buffer",
+      (url) => url.pathname === "/settings/booking/window",
     );
     const bufferControl = desktopPage.locator("#buffer");
     await expect(bufferControl).toBeVisible();
     await expect(bufferControl).toContainText("Time between appointments");
     await expectScrolledIntoView(desktopPage, bufferControl, "buffer control");
-    // Two searches, one page, two different destinations.
-    expect(new URL(desktopPage.url()).hash).toBe("#buffer");
+    // R2: the destination is the focused view itself, with no hash. The
+    // control is still its own element on the page (#buffer above).
+    expect(new URL(desktopPage.url()).hash).toBe("");
 
     await desktopPage.goto("/dashboard");
     await search.fill(seed.clientName);
@@ -910,7 +911,8 @@ for (const width of CARD_WIDTHS) {
       const m = await page.evaluate(() => {
         const rowBody = document.querySelector('[data-testid="today-row-body"]');
         if (!rowBody) return { error: "no today-row-body" } as const;
-        const card = rowBody.parentElement!.parentElement!;
+        // The row body is a direct child of the card since the compact-row layout (no left column wrapper).
+        const card = rowBody.parentElement!;
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
         const beforeToday =
@@ -928,7 +930,8 @@ for (const width of CARD_WIDTHS) {
         // A Range reports one client rect per line box — the only honest way to
         // ask "did this text wrap?" for a flex item that stretches vertically.
         const timeRange = document.createRange();
-        timeRange.selectNodeContents(timeCell);
+        // The start label is the cell's first span; the end time is a deliberate second line beneath it.
+        timeRange.selectNodeContents(timeCell.firstElementChild ?? timeCell);
         const actions = [...document.querySelectorAll('[data-testid="today-next-action"],[data-testid="today-consultation-notes"]')];
         // The VISIBLE text edge, not the box edge. A borderless link with
         // horizontal padding has a box that aligns while its glyphs sit 12px
@@ -1105,8 +1108,8 @@ for (const width of HOSTILE_WIDTHS) {
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
         const rg = document.createRange();
-        rg.selectNodeContents(timeCell);
-        const card = rowBody.parentElement!.parentElement!.getBoundingClientRect();
+        rg.selectNodeContents(timeCell.firstElementChild ?? timeCell);
+        const card = rowBody.parentElement!.getBoundingClientRect();
         const acts = [
           ...document.querySelectorAll(
             '[data-testid="today-next-action"],[data-testid="today-consultation-notes"]',

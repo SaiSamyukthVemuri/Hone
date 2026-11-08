@@ -7,7 +7,7 @@ function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 const ACTIONS = read("app/(app)/settings/tracking/actions.ts");
-const PAGE = read("app/(app)/settings/tracking/page.tsx");
+const PAGE = read("app/(app)/settings/integrations/marketing/page.tsx");
 const FORM = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
 
 describe("tracking settings — owner-gated + encrypted-at-rest", () => {

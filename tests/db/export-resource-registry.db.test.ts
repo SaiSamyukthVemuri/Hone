@@ -916,7 +916,9 @@ describe("what is excluded, and on what grounds", () => {
       // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
       // derived from the two ledgers.
       platform: 7,
-      derived: 7,
+      // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
+      // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
+      derived: 8,
       deliberate_privacy: 2,
     });
   });
