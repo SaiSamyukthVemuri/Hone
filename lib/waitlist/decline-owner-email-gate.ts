@@ -34,5 +34,15 @@ export const DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS = 23;
  */
 export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
 
+/**
+ * One sweep keeps claiming batches until nothing eligible remains or this budget is spent. The cron route declares maxDuration = 60 (the most
+ * a Hobby serverless function may run), and one row can take up to ~30s in the worst case (a 15s provider timeout, retried once under the same key),
+ * so the budget is 60 - 30 - margin = 25s: a row started just inside it still finishes before the platform cuts the function. A row cut anyway is left
+ * `sending`, reclaimed after the stale window under the same provider key. Rows left when the budget ends are reported as `remaining`, never dropped.
+ */
+export const DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS = 25_000;
+export const DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS = 60;
+export const DECLINE_OWNER_EMAIL_BATCH_SIZE = 50;
+
 /** A row left in `sending` longer than this was abandoned by a dead invocation and may be claimed again. */
 export const DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES = 10;

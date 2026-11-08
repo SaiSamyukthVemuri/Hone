@@ -6,7 +6,9 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
+  DECLINE_OWNER_EMAIL_BATCH_SIZE,
   DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS,
+  DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS,
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
   DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES,
   declineOwnerEmailActivation,
@@ -43,12 +45,17 @@ type Row = {
 
 export type RowResult = "sent" | "failed" | "cancelled" | "skipped";
 
-export type DispatchSummary = { sent: number; failed: number; cancelled: number; skipped: number };
+/** `remaining`: eligible rows this run did not reach because its time budget ran out (0 when it finished, -1 if they could not be counted). A count only. */
+export type DispatchSummary = { sent: number; failed: number; cancelled: number; skipped: number; remaining: number };
 
 type Deps = {
   admin: SupabaseClient;
   transport?: IdempotentEmailTransport | null;
   now?: () => Date;
+  /** Monotonic milliseconds for the time budget; a test seam. */
+  clock?: () => number;
+  /** Time budget for one run; a test seam. */
+  budgetMs?: number;
   appOrigin?: () => string;
 };
 
@@ -205,7 +212,7 @@ async function expireUnsent(admin: SupabaseClient, since: Date, windowStart: Dat
  * recent rows (the cron backstop). Rows created before the activation instant are never touched.
  */
 export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationId?: string } = {}): Promise<DispatchSummary> {
-  const summary: DispatchSummary = { sent: 0, failed: 0, cancelled: 0, skipped: 0 };
+  const summary: DispatchSummary = { sent: 0, failed: 0, cancelled: 0, skipped: 0, remaining: 0 };
   try {
     const activation = declineOwnerEmailActivation();
     if (!activation.enabled) return summary;
@@ -218,26 +225,51 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
     const earliest = windowStart > activation.since ? windowStart : activation.since;
     await expireUnsent(deps.admin, activation.since, windowStart, staleBefore, now);
 
-    let q = deps.admin
-      .from("waitlist_decline_owner_emails")
-      .select(COLUMNS)
-      .gte("created_at", earliest.toISOString())
-      .lt("attempt_count", DECLINE_OWNER_EMAIL_MAX_ATTEMPTS)
-      .or(`status.in.(held,failed),and(status.eq.sending,claimed_at.lt.${staleBefore})`)
-      .order("created_at", { ascending: true })
-      .limit(50);
-    if (scope.invitationId) q = q.eq("invitation_id", scope.invitationId);
-    const { data, error } = await q;
-    if (error || !Array.isArray(data)) {
-      log("decline_owner_email_read_failed", { code: "read_error" });
-      return summary;
-    }
-    for (const row of data as Row[]) {
-      try {
-        summary[await sendOne(deps, row, now)] += 1;
-      } catch {
-        summary.failed += 1;
+    // Batches are walked by a KEYSET on `id` so every row is visited at most once per run. Without it a row that just failed would still be
+    // eligible and be picked again in the next batch, spending its whole retry budget in one sweep. Per-row compare-and-swap claims are unchanged,
+    // so an overlapping post-commit send and this sweep cannot both send the same row.
+    const clock = deps.clock ?? (() => Date.now());
+    const budget = deps.budgetMs ?? DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS;
+    const startedAt = clock();
+    const eligible = (after: string | null, head: boolean) => {
+      let q = deps.admin
+        .from("waitlist_decline_owner_emails")
+        .select(COLUMNS, head ? { count: "exact", head: true } : undefined)
+        .gte("created_at", earliest.toISOString())
+        .lt("attempt_count", DECLINE_OWNER_EMAIL_MAX_ATTEMPTS)
+        .or(`status.in.(held,failed),and(status.eq.sending,claimed_at.lt.${staleBefore})`);
+      if (scope.invitationId) q = q.eq("invitation_id", scope.invitationId);
+      if (after) q = q.gt("id", after);
+      return q;
+    };
+    let after: string | null = null;
+    for (;;) {
+      const { data, error } = await eligible(after, false).order("id", { ascending: true }).limit(DECLINE_OWNER_EMAIL_BATCH_SIZE);
+      if (error || !Array.isArray(data)) {
+        log("decline_owner_email_read_failed", { code: "read_error" });
+        break;
       }
+      if (data.length === 0) break;
+      let stoppedEarly = false;
+      for (const row of data as Row[]) {
+        if (clock() - startedAt >= budget) {
+          stoppedEarly = true;
+          break;
+        }
+        after = row.id;
+        try {
+          summary[await sendOne(deps, row, now)] += 1;
+        } catch {
+          summary.failed += 1;
+        }
+      }
+      if (stoppedEarly) {
+        const rest = await eligible(after, true);
+        summary.remaining = !rest.error && typeof rest.count === "number" ? rest.count : -1;
+        log("decline_owner_email_budget_spent", { remaining: summary.remaining });
+        break;
+      }
+      if (data.length < DECLINE_OWNER_EMAIL_BATCH_SIZE) break;
     }
     if (summary.failed > 0) log("decline_owner_email_failures", { failed: summary.failed });
   } catch {

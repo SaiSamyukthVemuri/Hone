@@ -29,10 +29,12 @@ function world() {
     const f: Array<(r: Record<string, unknown>) => boolean> = [];
     let patch: Record<string, unknown> | null = null;
     let limit = Infinity;
+    let orderCol: string | null = null;
     const q: Record<string, unknown> = {};
     const rows = () => (name === "practitioners" ? [...pracs.values()] : outbox) as unknown as Array<Record<string, unknown>>;
     const run = () => {
       const hit = rows().filter((r) => f.every((p) => p(r)));
+      if (orderCol) hit.sort((a, b) => String(a[orderCol as string]).localeCompare(String(b[orderCol as string])));
       if (patch) {
         writes.push(patch);
         for (const r of hit) Object.assign(r, patch);
@@ -57,7 +59,8 @@ function world() {
       f.push((r) => r.status === "held" || r.status === "failed" || (r.status === "sending" && !!r.claimed_at && String(r.claimed_at) < stale));
       return q;
     };
-    q.order = () => q;
+    q.order = (c: string) => { orderCol = c; return q; };
+    q.gt = (c: string, v: unknown) => { f.push((r) => { const d = cmp(r[c], v); return d !== null && d > 0; }); return q; };
     q.limit = (n: number) => { limit = n; return q; };
     q.maybeSingle = async () => ({ data: run()[0] ?? null, error: null });
     q.then = (res: (v: unknown) => unknown) => {
@@ -114,7 +117,7 @@ describe("activation", () => {
   it.each([[undefined], ["TRUE"], ["1"], ["yes"], [" true"], [""]])("flag value %j sends nothing", async (v) => {
     if (v === undefined) delete process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED; else process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED = v;
     const w = world(); w.owner();
-    expect(await w.run()).toEqual({ sent: 0, failed: 0, cancelled: 0, skipped: 0 });
+    expect(await w.run()).toEqual({ sent: 0, failed: 0, cancelled: 0, skipped: 0, remaining: 0 });
     expect(w.sends).toHaveLength(0);
     expect(w.outbox[0].status).toBe("held");
   });
@@ -174,6 +177,42 @@ describe("one email to each current verified owner", () => {
     for (let i = 0; i < 5; i++) await w.run();
     expect(w.sends).toHaveLength(1);
     expect(o.row.status).toBe("failed");
+  });
+  it("120 eligible rows are all processed in one run, in batches, each exactly once", async () => {
+    const w = world();
+    for (let i = 0; i < 120; i++) w.owner();
+    const out = await w.run();
+    expect(out).toMatchObject({ sent: 120, remaining: 0 });
+    expect(w.sends).toHaveLength(120);
+    expect(new Set(w.sends.map((x) => x.key)).size).toBe(120);
+    expect(w.outbox.every((r) => r.status === "sent" && r.attempt_count === 1)).toBe(true);
+  });
+  it("a spent time budget stops cleanly, reports the remainder, and the next run finishes without sending anything twice", async () => {
+    const w = world();
+    for (let i = 0; i < 120; i++) w.owner();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let t = 0;
+    // each clock read costs 1 ms against a 70 ms budget
+    const deps = { admin: w.admin, transport: w.transport, now: () => NOW, appOrigin: () => "https://hone.example.test", clock: () => t++, budgetMs: 70 };
+    const first = await dispatchDeclineOwnerEmail(deps);
+    expect(first.sent).toBeGreaterThan(0);
+    expect(first.sent).toBeLessThan(120);
+    expect(first.remaining).toBe(120 - first.sent);
+    const line = spy.mock.calls.map((c) => String(c[0])).find((l) => l.includes("decline_owner_email_budget_spent")) ?? "";
+    expect(line).toContain(`"remaining":${first.remaining}`);
+    expect(line).not.toMatch(/@|example\.test|aaaaaaaa|bbbbbbbb/);
+    t = 0;
+    const second = await dispatchDeclineOwnerEmail({ ...deps, budgetMs: 100000 });
+    expect(second).toMatchObject({ remaining: 0 });
+    expect(first.sent + second.sent).toBe(120);
+    expect(w.sends).toHaveLength(120);
+    expect(new Set(w.sends.map((x) => x.key)).size).toBe(120);
+  });
+  it("a row that fails in this run is not picked up again in the same run", async () => {
+    const w = world(); w.owner(); w.owner(); w.owner(); w.setMode("reject");
+    await w.run();
+    expect(w.sends).toHaveLength(3);
+    expect(w.outbox.every((r) => r.attempt_count === 1)).toBe(true);
   });
   it("two overlapping invocations send once per row", async () => {
     const w = world(); w.owner(); w.owner();
@@ -309,7 +348,7 @@ describe("failure, retry, and no duplicates", () => {
   it("never throws, even when the database client does", async () => {
     const boom = { from: () => { throw new Error("synthetic"); } } as unknown as SupabaseClient;
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(dispatchDeclineOwnerEmail({ admin: boom })).resolves.toEqual({ sent: 0, failed: 0, cancelled: 0, skipped: 0 });
+    await expect(dispatchDeclineOwnerEmail({ admin: boom })).resolves.toEqual({ sent: 0, failed: 0, cancelled: 0, skipped: 0, remaining: 0 });
     expect(spy).toHaveBeenCalled();
   });
 });
