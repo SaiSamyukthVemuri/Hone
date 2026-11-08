@@ -170,3 +170,46 @@ describe("operation caller reads address visibility before freezing the request"
     expect(body.indexOf('from("studios")')).toBeLessThan(body.indexOf("adapter.freeze("));
   });
 });
+
+describe("HON-47 portal switch on the operation-path reminder", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://example.invalid");
+    vi.stubEnv("APPOINTMENT_SIGNING_SECRET", "synthetic-appointment-secret-32-bytes");
+    vi.stubEnv("INTAKE_SIGNING_SECRET", "synthetic-intake-secret-32-bytes");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const proj = () => ({
+    appointment: { id: "appointment-1", studio_id: "studio", client_id: "client", status: "confirmed" as const, starts_at: "2026-10-23T12:00:00.000Z", ends_at: "2026-10-23T13:00:00.000Z", duration_minutes: 60, service_id: null, practitioner_id: null },
+    client: { id: "client", name: "Synthetic Client", email: "client@harness.local" },
+    studio: { id: "studio", name: "Original studio", address: null, slug: "original-studio", timezone: "America/Toronto", owner_email: null, postcare_contact_email: null, show_treatment_time_to_clients: false, send_24h_reminders: true, send_2h_reminders: true, send_intake_reminders: true, client_cancellation_enabled: true, client_reschedule_enabled: true },
+    service: null, practitioner: null, treatmentTime: null, intake: null, attachments: null,
+  });
+  const all = (p: unknown) => { const x = p as { subject: string; html: string; text: string }; return `${x.subject}\n${x.html}\n${x.text}`; };
+
+  it.each(["reminder_24h", "reminder_2h"] as const)("%s: the portal link is printed when the portal is on and absent when it is off", async (purpose) => {
+    const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
+    const on = all(buildAppointmentEmailOperationPayload(proj() as never, purpose, "appointment-1", "both", true));
+    const off = all(buildAppointmentEmailOperationPayload(proj() as never, purpose, "appointment-1", "both", false));
+    expect(on).toContain("/portal/login?studio=original-studio");
+    expect(off).not.toContain("/portal/login");
+    expect(off).not.toContain("secure client portal");
+  });
+
+  it("the default (no fifth argument) is today's behaviour: link printed", async () => {
+    const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
+    expect(all(buildAppointmentEmailOperationPayload(proj() as never, "reminder_24h", "appointment-1", "both"))).toContain("/portal/login");
+  });
+
+  it("resolveOperationPortalEnabled: only an explicit false or an unreadable column withdraws the link", async () => {
+    const { resolveOperationPortalEnabled: r } = await import("@/lib/email/send-appointment");
+    expect(r({ data: { client_portal_enabled: false }, error: null })).toBe(false);
+    expect(r({ data: { client_portal_enabled: true }, error: null })).toBe(true);
+    expect(r({ data: {}, error: null })).toBe(true); // absent column value: the default is on
+    expect(r({ data: { client_portal_enabled: null }, error: null })).toBe(true);
+    expect(r({ data: null, error: { code: "PGRST204", message: "Could not find the 'client_portal_enabled' column of 'studios' in the schema cache" } })).toBe(true); // 0252 not applied
+    expect(r({ data: null, error: { code: "57014", message: "statement timeout" } })).toBe(false);
+    expect(r({ data: null, error: { code: "42703", message: "column studios.other does not exist" } })).toBe(false);
+    expect(r({ data: null, error: null })).toBe(false); // no row: fail closed
+  });
+});
