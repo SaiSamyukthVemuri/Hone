@@ -1,9 +1,11 @@
 "use client";
 
-import { useReducer } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { isConsultationService } from "@/lib/booking/consultation";
+import { capacityLines } from "@/lib/waitlist/consultation-capacity";
+import type { WindowCapacityResult } from "@/app/(app)/settings/waitlist/window-capacity-actions";
 import { buttonClasses } from "@/components/ui/button";
 import { cx } from "@/components/ui/control-base";
 import { fieldControlClass } from "@/components/ui/field";
@@ -263,7 +265,65 @@ export function InviteComposer(props: InviteComposerProps) {
 
 function StatefulInviteComposer(props: InviteComposerProps) {
   const [state, dispatch] = useReducer(composerReducer, props.draft, initialComposerState);
-  return <InviteComposerView {...props} state={state} dispatch={dispatch} />;
+  const [capacity, setCapacity] = useState<CapacityView>({ status: "idle" });
+  const [recheck, setRecheck] = useState(0);
+  const onRecheck = useCallback(() => setRecheck((n) => n + 1), []);
+  const { estimateCapacity } = props;
+  const { serviceId, windowDays, allowedWeekdays } = state.draft;
+  const weekdaysKey = allowedWeekdays === null ? "any" : [...allowedWeekdays].sort().join(",");
+
+  // Refresh on a change, on an explicit recheck, and when the tab becomes
+  // visible again: availability moves while the page sits open.
+  useEffect(() => {
+    if (!estimateCapacity || serviceId === null || !Number.isInteger(windowDays)) {
+      setCapacity({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setCapacity({ status: "loading" });
+    const timer = setTimeout(() => {
+      estimateCapacity({
+        serviceId,
+        windowDays,
+        allowedWeekdays: allowedWeekdays === null ? null : [...allowedWeekdays],
+      })
+        .then((r) => {
+          if (cancelled) return;
+          setCapacity(
+            r.ok
+              ? { status: "ok", lines: capacityLines({ fit: r.fit, outstanding: r.outstanding, open: r.open }, r.outstandingScope) }
+              : { status: "unavailable" },
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setCapacity({ status: "unavailable" });
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // weekdaysKey stands in for the array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estimateCapacity, serviceId, windowDays, weekdaysKey, recheck]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setRecheck((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
+  return (
+    <InviteComposerView
+      {...props}
+      state={state}
+      dispatch={dispatch}
+      capacity={capacity}
+      onRecheck={estimateCapacity ? onRecheck : undefined}
+    />
+  );
 }
 
 /**
@@ -344,7 +404,23 @@ export type InviteComposerProps = {
    * describe.
    */
   unavailableReason?: string | null;
+  /**
+   * How many consultations fit the window being offered. Optional, so every
+   * existing caller and test renders exactly as before.
+   */
+  estimateCapacity?: (input: {
+    serviceId: string;
+    windowDays: number;
+    allowedWeekdays: number[] | null;
+  }) => Promise<WindowCapacityResult>;
 };
+
+/** What the capacity note shows. `idle` renders nothing. */
+export type CapacityView =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ok"; lines: string[] }
+  | { status: "unavailable" };
 
 /**
  * The rendering half, PURE and exported so the whole surface can be proved
@@ -367,9 +443,13 @@ export function InviteComposerView({
   unavailableReason = null,
   state,
   dispatch,
+  capacity = { status: "idle" },
+  onRecheck,
 }: InviteComposerProps & {
   state: ComposerState;
   dispatch: (event: ComposerEvent) => void;
+  capacity?: CapacityView;
+  onRecheck?: () => void;
 }) {
   const draft = state.draft;
   // FILTERED ONCE, then used for everything. Rendering and validation read the
@@ -633,6 +713,30 @@ export function InviteComposerView({
             summary is a description of what will be sent, and an incomplete
             draft sends nothing — describing one would be the "confirmed one
             scope, sent another" defect in a new place. */}
+        {capacity.status !== "idle" && (
+          <div
+            data-testid="composer-capacity"
+            role="status"
+            aria-live="polite"
+            className="flex flex-col gap-1 text-sm leading-snug text-fg-muted"
+          >
+            {capacity.status === "loading" && <p>Checking availability&hellip;</p>}
+            {capacity.status === "unavailable" && (
+              <p>We couldn&rsquo;t check availability just now. Nothing is reserved.</p>
+            )}
+            {capacity.status === "ok" && capacity.lines.map((line) => <p key={line}>{line}</p>)}
+            {onRecheck && capacity.status !== "loading" && (
+              <button
+                type="button"
+                onClick={onRecheck}
+                data-testid="composer-capacity-recheck"
+                className="self-start underline"
+              >
+                Check again
+              </button>
+            )}
+          </div>
+        )}
         {validation.ok && (
           <p data-testid="composer-summary" className="text-sm leading-snug text-fg-muted">
             {/* States the SCOPE, never that anything has been sent. */}

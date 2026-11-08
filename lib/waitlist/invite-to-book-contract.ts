@@ -447,12 +447,39 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
 }
 
 /**
+ * Shown when new-client admission is Closed (or unreadable). 0204 refuses an INVITED
+ * booking in that state, so an invitation sent now would list times the invitee cannot
+ * book. Nothing was created. Tied to the check by
+ * tests/source-guards/invited-booking-refusal-copy.test.ts.
+ */
+export const INVITE_ADMISSION_CLOSED_COPY =
+  "No invitation was created. New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
+
+/**
+ * Shown, as neutral information, when admission is Closed and invitations can book (0323 applied).
+ * Keeps the three facts together: Closed; no public booking or joining; invitees can book.
+ */
+export const INVITE_CLOSED_INVITED_ONLY_COPY =
+  "New-client admission is Closed. New clients can’t book or join your waitlist online. People you invite here can still book, using the link and code in their invitation.";
+
+/** The owner's banner / composer reason while admission is Closed. Its own text, not a slice of the notice. */
+export const INVITE_ADMISSION_CLOSED_BANNER_COPY =
+  "New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
+
+/**
+ * Admission could not be READ. Invitations are paused (fail closed) but nothing is claimed
+ * about the mode. Used for the notice, the banner and the composer reason.
+ */
+export const INVITE_ADMISSION_UNREADABLE_COPY =
+  "We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.";
+
+/**
  * Map the structured result onto what to show. Pure, total, and the ONLY place
  * this translation happens.
  */
 export function invitationNoticeFor(
   outcome: InvitationOutcome | null,
-  reason?: "malformed_submission",
+  reason?: "malformed_submission" | "admission_closed" | "admission_unreadable",
 ): InvitationNotice {
   if (outcome === null) {
     return {
@@ -462,7 +489,11 @@ export function invitationNoticeFor(
       message:
         reason === "malformed_submission"
           ? "No invitation was created: the form was incomplete. Check the service and try again."
-          : "No invitation was created.",
+          : reason === "admission_closed"
+            ? INVITE_ADMISSION_CLOSED_COPY
+            : reason === "admission_unreadable"
+              ? INVITE_ADMISSION_UNREADABLE_COPY
+              : "No invitation was created.",
       invitationExists: false,
     };
   }

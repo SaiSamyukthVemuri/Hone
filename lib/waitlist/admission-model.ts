@@ -306,6 +306,11 @@ export type AdmissionContext = {
    * invitation is withheld while this is true.
    */
   invitationFactsUnknown?: boolean;
+  /**
+   * True when this `released` entry was released BY the person declining the offered times (not set aside
+   * by the owner). Display only: it changes the sentence, never what is available.
+   */
+  declinedByRecipient?: boolean;
 };
 
 export function actionAvailability(
@@ -552,6 +557,11 @@ export function statusMeaning(
     }
     if (context.invitationRedeemed) {
       return "They used their invitation without booking. This entry cannot go back on the waitlist — remove it, and they can join again themselves.";
+    }
+    if (context.declinedByRecipient) {
+      // They said none of the offered times suit them. Requeue keeps the same row, so their original
+      // place is restored; nothing here promises that the studio has been or will be contacted.
+      return "They said the offered times didn’t work. Return them to the waitlist to restore their original place. The same window can’t be offered again, so send a different one.";
     }
     // THE ORDINARY CASE, AND THE INSTRUCTION LIVES HERE NOW rather than in the
     // status default above: a set-aside entry genuinely can be returned, and

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type {
   BookingRefusal,
   ProofNotice,
@@ -41,6 +42,8 @@ type Props = {
   /** Supplied by B2's container. Never defined in this file. */
   onBook: () => void;
   onDecline: () => void;
+  /** 0319: when present, the footer offers "These times don't work" with optional text. */
+  onTimesDontWork?: (note: string) => void;
   onRetry: () => void;
   /** B1.5c proof exchange, both supplied by the container. */
   onRequestCode: () => void;
@@ -59,6 +62,7 @@ export function InvitationScreen({
   onSelectSlot,
   onBook,
   onDecline,
+  onTimesDontWork,
   onRetry,
   onRequestCode,
   onSubmitCode,
@@ -83,7 +87,7 @@ export function InvitationScreen({
       case "error":
         return <ErrorView retryable={state.retryable} onRetry={onRetry} />;
       case "declined":
-        return <DeclinedView />;
+        return <DeclinedView keptOnList={state.keptOnList === true} />;
       case "closed":
         return <ClosedView reason={state.reason} presentation={state.presentation} />;
       case "booked":
@@ -114,12 +118,16 @@ export function InvitationScreen({
             windowDescription={state.windowDescription}
             refusal={state.refusal}
             phoneRequired={state.phoneRequired === true}
+            bookingNotice={state.bookingNotice}
+            noTimeDays={state.noTimeDays}
+            inviteOpenUntil={state.inviteOpenUntil}
             typedPhone={typedPhone}
             onTypedPhoneChange={onTypedPhoneChange}
             selectedSlotStart={selectedSlotStart}
             onSelectSlot={onSelectSlot}
             onBook={onBook}
             onDecline={onDecline}
+            onTimesDontWork={onTimesDontWork}
             onRetry={onRetry}
             pending={pending}
           />
@@ -142,9 +150,11 @@ const PROOF_NOTICE_COPY: Record<ProofNotice, string> = {
 };
 
 const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {
-  slot_taken: "That time was taken while you were choosing. Please pick another.",
+  slot_taken: "That time was just taken. Please pick another time.",
   not_permitted: "Your invitation doesn't cover that time. Please choose one of the times shown.",
   unavailable: "We couldn't complete that booking. Please try again in a moment.",
+  note_invalid: "Your message can’t be saved as written. Please use plain text and try again.",
+  feedback_unavailable: "We couldn't save that just now. Nothing has changed, so please try again.",
 };
 
 /** Compile-time exhaustiveness for the screen's own union. */
@@ -185,17 +195,31 @@ function ErrorView({ retryable, onRetry }: { retryable: boolean; onRetry: () => 
   );
 }
 
-function DeclinedView() {
+function DeclinedView({ keptOnList }: { keptOnList: boolean }) {
+  if (keptOnList) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-xl text-[#0A0A0A]">Thanks — your reply is saved for the studio</h1>
+        <p className="text-sm text-[#6B6B6B]">
+          You keep your original join date. This invitation is closed, so these times can’t be
+          booked from this link. The studio decides who is invited next and may send you a new
+          invitation; nothing is booked or held in the meantime.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl text-[#0A0A0A]">Thanks for letting us know</h1>
+      <h1 className="text-xl text-[#0A0A0A]">This invitation is closed</h1>
       {/* NO PROMISE THE SYSTEM DOES NOT KEEP. Declining releases the entry;
           only a practitioner-authorised requeue returns it to the waiting list,
           so "you're still on the list and they'll be in touch" claimed an
-          automatic future contact that does not happen. */}
+          automatic future contact that does not happen.
+          Nor does declining notify the studio (no message, owner card or
+          dashboard item is written), so the copy claims no notification. */}
       <p className="text-sm text-[#6B6B6B]">
-        You’ve declined this appointment and the studio has been told. If you’d still like to be
-        seen, please contact them directly.
+        You’ve declined these times. Nothing is booked. If you’d still like to be seen, please
+        contact the studio; they can put you back on the waiting list in your original place.
       </p>
     </div>
   );
@@ -222,6 +246,14 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     title: "This appointment is already booked",
     body: "This invitation has already been used. Check your email for the confirmation, or contact the studio.",
   },
+  already_used: {
+    title: "This invitation has already been used",
+    body: "This invitation has already been used. Check your confirmation email or contact the studio.",
+  },
+  used_contact_studio: {
+    title: "This invitation has already been used",
+    body: "This invitation has already been used. Please contact the studio about this invitation.",
+  },
   consumed_without_booking: {
     title: "We couldn’t finish booking your appointment",
     // Deliberately does NOT say an appointment exists, and does NOT send anyone
@@ -247,6 +279,17 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // differ. Contacting the studio is the only route that still works, and it
     // is the only one offered.
     body: "This offer is for a service we can’t book through this link. Please contact the studio and they can arrange your appointment.",
+  },
+  admission_closed: {
+    title: "The studio isn’t taking new-client bookings right now",
+    // Shown INSTEAD of times: a time listed here could not be booked. Nothing was
+    // used up, and nothing is promised beyond contacting the studio.
+    body: "The studio isn’t taking new-client bookings right now, so you can’t book through this link yet. Your invitation hasn’t been used. Please contact the studio.",
+  },
+  admission_unreadable: {
+    title: "This link can’t be used to book right now",
+    // Refused, but the studio state is UNKNOWN, so nothing is asserted about it.
+    body: "This link can’t be used to book right now. Your invitation hasn’t been used. Please contact the studio.",
   },
   declined: {
     title: "You’ve already declined this offer",
@@ -306,12 +349,16 @@ function OfferView({
   windowDescription,
   refusal,
   phoneRequired,
+  bookingNotice,
+  noTimeDays,
+  inviteOpenUntil,
   typedPhone,
   onTypedPhoneChange,
   selectedSlotStart,
   onSelectSlot,
   onBook,
   onDecline,
+  onTimesDontWork,
   onRetry,
   pending,
 }: {
@@ -320,15 +367,21 @@ function OfferView({
   windowDescription: string;
   refusal?: BookingRefusal;
   phoneRequired: boolean;
+  bookingNotice?: string;
+  noTimeDays?: string[];
+  inviteOpenUntil?: string;
   typedPhone: string;
   onTypedPhoneChange?: (value: string) => void;
   selectedSlotStart: string | null;
   onSelectSlot: (slot: OfferedSlot) => void;
   onBook: () => void;
   onDecline: () => void;
+  onTimesDontWork?: (note: string) => void;
   onRetry: () => void;
   pending: boolean;
 }) {
+  // The only local state in this file: an unsent draft of the optional note.
+  const [note, setNote] = useState("");
   // DERIVED, never carried. A separate `empty` flag could contradict the
   // collection it described; this cannot.
   const empty = days.length === 0;
@@ -352,10 +405,17 @@ function OfferView({
         </p>
       ) : null}
 
+      {inviteOpenUntil ? (
+        <p className="text-sm text-[#0A0A0A]" data-testid="invite-open-until">
+          Book by {inviteOpenUntil}: after that this invitation closes. The days below are the
+          days you can choose from.
+        </p>
+      ) : null}
+
       {/* THE OFFERED HORIZON, STATED. The recipient should never have to infer
           what they were offered from which buttons happen to exist. */}
       <section className="flex flex-col gap-1 bg-[#F5F2EB] p-4">
-        <h2 className="text-sm text-[#0A0A0A]">Times held for you</h2>
+        <h2 className="text-sm text-[#0A0A0A]">Available consultation times</h2>
         {/* Already resolved through B2's weekday contract. This layer holds no
             weekday semantics of its own and must not acquire any. */}
         <p className="text-sm text-[#6B6B6B]">{windowDescription}</p>
@@ -364,7 +424,7 @@ function OfferView({
       {empty ? (
         <section className="flex flex-col gap-3" aria-live="polite">
           <p className="text-sm text-[#6B6B6B]">
-            Nothing is open in the times held for you right now. This can change — try again, or
+            Nothing is open in these times right now. This can change — try again, or
             let the studio know this doesn’t work.
           </p>
           <button
@@ -378,6 +438,17 @@ function OfferView({
       ) : (
         <section className="flex flex-col gap-5">
           <h2 className="text-sm text-[#0A0A0A]">Choose a time</h2>
+          <p className="text-sm text-[#6B6B6B]" data-testid="availability-note">
+            Times can change, and nothing is held for you until you book.{" "}
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={pending}
+              className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} inline-flex items-center underline disabled:opacity-60`}
+            >
+              Check again
+            </button>
+          </p>
           {/* GROUPED BY DAY, because an offer spanning Mondays AND Wednesdays
               renders "9:00 AM" twice otherwise and the recipient cannot tell
               which day they are booking. The heading names the day visually and
@@ -419,6 +490,12 @@ function OfferView({
         </section>
       )}
 
+      {!empty && noTimeDays && noTimeDays.length > 0 ? (
+        <p className="text-sm text-[#6B6B6B]" data-testid="no-time-days">
+          Nothing is open on: {noTimeDays.join(", ")}.
+        </p>
+      ) : null}
+
       {/* ASKED FOR ONLY WHERE THE STUDIO HAS NONE. Joining a waitlist makes a
           phone optional, but booking requires one, so an entry that joined
           without a number would otherwise reach a Book button that can never
@@ -448,6 +525,12 @@ function OfferView({
         </div>
       ) : null}
 
+      {!empty && bookingNotice ? (
+        <p className="rounded-md bg-[#F5F2EB] px-3 py-2 text-sm text-[#0A0A0A]" data-testid="booking-notice">
+          {bookingNotice}
+        </p>
+      ) : null}
+
       {!empty ? (
         <button
           type="button"
@@ -470,15 +553,45 @@ function OfferView({
       {/* Deliberately separated from the primary action, and never styled as a
           peer of it: declining is unrecoverable for the recipient, so a
           mis-tap must be hard rather than merely undone. */}
-      <footer className="mt-4 border-t border-[#E7E2D8] pt-4">
-        <button
-          type="button"
-          onClick={onDecline}
-          disabled={pending}
-          className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full px-4 text-sm text-[#6B6B6B] underline disabled:opacity-60`}
-        >
-          {pending ? "Working…" : "I can’t make any of these"}
-        </button>
+      <footer className="mt-4 flex flex-col gap-3 border-t border-[#E7E2D8] pt-4">
+        {onTimesDontWork ? (
+          <div className="flex flex-col gap-2">
+            <label htmlFor="times-dont-work-note" className="text-sm text-[#0A0A0A]">
+              These times don’t work for me
+            </label>
+            <p className="text-sm text-[#6B6B6B]">
+              Optional: tell the studio what would suit you better. Please don’t include health
+              or personal details. You keep your original join date.
+            </p>
+            <textarea
+              id="times-dont-work-note"
+              name="note"
+              maxLength={500}
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              disabled={pending}
+              className={`${FOCUS_RING} w-full border border-[#0A0A0A] px-3 py-2 text-sm disabled:opacity-60`}
+            />
+            <button
+              type="button"
+              onClick={() => onTimesDontWork(note)}
+              disabled={pending}
+              className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm text-[#0A0A0A] disabled:opacity-60`}
+            >
+              {pending ? "Working…" : "These times don’t work"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onDecline}
+            disabled={pending}
+            className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full px-4 text-sm text-[#6B6B6B] underline disabled:opacity-60`}
+          >
+            {pending ? "Working…" : "I can’t make any of these"}
+          </button>
+        )}
       </footer>
     </div>
   );
@@ -537,7 +650,7 @@ function ProofView({
       </header>
 
       <section className="flex flex-col gap-1 bg-[#F5F2EB] p-4">
-        <h2 className="text-sm text-[#0A0A0A]">Times held for you</h2>
+        <h2 className="text-sm text-[#0A0A0A]">Available consultation times</h2>
         <p className="text-sm text-[#6B6B6B]">{windowDescription}</p>
       </section>
 

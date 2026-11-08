@@ -12,6 +12,7 @@ import {
   INVITATION_DELIVERY_COPY,
   type InvitationDeliveryState,
 } from "@/lib/waitlist/invite-to-book-contract";
+import Link from "next/link";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -19,6 +20,20 @@ import {
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { estimateWindowCapacityAction } from "./window-capacity-actions";
+import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
+import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
+import {
+  getNewClientAdmissionMode,
+  invitedBookingRefusalKind,
+} from "@/lib/booking/new-client-admission";
+import {
+  INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_CLOSED_INVITED_ONLY_COPY,
+  INVITE_ADMISSION_UNREADABLE_COPY,
+} from "@/lib/waitlist/invite-to-book-contract";
+import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
+import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -674,6 +689,24 @@ export default async function WaitlistSettingsPage({
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
+  const attention = await loadNeedsAttention(supabase, studio.id);
+  const declined = await loadDeclinedAttention(supabase, studio.id);
+  // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
+  // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
+  const admissionForInvites = await getNewClientAdmissionMode(studio);
+  const invitesBlockedKind = await invitedBookingRefusalKind(admissionForInvites);
+  const invitesBlockedByAdmission = invitesBlockedKind !== null;
+  // Closed and NOT blocked means the 0323 marker answered true: say plainly what Closed now means.
+  const invitesClosedInvitedOnly =
+    admissionForInvites.ok && admissionForInvites.mode === "closed" && !invitesBlockedByAdmission;
+  const invitesBlockedCopy =
+    invitesBlockedKind === "closed"
+      ? INVITE_ADMISSION_CLOSED_BANNER_COPY
+      : INVITE_ADMISSION_UNREADABLE_COPY;
+  // Count only: no text is read on this page. Skipped entirely while the flag is off.
+  const replies = waitlistTimesFeedbackEnabled()
+    ? await countTimesFeedback(studio.id, practitioner.user_id)
+    : ({ kind: "unknown" } as const);
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (cycleIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
@@ -830,6 +863,138 @@ export default async function WaitlistSettingsPage({
           the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
           of this file. `claim_new_client_waitlist_entries` and its server action
           are untouched and still tested; nothing on this page invokes them. */}
+
+      {invitesClosedInvitedOnly && (
+        <section
+          role="note"
+          data-testid="invites-closed-invited-only"
+          className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+        >
+          <p>{INVITE_CLOSED_INVITED_ONLY_COPY}</p>
+        </section>
+      )}
+
+      {invitesBlockedByAdmission && (
+        <section
+          role="status"
+          data-testid="invites-blocked-admission"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+        >
+          <p>
+            {invitesBlockedCopy}{" "}
+            <WaitlistNavLink href="/settings/booking#new-client-admission" className="underline">
+              Open Settings → Booking
+            </WaitlistNavLink>
+          </p>
+        </section>
+      )}
+
+      {/* THE OWNER FOLLOW-UP CARDS RENDER WHETHER OR NOT ANYONE IS ACTIVE. They describe
+          things that outlive the queue: reply rows persist after the entry converts or is
+          removed, and a used-but-unbooked invitation or a declined offer is exactly when
+          the queue may look empty. Inside the `active !== 0` branch they vanished with the
+          last active entry (Codex P2). */}
+          {/* NEEDS YOUR ATTENTION. Derived from facts this page already read: an
+              invited entry whose invitation was used. It survives a reload and
+              says only what is known: the booking did not complete. It cannot
+              say why, so it names no reason. */}
+          {(() => {
+            if (attention.kind === "unknown") {
+              return (
+                <p className="text-sm text-neutral-600 dark:text-neutral-400" role="status">
+                  We couldn&rsquo;t check whether any invitation was used without a booking.
+                  Reload to try again.
+                </p>
+              );
+            }
+            if (attention.total === 0) return null;
+            return (
+              <section
+                aria-labelledby="needs-attention-heading"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+              >
+                <h2 id="needs-attention-heading" className="font-medium">
+                  Needs your attention ({attention.total})
+                </h2>
+                <p className="mt-1">
+                  The booking didn&rsquo;t complete for {attention.total === 1 ? "this person" : "these people"}.
+                  Their invitation has been used, so it can&rsquo;t be sent again. Please check
+                  the calendar, then contact them to book a time.
+                </p>
+                <ul className="mt-2 list-disc pl-5">
+                  {attention.shown.map((r) => (
+                    <li key={r.id}>{r.name}</li>
+                  ))}
+                </ul>
+                {attention.total > attention.shown.length && (
+                  <p className="mt-1">
+                    Showing {attention.shown.length} of {attention.total}.
+                  </p>
+                )}
+                <p className="mt-2">
+                  <WaitlistNavLink href={sectionHref("invited")} className="underline">
+                    Open the Invited group
+                  </WaitlistNavLink>{" "}
+                  to close each one once it is resolved.
+                </p>
+              </section>
+            );
+          })()}
+
+          {declined.kind === "ok" && declined.total > 0 && (
+            <section
+              aria-labelledby="declined-heading"
+              data-testid="declined-card"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+            >
+              <h2 id="declined-heading" className="font-medium">
+                Declined the offered times ({declined.total})
+              </h2>
+              <p className="mt-1">
+                {declined.total === 1 ? "This person said" : "These people said"} none of the offered times
+                suit them. {declined.total === 1 ? "They are" : "Each is"} off the waitlist for now and
+                nobody has been told. Return {declined.total === 1 ? "them" : "each one"} to the waitlist to
+                restore their original place. The same window can&rsquo;t be offered again, so send a
+                different one.
+              </p>
+              <ul className="mt-2 list-disc pl-5">
+                {declined.shown.map((r) => (
+                  <li key={r.id}>{r.name}</li>
+                ))}
+              </ul>
+              {declined.total > declined.shown.length && (
+                <p className="mt-1">
+                  Showing {declined.shown.length} of {declined.total}.
+                </p>
+              )}
+              <p className="mt-2">
+                <WaitlistNavLink href={sectionHref("released")} className="underline">
+                  Open the Released group
+                </WaitlistNavLink>{" "}
+                to return each one.
+              </p>
+            </section>
+          )}
+          {replies.kind === "ok" && replies.n > 0 && (
+            <section
+              aria-labelledby="replies-heading"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+            >
+              <h2 id="replies-heading" className="font-medium">
+                Replies to review ({replies.n})
+              </h2>
+              <p className="mt-1">
+                {replies.n === 1 ? "Someone" : "Some people"} told us the offered times
+                don&rsquo;t work. {replies.n === 1 ? "They were" : "Each was"} returned to the
+                waiting list with their original join date when they replied.
+              </p>
+              <p className="mt-2">
+                <Link href="/settings/waitlist/replies" className="underline">
+                  Open the replies
+                </Link>
+              </p>
+            </section>
+          )}
 
       {active === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
@@ -1101,6 +1266,7 @@ export default async function WaitlistSettingsPage({
                                 invitationElapsed: elapsed,
                                 invitationRedeemed: redeemed,
                                 invitationFactsUnknown: cycleByEntry === null,
+                                declinedByRecipient: declined.kind === "ok" && declined.ids.has(row.id),
                               })}
                             </p>
                           )}
@@ -1249,17 +1415,22 @@ export default async function WaitlistSettingsPage({
                                 entryName={row.name}
                                 draft={emptyDraft()}
                                 services={bookableServices}
+                                estimateCapacity={estimateWindowCapacityAction}
                                 // NO CAPACITY, NO OFFERED SEND. The composer
                                 // still opens for inspection; what it must not
                                 // do is present Send as valid and fail only
                                 // after submission. Usability, not authority —
                                 // the command re-checks regardless.
                                 capabilities={
-                                  canOfferInvite(capacity)
+                                  canOfferInvite(capacity) && !invitesBlockedByAdmission
                                     ? admissionCommandAdapter.capabilities
                                     : null
                                 }
-                                unavailableReason={inviteUnavailableReason(capacity)}
+                                unavailableReason={
+                                  invitesBlockedByAdmission
+                                    ? invitesBlockedCopy
+                                    : inviteUnavailableReason(capacity)
+                                }
                               />
                             </details>
                           )}

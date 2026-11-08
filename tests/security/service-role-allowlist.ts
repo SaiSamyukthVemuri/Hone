@@ -40,6 +40,35 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "record_waitlist_sms_consent_by_practitioner",
   },
   {
+    path: "app/(app)/settings/waitlist/window-capacity-actions.ts",
+    purpose: "HON-7 owner-only estimate of how many consultations fit the window being offered.",
+    why:
+      "Reads the studio's slug, timezone and buffer, the canonical public slot list for the " +
+      "selected service and dates. The COUNT of live invitations across all services is read through the " +
+      "owner's own SESSION client (RLS owner policy), not this admin client: service_role has no SELECT " +
+      "on that table. It writes " +
+      "nothing and reserves nothing. The studio comes from getCurrentPractitionerWithStudio() " +
+      "and the action returns { ok: false } for any non-owner before it constructs the admin " +
+      "client; the browser supplies only a service id, a window length and weekdays, each " +
+      "validated. This is a \"use server\" module, so it exposes the estimate and nothing else; " +
+      "the live-invitation read is a head count scoped by studio_id from the session.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "lib/waitlist/times-feedback-owner.ts",
+    purpose: "HON-7 / 0319 owner-side count, list and acknowledge of 'these times don't work' replies.",
+    why:
+      "count_/list_/acknowledge_waitlist_times_feedback are `security definer` with EXECUTE granted to " +
+      "service_role ALONE (revoked by name from public, anon, authenticated and service_role first), and " +
+      "waitlist_times_feedback has RLS on, no policy and no grant. This module issues RPC only and never " +
+      ".from(). It is NOT a \"use server\" module and is imported only by the owner-gated settings page and " +
+      "the owner-gated replies page/action, each of which passes the studio id and practitioner.user_id from " +
+      "the session -- never a form field -- and each of which refuses a non-owner before calling it. Every " +
+      "command re-derives ownership through new_client_waitlist_resolve_owner regardless. The count selects " +
+      "no text; only the list returns a recipient's note, and nothing here logs a row or an error body.",
+    scopeGuard: "count_waitlist_times_feedback",
+  },
+  {
     path: "app/(app)/settings/waitlist/capacity-actions.ts",
     purpose: "Owner's invitation-capacity open/close commands.",
     why:

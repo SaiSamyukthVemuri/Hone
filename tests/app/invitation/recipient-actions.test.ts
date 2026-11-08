@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InvitationViewState } from "@/lib/waitlist/invitation-offer";
 import { createHash, createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // WAIT-03 B3 — the recipient's server actions.
@@ -160,7 +160,14 @@ const entryFixture = { phone: "555 0100" as string | null };
 // actually arrives when nobody has set one -- so those tests keep reading the
 // default. P2-B sets it explicitly, because a horizon the runtime is supposed
 // to READ must not be the same number it would have FALLEN BACK to.
-const studioFixture = { timezone: "America/Toronto", horizonMonths: null as number | null };
+const studioFixture = {
+  timezone: "America/Toronto",
+  horizonMonths: null as number | null,
+  /** The stored admission mode; undefined models a row that carries no admission columns. */
+  admissionMode: undefined as string | undefined,
+  /** 0323 marker: applied | absent (not yet applied) | error (any other failure). */
+  closedInvitedRule: "absent" as "applied" | "absent" | "error",
+};
 /**
  * The service the invitation is scoped to.
  *
@@ -183,6 +190,7 @@ const serviceFixture = {
  * and capability it presented, since passing the wrong pair would be a real
  * authorisation defect that a shape-only assertion would miss.
  */
+const bookingStateFixture: { rows: Array<Record<string, unknown>> } = { rows: [] };
 const identityRpcCalls: Array<{ fn: string; token: string; capability: string }> = [];
 
 /**
@@ -216,6 +224,18 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     // therefore yields no identity here exactly as it does in the database —
     // proved against real PostgreSQL in tests/db/waitlist-recipient-proof.
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      // HON-7 / 0313: the reopen lookup. Answered from a fixture, never recorded as
+      // an identity call (it carries no capability).
+      if (fn === "waitlist_closed_invited_booking_enabled") {
+        if (studioFixture.closedInvitedRule === "applied") return { data: true, error: null };
+        return {
+          data: null,
+          error: { code: studioFixture.closedInvitedRule === "absent" ? "PGRST202" : "XX000", message: "x" },
+        };
+      }
+      if (fn === "waitlist_invitation_booking_state") {
+        return { data: bookingStateFixture.rows, error: null };
+      }
       identityRpcCalls.push({
         fn,
         token: String(args?.p_raw_token),
@@ -284,6 +304,12 @@ vi.mock("@/lib/supabase/admin-server", () => ({
                   name: "Studio A",
                   timezone: studioFixture.timezone,
                   public_booking_horizon_months: studioFixture.horizonMonths,
+                  ...(studioFixture.admissionMode
+                    ? {
+                        new_client_admission_mode: studioFixture.admissionMode,
+                        new_client_admission_mode_set_at: "2026-09-01T00:00:00.000Z",
+                      }
+                    : {}),
                 },
                 error: null,
               }
@@ -370,6 +396,8 @@ beforeEach(() => {
   entryFixture.phone = "555 0100";
   studioFixture.timezone = "America/Toronto";
   studioFixture.horizonMonths = null;
+  studioFixture.admissionMode = undefined;
+  studioFixture.closedInvitedRule = "absent";
   serviceFixture.name = "Consultation";
   serviceFixture.modality = "consultation";
   serviceFixture.active = true;
@@ -913,7 +941,7 @@ describe("terminal states are explicit", () => {
     // is that the invitation was spent, and that is not appointment evidence.
     // `already_redeemed` would assert a booking exists and send the recipient
     // after a confirmation that may never arrive.
-    ["already_redeemed", "booking_outcome_unknown"],
+    ["already_redeemed", "already_used"],
     ["declined", "declined"],
   ])("a %s invitation closes with reason %s", async (resolved, reason) => {
     resolveInvitation.mockResolvedValue({ kind: resolved });
@@ -1429,6 +1457,98 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
     ["book", () => bookInvitationSlotAction(TOKEN, SLOT)],
   ];
 
+  // 0204 `invited_book` refuses even a valid invitation while admission is closed, so the
+  // screen must not list times it cannot book, and a late refusal must not read as "try again".
+  describe("new-client admission is CLOSED", () => {
+    beforeEach(() => {
+      studioFixture.admissionMode = "closed";
+      cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    });
+
+    it.each(everyAction)("closes %s as admission_closed", async (_label, run) => {
+      const out = await run();
+      expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      expect(out.reason).toBe("admission_closed");
+    });
+
+    it("lists NO times and never reaches the booking action or the proof email", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      expect(out).not.toHaveProperty("days");
+      expect(fetchPublicSlotsForDates).not.toHaveBeenCalled();
+      await bookInvitationSlotAction(TOKEN, SLOT);
+      await requestInvitationProofAction(TOKEN);
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+      expect(beginRecipientProof).not.toHaveBeenCalled();
+    });
+
+    it("an UNREADABLE mode fails closed with wording that does not claim the studio is closed", async () => {
+      studioFixture.admissionMode = "not-a-mode";
+      for (const [, run] of everyAction) {
+        const out = await run();
+        expect(out.kind).toBe("closed");
+        if (out.kind !== "closed") throw new Error("unreachable");
+        expect(out.reason).toBe("admission_unreadable");
+      }
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    });
+
+    it("once 0323 is applied (marker answers true) a CLOSED studio leaves the offer open", async () => {
+      studioFixture.closedInvitedRule = "applied";
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("closed");
+      expect(out).toHaveProperty("days");
+    });
+
+    it("a marker failure other than 'absent' fails closed with the non-asserting wording", async () => {
+      studioFixture.closedInvitedRule = "error";
+      for (const [, run] of everyAction) {
+        const out = await run();
+        if (out.kind !== "closed") throw new Error("unreachable");
+        expect(out.reason).toBe("admission_unreadable");
+      }
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    });
+
+    it("the marker is never consulted for a studio that is not closed", async () => {
+      studioFixture.admissionMode = "waitlist";
+      studioFixture.closedInvitedRule = "error";
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("closed");
+    });
+
+    it.each(["waitlist", "open"])("%s admission leaves the offer open", async (mode) => {
+      studioFixture.admissionMode = mode;
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("closed");
+    });
+
+    it("a refusal at commit that the re-read cannot confirm as closed uses the non-asserting wording, never 'try again'", async () => {
+      studioFixture.admissionMode = "waitlist";
+      publicBookAppointmentAction.mockResolvedValue({
+        ok: false,
+        error: "This studio is not accepting new-client bookings right now.",
+        code: "new_client_admission_closed",
+      });
+      const out = await bookInvitationSlotAction(TOKEN, SLOT);
+      expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      // still waitlist on the re-read: not provably closed, so the non-asserting wording
+      expect(out.reason).toBe("admission_unreadable");
+    });
+
+    it("a commit-time refusal that re-reads as closed says closed", async () => {
+      studioFixture.admissionMode = "waitlist";
+      publicBookAppointmentAction.mockImplementation(async () => {
+        studioFixture.admissionMode = "closed"; // the owner closed it between load and commit
+        return { ok: false, error: "x", code: "new_client_admission_closed" };
+      });
+      const out = await bookInvitationSlotAction(TOKEN, SLOT);
+      if (out.kind !== "closed") throw new Error("unreachable");
+      expect(out.reason).toBe("admission_closed");
+    });
+  });
+
   describe("an ACTIVE, same-studio, NON-CONSULTATION service", () => {
     beforeEach(() => {
       serviceFixture.name = "Laser — full leg";
@@ -1550,5 +1670,163 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
       await loadInvitationAction(TOKEN);
       expect(fetchPublicSlotsForDates).toHaveBeenCalled();
     });
+  });
+});
+
+
+describe("HON-7: reopening a spent invitation", () => {
+  const BOOKED_ROW = {
+    state: "booked",
+    starts_at: "2026-10-15T14:00:00.000Z",
+    studio_id: STUDIO,
+    service_id: SERVICE,
+  };
+  const prove = () => cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+  const ALREADY_USED = { kind: "closed", reason: "already_used", presentation: null };
+  const CONTACT = { kind: "closed", reason: "used_contact_studio", presentation: null };
+
+  beforeEach(() => {
+    resolveInvitation.mockResolvedValue({ kind: "already_redeemed" });
+  });
+  afterEach(() => {
+    bookingStateFixture.rows = [];
+  });
+
+  it("a PROVEN holder sees the booked service, date and time", async () => {
+    prove();
+    bookingStateFixture.rows = [BOOKED_ROW];
+    const view = await loadInvitationAction(TOKEN);
+    expect(view.kind).toBe("booked");
+    if (view.kind === "booked") {
+      expect(view.startLabel).toBe("10:00 AM");
+      expect(view.dateLabel).toBe("2026-10-15");
+    }
+  });
+
+  it.each([
+    ["a live booking", [BOOKED_ROW]],
+    ["a booking with no link", [{ ...BOOKED_ROW, starts_at: null }]],
+    ["a cancelled appointment", [{ ...BOOKED_ROW, state: "booked_cancelled", starts_at: null }]],
+  ])("an UNPROVEN holder gets only the neutral 'already used' view, no detail: %s", async (_l, rows) => {
+    // No capability cookie: a link alone proves nothing about who holds it.
+    bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
+    const view = await loadInvitationAction(TOKEN);
+    expect(view).toEqual(ALREADY_USED);
+  });
+
+  it.each([
+    ["a cancelled appointment", { ...BOOKED_ROW, state: "booked_cancelled", starts_at: null }],
+    ["no link (old path, or predates the link)", { ...BOOKED_ROW, starts_at: null }],
+  ])("a PROVEN holder gets 'contact the studio', with no booked or appointment claim: %s", async (_l, row) => {
+    prove();
+    bookingStateFixture.rows = [row];
+    expect(await loadInvitationAction(TOKEN)).toEqual(CONTACT);
+  });
+
+  it.each([
+    ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
+    ["no answer (function missing or unreadable)", []],
+  ])("a PROVEN holder keeps the honest 'couldn't confirm' screen when the entry is not converted: %s", async (_l, rows) => {
+    prove();
+    bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
+    expect(await loadInvitationAction(TOKEN)).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
+  });
+
+  it.each([
+    ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
+    ["no answer (function missing or unreadable)", []],
+    ["a live booking", [BOOKED_ROW]],
+  ])("R5: an UNPROVEN holder gets the SAME neutral sentence whether or not anything was booked: %s", async (_l, rows) => {
+    bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+  });
+
+  // HOW LONG THE PROOF LIVES. The cookie carries the DATABASE's own expiry (30
+  // minutes from the proof), so a proven reopen exists only inside that window,
+  // and only while the cookie survives. A successful booking CLEARS it.
+  it("a successful booking clears the capability, so the very next reload of the spent link is UNPROVEN", async () => {
+    resolveInvitation.mockResolvedValue({ kind: "live", invitation: { studioId: STUDIO, scope: { serviceId: SERVICE } } });
+    prove();
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+    resolveInvitation.mockResolvedValue({ kind: "already_redeemed" });
+    bookingStateFixture.rows = [BOOKED_ROW];
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+  });
+
+  it("a proof older than its signed expiry is NOT proof: the reopen is the neutral view", async () => {
+    cookieJar.set(
+      "wl_proof_capability",
+      signedCapability(TOKEN, CAPABILITY, new Date(Date.now() - 1000).toISOString()),
+    );
+    bookingStateFixture.rows = [BOOKED_ROW];
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+  });
+
+  it("a proof inside its 30-minute window is proof", async () => {
+    cookieJar.set(
+      "wl_proof_capability",
+      signedCapability(TOKEN, CAPABILITY, new Date(Date.now() + 29 * 60_000).toISOString()),
+    );
+    bookingStateFixture.rows = [BOOKED_ROW];
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("booked");
+  });
+
+  it("the cookie lifetime equals the TTL the LATEST migration setting it gives the capability", () => {
+    const root = path.join(__dirname, "../../..");
+    const dir = path.join(root, "supabase/migrations");
+    const ASSIGN = /proof_capability_expires_at\s*=\s*[\w.]+\s*\+\s*interval\s*'(\d+)\s*(second|minute|hour)s?'/gi;
+    const hits = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
+      .map((f) => ({ f, found: [...readFileSync(path.join(dir, f), "utf8").matchAll(ASSIGN)] }))
+      .filter((h) => h.found.length > 0);
+    // NONE is a failure (the source moved), and so is more than one assignment in
+    // the latest file (which one is the TTL?).
+    expect(hits.length, "no migration sets the capability expiry").toBeGreaterThan(0);
+    const latest = hits[hits.length - 1];
+    expect(latest.found.length, `${latest.f} sets the expiry more than once`).toBe(1);
+    const [, n, unit] = latest.found[0];
+    const seconds = Number(n) * ({ second: 1, minute: 60, hour: 3600 } as Record<string, number>)[unit.toLowerCase()];
+    const src = readFileSync(path.join(root, "app/invitation/[token]/actions.ts"), "utf8");
+    const m = src.match(/CAPABILITY_COOKIE_MAX_AGE_SECONDS = (\d+) \* (\d+);/);
+    expect(m, "cookie max-age constant not found").not.toBeNull();
+    expect(Number((m as RegExpMatchArray)[1]) * Number((m as RegExpMatchArray)[2])).toBe(seconds);
+  });
+
+  it("OLD (flag-OFF) PATH, appointment since CANCELLED: no link row exists, so nobody is ever told 'You're booked'", async () => {
+    delete process.env.WAITLIST_BOOKING_COMMAND;
+    // The old path never writes a link, so the database answers 'booked' with no
+    // time whether or not the appointment was cancelled afterwards.
+    bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
+    const unproven = await loadInvitationAction(TOKEN);
+    expect(unproven).toEqual(ALREADY_USED);
+    prove();
+    const proven = await loadInvitationAction(TOKEN);
+    expect(proven).toEqual(CONTACT);
+    for (const v of [unproven, proven]) expect(v.kind).not.toBe("booked");
+  });
+
+  it("the flag does not matter: the old path's booking gets the same answers", async () => {
+    delete process.env.WAITLIST_BOOKING_COMMAND;
+    bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+    prove();
+    expect(await loadInvitationAction(TOKEN)).toEqual(CONTACT);
+  });
+
+  it("the other paths over a redeemed token behave as before, whatever the booking row says", async () => {
+    bookingStateFixture.rows = [BOOKED_ROW];
+    prove();
+    const asBefore = { kind: "closed", reason: "booking_outcome_unknown" };
+    declineInvitation.mockResolvedValue({ kind: "not_live" });
+    expect(await declineInvitationAction(TOKEN)).toMatchObject(asBefore);
+    beginRecipientProof.mockClear();
+    expect(await requestInvitationProofAction(TOKEN)).toMatchObject(asBefore);
+    expect(beginRecipientProof).not.toHaveBeenCalled();
+    expect(await bookInvitationSlotAction(TOKEN, "2026-10-15T14:00:00.000Z")).toMatchObject(asBefore);
   });
 });

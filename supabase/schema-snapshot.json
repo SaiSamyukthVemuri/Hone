@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 257,
-    "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "c50d8ed203ac0ce2ea93085649e2d8b592a4544997b740bdbd71438b033151d5"
+    "count": 260,
+    "last": "0323_waitlist_launch_controls.sql",
+    "sha256": "3f7410dbf0c5fe77f76b76f7a258df7033d3d2557beb1d1e72174342068bed03"
   },
   "public": {
     "tables": [
@@ -128,7 +128,10 @@
       "treatment_setup_captures",
       "treatment_setup_readings",
       "treatment_setup_submissions",
-      "waitlist"
+      "waitlist",
+      "waitlist_invitation_bookings",
+      "waitlist_invitation_followups",
+      "waitlist_times_feedback"
     ],
     "functions": [
       "_acquire_payment_method_tuple_xact_lock",
@@ -143,6 +146,7 @@
       "_touch_manual_fee_charge_attempts_updated_at",
       "_whole_session_copy_fingerprint",
       "_whole_session_copy_source_id",
+      "acknowledge_waitlist_times_feedback",
       "acquire_studio_capacity_lock",
       "add_electrolysis_pass",
       "add_studio_receptionist",
@@ -233,6 +237,8 @@
       "consume_payment_recovery_tokens_for_charge_attempt",
       "copy_session_setup",
       "correct_finalized_session",
+      "count_competing_waitlist_invitations",
+      "count_waitlist_times_feedback",
       "create_appointment_core",
       "create_block_with_entry",
       "create_block_with_initial_setup",
@@ -255,6 +261,7 @@
       "current_terms_version",
       "dashboard_attention_events_immutable",
       "decline_new_client_waitlist_invitation",
+      "decline_waitlist_invitation_times_unsuitable",
       "default_eligibility_for_practitioner",
       "default_eligibility_for_service",
       "delete_availability_day_locked",
@@ -334,6 +341,7 @@
       "latest_setup_for_client",
       "link_invited_membership",
       "list_dismissed_attention",
+      "list_waitlist_times_feedback",
       "lock_appointment_for_command",
       "lock_structural_calendar_source_mutation",
       "lock_studio_and_assert_owner",
@@ -435,9 +443,11 @@
       "record_treatment_setup_group",
       "record_treatment_setup_submission",
       "record_waitlist_invitation_delivery",
+      "record_waitlist_invitation_followup",
       "record_waitlist_sms_consent_by_practitioner",
       "record_welcome_email_result",
       "recurring_break_horizon_days",
+      "redeem_and_book_waitlist_invitation",
       "redeem_new_client_waitlist_invitation",
       "redeem_new_client_waitlist_invitation_verified",
       "redeem_waitlist_preference_grant",
@@ -468,6 +478,7 @@
       "resolve_new_client_waitlist_invitation",
       "resolve_public_any_available_practitioner",
       "resolve_studio_by_sms_messaging_service",
+      "resolve_waitlist_invitation_followup",
       "resolve_waitlist_invitation_recipient_identity",
       "restore_attention_item",
       "restore_attention_item_if_latest",
@@ -571,6 +582,8 @@
       "validate_public_reschedule_slot",
       "validate_schedule_scope",
       "waitlist_admission_round_consumed",
+      "waitlist_closed_invited_booking_enabled",
+      "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
       "waive_appointment_fee",
       "whole_session_copy_source_descriptor",

@@ -1715,6 +1715,27 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  waitlist_invitation_followups: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The owner's durable follow-up item for a waitlist invitation that was used without a confirmed booking, draft migration 0313 (HON-7). One row per invitation (unique), with a closed reason code, created and resolved instants and the entry it belongs to. Studio-owned operational history, so PENDING rather than EXCLUDED, decided with new_client_waitlist_entries. It holds no client text, name, contact or appointment time; any free-text response a client later leaves is a separate owner-only column that is not registered here. Rows are erased with the studio. No export surface ships in 0313.",
+  },
+  waitlist_invitation_bookings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Evidence link from a waitlist invitation to the appointment its booking command created, draft migration 0313 (HON-7). One row per invitation (primary key), with the studio, the appointment and a created instant. It holds no client text, name or contact; it exists so a reopened, already-used invitation can show the time that was actually booked rather than infer it. Studio-owned operational history, so PENDING, decided with new_client_waitlist_invitations. Rows are erased with the invitation, the appointment or the studio. No export surface ships in 0313.",
+  },
+  waitlist_times_feedback: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Owner-only record that an invited prospect said the offered times do not work, draft migration 0319 (HON-7). One row per invitation (unique) with an optional free-text note of at most 500 characters written by the recipient, beside the prospect's name on the entry, plus created and acknowledged instants. Client-supplied free text, so tier 1 and PENDING review of retention and export shape: not exported by default and never selected by a count. Rows are erased with the STUDIO only: an invited entry cannot be deleted on its own (invitations are append-only), so person-level erasure of this text is not possible yet (open item L1). No export surface ships in 0319.",
+  },
   studio_waitlist_admission_rounds: {
     kind: "pending",
     ticket: "TRUTH-01B",

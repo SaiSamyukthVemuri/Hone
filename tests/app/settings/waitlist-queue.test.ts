@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_ADMISSION_UNREADABLE_COPY,
+  INVITE_CLOSED_INVITED_ONLY_COPY,
+} from "@/lib/waitlist/invite-to-book-contract";
+import {
   CAPACITY_EXHAUSTED_COPY,
   CAPACITY_PANEL,
 } from "@/lib/waitlist/invitation-capacity";
@@ -198,6 +203,32 @@ function reset() {
 // NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
 // Delegating to the REAL resolver with no stored value routes it through the
 // transition bridge, so the env stubbing below keeps meaning what it meant.
+// The three owner follow-up cards read through these loaders. A test may force a result to model
+// "zero active entries but n>0 items"; null passes through to the real loader (every other test).
+const followUp = vi.hoisted(() => ({
+  attention: null as unknown,
+  declined: null as unknown,
+  replies: null as unknown,
+}));
+vi.mock("@/lib/waitlist/needs-attention", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/needs-attention")>();
+  return { ...a, loadNeedsAttention: vi.fn(async (...args: Parameters<typeof a.loadNeedsAttention>) =>
+    (followUp.attention as Awaited<ReturnType<typeof a.loadNeedsAttention>> | null) ?? a.loadNeedsAttention(...args)) };
+});
+vi.mock("@/lib/waitlist/declined-attention", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/declined-attention")>();
+  return { ...a, loadDeclinedAttention: vi.fn(async (...args: Parameters<typeof a.loadDeclinedAttention>) =>
+    (followUp.declined as Awaited<ReturnType<typeof a.loadDeclinedAttention>> | null) ?? a.loadDeclinedAttention(...args)) };
+});
+vi.mock("@/lib/waitlist/times-feedback-owner", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/times-feedback-owner")>();
+  return { ...a, countTimesFeedback: vi.fn(async (...args: Parameters<typeof a.countTimesFeedback>) =>
+    (followUp.replies as Awaited<ReturnType<typeof a.countTimesFeedback>> | null) ?? a.countTimesFeedback(...args)) };
+});
+
+// Null keeps the legacy-bridge behaviour every pre-existing test relies on; a test sets a
+// STORED mode to exercise the closed-admission invite block.
+const admissionHolder = vi.hoisted(() => ({ stored: null as string | null, rule: "absent" as "applied" | "absent" | "error" }));
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
@@ -205,8 +236,8 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     ...actual,
     getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
       actual.resolveAdmission({
-        storedMode: null,
-          storedSetAt: null,
+        storedMode: admissionHolder.stored,
+        storedSetAt: admissionHolder.stored ? "2026-09-01T00:00:00.000Z" : null,
         readFailed: false,
         studioSlug: studio.slug,
       }),
@@ -414,6 +445,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       throw new Error(`the waitlist action must not touch tables directly: ${table}`);
     },
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      // The 0323 marker; not a waitlist call, so it is not recorded with them.
+      if (fn === "waitlist_closed_invited_booking_enabled") {
+        if (admissionHolder.rule === "applied") return { data: true, error: null };
+        return { data: null, error: { code: admissionHolder.rule === "absent" ? "PGRST202" : "XX000", message: "x" } };
+      }
       rpcCalls.push({ fn, args });
       // THE CONSUMED COUNT IS ITS OWN ANSWER. Returning the removal result for
       // every rpc made the count NaN, which the page correctly read as unknown
@@ -537,8 +573,12 @@ describe("the query the page asks", () => {
     // ONE BOUNDED READ PER SECTION — five of them — rather than one cap shared
     // across every state. A shared cap lets a busy section crowd another off
     // the page entirely, taking that section's only actions with it.
-    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries");
+    // The owner's needs-attention card (0313) makes its own COMPLETE read of the
+    // invited entries (id,name); it is a sixth, separate read, not a section. The
+    // declined-times card reads released entries (id,name,released_at) the same way.
+    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns !== "id,name" && x.columns !== "id,name,released_at");
     expect(pageReads).toHaveLength(5);
+    expect(queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns === "id,name")).toHaveLength(1);
     const q = pageReads.find((x) =>
       x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "waiting"),
     )!;
@@ -1689,7 +1729,9 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
-    expect(queries.filter((q) => q.table === "new_client_waitlist_entries")).toHaveLength(5);
+    // Five section reads, plus the needs-attention card's own read (id,name).
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns === "id,name")).toHaveLength(1);
   });
 
   it("and IS read when a row is invited", async () => {
@@ -1697,11 +1739,13 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
     await render();
-    // TWO invitation reads: the live-cycle predicate and the redeemed one.
-    // Identity comes from the 0189 unique index, never from ordering — so
-    // neither read carries an `order`.
+    // THREE invitation reads: the live-cycle predicate and the redeemed one the
+    // page makes, plus the needs-attention card's own redeemed-invitation read
+    // (0313), which exists only because an invited entry does. Identity comes
+    // from the 0189 unique index, never from ordering — so none of them
+    // carries an `order`.
     const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
-    expect(inv).toHaveLength(2);
+    expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
 
@@ -1711,7 +1755,8 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-rel", status: "released" })];
     scenario.count = 1;
     await render();
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at");
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -2033,8 +2078,9 @@ describe("the focused view keeps the headline honest", () => {
     scenario.rows = [...seedSection("claimed", 150), ...seedSection("waiting", 7)];
     const html = await render({ section: "claimed", page: "1" });
 
-    // Five reads either way; only the focused one asks for rows.
-    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries");
+    // Five section reads either way; only the focused one asks for rows. (The
+    // needs-attention card's own id,name read is not a section.)
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at");
     expect(reads).toHaveLength(5);
     const listed = reads.filter((q) => q.options.head === false);
     expect(listed).toHaveLength(1);
@@ -2086,7 +2132,7 @@ describe("a browser-supplied section or page can never mislead", () => {
     // declares, because `section` is MATCHED against them rather than passed
     // through.
     const statuses = queries
-      .filter((q) => q.table === "new_client_waitlist_entries")
+      .filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")
       .map((q) => q.filters.find((f) => f[0] === "eq" && f[1] === "status")?.[2]);
     expect(statuses).toEqual(["waiting", "claimed", "invited", "expired", "released"]);
   });
@@ -2827,6 +2873,132 @@ describe("0208 — each row states its SMS standing, as recorded", () => {
       "sms_consent_text_version",
     ]) {
       expect(entriesQuery().columns).not.toContain(column);
+    }
+  });
+});
+
+describe("closed admission blocks the owner's invite until 0323 is applied (0204 invited_book refuses it)", () => {
+  afterEach(() => {
+    admissionHolder.stored = null;
+    admissionHolder.rule = "absent";
+  });
+
+  it("shows NO block under Closed once 0323 is applied (the marker answers true)", async () => {
+    admissionHolder.stored = "closed";
+    admissionHolder.rule = "applied";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).not.toContain("invites-blocked-admission");
+    // Neutral information, not a warning: it names all three facts.
+    expect(html).toContain('data-testid="invites-closed-invited-only"');
+    expect(html).toContain(INVITE_CLOSED_INVITED_ONLY_COPY);
+    expect(html).toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*neutral/);
+    expect(html).not.toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*amber/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toContain("Closed");
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/New clients can’t book or join your waitlist online/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/invite here can still book/);
+    // Send is not withheld for admission: neither blocked copy reaches the composer.
+    expect(html).not.toContain(INVITE_ADMISSION_CLOSED_BANNER_COPY);
+    expect(html).not.toContain(INVITE_ADMISSION_UNREADABLE_COPY);
+  });
+
+  it("the information note is absent whenever Closed is blocked, unreadable, or not Closed", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    for (const [stored, rule] of [["closed", "absent"], ["closed", "error"], ["not-a-mode", "applied"], ["waitlist", "applied"], ["open", "applied"]] as const) {
+      admissionHolder.stored = stored;
+      admissionHolder.rule = rule;
+      expect(await render(), `${stored}/${rule}`).not.toContain("invites-closed-invited-only");
+    }
+  });
+
+  it("a marker failure other than 'absent' pauses invitations without claiming Closed", async () => {
+    admissionHolder.stored = "closed";
+    admissionHolder.rule = "error";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("We couldn’t check new-client admission, so invitations are paused.");
+    expect(html).not.toContain("set to Closed");
+  });
+
+  it("says so, names Settings → Booking, and links to it", async () => {
+    admissionHolder.stored = "closed";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("New-client admission is set to Closed");
+    expect(html).toContain("Settings → Booking");
+    expect(html).toContain('href="/settings/booking#new-client-admission"');
+    expect(html).not.toContain("No invitation was created");
+  });
+
+  it("an UNREADABLE mode pauses invitations without claiming it is Closed", async () => {
+    admissionHolder.stored = "not-a-mode";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.");
+    expect(html).not.toContain("set to Closed");
+  });
+
+  it.each(["waitlist", "open"])("shows no block under %s", async (mode) => {
+    admissionHolder.stored = mode;
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    expect(await render()).not.toContain("invites-blocked-admission");
+  });
+});
+
+describe("owner follow-up cards render with ZERO active entries (Codex P2)", () => {
+  afterEach(() => {
+    followUp.attention = followUp.declined = followUp.replies = null;
+    vi.unstubAllEnvs();
+  });
+  const empty = () => {
+    scenario.rows = [];
+    scenario.count = 0;
+  };
+
+  it("Replies to review (n) shows, beside the empty-queue message", async () => {
+    vi.stubEnv("WAITLIST_TIMES_FEEDBACK", "1");
+    followUp.replies = { kind: "ok", n: 2 };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Replies to review (2)");
+  });
+
+  it("Needs your attention (n) shows, beside the empty-queue message", async () => {
+    followUp.attention = { kind: "ok", total: 3, shown: [{ id: "a", name: "A" }] };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Needs your attention (3)");
+  });
+
+  it("Declined the offered times (n) shows, beside the empty-queue message", async () => {
+    followUp.declined = { kind: "ok", total: 1, shown: [{ id: "d", name: "D" }], ids: new Set(["d"]) };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Declined the offered times (1)");
+  });
+
+  it("none of the three is rendered inside the active-entries branch", () => {
+    const src = readFileSync(path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const branch = src.indexOf("{active === 0 ? (");
+    expect(branch).toBeGreaterThan(-1);
+    for (const marker of ['id="needs-attention-heading"', 'data-testid="declined-card"', 'id="replies-heading"']) {
+      const at = src.indexOf(marker);
+      expect(at, marker).toBeGreaterThan(-1);
+      expect(at, `${marker} must precede the active branch`).toBeLessThan(branch);
     }
   });
 });

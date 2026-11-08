@@ -43,7 +43,7 @@ export type SubmittedInvitation = {
 
 export type InviteOutcomeResult =
   | { outcome: InvitationOutcome }
-  | { outcome: null; reason: "malformed_submission" };
+  | { outcome: null; reason: "malformed_submission" | "admission_closed" | "admission_unreadable" };
 
 /**
  * The one field this boundary reads from the submission.
