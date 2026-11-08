@@ -1,0 +1,204 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { adminQuery, asUser, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+
+// HON-58 receptionist name privacy (0280 proof gaps F2). A receptionist sees the preferred name or the label
+// "Name on file"; the stored name (which may be a legal name) must change NOTHING she can observe: not a hit,
+// a count, a sort position, a page boundary, a payload, or an error message. The strongest form of that claim is
+// tested directly: rewrite every stored name, then require the receptionist-visible output to be byte-identical.
+// Real receptionist JWTs on the real migrated database. Synthetic values only.
+
+const LABEL = "Name on file";
+const STORED_TERMS = ["Omegastored", "Alphastored", "Legalname", "Betastored"];
+
+let a: SeededStudio;
+let b: SeededStudio;
+let deskA: string;
+let deskB: string;
+const ids: Record<string, string> = {};
+
+async function seedDesk(studio: SeededStudio, tag: string): Promise<string> {
+  const userId = randomUUID();
+  await adminQuery("insert into auth.users(id,email) values ($1,$2)", [userId, `privacy-${tag}-${userId.slice(0, 8)}@harness.local`]);
+  await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic Front Desk',true)", [studio.studioId, userId]);
+  return userId;
+}
+async function addClient(studio: SeededStudio, key: string, name: string, preferred: string | null, phone: string): Promise<void> {
+  const id = randomUUID();
+  await adminQuery("insert into public.clients(id,studio_id,name,preferred_name,phone) values ($1,$2,$3,$4,$5)", [id, studio.studioId, name, preferred, phone]);
+  ids[key] = id;
+}
+const dir = (desk: string, studio: SeededStudio, q: string | null, sort = "name", offset = 0, limit = 25) =>
+  asUser(desk, (x) => x(`select * from public.receptionist_client_directory($1,$2,null,$3,$4,$5)`, [studio.studioId, q, sort, offset, limit]));
+const cal = (desk: string, studio: SeededStudio) =>
+  asUser(desk, (x) => x(`select * from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')`, [studio.studioId]));
+
+// Everything a receptionist can observe about the directory and the schedule, as one comparable value.
+async function observe(): Promise<unknown> {
+  const out: Record<string, unknown> = {};
+  out.browse = (await dir(deskA, a, null)).rows;
+  out.browseNext = (await dir(deskA, a, null, "next")).rows;
+  out.byPhone = (await dir(deskA, a, "555")).rows;
+  out.byPhoneNext = (await dir(deskA, a, "555", "next")).rows;
+  out.pages = [];
+  for (let off = 0; off < 4; off++) (out.pages as unknown[]).push((await dir(deskA, a, "555", "name", off, 1)).rows);
+  for (const term of [...STORED_TERMS, "Caz", "Dee", "Name on", "Abe", "Zed"]) out[`term:${term}`] = (await dir(deskA, a, term)).rows;
+  out.calendar = (await cal(deskA, a)).rows;
+  return out;
+}
+
+beforeAll(async () => {
+  a = await seedStudio("priv-a");
+  b = await seedStudio("priv-b");
+  deskA = await seedDesk(a, "a");
+  deskB = await seedDesk(b, "b");
+  await adminQuery("update public.clients set archived_at = now() where id = any($1)", [[a.clientId, b.clientId]]);
+  // Stored-name order is Abe < Beta < Zed; the shown values are a label, a label, a label and two preferred names.
+  await addClient(a, "zed", "Zed Omegastored", null, "+1 555 0301");
+  await addClient(a, "abe", "Abe Alphastored", null, "+1 555 0302");
+  await addClient(a, "beta", "Beta Betastored", null, "+1 555 0305");
+  await addClient(a, "carol", "Carol Legalname", "Caz", "+1 555 0303");
+  await addClient(a, "dee", "Dee Legalname", "Dee P", "+1 555 0304");
+  // A second studio with its own clients (tenant isolation).
+  await addClient(b, "bx", "Xavier Otherstudio", "Xav", "+1 555 0399");
+  const appt = (studio: SeededStudio, key: string, at: string) =>
+    adminQuery(
+      `insert into public.appointments (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status, cancellation_token_hash)
+       values (gen_random_uuid(), $1, $2, $3, $4::timestamptz, $4::timestamptz + interval '1 hour', 60, 'confirmed', encode(sha256(gen_random_uuid()::text::bytea), 'hex'))`,
+      [studio.studioId, studio.practitionerId, ids[key], at],
+    );
+  await appt(a, "zed", "2031-03-04T15:00:00Z");
+  await appt(a, "abe", "2031-03-04T17:00:00Z");
+  await appt(a, "carol", "2031-03-05T15:00:00Z");
+  await appt(b, "bx", "2031-03-04T15:00:00Z");
+  // A legal-identity row for one client, so the "receptionist reads none of it" checks have something to miss.
+  await adminQuery(`insert into public.client_legal_identities (client_id, studio_id, legal_given_name, legal_family_name) values ($1,$2,'Legalgiven','Legalfamily')`, [ids.carol, a.studioId]);
+});
+
+afterAll(async () => {
+  await closePool();
+});
+
+describe("the stored name changes nothing a receptionist can observe", () => {
+  it("rewriting every stored name leaves browse, sort, search, count, pages and schedule byte-identical (control: the rewrite really happened)", async () => {
+    const before = JSON.stringify(await observe());
+    // Reverse the stored order, and make two stored names equal to another client's SHOWN value and to a phone-like string,
+    // which is what an attacker would try to use as a probe.
+    await adminQuery("update public.clients set name = 'Aaa Zzzfirst' where id = $1", [ids.zed]);
+    await adminQuery("update public.clients set name = 'Caz' where id = $1", [ids.abe]);
+    await adminQuery("update public.clients set name = '555 0303' where id = $1", [ids.beta]);
+    await adminQuery("update public.clients set name = 'Dee P Legalname' where id = $1", [ids.carol]);
+    await adminQuery("update public.clients set name = 'Zzz Lastname' where id = $1", [ids.dee]);
+    const after = JSON.stringify(await observe());
+    expect(after).toBe(before);
+    const changed = await adminQuery("select count(*)::int n from public.clients where id = any($1) and name in ('Aaa Zzzfirst','Caz','555 0303','Dee P Legalname','Zzz Lastname')", [[ids.zed, ids.abe, ids.beta, ids.carol, ids.dee]]);
+    expect(changed.rows[0].n).toBe(5);
+  });
+  it("no stored name or legal name appears in any observed value", async () => {
+    const all = JSON.stringify(await observe());
+    for (const t of [...STORED_TERMS, "Zzzfirst", "Zzz Lastname", "Legalgiven", "Legalfamily", "Otherstudio"]) expect(all).not.toContain(t);
+  });
+});
+
+describe("search, count and page boundary", () => {
+  it("a stored name never matches, even when it equals another client's shown value; the shown value and phone do", async () => {
+    // Abe's stored name is now exactly "Caz", Carol's shown value. Only Carol may answer.
+    expect((await dir(deskA, a, "Caz")).rows.map((r) => r.client_id)).toEqual([ids.carol]);
+    // Beta's stored name is now a phone-like string equal to Carol's number; the phone search still finds Carol only.
+    expect((await dir(deskA, a, "555 0303")).rows.map((r) => r.client_id)).toEqual([ids.carol]);
+    expect((await dir(deskA, a, "Dee P")).rows.map((r) => r.client_id)).toEqual([ids.dee]);
+    // The label is not a search key (it would list every unlabelled client).
+    expect((await dir(deskA, a, "Name on")).rows).toEqual([]);
+    expect((await dir(deskA, a, "on file")).rows).toEqual([]);
+  });
+  it("paging with a one-row page reproduces the full order with no skip or repeat, and every page carries the same count", async () => {
+    const full = (await dir(deskA, a, "555", "name", 0, 50)).rows.map((r) => r.client_id);
+    expect(full).toHaveLength(5);
+    const walked: string[] = [];
+    for (let off = 0; off < 5; off++) {
+      const p = await dir(deskA, a, "555", "name", off, 1);
+      expect(p.rows).toHaveLength(1);
+      expect(Number(p.rows[0].total_count)).toBe(5);
+      walked.push(p.rows[0].client_id as string);
+    }
+    expect(walked).toEqual(full);
+    expect(new Set(walked).size).toBe(5);
+    expect((await dir(deskA, a, "555", "name", 5, 1)).rows).toEqual([]);
+  });
+  it("the unlabelled clients order by id, not by stored name (shown value ties on the label)", async () => {
+    const r = (await dir(deskA, a, "555", "name", 0, 50)).rows;
+    const unlabelled = r.filter((x) => x.name_on_file).map((x) => x.client_id as string);
+    expect(unlabelled).toHaveLength(3);
+    expect(unlabelled).toEqual([...unlabelled].sort());
+    // preferred names first: 'caz' < 'dee p' < 'name on file'
+    expect(r.slice(0, 2).map((x) => x.display_name)).toEqual(["Caz", "Dee P"]);
+  });
+});
+
+describe("errors carry no name", () => {
+  it("every refusal path names neither a stored name, a legal name nor the studio's clients", async () => {
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ["too short", () => dir(deskA, a, "x")],
+      ["too long", () => dir(deskA, a, "Omegastored".repeat(10))],
+      ["bad sort", () => dir(deskA, a, "555", "legalname")],
+      ["page out of range", () => dir(deskA, a, "555", "name", 190, 50)],
+      ["query required", () => dir(deskA, a, null, "name", 5, 5)],
+      ["foreign studio", () => dir(deskB, a, "555")],
+      ["foreign calendar", () => cal(deskB, a)],
+    ];
+    for (const [label, call] of calls) {
+      const err = await call().then(() => null, (e: Error & { code?: string }) => e);
+      expect(err, label).not.toBeNull();
+      const text = `${err?.message} ${(err as { detail?: string }).detail ?? ""} ${(err as { hint?: string }).hint ?? ""}`;
+      for (const t of [...STORED_TERMS, "Legalgiven", "Legalfamily", "Zzz", "Aaa"]) expect(text, `${label}: ${t}`).not.toContain(t);
+    }
+    // The too-long message does not echo the term back.
+    const long = await dir(deskA, a, "Omegastored".repeat(10)).then(() => "", (e: Error) => e.message);
+    expect(long).not.toContain("Omegastored");
+  });
+});
+
+describe("tenant isolation", () => {
+  it("another studio's receptionist is refused A, and sees only B, in directory and schedule", async () => {
+    await expect(dir(deskB, a, null)).rejects.toMatchObject({ code: "42501" });
+    await expect(cal(deskB, a)).rejects.toMatchObject({ code: "42501" });
+    const own = (await dir(deskB, b, null)).rows;
+    expect(own.map((r) => r.display_name)).toEqual(["Xav"]);
+    // A's phone numbers and preferred names do not exist in B.
+    expect((await dir(deskB, b, "555 0303")).rows).toEqual([]);
+    expect((await dir(deskB, b, "Caz")).rows).toEqual([]);
+    expect((await cal(deskB, b)).rows.map((r) => r.display_name)).toEqual(["Xav"]);
+  });
+});
+
+describe("schedule projection", () => {
+  it("receptionist_calendar_v2 returns exactly the display columns, only the studio's appointments in the window, and nothing outside it", async () => {
+    const r = await cal(deskA, a);
+    const cols = r.fields.map((f) => f.name);
+    for (const banned of ["name", "client_name", "preferred_name", "legal_given_name", "legal_family_name", "notes"]) expect(cols).not.toContain(banned);
+    expect(cols).toEqual(expect.arrayContaining(["display_name", "name_on_file"]));
+    expect(r.rows).toHaveLength(3);
+    const shown = r.rows.map((x) => [x.display_name, x.name_on_file]).sort();
+    expect(shown).toEqual([[LABEL, true], [LABEL, true], ["Caz", false]].sort());
+    const empty = await asUser(deskA, (x) => x(`select * from public.receptionist_calendar_v2($1,'2040-01-01T00:00:00Z','2040-01-02T00:00:00Z')`, [a.studioId]));
+    expect(empty.rows).toEqual([]);
+  });
+});
+
+describe("direct reads by the receptionist reach no name", () => {
+  it("clients, the legal identity table and the access switch return no row (control: the owner reads them)", async () => {
+    for (const sql of [
+      "select name, preferred_name from public.clients where studio_id = $1",
+      "select legal_given_name, legal_family_name from public.client_legal_identities where studio_id = $1",
+    ]) {
+      expect((await asUser(deskA, (x) => x(sql, [a.studioId]))).rows, sql).toEqual([]);
+    }
+    expect((await asUser(a.userId, (x) => x("select name from public.clients where studio_id = $1", [a.studioId]))).rows.length).toBeGreaterThan(0);
+    expect((await asUser(a.userId, (x) => x("select legal_given_name from public.client_legal_identities where studio_id = $1", [a.studioId]))).rows.length).toBe(1);
+  });
+  it("the older name-bearing finders are closed to her (privilege layer)", async () => {
+    await expect(asUser(deskA, (x) => x("select * from public.receptionist_client_contacts_v2($1,null,25)", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+    await expect(asUser(deskA, (x) => x("select * from public.receptionist_client_contacts($1,null,25)", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+    await expect(asUser(deskA, (x) => x("select * from public.receptionist_calendar($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+  });
+});
