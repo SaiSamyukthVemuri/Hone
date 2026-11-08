@@ -900,6 +900,7 @@ export default async function WaitlistSettingsPage({
             if (attention.total === 0) return null;
             return (
               <section
+                id="follow-up"
                 aria-labelledby="needs-attention-heading"
                 className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
               >
