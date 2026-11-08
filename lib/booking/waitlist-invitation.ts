@@ -892,6 +892,59 @@ export async function declineInvitation(input: {
 }
 
 // ---------------------------------------------------------------------------
+// 6b. "THESE TIMES DON'T WORK" (0319)
+//
+// Closes the invitation like a decline but returns the SAME entry to waiting, so
+// the person keeps their join date and priority. The command returns a scalar
+// text code. Fail closed on a missing function: the caller must not claim the
+// person was kept on the list when the command did not run.
+// ---------------------------------------------------------------------------
+
+export type TimesUnsuitableOutcome =
+  | { kind: "returned_to_waiting" }
+  | { kind: "invalid_note" }
+  | { kind: "proof_required" }
+  | { kind: "proof_expired" }
+  | { kind: "proof_invalid" }
+  | { kind: "invalid_token" }
+  | { kind: "not_live" }
+  | { kind: "invalid_input" }
+  | Unavailable;
+
+export async function declineTimesUnsuitable(input: {
+  rawToken: string;
+  rawCapability: string;
+  note: string | null;
+}): Promise<TimesUnsuitableOutcome> {
+  if (!RAW_SECRET.test(input.rawToken ?? "")) return { kind: "invalid_token" };
+  if (!RAW_SECRET.test(input.rawCapability ?? "")) return { kind: "proof_invalid" };
+  const admin = createAdminClient();
+  try {
+    const { data, error } = await admin.rpc("decline_waitlist_invitation_times_unsuitable", {
+      p_raw_token: input.rawToken,
+      p_raw_capability: input.rawCapability,
+      p_note: input.note,
+    });
+    if (error) return { kind: "unavailable" };
+    switch (data) {
+      case "returned_to_waiting":
+      case "invalid_note":
+      case "proof_required":
+      case "proof_expired":
+      case "proof_invalid":
+      case "invalid_token":
+      case "not_live":
+      case "invalid_input":
+        return { kind: data };
+      default:
+        return { kind: "unavailable" };
+    }
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 7. REVOKE and EXPIRE — practitioner-authorised lifecycle
 //
 // Neither is a new command. The applied chain has no `revoke_..._invitation`:

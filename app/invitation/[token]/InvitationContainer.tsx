@@ -8,6 +8,7 @@ import {
   bookInvitationSlotAction,
   declineInvitationAction,
   loadInvitationAction,
+  timesDontWorkAction,
   requestInvitationProofAction,
   submitInvitationProofAction,
 } from "./actions";
@@ -26,9 +27,12 @@ import {
 export function InvitationContainer({
   token,
   initial,
+  timesFeedback = false,
 }: {
   token: string;
   initial: InvitationViewState;
+  /** 0319: server-evaluated flag. False keeps the existing decline only. */
+  timesFeedback?: boolean;
 }) {
   const [state, setState] = useState<InvitationViewState>(initial);
   const [selectedSlotStart, setSelectedSlotStart] = useState<string | null>(null);
@@ -108,6 +112,9 @@ export function InvitationContainer({
         run(() => bookInvitationSlotAction(token, selectedSlotStart, typedPhone));
       }}
       onDecline={() => run(() => declineInvitationAction(token))}
+      onTimesDontWork={
+        timesFeedback ? (note: string) => run(() => timesDontWorkAction(token, note)) : undefined
+      }
     />
   );
 }

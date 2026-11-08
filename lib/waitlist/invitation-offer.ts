@@ -160,7 +160,11 @@ export type BookingRefusal =
   /** The offer does not cover that request -- wrong service, day or date. */
   | "not_permitted"
   /** In doubt: the attempt may or may not have reached the studio. */
-  | "unavailable";
+  | "unavailable"
+  /** 0319: the optional text was refused. Nothing changed; the offer is intact. */
+  | "note_invalid"
+  /** 0319: the "these times don't work" tap did not complete. Nothing changed. */
+  | "feedback_unavailable";
 
 /**
  * Why the recipient is being asked to prove again, when they did not ask to be.
@@ -305,7 +309,8 @@ export type InvitationViewState =
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
-  | { kind: "declined" }
+  /** `keptOnList` is true only when 0319 returned the entry to waiting. */
+  | { kind: "declined"; keptOnList?: boolean }
   | { kind: "error"; retryable: boolean };
 
 /**

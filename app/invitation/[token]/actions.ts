@@ -21,10 +21,12 @@ import { cookies, headers } from "next/headers";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { TIMES_FEEDBACK_NOTE_MAX, waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import {
   beginRecipientProof,
   completeRecipientProof,
   declineInvitation,
+  declineTimesUnsuitable,
   resolveInvitation,
   type ResolveOutcome,
 } from "@/lib/booking/waitlist-invitation";
@@ -1070,6 +1072,67 @@ export async function declineInvitationAction(
     booked: null,
     declined: false,
     proofNotice: notice,
+  });
+}
+
+/**
+ * 0319 — "These times don't work". Optional text, kept against the original
+ * waitlist entry; the person returns to waiting with their original priority.
+ *
+ * Behind WAITLIST_TIMES_FEEDBACK (off by default). With the flag off nothing is
+ * declined or written: the current offer is simply re-read. The confirmation
+ * (`keptOnList`) is returned ONLY when the command answered
+ * `returned_to_waiting`; every other answer leaves the invitation as it was and
+ * says so.
+ */
+export async function timesDontWorkAction(
+  rawToken: string,
+  note: string,
+): Promise<InvitationViewState> {
+  if (!waitlistTimesFeedbackEnabled()) return loadInvitationAction(rawToken);
+  const capability = await readCapability(rawToken);
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
+  if (!capability) {
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
+  }
+  const trimmed = typeof note === "string" ? note.trim() : "";
+  if (trimmed.length > TIMES_FEEDBACK_NOTE_MAX || /[<>]/.test(trimmed)) {
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
+  }
+  const out = await declineTimesUnsuitable({
+    rawToken,
+    rawCapability: capability,
+    note: trimmed.length > 0 ? trimmed : null,
+  });
+  if (out.kind === "returned_to_waiting") {
+    await clearCapability();
+    return { kind: "declined", keptOnList: true };
+  }
+
+  // Re-resolve: the invitation can die between the first read and this failure,
+  // and a terminal state outranks any notice.
+  const after = await loadContext(rawToken);
+  if (!after.ok) return after.state;
+  if (out.kind === "invalid_note" || out.kind === "unavailable") {
+    return offerState(
+      rawToken,
+      after.resolve,
+      after.studio,
+      { kind: "proven" },
+      out.kind === "invalid_note" ? "note_invalid" : "feedback_unavailable",
+    );
+  }
+  // The capability did not satisfy the gate: drop it and ask to prove again.
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve: after.resolve,
+    presentation: after.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
   });
 }
 
