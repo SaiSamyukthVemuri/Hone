@@ -919,7 +919,7 @@ describe("terminal states are explicit", () => {
     // is that the invitation was spent, and that is not appointment evidence.
     // `already_redeemed` would assert a booking exists and send the recipient
     // after a confirmation that may never arrive.
-    ["already_redeemed", "booking_outcome_unknown"],
+    ["already_redeemed", "already_used"],
     ["declined", "declined"],
   ])("a %s invitation closes with reason %s", async (resolved, reason) => {
     resolveInvitation.mockResolvedValue({ kind: resolved });
@@ -1612,10 +1612,73 @@ describe("HON-7: reopening a spent invitation", () => {
   it.each([
     ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
     ["no answer (function missing or unreadable)", []],
-  ])("keeps the honest 'couldn't confirm' screen when the entry is not converted: %s", async (_l, rows) => {
+  ])("a PROVEN holder keeps the honest 'couldn't confirm' screen when the entry is not converted: %s", async (_l, rows) => {
     prove();
     bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
     expect(await loadInvitationAction(TOKEN)).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
+  });
+
+  it.each([
+    ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
+    ["no answer (function missing or unreadable)", []],
+    ["a live booking", [BOOKED_ROW]],
+  ])("R5: an UNPROVEN holder gets the SAME neutral sentence whether or not anything was booked: %s", async (_l, rows) => {
+    bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+  });
+
+  // HOW LONG THE PROOF LIVES. The cookie carries the DATABASE's own expiry (30
+  // minutes from the proof), so a proven reopen exists only inside that window,
+  // and only while the cookie survives. A successful booking CLEARS it.
+  it("a successful booking clears the capability, so the very next reload of the spent link is UNPROVEN", async () => {
+    resolveInvitation.mockResolvedValue({ kind: "live", invitation: { studioId: STUDIO, scope: { serviceId: SERVICE } } });
+    prove();
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+    resolveInvitation.mockResolvedValue({ kind: "already_redeemed" });
+    bookingStateFixture.rows = [BOOKED_ROW];
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+  });
+
+  it("a proof older than its signed expiry is NOT proof: the reopen is the neutral view", async () => {
+    cookieJar.set(
+      "wl_proof_capability",
+      signedCapability(TOKEN, CAPABILITY, new Date(Date.now() - 1000).toISOString()),
+    );
+    bookingStateFixture.rows = [BOOKED_ROW];
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+  });
+
+  it("a proof inside its 30-minute window is proof", async () => {
+    cookieJar.set(
+      "wl_proof_capability",
+      signedCapability(TOKEN, CAPABILITY, new Date(Date.now() + 29 * 60_000).toISOString()),
+    );
+    bookingStateFixture.rows = [BOOKED_ROW];
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("booked");
+  });
+
+  it("the cookie lifetime equals the database's 30-minute capability TTL", () => {
+    const src = readFileSync(path.join(__dirname, "../../../app/invitation/[token]/actions.ts"), "utf8");
+    expect(src).toMatch(/CAPABILITY_COOKIE_MAX_AGE_SECONDS = 30 \* 60;/);
+    const db = readFileSync(path.join(__dirname, "../../../supabase/migrations/0192_waitlist_recipient_proof_authority.sql"), "utf8");
+    expect(db).toMatch(/proof_capability_expires_at = v_now \+ interval '30 minutes'/);
+  });
+
+  it("OLD (flag-OFF) PATH, appointment since CANCELLED: no link row exists, so nobody is ever told 'You're booked'", async () => {
+    delete process.env.WAITLIST_BOOKING_COMMAND;
+    // The old path never writes a link, so the database answers 'booked' with no
+    // time whether or not the appointment was cancelled afterwards.
+    bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
+    const unproven = await loadInvitationAction(TOKEN);
+    expect(unproven).toEqual(ALREADY_USED);
+    prove();
+    const proven = await loadInvitationAction(TOKEN);
+    expect(proven).toEqual(CONTACT);
+    for (const v of [unproven, proven]) expect(v.kind).not.toBe("booked");
   });
 
   it("the flag does not matter: the old path's booking gets the same answers", async () => {

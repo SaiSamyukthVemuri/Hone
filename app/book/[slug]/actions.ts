@@ -749,6 +749,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return {
       ok: false,
       error: "That time is no longer available. Please choose another time.",
+      code: "slot_taken",
     };
   }
 
@@ -812,9 +813,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     );
     const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
     if (!free) {
+      // CODED, so the invitation screen can say the time was just taken. This is
+      // the path a LOST RACE takes: the winner's appointment makes the time not
+      // free here, before the booking command is ever reached. Without the code
+      // the invitation fell through to its generic "couldn't complete" copy.
       return {
         ok: false,
         error: "That time is no longer available. Please choose another time.",
+        code: "slot_taken",
       };
     }
   } catch (err) {

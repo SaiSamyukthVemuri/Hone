@@ -400,7 +400,24 @@ grant execute on function public.resolve_waitlist_invitation_followup(uuid, uuid
 -- table that names which invitation booked which appointment.
 -- ---------------------------------------------------------------------------
 do $$
+declare
+  v_role text;
+  v_priv text;
 begin
+  -- Effective privileges, including any inherited through role membership.
+  foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
+    foreach v_priv in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] loop
+      if pg_catalog.has_table_privilege(v_role, 'public.waitlist_invitation_bookings', v_priv) then
+        raise exception 'waitlist_invitation_bookings must carry no privilege for public, anon, authenticated or service_role (% has %)', v_role, v_priv;
+      end if;
+    end loop;
+    foreach v_priv in array array['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] loop
+      if pg_catalog.has_any_column_privilege(v_role, 'public.waitlist_invitation_bookings', v_priv) then
+        raise exception 'waitlist_invitation_bookings must carry no privilege for public, anon, authenticated or service_role (% column %)', v_role, v_priv;
+      end if;
+    end loop;
+  end loop;
+  -- Stored ACLs, including PUBLIC (grantee 0), which has_table_privilege cannot name.
   if exists (
        select 1
          from pg_catalog.pg_class c

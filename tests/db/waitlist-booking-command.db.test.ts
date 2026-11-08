@@ -281,7 +281,7 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
   it("the migration's OWN self-check passes on the shipped state and raises on a grant to any API role", async () => {
     // The real DO block, lifted from the migration file and executed here.
     const sql = readFileSync(join(__dirname, "../../supabase/migrations/0313_waitlist_booking_command.sql"), "utf8");
-    const m = sql.match(/\ndo \$\$\nbegin\n  if exists \([\s\S]*?\n\$\$;/);
+    const m = sql.match(/\ndo \$\$\ndeclare\n  v_role text;[\s\S]*?\n\$\$;/);
     expect(m, "self-check block not found").not.toBeNull();
     const block = (m as RegExpMatchArray)[0];
     await q(block); // clean: no error

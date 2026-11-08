@@ -486,18 +486,16 @@ async function loadStudioContext(
  * Null when the state is anything else or cannot be read (including a database
  * without the 0313 function). Never throws.
  *
- * WHO MAY SEE WHAT. A reopened link on its own proves nothing about the person
- * holding it, so without the proven capability (the emailed-code proof this
- * browser already completed) the answer is the neutral "already used" sentence:
- * no service, time, studio detail or booking outcome. A proven holder sees the
- * booked service, date and time ONLY for a live appointment the explicit link
- * names; every other converted case (no link, cancelled) is the neutral
- * "already used" wording, which never mentions an appointment.
+ * CALLED ONLY FOR A PROVEN HOLDER (see loadContext: an unproven holder gets the
+ * neutral "already used" view without this being asked, so nothing about the
+ * booking is even read for them). A proven holder sees the booked service, date
+ * and time ONLY for a live appointment the explicit link names; every other
+ * converted case (no link, cancelled) is "contact the studio", which never
+ * mentions an appointment.
  */
 async function bookedViewOnReopen(
   rawToken: string,
   resolved: ResolveOutcome,
-  proven: boolean,
 ): Promise<InvitationViewState | null> {
   try {
     const { data } = await createAdminClient().rpc("waitlist_invitation_booking_state", {
@@ -505,7 +503,6 @@ async function bookedViewOnReopen(
     });
     const row = Array.isArray(data) ? data[0] : data;
     if (row?.state !== "booked" && row?.state !== "booked_cancelled") return null;
-    if (!proven) return { kind: "closed", reason: "already_used", presentation: null };
     if (
       row.state === "booked_cancelled" ||
       typeof row.starts_at !== "string" ||
@@ -557,11 +554,13 @@ async function loadContext(
   // holder who has proven the emailed code in this browser. Anything else keeps
   // the honest "couldn't confirm" screen.
   if (opts.reopen && resolved.kind === "already_redeemed") {
-    const reopened = await bookedViewOnReopen(
-      rawToken,
-      resolved,
-      (await readCapability(rawToken)) !== null,
-    );
+    // EVERY unproven holder gets the SAME sentence, converted or not, so the
+    // link alone cannot be used to tell a booked invitation from an unbooked
+    // one. Nothing about the booking is read for them.
+    if ((await readCapability(rawToken)) === null) {
+      return { ok: false, state: { kind: "closed", reason: "already_used", presentation: null } };
+    }
+    const reopened = await bookedViewOnReopen(rawToken, resolved);
     if (reopened) return { ok: false, state: reopened };
   }
   if (resolved.kind !== "live") {

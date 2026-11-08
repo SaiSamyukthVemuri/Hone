@@ -131,6 +131,11 @@ describe("0313 — the explicit invitation -> appointment link", () => {
   it("carries an in-migration self-check that the link table has no API-role privilege", () => {
     const at = E.indexOf("aclexplode(c.relacl)");
     expect(at).toBeGreaterThan(0);
+    // Effective privileges (inheritance included) for each API role, tables and columns ...
+    expect(E).toMatch(/has_table_privilege\(v_role, 'public\.waitlist_invitation_bookings', v_priv\)/);
+    expect(E).toMatch(/has_any_column_privilege\(v_role, 'public\.waitlist_invitation_bookings', v_priv\)/);
+    expect(E).toMatch(/array\['anon', 'authenticated', 'service_role'\]/);
+    // ... and the stored ACL scan, which is what can name PUBLIC.
     expect(E.slice(at - 400, at + 900)).toMatch(/anon', 'authenticated', 'service_role'/);
     expect(E.slice(at)).toMatch(/raise exception 'waitlist_invitation_bookings must carry no privilege/);
     expect(E.indexOf("aclexplode(c.relacl)")).toBeLessThan(E.lastIndexOf("commit;"));
