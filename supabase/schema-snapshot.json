@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 257,
-    "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "c50d8ed203ac0ce2ea93085649e2d8b592a4544997b740bdbd71438b033151d5"
+    "count": 258,
+    "last": "0313_waitlist_booking_command.sql",
+    "sha256": "1157bcfe0c3f1ff67ff84e278cdd279abb4d1b1808ba1a68a8741530ebab712f"
   },
   "public": {
     "tables": [
@@ -128,7 +128,8 @@
       "treatment_setup_captures",
       "treatment_setup_readings",
       "treatment_setup_submissions",
-      "waitlist"
+      "waitlist",
+      "waitlist_invitation_followups"
     ],
     "functions": [
       "_acquire_payment_method_tuple_xact_lock",
@@ -435,9 +436,11 @@
       "record_treatment_setup_group",
       "record_treatment_setup_submission",
       "record_waitlist_invitation_delivery",
+      "record_waitlist_invitation_followup",
       "record_waitlist_sms_consent_by_practitioner",
       "record_welcome_email_result",
       "recurring_break_horizon_days",
+      "redeem_and_book_waitlist_invitation",
       "redeem_new_client_waitlist_invitation",
       "redeem_new_client_waitlist_invitation_verified",
       "redeem_waitlist_preference_grant",
@@ -468,6 +471,7 @@
       "resolve_new_client_waitlist_invitation",
       "resolve_public_any_available_practitioner",
       "resolve_studio_by_sms_messaging_service",
+      "resolve_waitlist_invitation_followup",
       "resolve_waitlist_invitation_recipient_identity",
       "restore_attention_item",
       "restore_attention_item_if_latest",
@@ -571,6 +575,7 @@
       "validate_public_reschedule_slot",
       "validate_schedule_scope",
       "waitlist_admission_round_consumed",
+      "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
       "waive_appointment_fee",
       "whole_session_copy_source_descriptor",
