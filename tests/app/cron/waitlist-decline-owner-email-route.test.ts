@@ -16,7 +16,7 @@ const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.CRON_SECRET = "synthetic-secret";
-  h.dispatch.mockResolvedValue({ sent: 2, failed: 1, cancelled: 0, skipped: 0 });
+  h.dispatch.mockResolvedValue({ sent: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 7 });
 });
 afterEach(() => {
   delete process.env.CRON_SECRET;
@@ -30,7 +30,14 @@ describe("the backstop route", () => {
   });
   it("returns counts only", async () => {
     const res = await GET(new Request("https://x.test/a", { headers: { authorization: "Bearer synthetic-secret" } }));
-    expect(await res.json()).toEqual({ ok: true, sent: 2, failed: 1, cancelled: 0, skipped: 0 });
+    expect(await res.json()).toEqual({ ok: true, sent: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 7 });
+  });
+  it("declares a literal maxDuration equal to the constant the sweep budget was derived from, and the budget leaves room for one slow row", async () => {
+    const { DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS, DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS } = await import("@/lib/waitlist/decline-owner-email-gate");
+    expect(read("app/api/cron/waitlist-decline-owner-email/route.ts")).toContain(`export const maxDuration = ${DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS};`);
+    expect(DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS).toBeLessThanOrEqual(60); // Hobby
+    // worst case for one row: a 15s provider timeout, retried once under the same key
+    expect(DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS + 30_000).toBeLessThan(DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS * 1000);
   });
   it("is scheduled in vercel.json", () => {
     const crons = JSON.parse(read("vercel.json")).crons as Array<{ path: string; schedule: string }>;
