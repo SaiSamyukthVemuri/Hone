@@ -183,6 +183,29 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     expect((await when()).starts_at).toBeNull();
   });
 
+  it("the window edges: 59s before the conversion is included, 61s before is excluded", async () => {
+    const f = await fixture("edge");
+    const [t1] = await slots(f, 1);
+    const p = await provenEntry(f, "edge");
+    const r = await q<any>(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, t1, tokenHash("edge1")]);
+    expect(r[0].result).toBe("created_and_converted");
+    const read = () =>
+      q<{ starts_at: string | null }>(
+        `select starts_at from public.waitlist_invitation_booking_state($1)`, [p.token],
+      ).then((x) => x[0].starts_at);
+    const setAge = (secs: number) =>
+      q(
+        `update public.appointments
+            set created_at = (select converted_at from public.new_client_waitlist_entries where id=$2) - ($3 || ' seconds')::interval
+          where id=$1`,
+        [r[0].appointment_id, p.entryId, String(secs)],
+      );
+    await setAge(59);
+    expect(await read()).not.toBeNull();
+    await setAge(61);
+    expect(await read()).toBeNull();
+  });
+
   it("any other exception (a forced unique violation) propagates, rolls the redeem back and leaves the invitation live", async () => {
     const f = await fixture("uv");
     const [t1, t2] = await slots(f, 2);
