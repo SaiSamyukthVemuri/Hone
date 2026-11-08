@@ -637,8 +637,10 @@ export function MachineFirstSetupPanel({
   // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
   // panel showed a mode the record does not hold. Only "no key at all" defaults to the first mode; a key that is set but not offered is an
   // explicit UNRESOLVED state with no mode selected, so no reading for that mode can be recorded until a mode is chosen on purpose.
-  const modeFound = modeKey ? (modes.find((m) => m.key === modeKey) ?? null) : null;
-  const modeUnresolved = Boolean(chosen) && Boolean(modeKey) && modes.length > 0 && modeFound === null;
+  // A NULL CHECK, NOT TRUTHINESS (Insurance PEER-1369-UI-MODE-UNRESOLVED F2): an empty-string key is a key that is set and not offered.
+  const modeKeySet = modeKey !== null && modeKey !== undefined;
+  const modeFound = modeKeySet ? (modes.find((m) => m.key === modeKey) ?? null) : null;
+  const modeUnresolved = Boolean(chosen) && modeKeySet && modes.length > 0 && modeFound === null;
   const mode = modeUnresolved ? null : (modeFound ?? modes[0] ?? null);
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const unsupported = chosen ? unsupportedModes(chosen.profile) : [];
@@ -811,7 +813,7 @@ export function MachineFirstSetupPanel({
       )}
       {modeUnresolved && (
         <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-mode-unresolved">
-          Recorded mode not available on this machine. Choose a mode to continue; nothing has been changed on the record.
+          Recorded mode not available on this machine. Choose a mode to continue.
         </p>
       )}
       {savedUnavailable && (
@@ -964,7 +966,8 @@ export function MachineFirstSetupPanel({
             because the field contract - the labels, units and precision below
             - is per MODE, not per machine.
           */}
-          {modes.length > 1 && (
+          {/* The picker also renders when the stored mode is unresolved, even on a single-mode unit: the notice says "choose a mode", so a control must exist (Insurance F1). */}
+          {(modes.length > 1 || modeUnresolved) && (
             <div className="flex flex-col gap-1.5" data-testid="machine-mode-picker">
               <SectionLabel size="caption">Mode</SectionLabel>
               {/*

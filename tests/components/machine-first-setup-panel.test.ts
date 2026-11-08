@@ -1911,7 +1911,11 @@ describe("a recorded mode the unit does not offer is never shown as another mode
     const html = render({ ...base, initialDeviceId: "room-9", restoredSelection: { deviceId: "room-9", modeKey: "not-a-mode" } });
     expect(html).toContain('data-testid="machine-mode-unresolved"');
     expect(html).toContain("Recorded mode not available on this machine");
-    expect(html).not.toContain("Galvanic");
+    expect(html, "F3: the copy claims nothing about the record").not.toContain("nothing has been changed");
+    // The offered mode is listed as a CHOICE (the picker renders while unresolved, Insurance F1) but is never pressed, and no entry form is mounted.
+    expect(html).toContain('data-testid="machine-mode-picker"');
+    expect(html).toMatch(/aria-pressed="false"[^>]*data-testid="machine-mode-galvanic"|data-testid="machine-mode-galvanic"[^>]*aria-pressed="false"/);
+    expect(html).not.toContain("machine-reading-entry");
   });
 
   it("CONTROL: an offered key resolves normally, with no unresolved notice", () => {

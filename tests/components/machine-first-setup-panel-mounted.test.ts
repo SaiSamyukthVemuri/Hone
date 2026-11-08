@@ -145,4 +145,34 @@ describe("a stored mode the unit does not offer is never re-sent, mounted (#1369
     expect(onRecord, "mounting records nothing").not.toHaveBeenCalled();
     for (const call of onResolvedChoice.mock.calls) expect(JSON.stringify(call)).not.toContain("not-offered");
   });
+
+  // Insurance PEER-1369-UI-MODE-UNRESOLVED F1: the notice says "choose a mode", so on a single-mode unit a picker must exist.
+  it("F1: a single-mode unit with an unoffered stored key renders the picker, with nothing pressed, and choosing the offered mode resolves it", async () => {
+    const onRecord = vi.fn(async () => ({ ok: true }));
+    const onSelectMachine = vi.fn(async () => ({ ok: true }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(createElement(MachineFirstSetupPanel, props({ initialModeKey: "not-offered", onRecord, onSelectMachine }) as never)));
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="machine-mode-galvanic"]');
+    expect(host.querySelector('[data-testid="machine-mode-picker"]'), "the picker is rendered while the mode is unresolved").not.toBeNull();
+    expect(button, "the offered mode is a button").not.toBeNull();
+    expect(button!.getAttribute("aria-pressed"), "no mode is shown as chosen").toBe("false");
+    expect(host.querySelector('[data-testid="machine-reading-entry"]'), "still no entry form").toBeNull();
+    await act(async () => {
+      button!.click();
+    });
+    expect(host.querySelector('[data-testid="machine-mode-unresolved"]'), "choosing the mode resolves the state").toBeNull();
+    expect(host.querySelector('[data-testid="machine-reading-entry"]'), "the entry form mounts for the chosen mode").not.toBeNull();
+  });
+
+  // F2: an empty-string key is set and not offered; truthiness used to let it fall back to the first mode.
+  it("F2: an empty-string stored key is unresolved, not the first mode", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(createElement(MachineFirstSetupPanel, props({ initialModeKey: "" }) as never)));
+    expect(host.querySelector('[data-testid="machine-mode-unresolved"]'), "the unresolved state is shown").not.toBeNull();
+    expect(host.querySelector('[data-testid="machine-reading-entry"]'), "no entry form is mounted for the first mode").toBeNull();
+  });
 });
