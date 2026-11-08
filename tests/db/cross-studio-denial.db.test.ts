@@ -63,7 +63,6 @@ const TABLES: TableSpec[] = [
   {
     table: "services",
     ownerOnly: true,
-    openGap: "H1",
     seed: async (s) => {
       const id = randomUUID();
       await adminQuery(`insert into public.services (id, studio_id, name) values ($1, $2, 'Probe service')`, [id, s.studioId]);

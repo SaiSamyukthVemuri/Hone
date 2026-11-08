@@ -1,0 +1,6 @@
+{
+  "pr": 1393,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0302_finance_m1_owner_only_cards_and_service_writes.sql"],
+  "release_receipt": "01-ops/1393-release-receipt.json"
+}
