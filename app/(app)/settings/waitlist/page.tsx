@@ -19,6 +19,7 @@ import {
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { redeemedUnbookedEntries } from "@/lib/waitlist/needs-attention";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -856,6 +857,49 @@ export default async function WaitlistSettingsPage({
               the composer unmounts on exactly the outcomes that carry a delivery
               disposition. This boundary survives that, and survives the row
               leaving the visible list altogether. */}
+
+          {/* NEEDS YOUR ATTENTION. Derived from facts this page already read: an
+              invited entry whose invitation was used. It survives a reload and
+              says only what is known: the booking did not complete. It cannot
+              say why, so it names no reason. */}
+          {(() => {
+            const stuck = redeemedUnbookedEntries(rows, cycleByEntry);
+            if (stuck === null) {
+              return (
+                <p className="text-sm text-neutral-600 dark:text-neutral-400" role="status">
+                  We couldn&rsquo;t check whether any invitation was used without a booking.
+                  Reload to try again.
+                </p>
+              );
+            }
+            if (stuck.length === 0) return null;
+            return (
+              <section
+                aria-labelledby="needs-attention-heading"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+              >
+                <h2 id="needs-attention-heading" className="font-medium">
+                  Needs your attention ({stuck.length})
+                </h2>
+                <p className="mt-1">
+                  The booking didn&rsquo;t complete for {stuck.length === 1 ? "this person" : "these people"}.
+                  Their invitation has been used, so it can&rsquo;t be sent again. Please check
+                  the calendar, then contact them to book a time.
+                </p>
+                <ul className="mt-2 list-disc pl-5">
+                  {stuck.map((r) => (
+                    <li key={r.id}>{r.name}</li>
+                  ))}
+                </ul>
+                <p className="mt-2">
+                  <WaitlistNavLink href={sectionHref("invited")} className="underline">
+                    Open the Invited group
+                  </WaitlistNavLink>{" "}
+                  to close each one once it is resolved.
+                </p>
+              </section>
+            );
+          })()}
 
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
