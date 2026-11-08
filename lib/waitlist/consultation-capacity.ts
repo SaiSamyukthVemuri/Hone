@@ -58,11 +58,11 @@ export function estimateCapacity(fit: number, outstanding: number): CapacityEsti
 export const CAPACITY_NOTE =
   "Availability can change at any time. Nothing is reserved for an invitation until the person books.";
 
-const slots = (n: number) => `${n} consultation slot${n === 1 ? "" : "s"}`;
+const appointments = (n: number) => `${n} consultation appointment${n === 1 ? "" : "s"}`;
 const people = (n: number) => `${n} more ${n === 1 ? "person" : "people"}`;
 
 /**
- * The allowance, in the owner's words: "N consultation slots available · You can invite M more people."
+ * The allowance, in the owner's words: "N consultation appointments available. You can invite M more people."
  *
  * Both numbers are lower bounds. The slot count treats the studio as one calendar (it never
  * over-promises but may under-count), and when 0323 is not applied the competing count covers every
@@ -73,7 +73,7 @@ export function allowanceHeadline(
   c: CapacityEstimate,
   outstandingScope: "window" | "all" = "window",
 ): { headline: string; short: string; note: string } {
-  const headline = `${slots(c.fit)} available \u00b7 You can invite ${people(c.open)}.`;
+  const headline = `${appointments(c.fit)} available. You can invite ${people(c.open)}.`;
   const short = `You can invite ${people(c.open)}`;
   const lowerBound =
     outstandingScope === "all"

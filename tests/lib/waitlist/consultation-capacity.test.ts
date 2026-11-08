@@ -49,7 +49,7 @@ import { capacityLines } from "@/lib/waitlist/consultation-capacity";
 describe("capacityLines", () => {
   it("shows the allowance, mentions outstanding invitations, and ends with the not-reserved note", () => {
     const l = capacityLines({ fit: 5, outstanding: 2, open: 3 });
-    expect(l[0]).toBe("5 consultation slots available \u00b7 You can invite 3 more people.");
+    expect(l[0]).toBe("5 consultation appointments available. You can invite 3 more people.");
     expect(l[1]).toMatch(/2 invitations are already out for these dates and not yet booked, so about 3 more/);
     expect(l[l.length - 1]).toMatch(/Nothing is reserved/);
   });
@@ -61,8 +61,8 @@ describe("capacityLines", () => {
   });
 
   it("is honest when nothing fits and never presents a lower bound as exact", () => {
-    expect(capacityLines({ fit: 0, outstanding: 0, open: 0 })[0]).toBe("0 consultation slots available \u00b7 You can invite 0 more people.");
-    expect(capacityLines({ fit: 1, outstanding: 0, open: 1 })[0]).toBe("1 consultation slot available \u00b7 You can invite 1 more person.");
+    expect(capacityLines({ fit: 0, outstanding: 0, open: 0 })[0]).toBe("0 consultation appointments available. You can invite 0 more people.");
+    expect(capacityLines({ fit: 1, outstanding: 0, open: 1 })[0]).toBe("1 consultation appointment available. You can invite 1 more person.");
     for (const f of [1, 2, 9]) expect(capacityLines({ fit: f, outstanding: 0, open: f })[0]).not.toMatch(/exactly/i);
   });
 });
@@ -72,12 +72,26 @@ import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
 describe("allowanceHeadline", () => {
   it("is the owner's sentence, with minimums stated and nothing to type", () => {
     const h = allowanceHeadline({ fit: 4, outstanding: 1, open: 3 });
-    expect(h.headline).toBe("4 consultation slots available \u00b7 You can invite 3 more people.");
+    expect(h.headline).toBe("4 consultation appointments available. You can invite 3 more people.");
     expect(h.short).toBe("You can invite 3 more people");
     expect(h.note).toMatch(/minimums/);
     expect(h.note).toMatch(/Availability can change; invitations don't reserve appointments\./);
   });
   it("says the studio-wide count over-counts when 0323 is absent", () => {
     expect(allowanceHeadline({ fit: 4, outstanding: 1, open: 3 }, "all").note).toMatch(/whatever dates they cover/);
+  });
+});
+
+describe("the allowance headline is Sam's confirmed wording, verbatim", () => {
+  it("uses 'appointments' and a full stop, never 'slots' or a middle dot", () => {
+    for (const [fit, open, want] of [
+      [5, 3, "5 consultation appointments available. You can invite 3 more people."],
+      [1, 1, "1 consultation appointment available. You can invite 1 more person."],
+      [0, 0, "0 consultation appointments available. You can invite 0 more people."],
+    ] as const) {
+      const h = allowanceHeadline({ fit, outstanding: 0, open }).headline;
+      expect(h).toBe(want);
+      expect(h).not.toMatch(/slot|\u00b7/i);
+    }
   });
 });
