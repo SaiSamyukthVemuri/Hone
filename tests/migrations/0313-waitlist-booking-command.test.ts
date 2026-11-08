@@ -121,4 +121,18 @@ describe("0313 — the explicit invitation -> appointment link", () => {
   it("the held down file drops the link table too", () => {
     expect(exec(DOWN)).toMatch(/drop table if exists public\.waitlist_invitation_bookings;/);
   });
+
+  it("the link insert must write exactly one row, or the booking aborts", () => {
+    expect(E).toMatch(/get diagnostics v_links = row_count;/);
+    expect(E).toMatch(/if v_links is distinct from 1 then\s+raise exception 'waitlist_invitation_link_not_written'/);
+    expect(E.indexOf("get diagnostics v_links")).toBeLessThan(E.indexOf("when sqlstate 'WA313'"));
+  });
+
+  it("carries an in-migration self-check that the link table has no API-role privilege", () => {
+    const at = E.indexOf("aclexplode(c.relacl)");
+    expect(at).toBeGreaterThan(0);
+    expect(E.slice(at - 400, at + 900)).toMatch(/anon', 'authenticated', 'service_role'/);
+    expect(E.slice(at)).toMatch(/raise exception 'waitlist_invitation_bookings must carry no privilege/);
+    expect(E.indexOf("aclexplode(c.relacl)")).toBeLessThan(E.lastIndexOf("commit;"));
+  });
 });

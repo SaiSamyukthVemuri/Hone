@@ -244,11 +244,13 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     title: "This appointment is already booked",
     body: "This invitation has already been used. Check your email for the confirmation, or contact the studio.",
   },
-  used_appointment_cancelled: {
+  already_used: {
     title: "This invitation has already been used",
-    // Makes NO booked claim (the appointment was cancelled) and offers no
-    // rebooking from this link: the studio decides what happens next.
-    body: "This invitation has already been used. Please contact the studio about your appointment.",
+    body: "This invitation has already been used. Check your confirmation email or contact the studio.",
+  },
+  used_contact_studio: {
+    title: "This invitation has already been used",
+    body: "This invitation has already been used. Please contact the studio about this invitation.",
   },
   consumed_without_booking: {
     title: "We couldn’t finish booking your appointment",
@@ -312,24 +314,17 @@ function BookedView({
   dateLabel,
 }: {
   presentation: OfferPresentation;
-  startLabel: string | null;
-  dateLabel: string | null;
+  startLabel: string;
+  dateLabel: string;
 }) {
-  // A reopened link can know that the booking happened without knowing its time
-  // (the booking predates the explicit link, or its appointment was cancelled).
-  // Then the time is not shown at all, rather than guessed.
-  const when = startLabel && dateLabel ? `${dateLabel} at ${startLabel}` : null;
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl text-[#0A0A0A]">You’re booked</h1>
       <p className="text-sm text-[#0A0A0A]">
-        {presentation.serviceName}
-        {when ? ` · ${when}` : ""}
+        {presentation.serviceName} · {dateLabel} at {startLabel}
       </p>
       <p className="text-sm text-[#6B6B6B]">
-        {when
-          ? `${presentation.studioName} will send a confirmation. Add it to your calendar from that email.`
-          : `${presentation.studioName} has your booking. Check your confirmation email for the time, or contact the studio.`}
+        {presentation.studioName} will send a confirmation. Add it to your calendar from that email.
       </p>
     </div>
   );

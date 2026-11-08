@@ -482,49 +482,50 @@ async function loadStudioContext(
 }
 
 /**
- * The booked screen for a spent invitation whose entry the database says is
- * converted, with the appointment's time only when the explicit link names a
- * live one. Null when the state is anything else or cannot be read (including a
- * database without the 0313 function). Never throws.
+ * The screen for a spent invitation whose entry the database says is converted.
+ * Null when the state is anything else or cannot be read (including a database
+ * without the 0313 function). Never throws.
+ *
+ * WHO MAY SEE WHAT. A reopened link on its own proves nothing about the person
+ * holding it, so without the proven capability (the emailed-code proof this
+ * browser already completed) the answer is the neutral "already used" sentence:
+ * no service, time, studio detail or booking outcome. A proven holder sees the
+ * booked service, date and time ONLY for a live appointment the explicit link
+ * names; every other converted case (no link, cancelled) is the neutral
+ * "already used" wording, which never mentions an appointment.
  */
 async function bookedViewOnReopen(
   rawToken: string,
   resolved: ResolveOutcome,
+  proven: boolean,
 ): Promise<InvitationViewState | null> {
   try {
     const { data } = await createAdminClient().rpc("waitlist_invitation_booking_state", {
       p_raw_token: rawToken,
     });
     const row = Array.isArray(data) ? data[0] : data;
+    if (row?.state !== "booked" && row?.state !== "booked_cancelled") return null;
+    if (!proven) return { kind: "closed", reason: "already_used", presentation: null };
     if (
-      (row?.state !== "booked" && row?.state !== "booked_cancelled") ||
+      row.state === "booked_cancelled" ||
+      typeof row.starts_at !== "string" ||
       typeof row.studio_id !== "string" ||
       typeof row.service_id !== "string"
     ) {
-      return null;
+      return { kind: "closed", reason: "used_contact_studio", presentation: null };
     }
     const studio = await loadStudioContext(row.studio_id, row.service_id);
-    if (!studio) return null;
-    // A booking whose appointment was cancelled is NOT shown as booked.
-    if (row.state === "booked_cancelled") {
-      return { kind: "closed", reason: "used_appointment_cancelled", presentation: studio.presentation };
+    const at = new Date(row.starts_at);
+    if (!studio || Number.isNaN(at.getTime())) {
+      return { kind: "closed", reason: "used_contact_studio", presentation: null };
     }
-    // The entry is converted, so a booking exists. The TIME is shown only when
-    // the explicit link names a live appointment; otherwise none (no link, as for
-    // a booking made before the link existed or through the old path, or a
-    // cancelled appointment). Nothing is inferred from timestamps.
-    const at = typeof row.starts_at === "string" ? new Date(row.starts_at) : null;
     const tz = studio.presentation.studioTimezone;
-    const booked =
-      at && !Number.isNaN(at.getTime())
-        ? { startLabel: localTimeString12h(at, tz), dateLabel: localDateString(at, tz) }
-        : { startLabel: null, dateLabel: null };
     return deriveInvitationViewState({
       resolve: resolved,
       presentation: studio.presentation,
       proof: { kind: "required" },
       slots: [],
-      booked,
+      booked: { startLabel: localTimeString12h(at, tz), dateLabel: localDateString(at, tz) },
       declined: false,
     });
   } catch {
@@ -535,6 +536,10 @@ async function bookedViewOnReopen(
 /** Resolve plus presentation, or a view state describing why we cannot. */
 async function loadContext(
   rawToken: string,
+  // ONLY THE RELOAD PATH asks for the spent-invitation view. Book, decline,
+  // request-proof and the rest share this function and must see a spent
+  // invitation exactly as they always did.
+  opts: { reopen?: boolean } = {},
 ): Promise<
   | {
       ok: true;
@@ -548,10 +553,15 @@ async function loadContext(
   // confirm your booking" even when the booking had just succeeded, because
   // nothing here could see the appointment. This runs whichever booking path
   // made the booking (the flag gates the booking, not this read-only check): a
-  // converted entry is shown as booked, with the time only when the explicit
-  // 0313 link has one. Anything else keeps the honest "couldn't confirm" screen.
-  if (resolved.kind === "already_redeemed") {
-    const reopened = await bookedViewOnReopen(rawToken, resolved);
+  // converted entry is shown as used, and as booked (with its time) only to a
+  // holder who has proven the emailed code in this browser. Anything else keeps
+  // the honest "couldn't confirm" screen.
+  if (opts.reopen && resolved.kind === "already_redeemed") {
+    const reopened = await bookedViewOnReopen(
+      rawToken,
+      resolved,
+      (await readCapability(rawToken)) !== null,
+    );
     if (reopened) return { ok: false, state: reopened };
   }
   if (resolved.kind !== "live") {
@@ -843,7 +853,7 @@ async function offerState(
 export async function loadInvitationAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
-  const ctx = await loadContext(rawToken);
+  const ctx = await loadContext(rawToken, { reopen: true });
   if (!ctx.ok) return ctx.state;
   // A capability already in the jar means this browser proved recently. The
   // database still re-checks it at the mutation, so trusting it for RENDERING

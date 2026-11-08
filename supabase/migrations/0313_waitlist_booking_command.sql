@@ -163,6 +163,7 @@ declare
   v_round  uuid;
   v_red    record;
   v_row    record;
+  v_links  integer;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_raw_capability is null or p_raw_capability !~ '^[a-f0-9]{64}$'
@@ -225,6 +226,13 @@ begin
     select i.id, i.studio_id, v_row.appointment_id
       from public.new_client_waitlist_invitations i
      where i.token_hash = v_hash;
+    -- EXACTLY ONE ROW. An INSERT ... SELECT that matched nothing is not an error
+    -- by itself; it would leave a booking with no link, which the reopen check
+    -- then cannot report. Anything but one row aborts, and the booking with it.
+    get diagnostics v_links = row_count;
+    if v_links is distinct from 1 then
+      raise exception 'waitlist_invitation_link_not_written' using errcode = 'P0001';
+    end if;
   exception
     when sqlstate 'WA313' then
       -- The redeem and anything the inner command wrote are rolled back. The
@@ -385,5 +393,36 @@ grant execute on function public.redeem_and_book_waitlist_invitation(text, text,
 grant execute on function public.waitlist_invitation_booking_state(text) to service_role;
 grant execute on function public.record_waitlist_invitation_followup(text, text) to service_role;
 grant execute on function public.resolve_waitlist_invitation_followup(uuid, uuid, uuid) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- 6. Self-check: the link table has NO privilege for any API role. A hosted apply
+-- that finds one (default privileges, a stray grant) fails instead of shipping a
+-- table that names which invitation booked which appointment.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+       select 1
+         from pg_catalog.pg_class c
+         cross join lateral pg_catalog.aclexplode(c.relacl) a
+        where c.oid = 'public.waitlist_invitation_bookings'::regclass
+          and (a.grantee = 0
+               or a.grantee in (select oid from pg_catalog.pg_roles
+                                 where rolname in ('anon', 'authenticated', 'service_role')))
+     )
+     or exists (
+       select 1
+         from pg_catalog.pg_attribute t
+         cross join lateral pg_catalog.aclexplode(t.attacl) a
+        where t.attrelid = 'public.waitlist_invitation_bookings'::regclass
+          and t.attacl is not null
+          and (a.grantee = 0
+               or a.grantee in (select oid from pg_catalog.pg_roles
+                                 where rolname in ('anon', 'authenticated', 'service_role')))
+     ) then
+    raise exception 'waitlist_invitation_bookings must carry no privilege for public, anon, authenticated or service_role';
+  end if;
+end;
+$$;
 
 commit;

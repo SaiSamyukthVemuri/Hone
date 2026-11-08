@@ -1567,17 +1567,19 @@ describe("HON-7: reopening a spent invitation", () => {
     studio_id: STUDIO,
     service_id: SERVICE,
   };
+  const prove = () => cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+  const ALREADY_USED = { kind: "closed", reason: "already_used", presentation: null };
+  const CONTACT = { kind: "closed", reason: "used_contact_studio", presentation: null };
 
   beforeEach(() => {
     resolveInvitation.mockResolvedValue({ kind: "already_redeemed" });
-    process.env.WAITLIST_BOOKING_COMMAND = "1";
   });
   afterEach(() => {
-    delete process.env.WAITLIST_BOOKING_COMMAND;
     bookingStateFixture.rows = [];
   });
 
-  it("shows the BOOKED screen with the time the database holds, not 'we couldn't confirm'", async () => {
+  it("a PROVEN holder sees the booked service, date and time", async () => {
+    prove();
     bookingStateFixture.rows = [BOOKED_ROW];
     const view = await loadInvitationAction(TOKEN);
     expect(view.kind).toBe("booked");
@@ -1587,40 +1589,52 @@ describe("HON-7: reopening a spent invitation", () => {
     }
   });
 
-  it("a CANCELLED linked appointment makes no booked claim and offers no rebooking", async () => {
-    bookingStateFixture.rows = [{ ...BOOKED_ROW, state: "booked_cancelled", starts_at: null }];
+  it.each([
+    ["a live booking", [BOOKED_ROW]],
+    ["a booking with no link", [{ ...BOOKED_ROW, starts_at: null }]],
+    ["a cancelled appointment", [{ ...BOOKED_ROW, state: "booked_cancelled", starts_at: null }]],
+  ])("an UNPROVEN holder gets only the neutral 'already used' view, no detail: %s", async (_l, rows) => {
+    // No capability cookie: a link alone proves nothing about who holds it.
+    bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
     const view = await loadInvitationAction(TOKEN);
-    expect(view).toMatchObject({ kind: "closed", reason: "used_appointment_cancelled" });
+    expect(view).toEqual(ALREADY_USED);
   });
 
   it.each([
-    ["no link (a booking from the old path, flag OFF, or one that predates the link)"],
-  ])("a converted entry with no link shows 'booked' and NO time, never a guess: %s", async () => {
-    bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
-    const view = await loadInvitationAction(TOKEN);
-    expect(view.kind).toBe("booked");
-    if (view.kind === "booked") {
-      expect(view.startLabel).toBeNull();
-      expect(view.dateLabel).toBeNull();
-    }
+    ["a cancelled appointment", { ...BOOKED_ROW, state: "booked_cancelled", starts_at: null }],
+    ["no link (old path, or predates the link)", { ...BOOKED_ROW, starts_at: null }],
+  ])("a PROVEN holder gets 'contact the studio', with no booked or appointment claim: %s", async (_l, row) => {
+    prove();
+    bookingStateFixture.rows = [row];
+    expect(await loadInvitationAction(TOKEN)).toEqual(CONTACT);
   });
 
   it.each([
     ["spent but not booked", [{ state: "redeemed_unbooked", starts_at: null, studio_id: STUDIO, service_id: SERVICE }]],
     ["no answer (function missing or unreadable)", []],
-  ])("keeps the honest 'couldn't confirm' screen when the entry is not converted: %s", async (_label, rows) => {
+  ])("keeps the honest 'couldn't confirm' screen when the entry is not converted: %s", async (_l, rows) => {
+    prove();
     bookingStateFixture.rows = rows as Array<Record<string, unknown>>;
-    const view = await loadInvitationAction(TOKEN);
-    expect(view).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
+    expect(await loadInvitationAction(TOKEN)).toMatchObject({ kind: "closed", reason: "booking_outcome_unknown" });
   });
 
-  it("works with the booking-command flag OFF too: the old path's booking is shown as booked", async () => {
+  it("the flag does not matter: the old path's booking gets the same answers", async () => {
     delete process.env.WAITLIST_BOOKING_COMMAND;
     bookingStateFixture.rows = [{ ...BOOKED_ROW, starts_at: null }];
-    const view = await loadInvitationAction(TOKEN);
-    expect(view.kind).toBe("booked");
+    expect(await loadInvitationAction(TOKEN)).toEqual(ALREADY_USED);
+    prove();
+    expect(await loadInvitationAction(TOKEN)).toEqual(CONTACT);
+  });
+
+  it("the other paths over a redeemed token behave as before, whatever the booking row says", async () => {
     bookingStateFixture.rows = [BOOKED_ROW];
-    const withTime = await loadInvitationAction(TOKEN);
-    expect(withTime.kind === "booked" && withTime.startLabel).toBe("10:00 AM");
+    prove();
+    const asBefore = { kind: "closed", reason: "booking_outcome_unknown" };
+    declineInvitation.mockResolvedValue({ kind: "not_live" });
+    expect(await declineInvitationAction(TOKEN)).toMatchObject(asBefore);
+    beginRecipientProof.mockClear();
+    expect(await requestInvitationProofAction(TOKEN)).toMatchObject(asBefore);
+    expect(beginRecipientProof).not.toHaveBeenCalled();
+    expect(await bookInvitationSlotAction(TOKEN, "2026-10-15T14:00:00.000Z")).toMatchObject(asBefore);
   });
 });

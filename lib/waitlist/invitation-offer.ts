@@ -192,11 +192,16 @@ export type InvitationClosedReason =
   | "revoked"
   | "already_redeemed"
   /**
-   * The invitation's booking was made and its appointment has since been
-   * CANCELLED. Says only that the invitation is spent; it claims no appointment
-   * and offers no rebooking (the studio decides).
+   * The invitation is spent and the holder has NOT proven they are its
+   * recipient in this browser. Says only that it was used: no service, time,
+   * studio detail or booking outcome (a link alone must not disclose them).
    */
-  | "used_appointment_cancelled"
+  | "already_used"
+  /**
+   * The invitation is spent, the holder is proven, and the database cannot
+   * confirm a live booking behind it. Says nothing about an appointment.
+   */
+  | "used_contact_studio"
   /**
    * The redeem committed and the appointment did not.
    *
@@ -334,7 +339,7 @@ export type InvitationViewState =
       inviteOpenUntil?: string;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
-  | { kind: "booked"; presentation: OfferPresentation; startLabel: string | null; dateLabel: string | null }
+  | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
   /** `keptOnList` is true only when 0319 returned the entry to waiting. */
   | { kind: "declined"; keptOnList?: boolean }
   | { kind: "error"; retryable: boolean };
@@ -473,7 +478,7 @@ export type RecipientContext = {
   proof: ProofStage;
   slots: readonly OfferedSlot[];
   /** Set once a redeem has succeeded. */
-  booked: { startLabel: string | null; dateLabel: string | null } | null;
+  booked: { startLabel: string; dateLabel: string } | null;
   /** Set once a decline has succeeded. */
   declined: boolean;
   /**

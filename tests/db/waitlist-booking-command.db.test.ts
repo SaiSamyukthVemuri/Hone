@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
@@ -251,6 +253,49 @@ describe("0313 redeem_and_book_waitlist_invitation", () => {
     expect(await apptCount(f.studioId)).toBe(1);
     expect((await invitationOf(b.entryId)).redeemed_at).toBeNull();
     expect(await entryStatus(b.entryId)).toBe("invited");
+  });
+
+  it("R4: a link insert that writes ZERO rows aborts the booking; exactly one row is required", async () => {
+    const f = await fixture("zero");
+    const [t1] = await slots(f, 1);
+    const p = await provenEntry(f, "zero");
+    // A trigger scoped to THIS studio swallows the command's insert (0 rows, no
+    // error), the failure mode an INSERT ... SELECT has when its SELECT matches
+    // nothing. It is scoped by studio so concurrent suites are untouched.
+    const fn = `public.test_skip_link_${f.studioId.replace(/-/g, "").slice(0, 12)}`;
+    await q(`create or replace function ${fn}() returns trigger language plpgsql as $$ begin if new.studio_id = '${f.studioId}' then return null; end if; return new; end $$`);
+    await q(`create trigger test_skip_link before insert on public.waitlist_invitation_bookings for each row execute function ${fn}()`);
+    try {
+      await expect(
+        q(BOOK, [p.token, p.cap, f.studioId, p.email, f.serviceId, t1, tokenHash("zero")]),
+      ).rejects.toMatchObject({ message: expect.stringContaining("waitlist_invitation_link_not_written") });
+      expect(await apptCount(f.studioId)).toBe(0);
+      expect((await invitationOf(p.entryId)).redeemed_at).toBeNull();
+      expect(await entryStatus(p.entryId)).toBe("invited");
+    } finally {
+      await q(`drop trigger if exists test_skip_link on public.waitlist_invitation_bookings`);
+      await q(`drop function if exists ${fn}()`);
+    }
+  });
+
+  it("the migration's OWN self-check passes on the shipped state and raises on a grant to any API role", async () => {
+    // The real DO block, lifted from the migration file and executed here.
+    const sql = readFileSync(join(__dirname, "../../supabase/migrations/0313_waitlist_booking_command.sql"), "utf8");
+    const m = sql.match(/\ndo \$\$\nbegin\n  if exists \([\s\S]*?\n\$\$;/);
+    expect(m, "self-check block not found").not.toBeNull();
+    const block = (m as RegExpMatchArray)[0];
+    await q(block); // clean: no error
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      await q(`grant select on public.waitlist_invitation_bookings to ${role}`);
+      try {
+        await expect(q(block), role).rejects.toMatchObject({
+          message: expect.stringContaining("must carry no privilege"),
+        });
+      } finally {
+        await q(`revoke all on public.waitlist_invitation_bookings from ${role}`);
+      }
+    }
+    await q(block); // and clean again once revoked
   });
 
   it("any other exception (a forced unique violation) propagates, rolls the redeem back and leaves the invitation live", async () => {
