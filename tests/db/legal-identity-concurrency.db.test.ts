@@ -18,18 +18,18 @@ const seedRow = (s: SeededStudio, p: Parts) =>
   );
 
 /** The action's conditional UPDATE. Returns the number of rows it changed. */
-const conditionalUpdate = (s: SeededStudio, next: Parts, baseline: Parts) =>
+const conditionalUpdate = (s: SeededStudio, next: Parts, baseline: Parts, updatedBy: string | null = null) =>
   asUser(s.userId, async (q) =>
     (
       await q(
         `update public.client_legal_identities
-            set legal_given_name = $3, legal_middle_name = $4, legal_family_name = $5, updated_by = null
+            set legal_given_name = $3, legal_middle_name = $4, legal_family_name = $5, updated_by = $9
           where client_id = $1 and studio_id = $2
             and legal_given_name is not distinct from $6
             and legal_middle_name is not distinct from $7
             and legal_family_name is not distinct from $8
         returning client_id`,
-        [s.clientId, s.studioId, next.given, next.middle, next.family, baseline.given, baseline.middle, baseline.family],
+        [s.clientId, s.studioId, next.given, next.middle, next.family, baseline.given, baseline.middle, baseline.family, updatedBy],
       )
     ).rows.length,
   );
@@ -53,13 +53,17 @@ const auditCount = async (clientId: string) =>
 const BASE: Parts = { given: "Given", middle: null, family: "Family" };
 
 describe("legal identity save: concurrency", () => {
-  it("applies from an unchanged baseline: one row changed, revision and audit move once", async () => {
+  it("applies from an unchanged baseline with the real practitioner as updated_by: revision and audit move once, the audit actor is that practitioner", async () => {
     const s = await seedStudio("legal-ok");
     await seedRow(s, BASE);
     const audit0 = await auditCount(s.clientId);
-    expect(await conditionalUpdate(s, { given: "Other", middle: null, family: "Family" }, BASE)).toBe(1);
+    expect(await conditionalUpdate(s, { given: "Other", middle: null, family: "Family" }, BASE, s.practitionerId)).toBe(1);
     expect((await stored(s.clientId))[0]).toMatchObject({ g: "Other", revision: 2 });
     expect(await auditCount(s.clientId)).toBe(audit0 + 1);
+    const by = (await adminQuery(`select updated_by from public.client_legal_identities where client_id = $1`, [s.clientId])).rows[0].updated_by;
+    expect(by).toBe(s.practitionerId);
+    const actor = (await adminQuery(`select changed_by from public.client_identity_audit where client_id = $1 and concept = 'legal_name' order by revision desc limit 1`, [s.clientId])).rows[0].changed_by;
+    expect(actor, "the audit actor is the signed-in practitioner").toBe(s.practitionerId);
   });
 
   it("deterministic: a save that waits on a concurrent committed change re-checks, changes nothing and writes no audit row", async () => {
@@ -67,11 +71,13 @@ describe("legal identity save: concurrency", () => {
     await seedRow(s, BASE);
     const audit0 = await auditCount(s.clientId);
     let bPid: number | null = null;
+    let aPid: number | null = null;
     let bDone = false;
     let bCount = -1;
     let bPromise: Promise<void> = Promise.resolve();
     let auditAfterA = 0;
     await adminTx(async (qa) => {
+      aPid = (await qa(`select pg_backend_pid() as pid`)).rows[0].pid;
       await qa(`update public.client_legal_identities set legal_family_name = 'Changed' where client_id = $1`, [s.clientId]);
       bPromise = asUser(s.userId, async (qb) => {
         bPid = (await qb(`select pg_backend_pid() as pid`)).rows[0].pid;
@@ -96,6 +102,8 @@ describe("legal identity save: concurrency", () => {
         if (!waiting) await sleep(50);
       }
       expect(waiting, "the stale save must be WAITING on the row, not have read-and-written already").toBe(true);
+      const blockers = (await adminQuery(`select pg_blocking_pids($1) as b`, [bPid])).rows[0].b as number[];
+      expect(blockers, "the stale save is blocked by the open writer, not by something else").toContain(aPid);
     });
     await bPromise;
     auditAfterA = await auditCount(s.clientId);
@@ -142,10 +150,12 @@ describe("legal identity save: concurrency", () => {
   it("deterministic insert: an insert that waits on an uncommitted insert is refused with 23505 once it commits", async () => {
     const s = await seedStudio("legal-ins-wait");
     let bPid: number | null = null;
+    let aPid: number | null = null;
     let bDone = false;
     let bResult = "";
     let bPromise: Promise<void> = Promise.resolve();
     await adminTx(async (qa) => {
+      aPid = (await qa(`select pg_backend_pid() as pid`)).rows[0].pid;
       await qa(
         `insert into public.client_legal_identities (client_id, studio_id, legal_given_name, legal_family_name, source) values ($1,$2,'First','Family','staff_entry')`,
         [s.clientId, s.studioId],
@@ -173,6 +183,8 @@ describe("legal identity save: concurrency", () => {
         if (!waiting) await sleep(50);
       }
       expect(waiting, "the second insert must be WAITING on the first").toBe(true);
+      const blockers = (await adminQuery(`select pg_blocking_pids($1) as b`, [bPid])).rows[0].b as number[];
+      expect(blockers, "the second insert is blocked by the open first insert").toContain(aPid);
     });
     await bPromise;
     expect(bResult).toBe("23505");
