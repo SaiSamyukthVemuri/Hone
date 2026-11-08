@@ -1001,8 +1001,8 @@ describe("S4: the settlement and admission-mode commands refuse a no-studio user
 // 112-115, 148-151, 181-184), and answers only {ok:false, code:'refused'}. Proven here:
 //   1. the stranger gets exactly that answer for the owner's real studio, a random studio and a
 //      NULL studio (so the answer is no oracle for which studios exist, and echoes no studio id);
-//   2. the stranger's calls add no event row, counted on the SAME connection inside the transaction
-//      (reset role, count, back to the savepoint), so a call that did insert would be seen; the scratch
+//   2. the stranger's calls add no event row in ANY studio (the whole table is counted before and after), on the SAME
+//      connection inside the transaction (reset role, count, back to the savepoint), so a call that did insert would be seen; the scratch
 //      probe below shows the count moving when the ownership check is removed from dismiss_attention_item;
 //   3. after the OWNER dismissed an item (same transaction, claims then switched to the stranger),
 //      the stranger gets the refused answer and no item key or token. The refused answer is the
@@ -1030,15 +1030,20 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
     await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
   };
   const call = async (c: Client, f: Fn, studio: string | null) => (await callCounting(c, f, studio)).answer;
-  // The answer plus how many events the call left in the studio, counted on the same connection before the
-  // savepoint is rolled back (the table is closed to authenticated, so the count runs as the owner role).
+  // The answer plus how many rows the call added to dashboard_attention_events in ALL studios (not only the
+  // named one), counted on the same connection before the savepoint is rolled back. The table is closed to
+  // authenticated, so both counts run as the owner role and the call runs as authenticated in between.
+  const countAllEvents = async (c: Client) =>
+    Number((await c.query("select count(*)::int n from public.dashboard_attention_events")).rows[0].n);
   const callCounting = async (c: Client, f: Fn, studio: string | null) => {
     await c.query("savepoint s5");
     try {
+      await c.query("reset role");
+      const before = await countAllEvents(c);
+      await c.query("set local role authenticated");
       const answer = JSON.stringify((await c.query(f.sql(studio))).rows[0].r);
       await c.query("reset role");
-      const added = Number((await c.query("select count(*)::int n from public.dashboard_attention_events where studio_id = $1", [A.studioId])).rows[0].n);
-      return { answer, added };
+      return { answer, added: (await countAllEvents(c)) - before };
     } finally { await c.query("rollback to savepoint s5"); }
   };
   const withTx = async <T,>(fn: (c: Client) => Promise<T>): Promise<T> => {
@@ -1062,7 +1067,7 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
           const { answer, added } = await callCounting(c, f, st);
           expect(answer, `${f.name}(${st === null ? "null" : "studio"})`).toBe(REFUSED);
           expect(answer).not.toContain(A.studioId);
-          expect(added, `${f.name}: a refused stranger call must leave no event in the studio`).toBe(0);
+          expect(added, `${f.name}: a refused stranger call must add no event row anywhere`).toBe(0);
         }
       }
     });
@@ -1106,7 +1111,7 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
       for (const f of FNS) {
         const { answer, added } = await callCounting(c, f, A.studioId);
         expect(answer, `other-studio owner ${f.name}`).toBe(REFUSED);
-        expect(added, `${f.name}: no event in the other studio`).toBe(0);
+        expect(added, `${f.name}: no event row anywhere`).toBe(0);
       }
     });
   });
