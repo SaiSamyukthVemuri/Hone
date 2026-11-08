@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { adminQuery, closePool, seedStudio } from "./helpers/harness";
+import { adminQuery, asUser, closePool, seedStudio } from "./helpers/harness";
 import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "@/e2e/helpers/local-env";
 
 // ===========================================================================
@@ -138,10 +138,22 @@ async function seedProspect(label: string) {
   );
   expect(round.rows[0].result, "the fixture must actually open a round").toBe("opened");
   const email = `p-${label}-${studio.studioId.slice(0, 8)}@harness.local`;
+  // THE PATH THE APP USES: the guarded join, which decides admission in the same transaction. It
+  // answers only while the studio is on Waitlist, so the owner switches the mode through the
+  // owner command, the prospect joins, and the mode goes back to Closed (the launch setting)
+  // before anything is invited. The raw `join_new_client_waitlist` is not used: it is the
+  // internal command the guarded one wraps.
+  const setMode = (mode: string) =>
+    asUser(studio.userId, (query) =>
+      query("select * from public.set_new_client_admission_mode($1, $2)", [studio.studioId, mode]),
+    );
+  expect((await setMode("waitlist")).rows[0].outcome).toBe("ok");
   const joined = await adminQuery(
-    `select result, entry_id from public.join_new_client_waitlist($1, $2, $3, $4)`,
+    `select result, entry_id from public.join_new_client_waitlist_guarded($1, $2, $3, $4, false)`,
     [studio.studioId, `Prospect ${label}`, email, "+15550000321"],
   );
+  expect(joined.rows[0].result).toBe("created");
+  expect((await setMode("closed")).rows[0].outcome).toBe("ok");
   const entryId = joined.rows[0].entry_id as string;
   await adminQuery(`select public.claim_new_client_waitlist_entry($1, $2, $3)`, [
     studio.studioId,
@@ -249,9 +261,11 @@ describe("the emailed link and the emailed code, end to end", () => {
     const { mail } = await sendInvitation(p);
     const token = linkTokens(mail.payload.text)[0];
     expect(token).toBeTruthy();
-    // One character different, same length and alphabet.
-    const last = token[token.length - 1];
-    const corrupt = token.slice(0, -1) + (last === "A" ? "B" : "A");
+    // One character different, same length and alphabet. The FIRST character is flipped: the last
+    // character of a base64url string can carry padding bits, so changing it might not change the
+    // decoded value.
+    const first = token[0];
+    const corrupt = (first === "A" ? "B" : "A") + token.slice(1);
     expect(corrupt).not.toBe(token);
     // The corrupt value cannot be the stored hash's preimage.
     const stored = await adminQuery(
@@ -260,13 +274,18 @@ describe("the emailed link and the emailed code, end to end", () => {
     );
     expect(sha256(corrupt)).not.toBe(stored.rows[0].token_hash);
 
+    // Its own client address, so the positive test's calls cannot have used up this one's allowance:
+    // a refusal here must be the token being unknown, not the proof throttle.
+    hoisted.requestHeaders = new Headers({ "x-forwarded-for": "203.0.113.22" });
     const before = hoisted.sends.length;
     const { requestInvitationProofAction, loadInvitationAction, bookInvitationSlotAction } = await actions();
     const requested = await requestInvitationProofAction(corrupt);
-    expect(requested.kind === "proof" && requested.stage.kind === "sent").toBe(false);
+    // The exact refusal for an unknown token: a terminal error, not retryable. The throttle's answer
+    // is a different state (a proof stage of "unavailable", retryable), so this cannot be the throttle.
+    expect(requested).toEqual({ kind: "error", retryable: false });
     expect(hoisted.sends.length, "no code email may be sent for a token that is not the invitation's").toBe(before);
     const loaded = await loadInvitationAction(corrupt);
-    expect(loaded.kind).not.toBe("offer");
+    expect(loaded).toEqual({ kind: "error", retryable: false });
     const booked = await bookInvitationSlotAction(corrupt, new Date(Date.now() + 2 * 86_400_000).toISOString());
     expect(booked.kind).not.toBe("booked");
     const appts = await adminQuery(`select id from public.appointments where studio_id = $1`, [p.studio.studioId]);
