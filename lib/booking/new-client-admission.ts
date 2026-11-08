@@ -374,6 +374,18 @@ export function newClientAdmissionRefusesInvitedBooking(
   return newClientAdmissionRefusesOutright(a);
 }
 
+/**
+ * WHY an invited booking is refused, for copy that must not assert more than is known:
+ * `closed` is a read mode; `unreadable` means the mode could not be read (still refused,
+ * fail closed, but nobody may be told the studio is closed). null = not refused.
+ */
+export function newClientAdmissionInvitedRefusalKind(
+  a: NewClientAdmission,
+): "closed" | "unreadable" | null {
+  if (!newClientAdmissionRefusesInvitedBooking(a)) return null;
+  return a.ok ? "closed" : "unreadable";
+}
+
 export function newClientMayBook(a: NewClientAdmission): boolean {
   return a.ok && a.mode === "open";
 }

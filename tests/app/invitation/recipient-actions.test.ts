@@ -1472,13 +1472,24 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
       expect(beginRecipientProof).not.toHaveBeenCalled();
     });
 
+    it("an UNREADABLE mode fails closed with wording that does not claim the studio is closed", async () => {
+      studioFixture.admissionMode = "not-a-mode";
+      for (const [, run] of everyAction) {
+        const out = await run();
+        expect(out.kind).toBe("closed");
+        if (out.kind !== "closed") throw new Error("unreachable");
+        expect(out.reason).toBe("admission_unreadable");
+      }
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    });
+
     it.each(["waitlist", "open"])("%s admission leaves the offer open", async (mode) => {
       studioFixture.admissionMode = mode;
       const out = await loadInvitationAction(TOKEN);
       expect(out.kind).not.toBe("closed");
     });
 
-    it("a refusal at commit (mode closed after load) says so instead of 'try again'", async () => {
+    it("a refusal at commit that the re-read cannot confirm as closed uses the non-asserting wording, never 'try again'", async () => {
       studioFixture.admissionMode = "waitlist";
       publicBookAppointmentAction.mockResolvedValue({
         ok: false,
@@ -1487,6 +1498,18 @@ describe("P2-A — an offer the booking path cannot accept is closed", () => {
       });
       const out = await bookInvitationSlotAction(TOKEN, SLOT);
       expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      // still waitlist on the re-read: not provably closed, so the non-asserting wording
+      expect(out.reason).toBe("admission_unreadable");
+    });
+
+    it("a commit-time refusal that re-reads as closed says closed", async () => {
+      studioFixture.admissionMode = "waitlist";
+      publicBookAppointmentAction.mockImplementation(async () => {
+        studioFixture.admissionMode = "closed"; // the owner closed it between load and commit
+        return { ok: false, error: "x", code: "new_client_admission_closed" };
+      });
+      const out = await bookInvitationSlotAction(TOKEN, SLOT);
       if (out.kind !== "closed") throw new Error("unreachable");
       expect(out.reason).toBe("admission_closed");
     });

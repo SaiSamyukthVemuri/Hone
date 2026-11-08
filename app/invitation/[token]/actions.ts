@@ -53,7 +53,7 @@ import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   NEW_CLIENT_ADMISSION_REFUSAL_CODE,
   getNewClientAdmissionMode,
-  newClientAdmissionRefusesInvitedBooking,
+  newClientAdmissionInvitedRefusalKind,
 } from "@/lib/booking/new-client-admission";
 import {
   FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
@@ -629,12 +629,13 @@ async function loadContext(
     id: resolved.invitation.studioId,
     slug: studio.slug,
   });
-  if (newClientAdmissionRefusesInvitedBooking(admission)) {
+  const refusal = newClientAdmissionInvitedRefusalKind(admission);
+  if (refusal) {
     return {
       ok: false,
       state: {
         kind: "closed",
-        reason: "admission_closed",
+        reason: refusal === "closed" ? "admission_closed" : "admission_unreadable",
         presentation: studio.presentation,
       },
     };
@@ -1360,9 +1361,15 @@ export async function bookInvitationSlotAction(
   // The studio closed new-client admission between the load and the tap. The
   // commit refused BEFORE any redeem, so the invitation is intact; say why, not "try again".
   if (!booked.ok && booked.code === NEW_CLIENT_ADMISSION_REFUSAL_CODE) {
+    // ONE refusal code covers closed and unreadable, so re-read to say which; if it is
+    // not provably closed, use the wording that asserts nothing about the studio.
+    const now = await getNewClientAdmissionMode({ id: ctx.resolve.invitation.studioId, slug: ctx.studio.slug });
     return {
       kind: "closed",
-      reason: "admission_closed",
+      reason:
+        newClientAdmissionInvitedRefusalKind(now) === "closed"
+          ? "admission_closed"
+          : "admission_unreadable",
       presentation: ctx.studio.presentation,
     };
   }

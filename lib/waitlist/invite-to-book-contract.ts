@@ -455,13 +455,24 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
 export const INVITE_ADMISSION_CLOSED_COPY =
   "No invitation was created. New-client admission is set to Closed, so people you invite couldn’t book. Set it to Waitlist (or Open) in Settings → Booking first.";
 
+/** The owner's banner / composer reason while admission is Closed. Its own text, not a slice of the notice. */
+export const INVITE_ADMISSION_CLOSED_BANNER_COPY =
+  "New-client admission is set to Closed, so people you invite couldn’t book. Set it to Waitlist (or Open) in Settings → Booking first.";
+
+/**
+ * Admission could not be READ. Invitations are paused (fail closed) but nothing is claimed
+ * about the mode. Used for the notice, the banner and the composer reason.
+ */
+export const INVITE_ADMISSION_UNREADABLE_COPY =
+  "We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.";
+
 /**
  * Map the structured result onto what to show. Pure, total, and the ONLY place
  * this translation happens.
  */
 export function invitationNoticeFor(
   outcome: InvitationOutcome | null,
-  reason?: "malformed_submission" | "admission_closed",
+  reason?: "malformed_submission" | "admission_closed" | "admission_unreadable",
 ): InvitationNotice {
   if (outcome === null) {
     return {
@@ -473,7 +484,9 @@ export function invitationNoticeFor(
           ? "No invitation was created: the form was incomplete. Check the service and try again."
           : reason === "admission_closed"
             ? INVITE_ADMISSION_CLOSED_COPY
-            : "No invitation was created.",
+            : reason === "admission_unreadable"
+              ? INVITE_ADMISSION_UNREADABLE_COPY
+              : "No invitation was created.",
       invitationExists: false,
     };
   }

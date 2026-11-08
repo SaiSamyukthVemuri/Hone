@@ -21,7 +21,7 @@ vi.mock("@/lib/waitlist/invite-to-book-adapter", async (orig) => ({
 }));
 
 import { inviteToBookAction } from "@/app/(app)/settings/waitlist/invite-actions";
-import { INVITE_ADMISSION_CLOSED_COPY, invitationNoticeFor } from "@/lib/waitlist/invite-to-book-contract";
+import { INVITE_ADMISSION_CLOSED_COPY, INVITE_ADMISSION_UNREADABLE_COPY, invitationNoticeFor } from "@/lib/waitlist/invite-to-book-contract";
 
 const SERVICE = "11111111-1111-4111-8111-111111111111";
 const form = () => {
@@ -41,18 +41,18 @@ beforeEach(() => {
 
 describe("inviteToBookAction under admission", () => {
   it.each([
-    ["closed", { ok: true, mode: "closed", source: "persisted" }],
-    ["unreadable", { ok: false }],
-  ])("refuses the send when admission is %s, and never calls the command", async (_l, admission) => {
+    ["closed", { ok: true, mode: "closed", source: "persisted" }, "admission_closed"],
+    ["unreadable", { ok: false }, "admission_unreadable"],
+  ])("refuses the send when admission is %s, and never calls the command", async (_l, admission, reason) => {
     getNewClientAdmissionMode.mockResolvedValue(admission);
     const r = await inviteToBookAction(form());
-    expect(r).toEqual({ outcome: null, reason: "admission_closed" });
+    expect(r).toEqual({ outcome: null, reason });
     expect(inviteToBook).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the studio cannot be resolved", async () => {
+  it("fails closed, as UNREADABLE, when the studio cannot be resolved", async () => {
     getCurrentPractitionerWithStudio.mockRejectedValue(new Error("no session"));
-    expect(await inviteToBookAction(form())).toEqual({ outcome: null, reason: "admission_closed" });
+    expect(await inviteToBookAction(form())).toEqual({ outcome: null, reason: "admission_unreadable" });
     expect(inviteToBook).not.toHaveBeenCalled();
   });
 
@@ -69,5 +69,13 @@ describe("inviteToBookAction under admission", () => {
     expect(n.message).toContain("Closed");
     expect(n.message).toContain("Settings → Booking");
     expect(n.message).toContain("No invitation was created");
+  });
+
+  it("the unreadable notice does not claim the mode is Closed", () => {
+    const n = invitationNoticeFor(null, "admission_unreadable");
+    expect(n.invitationExists).toBe(false);
+    expect(n.message).toBe(INVITE_ADMISSION_UNREADABLE_COPY);
+    expect(n.message).toBe("We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.");
+    expect(n.message).not.toContain("Closed");
   });
 });

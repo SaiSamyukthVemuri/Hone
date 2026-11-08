@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   getNewClientAdmissionMode,
-  newClientAdmissionRefusesInvitedBooking,
+  newClientAdmissionInvitedRefusalKind,
 } from "@/lib/booking/new-client-admission";
 import {
   inviteSubmissionFromFormData,
@@ -62,7 +62,7 @@ import type { InvitationOutcome } from "@/lib/waitlist/invite-to-book-contract";
  */
 export type InviteActionResult =
   | { outcome: InvitationOutcome }
-  | { outcome: null; reason: "malformed_submission" | "admission_closed" };
+  | { outcome: null; reason: "malformed_submission" | "admission_closed" | "admission_unreadable" };
 
 /**
  * Has a service actually been chosen?
@@ -180,11 +180,12 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   try {
     const { studio } = await getCurrentPractitionerWithStudio();
     const admission = await getNewClientAdmissionMode(studio);
-    if (newClientAdmissionRefusesInvitedBooking(admission)) {
-      return { outcome: null, reason: "admission_closed" };
+    const refusal = newClientAdmissionInvitedRefusalKind(admission);
+    if (refusal) {
+      return { outcome: null, reason: refusal === "closed" ? "admission_closed" : "admission_unreadable" };
     }
   } catch {
-    return { outcome: null, reason: "admission_closed" };
+    return { outcome: null, reason: "admission_unreadable" };
   }
 
   const outcome = await admissionCommandAdapter.inviteToBook(input);

@@ -25,9 +25,12 @@ import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
 import {
   getNewClientAdmissionMode,
-  newClientAdmissionRefusesInvitedBooking,
+  newClientAdmissionInvitedRefusalKind,
 } from "@/lib/booking/new-client-admission";
-import { INVITE_ADMISSION_CLOSED_COPY } from "@/lib/waitlist/invite-to-book-contract";
+import {
+  INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_ADMISSION_UNREADABLE_COPY,
+} from "@/lib/waitlist/invite-to-book-contract";
 import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { inviteToBookAction } from "./invite-actions";
@@ -689,9 +692,14 @@ export default async function WaitlistSettingsPage({
   const declined = await loadDeclinedAttention(supabase, studio.id);
   // 0204 refuses an INVITED booking while admission is Closed (or unreadable), so Send is
   // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
-  const invitesBlockedByAdmission = newClientAdmissionRefusesInvitedBooking(
+  const invitesBlockedKind = newClientAdmissionInvitedRefusalKind(
     await getNewClientAdmissionMode(studio),
   );
+  const invitesBlockedByAdmission = invitesBlockedKind !== null;
+  const invitesBlockedCopy =
+    invitesBlockedKind === "closed"
+      ? INVITE_ADMISSION_CLOSED_BANNER_COPY
+      : INVITE_ADMISSION_UNREADABLE_COPY;
   // Count only: no text is read on this page. Skipped entirely while the flag is off.
   const replies = waitlistTimesFeedbackEnabled()
     ? await countTimesFeedback(studio.id, practitioner.user_id)
@@ -860,7 +868,7 @@ export default async function WaitlistSettingsPage({
           className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
         >
           <p>
-            {INVITE_ADMISSION_CLOSED_COPY.replace("No invitation was created. ", "")}{" "}
+            {invitesBlockedCopy}{" "}
             <WaitlistNavLink href="/settings/booking#new-client-admission" className="underline">
               Open Settings → Booking
             </WaitlistNavLink>
@@ -1402,7 +1410,7 @@ export default async function WaitlistSettingsPage({
                                 }
                                 unavailableReason={
                                   invitesBlockedByAdmission
-                                    ? "New-client admission is Closed, so invitees couldn’t book. Set it to Waitlist (or Open) in Settings → Booking."
+                                    ? invitesBlockedCopy
                                     : inviteUnavailableReason(capacity)
                                 }
                               />

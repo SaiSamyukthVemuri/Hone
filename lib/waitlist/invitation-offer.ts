@@ -251,6 +251,11 @@ export type InvitationClosedReason =
    * no times are shown and nothing is consumed. Says nothing about the offer.
    */
   | "admission_closed"
+  /**
+   * Same refusal, but the mode could NOT be read. Fails closed like `admission_closed`,
+   * and must not claim the studio is closed.
+   */
+  | "admission_unreadable"
   | "declined";
 
 export type InvitationViewState =

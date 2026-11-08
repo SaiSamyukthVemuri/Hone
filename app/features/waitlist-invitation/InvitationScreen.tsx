@@ -286,6 +286,11 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // used up, and nothing is promised beyond contacting the studio.
     body: "The studio isn’t taking new-client bookings right now, so you can’t book through this link yet. Your invitation hasn’t been used. Please contact the studio.",
   },
+  admission_unreadable: {
+    title: "This link can’t be used to book right now",
+    // Refused, but the studio state is UNKNOWN, so nothing is asserted about it.
+    body: "This link can’t be used to book right now. Your invitation hasn’t been used. Please contact the studio.",
+  },
   declined: {
     title: "You’ve already declined this offer",
     body: "If you’d still like an appointment, please contact the studio directly.",

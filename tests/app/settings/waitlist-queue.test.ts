@@ -2861,6 +2861,16 @@ describe("closed admission blocks the owner's invite (0204 invited_book refuses 
     expect(html).not.toContain("No invitation was created");
   });
 
+  it("an UNREADABLE mode pauses invitations without claiming it is Closed", async () => {
+    admissionHolder.stored = "not-a-mode";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.");
+    expect(html).not.toContain("set to Closed");
+  });
+
   it.each(["waitlist", "open"])("shows no block under %s", async (mode) => {
     admissionHolder.stored = mode;
     scenario.rows = [entry({ id: "w1", status: "waiting" })];

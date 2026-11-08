@@ -163,6 +163,7 @@ describe("terminal states offer nothing to press", () => {
     "booking_outcome_unknown",
     "unsupported_offer",
     "admission_closed",
+    "admission_unreadable",
     "declined",
   ] as const) {
     it(`${reason} renders NO booking or decline control at all`, () => {
@@ -196,6 +197,16 @@ describe("terminal states offer nothing to press", () => {
     });
     it("says the invitation has not been used", () => {
       expect(html).toContain("hasn’t been used");
+    });
+  });
+
+  describe("admission_unreadable", () => {
+    const html = render({ kind: "closed", reason: "admission_unreadable", presentation: PRESENTATION });
+    it("uses the exact wording and asserts nothing about the studio being closed", () => {
+      expect(html).toContain("This link can’t be used to book right now. Your invitation hasn’t been used. Please contact the studio.");
+      expect(html.toLowerCase()).not.toContain("isn’t taking");
+      expect(html.toLowerCase()).not.toContain("closed");
+      expect(html.toLowerCase()).not.toContain("try again");
     });
   });
 
