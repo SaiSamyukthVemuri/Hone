@@ -210,14 +210,16 @@ function DeclinedView({ keptOnList }: { keptOnList: boolean }) {
   }
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl text-[#0A0A0A]">Thanks for letting us know</h1>
+      <h1 className="text-xl text-[#0A0A0A]">This invitation is closed</h1>
       {/* NO PROMISE THE SYSTEM DOES NOT KEEP. Declining releases the entry;
           only a practitioner-authorised requeue returns it to the waiting list,
           so "you're still on the list and they'll be in touch" claimed an
-          automatic future contact that does not happen. */}
+          automatic future contact that does not happen.
+          Nor does declining notify the studio (no message, owner card or
+          dashboard item is written), so the copy claims no notification. */}
       <p className="text-sm text-[#6B6B6B]">
-        You’ve declined this appointment and the studio has been told. If you’d still like to be
-        seen, please contact them directly.
+        You’ve declined these times. If you’d still like to be seen, please contact the studio
+        directly.
       </p>
     </div>
   );

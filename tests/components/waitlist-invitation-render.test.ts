@@ -235,7 +235,7 @@ describe("loading, error and declined", () => {
 
   it("declining says what happened, with no queue detail", () => {
     const html = render({ kind: "declined" });
-    expect(html).toContain("declined this appointment");
+    expect(html).toContain("declined these times");
     expect(html.toLowerCase()).not.toContain("position");
   });
 });
@@ -374,7 +374,8 @@ describe("declining promises only what decline does", () => {
     // it back. Promising automatic follow-up would be untrue.
     expect(html.toLowerCase()).not.toContain("still on the studio");
     expect(html.toLowerCase()).not.toContain("be in touch");
-    expect(html).toContain("contact them directly");
+    expect(html).toContain("contact the studio directly");
+    expect(html.toLowerCase()).not.toMatch(/been (told|notified|informed)|let (them|the studio) know/);
   });
 });
 
