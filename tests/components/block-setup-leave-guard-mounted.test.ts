@@ -60,6 +60,7 @@ let host: HTMLElement | null = null;
 
 beforeEach(() => {
   blockActions.updateTreatmentAreaWithEntryAction.mockReset();
+  blockActions.createTreatmentAreaWithEntryAction.mockReset();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -67,7 +68,7 @@ afterEach(() => {
   root = host = null;
 });
 
-async function mount() {
+async function mount(create = false) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -77,7 +78,7 @@ async function mount() {
         sessionId: "s1",
         clientId: "c1",
         previousBlock: null,
-        block: BLOCK as never,
+        block: create ? null : (BLOCK as never),
         firstEntry: null,
         initialAreas: [{ area: "Upper lip", side: "center" }] as never,
         onCancel: () => undefined,
@@ -161,6 +162,56 @@ describe("the leave guard on the real form", () => {
     await makeDirty();
     await save();
     await act(async () => undefined);
+    expect(leaveIsHeld()).toBe(false);
+  });
+});
+
+// Codex #1369 4506141998: a NEW area saved UNCHANGED (prefilled values; the draft equals its baseline) was not unsaved, so an in-flight or
+// unresolved create did not arm the guard, and leaving dropped the create key (which is not in the URL). The create attempt is a registry
+// owner: unresolved from submit until a CONFIRMED outcome.
+describe("the leave guard on a CREATE saved without any edit", () => {
+  it("CONTROL: an untouched new area holds nothing", async () => {
+    await mount(true);
+    expect(leaveIsHeld()).toBe(false);
+  });
+
+  it("IN FLIGHT: armed although the draft equals its baseline", async () => {
+    let settle!: (v: unknown) => void;
+    blockActions.createTreatmentAreaWithEntryAction.mockImplementation(() => new Promise((r) => (settle = r)));
+    await mount(true);
+    await save();
+    expect(blockActions.createTreatmentAreaWithEntryAction, "the create reached the action").toHaveBeenCalledTimes(1);
+    expect(leaveIsHeld(), "leaving now drops the create key").toBe(true);
+    await act(async () => settle({ ok: false, error: "No." }));
+  });
+
+  it("LOST RESPONSE: still armed, the key is kept (no second create is possible) and Save stays closed", async () => {
+    blockActions.createTreatmentAreaWithEntryAction.mockRejectedValue(new Error("network"));
+    await mount(true);
+    await save();
+    await act(async () => undefined);
+    const first = blockActions.createTreatmentAreaWithEntryAction.mock.calls[0][0] as { createKey: string | null };
+    expect(first.createKey, "the create was keyed").toEqual(expect.any(String));
+    expect(leaveIsHeld(), "armed through the lost answer").toBe(true);
+    expect(host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!.disabled, "no retry that could duplicate").toBe(true);
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("A DEFINITIVE REFUSAL with no lost answer is a confirmed outcome: nothing committed, nothing to protect", async () => {
+    blockActions.createTreatmentAreaWithEntryAction.mockResolvedValue({ ok: false, error: "Refused." });
+    await mount(true);
+    await save();
+    await act(async () => undefined);
+    expect(host!.textContent).toContain("Refused.");
+    expect(leaveIsHeld()).toBe(false);
+  });
+
+  it("CONFIRMED SUCCESS: disarmed", async () => {
+    blockActions.createTreatmentAreaWithEntryAction.mockResolvedValue({ ok: true });
+    await mount(true);
+    await save();
+    await act(async () => undefined);
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
     expect(leaveIsHeld()).toBe(false);
   });
 });

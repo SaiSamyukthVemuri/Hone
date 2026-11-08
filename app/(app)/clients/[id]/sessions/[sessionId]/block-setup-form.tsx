@@ -1039,6 +1039,14 @@ export function BlockSetupForm({
   if (initialDraftJson.current === null) {
     initialDraftJson.current = JSON.stringify(draft);
   }
+  // THE CREATE ATTEMPT IS AN OWNER (Codex #1369 4506141998). A NEW area saved with prefilled values and an auto-resolved machine has a draft
+  // EQUAL to its baseline, and auto-resolution is not an edit, so nothing marked it unsaved: leaving mid-save dropped `bareCreateKeyRef`
+  // (not in the URL) and recreating could duplicate a committed save. From submit until a CONFIRMED outcome the attempt is both an unsaved
+  // draft and unresolved: in flight (`pending`) or held after a lost answer or a refusal that follows one (`saveUnresolved`). A definitive
+  // refusal with no lost answer is a confirmed outcome (nothing committed, key dropped), and a confirmed success closes the form, whose
+  // unmount removes this key. Registered like every other owner, so the guard and `anyUnresolved` derive from it.
+  const createAttemptOpen = !block && (pending || saveUnresolved);
+  useReportDraft({ draft: createAttemptOpen, unresolved: createAttemptOpen }, draftRegistry.api);
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
