@@ -19,7 +19,7 @@ describe("owner-only notification scope", () => {
   const spy = () => { const calls: unknown[][] = []; const q = { not: (...a: unknown[]) => { calls.push(a); return q; }, or: () => q }; return { q, calls }; };
 
   it("lists exactly the card-on-file event types and the waitlist decline", () => {
-    expect([...OWNER_ONLY_NOTIFICATION_EVENT_TYPES]).toEqual(["card_added", "card_replaced", "waitlist_offer_declined"]);
+    expect([...OWNER_ONLY_NOTIFICATION_EVENT_TYPES]).toEqual(["card_added", "card_replaced", "waitlist_offer_declined", "waitlist_withdrawal_requested"]);
   });
   it("leaves the owner's query unchanged", () => {
     const { q, calls } = spy();
@@ -29,7 +29,7 @@ describe("owner-only notification scope", () => {
   it("excludes the owner-only types for every other role", () => {
     const { q, calls } = spy();
     scopeNotificationsToViewer(q, false, VIEWER);
-    expect(calls).toEqual([["event_type", "in", "(card_added,card_replaced,waitlist_offer_declined)"]]);
+    expect(calls).toEqual([["event_type", "in", "(card_added,card_replaced,waitlist_offer_declined,waitlist_withdrawal_requested)"]]);
   });
   it("every retrieval path uses the scope: page, header badge, mark-all-read", () => {
     for (const f of ["app/(app)/notifications/page.tsx", "app/(app)/notifications/actions.ts", "app/(app)/layout.tsx"]) {
