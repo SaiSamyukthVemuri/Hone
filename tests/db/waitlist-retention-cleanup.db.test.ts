@@ -99,9 +99,9 @@ describe("the deadline: min(submitted + 90d, closed + 30d)", () => {
 
   it("a CLOSED request is erased 30 days after it closed, even though the answer is recent", async () => {
     const f = await seed("r2");
-    const notYet = await declined(f, "r2a", "2 days");
+    const notYet = await declined(f, "r2a", "40 days");
     await close(notYet.fid, "29 days 23 hours");
-    const due = await declined(f, "r2b", "2 days");
+    const due = await declined(f, "r2b", "40 days");
     await close(due.fid, "30 days 1 hour");
     await run();
     expect((await answer(notYet.fid)).erased_at).toBeNull();
@@ -109,9 +109,9 @@ describe("the deadline: min(submitted + 90d, closed + 30d)", () => {
     expect(await records(due.fid)).toHaveLength(1);
   });
 
-  it("the EARLIER clock wins: closed 31d ago beats an answer submitted 10d ago; submitted 91d ago beats a close 1d ago", async () => {
+  it("the EARLIER clock wins: closed 31d ago beats an answer submitted 40d ago; submitted 91d ago beats a close 1d ago", async () => {
     const f = await seed("r3");
-    const a = await declined(f, "r3a", "10 days");
+    const a = await declined(f, "r3a", "40 days");
     await close(a.fid, "31 days");
     const b = await declined(f, "r3b", "91 days");
     await close(b.fid, "1 day");
@@ -122,15 +122,23 @@ describe("the deadline: min(submitted + 90d, closed + 30d)", () => {
 
   it("a WITHDRAWAL that shows the earlier decline's answer starts its own 30-day clock on that answer", async () => {
     const f = await seed("r4");
-    const due = await declined(f, "r4a", "10 days");
-    const notYet = await declined(f, "r4b", "10 days");
-    await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '31 days')`, [f.studioId, due.id]);
-    await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '29 days')`, [f.studioId, notYet.id]);
+    const due = await declined(f, "r4a", "60 days");
+    const notYet = await declined(f, "r4b", "60 days");
+    await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '45 days', now() - interval '31 days')`, [f.studioId, due.id]);
+    await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '45 days', now() - interval '29 days')`, [f.studioId, notYet.id]);
     const eb = await q(`select public.waitlist_answer_erase_by($1) as d`, [due.fid]);
     expect(new Date(eb[0].d).getTime()).toBeLessThan(Date.now());
     await run();
     expect((await answer(due.fid)).erased_at).not.toBeNull();
     expect((await answer(notYet.fid)).erased_at).toBeNull();
+  });
+
+  it("a withdrawal that closed BEFORE the answer was submitted never shortens it (greatest(closed, submitted) + 30d)", async () => {
+    const f = await seed("r4d");
+    const a = await declined(f, "r4d", "5 days");
+    await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '50 days', now() - interval '40 days')`, [f.studioId, a.id]);
+    const eb = new Date((await q(`select public.waitlist_answer_erase_by($1) as d`, [a.fid]))[0].d).getTime();
+    expect(Math.abs(eb - (Date.now() + 25 * 86_400_000))).toBeLessThan(3_600_000);
   });
 
   it("a withdrawal's clock binds only to the answer that existed when it opened: a LATER decline keeps its own clocks", async () => {
@@ -173,7 +181,7 @@ describe("a late job never serves overdue text", () => {
     await run();
     expect((await answer(late.fid)).why_not_work).toBeNull();
     // Closed and overdue: no longer listed, same as erased.
-    const closedLate = await declined(f, "r5c", "2 days");
+    const closedLate = await declined(f, "r5c", "40 days");
     await close(closedLate.fid, "31 days");
     const after = await q(`select * from public.read_waitlist_followups($1,$2,null)`, [f.studioId, f.userId]);
     expect(after.find((r: any) => r.followup_id === closedLate.fid)).toBeUndefined();
@@ -265,6 +273,21 @@ describe("the job: idempotent, bounded, one bad row never blocks the rest", () =
     const next = await run();
     expect(next.purge_failed).toBe(0);
     expect(next.outcome).toBe("success");
+  });
+
+  it("the run-log purge never deletes the newest success row, even past 90 days", async () => {
+    await drain();
+    await q(`delete from public.waitlist_retention_runs`);
+    const ins = (o: string, ago: string, ec: string | null) => q(
+      `insert into public.waitlist_retention_runs (started_at, finished_at, outcome, error_class) values (now() - $1::interval, now() - $1::interval, $2, $3) returning id`, [ago, o, ec]);
+    const newest = (await ins("success", "100 days", null))[0].id;
+    await ins("success", "120 days", null);
+    await ins("failed", "95 days", "exception");
+    await run();
+    const left = (await q(`select id from public.waitlist_retention_runs where finished_at < now() - interval '90 days'`)).map((r: any) => r.id);
+    expect(left).toEqual([newest]);
+    const h = (await q(`select * from public.waitlist_retention_health()`))[0];
+    expect(h.last_success_at).not.toBeNull();
   });
 
   it("a studio deleted before the job removes its answers and the job still runs clean", async () => {

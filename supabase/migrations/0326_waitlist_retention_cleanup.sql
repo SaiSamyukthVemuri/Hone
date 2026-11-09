@@ -60,7 +60,7 @@ as $$
   -- answer). An open request has only the 90-day clock. least() ignores the null of a clock that has not started.
   select least(
            a.submitted_at + interval '90 days',
-           (select min(g.closed_at) + interval '30 days'
+           (select min(greatest(g.closed_at, a.submitted_at)) + interval '30 days'
               from public.waitlist_followups g
              where g.studio_id = d.studio_id and g.entry_id = d.entry_id and g.closed_at is not null
                and (g.id = d.id
@@ -157,7 +157,9 @@ begin
   begin
     with del as (
       delete from public.waitlist_retention_runs x
-       where x.id in (select y.id from public.waitlist_retention_runs y where y.finished_at < v_now - interval '90 days' order by y.finished_at, y.id limit p_batch_size)
+       where x.id in (select y.id from public.waitlist_retention_runs y where y.finished_at < v_now - interval '90 days'
+                        and y.id is distinct from (select z.id from public.waitlist_retention_runs z where z.outcome = 'success' order by z.finished_at desc, z.id desc limit 1)
+                      order by y.finished_at, y.id limit p_batch_size)
       returning 1)
     select count(*) into v_runs from del;
   exception when others then
@@ -255,7 +257,7 @@ begin
           join public.waitlist_followups d on d.id = a2.followup_id
          where d.entry_id = f.entry_id and d.kind = 'decline'
            and (f.kind = 'decline' and d.id = f.id or f.kind = 'withdrawal')
-         order by a2.submitted_at desc
+         order by a2.submitted_at desc, a2.followup_id desc
          limit 1) a on true
      where f.studio_id = p_studio_id
        -- No invitation id: every OPEN follow-up PLUS closed ones whose answers still exist, so the owner can still read and
@@ -360,7 +362,7 @@ begin
       raise exception '0326: service_role EXECUTE on % is not as intended', v_fn;
     end if;
   end loop;
-  if not exists (select 1 from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.read_waitlist_followups(uuid,uuid,uuid)') and md5(p.prosrc) = 'd98705fc14e1c1e89bbfd618648993c1')
+  if not exists (select 1 from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.read_waitlist_followups(uuid,uuid,uuid)') and md5(p.prosrc) = 'bfff39742592fb6b4a3f43f9e2429417')
      or not exists (select 1 from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.export_waitlist_decline_answers(uuid,uuid,uuid,integer)') and md5(p.prosrc) = 'fb2b2659843c53301755b9f76c0c53b4') then
     raise exception '0326: a replaced read is not the sealed body';
   end if;
