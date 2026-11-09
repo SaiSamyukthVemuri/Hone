@@ -58,15 +58,22 @@ it("lets an owner type 3:30 PM and move the same appointment after acknowledging
       }));
     });
     await act(async () => button("Custom time").click());
-    await act(async () => button("Type a time instead").click());
     await change(host.querySelector('input[type="date"]')!, "2030-11-11");
     const time = host.querySelector<HTMLInputElement>('input[aria-label="Custom time"]')!;
     expect(time.type).toBe("text");
-    await change(time, "3:30 PM");
+    await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await change(time, "3:30");
     expect(button("Move appointment").disabled).toBe(true);
+    expect(host.querySelector("#move-confirm-reason")?.textContent).toContain("Enter a complete time.");
     expect(move).not.toHaveBeenCalled();
 
-    await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await change(time, "3:30 PM");
+    await act(async () => button("Use time picker").click());
+    expect(time.type).toBe("time");
+    expect(time.value).toBe("15:30");
+    await act(async () => button("Type a time instead").click());
+    expect(time.type).toBe("text");
+    expect(time.value).toBe("15:30");
     expect(button("Move appointment").disabled).toBe(false);
     await act(async () => button("Move appointment").click());
 

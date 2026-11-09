@@ -79,7 +79,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const [mode, setMode] = useState<Mode>("available_slot");
   const [canUseCustomTime, setCanUseCustomTime] = useState(false);
   const [customTimeInput, setCustomTimeInput] = useState("");
-  const [typeCustomTime, setTypeCustomTime] = useState(false);
+  const [typeCustomTime, setTypeCustomTime] = useState(true);
   const customTime = parseCustomMoveTime(customTimeInput);
   const [ackOverride, setAckOverride] = useState(false);
 
@@ -177,7 +177,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setMoveError(null);
     setMode("available_slot");
     setCustomTimeInput("");
-    setTypeCustomTime(false);
+    setTypeCustomTime(true);
     setAckOverride(false);
     setCanUseCustomTime(false);
     setReassignEnabled(false);
@@ -275,7 +275,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     if (submitting || mode === "available_slot") return;
     setMode("available_slot");
     setCustomTimeInput("");
-    setTypeCustomTime(false);
+    setTypeCustomTime(true);
     setAckOverride(false);
     setMoveError(null);
     load(date, target); // reload current available slots
@@ -558,9 +558,15 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
                   }}
                   disabled={submitting}
                   aria-label="Custom time"
+                  aria-describedby="move-custom-time-format"
                   className="mt-1 block w-full rounded-lg border border-neutral-300 px-3 py-3 text-base focus:border-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900"
                 />
               </label>
+              <p id="move-custom-time-format" className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                {typeCustomTime
+                  ? "Enter a time with AM or PM, or use 24-hour time (for example, 3:30 PM or 15:30)."
+                  : "Complete the time in the picker, including AM or PM if shown."}
+              </p>
               <button
                 type="button"
                 disabled={submitting}

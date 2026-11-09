@@ -89,7 +89,7 @@ test("SAFE-WILLOW: appointment move + token resolution + cross-tenant isolation"
     await dialog.getByRole("button", { name: "Custom time" }).click();
 
     await dialog.locator('input[type="date"]').fill(futureYmd(400));
-    await dialog.locator('input[type="time"]').fill("05:00"); // before the 06:00 open
+    await dialog.getByRole("textbox", { name: "Custom time" }).fill("05:00"); // before the 06:00 open
     const ack = dialog.getByRole("checkbox");
     const confirm = dialog.getByRole("button", { name: /^Move appointment$/ });
     await expect(confirm).toBeDisabled(); // acknowledgement gate

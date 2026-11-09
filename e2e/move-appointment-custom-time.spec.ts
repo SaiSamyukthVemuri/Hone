@@ -75,6 +75,7 @@ async function customMove(page: Page, label: string, date: string, time: string)
   const prev = before.find((a) => a.id === apptId)!;
 
   const dialog = await openCustom(page);
+  await dialog.getByRole("button", { name: "Use time picker" }).click();
   const timeInput = dialog.locator('input[type="time"]');
   const dateInput = dialog.locator('input[type="date"]');
   const ack = dialog.getByRole("checkbox");
@@ -144,7 +145,6 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
     const d2 = await openCustom(page);
     const date = futureYmd(402);
     await d2.locator('input[type="date"]').fill(date);
-    await d2.getByRole("button", { name: "Type a time instead" }).click();
     await d2.getByRole("textbox", { name: "Custom time" }).pressSequentially("3:30 PM");
     await expect(d2.getByRole("button", { name: /^Move appointment$/ })).toBeDisabled();
     const ack = d2.getByRole("checkbox");
@@ -273,7 +273,7 @@ async function openMoveDialog(page: Page, apptId: string) {
 async function fillCustom(dialog: ReturnType<Page["getByRole"]>, date: string, time: string) {
   await dialog.getByRole("button", { name: "Custom time" }).click();
   await dialog.locator('input[type="date"]').fill(date);
-  await dialog.locator('input[type="time"]').fill(time);
+  await dialog.getByRole("textbox", { name: "Custom time" }).fill(time);
   await dialog.getByRole("checkbox").check();
 }
 

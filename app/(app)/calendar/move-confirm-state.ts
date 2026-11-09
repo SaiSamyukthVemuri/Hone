@@ -94,7 +94,7 @@ export const MOVE_REASON = {
   chooseSlot: "Choose a new time.",
   chooseDateAndTime: "Choose a date and time.",
   chooseDate: "Choose a date.",
-  chooseTime: "Choose a time.",
+  chooseTime: "Enter a complete time.",
   acknowledge: "Confirm that you want to override regular availability.",
   noChange: "Choose a different time to move this appointment.",
 } as const;

@@ -62,7 +62,7 @@ async function openCustomReady(page: Page, date: string, time: string) {
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Custom time" }).click();
   await dialog.locator('input[type="date"]').fill(date);
-  await dialog.locator('input[type="time"]').fill(time);
+  await dialog.getByRole("textbox", { name: "Custom time" }).fill(time);
   await dialog.getByRole("checkbox").check();
   return dialog;
 }
@@ -167,7 +167,7 @@ test("mobile Move submit: footer stays painted, immediate disabled 'Moving…', 
     await expect(confirm).toHaveText(/^Move appointment$/, { timeout: 10_000 });
     await expect(confirm).toBeEnabled();
     // The entered custom time + acknowledgement are retained for a deliberate retry.
-    await expect(dialog.locator('input[type="time"]')).toHaveValue("23:15");
+    await expect(dialog.getByRole("textbox", { name: "Custom time" })).toHaveValue("23:15");
     await expect(dialog.getByRole("checkbox")).toBeChecked();
     expect(ctrl.count, "exactly one (failed) request was issued").toBe(1);
 
