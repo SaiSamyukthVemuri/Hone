@@ -1740,14 +1740,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "derived",
     reason:
-      "The owner's follow-up item for a waitlist person who declined an invitation or asked to be taken off the list, draft migration 0325 (HON-7). One row per decline and per open withdrawal request, with a kind, a closed status, opened and closed instants, the entry and invitation it belongs to and, once booked, the linked appointment. Studio-owned operational history, so It holds no client text, name or contact. Rows are erased with the studio; the invitation and practitioner references refuse deletion while a row exists. EXCLUDED as operational: the owner's work queue, not the studio's client data; it holds no client text..",
+      "Operational record (ids, status and dates only); contains no client text.",
   },
   waitlist_decline_answers: {
     kind: "pending",
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "The two short free-text answers a waitlist person gives when declining an invitation (why the times do not work, what would), draft migration 0325 (HON-7). Client-supplied free text, so tier 1 and PENDING review of export shape and retention: these rows are ERASED, not kept - 30 days after the follow-up closes, 90 days at the latest, immediately when the owner removes the person, and on the owner's request - leaving only an erased marker, so an export must never be assumed to hold answers and must never outlive an erasure. Visible only to the studio owner through the owner-gated read command; no role reads the table directly. DECIDED (Sam, 9 Nov): a client's saved answers are INCLUDED in the studio data export and are erased when that client's record is erased. The export entry ships with the waitlist app change; this entry stays PENDING until then.",
+      "Not exported yet; this file is added to the export in the waitlist follow-up release.",
   },
   waitlist_decline_owner_emails: {
     kind: "excluded",
