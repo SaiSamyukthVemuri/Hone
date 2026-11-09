@@ -112,11 +112,14 @@ describe("scopeNotificationsToViewer", () => {
 });
 
 describe("waitlist_offer_declined wording and link (the decline command writes the row; these are the strings its DB test pins)", () => {
-  it("title and link are exactly the agreed strings, with a straight apostrophe", async () => {
+  it("title, empty body and link are exactly the agreed strings, and no name variant exists", async () => {
     const m = await import("@/lib/notifications/waitlist-offer-declined");
     expect(m.WAITLIST_OFFER_DECLINED_EVENT).toBe("waitlist_offer_declined");
-    expect(m.WAITLIST_OFFER_DECLINED_TITLE_WITH_NAME("Syn Invitee")).toBe("Syn Invitee couldn't make the offered times.");
-    expect(m.WAITLIST_OFFER_DECLINED_TITLE_WITH_NAME("Syn Invitee")).not.toMatch(/[‘’]/);
+    expect(m.WAITLIST_OFFER_DECLINED_TITLE).toBe("A waitlist response needs your attention");
+    expect(m.WAITLIST_OFFER_DECLINED_BODY).toBe("");
     expect(m.WAITLIST_OFFER_DECLINED_HREF).toBe("/settings/waitlist#follow-up");
+    // The title is the same for everyone: a function of a name, or any other export that could carry one, is a regression.
+    expect(typeof m.WAITLIST_OFFER_DECLINED_TITLE).toBe("string");
+    expect(Object.keys(m).sort()).toEqual(["WAITLIST_OFFER_DECLINED_BODY", "WAITLIST_OFFER_DECLINED_EVENT", "WAITLIST_OFFER_DECLINED_HREF", "WAITLIST_OFFER_DECLINED_TITLE"]);
   });
 });

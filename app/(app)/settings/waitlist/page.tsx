@@ -17,6 +17,8 @@ import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
 import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
 import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
+import { loadDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
+import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
 import {
   getNewClientAdmissionMode,
   invitedBookingRefusalKind,
@@ -645,6 +647,8 @@ export default async function WaitlistSettingsPage({
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   const attention = await loadNeedsAttention(supabase, studio.id);
   const declined = await loadDeclinedAttention(supabase, studio.id);
+  // The outbox has no policy for the user client (0325), so its status is read inside this helper, which builds its own server-only client. This page's data reads stay on the RLS client.
+  const declineEmail = await loadDeclineEmailStatus(studio.id);
   // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
   // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
   const admissionForInvites = await getNewClientAdmissionMode(studio);
@@ -932,6 +936,7 @@ export default async function WaitlistSettingsPage({
             );
           })()}
 
+          {declineEmail.kind === "ok" && <DeclineEmailFailedNotice failed={declineEmail.failed} />}
           {declined.kind === "ok" && declined.total > 0 && (
             <section
               aria-labelledby="declined-heading"
