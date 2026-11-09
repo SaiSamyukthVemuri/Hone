@@ -1,6 +1,0 @@
-{
-  "pr": 1408,
-  "runtime": true,
-  "migrations": ["supabase/migrations/0324_waitlist_atomic_send_allowance.sql"],
-  "release_receipt": "01-ops/1408-release-receipt.json"
-}

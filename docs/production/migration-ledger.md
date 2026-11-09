@@ -34,6 +34,30 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **`0319`** adds one empty table and four service-role-only functions for the "times don't work" reply; nothing writes to it until its flag is switched on.
 - Both are above this tree's declared hosted max, so each would be a plain push. Neither migration changes an existing table, column or row.
 
+### Newer apply entries (recorded 2026-11-09; this tree's declared hosted max is NOT advanced by this change)
+
+`0324` and `0325` have since been applied to production, one push each, under separate exact-package approvals. The two entries below are new; no earlier entry is rewritten. The "Pending migrations" cell above predates them and is kept as written for the same reason: it describes what this tree's declared hosted position implies, not the real hosted state.
+
+### The 0324 apply (facts as recorded by OPS, 2026-11-09; `01-ops/0324-APPLY-RESULT-20261109T0005Z.md`)
+
+- **What it is.** `0324_waitlist_atomic_send_allowance.sql`: it replaces the waitlist send command with a nine-argument version that enforces a send-time capacity limit and rotates a full admission round itself; the eight-argument send path is gone.
+- **Package.** One plain push of the sealed package, SEAL-SHA256SUMS `f687fdd1a2842b2eb29a9a976cb14a55643fd722c19d4c34c1b18ffc9cc1d194`; apply script `fd7b4f04…`, stage conf `f1001855…`, runner `c2e92c95…`, bundle tar `7372a8fa…` (264 files), pinned CLI v2.102.0.
+- **Pre-push reads.** 263 history rows, max `0323`, list md5 `66647823…`, `0324` absent; the preflight passed. The dry run listed exactly `0324_waitlist_atomic_send_allowance.sql`.
+- **Read-back.** 2026-11-09T00:04:55Z-00:04:58Z: **OVERALL PASS**. History 264 rows, max `0324`, `0324` once; the new functions are postgres-owned definers with `search_path = pg_catalog, pg_temp`, the admit function executable by the service role only and the internal count function by nobody, no PUBLIC; the ACL snapshot and the function body md5 values equal the sealed values; exactly one admit overload (nine arguments).
+- **Not captured.** Any server-side apply instant. Migration history is not table-content evidence.
+- **Release.** #1408 merged as `7e555f6ba` about 65 s after the read-back; between the apply and its deployment the live app's earlier send path failed closed and invitations were held.
+
+### The 0325 apply (facts as recorded by OPS, 2026-11-09; `01-ops/0325-PARTA-RESULT-20261109T0201Z.md`, Willow's apply record)
+
+- **What it is.** `0325_waitlist_decline_followups.sql`: the waitlist decline answers, withdrawal requests and the owner follow-up (four tables, four triggers, the commands, and an export-audit file-map entry).
+- **Package.** One plain push of the sealed package, SEAL-SHA256SUMS `d2573a90…`; 0325 sha256 `cca62b2f…`, down draft `cd459124…`; apply script `a269520e…`, reconcile `0b2aaf69…`; pinned CLI v2.102.0.
+- **Pre-push reads (Part A, 02:01Z).** 264 history rows, max `0324`, list md5 `24c1e042cb76d3e1d851d7876e9a1c10`, `0325` absent; all 17 gated preflight fields true.
+- **Push.** Plain push at 2026-11-09T02:05:44Z (client side).
+- **Read-back.** 2026-11-09T02:05:45Z-02:05:48Z: **OVERALL PASS**. History 265 rows, max `0325`, list md5 `751877e0…`; the 15 sealed function body md5 values, the ACLs, the four tables and the four triggers passed.
+- **What is and is not live.** The schema, the commands, the trigger on clients and the export-audit file-map entry are in the database. Nothing calls them until the application that writes them is deployed; admission stays Closed, public joining stays blocked, SMS stays off. Retention clocks start at that application deploy.
+- **Release.** #1410 merged as `7def16653` about 45 s after the push.
+- **Not captured.** Any server-side apply instant.
+
 ## Previous state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
 > **CURRENT RELATIONSHIP: repo == hosted at `0300`, with `0281` applied below the max (an out-of-order apply, declared in `hosted_out_of_order`), and `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0280`, `0282`-`0296`, `0298` and `0299` declared unhosted.** The single sealed migration `0281_identity_revisions_audit_atomic_save.sql` (sha256 `7fe0b10a973103393718ed1ac4fd94e42e23fac87b295ed9c67c0e2ce0c9dff2`) was APPLIED to production by ONE push of one file with `--include-all` inside the sealed stage, by Sam under his own-words authorization (`01-ops/SAM-AUTHORIZATION-0281-b01-20261105T020553Z.txt`, sha256 `853d7783681d81885f9aaafdeae064be68add10c51bed53dae01115623e9ec73`). Carrier PR #1358 head `3f6c8d25563ac561d5679e5de99ec251b142e013` at the apply; stage `stage-0281-b01-mac` (internal stage id `0281-b00`), `SHA256SUMS.txt` sha256 `a0c40670db8d588e2209f8581c5a827276ca39f4b2f0459b7ccf6bf546e829a3`.
