@@ -217,6 +217,64 @@ describe("0327: a withdrawal row shows the answer the retention helper binds it 
   });
 });
 
+describe("0327: erased answers and decline rows", () => {
+  it("N3. the bound EARLIER answer is erased: the withdrawal shows the erased marker, never the later decline's answers", async () => {
+    const f = await seed("n3");
+    const e = await entry(f, "n3");
+    const d0 = await declineThenHandle(f, e, "n3early");
+    const w = await withdraw(f, e);
+    const d1 = await declineThenHandle(f, e, "n3late", false);
+    await answerAt(d0, "30 days");
+    await openedAt(w, "10 days");
+    await closedAt(w, "9 days");
+    await answerAt(d1, "2 days");
+    // Erase ONLY the earlier answer (the owner's erase is entry-wide; this isolates the display rule).
+    await q(`update public.waitlist_decline_answers set why_not_work = null, better_times = null, erased_at = now() - interval '1 day' where followup_id = $1`, [d0]);
+    expect(await binding(w)).toBe(d0);
+    const row = await rowFor(f, w);
+    expect(row.why_not_work).toBeNull();
+    expect(row.better_times).toBeNull();
+    expect(row.answers_erased_at).not.toBeNull();
+    expect(row.erase_by).toBeNull();
+    expect(new Date(row.submitted_at).getTime()).toBe(new Date((await q(`select submitted_at from public.waitlist_decline_answers where followup_id=$1`, [d0]))[0].submitted_at).getTime());
+    // The later decline still shows its own answers, unaffected.
+    await expectOwn(f, d1, "n3late");
+  });
+
+  it("N2. DECLINE rows are identical before and after 0327, on the same fixture (only withdrawal rows can change)", async () => {
+    const f = await seed("n2");
+    const e = await entry(f, "n2");
+    const d1 = await declineThenHandle(f, e, "n2a");
+    const w1 = await withdraw(f, e);
+    const d2 = await declineThenHandle(f, e, "n2b");
+    const w2 = await withdraw(f, e); // Kept: an open withdrawal would hold the entry back from the next invitation
+    const d3 = await declineThenHandle(f, e, "n2c", false);
+    await answerAt(d1, "40 days");
+    await openedAt(w1, "30 days");
+    await closedAt(w1, "29 days");
+    await answerAt(d2, "20 days");
+    await openedAt(w2, "10 days");
+    await closedAt(w2, "9 days");
+    await answerAt(d3, "2 days");
+    const all = () =>
+      q(`select * from public.read_waitlist_followups($1,$2,null)`, [f.studioId, f.userId]).then((r: any[]) => r.sort((x, y) => (x.followup_id < y.followup_id ? -1 : 1)));
+    const declines = (rows: any[]) => rows.filter((r) => r.kind === "decline");
+    const withdrawals = (rows: any[]) => rows.filter((r) => r.kind === "withdrawal");
+    const after = await all();
+    try {
+      await adminQuery(downSql); // 0326's read
+      const before = await all();
+      expect(declines(before).length).toBe(3);
+      expect(declines(after)).toEqual(declines(before)); // every column of every decline row
+      // The change is real and confined to withdrawals: at least one withdrawal row differs.
+      expect(JSON.stringify(withdrawals(after))).not.toBe(JSON.stringify(withdrawals(before)));
+    } finally {
+      await adminQuery(upSql);
+    }
+    expect(await all()).toEqual(after);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The files: one clause, ACL by name, md5 pins, the down restores 0326 byte for byte, and up / down / up on the real database.
 // ---------------------------------------------------------------------------
@@ -225,6 +283,8 @@ const upSql = readFileSync(join(MIGRATIONS, "migrations", "0327_waitlist_followu
 const downSql = readFileSync(join(MIGRATIONS, "rollbacks", "0327_waitlist_followup_read_bound.down.sql"), "utf8");
 const sql0326 = readFileSync(join(MIGRATIONS, "migrations", "0326_waitlist_retention_cleanup.sql"), "utf8");
 const LIVE_0326_MD5 = "bfff39742592fb6b4a3f43f9e2429417";
+// Pinned as a LITERAL, not derived from the file, so a changed body cannot quietly move its own pin.
+const NEW_0327_MD5 = "a1943da8ebdb12d8beb2be6f71ad8117";
 const fnOf = (text: string) => {
   const a = text.indexOf("create or replace function public.read_waitlist_followups(");
   const b = text.indexOf("$$;", a) + 3;
@@ -247,6 +307,7 @@ describe("0327 files", () => {
     expect(fnOf(downSql)).toBe(fnOf(sql0326));
     expect(downSql).toContain(LIVE_0326_MD5);
     expect(upSql).toContain(LIVE_0326_MD5); // named in the header as the body being replaced
+    expect(upSql).toContain(NEW_0327_MD5); // the self-check pins the new body
   });
 
   it("opens its own transaction with the lock timeout inside it, and restates the ACL by name (all four roles revoked, service_role granted)", () => {
@@ -285,6 +346,7 @@ describe("0327 up / down / up on the real database", () => {
       expect(r).toMatchObject({ a: false, u: false, s: true, p: false, d: true });
     };
     const newMd5 = await readMd5();
+    expect(newMd5).toBe(NEW_0327_MD5);
     expect(newMd5).not.toBe(LIVE_0326_MD5);
     await aclOk();
     try {
