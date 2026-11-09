@@ -36,33 +36,24 @@ describe("the notice under the two answer fields is Sam's, word for word", () =>
       "Within your studio, only the studio owner can see your answers. They're used to arrange a time with you. Hone hides your answers from the studio's view and from new exports 30 days after your request closes or 90 days after you send them, whichever comes first. Hone deletes them from its active database during the next daily cleanup. Backup copies expire within a further seven days. Copies the studio has already downloaded are managed by the studio. Please don't include medical or health details.",
     );
   });
-  it("is rendered in the form, after both fields, and never claims everything is deleted", () => {
+  it("is not shown until the person opens the form (the revealed form is proved in the mounted test)", () => {
     const html = renderToStaticMarkup(createElement(NoTimesWorkForm, { pending: false, onSubmit: () => {}, onNoLongerNeed: () => {} }));
-    const text = html.replace(/&#x27;/g, "'");
-    expect(text).toContain(NO_TIMES_WORK_NOTICE);
-    expect(text.indexOf(NO_TIMES_WORK_LABELS.better)).toBeLessThan(text.indexOf(NO_TIMES_WORK_NOTICE));
+    expect(html.replace(/&#x27;/g, "'")).not.toContain(NO_TIMES_WORK_NOTICE);
     expect(`${NO_TIMES_WORK_NOTICE} ${DECLINE_CONFIRMATION} ${WITHDRAWAL_CONFIRMATION}`).not.toMatch(/all your information|everything/i);
   });
 });
 
-describe("the form", () => {
+describe("the form, before it is opened", () => {
   const html = renderToStaticMarkup(createElement(NoTimesWorkForm, { pending: false, onSubmit: () => {}, onNoLongerNeed: () => {} }));
-  it("asks both questions, both required, and offers the withdrawal separately", () => {
-    expect(html).toContain("Why don&#x27;t these times work?");
-    expect(html).toContain(NO_TIMES_WORK_LABELS.better);
-    expect((html.match(/required=""/g) ?? []).length).toBe(2);
-    // free text that may hold health detail: no browser autofill history, no spellcheck service
-    expect((html.match(/autocomplete="off"/gi) ?? []).length).toBe(2);
-    expect((html.match(/spellcheck="false"/gi) ?? []).length).toBe(2);
-    expect(html).toContain(NO_TIMES_WORK_LABELS.noLongerNeed);
+  it("offers only the two choices: no question, no field, no notice", () => {
     expect(html).toContain("None of these times work");
-  });
-  it("the submit button is disabled until both answers have text", () => {
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>None of these times work/);
+    expect(html).toContain(NO_TIMES_WORK_LABELS.noLongerNeed);
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain(NO_TIMES_WORK_LABELS.better);
+    expect(html).not.toContain("Send response");
   });
   it("caps each answer at the contract's 1000 characters", () => {
     expect(DECLINE_ANSWER_MAX).toBe(1000);
-    expect(html).toContain('maxLength="1000"');
   });
 });
 
