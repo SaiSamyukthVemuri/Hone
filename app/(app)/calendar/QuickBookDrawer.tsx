@@ -25,7 +25,7 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
-import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
+import { utcInstantFromLocal, formatClockLabel, parseCustomLocalTime, type TimeFormat } from "@/lib/booking/tz";
 import { matchesClientSearch } from "@/lib/clients/name-search";
 import {
   fetchSlotsForClientBookingAction,
@@ -202,7 +202,8 @@ export function QuickBookDrawer({
   //     instant computed from the local time + studio timezone.
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [overrideConfirmed, setOverrideConfirmed] = useState(false);
-  const [overrideLocalTime, setOverrideLocalTime] = useState<string>("");
+  const [overrideTimeInput, setOverrideTimeInput] = useState("");
+  const [typeCustomTime, setTypeCustomTime] = useState(false);
   // Drag-derived duration (minutes). Empty string when the drawer was
   // opened by a bare click; the override duration input is hidden in
   // that case and the booking uses the service default. When the
@@ -256,7 +257,7 @@ export function QuickBookDrawer({
       setTarget(initialTarget);
       setOverrideEnabled(false);
       setOverrideConfirmed(false);
-      setOverrideLocalTime("");
+      setOverrideTimeInput("");
       setOverrideDurationMinutes("");
       autoOverrideRef.current = false;
     }
@@ -268,9 +269,10 @@ export function QuickBookDrawer({
   // flow ignores this value.
   useEffect(() => {
     if (open && draft?.localTime) {
-      setOverrideLocalTime(draft.localTime);
+      setOverrideTimeInput(draft.localTime);
+      setTypeCustomTime(false);
     }
-  }, [open, draft?.localTime]);
+  }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
 
   // Drag-to-create: when the draft carries a durationMinutes value
   // (always 15-min granular from DayColumn), the override flow is
@@ -516,7 +518,7 @@ export function QuickBookDrawer({
   // it must parse to a 15-min multiple in [15, 360]. Override and
   // standard cannot both be active because the slot picker is hidden
   // when overrideEnabled is true.
-  const overrideTimeValid = /^\d{2}:\d{2}$/.test(overrideLocalTime);
+  const overrideLocalTime = parseCustomLocalTime(overrideTimeInput);
   const parsedOverrideDuration = (() => {
     if (!overrideDurationMinutes) return null;
     const n = parseInt(overrideDurationMinutes, 10);
@@ -534,11 +536,27 @@ export function QuickBookDrawer({
   const assignedName = showSelector
     ? (eligible.find((p) => p.id === target)?.displayName ?? "")
     : currentPractitionerName;
-  const canBook = !booking && !!selectedClient && !!serviceId && targetValid && (
-    overrideEnabled
-      ? overrideTimeValid && overrideConfirmed && overrideDurationValid
-      : !!pickedSlot
-  );
+  let bookingBlocker: string | null = null;
+  if (!selectedClient) {
+    bookingBlocker = "Choose a client.";
+  } else if (!serviceId) {
+    bookingBlocker = "Choose a service.";
+  } else if (!targetValid) {
+    bookingBlocker = loadingPractitioners
+      ? "Loading practitioners…"
+      : "An eligible practitioner is required.";
+  } else if (overrideEnabled) {
+    if (!overrideLocalTime) {
+      bookingBlocker = "Enter a valid start time, such as 3:30 PM or 15:30.";
+    } else if (!overrideDurationValid) {
+      bookingBlocker = "Choose a duration in 15-minute increments between 15 and 360 minutes.";
+    } else if (!overrideConfirmed) {
+      bookingBlocker = "Confirm that you want to book outside regular availability.";
+    }
+  } else if (!pickedSlot) {
+    bookingBlocker = "Choose an available time.";
+  }
+  const canBook = !booking && bookingBlocker === null;
 
   function handleCreateClient() {
     const name = newClientName.trim();
@@ -571,14 +589,7 @@ export function QuickBookDrawer({
   }
 
   function handleSubmit() {
-    if (!selectedClient || !serviceId) return;
-    // Item 6: an owner selector with no resolved eligible target blocks booking.
-    if (showSelector && !eligible.some((p) => p.id === target)) return;
-    if (overrideEnabled) {
-      if (!overrideTimeValid || !overrideConfirmed) return;
-    } else if (!pickedSlot) {
-      return;
-    }
+    if (!canBook || !selectedClient) return;
     setError(null);
     const fd = new FormData();
     fd.set("client_id", selectedClient.id);
@@ -1026,12 +1037,19 @@ export function QuickBookDrawer({
                   <input
                     id="override-time"
                     aria-labelledby="override-time-label"
-                    type="time"
-                    step={900}
-                    value={overrideLocalTime}
+                    type={typeCustomTime ? "text" : "time"}
+                    step={typeCustomTime ? undefined : 900}
+                    placeholder={typeCustomTime ? "3:30 PM or 15:30" : undefined}
+                    value={overrideTimeInput}
                     onChange={(e) => {
-                      setOverrideLocalTime(e.target.value);
+                      setOverrideTimeInput(e.currentTarget.value);
                       markOverrideExplicit();
+                    }}
+                    onBlur={(e) => {
+                      if (!typeCustomTime && e.currentTarget.value !== overrideTimeInput) {
+                        setOverrideTimeInput(e.currentTarget.value);
+                        markOverrideExplicit();
+                      }
                     }}
                     className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
                   />
@@ -1061,11 +1079,17 @@ export function QuickBookDrawer({
                   </label>
                 )}
               </div>
-              {overrideDurationMinutes !== "" && !overrideDurationValid && (
-                <p className="text-[11px] text-red-700 dark:text-red-400">
-                  Duration must be a 15-minute multiple between 15 and 360.
-                </p>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setOverrideTimeInput(overrideLocalTime);
+                  setTypeCustomTime(!typeCustomTime);
+                  markOverrideExplicit();
+                }}
+                className="min-h-[44px] self-start text-sm underline underline-offset-2"
+              >
+                {typeCustomTime ? "Use time picker" : "Type a time instead"}
+              </button>
               {/* Drag-to-book explanatory line. Renders only when the
                   drawer was opened via drag (overrideDurationMinutes
                   is pre-filled). Tells the practitioner why the
@@ -1162,6 +1186,9 @@ export function QuickBookDrawer({
           </p>
         )}
 
+        <p id="quick-book-status" className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
+          {!booking && bookingBlocker}
+        </p>
         <footer className="mt-auto flex items-center justify-end gap-2">
           <button
             type="button"
@@ -1174,6 +1201,7 @@ export function QuickBookDrawer({
             type="button"
             onClick={handleSubmit}
             disabled={!canBook}
+            aria-describedby={bookingBlocker && !booking ? "quick-book-status" : undefined}
             className="rounded-md bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             {booking ? "Booking…" : "Book appointment"}

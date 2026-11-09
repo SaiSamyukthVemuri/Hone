@@ -39,7 +39,7 @@ describe("override resets OFF for each booking attempt (not sticky)", () => {
 
 describe("practitioner clicked time is preserved (never snapped to a different slot)", () => {
   it("the override time is seeded from the clicked draft time and submitted exactly", () => {
-    expect(DRAWER).toMatch(/setOverrideLocalTime\(draft\.localTime\)/);
+    expect(DRAWER).toMatch(/setOverrideTimeInput\(draft\.localTime\)/);
     expect(DRAWER).toMatch(/utcInstantFromLocal\(\s*draft!\.localDate,\s*overrideLocalTime,\s*studioTimezone,?\s*\)/);
   });
   it("smart scheduling only preselects an EXACT-match slot, never a different suggestion", () => {
@@ -51,9 +51,12 @@ describe("practitioner clicked time is preserved (never snapped to a different s
 
 describe("booking outside availability requires an explicit override", () => {
   it("submit is blocked unless the override is confirmed", () => {
-    expect(DRAWER).toMatch(/if \(!overrideTimeValid \|\| !overrideConfirmed\) return;/);
+    expect(DRAWER).toMatch(/if \(!canBook \|\| !selectedClient\) return;/);
   });
   it("Save stays disabled until override time is valid AND confirmed", () => {
-    expect(DRAWER).toMatch(/overrideTimeValid && overrideConfirmed/);
+    expect(DRAWER).toMatch(/if \(!overrideLocalTime\) \{\s*bookingBlocker =/);
+    expect(DRAWER).toMatch(/else if \(!overrideConfirmed\) \{\s*bookingBlocker =/);
+    expect(DRAWER).toMatch(/canBook = !booking && bookingBlocker === null/);
+    expect(DRAWER).toMatch(/disabled=\{!canBook\}/);
   });
 });

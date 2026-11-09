@@ -26,18 +26,6 @@ export type MoveMode = "available_slot" | "custom_time";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
-/** Convert either time field to the action's studio-local HH:MM contract. */
-export function parseCustomMoveTime(value: string): string {
-  const text = value.trim();
-  const clock = /^((?:[01]\d|2[0-3]):[0-5]\d)(?::00(?:\.0{1,3})?)?$/.exec(text);
-  if (clock) return clock[1];
-
-  const meridiem = /^(0?[1-9]|1[0-2]):([0-5]\d)\s*(am|pm)$/i.exec(text);
-  if (!meridiem) return "";
-  const hour = Number(meridiem[1]) % 12 + (meridiem[3].toLowerCase() === "pm" ? 12 : 0);
-  return `${String(hour).padStart(2, "0")}:${meridiem[2]}`;
-}
-
 export type MoveConfirmInput = {
   mode: MoveMode;
   /** A mutation is in flight; the button carries its own "Moving…" label. */

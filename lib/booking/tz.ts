@@ -1,6 +1,18 @@
 // Zero-dependency timezone helpers.
 // All times in the DB are UTC. The UI displays in the studio's IANA timezone.
 
+/** Normalize custom time entry to studio-local HH:MM. */
+export function parseCustomLocalTime(value: string): string {
+  const text = value.trim();
+  const clock = /^((?:[01]\d|2[0-3]):[0-5]\d)(?::00(?:\.0{1,3})?)?$/.exec(text);
+  if (clock) return clock[1];
+
+  const meridiem = /^(0?[1-9]|1[0-2]):([0-5]\d)\s*(am|pm)$/i.exec(text);
+  if (!meridiem) return "";
+  const hour = Number(meridiem[1]) % 12 + (meridiem[3].toLowerCase() === "pm" ? 12 : 0);
+  return `${String(hour).padStart(2, "0")}:${meridiem[2]}`;
+}
+
 function partsInTz(date: Date, tz: string): Record<string, string> {
   const f = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,

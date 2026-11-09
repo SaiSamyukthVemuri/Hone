@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { parseCustomLocalTime } from "@/lib/booking/tz";
 import {
   MOVE_NOTICE,
   MOVE_REASON,
   isDifferentInstant,
   moveConfirmState,
-  parseCustomMoveTime,
   type MoveConfirmInput,
 } from "@/app/(app)/calendar/move-confirm-state";
 
@@ -76,13 +76,13 @@ describe("custom time entry", () => {
     ["12:00 PM", "12:00"],
     ["3:37 pm", "15:37"],
   ])("converts %s to %s without changing the selected minute", (input, expected) => {
-    expect(parseCustomMoveTime(input)).toBe(expected);
+    expect(parseCustomLocalTime(input)).toBe(expected);
   });
 
   it.each(["3:3", "3:30", "3:30 P", "13:30 PM", "24:00", "15:60", "15:30:01"])(
     "rejects the incomplete or invalid time %s",
     (input) => {
-      expect(parseCustomMoveTime(input)).toBe("");
+      expect(parseCustomLocalTime(input)).toBe("");
     },
   );
 });

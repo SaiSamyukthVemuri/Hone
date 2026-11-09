@@ -6,6 +6,7 @@ import {
   localDateString,
   localLongDate,
   localTimeString,
+  parseCustomLocalTime,
   utcInstantFromLocal,
 } from "@/lib/booking/tz";
 import {
@@ -14,7 +15,7 @@ import {
   type MoveSlot,
   type MovePractitionerOption,
 } from "./move-appointment-actions";
-import { moveConfirmState, parseCustomMoveTime } from "./move-confirm-state";
+import { moveConfirmState } from "./move-confirm-state";
 import { isServerActionTransportFailure } from "@/lib/reliability/server-action-transport";
 
 // Practitioner Move appointment, ONE shared responsive dialog + state machine used by
@@ -80,7 +81,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const [canUseCustomTime, setCanUseCustomTime] = useState(false);
   const [customTimeInput, setCustomTimeInput] = useState("");
   const [typeCustomTime, setTypeCustomTime] = useState(false);
-  const customTime = parseCustomMoveTime(customTimeInput);
+  const customTime = parseCustomLocalTime(customTimeInput);
   const [ackOverride, setAckOverride] = useState(false);
 
   // Item 7: owner-only reassignment. All server-authoritative from loadMoveSlotsAction.

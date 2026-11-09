@@ -43,9 +43,9 @@ describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy"
   });
   it("blocks booking without a resolved eligible target and shows the assigned practitioner", () => {
     expect(DRAWER).toMatch(/const targetValid = !showSelector \|\| eligible\.some\(\(p\) => p\.id === target\)/);
-    expect(DRAWER).toMatch(/canBook = !booking && !!selectedClient && !!serviceId && targetValid &&/);
+    expect(DRAWER).toMatch(/else if \(!targetValid\) \{\s*bookingBlocker =/);
     expect(DRAWER).toMatch(/With \{assignedName\}/);
-    expect(DRAWER).toMatch(/if \(showSelector && !eligible\.some\(\(p\) => p\.id === target\)\) return/);
+    expect(DRAWER).toMatch(/if \(!canBook \|\| !selectedClient\) return/);
   });
   it("latest-request-wins for eligible loads (stale service response cannot overwrite)", () => {
     expect(DRAWER).toMatch(/const eligibleReq = useRef\(0\)/);

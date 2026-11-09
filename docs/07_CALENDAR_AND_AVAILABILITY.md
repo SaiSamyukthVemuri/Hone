@@ -42,6 +42,7 @@ Bare click on an empty slot opens `QuickBookDrawer`:
 - Service picker; duration follows the service's default unless the practitioner overrides.
 - Client picker (live search) or "Add new" inline.
 - Buffer-aware availability check on submit.
+- For an owner booking outside regular availability, **Type a time instead** accepts a studio-local time such as `3:30 PM` or `15:30`. Acknowledge the override before booking. The drawer explains any missing requirement beside **Book appointment**.
 - Soft-override on the inferred duration (`autoOverrideRef` in `QuickBookDrawer.tsx`) so explicit edits stick.
 
 ### Appointment detail (`/calendar/[id]`)
