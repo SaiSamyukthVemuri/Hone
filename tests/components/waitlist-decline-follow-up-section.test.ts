@@ -68,9 +68,9 @@ describe("the owner follow-up section", () => {
       expect(html.toLowerCase()).not.toMatch(/delivered|queued|pending/);
     }
   });
-  it("an erased row shows no answers and no erase date", () => {
+  it("an erased row shows no answers and no 'will be erased' date, only the marker with the date it was erased", () => {
     const html = render([row({ whyNotWork: null, betterTimes: null, answersErasedAt: "2026-11-20T10:00:00Z" })]);
-    expect(html).toContain("Their answers have been erased.");
+    expect(html).toMatch(/Answers erased on [A-Z][a-z]{2} \d{1,2}, 2026\./);
     expect(html).not.toContain("WHYMARK");
     expect(html).not.toContain("Answers will be erased on");
   });

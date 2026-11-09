@@ -125,7 +125,9 @@ export function DeclineFollowUpSection({
               <p className="font-medium">{r.clientName || "A person on the waitlist"}</p>
               {r.kind === "withdrawal" ? <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
               {erased ? (
-                <p className="text-neutral-600 dark:text-neutral-400">Their answers have been erased.</p>
+                <p className="text-neutral-600 dark:text-neutral-400">
+                  {eraseDate(r.answersErasedAt, timeZone) ? `Answers erased on ${eraseDate(r.answersErasedAt, timeZone)}.` : "Their answers have been erased."}
+                </p>
               ) : r.whyNotWork !== null || r.betterTimes !== null ? (
                 <dl className="mt-1">
                   <dt className="text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.why}</dt>

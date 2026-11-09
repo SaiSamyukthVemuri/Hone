@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
+import { checkRetentionHealthForCron } from "@/lib/waitlist/retention-run";
 import { runReconciliation } from "@/lib/google-calendar/sync/reconcile";
 import {
   createReconcileObservability,
@@ -221,5 +222,10 @@ export async function GET(req: Request) {
         }),
       );
     }
+
+    // 0326: independent detector for the scheduled erase of overdue waitlist answers. The 10:00 run cannot report its own absence, so the earlier
+    // daily crons read its heartbeat and raise a deduped critical alert (counts and ages only). Same contract as the check above: no return, no
+    // throw, so it cannot change this route's result.
+    await checkRetentionHealthForCron("/api/cron/calendar-reconcile");
   }
 }

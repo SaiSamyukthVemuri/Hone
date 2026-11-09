@@ -5,8 +5,9 @@ import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-const h = vi.hoisted(() => ({ dispatch: vi.fn() }));
+const h = vi.hoisted(() => ({ dispatch: vi.fn(), retention: vi.fn() }));
 vi.mock("@/lib/waitlist/decline-owner-email", () => ({ dispatchDeclineOwnerEmail: h.dispatch }));
+vi.mock("@/lib/waitlist/retention-run", () => ({ runRetentionForCron: h.retention }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
 import { GET } from "@/app/api/cron/waitlist-decline-owner-email/route";
 import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
@@ -17,6 +18,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.CRON_SECRET = "synthetic-secret";
   h.dispatch.mockResolvedValue({ sent: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 7 });
+  h.retention.mockResolvedValue({ ok: true, calls: 1, erasedAnswers: 3, failedAnswers: 0, remaining: 0 });
 });
 afterEach(() => {
   delete process.env.CRON_SECRET;
@@ -27,10 +29,30 @@ describe("the backstop route", () => {
     expect((await GET(new Request("https://x.test/api/cron/waitlist-decline-owner-email"))).status).toBe(401);
     expect((await GET(new Request("https://x.test/a", { headers: { authorization: "Bearer wrong" } }))).status).toBe(401);
     expect(h.dispatch).not.toHaveBeenCalled();
+    expect(h.retention).not.toHaveBeenCalled();
   });
+  const authed = () => GET(new Request("https://x.test/a", { headers: { authorization: "Bearer synthetic-secret" } }));
   it("returns counts only", async () => {
-    const res = await GET(new Request("https://x.test/a", { headers: { authorization: "Bearer synthetic-secret" } }));
-    expect(await res.json()).toEqual({ ok: true, sent: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 7 });
+    expect(await (await authed()).json()).toEqual({
+      ok: true, sent: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 7,
+      retention: { ok: true, calls: 1, erasedAnswers: 3, failedAnswers: 0, remaining: 0 },
+    });
+  });
+  it("calls the 0326 erase on every authorized run", async () => {
+    await authed();
+    expect(h.retention).toHaveBeenCalledTimes(1);
+  });
+  it("a sweep that throws is still surfaced, and the erase still ran", async () => {
+    h.dispatch.mockRejectedValue(new Error("sweep down"));
+    await expect(authed()).rejects.toThrow("sweep down");
+    expect(h.retention).toHaveBeenCalledTimes(1);
+  });
+  it("the three earlier crons each run the shared health check with their own route path", () => {
+    for (const name of ["materialize-recurring-breaks", "calendar-reconcile", "calendar-sync"]) {
+      const src = read(`app/api/cron/${name}/route.ts`);
+      expect(src, name).toContain("checkRetentionHealthForCron(");
+      expect(src, name).toContain(`/api/cron/${name}`);
+    }
   });
   it("declares a literal maxDuration equal to the constant the sweep budget was derived from, and the budget leaves room for one slow row", async () => {
     const { DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS, DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS } = await import("@/lib/waitlist/decline-owner-email-gate");
