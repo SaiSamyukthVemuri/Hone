@@ -38,7 +38,11 @@ import {
   adapterMissingReason,
   type AdapterCapabilities,
 } from "@/lib/waitlist/invite-to-book-contract";
-import { useInviteOutcomeAction } from "@/components/waitlist/invite-outcome-boundary";
+import {
+  useInviteOutcomeAction,
+  useInviteOutcomeFor,
+  useInviteOutcomePending,
+} from "@/components/waitlist/invite-outcome-boundary";
 
 // ===========================================================================
 // WAIT-03 B4 — the invitation composer
@@ -490,6 +494,18 @@ export function InviteComposerView({
   // `InviteOutcomeBoundary` sits above every section and survives that.
   const outcomeAction = useInviteOutcomeAction();
 
+  // THE ANSWER ALSO APPEARS HERE, beside Send. A refusal does not revalidate, so this composer stays mounted and the boundary's notice (above
+  // the whole queue) is off-screen from the press. Withheld while a send is in flight and once the draft changes: the message answered the
+  // window that was sent, not the one now on screen.
+  const answered = useInviteOutcomeFor(entryId);
+  const sending = useInviteOutcomePending();
+  const [staleFor, setStaleFor] = useState<typeof answered>(null);
+  useEffect(() => {
+    setStaleFor(answered);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss the answer that was current when the draft moved; a later answer is new
+  }, [draft]);
+  const inlineAnswer = answered !== null && answered !== staleFor && !sending ? answered : null;
+
   const unbound = action === null && outcomeAction === null;
   const sendDisabled = send.disabled || unbound;
   // The CALLER'S reason wins when it has one: it knows why it withheld the
@@ -751,6 +767,20 @@ export function InviteComposerView({
           >
             {sendReason}
           </span>
+        )}
+        {inlineAnswer && (
+          <p
+            role="alert"
+            data-testid="composer-outcome"
+            data-tone={inlineAnswer.notice.tone}
+            className={
+              inlineAnswer.notice.tone === "error"
+                ? "text-sm leading-snug text-danger"
+                : "text-sm leading-snug text-fg"
+            }
+          >
+            {inlineAnswer.notice.message}
+          </p>
         )}
         {/* PRIMARY IS FULL WIDTH AND FIRST IN THE DOM. On a phone the send
             control is the one a thumb reaches for; putting Cancel first in

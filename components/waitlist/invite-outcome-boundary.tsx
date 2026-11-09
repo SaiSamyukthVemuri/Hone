@@ -74,6 +74,8 @@ type InviteOutcomeBinding = {
    * withheld until the action settles, and returns immediately afterwards.
    */
   pending: boolean;
+  /** The most recent answer, or null before any submission. Read by the composer that was pressed, so a refusal appears beside its Send button. */
+  submitted: SubmittedInvitation | null;
 };
 
 const InviteOutcomeContext = createContext<InviteOutcomeBinding | null>(null);
@@ -96,6 +98,17 @@ export function useInviteOutcomeAction(): ((formData: FormData) => void) | null 
  */
 export function useInviteOutcomePending(): boolean {
   return useContext(InviteOutcomeContext)?.pending ?? false;
+}
+
+/**
+ * The most recent answer when it belongs to THIS prospect, else null.
+ *
+ * The boundary's own notice sits above the whole queue, so a refusal on a row far down the page was never in view of the person who pressed
+ * Send: the button re-enabled and nothing visible changed. The composer renders this beside Send as well.
+ */
+export function useInviteOutcomeFor(entryId: string): SubmittedInvitation | null {
+  const submitted = useContext(InviteOutcomeContext)?.submitted ?? null;
+  return submitted !== null && submitted.entryId === entryId ? submitted : null;
 }
 
 /**
@@ -178,7 +191,7 @@ export function InviteOutcomeBoundary({
   );
 
   return (
-    <InviteOutcomeContext.Provider value={{ action: boundAction, pending }}>
+    <InviteOutcomeContext.Provider value={{ action: boundAction, pending, submitted }}>
       <div className="flex flex-col gap-3">
         <InvitationOutcomeNotice submitted={submitted} />
         {children}

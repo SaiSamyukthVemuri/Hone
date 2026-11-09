@@ -412,6 +412,10 @@ export type InvitationNotice = {
 export const PENDING_OWNER_REVIEW_COPY =
   "This person has a response waiting for your review. Follow up below before inviting them again.";
 
+/** Shown when the admit command refuses because this exact window was already declined for this person. Permanent for that window: the fix is a different window. */
+export const PREVIOUSLY_DECLINED_COPY =
+  "No invitation was created: they already said this window didn't work. Change the dates or days and send a different window.";
+
 /**
  * A refusal the server actually gave. The invitation was NOT created.
  *
@@ -454,6 +458,9 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
     // 0325: not a failure to retry. The person replied to an earlier invitation and the reply is waiting for the owner.
     case "pending_owner_review":
       return PENDING_OWNER_REVIEW_COPY;
+    // 0192: the person declined this identical offer (same service, dates and days). Retrying cannot succeed, so this must never read as "try again".
+    case "previously_declined":
+      return PREVIOUSLY_DECLINED_COPY;
     default:
       // TRUE FOR EVERY CODE IN THIS ARM BY CONSTRUCTION — `refused` means the
       // admission did not commit. Naming the code keeps the message honest
