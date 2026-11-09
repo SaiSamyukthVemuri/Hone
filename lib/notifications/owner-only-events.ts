@@ -5,7 +5,7 @@
 // (0070) still lets every member SELECT every row of the studio, so a direct API read is not closed by this file; that needs a policy
 // migration, which is HELD. This module is the application half of the rule and the single list both halves use.
 // waitlist_offer_declined (HON-7) names a person who declined offered times; it is written by the decline command, owner-only like the card events.
-export const OWNER_ONLY_NOTIFICATION_EVENT_TYPES = ["card_added", "card_replaced", "waitlist_offer_declined"] as const;
+export const OWNER_ONLY_NOTIFICATION_EVENT_TYPES = ["card_added", "card_replaced", "waitlist_offer_declined", "waitlist_withdrawal_requested"] as const;
 
 const EXCLUDE = `(${OWNER_ONLY_NOTIFICATION_EVENT_TYPES.join(",")})`;
 

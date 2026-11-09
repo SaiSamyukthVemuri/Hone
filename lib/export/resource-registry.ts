@@ -212,6 +212,21 @@ export type ExportedDisposition = {
   readonly sourceCountCheck: SourceCountCheck;
   /** One sentence, reused verbatim by the ZIP README and the settings page. */
   readonly description: string;
+  /**
+   * Set when the table cannot be SELECTed by any browser role (RLS on, no policy) and the owner-gated function is the only door.
+   * The exporter calls `fn` after the owner check with the session actor, never a service client and never the raw table.
+   */
+  readonly rpcSource?: RpcSourceDeclaration;
+};
+
+export type RpcSourceDeclaration = {
+  readonly fn: string;
+  /** Ascending keyset column the function pages by (`p_after_id`). */
+  readonly keyColumn: string;
+  /** The columns the function returns, exactly, in the database's declared order. */
+  readonly returns: readonly string[];
+  /** Returned columns that deliberately do not reach the CSV, each with why. */
+  readonly notEmitted?: Readonly<Record<string, string>>;
 };
 
 export type ExclusionCategory =
@@ -1715,6 +1730,51 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  waitlist_decline_answers: {
+    kind: "exported",
+    file: "waitlist-decline-answers.csv",
+    csvHeaders: [
+      "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
+      "why_not_work", "better_times", "submitted_at", "answers_erased_at",
+    ],
+    // Bound to the 0325 table: followup_id (primary key), studio_id, why_not_work, better_times, submitted_at, erased_at, erased_by_practitioner_id.
+    includedColumns: ["followup_id", "why_not_work", "better_times", "submitted_at", "erased_at"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+      {
+        column: "erased_by_practitioner_id",
+        reason: "internal_state",
+        note: "Who erased the answers is the studio's own audit detail, not the client's answer; the erased marker (answers_erased_at) is exported.",
+      },
+    ],
+    emittedAs: {
+      followup_id: { headers: ["answer_id", "followup_id"], note: "The answer's id is its follow-up's id; emitted under both names." },
+      erased_at: { headers: ["answers_erased_at"], note: "The function names the erased marker answers_erased_at." },
+    },
+    derivedHeaders: {
+      entry_id: "the waitlist entry the person answered as",
+      invitation_id: "the invitation that was declined",
+      client_id: "the client whose normalized email equals the entry's, in this studio; empty when there is none",
+      kind: "decline or withdrawal, from the follow-up",
+    },
+    rowScope:
+      "Every saved decline answer of this studio, erased ones included as a marker row. Read only through the owner-gated function export_waitlist_decline_answers after the owner check; the table has no policy and no browser grant.",
+    sourceCountCheck: {
+      kind: "none",
+      reason:
+        "The table has no browser-readable surface to count against; the owner-gated database function is its only reader and re-derives ownership itself.",
+    },
+    description:
+      "What waiting-list recipients answered when they said the offered times did not work. An erased answer is a row with no text and the time it was erased.",
+    rpcSource: {
+      fn: "export_waitlist_decline_answers",
+      keyColumn: "answer_id",
+      returns: [
+        "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
+        "why_not_work", "better_times", "submitted_at", "answers_erased_at",
+      ],
+    },
+  },
   waitlist_invitation_followups: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1742,24 +1802,17 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Operational record (ids, status and dates only); contains no client text.",
   },
-  waitlist_decline_answers: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Not exported yet; this file is added to the export in the waitlist follow-up release.",
-  },
   waitlist_decline_owner_emails: {
     kind: "excluded",
     category: "derived",
     reason:
-      "The outbox for the owner email sent when a waitlist person declines, draft migration 0325 (HON-7): one row per verified owner per invitation with a status, attempt count, closed error code and instants. It holds no client text, no name, no address and no email body; the recipient address is resolved at send time. Operational delivery history with no studio-facing meaning beyond whether the owner was told, Purged at 90 days once the retention decision lands. EXCLUDED as operational delivery history: it holds no client data.",
+      "Operational email-status record (ids, statuses and dates only); contains no client text.",
   },
   waitlist_erase_records: {
     kind: "excluded",
     category: "deliberate_privacy",
     reason:
-      "Ids-and-dates log of each time waitlist decline answers were erased (by the owner, by Remove or by retention), draft migration 0325 (HON-7). It holds no client text and is deliberately kept apart from the answers table and never restored with it, so that an erasure can be replayed after any restore. Compliance evidence about the studio's own data handling. EXCLUDED on purpose: ids and dates only, kept 30 days and then purged by a later scheduled cleanup; it is compliance evidence, not a client record.",
+      "Retained for 30 days by policy; the scheduled purge is not yet built.",
   },
   studio_waitlist_admission_rounds: {
     kind: "pending",
@@ -2314,6 +2367,52 @@ export function selectedColumnError(audit: SelectedColumnAudit): string {
   return `Export aborted: ${parts.join("; ")}. No partial export was produced.`;
 }
 
+export function rpcSourceOf(resource: string): RpcSourceDeclaration | null {
+  return exportedResources().find((e) => e.resource === resource)?.disposition.rpcSource ?? null;
+}
+
+export type RpcSourceAudit = {
+  readonly ok: boolean;
+  readonly problems: readonly string[];
+};
+
+/**
+ * An rpc-sourced file is only as honest as the function behind it. Three comparisons, each in both directions:
+ * every CSV header must be a returned column or a declared derived header; every returned column must reach the CSV or be listed in
+ * `notEmitted`; and the function's LIVE return columns (supplied by the DB suite from pg_proc) must equal the declared `returns`.
+ */
+export function auditRpcSources(
+  liveReturnsByFn: Readonly<Record<string, readonly string[]>>,
+  resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
+): RpcSourceAudit {
+  const problems: string[] = [];
+  for (const { resource, disposition } of resources) {
+    const rpc = disposition.rpcSource;
+    if (!rpc) continue;
+    const returns = new Set(rpc.returns);
+    const headers = new Set(disposition.csvHeaders);
+    const derived = new Set(Object.keys(disposition.derivedHeaders ?? {}));
+    const emittedTargets = new Set(Object.values(disposition.emittedAs ?? {}).flatMap((e) => e.headers));
+    if (!returns.has(rpc.keyColumn)) problems.push(`${resource}: key column ${rpc.keyColumn} is not a returned column`);
+    for (const h of disposition.csvHeaders) {
+      if (!returns.has(h) && !derived.has(h) && !emittedTargets.has(h)) problems.push(`${resource}: header ${h} is not returned by ${rpc.fn}`);
+    }
+    for (const c of rpc.returns) {
+      const reaches = headers.has(c) || (disposition.emittedAs?.[c]?.headers ?? []).every((x) => headers.has(x)) && !!disposition.emittedAs?.[c];
+      if (!reaches && !(rpc.notEmitted && c in rpc.notEmitted)) problems.push(`${resource}: ${rpc.fn} returns ${c} but it neither reaches the CSV nor is declared notEmitted`);
+    }
+    const live = liveReturnsByFn[rpc.fn];
+    if (!live) {
+      problems.push(`${resource}: no live return columns supplied for ${rpc.fn}`);
+      continue;
+    }
+    const liveSet = new Set(live);
+    for (const c of rpc.returns) if (!liveSet.has(c)) problems.push(`${resource}: declared column ${c} is not returned by live ${rpc.fn}`);
+    for (const c of live) if (!returns.has(c)) problems.push(`${resource}: live ${rpc.fn} returns undeclared column ${c}`);
+  }
+  return { ok: problems.length === 0, problems: problems.sort() };
+}
+
 export function auditSelectedColumns(
   selectedByResource: Readonly<Record<string, readonly string[]>>,
   resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
@@ -2328,7 +2427,10 @@ export function auditSelectedColumns(
     }
     const have = new Set(selected);
     for (const column of disposition.includedColumns) {
-      if (!have.has(column)) notSelected.push(`${resource}.${column}`);
+      // An rpc-sourced read has no select to read back; what it observed is the function's returned names, so an included column counts
+      // as selected when every header it is emitted under was returned.
+      const names = disposition.rpcSource ? (disposition.emittedAs?.[column]?.headers ?? [column]) : [column];
+      if (!names.every((n) => have.has(n))) notSelected.push(`${resource}.${column}`);
     }
   }
   return {

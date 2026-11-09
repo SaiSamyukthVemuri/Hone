@@ -72,6 +72,7 @@ describe("scopeNotificationsToViewer", () => {
 
   it("a non-owner never sees the owner-only types, including waitlist_offer_declined, nor another recipient's cancellation row (legacy studio-wide rows are unchanged)", () => {
     expect(OWNER_ONLY_NOTIFICATION_EVENT_TYPES).toContain("waitlist_offer_declined");
+    expect(OWNER_ONLY_NOTIFICATION_EVENT_TYPES).toContain("waitlist_withdrawal_requested");
     const s = scope(table(seed()), false, STAFF).rows();
     // row 5 is a cancellation with no recipient (the no-owner fallback): it names a client, so it is OWNER-ONLY
     expect(ids(s)).toEqual(["1", "10", "11", "2", "8", "9"]);

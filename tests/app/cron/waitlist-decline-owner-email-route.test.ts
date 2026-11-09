@@ -65,7 +65,7 @@ describe("what the owner sees when a send failed", () => {
   });
   it("is loaded for the owner only: after the role refusal, and through the helper, not an admin client in the page", () => {
     const src = read("app/(app)/settings/waitlist/page.tsx");
-    expect(src.indexOf('practitioner.role !== "owner"')).toBeLessThan(src.indexOf("loadDeclineEmailStatus(studio.id)"));
+    expect(src.indexOf('practitioner.role !== "owner"')).toBeLessThan(src.indexOf("loadDeclineEmailStatus(studio.id, practitioner.user_id)"));
     expect(src).not.toContain("createAdminClient");
   });
 });
