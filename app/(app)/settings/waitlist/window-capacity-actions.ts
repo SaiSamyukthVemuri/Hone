@@ -3,9 +3,9 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { addDays, localDateString } from "@/lib/booking/tz";
-import { consultationsThatFit, estimateCapacity } from "@/lib/waitlist/consultation-capacity";
+import { estimateCapacity } from "@/lib/waitlist/consultation-capacity";
+import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
 
 // ===========================================================================
 // HOW MANY CONSULTATIONS FIT THE WINDOW BEING OFFERED
@@ -50,34 +50,15 @@ export async function estimateWindowCapacityAction(input: {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner") return { ok: false };
 
-    const admin = createAdminClient();
-    const { data: row, error } = await admin
-      .from("studios")
-      .select("slug, timezone, buffer_minutes")
-      .eq("id", studio.id)
-      .maybeSingle();
-    if (error || !row) return { ok: false };
-
-    // The days an invitation's scope would permit: the SAME inclusive
-    // studio-local calendar-date range the invitation is issued over (today
-    // through today + windowDays - 1, see windowToDates). Stepping calendar
-    // dates, not epoch milliseconds, keeps a DST change from skipping or
-    // repeating a day.
-    const dates: string[] = [];
-    const first = localDateString(new Date(), row.timezone as string);
-    for (let i = 0; i < input.windowDays; i += 1) {
-      const d = addDays(first, i);
-      const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
-      if (weekdays === null || weekdays.length === 0 || weekdays.includes(dow)) dates.push(d);
-    }
-    if (dates.length === 0) return { ok: true, ...estimateCapacity(0, 0), outstandingScope: "window" };
-
-    const range = await fetchPublicSlotsForDates({
-      slug: row.slug as string,
+    const computed = await computeConsultationFit({
+      admin: createAdminClient(),
+      studioId: studio.id,
       serviceId: input.serviceId,
-      dates,
+      windowDays: input.windowDays,
+      allowedWeekdays: weekdays,
     });
-    if (!range.ok) return { ok: false };
+    if (!computed.ok) return { ok: false };
+    const first = computed.firstDate;
 
     // LIVE invitations that COMPETE with this window, for EVERY service: the studio is one
     // calendar, so an invitation for another service competes for the same hours, but one
@@ -121,8 +102,7 @@ export async function estimateWindowCapacityAction(input: {
       return { ok: false };
     }
 
-    const fit = consultationsThatFit(range.slots, Number(row.buffer_minutes ?? 0));
-    return { ok: true, ...estimateCapacity(fit, outstanding), outstandingScope };
+    return { ok: true, ...estimateCapacity(computed.fit, outstanding), outstandingScope };
   } catch {
     return { ok: false };
   }

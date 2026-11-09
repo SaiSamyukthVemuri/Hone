@@ -48,7 +48,7 @@ async function invite(s: Studio, from: number, to: number, weekdays: number[] | 
     [s.studioId, s.userId, `b323-${seq}-${s.studioId.slice(0, 8)}@example.com`],
   );
   const a = await q<any>(
-    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,72)`,
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,72,1000)`,
     [s.studioId, s.userId, e[0].entry_id, serviceId, date(from), date(to), weekdays],
   );
   expect(a[0].result).toBe("admitted");

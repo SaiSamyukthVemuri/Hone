@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({ practitioner: vi.fn(), attention: vi.fn() }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/queries", async (orig) => ({ ...(await orig<Record<string, unknown>>()), requirePractitionerWithStudio: h.practitioner }));
+// The page reads the one-shot lifecycle notice cookie (#1401); there is no request scope here, so it is empty.
+vi.mock("next/headers", async (orig) => ({ ...(await orig<Record<string, unknown>>()), cookies: async () => ({ get: () => undefined }) }));
 vi.mock("next/navigation", async (orig) => ({ ...(await orig<Record<string, unknown>>()), redirect: vi.fn(), notFound: vi.fn() }));
 vi.mock("@/lib/waitlist/needs-attention", async (orig) => ({ ...(await orig<Record<string, unknown>>()), loadNeedsAttention: h.attention }));
 vi.mock("@/lib/waitlist/declined-attention", () => ({ loadDeclinedAttention: async () => ({ kind: "ok", total: 0, shown: [], ids: new Set() }) }));

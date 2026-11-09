@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // 0323 — launch controls (closed + invited booking, and the competing-invitation count). STATIC contract. Behaviour is proved against a real
 // database in tests/db/waitlist-launch-controls.db.test.ts.
@@ -17,8 +17,7 @@ const ASSERT = "public.assert_new_client_admission(uuid, text, boolean)";
 const fnDef = (name: string) => E.match(new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?\\$\\$;`))![0];
 
 describe("0323 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0323")).toBe(true);
+  it("consumes exactly one number", () => {
     expect(countVersion("0323")).toBe(1);
   });
 });
