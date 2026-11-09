@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
 import { AUTO_ROUND_ALLOWANCE } from "@/lib/waitlist/auto-round";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> =>
@@ -43,9 +44,9 @@ async function entry(f: F, label: string) {
   return { id: e[0].entry_id as string, email };
 }
 
-async function invite(f: F, entryId: string) {
+async function invite(f: F, entryId: string, days = 30) {
   const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-  const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
   const a = await q(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,5)`, [
     f.studioId, f.userId, entryId, f.serviceId, from, to,
   ]);
@@ -383,6 +384,96 @@ describe("read_waitlist_followup_status takes an array", () => {
   });
 });
 
+describe("S1: closed follow-ups whose answers still exist stay readable and erasable", () => {
+  it("handled-with-answers is returned with its status; once erased it is not", async () => {
+    const f = await seed("t");
+    const e = await entry(f, "t");
+    await decline(await invite(f, e.id));
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    await q(`select * from public.mark_waitlist_decline_handled($1,$2,$3)`, [f.studioId, f.userId, fid]);
+    const list = () => q(`select * from public.read_waitlist_followups($1,$2,null)`, [f.studioId, f.userId]);
+    const before = await list();
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ status: "handled", why_not_work: WHY, better_times: TIMES });
+    expect(Object.keys(before[0])).not.toContain("client_email");
+    await q(`select * from public.erase_waitlist_decline_answers($1,$2,$3)`, [f.studioId, f.userId, fid]);
+    expect(await list()).toHaveLength(0);
+  });
+});
+
+describe("S3: a hard delete leaves a cascade erase record that survives the cascade", () => {
+  it("deleting the entry removes the answers and writes ids-and-dates only", async () => {
+    const f = await seed("u");
+    const e = await entry(f, "u");
+    await decline(await invite(f, e.id));
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    await q(`delete from public.new_client_waitlist_entries where id=$1`, [e.id]).catch(async () => {
+      // Entries refuse delete outside a studio cascade; delete the studio instead.
+      await q(`delete from public.studios where id=$1`, [f.studioId]);
+    });
+    expect(await q(`select 1 from public.waitlist_decline_answers where followup_id=$1`, [fid])).toHaveLength(0);
+    const rec = await q(`select * from public.waitlist_erase_records where followup_id=$1`, [fid]);
+    expect(rec).toHaveLength(1);
+    expect(rec[0]).toMatchObject({ reason: "cascade", kind: "decline", studio_id: f.studioId });
+    expect(JSON.stringify(rec[0])).not.toMatch(/MarkQ7/);
+  });
+});
+
+describe("Codex :534: withdrawal after expires_at does not strand the person", () => {
+  it("a lapsed-but-unmarked invitation is closed; Keep then a new invite is admitted", async () => {
+    const f = await seed("v");
+    const e = await entry(f, "v");
+    const t = await invite(f, e.id);
+    await q(`alter table public.new_client_waitlist_invitations disable trigger user`);
+    try {
+      await q(`update public.new_client_waitlist_invitations set issued_at = now() - interval '5 days', expires_at = now() - interval '1 minute' where entry_id=$1`, [e.id]);
+    } finally {
+      await q(`alter table public.new_client_waitlist_invitations enable trigger user`);
+    }
+    expect((await q(`select * from public.request_waitlist_withdrawal($1,$2)`, [t.token, t.cap]))[0].result).toBe("recorded");
+    const inv = await q(`select declined_at, released_at, expired_at from public.new_client_waitlist_invitations where entry_id=$1`, [e.id]);
+    expect(inv.every((r: any) => r.declined_at || r.released_at || r.expired_at)).toBe(true);
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    expect((await q(`select * from public.keep_waitlist_withdrawal($1,$2,$3)`, [f.studioId, f.userId, fid]))[0].result).toBe("kept");
+    const again = await invite(f, e.id);
+    expect(again.token).toBeTruthy();
+  });
+});
+
+describe("admit: the owner-review hold", () => {
+  const admit = (f: F, entryId: string, who: string, fit = 5) => {
+    const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 45 * 86_400_000).toISOString().slice(0, 10);
+    return q(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,$7)`, [f.studioId, who, entryId, f.serviceId, from, to, fit]).then((r) => r[0].result as string);
+  };
+
+  it("an entry with an open follow-up is refused as pending_owner_review until the owner handles it", async () => {
+    const f = await seed("o");
+    const e = await entry(f, "o");
+    await decline(await invite(f, e.id));
+    expect(await admit(f, e.id, f.userId)).toBe("pending_owner_review");
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    await q(`select * from public.mark_waitlist_decline_handled($1,$2,$3)`, [f.studioId, f.userId, fid]);
+    expect(await admit(f, e.id, f.userId)).toBe("admitted");
+  });
+
+  it("N1: a non-owner on an entry with an open follow-up gets the membership refusal, never pending_owner_review", async () => {
+    const f = await seed("p");
+    const e = await entry(f, "p");
+    await decline(await invite(f, e.id));
+    const prac = await seedMember({ studioId: f.studioId, userId: f.userId, practitionerId: f.practitionerId, clientId: f.clientId }, "np");
+    expect(await admit(f, e.id, prac.userId)).toBe("not_owner");
+    expect(await admit(f, e.id, randomUUID())).toBe("not_a_member");
+  });
+
+  it("no_capacity keeps its precedence over pending_owner_review", async () => {
+    const f = await seed("q");
+    const e = await entry(f, "q");
+    await decline(await invite(f, e.id));
+    expect(await admit(f, e.id, f.userId, 0)).toBe("no_capacity");
+  });
+});
+
 describe("source pins", () => {
   const sql = readFileSync(join(__dirname, "..", "..", "supabase", "migrations", "0325_waitlist_decline_followups.sql"), "utf8");
   it("E4: the SQL literal for a fresh round's allowance equals AUTO_ROUND_ALLOWANCE", () => {
@@ -392,5 +483,33 @@ describe("source pins", () => {
   it("the bell literals in SQL are the contract's", () => {
     expect(sql).toContain("'A waitlist response needs your attention'");
     expect(sql).toContain("'/settings/waitlist#follow-up'");
+  });
+});
+
+describe("C8: admit is built from the final 0324 bytes", () => {
+  const root = join(__dirname, "..", "..", "supabase");
+  const fn = (text: string) => {
+    const a = text.indexOf("create or replace function public.admit_new_client_waitlist_entry(");
+    return text.slice(a, text.indexOf("\n$$;", a) + 4);
+  };
+  const a24 = fn(readFileSync(join(root, "migrations", "0324_waitlist_atomic_send_allowance.sql"), "utf8"));
+  const a25 = fn(readFileSync(join(root, "migrations", "0325_waitlist_decline_followups.sql"), "utf8"));
+
+  it("0325's admit is 0324's with exactly one inserted region, and the guard and rotation survive in order", () => {
+    const start = a25.indexOf("  -- 3d. THE OWNER-REVIEW HOLD");
+    const end = a25.indexOf("  -- 4-9. THE MUTATING HALF");
+    expect(start).toBeGreaterThan(0);
+    expect(a25.slice(0, start) + a25.slice(end)).toBe(a24);
+    const guard = a25.indexOf("if v_competing + 1 > p_fit then");
+    const hold = a25.indexOf("'pending_owner_review'");
+    const rotate = a25.indexOf("values (p_studio_id, 100,");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(hold);
+    expect(hold).toBeLessThan(rotate);
+  });
+
+  it("the 0325 down file restores 0324's admit exactly", () => {
+    const down = readFileSync(join(root, "rollbacks", "0325_waitlist_decline_followups.down.sql"), "utf8");
+    expect(fn(down)).toBe(a24);
   });
 });

@@ -1736,6 +1736,34 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Owner-only record that an invited prospect said the offered times do not work, draft migration 0319 (HON-7). One row per invitation (unique) with an optional free-text note of at most 500 characters written by the recipient, beside the prospect's name on the entry, plus created and acknowledged instants. Client-supplied free text, so tier 1 and PENDING review of retention and export shape: not exported by default and never selected by a count. Rows are erased with the STUDIO only: an invited entry cannot be deleted on its own (invitations are append-only), so person-level erasure of this text is not possible yet (open item L1). No export surface ships in 0319.",
   },
+  waitlist_followups: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The owner's follow-up item for a waitlist person who declined an invitation or asked to be taken off the list, draft migration 0325 (HON-7). One row per decline and per open withdrawal request, with a kind, a closed status, opened and closed instants, the entry and invitation it belongs to and, once booked, the linked appointment. Studio-owned operational history, so PENDING rather than EXCLUDED, decided with new_client_waitlist_entries. It holds no client text, name or contact. Rows are erased with the studio; the invitation and practitioner references refuse deletion while a row exists. No export surface ships in 0325.",
+  },
+  waitlist_decline_answers: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "The two short free-text answers a waitlist person gives when declining an invitation (why the times do not work, what would), draft migration 0325 (HON-7). Client-supplied free text, so tier 1 and PENDING review of export shape and retention: these rows are ERASED, not kept - 30 days after the follow-up closes, 90 days at the latest, immediately when the owner removes the person, and on the owner's request - leaving only an erased marker, so an export must never be assumed to hold answers and must never outlive an erasure. Visible only to the studio owner through the owner-gated read command; no role reads the table directly. No export surface ships in 0325.",
+  },
+  waitlist_decline_owner_emails: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The outbox for the owner email sent when a waitlist person declines, draft migration 0325 (HON-7): one row per verified owner per invitation with a status, attempt count, closed error code and instants. It holds no client text, no name, no address and no email body; the recipient address is resolved at send time. Operational delivery history with no studio-facing meaning beyond whether the owner was told, so PENDING rather than EXCLUDED and decided with the other waitlist delivery ledgers. Purged at 90 days once the retention decision lands. No export surface ships in 0325.",
+  },
+  waitlist_erase_records: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Ids-and-dates log of each time waitlist decline answers were erased (by the owner, by Remove or by retention), draft migration 0325 (HON-7). It holds no client text and is deliberately kept apart from the answers table and never restored with it, so that an erasure can be replayed after any restore. Compliance evidence about the studio's own data handling, so PENDING rather than EXCLUDED. No export surface ships in 0325.",
+  },
   studio_waitlist_admission_rounds: {
     kind: "pending",
     ticket: "TRUTH-01B",

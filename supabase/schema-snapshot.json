@@ -3,7 +3,7 @@
   "migrations": {
     "count": 262,
     "last": "0325_waitlist_decline_followups.sql",
-    "sha256": "399fa6dfe4552a346f072356bd56df6db1d440176bd3a58f34dc380d7baa0674"
+    "sha256": "134c62719dd00a8fdce3ac3f59ece80c1b805bbd90fd0f409aaea35d7dfb1790"
   },
   "public": {
     "tables": [
@@ -597,6 +597,7 @@
       "validate_schedule_scope",
       "waitlist_admission_round_consumed",
       "waitlist_closed_invited_booking_enabled",
+      "waitlist_decline_answers_record_cascade_erase",
       "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
       "waive_appointment_fee",
