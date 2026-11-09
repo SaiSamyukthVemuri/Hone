@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { isConsultationService } from "@/lib/booking/consultation";
@@ -38,7 +38,11 @@ import {
   adapterMissingReason,
   type AdapterCapabilities,
 } from "@/lib/waitlist/invite-to-book-contract";
-import { useInviteOutcomeAction } from "@/components/waitlist/invite-outcome-boundary";
+import {
+  useInviteOutcomeAction,
+  useInviteOutcomeFor,
+  useInviteOutcomePending,
+} from "@/components/waitlist/invite-outcome-boundary";
 
 // ===========================================================================
 // WAIT-03 B4 — the invitation composer
@@ -433,6 +437,11 @@ export type CapacityView =
  * VISIBLE, what VALIDATES and what would be SUBMITTED are the same three
  * answers.
  */
+/** What an invitation is scoped to: the same three things the server compares (the dates follow from the window at send time). */
+function scopeKey(draft: InviteDraft): string {
+  return JSON.stringify([draft.serviceId, draft.windowDays, draft.allowedWeekdays === null ? null : [...draft.allowedWeekdays].sort((x, y) => x - y)]);
+}
+
 export function InviteComposerView({
   entryId,
   entryName,
@@ -490,6 +499,24 @@ export function InviteComposerView({
   // `InviteOutcomeBoundary` sits above every section and survives that.
   const outcomeAction = useInviteOutcomeAction();
 
+  // THE ANSWER ALSO APPEARS HERE, beside Send. A refusal does not revalidate, so this composer stays mounted and the boundary's notice (above
+  // the whole queue) is off-screen from the press. It answers the window that was SENT, so the scope key (service, window, days) is captured when
+  // Send submits and the answer shows only while the draft on screen still has that key: editing while the send is in flight, or afterwards,
+  // must never put "they declined this window" beside a window nobody sent. Withheld while a send is in flight.
+  const answered = useInviteOutcomeFor(entryId);
+  const sending = useInviteOutcomePending();
+  const [sentKey, setSentKey] = useState<string | null>(null);
+  const inlineAnswer = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
+  // The answer is inserted ABOVE Send and pushes it down, so a press near the bottom of a phone screen left the answer (and Send) below the fold.
+  // When an answer first appears, bring the pair into view with the least movement; focus stays where it was, and an unchanged answer re-rendering
+  // does not scroll again (the effect follows the answer, not the render). Reduced motion gets an instant jump.
+  const answerPairRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (inlineAnswer === null) return;
+    const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    answerPairRef.current?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
+  }, [inlineAnswer]);
+
   const unbound = action === null && outcomeAction === null;
   const sendDisabled = send.disabled || unbound;
   // The CALLER'S reason wins when it has one: it knows why it withheld the
@@ -500,6 +527,11 @@ export function InviteComposerView({
   return (
     <form
       action={outcomeAction ?? action ?? undefined}
+      onSubmit={(e) => {
+        // Cancel submits this form too, to its own binding; only Send sends a window.
+        const by = (e.nativeEvent as SubmitEvent).submitter;
+        if (by?.getAttribute("data-testid") !== "composer-cancel") setSentKey(scopeKey(draft));
+      }}
       className="flex flex-col"
       data-testid="invite-composer"
     >
@@ -752,6 +784,29 @@ export function InviteComposerView({
             {sendReason}
           </span>
         )}
+        {/* SCROLL MARGINS: scrollIntoView({block:"nearest"}) honours them, so the pair lands clear of the sticky bars and the keyboard/home bar.
+            Top = the measured app header (--settings-top, set by the settings shell; 4.5rem before it measures) plus, under 700px, the shell's own
+            sticky title bar (about 53px, so 4rem); from 700px that bar is static, so only a little air. Bottom = 16px. */}
+        <div
+          ref={answerPairRef}
+          data-testid="composer-answer-pair"
+          className="flex scroll-mb-4 scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] flex-col gap-3 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)]"
+        >
+        {inlineAnswer && (
+          <p
+            // Only a refusal interrupts; anything softer is a polite status.
+            role={inlineAnswer.notice.tone === "error" ? "alert" : "status"}
+            data-testid="composer-outcome"
+            data-tone={inlineAnswer.notice.tone}
+            className={
+              inlineAnswer.notice.tone === "error"
+                ? "text-sm leading-snug text-danger"
+                : "text-sm leading-snug text-fg"
+            }
+          >
+            {inlineAnswer.notice.message}
+          </p>
+        )}
         {/* PRIMARY IS FULL WIDTH AND FIRST IN THE DOM. On a phone the send
             control is the one a thumb reaches for; putting Cancel first in
             source order to get it visually left on a desktop would put it under
@@ -760,6 +815,7 @@ export function InviteComposerView({
           disabled={sendDisabled}
           describedBy={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
         />
+        </div>
         <button
           // Submits to its OWN binding, so dismissing is a real action rather
           // than a button that looks live and does nothing. Disabled while no
