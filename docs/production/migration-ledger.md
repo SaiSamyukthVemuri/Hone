@@ -56,6 +56,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Read-back.** 2026-11-09T02:05:45Z-02:05:48Z: **OVERALL PASS**. History 265 rows, max `0325`, list md5 `751877e0…`; the 15 sealed function body md5 values, the ACLs, the four tables and the four triggers passed.
 - **What is and is not live.** The schema, the commands, the trigger on clients and the export-audit file-map entry are in the database. Nothing calls them until the application that writes them is deployed; admission stays Closed, public joining stays blocked, SMS stays off. Retention clocks start at that application deploy.
 - **Release.** #1410 merged as `7def16653` about 45 s after the push.
+- **Related record line.** The commits of #1404 (a test harness for the owner decline email) landed through #1407 (`1d6c06c35`), not through a merge of #1404 itself.
 - **Not captured.** Any server-side apply instant.
 
 ## Previous state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
