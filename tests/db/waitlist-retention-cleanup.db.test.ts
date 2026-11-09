@@ -296,7 +296,7 @@ describe("the run log and the health read", () => {
     expect(row).toMatchObject({ outcome: "failed", error_class: "route_error", erased_answers: 0 });
     // Counts and class codes only: no free-text column exists.
     const cols = (await q(`select column_name from information_schema.columns where table_name='waitlist_retention_runs'`)).map((c: any) => c.column_name);
-    expect(cols.sort()).toEqual(["erased_answers","error_class","failed_answers","finished_at","id","outcome","purged_erase_records","purged_outbox","purged_runs","remaining_answers","remaining_erase_records","remaining_outbox","started_at"]);
+    expect(cols.sort()).toEqual(["erased_answers","error_class","failed_answers","finished_at","id","is_bootstrap","outcome","purged_erase_records","purged_outbox","purged_runs","remaining_answers","remaining_erase_records","remaining_outbox","started_at"]);
   });
 
   it("health counts held or sending outbox rows older than 24 hours, as a number only", async () => {
@@ -373,5 +373,19 @@ describe("the down file", () => {
     }
     expect(await bodyMd5("read_waitlist_followups")).toBe(readNew);
     expect(await bodyMd5("run_waitlist_retention_cleanup")).toBeDefined();
+  });
+
+  it("right after up there is exactly one bootstrap success row, so health never reads 'missed' before the first real run", async () => {
+    await q(`delete from public.waitlist_retention_runs where is_bootstrap`);
+    await q(up);
+    await q(up); // re-applying must not add a second one
+    const rows = await q(`select * from public.waitlist_retention_runs where is_bootstrap`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: "success", erased_answers: 0, failed_answers: 0, error_class: null });
+    expect(Date.now() - new Date(rows[0].finished_at).getTime()).toBeLessThan(120_000);
+    const h = (await q(`select seconds_ago from (select extract(epoch from now() - last_success_at) as seconds_ago from public.waitlist_retention_health()) x`))[0];
+    expect(Number(h.seconds_ago)).toBeLessThan(93_600); // inside the 26-hour threshold
+    // A bootstrap row can only ever be a clean success.
+    await expect(q(`insert into public.waitlist_retention_runs (started_at, finished_at, outcome, is_bootstrap, error_class) values (now(), now(), 'failed', true, 'unknown')`)).rejects.toBeTruthy();
   });
 });

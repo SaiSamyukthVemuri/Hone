@@ -28,6 +28,9 @@ create table if not exists public.waitlist_retention_runs (
   remaining_erase_records integer not null default 0,
   remaining_outbox        integer not null default 0,
   error_class             text,
+  -- The one row written by this migration itself, so the health read never reports a missed run before the first real one.
+  is_bootstrap            boolean not null default false,
+  constraint waitlist_retention_runs_bootstrap_check check (not is_bootstrap or (outcome = 'success' and erased_answers = 0 and failed_answers = 0)),
   constraint waitlist_retention_runs_outcome_check check (outcome in ('success','partial_failure','failed')),
   constraint waitlist_retention_runs_counts_check check (
     erased_answers >= 0 and failed_answers >= 0 and purged_erase_records >= 0 and purged_outbox >= 0 and purged_runs >= 0
@@ -298,6 +301,11 @@ grant execute on function public.record_waitlist_retention_failure(text) to serv
 grant execute on function public.waitlist_retention_health() to service_role;
 grant execute on function public.read_waitlist_followups(uuid, uuid, uuid) to service_role;
 grant execute on function public.export_waitlist_decline_answers(uuid, uuid, uuid, int) to service_role;
+
+-- Bootstrap: ONE run row at apply time (counts 0), so "no successful run in 26 hours" can only fire if a real run is then missed.
+insert into public.waitlist_retention_runs (started_at, finished_at, outcome, is_bootstrap)
+select pg_catalog.now(), pg_catalog.now(), 'success', true
+ where not exists (select 1 from public.waitlist_retention_runs r where r.is_bootstrap);
 
 do $$
 declare
