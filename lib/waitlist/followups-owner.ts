@@ -51,7 +51,7 @@ export async function exportDeclineAnswersPage(
   actorUserId: string,
   afterId: string | null,
   limit: number,
-): Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }> {
+): Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string; code?: string } | null }> {
   try {
     const { data, error } = await createAdminClient().rpc("export_waitlist_decline_answers", {
       p_studio_id: studioId,
@@ -59,7 +59,12 @@ export async function exportDeclineAnswersPage(
       p_after_id: afterId,
       p_limit: limit,
     });
-    if (error || !Array.isArray(data)) return { data: null, error: { message: "the answers export function did not return a page" } };
+    if (error) {
+      // the code is a database error class, never a value; the message is dropped so no echoed input can travel
+      const code = typeof error.code === "string" ? error.code : undefined;
+      return { data: null, error: { message: "the answers export function did not return a page", ...(code ? { code } : {}) } };
+    }
+    if (!Array.isArray(data)) return { data: null, error: { message: "the answers export function did not return a page" } };
     return { data: data as Array<Record<string, unknown>>, error: null };
   } catch {
     return { data: null, error: { message: "the answers export function could not be reached" } };

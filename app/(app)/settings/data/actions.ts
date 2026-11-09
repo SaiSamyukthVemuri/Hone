@@ -15,7 +15,6 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
-import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { exportDeclineAnswersPage } from "@/lib/waitlist/followups-owner";
 import {
   emptyExportRpcRead,
@@ -524,16 +523,23 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // cell, and a blank cell is indistinguishable from a studio that recorded
   // nothing there.
   // waitlist_decline_answers has no browser-readable surface; the owner-gated function is its only door. This runs after the owner check at
-  // the top of the action, with the session user, and only while the answers feature is on (before it, the table may not exist yet).
+  // the top of the action, with the session user. ALWAYS called, whatever the answers flag says: answers saved while it was on stay part of the
+  // client's export after it is turned off. The one tolerated failure is "the function does not exist" (PGRST202 / 42883), the window before
+  // 0325 is applied: a header-only file and a logged code. Every other error fails the whole export.
   const actorUserId = practitioner.user_id;
   if (!actorUserId) return { ok: false, error: "You do not have permission to export data." };
   const declineAnswersSpec = rpcSourceOf("waitlist_decline_answers");
   if (!declineAnswersSpec) return { ok: false, error: "Export aborted: the decline answers export is not declared. No partial export was produced." };
-  const declineAnswersRes = waitlistDeclineAnswersEnabled()
-    ? await fetchExportRpcRows<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec, (after, limit) =>
-        exportDeclineAnswersPage(studio.id, actorUserId, after, limit),
-      )
-    : emptyExportRpcRead<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec);
+  let declineAnswersRes = await fetchExportRpcRows<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec, (after, limit) =>
+    exportDeclineAnswersPage(studio.id, actorUserId, after, limit),
+  );
+  const declineAnswersCode = (declineAnswersRes.error as { code?: string } | null)?.code;
+  if (declineAnswersRes.error && (declineAnswersCode === "PGRST202" || declineAnswersCode === "42883")) {
+    console.warn(
+      JSON.stringify({ event: "studio_export_decline_answers_function_missing", code: declineAnswersCode, timestamp: new Date().toISOString() }),
+    );
+    declineAnswersRes = emptyExportRpcRead<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec);
+  }
   // All-or-nothing like every other read: a failed page never ships a file that is silently missing answers.
   if (declineAnswersRes.error) {
     return { ok: false, error: exportReadFailure(declineAnswersRes.error) };

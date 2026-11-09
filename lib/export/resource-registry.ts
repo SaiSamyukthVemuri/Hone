@@ -1737,11 +1737,21 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
       "why_not_work", "better_times", "submitted_at", "answers_erased_at",
     ],
-    includedColumns: ["why_not_work", "better_times", "submitted_at", "answers_erased_at"],
-    excludedColumns: [],
+    // Bound to the 0325 table: followup_id (primary key), studio_id, why_not_work, better_times, submitted_at, erased_at, erased_by_practitioner_id.
+    includedColumns: ["followup_id", "why_not_work", "better_times", "submitted_at", "erased_at"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+      {
+        column: "erased_by_practitioner_id",
+        reason: "internal_state",
+        note: "Who erased the answers is the studio's own audit detail, not the client's answer; the erased marker (answers_erased_at) is exported.",
+      },
+    ],
+    emittedAs: {
+      followup_id: { headers: ["answer_id", "followup_id"], note: "The answer's id is its follow-up's id; emitted under both names." },
+      erased_at: { headers: ["answers_erased_at"], note: "The function names the erased marker answers_erased_at." },
+    },
     derivedHeaders: {
-      answer_id: "the answer's id, which is its follow-up's id (export_waitlist_decline_answers)",
-      followup_id: "the follow-up the answer belongs to",
       entry_id: "the waitlist entry the person answered as",
       invitation_id: "the invitation that was declined",
       client_id: "the client whose normalized email equals the entry's, in this studio; empty when there is none",
@@ -2414,7 +2424,10 @@ export function auditSelectedColumns(
     }
     const have = new Set(selected);
     for (const column of disposition.includedColumns) {
-      if (!have.has(column)) notSelected.push(`${resource}.${column}`);
+      // An rpc-sourced read has no select to read back; what it observed is the function's returned names, so an included column counts
+      // as selected when every header it is emitted under was returned.
+      const names = disposition.rpcSource ? (disposition.emittedAs?.[column]?.headers ?? [column]) : [column];
+      if (!names.every((n) => have.has(n))) notSelected.push(`${resource}.${column}`);
     }
   }
   return {

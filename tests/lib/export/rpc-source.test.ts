@@ -160,4 +160,14 @@ describe("auditRpcSources", () => {
     const out = await fetchExportRpcRows("synthetic_answers", SPEC, fakeFn([row(1)]).call);
     expect(auditSelectedColumns(selectedColumnsByResource([out]), [entry()]).ok).toBe(true);
   });
+  it("an included column renamed by the function counts as selected under its emitted headers, and is caught when one is missing", () => {
+    const renamed = entry({
+      includedColumns: ["followup_id", "erased_at"],
+      emittedAs: { followup_id: { headers: ["answer_id", "followup_id"], note: "n" }, erased_at: { headers: ["answers_erased_at"], note: "n" } },
+      csvHeaders: ["answer_id", "followup_id", "answers_erased_at"],
+      rpcSource: { fn: "export_synthetic", keyColumn: "answer_id", returns: ["answer_id", "followup_id", "answers_erased_at"] },
+    });
+    expect(auditSelectedColumns({ synthetic_answers: ["answer_id", "followup_id", "answers_erased_at"] }, [renamed]).ok).toBe(true);
+    expect(auditSelectedColumns({ synthetic_answers: ["answer_id", "followup_id"] }, [renamed]).notSelected).toEqual(["synthetic_answers.erased_at"]);
+  });
 });

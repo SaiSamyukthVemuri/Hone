@@ -660,7 +660,7 @@ describe("SEC-003 actual export withholds bytes on trusted audit failure", () =>
 describe("SEC-003 cached owner revocation after export reads", () => {
   it("withholds real archive bytes when the cached owner is revoked before the uncached audit check", async () => {
     auditInsert = null; failingTables = new Set(); auditFailure = null;
-    freshOwnerActive = true; adminConstructed = 0; completedExportReads = 0;
+    freshOwnerActive = true; adminConstructed = 0; completedExportReads = 0; declineCalls = [];
     const generate = JSZip.prototype.generateAsync;
     let readsAtRevocation = 0;
     const revoke = vi.spyOn(JSZip.prototype, "generateAsync").mockImplementation(function (this: JSZip, ...args) {
@@ -681,7 +681,7 @@ describe("SEC-003 cached owner revocation after export reads", () => {
       expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
       expect(result).not.toHaveProperty("base64");
       expect(result).not.toHaveProperty("filename");
-      expect(adminConstructed).toBe(0);
+      expect(adminConstructed - declineCalls.length).toBe(0); // the answers read is the only admin use; the audit never got one
       expect(auditInsert).toBeNull();
     } finally { revoke.mockRestore(); freshOwnerActive = true; }
   });
@@ -691,12 +691,12 @@ describe("SEC-003 cached owner revocation after export reads", () => {
 describe("SEC-003 atomic write-time owner check", () => {
   it("withholds ZIP when membership is revoked AFTER the fresh app check", async () => {
     auditInsert = null; failingTables = new Set(); auditFailure = null;
-    freshOwnerActive = true; adminConstructed = 0; revokeAtAtomicCommand = true;
+    freshOwnerActive = true; adminConstructed = 0; revokeAtAtomicCommand = true; declineCalls = [];
     try {
       const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
       const result = await exportStudioDataAction();
       expect(freshOwnerActive).toBe(false); // Only the command mock revoked it.
-      expect(adminConstructed).toBe(1); // App precheck passed; this exercises RPC denial.
+      expect(adminConstructed - declineCalls.length).toBe(1); // App precheck passed; this exercises RPC denial.
       expect(auditInsert).toBeNull();
       expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
       expect(result).not.toHaveProperty("base64");
@@ -811,11 +811,34 @@ describe("the decline answers export", () => {
     });
   });
 
-  it("with the feature off the function is not called and the file is header-only", async () => {
+  it("is called with the answers flag OFF too: answers saved while it was on still export", async () => {
     reset();
     delete process.env.WAITLIST_DECLINE_ANSWERS;
+    declineHandler = () => ({ data: [answer(1)], error: null });
     const out = await csv(await run());
-    expect(declineCalls).toHaveLength(0);
-    expect(out.trim().split("\n")).toHaveLength(1);
+    expect(declineCalls).toHaveLength(1);
+    expect(out).toContain("SYNTHETIC-WHY-studio-1-1");
+  });
+
+  it.each(["PGRST202", "42883"])("the function not existing (%s) gives a header-only file and a logged code, not a failure", async (code) => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      declineHandler = () => ({ data: null, error: { code, message: "SYNTHETIC-PRIVATE-ERROR" } });
+      const out = await csv(await run());
+      expect(out.trim().split("\n")).toHaveLength(1);
+      const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain(code);
+      expect(logged).not.toContain("SYNTHETIC-PRIVATE-ERROR");
+    } finally { warn.mockRestore(); }
+  });
+
+  it.each(["42501", "XX000", "22023", undefined])("any other error (%s) fails the whole export: no archive", async (code) => {
+    reset();
+    declineHandler = () => ({ data: null, error: { code, message: "SYNTHETIC-PRIVATE-ERROR" } });
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r).not.toHaveProperty("base64");
+    expect(JSON.stringify(r)).not.toContain("SYNTHETIC-PRIVATE-ERROR");
   });
 });

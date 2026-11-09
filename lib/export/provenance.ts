@@ -189,7 +189,13 @@ export async function fetchExportRpcRows<T extends Record<string, unknown>>(
     } catch {
       return fail("read failed");
     }
-    if (result.error) return fail(`read failed: ${result.error.message}`);
+    if (result.error) {
+      const failed = fail(`read failed: ${result.error.message}`);
+      const code = (result.error as { code?: string }).code;
+      // the database code travels with the refusal so the caller can tell "the function does not exist" from every other failure
+      if (code) (failed.error as { code?: string }).code = code;
+      return failed;
+    }
     if (!Array.isArray(result.data)) return fail("read returned no data");
     for (const row of result.data) {
       const keys = new Set(Object.keys(row));
