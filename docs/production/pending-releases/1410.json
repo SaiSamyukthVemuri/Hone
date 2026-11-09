@@ -1,6 +1,0 @@
-{
-  "pr": 1410,
-  "runtime": true,
-  "migrations": ["supabase/migrations/0325_waitlist_decline_followups.sql"],
-  "release_receipt": "01-ops/1410-release-receipt.json"
-}
