@@ -1806,13 +1806,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "derived",
     reason:
-      "The outbox for the owner email sent when a waitlist person declines, draft migration 0325 (HON-7): one row per verified owner per invitation with a status, attempt count, closed error code and instants. It holds no client text, no name, no address and no email body; the recipient address is resolved at send time. Operational delivery history with no studio-facing meaning beyond whether the owner was told, Purged at 90 days once the retention decision lands. EXCLUDED as operational delivery history: it holds no client data.",
+      "Operational email-status record (ids, statuses and dates only); contains no client text.",
   },
   waitlist_erase_records: {
     kind: "excluded",
     category: "deliberate_privacy",
     reason:
-      "Ids-and-dates log of each time waitlist decline answers were erased (by the owner, by Remove or by retention), draft migration 0325 (HON-7). It holds no client text and is deliberately kept apart from the answers table and never restored with it, so that an erasure can be replayed after any restore. Compliance evidence about the studio's own data handling. EXCLUDED on purpose: ids and dates only; it is compliance evidence, not a client record. Retained for 30 days by policy; the scheduled purge is not yet built.",
+      "Retained for 30 days by policy; the scheduled purge is not yet built.",
   },
   studio_waitlist_admission_rounds: {
     kind: "pending",
