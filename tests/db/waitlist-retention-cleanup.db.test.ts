@@ -133,12 +133,12 @@ describe("the deadline: min(submitted + 90d, closed + 30d)", () => {
     expect((await answer(notYet.fid)).erased_at).toBeNull();
   });
 
-  it("a withdrawal that closed BEFORE the answer was submitted never shortens it (greatest(closed, submitted) + 30d)", async () => {
+  it("a withdrawal that opened and closed BEFORE the answer was submitted never shortens it", async () => {
     const f = await seed("r4d");
     const a = await declined(f, "r4d", "5 days");
     await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '50 days', now() - interval '40 days')`, [f.studioId, a.id]);
     const eb = new Date((await q(`select public.waitlist_answer_erase_by($1) as d`, [a.fid]))[0].d).getTime();
-    expect(Math.abs(eb - (Date.now() + 25 * 86_400_000))).toBeLessThan(3_600_000);
+    expect(Math.abs(eb - (Date.now() + 85 * 86_400_000))).toBeLessThan(3_600_000);
   });
 
   it("a withdrawal's clock binds only to the answer that existed when it opened: a LATER decline keeps its own clocks", async () => {
