@@ -784,7 +784,14 @@ export function InviteComposerView({
             {sendReason}
           </span>
         )}
-        <div ref={answerPairRef} className="flex flex-col gap-3">
+        {/* SCROLL MARGINS: scrollIntoView({block:"nearest"}) honours them, so the pair lands clear of the sticky bars and the keyboard/home bar.
+            Top = the measured app header (--settings-top, set by the settings shell; 4.5rem before it measures) plus, under 700px, the shell's own
+            sticky title bar (about 53px, so 4rem); from 700px that bar is static, so only a little air. Bottom = 16px. */}
+        <div
+          ref={answerPairRef}
+          data-testid="composer-answer-pair"
+          className="flex scroll-mb-4 scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] flex-col gap-3 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)]"
+        >
         {inlineAnswer && (
           <p
             // Only a refusal interrupts; anything softer is a polite status.

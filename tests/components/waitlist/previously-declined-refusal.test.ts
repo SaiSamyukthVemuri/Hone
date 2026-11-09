@@ -211,6 +211,15 @@ describe("the answer and Send are brought into view (phone: the alert pushes Sen
     expect(target.contains(inline(0))).toBe(true);
     expect(target.contains(send(0))).toBe(true);
   });
+  it("the scrolled wrapper clears the sticky bars above and the keyboard/home bar below", async () => {
+    await mount();
+    const pair = host.querySelector<HTMLElement>('[data-testid="composer-answer-pair"]')!;
+    const cls = pair.className.split(/\s+/);
+    // jsdom computes no Tailwind, so the contract is the classes; Photos hit-tests the geometry at 390px.
+    expect(cls).toContain("scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)]");
+    expect(cls).toContain("min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)]");
+    expect(cls).toContain("scroll-mb-4");
+  });
   it("does not scroll again when the same answer re-renders", async () => {
     action.mockResolvedValue(REFUSED);
     await mount();
