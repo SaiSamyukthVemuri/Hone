@@ -12,6 +12,8 @@ const ACTIONS = strip(read("app/(app)/settings/waitlist/actions.ts"));
 const PAGE = strip(read("app/(app)/settings/waitlist/page.tsx"));
 const BOOK = strip(read("app/book/[slug]/actions.ts"));
 const CAPACITY = strip(read("app/(app)/settings/waitlist/window-capacity-actions.ts"));
+// The date stepping lives in the one shared fit computation (send and display use the same code).
+const FIT = strip(read("lib/waitlist/send-time-fit.ts"));
 
 describe("L3 — the follow-up resolver's actor comes from the session", () => {
   it("passes the signed-in owner's user id and nothing the browser sent", () => {
@@ -63,9 +65,10 @@ describe("the window estimate action", () => {
   it("estimates over the SAME inclusive studio-local dates the invitation is issued over", () => {
     // Today through today + windowDays - 1 (windowToDates), stepped as calendar
     // dates: epoch-millisecond arithmetic shifts or repeats a day across DST.
-    expect(CAPACITY).toMatch(/addDays\(first, i\)/);
-    expect(CAPACITY).toMatch(/for \(let i = 0; i < input\.windowDays; i \+= 1\)/);
-    expect(CAPACITY).not.toMatch(/86_400_000/);
+    expect(FIT).toMatch(/addDays\(first, i\)/);
+    expect(FIT).toMatch(/for \(let i = 0; i < input\.windowDays; i \+= 1\)/);
+    expect(FIT).not.toMatch(/86_400_000/);
+    expect(CAPACITY).toMatch(/computeConsultationFit/);
   });
   it("refuses a non-owner before it builds the admin client", () => {
     expect(CAPACITY.indexOf('practitioner.role !== "owner"')).toBeGreaterThan(0);

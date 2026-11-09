@@ -92,7 +92,7 @@
  * contract. `AdapterCapabilities.enforcesScope` exists so that such an adapter
  * has to say so, and so the surface can refuse to imply otherwise.
  */
-import { CAPACITY_EXHAUSTED_COPY } from "@/lib/waitlist/invitation-capacity";
+import { CAPACITY_EXHAUSTED_COPY, NO_CAPACITY_COPY, NOT_YET_AVAILABLE_COPY } from "@/lib/waitlist/invitation-capacity";
 
 export type BookingScope = {
   /**
@@ -218,6 +218,11 @@ export const INVITE_TO_BOOK_FAILURES = [
   "not_admissible",
   "no_admission_round",
   "admission_round_full",
+  // 0324: the consultations that fit are already spoken for by live invitations.
+  "no_capacity",
+  // The send command this release calls is not in the database yet (0324 not applied). The call was
+  // refused BEFORE it ran, so nothing was created: a definite answer, not a lost one.
+  "not_yet_available",
   "previously_declined",
   // 0325: the person has a decline or withdrawal response still waiting for the owner's review, and the admit command refuses to invite them
   // again until the owner has dealt with it. A definite refusal; the answer is to follow up first.
@@ -439,9 +444,13 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
     // when no capacity is open, but a capacity closed between render and press
     // still lands here, and it must read the same way.
     case "no_admission_round":
-      return "Set your invitation capacity before inviting someone to book.";
+      return CAPACITY_EXHAUSTED_COPY;
     case "admission_round_full":
       return CAPACITY_EXHAUSTED_COPY;
+    case "no_capacity":
+      return NO_CAPACITY_COPY;
+    case "not_yet_available":
+      return NOT_YET_AVAILABLE_COPY;
     // 0325: not a failure to retry. The person replied to an earlier invitation and the reply is waiting for the owner.
     case "pending_owner_review":
       return PENDING_OWNER_REVIEW_COPY;
@@ -638,6 +647,10 @@ export const ADMIT_SERVER_REFUSALS = [
   "no_round_open",
   /** The open round's allowance is already consumed. */
   "round_full",
+  /** 0324: live competing invitations plus this one would exceed the consultations that fit. */
+  "no_capacity",
+  /** 0324: the sender passed no usable fit. A bug on this side of the wire. */
+  "invalid_fit",
   "invalid_service",
   "invalid_scope_dates",
   "invalid_weekdays",
@@ -706,6 +719,8 @@ export const ADMIT_REFUSAL_PRESENTATION: Record<
   // Capacity and consent. See the note above: detail is lost here on purpose.
   no_round_open: "no_admission_round",
   round_full: "admission_round_full",
+  no_capacity: "no_capacity",
+  invalid_fit: "invalid_input",
   already_declined_offer: "previously_declined",
   // The owner can act on this one: the response is waiting in the follow-up section.
   pending_owner_review: "pending_owner_review",

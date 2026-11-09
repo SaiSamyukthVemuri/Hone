@@ -51,7 +51,7 @@ describe("decline (flag off) then requeue keeps the original place", () => {
     const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
     const a = await q<any>(
-      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`,
+      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,1000)`,
       [f.studioId, f.userId, early, f.serviceId, from, to],
     );
     expect(a[0].result).toBe("admitted");

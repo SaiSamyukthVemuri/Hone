@@ -199,7 +199,11 @@ describe("every failure the adapter may report is one a command can produce", ()
       // could not find out" and must not absorb an answer the server gave.
       "admission_round_full",
       "no_admission_round",
+      // 0324: the consultations that fit are covered by live invitations.
+      "no_capacity",
       "not_admissible",
+      // Before 0324 is applied the send command does not exist; refused before it runs.
+      "not_yet_available",
       // 0325: admit refuses while the person's decline or withdrawal response is waiting for the owner.
       "pending_owner_review",
       "previously_declined",
@@ -349,7 +353,8 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   const EXPECTED_ADMIT_RESULTS = {
     success: "admitted",
     // returned directly by admit_new_client_waitlist_entry
-    own: ["unknown_studio", "not_found", "not_admissible"],
+    // 0324 adds the two capacity refusals, decided under the studio lock before the issuer runs.
+    own: ["unknown_studio", "not_found", "not_admissible", "no_capacity", "invalid_fit"],
     // raised as WA001 out of claim_new_client_waitlist_entry (0189) and
     // re-emitted by admit's own exception handler as SQLERRM
     fromClaim: ["invalid_input", "not_found", "not_waiting"],
@@ -388,7 +393,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   it("types every refusal known at the reviewed #685 head", () => {
     // Non-vacuity: the union must be genuinely larger than the command's own
     // literals, or the derivation collapsed back to reading `return query`.
-    expect(expectedRefusals.length).toBe(15);
+    expect(expectedRefusals.length).toBe(17);
     expect(EXPECTED_ADMIT_RESULTS.own.length).toBeLessThan(expectedRefusals.length);
 
     expect(ADMIT_SERVER_SUCCESS).toBe(EXPECTED_ADMIT_RESULTS.success);
@@ -1026,5 +1031,20 @@ describe("0325 — admit refuses while a response is waiting for the owner", () 
     expect(notice.message).toBe("This person has a response waiting for your review. Follow up below before inviting them again.");
     expect(notice.message).toBe(PENDING_OWNER_REVIEW_COPY);
     expect(notice.message).not.toMatch(/pending_owner_review|try again|answer/i);
+  });
+});
+
+describe("the live admit refusals reach the owner with the right meaning (0324 + 0325)", () => {
+  it("maps no_capacity, invalid_fit and pending_owner_review to definite refusals with their own outcomes", () => {
+    expect(admitResultToOutcome("no_capacity", null, undefined)).toEqual({ state: "refused", code: "no_capacity" });
+    expect(admitResultToOutcome("invalid_fit", null, undefined)).toEqual({ state: "refused", code: "invalid_input" });
+    expect(admitResultToOutcome("pending_owner_review", null, undefined)).toEqual({ state: "refused", code: "pending_owner_review" });
+  });
+  it("each shows its own copy, none of them the raw code, and the three differ", () => {
+    const msg = (r: string) => invitationNoticeFor(admitResultToOutcome(r, null, undefined)).message;
+    const set = new Set([msg("no_capacity"), msg("invalid_fit"), msg("pending_owner_review")]);
+    expect(set.size).toBe(3);
+    for (const r of ["no_capacity", "invalid_fit", "pending_owner_review"]) expect(msg(r)).not.toContain(r);
+    expect(msg("pending_owner_review")).toBe(PENDING_OWNER_REVIEW_COPY);
   });
 });
