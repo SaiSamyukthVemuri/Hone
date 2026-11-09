@@ -12,10 +12,12 @@ import {
   type NoTimesWorkValidation,
 } from "@/lib/waitlist/decline-responses";
 
-// HON-7 (b). Two choices first: "None of these times work" and "I no longer need an appointment". Opening the first only reveals the two
-// required questions and the notice (client state; no request, no record); the answers go only when "Send response" is pressed. The second
+// HON-7 (b). Two choices first: "None of these times work" and "I no longer need an appointment". Opening the first only reveals the notice and the
+// two required questions (the notice first, so it is read before anything is typed, and described by each field) (client state; no request, no record); the answers go only when "Send response" is pressed. The second
 // goes straight to the withdrawal action and its confirmation, with no question asked. Required is enforced here for the person's benefit
 // (an empty field is refused with a message a screen reader announces) and again on the server, which is the authority.
+const NOTICE_ID = "no-times-notice";
+
 export function NoTimesWorkForm({
   pending,
   onSubmit,
@@ -66,13 +68,17 @@ export function NoTimesWorkForm({
         required
         aria-required="true"
         aria-invalid={shown[id] ? "true" : undefined}
-        aria-describedby={shown[id] ? `no-times-${id}-error` : undefined}
+        aria-describedby={shown[id] ? `${NOTICE_ID} no-times-${id}-error` : NOTICE_ID}
         maxLength={DECLINE_ANSWER_MAX}
         autoComplete="off"
         spellCheck={false}
         rows={3}
         value={value}
-        onChange={(e) => set(e.target.value)}
+        onChange={(e) => {
+          set(e.target.value);
+          // The message answered what was typed before; once the person types in this field it no longer applies.
+          if (shown[id]) setShown(({ [id]: _cleared, ...rest }) => rest);
+        }}
         disabled={pending}
         className={`${FOCUS_RING} w-full border border-[#0A0A0A] px-3 py-2 text-sm disabled:opacity-60`}
       />
@@ -114,11 +120,11 @@ export function NoTimesWorkForm({
 
   return (
     <div className="flex flex-col gap-3" data-testid="no-times-work-form">
-      {field("why", NO_TIMES_WORK_LABELS.why, why, setWhy, whyRef)}
-      {field("better", NO_TIMES_WORK_LABELS.better, better, setBetter, betterRef)}
-      <p className="text-sm text-[#6B6B6B]" data-testid="no-times-notice">
+      <p id={NOTICE_ID} className="text-sm text-[#6B6B6B]" data-testid="no-times-notice">
         {NO_TIMES_WORK_NOTICE}
       </p>
+      {field("why", NO_TIMES_WORK_LABELS.why, why, setWhy, whyRef)}
+      {field("better", NO_TIMES_WORK_LABELS.better, better, setBetter, betterRef)}
       <button
         type="button"
         onClick={submit}

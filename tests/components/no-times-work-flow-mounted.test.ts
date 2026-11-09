@@ -101,6 +101,29 @@ describe("path 1: None of these times work", () => {
     expect(button("Send response")).toBeTruthy();
     for (const m of [noTimesWork, noLongerNeed, loadAction, bookAction]) expect(m).not.toHaveBeenCalled();
   });
+  it("puts the notice above both questions and names it in each field's description", async () => {
+    await mount();
+    await click(button("None of these times work"));
+    const notice = host.querySelector("#no-times-notice") as HTMLElement;
+    expect(notice.textContent).toBe(NO_TIMES_WORK_NOTICE);
+    for (const id of ["why", "better"] as const) {
+      expect(notice.compareDocumentPosition(area(id)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(area(id)!.getAttribute("aria-describedby")).toBe("no-times-notice");
+    }
+  });
+  it("keeps the notice in the description beside the error, and clears the error when the person types", async () => {
+    await mount();
+    await click(button("None of these times work"));
+    await click(button("Send response"));
+    expect(area("why")!.getAttribute("aria-describedby")).toBe("no-times-notice no-times-why-error");
+    expect(area("better")!.getAttribute("aria-describedby")).toBe("no-times-notice no-times-better-error");
+    await type(area("why")!, "x");
+    expect(host.querySelector("#no-times-why-error")).toBeNull();
+    expect(area("why")!.getAttribute("aria-invalid")).toBeNull();
+    expect(area("why")!.getAttribute("aria-describedby")).toBe("no-times-notice");
+    expect(host.querySelector("#no-times-better-error")).toBeTruthy();
+    expect(area("better")!.getAttribute("aria-describedby")).toBe("no-times-notice no-times-better-error");
+  });
   it("moves focus into the first question when it opens", async () => {
     await mount();
     await click(button("None of these times work"));
@@ -116,7 +139,7 @@ describe("path 1: None of these times work", () => {
     expect(err.getAttribute("role")).toBe("alert");
     expect(err.textContent).toBe(ANSWER_PROBLEM_COPY.required);
     expect(area("better")!.getAttribute("aria-invalid")).toBe("true");
-    expect(area("better")!.getAttribute("aria-describedby")).toBe("no-times-better-error");
+    expect(area("better")!.getAttribute("aria-describedby")).toBe("no-times-notice no-times-better-error");
     expect(document.activeElement).toBe(area("better"));
     expect(host.querySelector("#no-times-why-error")).toBeNull();
   });
