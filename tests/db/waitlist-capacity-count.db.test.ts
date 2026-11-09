@@ -42,7 +42,7 @@ async function invitedStudio(label: string) {
   const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
   const to = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
   const a = await q<any>(
-    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`,
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,1000)`,
     [s.studioId, s.userId, e[0].entry_id, svc[0].id, from, to],
   );
   expect(a[0].result).toBe("admitted");

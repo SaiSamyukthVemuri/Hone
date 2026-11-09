@@ -78,7 +78,7 @@ describe("invited_book refusal is tied to honest copy", () => {
     expect(order).toBeGreaterThan(-1);
     expect(order).toBeLessThan(act.indexOf("admissionCommandAdapter.inviteToBook(input)"));
     const page = read("app/(app)/settings/waitlist/page.tsx");
-    expect(page).toMatch(/canOfferInvite\(capacity\) && !invitesBlockedByAdmission/);
+    expect(page).toMatch(/capabilities=\{\s*!invitesBlockedByAdmission/);
     const contract = read("lib/waitlist/invite-to-book-contract.ts");
     expect(contract).toMatch(/INVITE_ADMISSION_CLOSED_COPY =\s*"[^"]*Settings → Booking/);
   });

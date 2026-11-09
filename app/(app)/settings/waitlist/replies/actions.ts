@@ -1,5 +1,6 @@
 "use server";
 
+import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -14,6 +15,7 @@ const PAGE = "/settings/waitlist/replies";
  * silently, so the owner is never left thinking a reply was cleared.
  */
 export async function acknowledgeReplyAction(formData: FormData): Promise<void> {
+  await clearLifecycleNotice();
   const invitationId = formData.get("invitationId");
   if (typeof invitationId !== "string" || !UUID.test(invitationId)) redirect(`${PAGE}?ack=failed`);
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();

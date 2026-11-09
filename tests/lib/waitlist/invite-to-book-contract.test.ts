@@ -197,7 +197,11 @@ describe("every failure the adapter may report is one a command can produce", ()
       // could not find out" and must not absorb an answer the server gave.
       "admission_round_full",
       "no_admission_round",
+      // 0324: the consultations that fit are covered by live invitations.
+      "no_capacity",
       "not_admissible",
+      // Before 0324 is applied the send command does not exist; refused before it runs.
+      "not_yet_available",
       "previously_declined",
       // The contract's own: no shipped command carries a service or booking
       // window yet, so an adapter that cannot honour one needs a way to refuse
@@ -345,7 +349,8 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   const EXPECTED_ADMIT_RESULTS = {
     success: "admitted",
     // returned directly by admit_new_client_waitlist_entry
-    own: ["unknown_studio", "not_found", "not_admissible"],
+    // 0324 adds the two capacity refusals, decided under the studio lock before the issuer runs.
+    own: ["unknown_studio", "not_found", "not_admissible", "no_capacity", "invalid_fit"],
     // raised as WA001 out of claim_new_client_waitlist_entry (0189) and
     // re-emitted by admit's own exception handler as SQLERRM
     fromClaim: ["invalid_input", "not_found", "not_waiting"],
@@ -381,7 +386,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   it("types every refusal known at the reviewed #685 head", () => {
     // Non-vacuity: the union must be genuinely larger than the command's own
     // literals, or the derivation collapsed back to reading `return query`.
-    expect(expectedRefusals.length).toBe(14);
+    expect(expectedRefusals.length).toBe(16);
     expect(EXPECTED_ADMIT_RESULTS.own.length).toBeLessThan(expectedRefusals.length);
 
     expect(ADMIT_SERVER_SUCCESS).toBe(EXPECTED_ADMIT_RESULTS.success);
