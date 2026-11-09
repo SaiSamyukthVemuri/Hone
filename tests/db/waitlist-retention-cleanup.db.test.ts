@@ -132,6 +132,23 @@ describe("the deadline: min(submitted + 90d, closed + 30d)", () => {
     expect((await answer(due.fid)).erased_at).not.toBeNull();
     expect((await answer(notYet.fid)).erased_at).toBeNull();
   });
+
+  it("a withdrawal's clock binds only to the answer that existed when it opened: a LATER decline keeps its own clocks", async () => {
+    const f = await seed("r4c");
+    const old = await declined(f, "r4c", "80 days");
+    await close(old.fid, "76 days");
+    await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at, closed_at) values ($1,$2,'withdrawal','kept', now() - interval '75 days', now() - interval '70 days')`, [f.studioId, old.id]);
+    const nf = await q<{ id: string }>(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at) values ($1,$2,'decline','open', now() - interval '5 days') returning id`, [f.studioId, old.id]);
+    await q(`insert into public.waitlist_decline_answers (followup_id, studio_id, why_not_work, better_times, submitted_at) values ($1,$2,$3,$4, now() - interval '5 days')`, [nf[0].id, f.studioId, WHY, TIMES]);
+    const eb = async (id: string) => new Date((await q(`select public.waitlist_answer_erase_by($1) as d`, [id]))[0].d).getTime();
+    expect(await eb(old.fid)).toBeLessThan(Date.now());
+    expect(Math.abs((await eb(nf[0].id)) - (Date.now() + 85 * 86_400_000))).toBeLessThan(3_600_000);
+    await run();
+    expect((await answer(old.fid)).erased_at).not.toBeNull();
+    const fresh = await answer(nf[0].id);
+    expect(fresh.erased_at).toBeNull();
+    expect(fresh.why_not_work).toBe(WHY);
+  });
 });
 
 describe("a late job never serves overdue text", () => {
@@ -227,6 +244,29 @@ describe("the job: idempotent, bounded, one bad row never blocks the rest", () =
     expect(await records(bad.fid)).toHaveLength(1);
   });
 
+  it("a purge that fails is counted and never undoes the erases; the next run completes it", async () => {
+    await drain();
+    const f = await seed("r9p");
+    const a = await declined(f, "r9p", "95 days");
+    await q(`insert into public.waitlist_erase_records (studio_id, followup_id, kind, reason, erased_at) values ($1, gen_random_uuid(), 'decline', 'owner_erase', now() - interval '40 days')`, [f.studioId]);
+    await q(`create or replace function public.test_0326_block_purge() returns trigger language plpgsql as $$
+             begin raise exception 'purge blocked for test'; end $$`);
+    await q(`create trigger test_0326_block_purge before delete on public.waitlist_erase_records for each statement execute function public.test_0326_block_purge()`);
+    try {
+      const r = await run();
+      expect(r.purge_failed).toBeGreaterThanOrEqual(1);
+      expect(r.outcome).toBe("partial_failure");
+      expect((await answer(a.fid)).erased_at).not.toBeNull();
+      expect(await records(a.fid)).toHaveLength(1);
+    } finally {
+      await q(`drop trigger if exists test_0326_block_purge on public.waitlist_erase_records`);
+      await q(`drop function if exists public.test_0326_block_purge()`);
+    }
+    const next = await run();
+    expect(next.purge_failed).toBe(0);
+    expect(next.outcome).toBe("success");
+  });
+
   it("a studio deleted before the job removes its answers and the job still runs clean", async () => {
     const f = await seed("r10");
     const d = await declined(f, "r10a", "95 days");
@@ -296,7 +336,7 @@ describe("the run log and the health read", () => {
     expect(row).toMatchObject({ outcome: "failed", error_class: "route_error", erased_answers: 0 });
     // Counts and class codes only: no free-text column exists.
     const cols = (await q(`select column_name from information_schema.columns where table_name='waitlist_retention_runs'`)).map((c: any) => c.column_name);
-    expect(cols.sort()).toEqual(["erased_answers","error_class","failed_answers","finished_at","id","is_bootstrap","outcome","purged_erase_records","purged_outbox","purged_runs","remaining_answers","remaining_erase_records","remaining_outbox","started_at"]);
+    expect(cols.sort()).toEqual(["erased_answers","error_class","failed_answers","finished_at","id","is_bootstrap","outcome","purge_failed","purged_erase_records","purged_outbox","purged_runs","remaining_answers","remaining_erase_records","remaining_outbox","started_at"]);
   });
 
   it("health counts held or sending outbox rows older than 24 hours, as a number only", async () => {
