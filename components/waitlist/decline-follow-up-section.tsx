@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { FollowUpRow } from "@/lib/waitlist/followups-owner";
-import type { LinkableAppointment } from "@/lib/waitlist/followup-linkable";
+import type { LinkableList } from "@/lib/waitlist/followup-linkable";
 import { bellStatusLine, DECLINE_CARD_SAVED, emailStatusLine, emptyOutboxCounts, type OutboxCounts } from "@/lib/waitlist/decline-status-lines";
 import { NO_TIMES_WORK_LABELS } from "@/lib/waitlist/decline-responses";
 import {
@@ -15,6 +15,8 @@ import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
 // OWNER-ONLY BY CONSTRUCTION: it renders the recipient's answers, so it must only ever be rendered after the page's owner check (a test pins the
 // call site's order). Data comes in as props; this performs no reads. Nothing here says "delivered", "queued" or "pending" about the email, and
 // nothing auto-resolves: the owner's own action closes a response.
+
+export const LINKABLE_MORE_COPY = "Showing the 10 most recently booked appointments";
 
 export const FOLLOWUP_CAPPED_COPY = "Showing the first 500 responses. More are waiting; contact support to see the rest.";
 
@@ -77,7 +79,7 @@ export function DeclineFollowUpSection({
   /** Outbox counts by invitation id; null when they could not be read. */
   outbox: Map<string, OutboxCounts> | null;
   /** This person's own appointments the owner may link, by follow-up id. */
-  linkable: Map<string, LinkableAppointment[]>;
+  linkable: Map<string, LinkableList>;
   notice: FollowUpNotice | null;
   /** True when the owner arrived straight from a response being saved. */
   justSaved?: boolean;
@@ -147,7 +149,12 @@ export function DeclineFollowUpSection({
               )}
               {r.status === "open" ? (
                 <div className="mt-2 flex flex-col gap-2">
-                  {(linkable.get(r.followupId) ?? []).map((a) => (
+                  {linkable.get(r.followupId)?.more ? (
+                    <p className="text-neutral-600 dark:text-neutral-400" data-testid="linkable-more">
+                      {LINKABLE_MORE_COPY}
+                    </p>
+                  ) : null}
+                  {(linkable.get(r.followupId)?.items ?? []).map((a) => (
                     <form key={a.id} action={linkAppointmentAction}>
                       <Hidden id={r.followupId} />
                       <input type="hidden" name="appointmentId" value={a.id} />

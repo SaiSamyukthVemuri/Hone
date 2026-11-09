@@ -105,6 +105,12 @@ describe("the owner follow-up section", () => {
   it("never renders an email address", () => {
     expect(render([row()])).not.toContain("@");
   });
+  it("a person with more than 10 eligible appointments is told which are shown; with 10 or fewer nothing is said", () => {
+    const withList = (more: boolean) => new Map([["33333333-3333-4333-8333-333333333333", { items: [{ id: "ap1", label: "Fri, Nov 13, 10:00 AM" }], more }]]);
+    expect(render([row()], { linkable: withList(true) })).toContain("Showing the 10 most recently booked appointments");
+    expect(render([row()], { linkable: withList(false) })).not.toContain("most recently booked");
+    expect(render([row()], { linkable: withList(false) })).toContain("Link booking: Fri, Nov 13, 10:00 AM");
+  });
   it("500 rows (capped) shows the notice and a 500+ style count; 499 shows neither", () => {
     const many = (n: number) => Array.from({ length: n }, (_, i) => row({ followupId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, invitationId: `i${i}` }));
     const capped = render(many(500), { capped: true });
