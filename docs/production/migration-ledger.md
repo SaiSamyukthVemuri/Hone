@@ -36,7 +36,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ### Newer apply entries (recorded 2026-11-09; this tree's declared hosted max is NOT advanced by this change)
 
-`0324` and `0325` have since been applied to production, one push each, under separate exact-package approvals. The two entries below are new; no earlier entry is rewritten. The "Pending migrations" cell above predates them and is kept as written for the same reason: it describes what this tree's declared hosted position implies, not the real hosted state.
+`0324` and `0325` have since been applied to production, one push each, under separate exact-package approvals. The two entries below are new; no earlier entry is rewritten. The "Pending migrations" cell above predates them and is kept as written for the same reason: it describes what this tree's declared hosted position implies, not the real hosted state. Advancing `hosted_migration_max` to `0325` in `migration-state.json` is a dated follow-up after HON-7 V1; it is blocked on the `0301`-`0303` and unallocated-number declarations, not on uncertainty about the applies.
 
 ### The 0324 apply (facts as recorded by OPS, 2026-11-09; `01-ops/0324-APPLY-RESULT-20261109T0005Z.md`)
 
@@ -47,13 +47,13 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Not captured.** Any server-side apply instant. Migration history is not table-content evidence.
 - **Release.** #1408 merged as `7e555f6ba` about 65 s after the read-back; between the apply and its deployment the live app's earlier send path failed closed and invitations were held.
 
-### The 0325 apply (facts as recorded by OPS, 2026-11-09; `01-ops/0325-PARTA-RESULT-20261109T0201Z.md`, Willow's apply record)
+### The 0325 apply (facts as recorded by OPS, 2026-11-09; apply record `01-ops/0325-APPLY-RESULT-20261109T0205Z.md`; the read-only precheck is `01-ops/0325-PARTA-RESULT-20261109T0201Z.md`; Willow's apply record)
 
-- **What it is.** `0325_waitlist_decline_followups.sql`: the waitlist decline answers, withdrawal requests and the owner follow-up (four tables, four triggers, the commands, and an export-audit file-map entry).
+- **What it is.** `0325_waitlist_decline_followups.sql`: the waitlist decline answers, withdrawal requests and the owner follow-up (four tables, three new triggers plus the existing entry transition-guard trigger whose function 0325 replaces, the commands, and an export-audit file-map entry).
 - **Package.** One plain push of the sealed package, SEAL-SHA256SUMS `d2573a90…`; 0325 sha256 `cca62b2f…`, down draft `cd459124…`; apply script `a269520e…`, reconcile `0b2aaf69…`; pinned CLI v2.102.0.
 - **Pre-push reads (Part A, 02:01Z).** 264 history rows, max `0324`, list md5 `24c1e042cb76d3e1d851d7876e9a1c10`, `0325` absent; all 17 gated preflight fields true.
 - **Push.** Plain push at 2026-11-09T02:05:44Z (client side).
-- **Read-back.** 2026-11-09T02:05:45Z-02:05:48Z: **OVERALL PASS**. History 265 rows, max `0325`, list md5 `751877e0…`; the 15 sealed function body md5 values, the ACLs, the four tables and the four triggers passed.
+- **Read-back.** 2026-11-09T02:05:45Z-02:05:48Z: **OVERALL PASS**. History 265 rows, max `0325`, list md5 `751877e0…`; the 15 sealed function body md5 values, the ACLs, the four tables, the three new triggers and the replaced guard function passed.
 - **What is and is not live.** The schema, the commands, the trigger on clients and the export-audit file-map entry are in the database. At the apply (02:05Z) nothing called them; the application deployed at 02:11Z with the answers flag and owner email off. Admission stays Closed, public joining stays blocked, SMS stays off. Retention clocks start when the first real answer is stored, which cannot happen while the answers flag is off.
 - **Release.** #1410 merged as `7def16653` about 45 s after the push.
 - **Related record line.** The commits of #1404 (a test harness for the owner decline email) landed through #1407 (`1d6c06c35`), not through a merge of #1404 itself.
