@@ -212,6 +212,21 @@ export type ExportedDisposition = {
   readonly sourceCountCheck: SourceCountCheck;
   /** One sentence, reused verbatim by the ZIP README and the settings page. */
   readonly description: string;
+  /**
+   * Set when the table cannot be SELECTed by any browser role (RLS on, no policy) and the owner-gated function is the only door.
+   * The exporter calls `fn` after the owner check with the session actor, never a service client and never the raw table.
+   */
+  readonly rpcSource?: RpcSourceDeclaration;
+};
+
+export type RpcSourceDeclaration = {
+  readonly fn: string;
+  /** Ascending keyset column the function pages by (`p_after_id`). */
+  readonly keyColumn: string;
+  /** The columns the function returns, exactly, in the database's declared order. */
+  readonly returns: readonly string[];
+  /** Returned columns that deliberately do not reach the CSV, each with why. */
+  readonly notEmitted?: Readonly<Record<string, string>>;
 };
 
 export type ExclusionCategory =
@@ -2287,6 +2302,52 @@ export function selectedColumnError(audit: SelectedColumnAudit): string {
     parts.push(`no select is declared for ${audit.notObserved.join(", ")}`);
   }
   return `Export aborted: ${parts.join("; ")}. No partial export was produced.`;
+}
+
+export function rpcSourceOf(resource: string): RpcSourceDeclaration | null {
+  return exportedResources().find((e) => e.resource === resource)?.disposition.rpcSource ?? null;
+}
+
+export type RpcSourceAudit = {
+  readonly ok: boolean;
+  readonly problems: readonly string[];
+};
+
+/**
+ * An rpc-sourced file is only as honest as the function behind it. Three comparisons, each in both directions:
+ * every CSV header must be a returned column or a declared derived header; every returned column must reach the CSV or be listed in
+ * `notEmitted`; and the function's LIVE return columns (supplied by the DB suite from pg_proc) must equal the declared `returns`.
+ */
+export function auditRpcSources(
+  liveReturnsByFn: Readonly<Record<string, readonly string[]>>,
+  resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
+): RpcSourceAudit {
+  const problems: string[] = [];
+  for (const { resource, disposition } of resources) {
+    const rpc = disposition.rpcSource;
+    if (!rpc) continue;
+    const returns = new Set(rpc.returns);
+    const headers = new Set(disposition.csvHeaders);
+    const derived = new Set(Object.keys(disposition.derivedHeaders ?? {}));
+    const emittedTargets = new Set(Object.values(disposition.emittedAs ?? {}).flatMap((e) => e.headers));
+    if (!returns.has(rpc.keyColumn)) problems.push(`${resource}: key column ${rpc.keyColumn} is not a returned column`);
+    for (const h of disposition.csvHeaders) {
+      if (!returns.has(h) && !derived.has(h) && !emittedTargets.has(h)) problems.push(`${resource}: header ${h} is not returned by ${rpc.fn}`);
+    }
+    for (const c of rpc.returns) {
+      const reaches = headers.has(c) || (disposition.emittedAs?.[c]?.headers ?? []).every((x) => headers.has(x)) && !!disposition.emittedAs?.[c];
+      if (!reaches && !(rpc.notEmitted && c in rpc.notEmitted)) problems.push(`${resource}: ${rpc.fn} returns ${c} but it neither reaches the CSV nor is declared notEmitted`);
+    }
+    const live = liveReturnsByFn[rpc.fn];
+    if (!live) {
+      problems.push(`${resource}: no live return columns supplied for ${rpc.fn}`);
+      continue;
+    }
+    const liveSet = new Set(live);
+    for (const c of rpc.returns) if (!liveSet.has(c)) problems.push(`${resource}: declared column ${c} is not returned by live ${rpc.fn}`);
+    for (const c of live) if (!returns.has(c)) problems.push(`${resource}: live ${rpc.fn} returns undeclared column ${c}`);
+  }
+  return { ok: problems.length === 0, problems: problems.sort() };
 }
 
 export function auditSelectedColumns(
