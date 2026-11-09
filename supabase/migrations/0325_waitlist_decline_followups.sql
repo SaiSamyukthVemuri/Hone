@@ -85,7 +85,7 @@ create table if not exists public.waitlist_erase_records (
   erased_at   timestamptz not null default now(),
   erased_by_practitioner_id uuid,
   reason      text not null,
-  constraint waitlist_erase_records_kind_check check (kind in ('decline','withdrawal')),
+  constraint waitlist_erase_records_kind_check check (kind in ('decline','withdrawal','unknown')),
   constraint waitlist_erase_records_reason_check check (reason in ('owner_erase','removed','retention','cascade')),
   -- followup_id is deliberately NOT a foreign key: this log must outlive and never be restored with the answers.
   constraint waitlist_erase_records_followup_reason_key unique (followup_id, reason)
@@ -153,7 +153,8 @@ begin
   if old.erased_at is null then
     insert into public.waitlist_erase_records (studio_id, followup_id, kind, erased_at, erased_by_practitioner_id, reason)
     values (old.studio_id, old.followup_id,
-            coalesce((select f.kind from public.waitlist_followups f where f.id = old.followup_id), 'decline'),
+            -- The follow-up's ACTUAL kind where it is still visible; 'unknown' when the cascade has already removed it.
+            coalesce((select f.kind from public.waitlist_followups f where f.id = old.followup_id), 'unknown'),
             pg_catalog.clock_timestamp(), null, 'cascade')
     on conflict (followup_id, reason) do nothing;
   end if;
@@ -627,7 +628,8 @@ begin
        -- erase them before the retention date. With an id: that invitation's follow-ups, whatever their state.
        and (case when p_invitation_id is null then (f.status = 'open' or (a.followup_id is not null and a.erased_at is null))
                  else f.invitation_id = p_invitation_id end)
-     order by f.opened_at, f.id
+     -- OPEN rows first, newest first, then closed rows with answers still present: past the cap it is the oldest CLOSED rows that drop.
+     order by (f.status <> 'open'), f.opened_at desc, f.id
      limit 500;
 end;
 $$;
@@ -1230,6 +1232,9 @@ begin
       raise exception '0325: % must have no policy', v_t;
     end if;
     foreach v_role in array array['anon','authenticated'] loop
+      if pg_catalog.has_any_column_privilege(v_role, 'public.' || v_t, 'select,insert,update,references') then
+        raise exception '0325: % has a column-level grant to %', v_t, v_role;
+      end if;
       if pg_catalog.has_table_privilege(v_role, 'public.' || v_t, 'select,insert,update,delete,truncate,references,trigger') then
         raise exception '0325: % must not be reachable by %', v_t, v_role;
       end if;

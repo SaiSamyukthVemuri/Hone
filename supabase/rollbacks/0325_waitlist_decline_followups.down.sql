@@ -1,13 +1,21 @@
--- Down for 0325: restore 0324's admit and 0208's entry transition guard exactly, then remove everything 0325 added.
--- Rollback only; never run against a hosted database without approval. DESTROYS follow-up, answer, outbox and erase data.
+-- Down for 0325: restore 0324's admit and 0208's entry transition guard exactly, then remove what 0325 added EXCEPT waitlist_erase_records.
+-- Rollback only; never run against a hosted database without approval. DESTROYS follow-up, answer and outbox data; REFUSES while any
+-- follow-up is open or any answer text exists.
 begin;
 set local lock_timeout = '5s';
+
+-- Lock FIRST so a concurrent decline cannot commit between the check below and the drops.
+-- RUNBOOK: export waitlist_erase_records read-only before any down anyway; this file KEEPS it (ids and dates only; the replay proof).
+lock table public.waitlist_followups, public.waitlist_decline_answers in access exclusive mode;
 
 -- NEVER silently destroy answers: the runbook says erase or export first.
 do $$
 begin
   if exists (select 1 from public.waitlist_decline_answers a where a.erased_at is null) then
     raise exception '0325 down refused: decline answers still exist; erase or export them first';
+  end if;
+  if exists (select 1 from public.waitlist_followups f where f.status = 'open') then
+    raise exception '0325 down refused: open follow-ups exist; resolve them first';
   end if;
 end $$;
 
@@ -554,8 +562,23 @@ drop function if exists public.link_waitlist_followup_appointment(uuid, uuid, uu
 drop function if exists public.erase_waitlist_decline_answers(uuid, uuid, uuid);
 
 drop table if exists public.waitlist_decline_owner_emails;
-drop table if exists public.waitlist_erase_records;
+-- waitlist_erase_records is deliberately KEPT.
 drop table if exists public.waitlist_decline_answers;
 drop table if exists public.waitlist_followups;
+
+-- The restore must be byte-exact: fail closed (roll everything back) if either restored body is not the expected one.
+do $$
+begin
+  if not exists (select 1 from pg_catalog.pg_proc p
+                  where p.oid = pg_catalog.to_regprocedure('public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer)')
+                    and md5(p.prosrc) = 'd22e76ad1c73f9c82e6e99af89e3232a') then
+    raise exception '0325 down: the restored admit is not the 0324 body';
+  end if;
+  if not exists (select 1 from pg_catalog.pg_proc p
+                  where p.oid = pg_catalog.to_regprocedure('public.new_client_waitlist_entries_transition_guard()')
+                    and md5(p.prosrc) = '2cc3da6987e69ccd5a9204b1a2b7789c') then
+    raise exception '0325 down: the restored entry transition guard is not the 0208 body';
+  end if;
+end $$;
 
 commit;

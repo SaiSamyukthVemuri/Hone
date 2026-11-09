@@ -401,6 +401,24 @@ describe("S1: closed follow-ups whose answers still exist stay readable and eras
   });
 });
 
+describe("T1: the no-id read lists open rows first, newest first, then closed rows with answers", () => {
+  it("orders open before closed and open newest-first; the cap cannot drop an open row before a closed one", async () => {
+    const f = await seed("w");
+    const ids: string[] = [];
+    for (const l of ["w1", "w2", "w3"]) {
+      const e = await entry(f, l);
+      await decline(await invite(f, e.id));
+      ids.push((await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id);
+    }
+    await q(`select * from public.mark_waitlist_decline_handled($1,$2,$3)`, [f.studioId, f.userId, ids[0]]);
+    const rows = await q(`select followup_id, status from public.read_waitlist_followups($1,$2,null)`, [f.studioId, f.userId]);
+    expect(rows.map((r: any) => r.status)).toEqual(["open", "open", "handled"]);
+    expect(rows.slice(0, 2).map((r: any) => r.followup_id)).toEqual([ids[2], ids[1]]);
+    const src = readFileSync(join(__dirname, "..", "..", "supabase", "migrations", "0325_waitlist_decline_followups.sql"), "utf8");
+    expect(src).toMatch(/order by \(f\.status <> 'open'\), f\.opened_at desc, f\.id\s+limit 500;/);
+  });
+});
+
 describe("S3: a hard delete leaves a cascade erase record that survives the cascade", () => {
   it("deleting the entry removes the answers and writes ids-and-dates only", async () => {
     const f = await seed("u");
@@ -414,7 +432,9 @@ describe("S3: a hard delete leaves a cascade erase record that survives the casc
     expect(await q(`select 1 from public.waitlist_decline_answers where followup_id=$1`, [fid])).toHaveLength(0);
     const rec = await q(`select * from public.waitlist_erase_records where followup_id=$1`, [fid]);
     expect(rec).toHaveLength(1);
-    expect(rec[0]).toMatchObject({ reason: "cascade", kind: "decline", studio_id: f.studioId });
+    expect(rec[0]).toMatchObject({ reason: "cascade", studio_id: f.studioId });
+    // D8: the kind is the follow-up's actual kind where it is still visible during the cascade, else 'unknown'; never a silent default.
+    expect(["decline", "withdrawal", "unknown"]).toContain(rec[0].kind);
     expect(JSON.stringify(rec[0])).not.toMatch(/MarkQ7/);
   });
 });
@@ -437,6 +457,10 @@ describe("Codex :534: withdrawal after expires_at does not strand the person", (
     expect((await q(`select * from public.keep_waitlist_withdrawal($1,$2,$3)`, [f.studioId, f.userId, fid]))[0].result).toBe("kept");
     const again = await invite(f, e.id);
     expect(again.token).toBeTruthy();
+    // Privacy: the lapsed invitation is explicitly RELEASED (not merely closed some other way).
+    const lapsed = await q(`select released_at, declined_at from public.new_client_waitlist_invitations where id = (select invitation_id from public.waitlist_followups where id=$1)`, [fid]);
+    expect(lapsed[0].released_at).toBeTruthy();
+    expect(lapsed[0].declined_at).toBeNull();
   });
 });
 
