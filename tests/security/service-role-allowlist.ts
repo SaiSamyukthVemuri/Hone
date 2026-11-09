@@ -99,8 +99,27 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "HON-7 item 4: cron backstop for the owner decline email.",
     why:
       "Rejects any request without the CRON_SECRET bearer (isAuthorizedCronRequest) before building a client, then calls " +
-      "dispatchDeclineOwnerEmail, which is inert while the flag is off. It returns counts only.",
+      "dispatchDeclineOwnerEmail, which is inert while the flag is off, and runRetentionForCron (0326), which runs the scheduled erase " +
+      "of overdue waitlist answers whatever the flag says. It returns counts only.",
     scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "lib/waitlist/retention-run.ts",
+    purpose: "HON-7 (0326): the daily route's scheduled erase of overdue waitlist decline answers, and the early crons' health check.",
+    why:
+      "Called only from cron routes that reject any request without the CRON_SECRET bearer before reaching it. The cleanup and failure-record " +
+      "functions are service_role only and take no studio, client or id: they work on rows already past their deadline. Everything this module " +
+      "returns, logs or alerts is a count, an age or an error class; it never reads an answer, a name or an id. It never throws.",
+    scopeGuard: "runRetentionForCron",
+  },
+  {
+    path: "lib/waitlist/retention-health.ts",
+    purpose: "HON-7 (0326): read the erase heartbeat and raise deduped critical ops alerts when the daily erase is missed, failed or overdue.",
+    why:
+      "Reads waitlist_retention_health() (service_role only; counts, timestamps and an outcome word, nothing personal) and reads ops_alerts only " +
+      "to dedupe its own event names inside a 23 hour window. Called only from cron routes after their CRON_SECRET check. Alerts carry counts, " +
+      "ages in hours and an error class, never a studio, client, answer or id. It never throws.",
+    scopeGuard: "waitlist_retention_health",
   },
   {
     path: "app/(app)/calendar/[id]/manual-fee-actions.ts",
