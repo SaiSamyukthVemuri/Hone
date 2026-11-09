@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -103,6 +104,21 @@ describe("the owner follow-up section", () => {
   });
   it("never renders an email address", () => {
     expect(render([row()])).not.toContain("@");
+  });
+  it("500 rows (capped) shows the notice and a 500+ style count; 499 shows neither", () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => row({ followupId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, invitationId: `i${i}` }));
+    const capped = render(many(500), { capped: true });
+    expect(capped).toContain('data-testid="follow-up-capped"');
+    expect(capped).toContain("Showing the first 500 responses. More are waiting; contact support to see the rest.");
+    expect(capped).toContain("Waitlist responses (500+)");
+    const under = render(many(499));
+    expect(under).not.toContain("follow-up-capped");
+    expect(under).not.toContain("Showing the first 500");
+    expect(under).toContain("Waitlist responses (499)");
+  });
+  it("the settings page hands the cap flag from the read to the section, so a partial list is never rendered as complete", () => {
+    const page = readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8");
+    expect(page).toContain("capped={followUps.capped === true}");
   });
   it("an empty list says so", () => {
     expect(render([])).toContain("No responses need follow-up");

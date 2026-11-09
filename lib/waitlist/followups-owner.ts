@@ -36,7 +36,11 @@ export const FOLLOWUP_READ_COLUMNS = [
   "why_not_work", "better_times", "answers_erased_at", "submitted_at", "closed_at", "erase_by",
 ] as const;
 
-export type FollowUpList = { kind: "unknown" } | { kind: "ok"; rows: FollowUpRow[] };
+/** read_waitlist_followups returns at most this many rows (0325, frozen). A list this long may be missing the rest, and must say so. */
+export const FOLLOWUP_LIST_CAP = 500;
+
+/** `capped` is present (true) only when the list reached the cap, so a partial list can never look complete. */
+export type FollowUpList = { kind: "unknown" } | { kind: "ok"; rows: FollowUpRow[]; capped?: true };
 
 const STATUSES = new Set(["open", "handled", "kept", "booked", "removed"]);
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
@@ -100,7 +104,7 @@ export async function readFollowUps(studioId: string, actorUserId: string | null
         eraseBy: str(r.erase_by),
       });
     }
-    return { kind: "ok", rows };
+    return rows.length >= FOLLOWUP_LIST_CAP ? { kind: "ok", rows, capped: true } : { kind: "ok", rows };
   } catch {
     return { kind: "unknown" };
   }

@@ -962,6 +962,7 @@ export default async function WaitlistSettingsPage({
                 outbox={outbox}
                 linkable={linkable}
                 notice={followUpNotice}
+                capped={followUps.capped === true}
               />
             ) : (
               <p id="follow-up" className="text-sm text-neutral-600 dark:text-neutral-400" role="status">

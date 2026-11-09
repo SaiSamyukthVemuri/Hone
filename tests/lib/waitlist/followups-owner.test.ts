@@ -55,6 +55,17 @@ describe("the owner reads", () => {
     h.rpc.mockResolvedValue({ data: [], error: null });
     expect(await readFollowUps(S, A)).toEqual({ kind: "ok", rows: [] });
   });
+  it("a list of exactly 500 rows is marked capped; 499 is not (the database returns at most 500, so 500 may be a partial list)", async () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => row({ followup_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
+    h.rpc.mockResolvedValue({ data: many(500), error: null });
+    const full = await readFollowUps(S, A);
+    expect(full).toMatchObject({ kind: "ok", capped: true });
+    expect(full.kind === "ok" && full.rows).toHaveLength(500);
+    h.rpc.mockResolvedValue({ data: many(499), error: null });
+    const under = await readFollowUps(S, A);
+    expect(under.kind).toBe("ok");
+    expect(under).not.toHaveProperty("capped");
+  });
   it("the status read is ONE call for many invitations, returns a status only, and treats a missing row as none", async () => {
     h.rpc.mockResolvedValue({ data: [{ invitation_id: "i1", status: "open" }, { invitation_id: "i2", status: "handled" }], error: null });
     const out = await readFollowUpStatuses(S, A, ["i1", "i2", "i3"]);

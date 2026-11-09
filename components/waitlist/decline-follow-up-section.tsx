@@ -16,6 +16,8 @@ import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
 // call site's order). Data comes in as props; this performs no reads. Nothing here says "delivered", "queued" or "pending" about the email, and
 // nothing auto-resolves: the owner's own action closes a response.
 
+export const FOLLOWUP_CAPPED_COPY = "Showing the first 500 responses. More are waiting; contact support to see the rest.";
+
 const NOTICE_COPY: Record<FollowUpNotice, string> = {
   done: "Done.",
   already: "Already done.",
@@ -67,6 +69,7 @@ export function DeclineFollowUpSection({
   linkable,
   notice,
   justSaved = false,
+  capped = false,
 }: {
   rows: FollowUpRow[];
   timeZone: string;
@@ -78,6 +81,8 @@ export function DeclineFollowUpSection({
   notice: FollowUpNotice | null;
   /** True when the owner arrived straight from a response being saved. */
   justSaved?: boolean;
+  /** True when the list reached the database's 500-row cap: more responses may be waiting than are shown. */
+  capped?: boolean;
 }) {
   const open = rows.filter((r) => r.status === "open");
   return (
@@ -88,8 +93,13 @@ export function DeclineFollowUpSection({
       className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
     >
       <h2 id="follow-up-heading" className="font-medium">
-        Waitlist responses ({open.length})
+        {`Waitlist responses (${open.length}${capped ? "+" : ""})`}
       </h2>
+      {capped ? (
+        <p className="mt-1" role="status" data-testid="follow-up-capped">
+          {FOLLOWUP_CAPPED_COPY}
+        </p>
+      ) : null}
       {justSaved ? (
         <p className="mt-1" role="status">
           {DECLINE_CARD_SAVED}
