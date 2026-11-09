@@ -743,6 +743,10 @@ describe("the decline answers export", () => {
       expect(declineCalls[0].ownerChecksBefore).toBeGreaterThanOrEqual(1);
       expect(declineCalls[0].args).toMatchObject({ p_studio_id: "studio-1", p_actor_user_id: "user-1", p_after_id: null, p_limit: 1000 });
       expect(out).toContain("SYNTHETIC-WHY-studio-1-1");
+      // the audit row names the file and counts it under the keys the audit command's map uses
+      const meta = (auditInsert as { metadata: { files: string[]; row_counts: Record<string, number> } }).metadata;
+      expect(meta.files).toContain("waitlist-decline-answers.csv");
+      expect(meta.row_counts).toHaveProperty("waitlist_decline_answers", 1);
     });
   });
 

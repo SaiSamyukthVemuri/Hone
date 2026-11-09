@@ -1800,7 +1800,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "derived",
     reason:
-      "The owner's follow-up item for a waitlist person who declined an invitation or asked to be taken off the list, draft migration 0325 (HON-7). One row per decline and per open withdrawal request, with a kind, a closed status, opened and closed instants, the entry and invitation it belongs to and, once booked, the linked appointment. Studio-owned operational history, so It holds no client text, name or contact. Rows are erased with the studio; the invitation and practitioner references refuse deletion while a row exists. EXCLUDED as operational: the owner's work queue, not the studio's client data; it holds no client text. The answers are exported through export_waitlist_decline_answers.",
+      "Operational record (ids, status and dates only); contains no client text.",
   },
   waitlist_decline_owner_emails: {
     kind: "excluded",

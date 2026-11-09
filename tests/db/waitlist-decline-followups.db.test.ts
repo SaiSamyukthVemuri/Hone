@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, closePool, seedMember, seedStudio } from "./helpers/harness";
 import { AUTO_ROUND_ALLOWANCE } from "@/lib/waitlist/auto-round";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -543,6 +543,27 @@ describe("H2: client erasure is studio-scoped and idempotent", () => {
     // Erasing the other studio's client erases only that studio's answer, once.
     await q(`delete from public.clients where id=$1`, [g.clientId]);
     expect(await q(`select 1 from public.waitlist_erase_records where followup_id=$1 and reason='client_erased'`, [fidG])).toHaveLength(1);
+  });
+});
+
+describe("H2: the export audit command accepts waitlist-decline-answers.csv", () => {
+  const audit = async (f: F, files: string[], counts: Record<string, number>) => {
+    const st = await q(`select name from public.studios where id=$1`, [f.studioId]);
+    const slug = String(st[0].name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "studio";
+    const r = await adminTx(async (tq) => {
+      await tq("set local role service_role");
+      return tq(`select public.record_studio_export_audit_governed($1,$2,$3,$4,$5,$6) as recorded`, [
+        f.practitionerId, f.userId, f.studioId, `hone-export-${slug}-2026-11-09.zip`, files, counts,
+      ]);
+    });
+    return r.rows[0].recorded as boolean;
+  };
+  it("passes with the new file, still refuses an unknown file and a count for an absent file", async () => {
+    const f = await seed("au");
+    expect(await audit(f, ["clients.csv", "waitlist-decline-answers.csv", "manifest.json", "README.txt"], { clients: 0, waitlist_decline_answers: 0 })).toBe(true);
+    expect(await audit(f, ["clients.csv", "waitlist-decline-answers.csv", "manifest.json", "README.txt"], { clients: 0 })).toBe(false);
+    expect(await audit(f, ["clients.csv", "not-a-registry-file.csv", "manifest.json", "README.txt"], { clients: 0 })).toBe(false);
+    expect(await audit(f, ["clients.csv", "manifest.json", "README.txt"], { clients: 0 })).toBe(true);
   });
 });
 
