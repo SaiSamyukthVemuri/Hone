@@ -822,23 +822,24 @@ describe("the decline answers export", () => {
     expect(out).toContain("SYNTHETIC-WHY-studio-1-1");
   });
 
-  it.each(["PGRST202", "42883"])("the function not existing (%s) gives a header-only file and a logged code, not a failure", async (code) => {
+  it.each(["PGRST202", "42883"])("the function not existing (%s) leaves the file out of the archive, says so in the manifest and README, and logs a code", async (code) => {
     reset();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       declineHandler = () => ({ data: null, error: { code, message: "SYNTHETIC-PRIVATE-ERROR" } });
-      const out = await csv(await run());
-      expect(out.trim().split("\n")).toHaveLength(1);
-      const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(logged).toContain(code);
-      expect(logged).not.toContain("SYNTHETIC-PRIVATE-ERROR");
-      // the archive says so itself: a header-only file is not "no answers"
       const r = await run();
       if (!r.ok) throw new Error(r.error);
       const zip = await JSZip.loadAsync(Buffer.from(r.base64, "base64"));
+      expect(zip.file("waitlist-decline-answers.csv")).toBeNull();
+      const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain(code);
+      expect(logged).not.toContain("SYNTHETIC-PRIVATE-ERROR");
       const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
       expect(manifest.not_available_yet).toEqual([expect.objectContaining({ file: "waitlist-decline-answers.csv", status: "not available yet" })]);
-      expect(await zip.file("README.txt")!.async("string")).toContain("NOT AVAILABLE YET");
+      expect(manifest.files).not.toHaveProperty("waitlist-decline-answers.csv");
+      expect(await zip.file("README.txt")!.async("string")).toContain("waitlist-decline-answers.csv: NOT AVAILABLE YET");
+      // the audit row is built from the archive that exists: no file the audit command does not know
+      expect(JSON.stringify(auditInsert)).not.toContain("waitlist-decline-answers");
     } finally { warn.mockRestore(); }
   });
 

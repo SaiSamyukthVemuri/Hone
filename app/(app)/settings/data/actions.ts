@@ -703,7 +703,9 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   writeCsv("clients", clientsRes);
 
-  writeCsv("waitlist_decline_answers", declineAnswersRes);
+  // While the answers function does not exist the file is left OUT of the archive, not written empty: the audit command accepts only files it
+  // knows, so a header-only file in a database that predates it would fail every export, and an empty file would read as "no answers".
+  if (!declineAnswersUnavailable) writeCsv("waitlist_decline_answers", declineAnswersRes);
 
   writeCsv("sessions", sessionsRes);
 
@@ -1147,9 +1149,10 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const writtenCsvNames = Object.entries(zip.files)
     .filter(([name, entry]) => name.endsWith(".csv") && !entry.dir)
     .map(([name]) => name);
-  const toleratedOmissions = budgetContextExported
-    ? []
-    : [exportSpec("client_budget_context").file];
+  const toleratedOmissions = [
+    ...(budgetContextExported ? [] : [exportSpec("client_budget_context").file]),
+    ...(declineAnswersUnavailable ? [exportSpec("waitlist_decline_answers").file] : []),
+  ];
   const parity = auditEmissionParity(writtenCsvNames, toleratedOmissions);
   if (!parity.ok) {
     return { ok: false, error: emissionParityError(parity) };
@@ -1245,7 +1248,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
               status: "not available yet",
               reason:
                 "Saved decline answers could not be read because the database function that returns them is not installed yet. " +
-                "The file holds only its header row. It does NOT mean this studio has no saved answers.",
+                "The file is NOT in this archive. It does NOT mean this studio has no saved answers.",
             },
           ],
         }
@@ -1283,10 +1286,13 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // answer is forty resources.
   const includedLines = exportedResources()
     .filter(({ disposition }) => disposition.file in manifestCounts)
-    .map(({ disposition }) =>
-      `- ${disposition.file}: ${disposition.description}${declineAnswersUnavailable && disposition.file === exportSpec("waitlist_decline_answers").file ? " (NOT AVAILABLE YET: this file holds only its header row and does not mean there are no saved answers.)" : ""}`,
-    )
-    .join("\n");
+    .map(({ disposition }) => `- ${disposition.file}: ${disposition.description}`)
+    .join("\n")
+    .concat(
+      declineAnswersUnavailable
+        ? `\n- ${exportSpec("waitlist_decline_answers").file}: NOT AVAILABLE YET. Saved decline answers could not be read, so the file is not in this archive. It does NOT mean this studio has no saved answers.`
+        : "",
+    );
   const notExportedLines = pendingResources()
     .map(({ resource, disposition }) => `- ${resource} (${disposition.ticket}): ${disposition.reason}`)
     .join("\n");
