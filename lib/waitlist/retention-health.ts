@@ -105,7 +105,7 @@ export function evaluateRetentionHealth(
       severity: "critical",
       message:
         h.lastOutcome === "partial_failure"
-          ? `The latest run of the scheduled erase of overdue waitlist answers skipped ${h.lastFailedCount} answers that failed to erase.`
+          ? `The latest run of the scheduled erase of overdue waitlist answers finished with failures (${h.lastFailedCount} answers not erased; any other failure was a clean-up step).`
           : "The latest run of the scheduled erase of overdue waitlist answers failed.",
       details: { last_outcome: h.lastOutcome, failed_answers: h.lastFailedCount, erased_answers: h.lastErasedCount, hours_since_success: ageHours },
     });

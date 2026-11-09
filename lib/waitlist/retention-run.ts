@@ -8,7 +8,7 @@ import { checkRetentionHealthAndAlert, raiseRetentionAlert } from "@/lib/waitlis
 
 export type RetentionRunSummary =
   | { ok: true; skipped: "not_installed" }
-  | { ok: true; calls: number; erasedAnswers: number; failedAnswers: number; purgedEraseRecords: number; purgedOutbox: number; purgedRuns: number; remaining: number; stoppedEarly: boolean; partialFailure: boolean }
+  | { ok: true; calls: number; erasedAnswers: number; failedAnswers: number; purgeFailed: number; purgedEraseRecords: number; purgedOutbox: number; purgedRuns: number; remaining: number; stoppedEarly: boolean; partialFailure: boolean }
   | { ok: false; calls: number; erasedAnswers: number; failedAnswers: number; errorClass: string; failureRecorded: boolean };
 
 export const RETENTION_RUN_ROUTE = "/api/cron/waitlist-decline-owner-email";
@@ -39,8 +39,8 @@ export async function runRetentionForCron(
     // Rows that fail to erase are skipped and retried next run, but a deadline is being missed: say so now, with a count and nothing else.
     await raiseRetentionAlert(
       "failed",
-      `The scheduled erase of overdue waitlist answers skipped ${tick.counts.failedAnswers} answers that failed to erase.`,
-      { last_outcome: "partial_failure", failed_answers: tick.counts.failedAnswers, erased_answers: tick.counts.erasedAnswers, calls: tick.calls },
+      `The scheduled erase of overdue waitlist answers finished with failures: ${tick.counts.failedAnswers} answers could not be erased and ${tick.counts.purgeFailed} clean-up steps failed.`,
+      { last_outcome: "partial_failure", failed_answers: tick.counts.failedAnswers, purge_failed: tick.counts.purgeFailed, erased_answers: tick.counts.erasedAnswers, calls: tick.calls },
       RETENTION_RUN_ROUTE,
     );
   }
@@ -49,6 +49,7 @@ export async function runRetentionForCron(
     calls: tick.calls,
     erasedAnswers: tick.counts.erasedAnswers,
     failedAnswers: tick.counts.failedAnswers,
+    purgeFailed: tick.counts.purgeFailed,
     partialFailure: tick.partialFailure,
     purgedEraseRecords: tick.counts.purgedEraseRecords,
     purgedOutbox: tick.counts.purgedOutbox,

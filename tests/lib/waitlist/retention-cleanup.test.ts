@@ -5,7 +5,7 @@ import { classifyRetentionFailure, runRetentionCleanup, type RetentionRpcClient 
 
 type Row = Partial<Record<string, unknown>>;
 const row = (o: Row = {}) => ({
-  run_id: "r", outcome: "success", erased_answers: 0, failed_answers: 0, purged_erase_records: 0, purged_outbox: 0, purged_runs: 0,
+  run_id: "r", outcome: "success", erased_answers: 0, failed_answers: 0, purge_failed: 0, purged_erase_records: 0, purged_outbox: 0, purged_runs: 0,
   remaining_answers: 0, remaining_erase_records: 0, remaining_outbox: 0, started_at: "t", finished_at: "t", ...o,
 });
 
@@ -59,6 +59,14 @@ describe("the cleanup loop", () => {
     expect(f.calls).toHaveLength(1);
     expect(out).toMatchObject({ ok: true, partialFailure: true, remaining: 3, stoppedEarly: true });
     expect(out.ok && "counts" in out && out.counts.failedAnswers).toBe(3);
+  });
+  it("a failed purge alone is a partial failure: the outcome and purge_failed agree, and it is counted", async () => {
+    const out = await runRetentionCleanup(fake([{ data: [row({ outcome: "partial_failure", purge_failed: 2, erased_answers: 4 })] }]).client);
+    expect(out).toMatchObject({ ok: true, partialFailure: true });
+    expect(out.ok && "counts" in out && out.counts).toMatchObject({ purgeFailed: 2, failedAnswers: 0, erasedAnswers: 4 });
+    // success with a failed purge, or partial_failure with nothing failed, contradict each other and are not trusted
+    expect(await runRetentionCleanup(fake([{ data: [row({ outcome: "success", purge_failed: 1 })] }]).client)).toMatchObject({ ok: false, errorClass: "unknown" });
+    expect(await runRetentionCleanup(fake([{ data: [row({ outcome: "partial_failure" })] }]).client)).toMatchObject({ ok: false, errorClass: "unknown" });
   });
   it("a partial failure with progress keeps going and totals the failures", async () => {
     const f = fake([

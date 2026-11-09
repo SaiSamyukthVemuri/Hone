@@ -14,6 +14,8 @@ export type RetentionCounts = {
   erasedAnswers: number;
   /** Answers whose erase failed and were skipped; the database retries them next run (outcome partial_failure). */
   failedAnswers: number;
+  /** Housekeeping purges that failed this run (the erases still stand; the database retries the purge next run). Also makes the outcome partial_failure. */
+  purgeFailed: number;
   purgedEraseRecords: number;
   purgedOutbox: number;
   purgedRuns: number;
@@ -37,6 +39,7 @@ export type RetentionRpcClient = {
 export const ZERO_RETENTION_COUNTS: RetentionCounts = {
   erasedAnswers: 0,
   failedAnswers: 0,
+  purgeFailed: 0,
   purgedEraseRecords: 0,
   purgedOutbox: 0,
   purgedRuns: 0,
@@ -58,6 +61,7 @@ function readRow(data: unknown): (RetentionCounts & { outcome: string }) | null 
   const parsed = {
     erasedAnswers: count(r.erased_answers),
     failedAnswers: count(r.failed_answers),
+    purgeFailed: count(r.purge_failed),
     purgedEraseRecords: count(r.purged_erase_records),
     purgedOutbox: count(r.purged_outbox),
     purgedRuns: count(r.purged_runs),
@@ -66,9 +70,9 @@ function readRow(data: unknown): (RetentionCounts & { outcome: string }) | null 
     remainingOutbox: count(r.remaining_outbox),
   };
   if (Object.values(parsed).some((v) => v === null)) return null;
-  // the contract's two outcomes; a failed_answers count and the outcome must agree
+  // the contract's two outcomes; the outcome is partial_failure exactly when an erase or a purge failed
   if (r.outcome !== "success" && r.outcome !== "partial_failure") return null;
-  if ((r.outcome === "partial_failure") !== ((parsed.failedAnswers as number) > 0)) return null;
+  if ((r.outcome === "partial_failure") !== ((parsed.failedAnswers as number) + (parsed.purgeFailed as number) > 0)) return null;
   return { ...(parsed as RetentionCounts), outcome: r.outcome };
 }
 
@@ -133,6 +137,7 @@ export async function runRetentionCleanup(
     if (!got) return fail("unknown");
     total.erasedAnswers += got.erasedAnswers;
     total.failedAnswers += got.failedAnswers;
+    total.purgeFailed += got.purgeFailed;
     total.purgedEraseRecords += got.purgedEraseRecords;
     total.purgedOutbox += got.purgedOutbox;
     total.purgedRuns += got.purgedRuns;
@@ -145,5 +150,5 @@ export async function runRetentionCleanup(
     if (got.erasedAnswers + got.purgedEraseRecords + got.purgedOutbox + got.purgedRuns === 0) break;
   }
   const remaining = remainingTotal(total);
-  return { ok: true, calls, counts: total, remaining, stoppedEarly: remaining > 0, partialFailure: total.failedAnswers > 0 };
+  return { ok: true, calls, counts: total, remaining, stoppedEarly: remaining > 0, partialFailure: total.failedAnswers + total.purgeFailed > 0 };
 }
