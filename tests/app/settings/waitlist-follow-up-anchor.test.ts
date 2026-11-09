@@ -67,6 +67,19 @@ describe("the follow-up anchor", () => {
       vi.unstubAllEnvs();
     }
   });
+  it("with the flag on and ZERO responses and nothing needing attention, the section still renders, once, with an empty state (the email CTA lands on it)", async () => {
+    h.attention.mockResolvedValue({ kind: "ok", total: 0, shown: [] });
+    vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "1");
+    try {
+      const html = await render("owner");
+      expect(html.match(/id="follow-up"/g)).toHaveLength(1);
+      expect(html).toContain('data-testid="decline-follow-up"');
+      expect(html).toContain("No responses need follow-up.");
+      expect(html).not.toContain('id="needs-attention-heading"');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("with the flag off the old attention section keeps the id and no new section renders", async () => {
     const html = await render("owner");
     expect(html).not.toContain('data-testid="decline-follow-up"');
