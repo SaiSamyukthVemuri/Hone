@@ -1054,6 +1054,9 @@ describe("0171 — the financial census is complete", () => {
         // it is evidence, not payment state, and stays on the ORIGINAL appointment
         // (a free consultation at a waitlist studio is cancel-only, never rescheduled).
         "waitlist_invitation_bookings",
+        // 0325 owner follow-up (appointment_id, ON DELETE RESTRICT, set only when a follow-up is closed as
+        // booked). Ids and dates only, no amount, no payment reference, no client text; evidence of the link, not payment state.
+        "waitlist_followups",
         // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
         // (PAY-SETTLE / 0187):
         "appointment_settlements", //      see the justification below

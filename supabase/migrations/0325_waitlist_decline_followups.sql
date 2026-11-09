@@ -86,7 +86,7 @@ create table if not exists public.waitlist_erase_records (
   erased_by_practitioner_id uuid,
   reason      text not null,
   constraint waitlist_erase_records_kind_check check (kind in ('decline','withdrawal','unknown')),
-  constraint waitlist_erase_records_reason_check check (reason in ('owner_erase','removed','retention','cascade')),
+  constraint waitlist_erase_records_reason_check check (reason in ('owner_erase','removed','retention','cascade','client_erased')),
   -- followup_id is deliberately NOT a foreign key: this log must outlive and never be restored with the answers.
   constraint waitlist_erase_records_followup_reason_key unique (followup_id, reason)
 );
@@ -140,7 +140,7 @@ grant update (status, attempt_count, claimed_at, last_error_code, provider_messa
 comment on table public.waitlist_decline_answers is
   'The ONLY table holding a waitlist person''s own words (decline answers). Erasable by owner, by Remove and by retention. Never selected outside the owner-gated read command.';
 comment on table public.waitlist_erase_records is
-  'Ids and dates only. It lives in the SAME database as the answers, so a point-in-time restore brings back an older copy of this log too. Replaying the erasures after a restore therefore needs the read-only export OPS takes BEFORE the restore (OPS runbook); a restore from a lost database is out of V1 scope.';
+  'RETENTION (Sam, 9 Nov): erase records are kept 30 days and then purged by the scheduled cleanup. That job is a LATER, separately tracked migration; nothing in 0325 purges anything. Ids and dates only. It lives in the SAME database as the answers, so a point-in-time restore brings back an older copy of this log too. Replaying the erasures after a restore therefore needs the read-only export OPS takes BEFORE the restore (OPS runbook); a restore from a lost database is out of V1 scope.';
 
 -- A hard delete (of an entry, a follow-up or a studio) cascades the answers away. Leave an erase record for every row that
 -- still held text, so a destroyed answer is never silent.
@@ -165,6 +165,76 @@ drop trigger if exists waitlist_decline_answers_record_cascade_erase on public.w
 create trigger waitlist_decline_answers_record_cascade_erase
   before delete on public.waitlist_decline_answers
   for each row execute function public.waitlist_decline_answers_record_cascade_erase();
+
+-- A client's record being ERASED (a hard delete of the clients row; the product archives clients today and has no hard-delete path, so this
+-- is the admin / future path) deletes that person's saved decline answers. LINKAGE: the entry's normalised email and the studio equal the
+-- client's normalised email and studio (clients.email, unique per studio on lower(btrim(email))). Leaves an erase record, reason 'client_erased'.
+create or replace function public.clients_erase_waitlist_decline_answers()
+returns trigger
+language plpgsql security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if old.normalized_email is null then
+    return null;
+  end if;
+  with erased as (
+    update public.waitlist_decline_answers a
+       set why_not_work = null, better_times = null, erased_at = v_now, erased_by_practitioner_id = null
+      from public.waitlist_followups d
+      join public.new_client_waitlist_entries e on e.id = d.entry_id and e.studio_id = d.studio_id
+     where a.followup_id = d.id and a.erased_at is null
+       and e.studio_id = old.studio_id
+       and e.email_normalized = old.normalized_email
+    returning a.followup_id, d.kind
+  )
+  insert into public.waitlist_erase_records (studio_id, followup_id, kind, erased_at, erased_by_practitioner_id, reason)
+  select old.studio_id, x.followup_id, x.kind, v_now, null, 'client_erased' from erased x
+  on conflict (followup_id, reason) do nothing;
+  return null;
+end;
+$$;
+drop trigger if exists clients_erase_waitlist_decline_answers on public.clients;
+create trigger clients_erase_waitlist_decline_answers
+  after delete on public.clients
+  for each row execute function public.clients_erase_waitlist_decline_answers();
+
+-- The studio data export's read: a keyset page of decline answers ordered by answer id (the answer's id is its follow-up id). An erased
+-- answer comes back as a MARKER row, both text columns null and answers_erased_at set, never text. client_id is the client whose
+-- normalized_email equals the entry's email in this studio (null when none). Owner re-derived; a non-owner gets zero rows. service_role only.
+create or replace function public.export_waitlist_decline_answers(
+  p_studio_id     uuid,
+  p_actor_user_id uuid,
+  p_after_id      uuid default null,
+  p_limit         int  default 1000
+)
+returns table (answer_id uuid, followup_id uuid, entry_id uuid, invitation_id uuid, client_id uuid, kind text,
+               why_not_work text, better_times text, submitted_at timestamptz, answers_erased_at timestamptz)
+language plpgsql stable security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare v_code text;
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 1000 then
+    raise exception 'invalid_limit' using errcode = '22023';
+  end if;
+  select o.code into v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) o;
+  if v_code is distinct from 'ok' then return; end if;
+  return query
+    select a.followup_id, d.id, d.entry_id, d.invitation_id, c.id, d.kind,
+           a.why_not_work, a.better_times, a.submitted_at, a.erased_at
+      from public.waitlist_decline_answers a
+      join public.waitlist_followups d on d.id = a.followup_id and d.studio_id = a.studio_id
+      join public.new_client_waitlist_entries e on e.id = d.entry_id and e.studio_id = d.studio_id
+      left join public.clients c on c.studio_id = e.studio_id and c.normalized_email = e.email_normalized
+     where a.studio_id = p_studio_id
+       and (p_after_id is null or a.followup_id > p_after_id)
+     order by a.followup_id
+     limit p_limit;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- 2. waiting -> converted: admitted NARROWLY, only inside link_waitlist_followup_appointment
@@ -1198,6 +1268,8 @@ revoke all on function public.link_waitlist_followup_appointment(uuid, uuid, uui
 revoke all on function public.erase_waitlist_decline_answers(uuid, uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.new_client_waitlist_entries_erase_on_remove() from public, anon, authenticated, service_role;
 revoke all on function public.waitlist_decline_answers_record_cascade_erase() from public, anon, authenticated, service_role;
+revoke all on function public.clients_erase_waitlist_decline_answers() from public, anon, authenticated, service_role;
+revoke all on function public.export_waitlist_decline_answers(uuid, uuid, uuid, int) from public, anon, authenticated, service_role;
 grant execute on function public.decline_waitlist_invitation_with_answers(text, text, text, text) to service_role;
 grant execute on function public.request_waitlist_withdrawal(text, text) to service_role;
 grant execute on function public.read_waitlist_followups(uuid, uuid, uuid) to service_role;
@@ -1206,6 +1278,7 @@ grant execute on function public.mark_waitlist_decline_handled(uuid, uuid, uuid)
 grant execute on function public.keep_waitlist_withdrawal(uuid, uuid, uuid) to service_role;
 grant execute on function public.link_waitlist_followup_appointment(uuid, uuid, uuid, uuid) to service_role;
 grant execute on function public.erase_waitlist_decline_answers(uuid, uuid, uuid) to service_role;
+grant execute on function public.export_waitlist_decline_answers(uuid, uuid, uuid, int) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- 9. Self-checks (as in 0324): the migration fails closed if the posture is not what it says
@@ -1221,7 +1294,8 @@ declare
     'decline_waitlist_invitation_with_answers','request_waitlist_withdrawal','read_waitlist_followups',
     'read_waitlist_followup_status','mark_waitlist_decline_handled','keep_waitlist_withdrawal',
     'link_waitlist_followup_appointment','erase_waitlist_decline_answers',
-    'new_client_waitlist_entries_erase_on_remove','waitlist_decline_answers_record_cascade_erase'];
+    'export_waitlist_decline_answers',
+    'new_client_waitlist_entries_erase_on_remove','waitlist_decline_answers_record_cascade_erase','clients_erase_waitlist_decline_answers'];
 begin
   foreach v_t in array v_tables loop
     if not (select c.relrowsecurity from pg_catalog.pg_class c

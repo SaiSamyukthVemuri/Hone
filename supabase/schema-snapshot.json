@@ -3,7 +3,7 @@
   "migrations": {
     "count": 262,
     "last": "0325_waitlist_decline_followups.sql",
-    "sha256": "34236664c3d4a3a7b3c284dd9bd614171c3b216a0cc9cd1252e35ffc7c784e70"
+    "sha256": "ee7f23fc257e5d9260d1124e275c836fe5ffc851df0c544c950ca88f2567169b"
   },
   "public": {
     "tables": [
@@ -228,6 +228,7 @@
       "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
+      "clients_erase_waitlist_decline_answers",
       "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
@@ -295,6 +296,7 @@
       "expire_new_client_waitlist_invitation",
       "expire_pending_sessions",
       "expire_platform_lead_alerts",
+      "export_waitlist_decline_answers",
       "fail_studio_sms_provisioning",
       "fanout_studio_wide_reservation",
       "finalize_session",

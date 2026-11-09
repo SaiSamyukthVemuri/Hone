@@ -23,6 +23,8 @@ drop trigger if exists new_client_waitlist_entries_erase_on_remove on public.new
 drop function if exists public.new_client_waitlist_entries_erase_on_remove();
 drop trigger if exists waitlist_decline_answers_record_cascade_erase on public.waitlist_decline_answers;
 drop function if exists public.waitlist_decline_answers_record_cascade_erase();
+drop trigger if exists clients_erase_waitlist_decline_answers on public.clients;
+drop function if exists public.clients_erase_waitlist_decline_answers();
 
 create or replace function public.admit_new_client_waitlist_entry(
   p_studio_id        uuid,
@@ -560,6 +562,7 @@ drop function if exists public.mark_waitlist_decline_handled(uuid, uuid, uuid);
 drop function if exists public.keep_waitlist_withdrawal(uuid, uuid, uuid);
 drop function if exists public.link_waitlist_followup_appointment(uuid, uuid, uuid, uuid);
 drop function if exists public.erase_waitlist_decline_answers(uuid, uuid, uuid);
+drop function if exists public.export_waitlist_decline_answers(uuid, uuid, uuid, int);
 
 drop table if exists public.waitlist_decline_owner_emails;
 -- waitlist_erase_records is deliberately KEPT.

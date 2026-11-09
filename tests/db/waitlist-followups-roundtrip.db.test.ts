@@ -39,6 +39,8 @@ describe("0325 down file (T4, D2, D3)", () => {
 
 describe("0325 up / down / up", () => {
   it("down REFUSES while an open follow-up or answer text exists, destroying nothing", async () => {
+    // Other suites' answers would make the down refuse for answers first; clear them so the open-follow-up refusal is what we read.
+    await q(`delete from public.waitlist_decline_answers`);
     try {
       const st = await seedStudio("rt");
       const studio = st.studioId;

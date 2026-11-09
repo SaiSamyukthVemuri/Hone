@@ -439,6 +439,85 @@ describe("S3: a hard delete leaves a cascade erase record that survives the casc
   });
 });
 
+describe("H2: export of decline answers and client erasure", () => {
+  const exp = (f: F, u: string, after: string | null = null, limit = 1000) =>
+    q(`select * from public.export_waitlist_decline_answers($1,$2,$3,$4)`, [f.studioId, u, after, limit]);
+
+  it("owner gets this studio's rows only, with the client link; a non-owner and another studio get zero; bad limits are refused value-free", async () => {
+    const f = await seed("x1");
+    const other = await seed("x2");
+    const e = await entry(f, "x1");
+    await decline(await invite(f, e.id));
+    const eo = await entry(other, "x2");
+    await decline(await invite(other, eo.id));
+    await q(`update public.clients set email = $2 where id = $1`, [f.clientId, e.email]);
+    const rows = await exp(f, f.userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ entry_id: e.id, client_id: f.clientId, kind: "decline", why_not_work: WHY, better_times: TIMES, answers_erased_at: null });
+    expect(rows[0].answer_id).toBe(rows[0].followup_id);
+    expect(await exp(f, other.userId)).toHaveLength(0);
+    expect(await q(`select * from public.export_waitlist_decline_answers($1,$2,null,1000)`, [other.studioId, f.userId])).toHaveLength(0);
+    for (const bad of [0, 1001, -1]) {
+      await expect(exp(f, f.userId, null, bad)).rejects.toMatchObject({ code: "22023" });
+    }
+  });
+
+  it("an erased answer is a marker row with null text; a person who is not a client has a null client_id", async () => {
+    const f = await seed("x3");
+    const e = await entry(f, "x3");
+    await decline(await invite(f, e.id));
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    await q(`select * from public.erase_waitlist_decline_answers($1,$2,$3)`, [f.studioId, f.userId, fid]);
+    const rows = await exp(f, f.userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ client_id: null, why_not_work: null, better_times: null });
+    expect(rows[0].answers_erased_at).not.toBeNull();
+  });
+
+  it("paging covers all rows exactly once", async () => {
+    const f = await seed("x4");
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const e = await entry(f, `x4-${i}`);
+      await decline(await invite(f, e.id));
+      ids.push(e.id);
+    }
+    const seen: string[] = [];
+    let after: string | null = null;
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await exp(f, f.userId, after, 2);
+      if (page.length === 0) break;
+      expect(page.length).toBeLessThanOrEqual(2);
+      seen.push(...page.map((r: any) => r.answer_id));
+      after = page[page.length - 1].answer_id;
+    }
+    expect(seen).toHaveLength(5);
+    expect(new Set(seen).size).toBe(5);
+    expect([...seen].sort()).toEqual(seen);
+  });
+
+  it("erasing the client record deletes that person's answers only, leaves a client_erased record with no text, and not another client's", async () => {
+    const f = await seed("x5");
+    const e = await entry(f, "x5");
+    const e2 = await entry(f, "x5b");
+    await decline(await invite(f, e.id));
+    await decline(await invite(f, e2.id));
+    await q(`update public.clients set email = $2 where id = $1`, [f.clientId, e.email]);
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    await q(`delete from public.clients where id=$1`, [f.clientId]);
+    const mine = await q(`select * from public.waitlist_decline_answers where followup_id=$1`, [fid]);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ why_not_work: null, better_times: null });
+    expect(mine[0].erased_at).not.toBeNull();
+    const rec = await q(`select * from public.waitlist_erase_records where followup_id=$1`, [fid]);
+    expect(rec).toHaveLength(1);
+    expect(rec[0]).toMatchObject({ reason: "client_erased", studio_id: f.studioId, kind: "decline" });
+    expect(JSON.stringify(rec[0])).not.toMatch(/MarkQ7/);
+    const rows = await exp(f, f.userId);
+    expect(rows.filter((r: any) => r.answers_erased_at === null)).toHaveLength(1);
+  });
+});
+
 describe("Codex :534: withdrawal after expires_at does not strand the person", () => {
   it("a lapsed-but-unmarked invitation is closed; Keep then a new invite is admitted", async () => {
     const f = await seed("v");
