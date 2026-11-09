@@ -9,6 +9,8 @@ import {
   declineInvitationAction,
   loadInvitationAction,
   timesDontWorkAction,
+  noTimesWorkAction,
+  noLongerNeedAction,
   requestInvitationProofAction,
   submitInvitationProofAction,
 } from "./actions";
@@ -33,11 +35,14 @@ export function InvitationContainer({
   token,
   initial,
   timesFeedback = false,
+  declineAnswers = false,
 }: {
   token: string;
   initial: InvitationViewState;
   /** 0319: server-evaluated flag. False keeps the existing decline only. */
   timesFeedback?: boolean;
+  /** 0325: server-evaluated flag. True shows the two-answer form and "I no longer need an appointment". */
+  declineAnswers?: boolean;
 }) {
   const [state, setState] = useState<InvitationViewState>(initial);
   const [selectedSlotStart, setSelectedSlotStart] = useState<string | null>(null);
@@ -185,6 +190,12 @@ export function InvitationContainer({
         run(() => bookInvitationSlotAction(token, selectedSlotStart, typedPhone));
       }}
       onDecline={() => run(() => declineInvitationAction(token))}
+      onNoTimesWork={
+        declineAnswers
+          ? (a: { why: string; better: string }) => run(() => noTimesWorkAction(token, a.why, a.better))
+          : undefined
+      }
+      onNoLongerNeed={declineAnswers ? () => run(() => noLongerNeedAction(token)) : undefined}
       onTimesDontWork={
         timesFeedback ? (note: string) => run(() => timesDontWorkAction(token, note)) : undefined
       }

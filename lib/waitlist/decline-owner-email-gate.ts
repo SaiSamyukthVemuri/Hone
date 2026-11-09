@@ -16,6 +16,22 @@ export function declineOwnerEmailActivation(): { enabled: false } | { enabled: t
   return { enabled: true, since };
 }
 
+/**
+ * THE per-row eligibility rule, shared by the dispatcher (which uses the lower bound as its query filter) and the card (which classifies a held row
+ * with it), so what the card says "will send" can never drift from what the sweep will actually claim. A row is eligible only if it was created at
+ * or after the activation instant AND is still inside the retry window measured from its own creation.
+ */
+export function declineOwnerEmailEarliestEligible(since: Date, now: Date): Date {
+  const windowStart = new Date(now.getTime() - DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS * 3_600_000);
+  return windowStart > since ? windowStart : since;
+}
+
+export function declineOwnerEmailRowEligible(createdAt: string, since: Date, now: Date): boolean {
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return false;
+  return created >= declineOwnerEmailEarliestEligible(since, now);
+}
+
 // Retention of outbox rows is undecided (Sam, HON-7). The purge period lives in this one constant and nothing deletes with it yet.
 export const DECLINE_OWNER_EMAIL_PURGE_DAYS = 90;
 
@@ -29,12 +45,6 @@ export const DECLINE_OWNER_EMAIL_MAX_ATTEMPTS = 3;
 export const DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS = 23;
 
 /**
- * How long a failed send is shown to the owner. The outbox (0325) has no "follow-up handled" column, so the notice cannot yet be tied to the
- * response being dealt with; until it can (migration b), it ages out instead of staying forever.
- */
-export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
-
-/**
  * One sweep keeps claiming batches until nothing eligible remains or this budget is spent. The cron route declares maxDuration = 60 (the most
  * a Hobby serverless function may run), and one row can take up to ~30s in the worst case (a 15s provider timeout, retried once under the same key),
  * so the budget is 60 - 30 - margin = 25s: a row started just inside it still finishes before the platform cuts the function. A row cut anyway is left
@@ -43,6 +53,14 @@ export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
 export const DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS = 25_000;
 export const DECLINE_OWNER_EMAIL_ROUTE_MAX_DURATION_SECONDS = 60;
 export const DECLINE_OWNER_EMAIL_BATCH_SIZE = 50;
+
+/** With the answers flag OFF the outbox cannot say a response was handled, so a failed-send notice ages out after this many days (as shipped in #1407). */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS = 14;
+/** With the answers flag ON the notice counts open follow-ups; past this many distinct failed responses it says "500+" instead of a silently truncated count. */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP = 500;
+/** Failed rows are read in pages of this many (never more than one status call's worth of ids), at most this many pages per render. */
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS = 500;
+export const DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES = 20;
 
 /** A row left in `sending` longer than this was abandoned by a dead invocation and may be claimed again. */
 export const DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES = 10;

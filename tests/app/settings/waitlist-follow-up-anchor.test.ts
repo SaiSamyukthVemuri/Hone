@@ -8,6 +8,8 @@ import { returnToDestination } from "@/lib/auth/return-to";
 const h = vi.hoisted(() => ({ practitioner: vi.fn(), attention: vi.fn() }));
 
 vi.mock("server-only", () => ({}));
+// The page reads its lifecycle flash cookie; outside a request there is no store, so give it an empty one.
+vi.mock("next/headers", async (orig) => ({ ...(await orig<Record<string, unknown>>()), cookies: async () => ({ get: () => undefined }) }));
 vi.mock("@/lib/supabase/queries", async (orig) => ({ ...(await orig<Record<string, unknown>>()), requirePractitionerWithStudio: h.practitioner }));
 // The page reads the one-shot lifecycle notice cookie (#1401); there is no request scope here, so it is empty.
 vi.mock("next/headers", async (orig) => ({ ...(await orig<Record<string, unknown>>()), cookies: async () => ({ get: () => undefined }) }));
@@ -52,6 +54,36 @@ describe("the follow-up anchor", () => {
   it("the owner page renders exactly one element with id follow-up", async () => {
     const html = await render("owner");
     expect(html.match(/id="follow-up"/g)).toHaveLength(1);
+  });
+  it("with the decline-answers flag on, still exactly one id follow-up: the new section owns it and the old attention section drops it", async () => {
+    vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "1");
+    try {
+      const html = await render("owner");
+      expect(html.match(/id="follow-up"/g)).toHaveLength(1);
+      expect(html).toContain('data-testid="decline-follow-up"');
+      expect(html).toContain('id="needs-attention-heading"');
+      expect(html).toMatch(/<section id="follow-up"[^>]*data-testid="decline-follow-up"/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it("with the flag on and ZERO responses and nothing needing attention, the section still renders, once, with an empty state (the email CTA lands on it)", async () => {
+    h.attention.mockResolvedValue({ kind: "ok", total: 0, shown: [] });
+    vi.stubEnv("WAITLIST_DECLINE_ANSWERS", "1");
+    try {
+      const html = await render("owner");
+      expect(html.match(/id="follow-up"/g)).toHaveLength(1);
+      expect(html).toContain('data-testid="decline-follow-up"');
+      expect(html).toContain("No responses need follow-up.");
+      expect(html).not.toContain('id="needs-attention-heading"');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it("with the flag off the old attention section keeps the id and no new section renders", async () => {
+    const html = await render("owner");
+    expect(html).not.toContain('data-testid="decline-follow-up"');
+    expect(html).toMatch(/<section id="follow-up" aria-labelledby="needs-attention-heading"/);
   });
   it("a non-owner gets the notice and no such element", async () => {
     const html = await render("practitioner");

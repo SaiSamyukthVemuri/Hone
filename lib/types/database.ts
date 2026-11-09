@@ -1503,7 +1503,9 @@ export type PractitionerNotificationEventType =
   | "card_added"
   | "card_replaced"
   // Written by the waitlist decline command (HON-7), owner-only like the card events.
-  | "waitlist_offer_declined";
+  | "waitlist_offer_declined"
+  // Written by the waitlist withdrawal command (HON-7, 0325), owner-only like the decline event.
+  | "waitlist_withdrawal_requested";
 
 export type PractitionerNotification = {
   id: string;

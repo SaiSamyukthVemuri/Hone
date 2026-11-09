@@ -4,14 +4,22 @@ import { sendWaitlistEmailIdempotent, type IdempotentEmailTransport } from "@/li
 import { buildWaitlistDeclineOwnerEmail } from "@/lib/email/templates/waitlist-decline-owner";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { readFollowUpStatuses } from "./followups-owner";
+import { waitlistDeclineAnswersEnabled } from "./decline-answers-gate";
+import { emptyOutboxCounts, type OutboxCounts } from "./decline-status-lines";
 import {
   DECLINE_OWNER_EMAIL_MAX_ATTEMPTS,
-  DECLINE_OWNER_EMAIL_BATCH_SIZE,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP,
   DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES,
+  DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS,
+  DECLINE_OWNER_EMAIL_BATCH_SIZE,
   DECLINE_OWNER_EMAIL_SWEEP_BUDGET_MS,
   DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS,
   DECLINE_OWNER_EMAIL_STALE_CLAIM_MINUTES,
   declineOwnerEmailActivation,
+  declineOwnerEmailEarliestEligible,
+  declineOwnerEmailRowEligible,
 } from "./decline-owner-email-gate";
 
 // The owner email on a waitlist decline (HON-7 item 4): the sender. The decline transaction (migration 0325, Willow) inserts ONE
@@ -222,7 +230,7 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
     // Nothing is attempted after the window, and a row that never got its turn inside it becomes `failed` (shown in Hone) rather than
     // lingering `held`. The window is measured from the row's own creation, so it holds whatever the cron cadence.
     const windowStart = new Date(now.getTime() - DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS * 3_600_000);
-    const earliest = windowStart > activation.since ? windowStart : activation.since;
+    const earliest = declineOwnerEmailEarliestEligible(activation.since, now);
     await expireUnsent(deps.admin, activation.since, windowStart, staleBefore, now);
 
     // Batches are walked by a KEYSET on `id` so every row is visited at most once per run. Without it a row that just failed would still be
@@ -278,34 +286,126 @@ export async function dispatchDeclineOwnerEmail(deps: Deps, scope: { invitationI
   return summary;
 }
 
-export type DeclineEmailStatus = { kind: "unknown" } | { kind: "ok"; failed: number };
+export type DeclineEmailStatus = { kind: "unknown" } | { kind: "ok"; failed: number; atLeast?: boolean };
 
-/** Owners see a failure in Hone. A count only: no recipient, no error text. */
-export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, now: Date = new Date()): Promise<DeclineEmailStatus> {
+/**
+ * Owners see a failure in Hone. A count only: no recipient, no error text.
+ *
+ * Two modes, chosen by the answers flag so the 0325 function is never called (and never required) while the flag is off:
+ *   * OFF: exactly as shipped in #1407. Failed rows since activation and within the last DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS days; the outbox
+ *     cannot say a response was handled, so the notice ages out.
+ *   * ON: failed rows since activation whose follow-up is still OPEN, read in ONE status-only call (no name, no answer). Past the cap it says
+ *     "at least" rather than truncating silently.
+ */
+export async function getDeclineEmailStatus(admin: SupabaseClient, studioId: string, actorUserId: string | null, now: Date = new Date()): Promise<DeclineEmailStatus> {
   try {
     const activation = declineOwnerEmailActivation();
     if (!activation.enabled) return { kind: "ok", failed: 0 };
-    // Only `failed` rows, only since activation, and only recent ones: the outbox cannot yet say a response was handled, so the notice ages out.
-    const recent = new Date(now.getTime() - DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS * 86_400_000);
-    const from = recent > activation.since ? recent : activation.since;
-    const { count, error } = await admin
-      .from("waitlist_decline_owner_emails")
-      .select("id", { count: "exact", head: true })
-      .eq("studio_id", studioId)
-      .eq("status", "failed")
-      .gte("created_at", from.toISOString());
-    if (error || typeof count !== "number") return { kind: "unknown" };
-    return { kind: "ok", failed: count };
+    if (!waitlistDeclineAnswersEnabled()) {
+      const recent = new Date(now.getTime() - DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS * 86_400_000);
+      const from = recent > activation.since ? recent : activation.since;
+      const { count, error } = await admin
+        .from("waitlist_decline_owner_emails")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studioId)
+        .eq("status", "failed")
+        .gte("created_at", from.toISOString());
+      if (error || typeof count !== "number") return { kind: "unknown" };
+      return { kind: "ok", failed: count };
+    }
+    if (!actorUserId) return { kind: "unknown" };
+    // The OPEN filter is applied BEFORE any cap: failed rows are walked in pages by id, each page's new invitations go through ONE status call, and
+    // only open ones are counted. A cap on the failed rows themselves could pick only handled responses and hide real open ones.
+    // Stops as soon as the open count reaches the cap ("500+"), or the rows are exhausted (an exact count). If the page budget runs out first the
+    // answer is "at least what was found" when something open was found, and unknown otherwise: zero is never rendered beside "at least".
+    const seen = new Set<string>();
+    let open = 0;
+    let after: string | null = null;
+    for (let page = 0; page < DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES; page += 1) {
+      let q = admin
+        .from("waitlist_decline_owner_emails")
+        .select("id,invitation_id")
+        .eq("studio_id", studioId)
+        .eq("status", "failed")
+        .gte("created_at", activation.since.toISOString())
+        .order("id", { ascending: true })
+        .limit(DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS);
+      if (after) q = q.gt("id", after);
+      const { data, error } = await q;
+      if (error || !Array.isArray(data)) return { kind: "unknown" };
+      const rows = data as Array<{ id?: unknown; invitation_id?: unknown }>;
+      const fresh: string[] = [];
+      for (const r of rows) {
+        if (typeof r.invitation_id === "string" && !seen.has(r.invitation_id)) {
+          seen.add(r.invitation_id);
+          fresh.push(r.invitation_id);
+        }
+      }
+      if (fresh.length > 0) {
+        const st = await readFollowUpStatuses(studioId, actorUserId, fresh);
+        // A page never carries more ids than one call accepts, so a refusal for size is a contract surprise: unknown, not a count.
+        if (st.kind !== "ok") return { kind: "unknown" };
+        for (const id of fresh) if (st.byInvitation.get(id) === "open") open += 1;
+        if (open >= DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP) return { kind: "ok", failed: DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, atLeast: true };
+      }
+      if (rows.length < DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS) return { kind: "ok", failed: open };
+      const last = rows[rows.length - 1]?.id;
+      if (typeof last !== "string") return { kind: "unknown" };
+      after = last;
+    }
+    return open > 0 ? { kind: "ok", failed: open, atLeast: true } : { kind: "unknown" };
   } catch {
     return { kind: "unknown" };
   }
 }
 
 /** For the owner page, after its role check. The service-role client stays inside this module; an unbuildable client is `unknown`. */
-export async function loadDeclineEmailStatus(studioId: string): Promise<DeclineEmailStatus> {
+export async function loadDeclineEmailStatus(studioId: string, actorUserId: string | null): Promise<DeclineEmailStatus> {
   try {
-    return await getDeclineEmailStatus(createAdminClient(), studioId);
+    return await getDeclineEmailStatus(createAdminClient(), studioId, actorUserId);
   } catch {
     return { kind: "unknown" };
+  }
+}
+
+const OUTBOX_READ_CHUNK = 50;
+const OUTBOX_READ_ROW_CEILING = 1000;
+
+/** Outbox counts per invitation, for the follow-up card's email line. Ids and counts only. null = could not be read. */
+export async function loadOutboxCounts(studioId: string, invitationIds: string[], now: Date = new Date()): Promise<Map<string, OutboxCounts> | null> {
+  const out = new Map<string, OutboxCounts>();
+  const ids = [...new Set(invitationIds)];
+  if (ids.length === 0) return out;
+  try {
+    const activation = declineOwnerEmailActivation();
+    const admin = createAdminClient();
+    // EVERY invitation is read, in chunks that keep each id list a short URL. Nothing is silently skipped: a skipped invitation would be rendered by
+    // the card as "no recipients" even though its email was sent or failed. A chunk that errors, or that fills the API's row ceiling (so rows may
+    // be missing), makes the whole read unavailable (null), which the card says plainly.
+    const rows: Array<{ invitation_id?: unknown; status?: unknown; created_at?: unknown }> = [];
+    for (let i = 0; i < ids.length; i += OUTBOX_READ_CHUNK) {
+      const { data, error } = await admin
+        .from("waitlist_decline_owner_emails")
+        .select("invitation_id,status,created_at")
+        .eq("studio_id", studioId)
+        .in("invitation_id", ids.slice(i, i + OUTBOX_READ_CHUNK))
+        .limit(OUTBOX_READ_ROW_CEILING);
+      if (error || !Array.isArray(data) || data.length >= OUTBOX_READ_ROW_CEILING) return null;
+      rows.push(...(data as typeof rows));
+    }
+    for (const r of rows) {
+      if (typeof r.invitation_id !== "string" || typeof r.status !== "string") continue;
+      const c = out.get(r.invitation_id) ?? emptyOutboxCounts();
+      // A held row the sweep will never claim (created before activation, or past its window) is "not sent", never "sending".
+      if (r.status === "held" && activation.enabled && !(typeof r.created_at === "string" && declineOwnerEmailRowEligible(r.created_at, activation.since, now))) {
+        c.notSent += 1;
+      } else if (r.status in c && r.status !== "notSent") {
+        c[r.status as keyof OutboxCounts] += 1;
+      }
+      out.set(r.invitation_id, c);
+    }
+    return out;
+  } catch {
+    return null;
   }
 }

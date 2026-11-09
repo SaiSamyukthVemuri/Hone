@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 
 import {
   auditColumnCoverage,
+  auditRpcSources,
   auditResourceCoverage,
   CUSTOMER_RESOURCE_SCHEMA,
   EXPORT_RESOURCE_REGISTRY,
@@ -1171,6 +1172,56 @@ describe("0193 waitlist admission resources are classified deliberately", () => 
         EXPORT_RESOURCE_REGISTRY[resource].kind,
         `${resource} must not join the export in WAIT-ADMIT-01`,
       ).toBe("pending");
+    }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// RPC-SOURCED EXPORTS: the declared return list must be the function's real one
+// ---------------------------------------------------------------------------
+//
+// A table no browser role can read (RLS on, no policy) is exported through its owner-gated function. The registry declares the columns that
+// function returns; only the live database knows what it actually returns, so the comparison lives here.
+describe("rpc-sourced exports return exactly the columns the registry declares", () => {
+  const rpcResources = () => exportedResources().filter((e) => e.disposition.rpcSource);
+
+  async function liveReturns(): Promise<Record<string, string[]>> {
+    const fns = rpcResources().map((e) => e.disposition.rpcSource!.fn);
+    const res = await adminQuery(
+      `select p.proname as fn, array_agg(a.name order by a.ord) as cols
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'public'
+         cross join lateral unnest(p.proargnames, p.proargmodes) with ordinality as a(name, mode, ord)
+        where p.proname = any($1) and a.mode in ('t', 'o')
+        group by p.proname`,
+      [fns],
+    );
+    return Object.fromEntries((res.rows as Array<{ fn: string; cols: string[] }>).map((r) => [r.fn, r.cols]));
+  }
+
+  it("the live return columns equal the declared ones, in both directions", async () => {
+    expect(rpcResources().length).toBeGreaterThan(0);
+    expect(auditRpcSources(await liveReturns())).toEqual({ ok: true, problems: [] });
+  });
+
+  it("RED when the live function returns a column the registry does not declare (fixture control)", async () => {
+    const live = await liveReturns();
+    const fn = rpcResources()[0].disposition.rpcSource!.fn;
+    expect(auditRpcSources({ ...live, [fn]: [...live[fn], "client_email"] }).ok).toBe(false);
+  });
+
+  it("the function is service_role-only: no browser role may execute it", async () => {
+    for (const { disposition } of rpcResources()) {
+      const res = await adminQuery(
+        `select r.rolname, has_function_privilege(r.rolname, p.oid, 'execute') as can
+           from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'public'
+           cross join (select rolname from pg_roles where rolname in ('anon', 'authenticated')) r
+          where p.proname = $1`,
+        [disposition.rpcSource!.fn],
+      );
+      for (const row of res.rows as Array<{ rolname: string; can: boolean }>) expect(`${row.rolname}:${row.can}`).toBe(`${row.rolname}:false`);
     }
   });
 });

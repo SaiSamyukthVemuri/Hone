@@ -60,6 +60,7 @@ const ALLOWED_EVENT_TYPES: ReadonlySet<PractitionerNotificationEventType> =
     "card_added",
     "card_replaced",
     "waitlist_offer_declined",
+    "waitlist_withdrawal_requested",
   ]);
 
 export type RecordPractitionerNotificationInput = {

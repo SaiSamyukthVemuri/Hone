@@ -256,7 +256,12 @@ export type InvitationClosedReason =
    * and must not claim the studio is closed.
    */
   | "admission_unreadable"
-  | "declined";
+  | "declined"
+  /**
+   * 0325: the answers command said the invitation is not live (or the token is not valid) although the page could still read it. Says only that
+   * it is no longer active: not that it expired, was revoked, used or declined, and nothing about proof.
+   */
+  | "no_longer_active";
 
 export type InvitationViewState =
   | { kind: "loading" }
@@ -352,7 +357,7 @@ export type InvitationViewState =
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
   /** `keptOnList` is true only when 0319 returned the entry to waiting. */
-  | { kind: "declined"; keptOnList?: boolean }
+  | { kind: "declined"; keptOnList?: boolean; answered?: "answers" | "withdrawal" }
   | { kind: "error"; retryable: boolean };
 
 /**

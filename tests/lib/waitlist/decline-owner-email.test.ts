@@ -1,10 +1,15 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-send";
 
 vi.mock("server-only", () => ({}));
+const status = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/waitlist/followups-owner", () => ({ readFollowUpStatuses: status }));
 import { dispatchDeclineOwnerEmail, getDeclineEmailStatus } from "@/lib/waitlist/decline-owner-email";
-import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
+import { declineOwnerEmailRowEligible } from "@/lib/waitlist/decline-owner-email-gate";
+import { DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS, DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES, DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS, DECLINE_OWNER_EMAIL_MAX_ATTEMPTS, DECLINE_OWNER_EMAIL_RETRY_WINDOW_HOURS } from "@/lib/waitlist/decline-owner-email-gate";
 import { buildWaitlistDeclineOwnerEmail, WAITLIST_DECLINE_OWNER_BODY, WAITLIST_DECLINE_OWNER_SUBJECT } from "@/lib/email/templates/waitlist-decline-owner";
 
 // HON-7 item 4. Synthetic ids and addresses only. The fake below models the outbox table, the practitioners table and the auth user read.
@@ -378,24 +383,149 @@ describe("what is written and logged", () => {
   });
 });
 
-describe("status shown in Hone", () => {
-  it("counts failed rows only, since activation, and nothing else", async () => {
-    const w = world(); w.owner({ status: "failed" }); w.owner({ status: "sent" }); w.owner({ status: "cancelled" }); w.owner({ status: "held" }); w.owner({ status: "failed", created: "2026-11-08T00:00:00.000Z" });
-    expect(await getDeclineEmailStatus(w.admin, STUDIO, NOW)).toEqual({ kind: "ok", failed: 1 });
+describe("status shown in Hone, answers flag ON (tied to the OPEN follow-up, via ONE status-only read)", () => {
+  const ACTOR = "dddddddd-0000-4000-8000-000000000001";
+  const setStatus = (m: Record<string, "open" | "handled" | "booked" | "removed" | "unknown">) =>
+    status.mockImplementation(async (_s: string, _a: string | null, ids: string[]) => {
+      if (ids.some((id) => m[id] === "unknown")) return { kind: "unknown" };
+      return { kind: "ok", byInvitation: new Map(ids.flatMap((id) => (m[id] && m[id] !== "unknown" ? [[id, m[id]] as const] : []))) };
+    });
+  const failedRow = (w: ReturnType<typeof world>, inv: string, created = "2026-11-09T11:00:00.000Z") => {
+    const o = w.owner({ status: "failed", created });
+    o.row.invitation_id = inv;
+    return o;
+  };
+  beforeEach(() => {
+    status.mockReset();
+    process.env.WAITLIST_DECLINE_ANSWERS = "1";
   });
-  it("a failure ages out of the notice after 14 days (the outbox cannot yet say it was handled)", async () => {
-    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-10-01T00:00:00.000Z";
-    const w = world(); w.owner({ status: "failed", created: "2026-10-26T11:00:00.000Z" }); w.owner({ status: "failed", created: "2026-10-27T12:00:00.000Z" });
-    expect(await getDeclineEmailStatus(w.admin, STUDIO, NOW)).toEqual({ kind: "ok", failed: 1 });
-    expect(DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS).toBe(14);
+  afterEach(() => {
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+  });
+
+  it("counts failed rows for responses that are still OPEN, once per response", async () => {
+    const w = world();
+    failedRow(w, "inv-open"); failedRow(w, "inv-open"); failedRow(w, "inv-handled");
+    w.owner({ status: "sent" }); w.owner({ status: "held" });
+    setStatus({ "inv-open": "open", "inv-handled": "handled" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 1 });
+  });
+  it("goes away once the response is handled, booked or removed, or has no follow-up", async () => {
+    for (const st of ["handled", "booked", "removed", undefined] as const) {
+      const w = world(); failedRow(w, "inv-1");
+      setStatus(st ? { "inv-1": st } : {});
+      expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+    }
+  });
+  it("makes ONE status call for all failed responses, with the verified actor, never the full follow-up read", async () => {
+    const w = world(); failedRow(w, "inv-1"); failedRow(w, "inv-2"); failedRow(w, "inv-3");
+    setStatus({ "inv-1": "open", "inv-2": "open", "inv-3": "handled" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 2 });
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(status).toHaveBeenCalledWith(STUDIO, ACTOR, expect.arrayContaining(["inv-1", "inv-2", "inv-3"]));
+    const src = readFileSync(join(process.cwd(), "lib/waitlist/decline-owner-email.ts"), "utf8");
+    expect(src).toContain("readFollowUpStatuses");
+    expect(src).not.toMatch(/readFollowUps\b|read_waitlist_followups/);
+  });
+  it("does not call the status read when there are no failed rows", async () => {
+    const w = world(); w.owner({ status: "sent" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+  });
+  const manyFailed = (w: ReturnType<typeof world>, n: number) => {
+    for (let i = 0; i < n; i += 1) failedRow(w, `inv-${String(i).padStart(4, "0")}`);
+  };
+  const statusBy = (isOpen: (id: string) => boolean) =>
+    status.mockImplementation(async (_s: string, _a: string | null, ids: string[]) => {
+      expect(ids.length).toBeLessThanOrEqual(DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP);
+      return { kind: "ok", byInvitation: new Map(ids.map((id) => [id, isOpen(id) ? "open" : "handled"] as const)) };
+    });
+  it("600 failed rows, 550 handled FIRST and 50 open: shows 50, not zero and not a prefix", async () => {
+    const w = world(); manyFailed(w, 600);
+    statusBy((id) => Number(id.slice(4)) >= 550);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 50 });
+  });
+  it("600 failed rows all open: caps at 500+ without ever claiming a smaller exact number", async () => {
+    const w = world(); manyFailed(w, 600);
+    statusBy(() => true);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: DECLINE_OWNER_EMAIL_FAILED_NOTICE_CAP, atLeast: true });
+  });
+  it("600 failed rows all handled: exactly zero, with no 'at least'", async () => {
+    const w = world(); manyFailed(w, 600);
+    statusBy(() => false);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+  });
+  it("never renders zero beside 'at least': if the page budget runs out with nothing open it is unknown", async () => {
+    const w = world(); manyFailed(w, DECLINE_OWNER_EMAIL_FAILED_NOTICE_PAGE_ROWS * DECLINE_OWNER_EMAIL_FAILED_NOTICE_MAX_PAGES + 1);
+    statusBy(() => false);
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
+  });
+  it("a size refusal from the database on a page of at most 500 ids is a contract surprise: unknown, never a count", async () => {
+    const w = world(); failedRow(w, "inv-1");
+    status.mockResolvedValue({ kind: "too_many" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
+  });
+  it("ignores rows from before activation", async () => {
+    const w = world(); failedRow(w, "inv-1", "2026-11-08T00:00:00.000Z");
+    setStatus({ "inv-1": "open" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
   });
   it("is zero while the feature is off", async () => {
     delete process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED;
-    const w = world(); w.owner({ status: "failed" });
-    expect(await getDeclineEmailStatus(w.admin, STUDIO)).toEqual({ kind: "ok", failed: 0 });
+    const w = world(); failedRow(w, "inv-1");
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "ok", failed: 0 });
+    expect(status).not.toHaveBeenCalled();
   });
-  it("a read error is unknown, not zero", async () => {
+  it("an unreadable status, a read error or no actor is unknown, not zero", async () => {
+    const w = world(); failedRow(w, "inv-1");
+    setStatus({ "inv-1": "unknown" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, null)).toEqual({ kind: "unknown" });
     const bad = { from: () => { throw new Error("x"); } } as unknown as SupabaseClient;
-    expect(await getDeclineEmailStatus(bad, STUDIO)).toEqual({ kind: "unknown" });
+    expect(await getDeclineEmailStatus(bad, STUDIO, ACTOR)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("status shown in Hone, answers flag OFF (exactly as shipped in #1407; 0325 may be absent)", () => {
+  const ACTOR = "dddddddd-0000-4000-8000-000000000001";
+  beforeEach(() => {
+    status.mockReset();
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+  });
+  it("counts failed rows only, since activation, and nothing else, without calling the 0325 function or needing an actor", async () => {
+    const w = world(); w.owner({ status: "failed" }); w.owner({ status: "sent" }); w.owner({ status: "cancelled" }); w.owner({ status: "held" }); w.owner({ status: "failed", created: "2026-11-08T00:00:00.000Z" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, null, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(status).not.toHaveBeenCalled();
+  });
+  it("a failure ages out of the notice after 14 days (the outbox cannot say it was handled)", async () => {
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-10-01T00:00:00.000Z";
+    const w = world(); w.owner({ status: "failed", created: "2026-10-26T11:00:00.000Z" }); w.owner({ status: "failed", created: "2026-10-27T12:00:00.000Z" });
+    expect(await getDeclineEmailStatus(w.admin, STUDIO, ACTOR, NOW)).toEqual({ kind: "ok", failed: 1 });
+    expect(DECLINE_OWNER_EMAIL_FAILED_NOTICE_DAYS).toBe(14);
+  });
+  it("owner email on, answers off, 0325 absent: no 'unknown' and no call to the 0325 function", async () => {
+    status.mockResolvedValue({ kind: "unknown" });
+    const w = world(); w.owner({ status: "failed" });
+    const out = await getDeclineEmailStatus(w.admin, STUDIO, ACTOR, NOW);
+    expect(out.kind).toBe("ok");
+    expect(status).not.toHaveBeenCalled();
+  });
+  it("a read error is still unknown, not zero", async () => {
+    const bad = { from: () => { throw new Error("x"); } } as unknown as SupabaseClient;
+    expect(await getDeclineEmailStatus(bad, STUDIO, null, NOW)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("the sweep and the card share one eligibility rule", () => {
+  beforeEach(() => ON());
+  it.each([
+    ["before activation", "2026-11-08T23:00:00.000Z", false],
+    ["at activation", SINCE, true],
+    ["after activation, inside the window", "2026-11-09T11:00:00.000Z", true],
+  ])("a held row created %s is sent exactly when the shared helper says eligible", async (_n, created, eligible) => {
+    const w = world(); w.owner({ created });
+    expect(declineOwnerEmailRowEligible(created, new Date(SINCE), NOW)).toBe(eligible);
+    await w.run();
+    expect(w.sends.length > 0).toBe(eligible);
   });
 });
