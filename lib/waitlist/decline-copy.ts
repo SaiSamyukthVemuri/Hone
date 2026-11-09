@@ -1,7 +1,7 @@
 // The notice shown directly under the two decline answer fields. Sam's wording, word for word; do not paraphrase. Retention figures here must
-// match the 0325 retention decisions (answers erased 30 days after the request closes, 90 at the latest; backups removed within 7 days).
+// match the 0325 retention decisions (answers hidden from the owner views and the export at the earlier of 30 days after the request closes and 90 days after they were sent, erased by the next daily cleanup; backups expire within a further 7 days).
 export const NO_TIMES_WORK_NOTICE =
-  "Only the studio owner sees your answers. They're used to arrange a time with you and are deleted within 30 days after your request is closed (90 days at the latest). Backup copies are removed within 7 days. Please don't include medical or health details.";
+  "Only the studio owner sees your answers. They're used to arrange a time with you. Hone hides your answers from the studio's view and from new exports 30 days after your request closes or 90 days after you send them, whichever comes first. Hone deletes them from its active database during the next daily cleanup. Backup copies expire within a further seven days. Copies the studio has already downloaded are managed by the studio. Please don't include medical or health details.";
 
 /** Shown after `declined` or `already_declined`, and only then (0325 contract). */
 export const DECLINE_CONFIRMATION =

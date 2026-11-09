@@ -33,7 +33,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("the notice under the two answer fields is Sam's, word for word", () => {
   it("is pinned exactly", () => {
     expect(NO_TIMES_WORK_NOTICE).toBe(
-      "Only the studio owner sees your answers. They're used to arrange a time with you and are deleted within 30 days after your request is closed (90 days at the latest). Backup copies are removed within 7 days. Please don't include medical or health details.",
+      "Only the studio owner sees your answers. They're used to arrange a time with you. Hone hides your answers from the studio's view and from new exports 30 days after your request closes or 90 days after you send them, whichever comes first. Hone deletes them from its active database during the next daily cleanup. Backup copies expire within a further seven days. Copies the studio has already downloaded are managed by the studio. Please don't include medical or health details.",
     );
   });
   it("is rendered in the form, after both fields, and never claims everything is deleted", () => {
