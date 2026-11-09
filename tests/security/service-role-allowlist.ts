@@ -76,7 +76,10 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
       "the owner role inside (new_client_waitlist_resolve_owner). The callers take both from the session (getUser), " +
       "never from a form field, and each refuses a non-owner before calling. Only readFollowUps returns the " +
       "recipient's answers, and only to the owner-gated settings page; the status read returns no name and no " +
-      "answer. An unreadable result is unknown, never an empty list, and nothing here logs a row or an error body.",
+      "answer. An unreadable result is unknown, never an empty list, and nothing here logs a row or an error body. " +
+      "exportDeclineAnswersPage is the one export call site: the owner-only studio export (exportStudioDataAction) passes the " +
+      "session user after its role refusal, the function (export_waitlist_decline_answers) re-derives ownership and returns zero " +
+      "rows to anyone else, the raw table is never read, and an error carries no body.",
     scopeGuard: "p_actor_user_id",
   },
   {

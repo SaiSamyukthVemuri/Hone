@@ -163,6 +163,11 @@ export type RpcSourceSpec = {
 export const EXPORT_RPC_PAGE_LIMIT = 1000;
 const MAX_RPC_PAGES = 10_000;
 
+/** The envelope for an rpc-sourced resource that is deliberately not read (its feature is off): zero rows, the declared select, no error. */
+export function emptyExportRpcRead<T>(resource: string, source: RpcSourceSpec): ExportRead<T> {
+  return brand<T>({ data: [], error: null }, { resource, select: source.returns.join(", ") });
+}
+
 export async function fetchExportRpcRows<T extends Record<string, unknown>>(
   resource: string,
   source: RpcSourceSpec,

@@ -15,7 +15,11 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
+import { exportDeclineAnswersPage } from "@/lib/waitlist/followups-owner";
 import {
+  emptyExportRpcRead,
+  fetchExportRpcRows,
   fetchExportRows,
   mapExportRows,
   rowsForResource,
@@ -39,6 +43,7 @@ import {
   exportedResources,
   exportSpec,
   pendingResources,
+  rpcSourceOf,
 } from "@/lib/export/resource-registry";
 // One decision point for the budget read, backed by the SAME narrow
 // migration-skew classifier the Consultation page uses, so the two surfaces
@@ -518,7 +523,24 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // serialized. A column declared included but never asked for produces a blank
   // cell, and a blank cell is indistinguishable from a studio that recorded
   // nothing there.
+  // waitlist_decline_answers has no browser-readable surface; the owner-gated function is its only door. This runs after the owner check at
+  // the top of the action, with the session user, and only while the answers feature is on (before it, the table may not exist yet).
+  const actorUserId = practitioner.user_id;
+  if (!actorUserId) return { ok: false, error: "You do not have permission to export data." };
+  const declineAnswersSpec = rpcSourceOf("waitlist_decline_answers");
+  if (!declineAnswersSpec) return { ok: false, error: "Export aborted: the decline answers export is not declared. No partial export was produced." };
+  const declineAnswersRes = waitlistDeclineAnswersEnabled()
+    ? await fetchExportRpcRows<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec, (after, limit) =>
+        exportDeclineAnswersPage(studio.id, actorUserId, after, limit),
+      )
+    : emptyExportRpcRead<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec);
+  // All-or-nothing like every other read: a failed page never ships a file that is silently missing answers.
+  if (declineAnswersRes.error) {
+    return { ok: false, error: exportReadFailure(declineAnswersRes.error) };
+  }
+
   const exportReads: ReadonlyArray<ExportRead<unknown>> = [
+    declineAnswersRes,
     clientsRes,
     sessionsRes,
     electRes,
@@ -672,6 +694,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   };
 
   writeCsv("clients", clientsRes);
+
+  writeCsv("waitlist_decline_answers", declineAnswersRes);
 
   writeCsv("sessions", sessionsRes);
 

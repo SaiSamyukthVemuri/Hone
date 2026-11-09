@@ -32,6 +32,7 @@ import {
 // rather than by hand. This is the payload pin: TRUTH-01A moved the header
 // arrays into the registry, and if a single column moved with them, this fails.
 const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
+  "waitlist-decline-answers.csv": ["answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind", "why_not_work", "better_times", "submitted_at", "answers_erased_at"],
   "client_consent_signatures.csv": ["id", "client_id", "template_id", "template_title_snapshot", "template_body_snapshot", "template_version", "template_hash", "signature_name", "signed_at", "response", "response_label_snapshot", "created_at"],
   "probe_lots.csv": ["id", "probe_size", "lot_number", "expiry_date", "active", "notes", "created_at"],
   "service_practitioners.csv": ["id", "service_id", "practitioner_id", "created_at"],
@@ -66,6 +67,11 @@ let auditFailure: "error" | "throw" | null = null;
 let freshOwnerActive = true;
 let revokeAtAtomicCommand = false;
 let adminConstructed = 0;
+// export_waitlist_decline_answers: who called it, and how many owner checks had run by then.
+let actorRole = "owner";
+let ownerChecks = 0;
+let declineCalls: Array<{ args: Record<string, unknown>; ownerChecksBefore: number }> = [];
+let declineHandler: (args: Record<string, unknown>) => { data: unknown; error: unknown } = () => ({ data: [], error: null });
 let completedExportReads = 0;
 /**
  * The column list the action ACTUALLY asks PostgREST for, per table. Recorded
@@ -124,6 +130,10 @@ function makeClient() {
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     // Synthetic atomic-command adapter, not SQL/concurrency proof.
     async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "export_waitlist_decline_answers") {
+        declineCalls.push({ args, ownerChecksBefore: ownerChecks });
+        return declineHandler(args);
+      }
       expect(name).toBe("record_studio_export_audit_governed");
       expect(args).toMatchObject({ p_actor_id: "prac-1", p_user_id: "user-1", p_studio_id: "studio-1" });
       if (revokeAtAtomicCommand) freshOwnerActive = false;
@@ -163,8 +173,8 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({
-    practitioner: { id: "prac-1", role: "owner", active: true },
+  getCurrentPractitionerWithStudio: async () => (ownerChecks++, {
+    practitioner: { id: "prac-1", user_id: "user-1", role: actorRole, active: true },
     studio: { id: "studio-1", name: "Willow Electrolysis" },
   }),
 }));
@@ -692,5 +702,120 @@ describe("SEC-003 atomic write-time owner check", () => {
       expect(result).not.toHaveProperty("base64");
       expect(result).not.toHaveProperty("filename");
     } finally { revokeAtAtomicCommand = false; freshOwnerActive = true; }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// waitlist_decline_answers: exported through the owner-gated function (rpc source kind), never the raw table.
+// ---------------------------------------------------------------------------
+describe("the decline answers export", () => {
+  const aid = (n: number, studio = "studio-1") => `${studio === "studio-1" ? "a" : "b"}0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const answer = (n: number, studio = "studio-1", o: Record<string, unknown> = {}) => ({
+    answer_id: aid(n, studio), followup_id: aid(n, studio), entry_id: "e", invitation_id: "i", client_id: null, kind: "decline",
+    why_not_work: `SYNTHETIC-WHY-${studio}-${n}`, better_times: `SYNTHETIC-BETTER-${n}`, submitted_at: "2026-11-01T10:00:00Z", answers_erased_at: null, ...o,
+  });
+  const reset = () => {
+    auditInsert = null; failingTables = new Set(); auditFailure = null; freshOwnerActive = true; adminConstructed = 0;
+    actorRole = "owner"; ownerChecks = 0; declineCalls = []; declineHandler = () => ({ data: [], error: null });
+  };
+  const run = async () => {
+    const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+    return exportStudioDataAction();
+  };
+  const csv = async (r: Awaited<ReturnType<typeof run>>) => {
+    if (!r.ok) throw new Error(r.error);
+    const zip = await JSZip.loadAsync(Buffer.from(r.base64, "base64"));
+    return zip.file("waitlist-decline-answers.csv")!.async("string");
+  };
+  const withFlag = async (fn: () => Promise<void>) => {
+    const was = process.env.WAITLIST_DECLINE_ANSWERS;
+    process.env.WAITLIST_DECLINE_ANSWERS = "1";
+    try { await fn(); } finally { if (was === undefined) delete process.env.WAITLIST_DECLINE_ANSWERS; else process.env.WAITLIST_DECLINE_ANSWERS = was; reset(); }
+  };
+
+  it("calls the function only after the owner check, with the studio and the SESSION user, and never reads the table", async () => {
+    reset();
+    await withFlag(async () => {
+      declineHandler = () => ({ data: [answer(1)], error: null });
+      const out = await csv(await run());
+      expect(declineCalls).toHaveLength(1);
+      expect(declineCalls[0].ownerChecksBefore).toBeGreaterThanOrEqual(1);
+      expect(declineCalls[0].args).toMatchObject({ p_studio_id: "studio-1", p_actor_user_id: "user-1", p_after_id: null, p_limit: 1000 });
+      expect(out).toContain("SYNTHETIC-WHY-studio-1-1");
+    });
+  });
+
+  it("a non-owner session never reaches the function", async () => {
+    reset();
+    await withFlag(async () => {
+      actorRole = "practitioner";
+      const r = await run();
+      expect(r).toEqual({ ok: false, error: "You do not have permission to export data." });
+      expect(declineCalls).toHaveLength(0);
+      expect(adminConstructed).toBe(0);
+    });
+  });
+
+  it("an owner whose function returns nothing (a non-owner per the database) gets a header-only file", async () => {
+    reset();
+    await withFlag(async () => {
+      const out = await csv(await run());
+      expect(out.trim()).toBe("answer_id,followup_id,entry_id,invitation_id,client_id,kind,why_not_work,better_times,submitted_at,answers_erased_at");
+    });
+  });
+
+  it("an erased answer exports as a marker with no text", async () => {
+    reset();
+    await withFlag(async () => {
+      declineHandler = () => ({ data: [answer(1, "studio-1", { why_not_work: null, better_times: null, answers_erased_at: "2026-11-05T10:00:00Z" })], error: null });
+      const out = await csv(await run());
+      expect(out).toContain("2026-11-05T10:00:00Z");
+      expect(out).not.toContain("SYNTHETIC");
+    });
+  });
+
+  it("covers every page: follows p_after_id until a short page", async () => {
+    reset();
+    await withFlag(async () => {
+      const table = Array.from({ length: 2001 }, (_, i) => answer(i + 1));
+      declineHandler = (args) => {
+        const after = args.p_after_id as string | null;
+        return { data: table.filter((r) => after === null || r.answer_id > after).slice(0, args.p_limit as number), error: null };
+      };
+      const out = await csv(await run());
+      expect(declineCalls.map((c) => c.args.p_after_id)).toEqual([null, aid(1000), aid(2000)]);
+      expect(out.trim().split("\n")).toHaveLength(2002); // header + 2001 rows
+    });
+  });
+
+  it("contains this studio's answers only", async () => {
+    reset();
+    await withFlag(async () => {
+      const table = [answer(1), answer(2, "studio-2"), answer(3)];
+      declineHandler = (args) => ({ data: table.filter((r) => (r.answer_id.startsWith("a") ? "studio-1" : "studio-2") === args.p_studio_id), error: null });
+      const out = await csv(await run());
+      expect(out).toContain("SYNTHETIC-WHY-studio-1-1");
+      expect(out).not.toContain("studio-2");
+    });
+  });
+
+  it("a failed page fails the whole export; no partial archive", async () => {
+    reset();
+    await withFlag(async () => {
+      declineHandler = () => ({ data: null, error: { message: "SYNTHETIC-PRIVATE-ERROR" } });
+      const r = await run();
+      expect(r.ok).toBe(false);
+      expect(JSON.stringify(r)).not.toContain("SYNTHETIC-PRIVATE-ERROR");
+      expect(r).not.toHaveProperty("base64");
+    });
+  });
+
+  it("with the feature off the function is not called and the file is header-only", async () => {
+    reset();
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+    const out = await csv(await run());
+    expect(declineCalls).toHaveLength(0);
+    expect(out.trim().split("\n")).toHaveLength(1);
   });
 });

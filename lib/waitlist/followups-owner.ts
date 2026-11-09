@@ -41,6 +41,31 @@ export type FollowUpList = { kind: "unknown" } | { kind: "ok"; rows: FollowUpRow
 const STATUSES = new Set(["open", "handled", "kept", "booked", "removed"]);
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
+/**
+ * One keyset page of the studio export of saved decline answers (0325 export_waitlist_decline_answers). Owner re-derived inside the function;
+ * a non-owner gets zero rows. The caller is the owner-only export, after its role refusal, passing the session user. The error carries no body:
+ * a page of answers must never be echoed into a message or a log.
+ */
+export async function exportDeclineAnswersPage(
+  studioId: string,
+  actorUserId: string,
+  afterId: string | null,
+  limit: number,
+): Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }> {
+  try {
+    const { data, error } = await createAdminClient().rpc("export_waitlist_decline_answers", {
+      p_studio_id: studioId,
+      p_actor_user_id: actorUserId,
+      p_after_id: afterId,
+      p_limit: limit,
+    });
+    if (error || !Array.isArray(data)) return { data: null, error: { message: "the answers export function did not return a page" } };
+    return { data: data as Array<Record<string, unknown>>, error: null };
+  } catch {
+    return { data: null, error: { message: "the answers export function could not be reached" } };
+  }
+}
+
 export async function readFollowUps(studioId: string, actorUserId: string | null): Promise<FollowUpList> {
   if (!actorUserId) return { kind: "unknown" };
   try {

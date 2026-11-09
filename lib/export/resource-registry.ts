@@ -1730,6 +1730,56 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  waitlist_decline_answers: {
+    kind: "exported",
+    file: "waitlist-decline-answers.csv",
+    csvHeaders: [
+      "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
+      "why_not_work", "better_times", "submitted_at", "answers_erased_at",
+    ],
+    includedColumns: ["why_not_work", "better_times", "submitted_at", "answers_erased_at"],
+    excludedColumns: [],
+    derivedHeaders: {
+      answer_id: "the answer's id, which is its follow-up's id (export_waitlist_decline_answers)",
+      followup_id: "the follow-up the answer belongs to",
+      entry_id: "the waitlist entry the person answered as",
+      invitation_id: "the invitation that was declined",
+      client_id: "the client whose normalized email equals the entry's, in this studio; empty when there is none",
+      kind: "decline or withdrawal, from the follow-up",
+    },
+    rowScope:
+      "Every saved decline answer of this studio, erased ones included as a marker row. Read only through the owner-gated function export_waitlist_decline_answers after the owner check; the table has no policy and no browser grant.",
+    sourceCountCheck: {
+      kind: "none",
+      reason:
+        "The table has no browser-readable surface to count against; the owner-gated database function is its only reader and re-derives ownership itself.",
+    },
+    description:
+      "What waiting-list recipients answered when they said the offered times did not work. An erased answer is a row with no text and the time it was erased.",
+    rpcSource: {
+      fn: "export_waitlist_decline_answers",
+      keyColumn: "answer_id",
+      returns: [
+        "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
+        "why_not_work", "better_times", "submitted_at", "answers_erased_at",
+      ],
+    },
+  },
+  waitlist_followups: {
+    kind: "excluded",
+    category: "platform",
+    reason: "Operational follow-up state for a declined or withdrawn invitation (0325). The owner's answers are exported through waitlist_decline_answers; this table adds workflow status only.",
+  },
+  waitlist_decline_owner_emails: {
+    kind: "excluded",
+    category: "platform",
+    reason: "Outbound owner-notification outbox (0325): delivery mechanics, no client text.",
+  },
+  waitlist_erase_records: {
+    kind: "excluded",
+    category: "platform",
+    reason: "Ids-and-dates-only log of answer erasures (0325), kept for 30 days for the studio's own accountability; operational, not studio content.",
+  },
   waitlist_invitation_followups: {
     kind: "pending",
     ticket: "TRUTH-01B",
