@@ -126,7 +126,8 @@ export function DeclineFollowUpSection({
               {r.kind === "withdrawal" ? <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
               {erased ? (
                 <p className="text-neutral-600 dark:text-neutral-400">
-                  {eraseDate(r.answersErasedAt, timeZone) ? `Answers erased on ${eraseDate(r.answersErasedAt, timeZone)}.` : "Their answers have been erased."}
+                  {/* An answer past its deadline reads back as erased at the deadline before the job has physically erased it, so the copy claims only what is true of both: it is no longer shown. */}
+                  {eraseDate(r.answersErasedAt, timeZone) ? `Answers removed from view on ${eraseDate(r.answersErasedAt, timeZone)}.` : "Their answers have been removed from view."}
                 </p>
               ) : r.whyNotWork !== null || r.betterTimes !== null ? (
                 <dl className="mt-1">
