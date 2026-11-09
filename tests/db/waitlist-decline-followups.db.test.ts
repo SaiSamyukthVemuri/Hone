@@ -518,6 +518,34 @@ describe("H2: export of decline answers and client erasure", () => {
   });
 });
 
+describe("H2: client erasure is studio-scoped and idempotent", () => {
+  it("a client with the same email in ANOTHER studio is untouched; an already-erased answer writes no second record and nothing fails", async () => {
+    const f = await seed("y1");
+    const g = await seed("y2");
+    const e = await entry(f, "y1");
+    // The other studio's person shares the SAME email as the first studio's client.
+    const e2 = await q(`select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,null,null)`, [g.studioId, g.userId, "Other studio person", e.email]);
+    expect(e2[0].result).toBe("created");
+    await decline(await invite(f, e.id));
+    await decline(await invite(g, e2[0].entry_id));
+    await q(`update public.clients set email = $2 where id = $1`, [f.clientId, e.email]);
+    await q(`update public.clients set email = $2 where id = $1`, [g.clientId, e.email]);
+    const fidF = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e.id]))[0].id;
+    const fidG = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e2[0].entry_id]))[0].id;
+    // Already erased by the owner: the client erasure must not write a second record or fail.
+    await q(`select * from public.erase_waitlist_decline_answers($1,$2,$3)`, [f.studioId, f.userId, fidF]);
+    await q(`delete from public.clients where id=$1`, [f.clientId]);
+    expect(await q(`select 1 from public.waitlist_erase_records where followup_id=$1 and reason='client_erased'`, [fidF])).toHaveLength(0);
+    expect(await q(`select 1 from public.waitlist_erase_records where followup_id=$1 and reason='owner_erase'`, [fidF])).toHaveLength(1);
+    // The other studio's answer survives with its text.
+    const g1 = await q(`select why_not_work, erased_at from public.waitlist_decline_answers where followup_id=$1`, [fidG]);
+    expect(g1[0]).toMatchObject({ why_not_work: WHY, erased_at: null });
+    // Erasing the other studio's client erases only that studio's answer, once.
+    await q(`delete from public.clients where id=$1`, [g.clientId]);
+    expect(await q(`select 1 from public.waitlist_erase_records where followup_id=$1 and reason='client_erased'`, [fidG])).toHaveLength(1);
+  });
+});
+
 describe("Codex :534: withdrawal after expires_at does not strand the person", () => {
   it("a lapsed-but-unmarked invitation is closed; Keep then a new invite is admitted", async () => {
     const f = await seed("v");
