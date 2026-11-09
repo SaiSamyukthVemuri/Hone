@@ -437,6 +437,11 @@ export type CapacityView =
  * VISIBLE, what VALIDATES and what would be SUBMITTED are the same three
  * answers.
  */
+/** What an invitation is scoped to: the same three things the server compares (the dates follow from the window at send time). */
+function scopeKey(draft: InviteDraft): string {
+  return JSON.stringify([draft.serviceId, draft.windowDays, draft.allowedWeekdays === null ? null : [...draft.allowedWeekdays].sort((x, y) => x - y)]);
+}
+
 export function InviteComposerView({
   entryId,
   entryName,
@@ -495,16 +500,13 @@ export function InviteComposerView({
   const outcomeAction = useInviteOutcomeAction();
 
   // THE ANSWER ALSO APPEARS HERE, beside Send. A refusal does not revalidate, so this composer stays mounted and the boundary's notice (above
-  // the whole queue) is off-screen from the press. Withheld while a send is in flight and once the draft changes: the message answered the
-  // window that was sent, not the one now on screen.
+  // the whole queue) is off-screen from the press. It answers the window that was SENT, so the scope key (service, window, days) is captured when
+  // Send submits and the answer shows only while the draft on screen still has that key: editing while the send is in flight, or afterwards,
+  // must never put "they declined this window" beside a window nobody sent. Withheld while a send is in flight.
   const answered = useInviteOutcomeFor(entryId);
   const sending = useInviteOutcomePending();
-  const [staleFor, setStaleFor] = useState<typeof answered>(null);
-  useEffect(() => {
-    setStaleFor(answered);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss the answer that was current when the draft moved; a later answer is new
-  }, [draft]);
-  const inlineAnswer = answered !== null && answered !== staleFor && !sending ? answered : null;
+  const [sentKey, setSentKey] = useState<string | null>(null);
+  const inlineAnswer = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
 
   const unbound = action === null && outcomeAction === null;
   const sendDisabled = send.disabled || unbound;
@@ -516,6 +518,11 @@ export function InviteComposerView({
   return (
     <form
       action={outcomeAction ?? action ?? undefined}
+      onSubmit={(e) => {
+        // Cancel submits this form too, to its own binding; only Send sends a window.
+        const by = (e.nativeEvent as SubmitEvent).submitter;
+        if (by?.getAttribute("data-testid") !== "composer-cancel") setSentKey(scopeKey(draft));
+      }}
       className="flex flex-col"
       data-testid="invite-composer"
     >

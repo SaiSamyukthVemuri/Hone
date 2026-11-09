@@ -68,7 +68,7 @@ const mount = async () => {
         entryNames: { "e-1": "Sam", "e-2": "Amara" },
         children: [
           createElement("div", { key: "above", "data-testid": "queue-above" }),
-          createElement(InviteComposer, { key: "e-1", entryId: "e-1", entryName: "Sam", draft: { ...emptyDraft(), serviceId: "svc-1" }, services: SERVICES, capabilities: CONNECTED }),
+          createElement(InviteComposer, { key: "e-1", entryId: "e-1", entryName: "Sam", draft: { ...emptyDraft(), serviceId: "svc-1" }, services: SERVICES, capabilities: CONNECTED, cancelAction: async () => {} }),
           createElement(InviteComposer, { key: "e-2", entryId: "e-2", entryName: "Amara", draft: { ...emptyDraft(), serviceId: "svc-1" }, services: SERVICES, capabilities: CONNECTED }),
         ],
       }),
@@ -131,6 +131,47 @@ describe("the refusal is announced beside Send", () => {
     });
     expect(inline(0)).toBeNull();
     await act(async () => release(REFUSED));
+    expect(inline(0)!.textContent).toBe(COPY);
+  });
+  it("a refusal that arrives after the window was edited mid-send is NOT shown beside the new window", async () => {
+    await mount();
+    let release!: (r: InviteOutcomeResult) => void;
+    action.mockReturnValueOnce(new Promise((r) => (release = r)));
+    await act(async () => {
+      send(0).form!.requestSubmit(send(0));
+    });
+    const other = [...host.querySelectorAll<HTMLInputElement>('form input[name="window_days"]')].find((r) => !r.checked)!;
+    await act(async () => {
+      other.click();
+    });
+    await act(async () => release(REFUSED));
+    expect(inline(0)).toBeNull();
+    // The boundary's own notice still reports the answer to the window that was sent.
+    expect(host.querySelector('[data-testid="invite-outcome"]')!.textContent).toContain(COPY);
+  });
+  it("Cancel does not capture a window: pressing it after an edit does not bring the answer back", async () => {
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    await press(0);
+    const other = [...host.querySelectorAll<HTMLInputElement>('form input[name="window_days"]')].find((r) => !r.checked)!;
+    await act(async () => other.click());
+    expect(inline(0)).toBeNull();
+    const cancel = host.querySelector<HTMLButtonElement>('[data-testid="composer-cancel"]')!;
+    await act(async () => {
+      cancel.form!.requestSubmit(cancel);
+    });
+    expect(inline(0)).toBeNull();
+  });
+  it("still shows when the draft is edited and put back to what was sent", async () => {
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    await press(0);
+    const radios = [...host.querySelectorAll<HTMLInputElement>('form input[name="window_days"]')];
+    const sent = radios.find((r) => r.checked)!;
+    const other = radios.find((r) => !r.checked)!;
+    await act(async () => other.click());
+    expect(inline(0)).toBeNull();
+    await act(async () => sent.click());
     expect(inline(0)!.textContent).toBe(COPY);
   });
   it("goes away when the dates or days change, because it answered the window that was sent", async () => {
