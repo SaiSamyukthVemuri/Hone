@@ -1761,6 +1761,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Ids-and-dates log of each time waitlist decline answers were erased (by the owner, by Remove or by retention), draft migration 0325 (HON-7). It holds no client text and is deliberately kept apart from the answers table and never restored with it, so that an erasure can be replayed after any restore. Compliance evidence about the studio's own data handling. EXCLUDED on purpose: ids and dates only, kept 30 days and then purged by a later scheduled cleanup; it is compliance evidence, not a client record.",
   },
+  waitlist_retention_runs: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Platform maintenance log of the waitlist cleanup job (run times and counts only). It has no studio column and holds no client data, so it is not studio content.",
+  },
   studio_waitlist_admission_rounds: {
     kind: "pending",
     ticket: "TRUTH-01B",
