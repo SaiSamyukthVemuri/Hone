@@ -368,19 +368,32 @@ export async function loadDeclineEmailStatus(studioId: string, actorUserId: stri
   }
 }
 
+const OUTBOX_READ_CHUNK = 50;
+const OUTBOX_READ_ROW_CEILING = 1000;
+
 /** Outbox counts per invitation, for the follow-up card's email line. Ids and counts only. null = could not be read. */
 export async function loadOutboxCounts(studioId: string, invitationIds: string[], now: Date = new Date()): Promise<Map<string, OutboxCounts> | null> {
   const out = new Map<string, OutboxCounts>();
-  if (invitationIds.length === 0) return out;
+  const ids = [...new Set(invitationIds)];
+  if (ids.length === 0) return out;
   try {
     const activation = declineOwnerEmailActivation();
-    const { data, error } = await createAdminClient()
-      .from("waitlist_decline_owner_emails")
-      .select("invitation_id,status,created_at")
-      .eq("studio_id", studioId)
-      .in("invitation_id", invitationIds.slice(0, 200));
-    if (error || !Array.isArray(data)) return null;
-    for (const r of data as Array<{ invitation_id?: unknown; status?: unknown; created_at?: unknown }>) {
+    const admin = createAdminClient();
+    // EVERY invitation is read, in chunks that keep each id list a short URL. Nothing is silently skipped: a skipped invitation would be rendered by
+    // the card as "no recipients" even though its email was sent or failed. A chunk that errors, or that fills the API's row ceiling (so rows may
+    // be missing), makes the whole read unavailable (null), which the card says plainly.
+    const rows: Array<{ invitation_id?: unknown; status?: unknown; created_at?: unknown }> = [];
+    for (let i = 0; i < ids.length; i += OUTBOX_READ_CHUNK) {
+      const { data, error } = await admin
+        .from("waitlist_decline_owner_emails")
+        .select("invitation_id,status,created_at")
+        .eq("studio_id", studioId)
+        .in("invitation_id", ids.slice(i, i + OUTBOX_READ_CHUNK))
+        .limit(OUTBOX_READ_ROW_CEILING);
+      if (error || !Array.isArray(data) || data.length >= OUTBOX_READ_ROW_CEILING) return null;
+      rows.push(...(data as typeof rows));
+    }
+    for (const r of rows) {
       if (typeof r.invitation_id !== "string" || typeof r.status !== "string") continue;
       const c = out.get(r.invitation_id) ?? emptyOutboxCounts();
       // A held row the sweep will never claim (created before activation, or past its window) is "not sent", never "sending".
