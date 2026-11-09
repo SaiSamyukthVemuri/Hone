@@ -182,6 +182,7 @@ export async function fetchExportRpcRows<T extends Record<string, unknown>>(
 
   const rows: T[] = [];
   let after: string | null = null;
+  let lastKey: string | null = null;
   for (let page = 0; page < MAX_RPC_PAGES; page += 1) {
     let result: PageResult<T>;
     try {
@@ -205,10 +206,10 @@ export async function fetchExportRpcRows<T extends Record<string, unknown>>(
       if (extra.length > 0) return fail(`function returned undeclared column(s): ${extra.join(", ")}`);
       const key = row[source.keyColumn];
       if (typeof key !== "string" || key.length === 0) return fail(`row has no usable ${source.keyColumn}`);
-      if (after !== null && key <= after && rows.length > 0 && rows[rows.length - 1][source.keyColumn] !== undefined) {
-        const prev = rows[rows.length - 1][source.keyColumn] as string;
-        if (key <= prev) return fail(`${source.keyColumn} did not increase between rows (refusing to return a partial table)`);
-      }
+      // Every key must be strictly greater than the one before it, across rows AND pages (the first row of a page is compared with the
+      // cursor it was asked after). An unsorted page whose keys are all above the cursor would otherwise skip rows without any signal.
+      if (lastKey !== null && key <= lastKey) return fail(`${source.keyColumn} did not strictly increase between rows (refusing to return a partial table)`);
+      lastKey = key;
       rows.push(row);
     }
     if (result.data.length < limit) return brand<T>({ data: rows, error: null }, { resource, select });

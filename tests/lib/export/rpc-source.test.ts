@@ -57,6 +57,20 @@ describe("fetchExportRpcRows paging", () => {
     expect(out.data).toBeNull();
     expect(out.error?.message).toMatch(/partial table/);
   });
+  it("an unsorted page whose keys are all above the cursor fails the read", async () => {
+    const unsorted = async () => ({ data: [row(5), row(3), row(9)], error: null });
+    const out = await fetchExportRpcRows("waitlist_decline_answers", SPEC, unsorted, 3);
+    expect(out.data).toBeNull();
+    expect(out.error?.message).toMatch(/strictly increase/);
+  });
+  it("an unsorted SECOND page above its cursor fails too, and duplicates inside a page fail", async () => {
+    let n = 0;
+    const pages = [[row(1), row(2), row(3)], [row(7), row(5), row(9)]];
+    const out = await fetchExportRpcRows("waitlist_decline_answers", SPEC, async () => ({ data: pages[n++], error: null }), 3);
+    expect(out.error?.message).toMatch(/strictly increase/);
+    const dup = await fetchExportRpcRows("waitlist_decline_answers", SPEC, async () => ({ data: [row(1), row(1)], error: null }), 3);
+    expect(dup.error?.message).toMatch(/strictly increase/);
+  });
   it("a failed page fails the whole read; it never returns the pages before it", async () => {
     let n = 0;
     const flaky = async () => (++n === 2 ? { data: null, error: { message: "boom" } } : { data: [row(n * 10), row(n * 10 + 1)], error: null });

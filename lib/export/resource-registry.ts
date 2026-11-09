@@ -1788,7 +1788,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   waitlist_erase_records: {
     kind: "excluded",
     category: "platform",
-    reason: "Ids-and-dates-only log of answer erasures (0325), kept for 30 days for the studio's own accountability; operational, not studio content.",
+    reason: "Ids-and-dates-only log of answer erasures (0325), retained 30 days by policy (Sam, 9 Nov); purged by the scheduled cleanup migration (tracked). Operational, not studio content.",
   },
   waitlist_invitation_followups: {
     kind: "pending",

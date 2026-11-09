@@ -815,7 +815,9 @@ describe("the decline answers export", () => {
     reset();
     delete process.env.WAITLIST_DECLINE_ANSWERS;
     declineHandler = () => ({ data: [answer(1)], error: null });
-    const out = await csv(await run());
+    const r0 = await run();
+    const out = await csv(r0);
+    if (r0.ok) expect(JSON.parse(await (await JSZip.loadAsync(Buffer.from(r0.base64, "base64"))).file("manifest.json")!.async("string"))).not.toHaveProperty("not_available_yet");
     expect(declineCalls).toHaveLength(1);
     expect(out).toContain("SYNTHETIC-WHY-studio-1-1");
   });
@@ -830,6 +832,13 @@ describe("the decline answers export", () => {
       const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
       expect(logged).toContain(code);
       expect(logged).not.toContain("SYNTHETIC-PRIVATE-ERROR");
+      // the archive says so itself: a header-only file is not "no answers"
+      const r = await run();
+      if (!r.ok) throw new Error(r.error);
+      const zip = await JSZip.loadAsync(Buffer.from(r.base64, "base64"));
+      const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+      expect(manifest.not_available_yet).toEqual([expect.objectContaining({ file: "waitlist-decline-answers.csv", status: "not available yet" })]);
+      expect(await zip.file("README.txt")!.async("string")).toContain("NOT AVAILABLE YET");
     } finally { warn.mockRestore(); }
   });
 

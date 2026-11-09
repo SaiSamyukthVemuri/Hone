@@ -534,11 +534,13 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     exportDeclineAnswersPage(studio.id, actorUserId, after, limit),
   );
   const declineAnswersCode = (declineAnswersRes.error as { code?: string } | null)?.code;
+  let declineAnswersUnavailable = false;
   if (declineAnswersRes.error && (declineAnswersCode === "PGRST202" || declineAnswersCode === "42883")) {
     console.warn(
       JSON.stringify({ event: "studio_export_decline_answers_function_missing", code: declineAnswersCode, timestamp: new Date().toISOString() }),
     );
     declineAnswersRes = emptyExportRpcRead<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec);
+    declineAnswersUnavailable = true;
   }
   // All-or-nothing like every other read: a failed page never ships a file that is silently missing answers.
   if (declineAnswersRes.error) {
@@ -1234,6 +1236,20 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       tier: disposition.tier,
       reason: disposition.reason,
     })),
+    // A header-only file because the function does not exist yet must not be mistaken for "this studio has no answers".
+    ...(declineAnswersUnavailable
+      ? {
+          not_available_yet: [
+            {
+              file: exportSpec("waitlist_decline_answers").file,
+              status: "not available yet",
+              reason:
+                "Saved decline answers could not be read because the database function that returns them is not installed yet. " +
+                "The file holds only its header row. It does NOT mean this studio has no saved answers.",
+            },
+          ],
+        }
+      : {}),
     ...(budgetContextExported
       ? {}
       : {
@@ -1267,7 +1283,9 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // answer is forty resources.
   const includedLines = exportedResources()
     .filter(({ disposition }) => disposition.file in manifestCounts)
-    .map(({ disposition }) => `- ${disposition.file}: ${disposition.description}`)
+    .map(({ disposition }) =>
+      `- ${disposition.file}: ${disposition.description}${declineAnswersUnavailable && disposition.file === exportSpec("waitlist_decline_answers").file ? " (NOT AVAILABLE YET: this file holds only its header row and does not mean there are no saved answers.)" : ""}`,
+    )
     .join("\n");
   const notExportedLines = pendingResources()
     .map(({ resource, disposition }) => `- ${resource} (${disposition.ticket}): ${disposition.reason}`)
