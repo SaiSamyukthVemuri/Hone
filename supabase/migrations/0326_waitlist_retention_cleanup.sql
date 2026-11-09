@@ -21,6 +21,7 @@ create table if not exists public.waitlist_retention_runs (
   outcome                 text not null,
   erased_answers          integer not null default 0,
   failed_answers             integer not null default 0,
+  purge_failed            integer not null default 0,
   purged_erase_records    integer not null default 0,
   purged_outbox           integer not null default 0,
   purged_runs             integer not null default 0,
@@ -30,10 +31,10 @@ create table if not exists public.waitlist_retention_runs (
   error_class             text,
   -- The one row written by this migration itself, so the health read never reports a missed run before the first real one.
   is_bootstrap            boolean not null default false,
-  constraint waitlist_retention_runs_bootstrap_check check (not is_bootstrap or (outcome = 'success' and erased_answers = 0 and failed_answers = 0)),
+  constraint waitlist_retention_runs_bootstrap_check check (not is_bootstrap or (outcome = 'success' and erased_answers = 0 and failed_answers = 0 and purge_failed = 0)),
   constraint waitlist_retention_runs_outcome_check check (outcome in ('success','partial_failure','failed')),
   constraint waitlist_retention_runs_counts_check check (
-    erased_answers >= 0 and failed_answers >= 0 and purged_erase_records >= 0 and purged_outbox >= 0 and purged_runs >= 0
+    erased_answers >= 0 and failed_answers >= 0 and purge_failed >= 0 and purged_erase_records >= 0 and purged_outbox >= 0 and purged_runs >= 0
     and remaining_answers >= 0 and remaining_erase_records >= 0 and remaining_outbox >= 0),
   constraint waitlist_retention_runs_time_check check (finished_at >= started_at),
   constraint waitlist_retention_runs_error_check check (
@@ -55,11 +56,11 @@ language sql stable security definer
 set search_path = pg_catalog, pg_temp
 as $$
   -- THE retention rule, once: the EARLIER of 90 days after the answer was submitted and 30 days after the earliest close of any
-  -- follow-up that shows it (its own decline follow-up; a withdrawal follow-up of the same entry shows the entry's LATEST decline
+  -- follow-up that shows it (its own decline follow-up; a withdrawal follow-up of the same entry shows the LATEST decline answer submitted before it opened; a later decline keeps only its own clocks
   -- answer). An open request has only the 90-day clock. least() ignores the null of a clock that has not started.
   select least(
            a.submitted_at + interval '90 days',
-           (select min(g.closed_at) + interval '30 days'
+           (select min(greatest(g.closed_at, a.submitted_at)) + interval '30 days'
               from public.waitlist_followups g
              where g.studio_id = d.studio_id and g.entry_id = d.entry_id and g.closed_at is not null
                and (g.id = d.id
@@ -68,6 +69,7 @@ as $$
                                                from public.waitlist_decline_answers a3
                                                join public.waitlist_followups d3 on d3.id = a3.followup_id
                                               where d3.entry_id = d.entry_id and d3.studio_id = d.studio_id and d3.kind = 'decline'
+                                                and a3.submitted_at <= g.opened_at
                                               order by a3.submitted_at desc, a3.followup_id desc
                                               limit 1)))))
     from public.waitlist_decline_answers a
@@ -76,7 +78,7 @@ as $$
 $$;
 
 create or replace function public.run_waitlist_retention_cleanup(p_batch_size integer default 500)
-returns table (run_id uuid, outcome text, erased_answers integer, failed_answers integer,
+returns table (run_id uuid, outcome text, erased_answers integer, failed_answers integer, purge_failed integer,
                purged_erase_records integer, purged_outbox integer, purged_runs integer,
                remaining_answers integer, remaining_erase_records integer, remaining_outbox integer,
                started_at timestamptz, finished_at timestamptz)
@@ -90,7 +92,7 @@ declare
   v_started timestamptz := pg_catalog.clock_timestamp();
   -- Erase records: the 30-day rule, never below the PITR window (7 days, Sam-verified) plus a one-day margin.
   v_floor   interval := greatest(interval '30 days', interval '7 days' + interval '1 day');
-  v_erased int := 0; v_failed int := 0; v_rec int := 0; v_out int := 0; v_runs int := 0;
+  v_erased int := 0; v_failed int := 0; v_purge_failed int := 0; v_rec int := 0; v_out int := 0; v_runs int := 0;
   v_rem_a int; v_rem_r int; v_rem_o int; v_n int; v_run uuid; v_outcome text; r record;
 begin
   if p_batch_size is null or p_batch_size < 1 or p_batch_size > 1000 then
@@ -132,23 +134,37 @@ begin
   end loop;
 
   -- 2. Purge erase records past the floor, terminal outbox rows past 90 days, and run rows past 90 days. Bounded batches.
-  with del as (
-    delete from public.waitlist_erase_records x
-     where x.id in (select y.id from public.waitlist_erase_records y where y.erased_at < v_now - v_floor order by y.erased_at, y.id limit p_batch_size)
-    returning 1)
-  select count(*) into v_rec from del;
-  with del as (
-    delete from public.waitlist_decline_owner_emails x
-     where x.id in (select y.id from public.waitlist_decline_owner_emails y
-                     where y.status in ('sent','failed','cancelled') and y.created_at < v_now - interval '90 days'
-                     order by y.created_at, y.id limit p_batch_size)
-    returning 1)
-  select count(*) into v_out from del;
-  with del as (
-    delete from public.waitlist_retention_runs x
-     where x.id in (select y.id from public.waitlist_retention_runs y where y.finished_at < v_now - interval '90 days' order by y.finished_at, y.id limit p_batch_size)
-    returning 1)
-  select count(*) into v_runs from del;
+  begin
+    with del as (
+      delete from public.waitlist_erase_records x
+       where x.id in (select y.id from public.waitlist_erase_records y where y.erased_at < v_now - v_floor order by y.erased_at, y.id limit p_batch_size)
+      returning 1)
+    select count(*) into v_rec from del;
+  exception when others then
+    v_purge_failed := v_purge_failed + 1; v_rec := 0;   -- a purge failing never undoes the erases; it is retried next run
+  end;
+  begin
+    with del as (
+      delete from public.waitlist_decline_owner_emails x
+       where x.id in (select y.id from public.waitlist_decline_owner_emails y
+                       where y.status in ('sent','failed','cancelled') and y.created_at < v_now - interval '90 days'
+                       order by y.created_at, y.id limit p_batch_size)
+      returning 1)
+    select count(*) into v_out from del;
+  exception when others then
+    v_purge_failed := v_purge_failed + 1; v_out := 0;   -- a purge failing never undoes the erases; it is retried next run
+  end;
+  begin
+    with del as (
+      delete from public.waitlist_retention_runs x
+       where x.id in (select y.id from public.waitlist_retention_runs y where y.finished_at < v_now - interval '90 days'
+                        and y.id is distinct from (select z.id from public.waitlist_retention_runs z where z.outcome = 'success' order by z.finished_at desc, z.id desc limit 1)
+                      order by y.finished_at, y.id limit p_batch_size)
+      returning 1)
+    select count(*) into v_runs from del;
+  exception when others then
+    v_purge_failed := v_purge_failed + 1; v_runs := 0;   -- a purge failing never undoes the erases; it is retried next run
+  end;
 
   select count(*) into v_rem_a from public.waitlist_decline_answers a
    where a.erased_at is null and public.waitlist_answer_erase_by(a.followup_id) <= v_now;
@@ -156,15 +172,15 @@ begin
   select count(*) into v_rem_o from public.waitlist_decline_owner_emails y
    where y.status in ('sent','failed','cancelled') and y.created_at < v_now - interval '90 days';
 
-  v_outcome := case when v_failed > 0 then 'partial_failure' else 'success' end;
+  v_outcome := case when v_failed > 0 or v_purge_failed > 0 then 'partial_failure' else 'success' end;
   insert into public.waitlist_retention_runs
-    (started_at, finished_at, outcome, erased_answers, failed_answers, purged_erase_records, purged_outbox, purged_runs,
+    (started_at, finished_at, outcome, erased_answers, failed_answers, purge_failed, purged_erase_records, purged_outbox, purged_runs,
      remaining_answers, remaining_erase_records, remaining_outbox)
-  values (v_started, pg_catalog.clock_timestamp(), v_outcome, v_erased, v_failed, v_rec, v_out, v_runs, v_rem_a, v_rem_r, v_rem_o)
+  values (v_started, pg_catalog.clock_timestamp(), v_outcome, v_erased, v_failed, v_purge_failed, v_rec, v_out, v_runs, v_rem_a, v_rem_r, v_rem_o)
   returning id into v_run;
 
   return query
-    select t.id, t.outcome, t.erased_answers, t.failed_answers, t.purged_erase_records, t.purged_outbox, t.purged_runs,
+    select t.id, t.outcome, t.erased_answers, t.failed_answers, t.purge_failed, t.purged_erase_records, t.purged_outbox, t.purged_runs,
            t.remaining_answers, t.remaining_erase_records, t.remaining_outbox, t.started_at, t.finished_at
       from public.waitlist_retention_runs t where t.id = v_run;
 end;
@@ -241,7 +257,7 @@ begin
           join public.waitlist_followups d on d.id = a2.followup_id
          where d.entry_id = f.entry_id and d.kind = 'decline'
            and (f.kind = 'decline' and d.id = f.id or f.kind = 'withdrawal')
-         order by a2.submitted_at desc
+         order by a2.submitted_at desc, a2.followup_id desc
          limit 1) a on true
      where f.studio_id = p_studio_id
        -- No invitation id: every OPEN follow-up PLUS closed ones whose answers still exist, so the owner can still read and
@@ -346,7 +362,7 @@ begin
       raise exception '0326: service_role EXECUTE on % is not as intended', v_fn;
     end if;
   end loop;
-  if not exists (select 1 from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.read_waitlist_followups(uuid,uuid,uuid)') and md5(p.prosrc) = 'd98705fc14e1c1e89bbfd618648993c1')
+  if not exists (select 1 from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.read_waitlist_followups(uuid,uuid,uuid)') and md5(p.prosrc) = 'bfff39742592fb6b4a3f43f9e2429417')
      or not exists (select 1 from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.export_waitlist_decline_answers(uuid,uuid,uuid,integer)') and md5(p.prosrc) = 'fb2b2659843c53301755b9f76c0c53b4') then
     raise exception '0326: a replaced read is not the sealed body';
   end if;
