@@ -1,4 +1,4 @@
--- 0327 — the owner follow-up read shows a WITHDRAWAL row exactly the answer waitlist_answer_erase_by binds it to (HON-7). Reviewed by Privacy at 9c41be316 (PASS); apply needs Sam's per-change approval.
+-- 0327 — the owner follow-up read shows a WITHDRAWAL row exactly the answer waitlist_answer_erase_by binds it to (HON-7). Applied only with the owner's per-change approval.
 --
 -- THE BUG (Sam's production retest): withdraw -> Keep on the waitlist -> invite again (new window) -> decline with answers. The later
 -- decline's answers ALSO showed on the earlier withdrawal card, because 0326's read took the entry's newest decline answer for any withdrawal
