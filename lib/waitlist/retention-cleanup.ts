@@ -12,7 +12,7 @@ export const RETENTION_TICK_BUDGET_MS = 12_000;
 
 export type RetentionCounts = {
   erasedAnswers: number;
-  /** Answers whose erase failed and were skipped; the database retries them next run (outcome partial_failure). */
+  /** Answers whose erase failed in the tick's LAST call and were skipped; the database retries them next run (outcome partial_failure). */
   failedAnswers: number;
   /** Housekeeping purges that failed this run (the erases still stand; the database retries the purge next run). Also makes the outcome partial_failure. */
   purgeFailed: number;
@@ -136,8 +136,9 @@ export async function runRetentionCleanup(
     const got = readRow(res.data);
     if (!got) return fail("unknown");
     total.erasedAnswers += got.erasedAnswers;
-    total.failedAnswers += got.failedAnswers;
-    total.purgeFailed += got.purgeFailed;
+    // A row that keeps failing fails again on every call of the tick, so summing would count one stuck row once per call. What is failing NOW is the last call's.
+    total.failedAnswers = got.failedAnswers;
+    total.purgeFailed = got.purgeFailed;
     total.purgedEraseRecords += got.purgedEraseRecords;
     total.purgedOutbox += got.purgedOutbox;
     total.purgedRuns += got.purgedRuns;

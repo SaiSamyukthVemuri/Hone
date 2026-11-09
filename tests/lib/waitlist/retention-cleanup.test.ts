@@ -68,14 +68,14 @@ describe("the cleanup loop", () => {
     expect(await runRetentionCleanup(fake([{ data: [row({ outcome: "success", purge_failed: 1 })] }]).client)).toMatchObject({ ok: false, errorClass: "unknown" });
     expect(await runRetentionCleanup(fake([{ data: [row({ outcome: "partial_failure" })] }]).client)).toMatchObject({ ok: false, errorClass: "unknown" });
   });
-  it("a partial failure with progress keeps going and totals the failures", async () => {
+  it("a partial failure with progress keeps going, and counts what is still failing at the end (a stuck row is not counted once per call)", async () => {
     const f = fake([
       { data: [row({ outcome: "partial_failure", failed_answers: 1, erased_answers: 499, remaining_answers: 1 })] },
       { data: [row({ outcome: "partial_failure", failed_answers: 1 })] },
     ]);
     const out = await runRetentionCleanup(f.client);
     expect(out).toMatchObject({ ok: true, partialFailure: true });
-    expect(out.ok && "counts" in out && out.counts).toMatchObject({ erasedAnswers: 499, failedAnswers: 2 });
+    expect(out.ok && "counts" in out && out.counts).toMatchObject({ erasedAnswers: 499, failedAnswers: 1 });
   });
 });
 
