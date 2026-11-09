@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-const h = vi.hoisted(() => ({ raise: vi.fn(async () => "alerted"), check: vi.fn(async () => ({ status: "unavailable" })) }));
+const h = vi.hoisted(() => ({ raise: vi.fn(async () => "alerted"), unavailable: vi.fn(async () => "quiet"), check: vi.fn(async () => ({ status: "unavailable" })) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
-vi.mock("@/lib/waitlist/retention-health", () => ({ raiseRetentionAlert: h.raise, checkRetentionHealthAndAlert: h.check }));
+vi.mock("@/lib/waitlist/retention-health", () => ({ raiseRetentionAlert: h.raise, alertRetentionUnavailable: h.unavailable, checkRetentionHealthAndAlert: h.check }));
 import { runRetentionForCron } from "@/lib/waitlist/retention-run";
 import type { RetentionRpcClient } from "@/lib/waitlist/retention-cleanup";
 
@@ -56,10 +56,12 @@ describe("the cron's erase", () => {
     expect(h.raise).toHaveBeenCalledTimes(1);
     expect((h.raise.mock.calls[0] as unknown as [string, string, Record<string, unknown>])[2]).toMatchObject({ purge_failed: 1, failed_answers: 0 });
   });
-  it("before 0326 is applied it is skipped without an alert", async () => {
+  it("before 0326 is applied it is skipped: no failed alert, and the unavailable rule is consulted", async () => {
     const k = client([{ error: { code: "PGRST202" } }]);
     expect(await runRetentionForCron(() => k.c)).toEqual({ ok: true, skipped: "not_installed" });
     expect(h.raise).not.toHaveBeenCalled();
+    // the quiet-or-critical decision (flag on / owner email activated) belongs to alertRetentionUnavailable, which the route always asks
+    expect(h.unavailable).toHaveBeenCalledWith("not_installed", "/api/cron/waitlist-decline-owner-email");
   });
   it("a client that cannot be built is a route_error failure, not a throw", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});

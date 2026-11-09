@@ -48,8 +48,8 @@ describe("the owner follow-up section", () => {
     expect(html).toContain('id="follow-up"');
     expect(html).toContain("WHYMARK");
     expect(html).toContain("BETTERMARK");
-    expect(html).toContain("Answers will be erased on");
-    expect(html).toContain("Answers will be erased on Feb 7, 2027.");
+    expect(html).toContain("Answers will be removed from view on");
+    expect(html).toContain("Answers will be removed from view on Feb 7, 2027.");
   });
   it("shows the saved line only when the owner just arrived from a save", () => {
     expect(render([row()], { justSaved: true })).toContain("Response saved. Review the follow-up below.");
@@ -68,12 +68,12 @@ describe("the owner follow-up section", () => {
       expect(html.toLowerCase()).not.toMatch(/delivered|queued|pending/);
     }
   });
-  it("an erased or overdue row shows no answers and no 'will be erased' date, only the marker with the date they were removed from view", () => {
+  it("an erased or overdue row shows no answers and no 'will be removed' date, only the marker with the date they were removed from view", () => {
     const html = render([row({ whyNotWork: null, betterTimes: null, answersErasedAt: "2026-11-20T10:00:00Z" })]);
     expect(html).toMatch(/Answers removed from view on [A-Z][a-z]{2} \d{1,2}, 2026\./);
     expect(html).not.toMatch(/Answers erased on/);
     expect(html).not.toContain("WHYMARK");
-    expect(html).not.toContain("Answers will be erased on");
+    expect(html).not.toContain("Answers will be removed from view on");
   });
   it("Erase answers is offered on open, handled and closed rows while answers exist, and only behind a confirm step", () => {
     for (const status of ["open", "handled", "kept", "booked", "removed"] as const) {
@@ -99,7 +99,7 @@ describe("the owner follow-up section", () => {
   it("a missing erase date shows a neutral fallback, not nothing; a present one shows the date", () => {
     const html = render([row({ eraseBy: null })]);
     expect(html).toContain("Erase date unavailable. You can erase these answers now, or contact support.");
-    expect(html).not.toContain("Answers will be erased on");
+    expect(html).not.toContain("Answers will be removed from view on");
     expect(render([row({ eraseBy: "not a date" })])).toContain("Erase date unavailable");
     expect(render([row()])).not.toContain("Erase date unavailable");
   });

@@ -139,7 +139,7 @@ export function DeclineFollowUpSection({
               ) : null}
               {!erased && hasAnswers ? (
                 <p className="mt-1 text-neutral-600 dark:text-neutral-400" data-testid="erase-by">
-                  {when ? `Answers will be erased on ${when}.` : "Erase date unavailable. You can erase these answers now, or contact support."}
+                  {when ? `Answers will be removed from view on ${when}.` : "Erase date unavailable. You can erase these answers now, or contact support."}
                 </p>
               ) : null}
               {r.kind === "decline" ? (

@@ -2,6 +2,7 @@ import "server-only";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { declineOwnerEmailActivation } from "@/lib/waitlist/decline-owner-email-gate";
 
 // 0326: is the scheduled erase of overdue waitlist decline answers actually running? The 10:00 route cannot report its own absence, so the three
@@ -19,11 +20,11 @@ export const RETENTION_EVENTS = {
   failed: "waitlist_answers_erase_failed",
   overdue: "waitlist_answers_erase_overdue",
   stuckEmail: "waitlist_owner_email_stuck",
+  unavailable: "waitlist_retention_unavailable",
 } as const;
 export type RetentionAlertKind = keyof typeof RETENTION_EVENTS;
-/** A quiet info row (no email) written the FIRST time overdue answers are seen, so the next check can tell "two consecutive checks" without any other state. */
-export const RETENTION_OVERDUE_SEEN_EVENT = "waitlist_answers_overdue_seen";
-export const RETENTION_OVERDUE_SEEN_WINDOW_HOURS = 26;
+/** An owner email still held or sending this long after it was created is stuck. */
+export const RETENTION_STUCK_EMAIL_AFTER_HOURS = 24;
 
 // Shape of waitlist_retention_health() in contract v2 (0326). Counts, timestamps and an outcome word only.
 export type RetentionHealth = {
@@ -34,11 +35,10 @@ export type RetentionHealth = {
   lastFailedCount: number;
   overdueUnerasedCount: number;
   oldestOverdueAgeHours: number | null;
-  stuckHeldOutboxCount: number;
 };
 
 export type RetentionFinding = { kind: RetentionAlertKind; severity: "critical" | "warning"; message: string; details: Record<string, unknown> };
-export type RetentionEvaluation = { findings: RetentionFinding[]; markOverdueSeen: boolean };
+export type RetentionEvaluation = { findings: RetentionFinding[] };
 
 const ms = (iso: string | null): number | null => {
   if (!iso) return null;
@@ -57,7 +57,7 @@ export function parseRetentionHealth(data: unknown): RetentionHealth | null {
     const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
     return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
   };
-  const counts = [num(r.last_erased_count), num(r.last_failed_count), num(r.overdue_unerased_count), num(r.stuck_held_outbox_count)];
+  const counts = [num(r.last_erased_count), num(r.last_failed_count), num(r.overdue_unerased_count)];
   if (counts.some((c) => c === null)) return null;
   return {
     lastSuccessAt: str(r.last_success_at),
@@ -67,7 +67,6 @@ export function parseRetentionHealth(data: unknown): RetentionHealth | null {
     lastFailedCount: counts[1] as number,
     overdueUnerasedCount: counts[2] as number,
     oldestOverdueAgeHours: num(r.oldest_overdue_age_hours),
-    stuckHeldOutboxCount: counts[3] as number,
   };
 }
 
@@ -75,13 +74,14 @@ export function parseRetentionHealth(data: unknown): RetentionHealth | null {
  * The contract's alert rules (v2), plus the 24 h overdue rule. Pure. The age is computed from the timestamp, not trusted from the database.
  *  missed     = no success ever, or the last success is older than 26 h
  *  failed     = the last run's outcome is failed or partial_failure
- *  overdue    = unerased answers past their deadline on two consecutive checks, or the oldest is already more than 24 h overdue
- *  stuckEmail = owner emails held or sending for more than 24 h, but only once owner email is activated
+ *  overdue    = the oldest unerased answer is more than 24 h past its deadline. (The 08:00, 09:00 and 09:30 checks run BEFORE the 10:00 job, so an
+ *               answer that came due since yesterday's run is normally overdue by a few hours at check time: only 24 h means a missed or failing run.)
+ *  stuckEmail = owner emails held or sending for more than 24 h and created since activation, counted by the caller, only once owner email is activated
  */
 export function evaluateRetentionHealth(
   h: RetentionHealth,
   nowMs: number,
-  ctx: { emailActivated: boolean; overdueSeenRecently: boolean },
+  ctx: { stuckOwnerEmails: number | null },
 ): RetentionEvaluation {
   const findings: RetentionFinding[] = [];
   const success = ms(h.lastSuccessAt);
@@ -110,29 +110,24 @@ export function evaluateRetentionHealth(
       details: { last_outcome: h.lastOutcome, failed_answers: h.lastFailedCount, erased_answers: h.lastErasedCount, hours_since_success: ageHours },
     });
   }
-  let markOverdueSeen = false;
-  if (h.overdueUnerasedCount > 0) {
-    const oldest = h.oldestOverdueAgeHours;
-    if ((oldest !== null && oldest > RETENTION_OVERDUE_AFTER_SECONDS / 3600) || ctx.overdueSeenRecently) {
-      findings.push({
-        kind: "overdue",
-        severity: "critical",
-        message: `${h.overdueUnerasedCount} waitlist answers are past their erase deadline and not yet erased${oldest === null ? "" : `; the oldest is ${round1(oldest)} hours overdue`}.`,
-        details: { overdue_unerased_answers: h.overdueUnerasedCount, oldest_overdue_hours: oldest === null ? null : round1(oldest), consecutive_checks: ctx.overdueSeenRecently },
-      });
-    } else {
-      markOverdueSeen = true;
-    }
+  const oldest = h.oldestOverdueAgeHours;
+  if (h.overdueUnerasedCount > 0 && oldest !== null && oldest > RETENTION_OVERDUE_AFTER_SECONDS / 3600) {
+    findings.push({
+      kind: "overdue",
+      severity: "critical",
+      message: `${h.overdueUnerasedCount} waitlist answers are past their erase deadline and not yet erased; the oldest is ${round1(oldest)} hours overdue.`,
+      details: { overdue_unerased_answers: h.overdueUnerasedCount, oldest_overdue_hours: round1(oldest) },
+    });
   }
-  if (ctx.emailActivated && h.stuckHeldOutboxCount > 0) {
+  if (ctx.stuckOwnerEmails !== null && ctx.stuckOwnerEmails > 0) {
     findings.push({
       kind: "stuckEmail",
       severity: "warning",
-      message: `${h.stuckHeldOutboxCount} waitlist owner emails have been held or sending for more than 24 hours.`,
-      details: { stuck_owner_emails: h.stuckHeldOutboxCount },
+      message: `${ctx.stuckOwnerEmails} waitlist owner emails have been held or sending for more than ${RETENTION_STUCK_EMAIL_AFTER_HOURS} hours.`,
+      details: { stuck_owner_emails: ctx.stuckOwnerEmails },
     });
   }
-  return { findings, markOverdueSeen };
+  return { findings };
 }
 
 export type RetentionCheckResult =
@@ -165,15 +160,49 @@ export async function raiseRetentionAlert(
   return "alerted";
 }
 
-/** Was an overdue answer already seen by a check inside the last 26 h? (An unreadable table reads as "not seen".) */
-async function overdueSeenRecently(nowMs: number): Promise<boolean> {
+/** Owner emails held or sending for more than 24 h that were created since activation (earlier rows are never claimed, so they are not stuck, they are dark). Counts only; null when unreadable. */
+async function countStuckOwnerEmails(since: Date, nowMs: number): Promise<number | null> {
   try {
-    const since = new Date(nowMs - RETENTION_OVERDUE_SEEN_WINDOW_HOURS * 3_600_000).toISOString();
-    const { data, error } = await createAdminClient().from("ops_alerts").select("id").eq("event", RETENTION_OVERDUE_SEEN_EVENT).gte("created_at", since).limit(1);
-    return !error && Array.isArray(data) && data.length > 0;
+    const older = new Date(nowMs - RETENTION_STUCK_EMAIL_AFTER_HOURS * 3_600_000).toISOString();
+    const { count, error } = await createAdminClient()
+      .from("waitlist_decline_owner_emails")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["held", "sending"])
+      .lt("created_at", older)
+      .gte("created_at", since.toISOString());
+    if (error) {
+      console.warn(JSON.stringify({ event: "waitlist_stuck_owner_email_count_unreadable", code: dbErrorCode(error), timestamp: new Date().toISOString() }));
+      return null;
+    }
+    return typeof count === "number" ? count : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * The retention functions are missing or unreadable. Before anything depends on them (the answers flag off, owner email not activated) that is a quiet
+ * log line. Once answers are being collected or owner email is activated, a job that cannot run is a missed erasure duty: raise a critical alert.
+ * Returns whether it alerted. Shared by the 10:00 route and the health check. Never throws.
+ */
+export async function alertRetentionUnavailable(reason: "not_installed" | "unavailable", route: string, nowMs: number = Date.now()): Promise<"alerted" | "deduped" | "quiet"> {
+  let active = false;
+  try {
+    active = waitlistDeclineAnswersEnabled() || declineOwnerEmailActivation().enabled;
+  } catch {
+    active = false;
+  }
+  if (!active) {
+    console.warn(JSON.stringify({ event: "waitlist_retention_not_active_yet", reason, route, timestamp: new Date().toISOString() }));
+    return "quiet";
+  }
+  return raiseRetentionAlert(
+    "unavailable",
+    "The scheduled erase of waitlist answers cannot run: its database functions are missing or unreadable while answers are being collected or owner email is active.",
+    { reason },
+    route,
+    nowMs,
+  );
 }
 
 /** Read the heartbeat and raise whatever is wrong. Read-only except for ops alerts. Never throws. */
@@ -184,20 +213,23 @@ export async function checkRetentionHealthAndAlert(route: string, nowMs: number 
     if (error) {
       // Not installed yet (before 0326) or unreadable: the check cannot say anything, and says so in the log by class only.
       console.warn(JSON.stringify({ event: "waitlist_retention_health_unreadable", code: dbErrorCode(error), route, timestamp: new Date().toISOString() }));
+      await alertRetentionUnavailable("unavailable", route, nowMs);
       return { status: "unavailable" };
     }
     health = parseRetentionHealth(data);
   } catch {
+    await alertRetentionUnavailable("unavailable", route, nowMs);
     return { status: "unavailable" };
   }
-  if (!health) return { status: "unavailable" };
-  const { findings, markOverdueSeen } = evaluateRetentionHealth(health, nowMs, {
-    emailActivated: declineOwnerEmailActivation().enabled,
-    overdueSeenRecently: health.overdueUnerasedCount > 0 ? await overdueSeenRecently(nowMs) : false,
-  });
-  if (markOverdueSeen) {
-    await recordOpsAlert({ severity: "info", event: RETENTION_OVERDUE_SEEN_EVENT, message: "Waitlist answers past their erase deadline were seen by a health check.", route, safeDetails: { overdue_unerased_answers: health.overdueUnerasedCount } });
+  if (!health) {
+    await alertRetentionUnavailable("unavailable", route, nowMs);
+    return { status: "unavailable" };
   }
+  // The outbox read is the app's, not the health function's: the function cannot tell a pre-activation row (never sent, by design) from a stuck one.
+  const activation = declineOwnerEmailActivation();
+  const { findings } = evaluateRetentionHealth(health, nowMs, {
+    stuckOwnerEmails: activation.enabled ? await countStuckOwnerEmails(activation.since, nowMs) : null,
+  });
   const alerted: RetentionAlertKind[] = [];
   const deduped: RetentionAlertKind[] = [];
   for (const f of findings) {

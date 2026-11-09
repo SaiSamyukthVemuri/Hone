@@ -2,7 +2,7 @@ import "server-only";
 import { thrownErrorClass } from "@/lib/logging/error-class";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { runRetentionCleanup, ZERO_RETENTION_COUNTS, type RetentionRpcClient, type RetentionTick } from "@/lib/waitlist/retention-cleanup";
-import { checkRetentionHealthAndAlert, raiseRetentionAlert } from "@/lib/waitlist/retention-health";
+import { alertRetentionUnavailable, checkRetentionHealthAndAlert, raiseRetentionAlert } from "@/lib/waitlist/retention-health";
 
 // 0326: what the daily routes call. Counts and classes only, in the response, the alert and the log. Never throws.
 
@@ -34,7 +34,11 @@ export async function runRetentionForCron(
     );
     return { ok: false, calls: tick.calls, erasedAnswers: tick.counts.erasedAnswers, failedAnswers: tick.counts.failedAnswers, errorClass: tick.errorClass, failureRecorded: tick.failureRecorded };
   }
-  if ("skipped" in tick) return tick;
+  if ("skipped" in tick) {
+    // The functions are missing: quiet before anything depends on them, critical once answers are collected or owner email is active.
+    await alertRetentionUnavailable("not_installed", RETENTION_RUN_ROUTE);
+    return tick;
+  }
   if (tick.partialFailure) {
     // Rows that fail to erase are skipped and retried next run, but a deadline is being missed: say so now, with a count and nothing else.
     await raiseRetentionAlert(

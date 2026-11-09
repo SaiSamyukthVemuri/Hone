@@ -5,6 +5,8 @@ const h = vi.hoisted(() => ({
   health: { data: null as unknown, error: null as { code?: string } | null },
   alertsRows: [] as Array<{ event: string; created_at: string; resolved_at: string | null }>,
   alertsError: false,
+  outbox: [] as Array<{ status: string; created_at: string }>,
+  outboxError: false,
   recorded: [] as Array<Record<string, unknown>>,
 }));
 vi.mock("@/lib/ops/alerts", () => ({
@@ -17,7 +19,25 @@ vi.mock("@/lib/ops/alerts", () => ({
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: async (fn: string) => (fn === "waitlist_retention_health" ? h.health : { data: null, error: { code: "42883" } }),
-    from: () => {
+    from: (table: string) => {
+      if (table === "waitlist_decline_owner_emails") {
+        let statuses: string[] = [];
+        let olderThan = "9999";
+        let notBefore = "";
+        const o: Record<string, unknown> = {
+          select: () => o,
+          in: (_c: string, v: string[]) => ((statuses = v), o),
+          lt: (_c: string, v: string) => ((olderThan = v), o),
+          gte: (_c: string, v: string) => ((notBefore = v), o),
+          then: (res: (v: unknown) => unknown) =>
+            Promise.resolve(
+              h.outboxError
+                ? { count: null, error: { code: "XX000" } }
+                : { count: h.outbox.filter((r) => statuses.includes(r.status) && r.created_at < olderThan && r.created_at >= notBefore).length, error: null },
+            ).then(res),
+        };
+        return o;
+      }
       let event = "";
       let since = "";
       let unresolvedOnly = false;
@@ -43,6 +63,7 @@ import {
   RETENTION_EVENTS,
   RETENTION_MISSED_AFTER_SECONDS,
   checkRetentionHealthAndAlert,
+  alertRetentionUnavailable,
   evaluateRetentionHealth,
   parseRetentionHealth,
   type RetentionHealth,
@@ -52,22 +73,25 @@ const NOW = Date.parse("2026-11-12T08:00:00.000Z");
 const hoursAgo = (n: number) => new Date(NOW - n * 3_600_000).toISOString();
 const healthy = (o: Partial<RetentionHealth> = {}): RetentionHealth => ({
   lastSuccessAt: hoursAgo(22), lastRunAt: hoursAgo(22), lastOutcome: "success", lastErasedCount: 4, lastFailedCount: 0,
-  overdueUnerasedCount: 0, oldestOverdueAgeHours: null, stuckHeldOutboxCount: 0, ...o,
+  overdueUnerasedCount: 0, oldestOverdueAgeHours: null, ...o,
 });
-const ctx = (o: Partial<{ emailActivated: boolean; overdueSeenRecently: boolean }> = {}) => ({ emailActivated: false, overdueSeenRecently: false, ...o });
+const ctx = (o: Partial<{ stuckOwnerEmails: number | null }> = {}) => ({ stuckOwnerEmails: null as number | null, ...o });
 const kinds = (x: RetentionHealth, c = ctx()) => evaluateRetentionHealth(x, NOW, c).findings.map((f) => f.kind);
 const row = (o: Record<string, unknown> = {}) => ({
   last_success_at: hoursAgo(22), last_run_at: hoursAgo(22), last_outcome: "success", last_erased_count: 4, last_failed_count: 0,
-  overdue_unerased_count: 0, oldest_overdue_age_hours: null, stuck_held_outbox_count: 0, ...o,
+  overdue_unerased_count: 0, oldest_overdue_age_hours: null, ...o,
 });
 
 beforeEach(() => {
   h.health = { data: [row()], error: null };
   h.alertsRows = [];
   h.alertsError = false;
+  h.outbox = [];
+  h.outboxError = false;
   h.recorded = [];
   delete process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED;
   delete process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE;
+  delete process.env.WAITLIST_DECLINE_ANSWERS;
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -95,29 +119,27 @@ describe("the alert rules", () => {
     expect(partial.map((f) => f.kind)).toEqual(["failed"]);
     expect(partial[0].details).toMatchObject({ failed_answers: 3 });
   });
-  it("overdue: not on the first sighting (which is only noted), yes on the second consecutive check, yes at once past 24 hours", () => {
-    const first = evaluateRetentionHealth(healthy({ overdueUnerasedCount: 2, oldestOverdueAgeHours: 3 }), NOW, ctx());
-    expect(first.findings).toEqual([]);
-    expect(first.markOverdueSeen).toBe(true);
-    const second = evaluateRetentionHealth(healthy({ overdueUnerasedCount: 2, oldestOverdueAgeHours: 3 }), NOW, ctx({ overdueSeenRecently: true }));
-    expect(second.findings.map((f) => f.kind)).toEqual(["overdue"]);
-    expect(second.markOverdueSeen).toBe(false);
-    expect(kinds(healthy({ overdueUnerasedCount: 1, oldestOverdueAgeHours: 24.5 }))).toEqual(["overdue"]);
+  it("overdue: only when the oldest unerased answer is more than 24 hours past its deadline (23h quiet, 25h alert)", () => {
+    expect(kinds(healthy({ overdueUnerasedCount: 2, oldestOverdueAgeHours: 3 }))).toEqual([]);
+    expect(kinds(healthy({ overdueUnerasedCount: 2, oldestOverdueAgeHours: 23 }))).toEqual([]);
     expect(kinds(healthy({ overdueUnerasedCount: 1, oldestOverdueAgeHours: 24 }))).toEqual([]);
-    expect(kinds(healthy({ overdueUnerasedCount: 0, oldestOverdueAgeHours: null }), ctx({ overdueSeenRecently: true }))).toEqual([]);
+    expect(kinds(healthy({ overdueUnerasedCount: 1, oldestOverdueAgeHours: 25 }))).toEqual(["overdue"]);
+    expect(kinds(healthy({ overdueUnerasedCount: 0, oldestOverdueAgeHours: null }))).toEqual([]);
+    expect(kinds(healthy({ overdueUnerasedCount: 1, oldestOverdueAgeHours: null }))).toEqual([]);
   });
-  it("stuck email: only after owner email is activated", () => {
-    expect(kinds(healthy({ stuckHeldOutboxCount: 4 }))).toEqual([]);
-    const active = evaluateRetentionHealth(healthy({ stuckHeldOutboxCount: 4 }), NOW, ctx({ emailActivated: true })).findings;
-    expect(active.map((f) => f.kind)).toEqual(["stuckEmail"]);
-    expect(active[0].severity).toBe("warning");
-    expect(kinds(healthy(), ctx({ emailActivated: true }))).toEqual([]);
+  it("stuck email: raised from the app's own count, as a warning", () => {
+    expect(kinds(healthy())).toEqual([]);
+    expect(kinds(healthy(), ctx({ stuckOwnerEmails: 0 }))).toEqual([]);
+    expect(kinds(healthy(), ctx({ stuckOwnerEmails: null }))).toEqual([]);
+    const f = evaluateRetentionHealth(healthy(), NOW, ctx({ stuckOwnerEmails: 4 })).findings;
+    expect(f.map((x) => x.kind)).toEqual(["stuckEmail"]);
+    expect(f[0].severity).toBe("warning");
   });
   it("every finding carries counts, hours and words only: no id, no uuid, no email address, no answer", () => {
     const all = evaluateRetentionHealth(
-      healthy({ lastSuccessAt: null, lastOutcome: "partial_failure", lastFailedCount: 2, overdueUnerasedCount: 3, oldestOverdueAgeHours: 30, stuckHeldOutboxCount: 1 }),
+      healthy({ lastSuccessAt: null, lastOutcome: "partial_failure", lastFailedCount: 2, overdueUnerasedCount: 3, oldestOverdueAgeHours: 30 }),
       NOW,
-      ctx({ emailActivated: true }),
+      ctx({ stuckOwnerEmails: 1 }),
     ).findings;
     expect(all.map((f) => f.kind).sort()).toEqual(["failed", "missed", "overdue", "stuckEmail"]);
     const text = JSON.stringify(all);
@@ -130,7 +152,7 @@ describe("parsing the health row", () => {
   it("accepts numeric as a number or a string; a missing or malformed count is unknown, never healthy", () => {
     expect(parseRetentionHealth([row({ overdue_unerased_count: 2, oldest_overdue_age_hours: "30.5" })])).toMatchObject({ overdueUnerasedCount: 2, oldestOverdueAgeHours: 30.5 });
     expect(parseRetentionHealth([row({ overdue_unerased_count: "x" })])).toBeNull();
-    expect(parseRetentionHealth([row({ stuck_held_outbox_count: undefined })])).toBeNull();
+    expect(parseRetentionHealth([row({ last_failed_count: undefined })])).toBeNull();
     expect(parseRetentionHealth([])).toBeNull();
     expect(parseRetentionHealth(null)).toBeNull();
   });
@@ -166,24 +188,42 @@ describe("the check raises the alerts, once per day", () => {
     await checkRetentionHealthAndAlert("/r", NOW + 24 * 3_600_000);
     expect(h.recorded.filter((r) => r.event === RETENTION_EVENTS.missed)).toHaveLength(2);
   });
-  it("overdue answers: the first check only notes them (an info row, no email); the second raises the critical alert", async () => {
-    h.health = { data: [row({ overdue_unerased_count: 2, oldest_overdue_age_hours: 2 })], error: null };
-    const first = await checkRetentionHealthAndAlert("/r", NOW);
-    expect(first).toMatchObject({ status: "checked", findings: [], alerted: [] });
+  it("overdue answers alert at once past 24 hours, never on a normal pre-10:00 check, and leave no marker row", async () => {
+    h.health = { data: [row({ overdue_unerased_count: 2, oldest_overdue_age_hours: 3 })], error: null };
+    expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ status: "checked", findings: [], alerted: [] });
+    expect(await checkRetentionHealthAndAlert("/r", NOW + 3_600_000)).toMatchObject({ findings: [], alerted: [] });
+    expect(h.recorded).toHaveLength(0);
+    h.health = { data: [row({ overdue_unerased_count: 2, oldest_overdue_age_hours: "25" })], error: null };
+    expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ alerted: ["overdue"] });
     expect(h.recorded).toHaveLength(1);
-    expect(h.recorded[0]).toMatchObject({ severity: "info", event: "waitlist_answers_overdue_seen" });
-    const second = await checkRetentionHealthAndAlert("/r", NOW + 3_600_000);
-    expect(second).toMatchObject({ alerted: ["overdue"] });
-    expect(h.recorded.at(-1)).toMatchObject({ severity: "critical", event: RETENTION_EVENTS.overdue });
-    // and the marker is not written twice
-    expect(h.recorded.filter((r) => r.event === "waitlist_answers_overdue_seen")).toHaveLength(1);
+    expect(h.recorded[0]).toMatchObject({ severity: "critical", event: RETENTION_EVENTS.overdue });
   });
-  it("stuck owner emails alert only when owner email is activated", async () => {
-    h.health = { data: [row({ stuck_held_outbox_count: 3 })], error: null };
-    expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ findings: [], alerted: [] });
-    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED = "true";
-    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
-    expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ alerted: ["stuckEmail"] });
+  describe("stuck owner emails", () => {
+    const SINCE = "2026-11-10T00:00:00.000Z";
+    const activate = () => {
+      process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED = "true";
+      process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = SINCE;
+    };
+    it("not counted, and not even read, before owner email is activated", async () => {
+      h.outbox = [{ status: "held", created_at: "2026-11-10T12:00:00.000Z" }];
+      expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ findings: [], alerted: [] });
+    });
+    it("a held row created before SINCE is not counted (it will never send); an older-than-24h row after SINCE is", async () => {
+      activate();
+      h.outbox = [{ status: "held", created_at: "2026-11-09T12:00:00.000Z" }, { status: "sending", created_at: "2026-11-09T23:00:00.000Z" }];
+      expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ findings: [], alerted: [] });
+      h.outbox.push({ status: "held", created_at: "2026-11-10T12:00:00.000Z" });
+      expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ alerted: ["stuckEmail"] });
+      expect(h.recorded.at(-1)).toMatchObject({ severity: "warning", event: RETENTION_EVENTS.stuckEmail, safeDetails: { stuck_owner_emails: 1 } });
+    });
+    it("a row younger than 24 hours, or already sent, is not stuck; an unreadable outbox raises nothing", async () => {
+      activate();
+      h.outbox = [{ status: "held", created_at: "2026-11-11T12:00:00.000Z" }, { status: "sent", created_at: "2026-11-10T12:00:00.000Z" }];
+      expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ findings: [] });
+      h.outbox = [{ status: "held", created_at: "2026-11-10T12:00:00.000Z" }];
+      h.outboxError = true;
+      expect(await checkRetentionHealthAndAlert("/r", NOW)).toMatchObject({ findings: [] });
+    });
   });
   it("what reaches the alert path carries no studio, client, appointment or id", async () => {
     h.health = { data: [row({ last_success_at: hoursAgo(46), last_outcome: "partial_failure", last_failed_count: 2 })], error: null };
@@ -195,12 +235,26 @@ describe("the check raises the alerts, once per day", () => {
       expect(JSON.stringify(a)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|@/i);
     }
   });
-  it("before 0326 is applied (or when the read fails) the check says unavailable and raises nothing, logging only a code", async () => {
+  it("missing or unreadable functions: QUIET before anything depends on them, CRITICAL once the answers flag is on or owner email is activated", async () => {
     h.health = { data: null, error: { code: "42883" } };
     expect(await checkRetentionHealthAndAlert("/r", NOW)).toEqual({ status: "unavailable" });
     h.health = { data: [{ junk: true }], error: null };
     expect(await checkRetentionHealthAndAlert("/r", NOW)).toEqual({ status: "unavailable" });
     expect(h.recorded).toHaveLength(0);
+    process.env.WAITLIST_DECLINE_ANSWERS = "1";
+    h.health = { data: null, error: { code: "42883" } };
+    expect(await checkRetentionHealthAndAlert("/r", NOW)).toEqual({ status: "unavailable" });
+    expect(h.recorded).toHaveLength(1);
+    expect(h.recorded[0]).toMatchObject({ severity: "critical", event: RETENTION_EVENTS.unavailable });
+    delete process.env.WAITLIST_DECLINE_ANSWERS;
+    h.alertsRows = [];
+    h.recorded = [];
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED = "true";
+    process.env.HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE = "2026-11-01T00:00:00.000Z";
+    expect(await alertRetentionUnavailable("not_installed", "/api/cron/waitlist-decline-owner-email", NOW)).toBe("alerted");
+    expect(await alertRetentionUnavailable("not_installed", "/api/cron/waitlist-decline-owner-email", NOW)).toBe("deduped");
+    expect(h.recorded).toHaveLength(1);
+    expect(JSON.stringify(h.recorded)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|@/i);
   });
   it("an unreadable alerts table means 'not seen', so the alert is raised rather than lost", async () => {
     h.alertsError = true;
