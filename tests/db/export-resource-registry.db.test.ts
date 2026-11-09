@@ -919,8 +919,11 @@ describe("what is excluded, and on what grounds", () => {
       platform: 7,
       // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
-      derived: 8,
-      deliberate_privacy: 2,
+      // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its
+      // delivery ledger. Operational; the client's own answers are exported through export_waitlist_decline_answers.
+      derived: 10,
+      // 2 -> 3 deliberate_privacy: waitlist_erase_records (0325), ids and dates only, kept 30 days.
+      deliberate_privacy: 3,
     });
   });
 

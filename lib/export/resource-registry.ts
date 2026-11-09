@@ -1775,21 +1775,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       ],
     },
   },
-  waitlist_followups: {
-    kind: "excluded",
-    category: "platform",
-    reason: "Operational follow-up state for a declined or withdrawn invitation (0325). The owner's answers are exported through waitlist_decline_answers; this table adds workflow status only.",
-  },
-  waitlist_decline_owner_emails: {
-    kind: "excluded",
-    category: "platform",
-    reason: "Outbound owner-notification outbox (0325): delivery mechanics, no client text.",
-  },
-  waitlist_erase_records: {
-    kind: "excluded",
-    category: "platform",
-    reason: "Retained for 30 days by policy; the scheduled purge is not yet built.",
-  },
   waitlist_invitation_followups: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1810,6 +1795,24 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 1,
     reason:
       "Owner-only record that an invited prospect said the offered times do not work, draft migration 0319 (HON-7). One row per invitation (unique) with an optional free-text note of at most 500 characters written by the recipient, beside the prospect's name on the entry, plus created and acknowledged instants. Client-supplied free text, so tier 1 and PENDING review of retention and export shape: not exported by default and never selected by a count. Rows are erased with the STUDIO only: an invited entry cannot be deleted on its own (invitations are append-only), so person-level erasure of this text is not possible yet (open item L1). No export surface ships in 0319.",
+  },
+  waitlist_followups: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "The owner's follow-up item for a waitlist person who declined an invitation or asked to be taken off the list, draft migration 0325 (HON-7). One row per decline and per open withdrawal request, with a kind, a closed status, opened and closed instants, the entry and invitation it belongs to and, once booked, the linked appointment. Studio-owned operational history, so It holds no client text, name or contact. Rows are erased with the studio; the invitation and practitioner references refuse deletion while a row exists. EXCLUDED as operational: the owner's work queue, not the studio's client data; it holds no client text. The answers are exported through export_waitlist_decline_answers.",
+  },
+  waitlist_decline_owner_emails: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "The outbox for the owner email sent when a waitlist person declines, draft migration 0325 (HON-7): one row per verified owner per invitation with a status, attempt count, closed error code and instants. It holds no client text, no name, no address and no email body; the recipient address is resolved at send time. Operational delivery history with no studio-facing meaning beyond whether the owner was told, Purged at 90 days once the retention decision lands. EXCLUDED as operational delivery history: it holds no client data.",
+  },
+  waitlist_erase_records: {
+    kind: "excluded",
+    category: "deliberate_privacy",
+    reason:
+      "Ids-and-dates log of each time waitlist decline answers were erased (by the owner, by Remove or by retention), draft migration 0325 (HON-7). It holds no client text and is deliberately kept apart from the answers table and never restored with it, so that an erasure can be replayed after any restore. Compliance evidence about the studio's own data handling. EXCLUDED on purpose: ids and dates only; it is compliance evidence, not a client record. Retained for 30 days by policy; the scheduled purge is not yet built.",
   },
   studio_waitlist_admission_rounds: {
     kind: "pending",

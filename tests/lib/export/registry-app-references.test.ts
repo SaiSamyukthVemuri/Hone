@@ -88,7 +88,7 @@ const callsRpc = (code: string, fn: string) => new RegExp(String.raw`\.rpc\(\s*[
 
 /** Exported-through-a-function resources whose migration is not in this tree yet. Each entry is deleted, by the guard itself going red, the
  * moment the snapshot contains the table and the function. */
-const MIGRATION_PENDING_RPC_EXPORTS: Readonly<Record<string, string>> = { waitlist_decline_answers: "0325" };
+const MIGRATION_PENDING_RPC_EXPORTS: Readonly<Record<string, string>> = {};
 
 /** Application files a reason names, e.g. app/(app)/calendar/x.ts or lib/stripe/account.ts. */
 const NAMED_FILE = /\b(?:app|lib|components)\/[\w\-[\]().\/]*?\.tsx?\b/g;
