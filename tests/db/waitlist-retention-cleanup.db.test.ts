@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, closePool, seedStudio } from "./helpers/harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +9,11 @@ const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> =>
 // ===========================================================================
 // 0326 -- waitlist retention cleanup: the scheduled erase, read-time suppression, the run log and the purges.
 // ===========================================================================
+
+// The 0325 round-trip suite re-applies 0325 and, depending on file order, leaves 0325's two reads live. 0326 is idempotent, so restore it.
+beforeAll(async () => {
+  await adminQuery(readFileSync(join(__dirname, "..", "..", "supabase", "migrations", "0326_waitlist_retention_cleanup.sql"), "utf8"));
+});
 
 afterAll(async () => {
   await closePool();
