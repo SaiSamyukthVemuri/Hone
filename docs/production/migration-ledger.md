@@ -54,7 +54,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Pre-push reads (Part A, 02:01Z).** 264 history rows, max `0324`, list md5 `24c1e042cb76d3e1d851d7876e9a1c10`, `0325` absent; all 17 gated preflight fields true.
 - **Push.** Plain push at 2026-11-09T02:05:44Z (client side).
 - **Read-back.** 2026-11-09T02:05:45Z-02:05:48Z: **OVERALL PASS**. History 265 rows, max `0325`, list md5 `751877e0…`; the 15 sealed function body md5 values, the ACLs, the four tables and the four triggers passed.
-- **What is and is not live.** The schema, the commands, the trigger on clients and the export-audit file-map entry are in the database. Nothing calls them until the application that writes them is deployed; admission stays Closed, public joining stays blocked, SMS stays off. Retention clocks start at that application deploy.
+- **What is and is not live.** The schema, the commands, the trigger on clients and the export-audit file-map entry are in the database. At the apply (02:05Z) nothing called them; the application deployed at 02:11Z with the answers flag and owner email off. Admission stays Closed, public joining stays blocked, SMS stays off. Retention clocks start when the first real answer is stored, which cannot happen while the answers flag is off.
 - **Release.** #1410 merged as `7def16653` about 45 s after the push.
 - **Related record line.** The commits of #1404 (a test harness for the owner decline email) landed through #1407 (`1d6c06c35`), not through a merge of #1404 itself.
 - **Not captured.** Any server-side apply instant.
