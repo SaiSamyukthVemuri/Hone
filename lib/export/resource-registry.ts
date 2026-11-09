@@ -1812,7 +1812,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "deliberate_privacy",
     reason:
-      "Retained for 30 days by policy; the scheduled purge is not yet built.",
+      "Retained for 30 days by policy, then purged by the scheduled cleanup.",
+  },
+  waitlist_retention_runs: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Platform maintenance log of the waitlist cleanup job (run times and counts only). It has no studio column and holds no client data, so it is not studio content.",
   },
   studio_waitlist_admission_rounds: {
     kind: "pending",

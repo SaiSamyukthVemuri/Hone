@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 262,
-    "last": "0325_waitlist_decline_followups.sql",
-    "sha256": "40ea8fc49608978b052c5f70bc73b8127ad384941c28806e6d0d316811c7f1a1"
+    "count": 263,
+    "last": "0326_waitlist_retention_cleanup.sql",
+    "sha256": "d72089896a6753b9bdcf3216193ff89feb81be5c84aa305dc428c3e3445c6546"
   },
   "public": {
     "tables": [
@@ -135,6 +135,7 @@
       "waitlist_followups",
       "waitlist_invitation_bookings",
       "waitlist_invitation_followups",
+      "waitlist_retention_runs",
       "waitlist_times_feedback"
     ],
     "functions": [
@@ -459,6 +460,7 @@
       "record_treatment_setup_submission",
       "record_waitlist_invitation_delivery",
       "record_waitlist_invitation_followup",
+      "record_waitlist_retention_failure",
       "record_waitlist_sms_consent_by_practitioner",
       "record_welcome_email_result",
       "recurring_break_horizon_days",
@@ -503,6 +505,7 @@
       "retire_studio_machine",
       "revert_appointment_outcome",
       "revoke_waitlist_preference_grant",
+      "run_waitlist_retention_cleanup",
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
       "save_weekly_availability",
@@ -598,10 +601,12 @@
       "validate_public_reschedule_slot",
       "validate_schedule_scope",
       "waitlist_admission_round_consumed",
+      "waitlist_answer_erase_by",
       "waitlist_closed_invited_booking_enabled",
       "waitlist_decline_answers_record_cascade_erase",
       "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
+      "waitlist_retention_health",
       "waive_appointment_fee",
       "whole_session_copy_source_descriptor",
       "write_appointment_audit",
