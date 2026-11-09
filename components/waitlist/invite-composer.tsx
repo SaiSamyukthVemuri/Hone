@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { isConsultationService } from "@/lib/booking/consultation";
@@ -507,6 +507,15 @@ export function InviteComposerView({
   const sending = useInviteOutcomePending();
   const [sentKey, setSentKey] = useState<string | null>(null);
   const inlineAnswer = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
+  // The answer is inserted ABOVE Send and pushes it down, so a press near the bottom of a phone screen left the answer (and Send) below the fold.
+  // When an answer first appears, bring the pair into view with the least movement; focus stays where it was, and an unchanged answer re-rendering
+  // does not scroll again (the effect follows the answer, not the render). Reduced motion gets an instant jump.
+  const answerPairRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (inlineAnswer === null) return;
+    const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    answerPairRef.current?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
+  }, [inlineAnswer]);
 
   const unbound = action === null && outcomeAction === null;
   const sendDisabled = send.disabled || unbound;
@@ -775,9 +784,11 @@ export function InviteComposerView({
             {sendReason}
           </span>
         )}
+        <div ref={answerPairRef} className="flex flex-col gap-3">
         {inlineAnswer && (
           <p
-            role="alert"
+            // Only a refusal interrupts; anything softer is a polite status.
+            role={inlineAnswer.notice.tone === "error" ? "alert" : "status"}
             data-testid="composer-outcome"
             data-tone={inlineAnswer.notice.tone}
             className={
@@ -797,6 +808,7 @@ export function InviteComposerView({
           disabled={sendDisabled}
           describedBy={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
         />
+        </div>
         <button
           // Submits to its OWN binding, so dismissing is a real action rather
           // than a button that looks live and does nothing. Disabled while no

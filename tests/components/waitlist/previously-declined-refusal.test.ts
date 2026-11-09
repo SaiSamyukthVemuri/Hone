@@ -50,6 +50,8 @@ let root: ReturnType<typeof createRoot>;
 const action = vi.fn<(f: FormData) => Promise<InviteOutcomeResult>>();
 
 beforeEach(() => {
+  // jsdom has no layout, so no scrollIntoView; the scroll describe below replaces this with a spy.
+  Element.prototype.scrollIntoView = vi.fn() as never;
   action.mockReset();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -184,5 +186,71 @@ describe("the refusal is announced beside Send", () => {
       other.click();
     });
     expect(inline(0)).toBeNull();
+  });
+});
+
+describe("the answer and Send are brought into view (phone: the alert pushes Send down)", () => {
+  let scroll: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll as never;
+  });
+  afterEach(() => {
+    delete (window as { matchMedia?: unknown }).matchMedia;
+  });
+  const rerender = () => mount();
+
+  it("scrolls once when the refusal appears, to a block holding both the alert and Send, with least movement", async () => {
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    expect(scroll).not.toHaveBeenCalled();
+    await press(0);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    const target = scroll.mock.contexts[0] as HTMLElement;
+    expect(target.contains(inline(0))).toBe(true);
+    expect(target.contains(send(0))).toBe(true);
+  });
+  it("does not scroll again when the same answer re-renders", async () => {
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    await press(0);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    await rerender();
+    await act(async () => {
+      send(1).focus();
+    });
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+  it("does not move focus", async () => {
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    await act(async () => send(0).focus());
+    await press(0);
+    expect(document.activeElement).toBe(send(0));
+  });
+  it("honours prefers-reduced-motion: an instant jump, not a smooth scroll", async () => {
+    (window as { matchMedia?: unknown }).matchMedia = () => ({ matches: true });
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    await press(0);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" });
+  });
+});
+
+describe("the live-region role follows the tone", () => {
+  it("a refusal is an alert", async () => {
+    action.mockResolvedValue(REFUSED);
+    await mount();
+    await press(0);
+    expect(inline(0)!.getAttribute("role")).toBe("alert");
+  });
+  it("a softer answer is a polite status, not an alert", async () => {
+    Element.prototype.scrollIntoView = vi.fn() as never;
+    action.mockResolvedValue({ outcome: { state: "indeterminate", code: "unavailable" } });
+    await mount();
+    await press(0);
+    expect(inline(0)!.getAttribute("data-tone")).toBe("warning");
+    expect(inline(0)!.getAttribute("role")).toBe("status");
   });
 });
