@@ -3,7 +3,7 @@
   "migrations": {
     "count": 263,
     "last": "0326_waitlist_retention_cleanup.sql",
-    "sha256": "b1bd9f55101e2c0c238c14b8aeafa0fa706b7f1a781ffcdd24d9dda789d6ce5e"
+    "sha256": "d72089896a6753b9bdcf3216193ff89feb81be5c84aa305dc428c3e3445c6546"
   },
   "public": {
     "tables": [
