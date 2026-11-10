@@ -1,6 +1,0 @@
-{
-  "pr": 1412,
-  "runtime": true,
-  "migrations": ["supabase/migrations/0326_waitlist_retention_cleanup.sql"],
-  "release_receipt": "01-ops/1412-release-receipt.json"
-}
