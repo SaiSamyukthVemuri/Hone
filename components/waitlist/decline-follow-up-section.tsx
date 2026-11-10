@@ -141,6 +141,8 @@ export function DeclineFollowUpSection({
           return (
             <li key={r.followupId} className="border-t border-amber-200 pt-3 first:border-t-0 first:pt-0" data-status={r.status} data-kind={r.kind}>
               <p className="font-medium">{r.clientName || "A person on the waitlist"}</p>
+              {/* At the top of the row so an opened panel grows DOWNWARD into the row with room below it, never off the bottom of the screen; DOM, visual and focus order agree. */}
+              {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
               {r.kind === "withdrawal" ? <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
               {erased ? (
                 <p className="text-neutral-600 dark:text-neutral-400">
@@ -211,7 +213,6 @@ export function DeclineFollowUpSection({
               ) : (
                 <p className="mt-1 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
               )}
-              {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
             </li>
           );
         };

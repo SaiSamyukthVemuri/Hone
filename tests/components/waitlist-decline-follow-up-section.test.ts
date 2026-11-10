@@ -102,6 +102,16 @@ describe("the owner follow-up section", () => {
     expect(html).not.toMatch(/<button[^>]*tabindex="-1"/);
     expect(render([row({ clientName: "" })])).toContain('aria-label="More actions for this person: erase answers"');
   });
+  it("More actions sits in the row header, right after the name and BEFORE the answers and the primary actions, so an opened panel grows downward", () => {
+    const html = render([row({ clientName: "Ada Lovelace" })]);
+    const name = html.indexOf("Ada Lovelace");
+    const more = html.indexOf('data-testid="more-actions"');
+    expect(name).toBeGreaterThan(-1);
+    expect(more).toBeGreaterThan(name);
+    expect(more).toBeLessThan(html.indexOf("WHYMARK"));
+    expect(more).toBeLessThan(html.indexOf("Book now"));
+    expect(html).not.toContain("flex-col-reverse");
+  });
   it("Book now, Mark handled and Keep on the waitlist stay visible OUTSIDE More actions", () => {
     const html = render([row(), row({ followupId: "44444444-4444-4444-8444-444444444444", kind: "withdrawal" })]);
     const outside = html.replace(/<details data-testid="more-actions"[\s\S]*?<\/details><\/div><\/details>/g, "");
