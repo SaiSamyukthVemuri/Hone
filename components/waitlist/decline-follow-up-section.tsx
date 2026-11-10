@@ -41,20 +41,36 @@ function eraseDate(iso: string | null, timeZone: string): string | null {
 const BUTTON =
   "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
 
-/** Two-step erase with no client JavaScript, the same pattern as Remove: the confirm button is not in the DOM until the disclosure is opened. */
+/** Two-step erase with no client JavaScript, the same pattern as Remove: the confirm button is not in the DOM until the disclosure is opened.
+ *  Erase is ENTRY-WIDE (every response of this person), so the copy says so; it sits behind a "More actions" disclosure so the primary actions stay the only
+ *  things in the owner's way. Both disclosures are native <details>: keyboard reachable, no client JavaScript. */
+export const ERASE_CONFIRM_COPY =
+  "Erase all of this person's answers on the waitlist now, including earlier responses? This cannot be undone. The responses themselves stay, so you can still follow up.";
+
 function EraseControl({ id }: { id: string }) {
   return (
     <details data-testid="erase-control">
-      <summary className={`${BUTTON} cursor-pointer list-none select-none`}>Erase answers</summary>
+      <summary className={`${BUTTON} cursor-pointer list-none select-none`}>Erase all of this person&apos;s answers…</summary>
       <form action={eraseAnswersAction} className="mt-2 flex flex-col gap-2">
         <Hidden id={id} />
-        <p className="break-words text-neutral-600 dark:text-neutral-400">
-          Erase their answers now? This cannot be undone. The response itself stays, so you can still follow up.
-        </p>
+        <p className="break-words text-neutral-600 dark:text-neutral-400">{ERASE_CONFIRM_COPY}</p>
         <button type="submit" className={BUTTON}>
-          Yes, erase the answers
+          Yes, erase all of this person&apos;s answers
         </button>
       </form>
+    </details>
+  );
+}
+
+function MoreActions({ id, name }: { id: string; name: string }) {
+  return (
+    <details data-testid="more-actions" className="mt-2">
+      <summary aria-label={`More actions for ${name}: erase answers`} className={`${BUTTON} cursor-pointer list-none select-none`}>
+        More actions
+      </summary>
+      <div className="mt-2">
+        <EraseControl id={id} />
+      </div>
     </details>
   );
 }
@@ -113,8 +129,10 @@ export function DeclineFollowUpSection({
         </p>
       ) : null}
       {rows.length === 0 ? <p className="mt-1">No responses need follow-up.</p> : null}
-      <ul className="mt-2 flex flex-col gap-4">
-        {rows.map((r) => {
+      {(() => {
+        const openRows = rows.filter((r) => r.status === "open");
+        const closedRows = rows.filter((r) => r.status !== "open");
+        const renderRow = (r: FollowUpRow) => {
           const erased = r.answersErasedAt !== null;
           const hasAnswers = r.whyNotWork !== null || r.betterTimes !== null;
           const when = eraseDate(r.eraseBy, timeZone);
@@ -193,15 +211,22 @@ export function DeclineFollowUpSection({
               ) : (
                 <p className="mt-1 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
               )}
-              {!erased && hasAnswers ? (
-                <div className="mt-2">
-                  <EraseControl id={r.followupId} />
-                </div>
-              ) : null}
+              {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
             </li>
           );
-        })}
-      </ul>
+        };
+        return (
+          <>
+            {openRows.length > 0 ? <ul className="mt-2 flex flex-col gap-4">{openRows.map(renderRow)}</ul> : rows.length > 0 ? <p className="mt-1">No open responses.</p> : null}
+            {closedRows.length > 0 ? (
+              <details data-testid="closed-responses" className="mt-3">
+                <summary className={`${BUTTON} cursor-pointer list-none select-none`}>{`Closed (${closedRows.length})`}</summary>
+                <ul className="mt-2 flex flex-col gap-4">{closedRows.map(renderRow)}</ul>
+              </details>
+            ) : null}
+          </>
+        );
+      })()}
     </section>
   );
 }
