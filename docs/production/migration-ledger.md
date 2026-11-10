@@ -73,21 +73,21 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ### The 0327 apply (facts as recorded by OPS, 2026-11-10; apply record `01-ops/0327-APPLY-RESULT-20261110T0019Z.md`; the read-only precheck is `01-ops/0327-PARTA-RESULT-20261110T0009Z.md`)
 
-- **What it is.** `0327_waitlist_followup_read_bound.sql`: it replaces the owner follow-up read (a bound on what that read returns). The export read and the erase-by helper keep their 0326 bodies, so the retention rule is unchanged. The file of 0327 is not in this tree: it arrives with #1419, which was not merged when this entry was written.
+- **What it is.** `0327_waitlist_followup_read_bound.sql`: it replaces the owner follow-up read so a withdrawal row shows the decline answer its retention clock binds to. Display only: it changes which decline answer a withdrawal row shows; retention, erase and export are unchanged. The export read and the erase-by helper keep their 0326 bodies. The file of 0327 arrived with #1419, merged as `09a84b18b` on 2026-11-10 at 00:22:08Z at head `04cb38a2e`, after the apply was read back.
 - **Approval.** Sam's own words for this exact package: apply 0327 only, with a plain push and without `--include-all`, migration sha256 `3b2c9a30…`, SEAL-SHA256SUMS `0c8b6170…`, and hold the #1419 merge until Sam reviews the production read-back.
 - **Package.** One plain push, exactly one migration; apply script `aedc55b3…`; bundle tar `84ea158b…` (267 files, 0001..0327, with the expected absences); pinned CLI v2.102.0.
 - **Pre-push reads.** 266 history rows, max `0326`, `0327` absent (the same as the Part A result); preflight passed.
 - **Push.** 2026-11-10T00:19:12Z (client side).
 - **Read-back.** 00:19:13Z-00:19:15Z: **OVERALL PASS**. History 267 rows, max `0327`, `0327` once. The owner follow-up read, the export read and the erase-by helper are `postgres`-owned security-definer functions with `search_path` set to `pg_catalog, pg_temp`; EXECUTE is `service_role` only on the two reads and nobody on the helper; no PUBLIC EXECUTE. The follow-up read has the 0327 body (md5 `a1943da8…`); exactly one overload each.
 - **Hosted at that read-back:** 267 rows, max `0327`.
-- **Release.** #1419 (the file of 0327) was held for Sam's review of the read-back; no application change is needed for it. The scheduled cleanup at 10:00 UTC on 2026-11-10 is to record a success heartbeat.
+- **Release.** #1419 (the file of 0327) was held for Sam's review of the read-back, then merged on Sam's own words ("I approve merging #1419 at 04cb38a2e"); no application change was needed for it. The scheduled cleanup at 10:00 UTC on 2026-11-10 is to record a success heartbeat.
 - **Not captured.** Any server-side apply instant.
 
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
 
-- **What changed.** Sam approved, in Sam's own words, activating HON-7 V1 in production with the corrected notice from #1414 and #1415. The activation instant is **2026-11-09T15:19:06Z**: the answers flag (`WAITLIST_DECLINE_ANSWERS`) and owner email (`HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED`, with `HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE` set to that instant) were created as Production-only environment variables, then production was redeployed on `c671beb22` (READY 15:21:44Z).
+- **What changed.** Sam approved, in Sam's own words, activating HON-7 V1 in production with the corrected notice from #1414 and #1415. The activation instant is **2026-11-09T15:19:06Z**: the answers flag (`WAITLIST_DECLINE_ANSWERS`) and owner email (`HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED`, with `HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE` set to that instant) were created as Production-only environment variables, then production was redeployed on `c671beb22` (READY 15:21:44Z). Variables created 15:19:06Z; redeploy READY 15:21:44Z; the deadline is counted from the earlier instant (conservative).
 - **Unchanged.** Admission stays Closed, public joining stays blocked and SMS stays off. No migration was applied for this.
-- **Retention.** The 30-day hard deadline for automatic cleanup (2026-12-09T15:19:06Z) is met by the 0326 cleanup, which was applied and deployed before the activation.
+- **Retention.** The 30-day hard deadline for automatic cleanup (2026-12-09T15:19:06Z) is to be met by the 0326 cleanup, applied and deployed before the activation; the first scheduled run (10:00 UTC, 2026-11-10) is read separately and is not recorded here.
 
 ## Previous state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
