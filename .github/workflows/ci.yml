@@ -115,6 +115,9 @@ jobs:
       # downstream, which would make the flag `--shard=N/` and fail the lane.
       browser_shard_total: ${{ steps.browser.outputs.browser_shard_total }}
       browser_reason: ${{ steps.browser.outputs.browser_reason }}
+      browser_shared: ${{ steps.browser.outputs.browser_shared }}
+      browser_photos: ${{ steps.browser.outputs.browser_photos }}
+      browser_time_inputs: ${{ steps.browser.outputs.browser_time_inputs }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -199,6 +202,8 @@ jobs:
 
       - name: Select browser groups
         id: browser
+        env:
+          FULL_MATRIX_REQUIRED: ${{ steps.classify.outputs.full_matrix_required }}
         run: |
           set -euo pipefail
           node -e '
@@ -217,8 +222,22 @@ jobs:
               // entire suite split across the TARGETED shard count under the
               // TARGETED 15 min cap, which is strictly less time and fewer
               // runners than the same workload gets when it is named extended.
+              // HON-73. AN EMPTY SELECTION MEANS "RUN EVERYTHING" ONLY WHEN THE
+              // SHARD JOB WILL ACTUALLY RUN, which with no groups is only the
+              // full-matrix case. This step runs on EVERY diff, and before this
+              // line a docs-only or backend-only diff (no groups, shards skipped)
+              // still emitted browser_extended=true, which started the storage photo
+              // and WebKit time-input jobs on PRs that touch neither.
               const fullSuite = !specs || specs.length === 0;
-              const extended = r.extended || fullSuite;
+              const fullMatrix = process.env.FULL_MATRIX_REQUIRED === "true";
+              const extended = r.extended || (fullSuite && fullMatrix);
+              // The two not-required lanes run on the paths they prove, on
+              // shared infrastructure, on full-matrix diffs and on every push to
+              // production; NOT on every extended run, because unattributed
+              // application code elsewhere cannot reach real storage or WebKit.
+              const PHOTO_PATHS = /(photo|portrait|treatment[-_]?images?|image[-_]?upload|signed[-_]?url|storage)/i;
+              const TIME_INPUT_PATHS = /(availability|hours[-_]?editor|time[-_]?input|finish[-_]?appointment|touch[-_]?floor)/i;
+              const shared = m.sharedFiles(files).length > 0;
               // Extended runs the whole suite, which is never fewer files than
               // shards. Targeted is capped at what it actually selected.
               const shardTotal = extended
@@ -269,6 +288,9 @@ jobs:
                 `browser_shard_total=${shardTotal}`,
                 `browser_shards=[${Array.from({ length: shardTotal }, (_, i) => i + 1).join(",")}]`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
+                `browser_shared=${shared}`,
+                `browser_photos=${files.some((f) => PHOTO_PATHS.test(f))}`,
+                `browser_time_inputs=${files.some((f) => TIME_INPUT_PATHS.test(f))}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
               console.log(out);
@@ -2144,7 +2166,7 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || (github.event_name == 'push' && needs.changes.outputs.docs_only != 'true') || needs.changes.outputs.browser_shared == 'true' || needs.changes.outputs.browser_photos == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2399,7 +2421,7 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || (github.event_name == 'push' && needs.changes.outputs.docs_only != 'true') || needs.changes.outputs.browser_shared == 'true' || needs.changes.outputs.browser_time_inputs == 'true' || needs.changes.outputs.browser_photos == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:

@@ -227,7 +227,8 @@ describe("the step that emits the matrix actually RUNS", () => {
       writeFileSync(path.join(dir, "changed.txt"), "vitest.config.ts\n");
       execFileSync("bash", ["-c", script], {
         cwd: dir,
-        env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile },
+        // The step reads the classifier's verdict, as the workflow wires it.
+        env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile, FULL_MATRIX_REQUIRED: "true" },
         encoding: "utf8",
       });
       const emitted = readFileSync(outFile, "utf8");
@@ -239,6 +240,67 @@ describe("the step that emits the matrix actually RUNS", () => {
       expect(emitted).toContain("browser_shards=[1,2,3,4]");
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("HON-73: a selection with NO groups and NO full matrix is not extended (docs-only, backend-only)", () => {
+    // The step runs on EVERY diff. A docs-only diff selects no groups and the
+    // shard job is skipped, but before HON-73 the step still emitted
+    // browser_extended=true, which started storage-photos and webkit-hon-62 on
+    // PRs touching neither (measured: 17 of the last 97 ci runs).
+    const script = stepScript("Select browser groups");
+    expect(CI_YML).toContain("FULL_MATRIX_REQUIRED: ${{ steps.classify.outputs.full_matrix_required }}");
+    for (const [changed, fm] of [
+      ["docs/README.md\n", "false"],
+      ["supabase/migrations/0001_x.sql\ntests/db/x.db.test.ts\n", "false"],
+    ] as const) {
+      const dir = mkdtempSync(path.join(tmpdir(), "hone-ci-step-"));
+      const outFile = path.join(dir, "github_output");
+      try {
+        writeFileSync(outFile, "");
+        symlinkSync(path.join(ROOT, "scripts"), path.join(dir, "scripts"));
+        symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
+        writeFileSync(path.join(dir, "changed.txt"), changed);
+        execFileSync("bash", ["-c", script], {
+          cwd: dir,
+          env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile, FULL_MATRIX_REQUIRED: fm },
+          encoding: "utf8",
+        });
+        const emitted = readFileSync(outFile, "utf8");
+        expect(emitted, changed).toContain("browser_run=false");
+        expect(emitted, changed).toContain("browser_extended=false");
+        expect(emitted, changed).toContain("browser_shared=false");
+        expect(emitted, changed).toContain("browser_photos=false");
+        expect(emitted, changed).toContain("browser_time_inputs=false");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("HON-73: the photo, time-input and shared signals fire on the paths they prove", () => {
+    const script = stepScript("Select browser groups");
+    for (const [changed, key] of [
+      ["components/sessions/treatment-image-uploader.tsx\n", "browser_photos=true"],
+      ["app/(app)/settings/availability/hours-editor.tsx\n", "browser_time_inputs=true"],
+      ["lib/supabase/server.ts\n", "browser_shared=true"],
+    ] as const) {
+      const dir = mkdtempSync(path.join(tmpdir(), "hone-ci-step-"));
+      const outFile = path.join(dir, "github_output");
+      try {
+        writeFileSync(outFile, "");
+        symlinkSync(path.join(ROOT, "scripts"), path.join(dir, "scripts"));
+        symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
+        writeFileSync(path.join(dir, "changed.txt"), changed);
+        execFileSync("bash", ["-c", script], {
+          cwd: dir,
+          env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile, FULL_MATRIX_REQUIRED: "false" },
+          encoding: "utf8",
+        });
+        expect(readFileSync(outFile, "utf8"), changed).toContain(key);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 

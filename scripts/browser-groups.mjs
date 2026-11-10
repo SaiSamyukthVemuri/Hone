@@ -548,7 +548,12 @@ export const PUBLIC_BOOKING_PATTERNS = [/^app\/book\//, /^lib\/booking\//];
 const PATH_TO_GROUP = [
   { group: "intake", patterns: [/intake/i] },
   { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
-  { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
+  // HON-73. The waitlist settings, decline copy and follow-up actions matched no
+  // rule, so every waitlist diff fell through to EXTENDED (measured: 18 of the
+  // last 97 ci runs). Both waitlist browser specs already live in `booking`
+  // (new-client-waitlist, waitlist-invitation-delivery-status), so this selects
+  // the group that proves the surface instead of everything.
+  { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i, /^(app|components|lib)\/(.*\/)?[^/]*waitlist/i] },
   // UI-06. `appointment-prep-memory-card` is matched by the BOOKING rule's
   // /appointments?/i purely because of its filename, and by nothing here — so a
   // diff touching it selected `booking` + `smoke` and never ran
@@ -586,6 +591,11 @@ const PATH_TO_GROUP = [
   { group: "responsive", patterns: [/mobile/i, /responsive/i] },
 ];
 
+/** The changed files that match a SHARED pattern (empty when none do). */
+export function sharedFiles(files) {
+  return (files ?? []).map((f) => f.trim()).filter(Boolean).filter((f) => SHARED_PATTERNS.some((re) => re.test(f)));
+}
+
 /** All spec files for a set of group names, deduplicated and sorted. */
 export function specsForGroups(groups) {
   if (groups.includes(EXTENDED)) return null; // null = run everything
@@ -612,7 +622,7 @@ export function selectBrowserGroups(files) {
     return { groups: [], extended: false, reason: "docs / ledger / migration-only, no browser coverage needed" };
   }
 
-  const shared = list.filter((f) => SHARED_PATTERNS.some((re) => re.test(f)));
+  const shared = sharedFiles(list);
   if (shared.length > 0) {
     return {
       groups: [EXTENDED],

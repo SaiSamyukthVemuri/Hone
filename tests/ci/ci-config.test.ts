@@ -1260,11 +1260,15 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     }
   });
 
-  it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
+  it("runs when the HON-62 spec or its paths change, on shared / full-matrix diffs and every production push, NOT on every extended run (HON-73)", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
-    expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
+    expect(job.if).toContain("(github.event_name == 'push' && needs.changes.outputs.docs_only != 'true')");
+    expect(job.if).toContain("needs.changes.outputs.browser_shared == 'true'");
+    expect(job.if).toContain("needs.changes.outputs.browser_time_inputs == 'true'");
+    expect(job.if).toContain("needs.changes.outputs.browser_photos == 'true'");
+    expect(job.if).not.toContain("browser_extended");
   });
 
   it("runs for a payment-spec-only change (Codex P2: browser groups map only e2e/ specs), and not for an unrelated path", async () => {
@@ -1448,6 +1452,20 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
     expect(CI).not.toMatch(/needs:[^\n]*storage-photos/);
     expect(CI).not.toMatch(/^ {6}- storage-photos$/m);
     expect(code(CI.replace(JOB, ""))).not.toMatch(/storage-photos/);
+  });
+
+  it("HON-73: runs on its specs and photo paths, shared / full-matrix diffs and every production push, NOT on every extended run", () => {
+    const ifLine = JOB.split("\n").find((l) => l.startsWith("    if: ")) ?? "";
+    for (const s of [
+      "needs.changes.outputs.full_matrix_required == 'true'",
+      "(github.event_name == 'push' && needs.changes.outputs.docs_only != 'true')",
+      "needs.changes.outputs.browser_shared == 'true'",
+      "needs.changes.outputs.browser_photos == 'true'",
+      "contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts')",
+      "contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts')",
+      "contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts')",
+    ]) expect(ifLine).toContain(s);
+    expect(ifLine).not.toContain("browser_extended");
   });
 
   it("starts Supabase WITH storage-api, and every other start still excludes it", () => {
