@@ -62,13 +62,13 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 ### The 0326 apply (facts as recorded by OPS, 2026-11-09; apply record `01-ops/0326-APPLY-RESULT-20261109T1230Z.md`; the read-only precheck is `01-ops/0326-PARTA-RESULT-20261109T1222Z.md`)
 
 - **What it is.** `0326_waitlist_retention_cleanup.sql`: the scheduled retention cleanup for waitlist decline follow-ups. Six security-definer functions (the cleanup job, a failure recorder, a health read, a deadline helper, and replacements for two of the 0325 reads so overdue text is suppressed) and a run-log table with a bootstrap row.
-- **Approval.** Sam's own words on 2026-11-09 for this exact package (SEAL-SHA256SUMS `0c663db9…`), with the instruction to keep the answers flag and owner email off until the apply was verified.
+- **Approval.** Sam's own words on 2026-11-09 for this exact package (SEAL-SHA256SUMS `0c663db9…`), including, in Sam's words: "Keep WAITLIST_DECLINE_ANSWERS and owner email OFF."
 - **Package.** One plain push, exactly one migration; 0326 sha256 `5225f6aa…`; apply script `86230709…`; pinned CLI v2.102.0.
 - **Pre-push reads.** 265 history rows, max `0325`, `0326` absent; preflight passed; no transaction older than 60 s on the three scanned tables.
 - **Push.** 2026-11-09T12:30:09Z (client side).
 - **Read-back.** 12:30:10Z-12:30:13Z: **OVERALL PASS**. History 266 rows, max `0326`, `0326` once. The six functions are owned by `postgres`, with `search_path` set to `pg_catalog, pg_temp`; the job, the failure recorder, the health read and the two replaced reads are executable by `service_role` only, and the deadline helper by nobody; no PUBLIC. All six body md5 values equal the sealed values. The run-log table has row-level security on, no policy and no privilege for anyone; its four indexes exist and it holds exactly the one bootstrap run row.
 - **Hosted at that read-back:** 266 rows, max `0326`.
-- **Release.** #1412 merged as `26de3cc3b` at 13:00:03Z and #1413 as `2e3842f93` at 13:00:38Z, after the apply was verified. The first scheduled run row is expected from the 10:00 UTC run on 2026-11-10, read in a separate window; the stage's gap read is due by 2026-11-10T12:30Z.
+- **Release.** #1412 merged as `26de3cc3b` at 13:00:03Z and #1413 as `2e3842f93` at 13:00:38Z, after the apply was verified. The first scheduled run row is expected from the 10:00 UTC run on 2026-11-10, read in a separate window. No gap read applies: the apply record's "gap read within 24 h" line is inherited template text, and 0326 was an online apply with no maintenance window and no payment hold.
 - **Not captured.** Any server-side apply instant.
 
 ### The 0327 apply (facts as recorded by OPS, 2026-11-10; apply record `01-ops/0327-APPLY-RESULT-20261110T0019Z.md`; the read-only precheck is `01-ops/0327-PARTA-RESULT-20261110T0009Z.md`)
