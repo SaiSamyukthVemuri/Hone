@@ -1,0 +1,6 @@
+{
+  "pr": 1419,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0327_waitlist_followup_read_bound.sql"],
+  "release_receipt": "01-ops/1419-release-receipt.json"
+}
