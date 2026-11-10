@@ -36,7 +36,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ### Newer apply entries (recorded 2026-11-09; this tree's declared hosted max is NOT advanced by this change)
 
-`0324`, `0325` and `0326` have since been applied to production, one push each, under separate exact-package approvals. The three entries below are new; no earlier entry is rewritten. The "Pending migrations" cell above predates them and is kept as written for the same reason: it describes what this tree's declared hosted position implies, not the real hosted state. Advancing `hosted_migration_max` to `0326` in `migration-state.json` is a dated follow-up after HON-7 V1; it is blocked on the `0301`-`0303` and unallocated-number declarations, not on uncertainty about the applies.
+`0324`, `0325`, `0326` and `0327` have since been applied to production, one push each, under separate exact-package approvals. The four apply entries below are new; no earlier entry is rewritten. The "Pending migrations" cell above predates them and is kept as written for the same reason: it describes what this tree's declared hosted position implies, not the real hosted state. Advancing `hosted_migration_max` to `0327` in `migration-state.json` is a dated follow-up after HON-7 V1; it is blocked on the `0301`-`0303` and unallocated-number declarations, not on uncertainty about the applies.
 
 ### The 0324 apply (facts as recorded by OPS, 2026-11-09; `01-ops/0324-APPLY-RESULT-20261109T0005Z.md`)
 
@@ -69,6 +69,18 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Read-back.** 12:30:10Z-12:30:13Z: **OVERALL PASS**. History 266 rows, max `0326`, `0326` once. The six functions are owned by `postgres`, with `search_path` set to `pg_catalog, pg_temp`; the job, the failure recorder, the health read and the two replaced reads are executable by `service_role` only, and the deadline helper by nobody; no PUBLIC. All six body md5 values equal the sealed values. The run-log table has row-level security on, no policy and no privilege for anyone; its four indexes exist and it holds exactly the one bootstrap run row.
 - **Hosted at that read-back:** 266 rows, max `0326`.
 - **Release.** #1412 merged as `26de3cc3b` at 13:00:03Z and #1413 as `2e3842f93` at 13:00:38Z, after the apply was verified. The first scheduled run row is expected from the 10:00 UTC run on 2026-11-10, read in a separate window; the stage's gap read is due by 2026-11-10T12:30Z.
+- **Not captured.** Any server-side apply instant.
+
+### The 0327 apply (facts as recorded by OPS, 2026-11-10; apply record `01-ops/0327-APPLY-RESULT-20261110T0019Z.md`; the read-only precheck is `01-ops/0327-PARTA-RESULT-20261110T0009Z.md`)
+
+- **What it is.** `0327_waitlist_followup_read_bound.sql`: it replaces the owner follow-up read (a bound on what that read returns). The export read and the erase-by helper keep their 0326 bodies, so the retention rule is unchanged. The file of 0327 is not in this tree: it arrives with #1419, which was not merged when this entry was written.
+- **Approval.** Sam's own words for this exact package: apply 0327 only, with a plain push and without `--include-all`, migration sha256 `3b2c9a30…`, SEAL-SHA256SUMS `0c8b6170…`, and hold the #1419 merge until Sam reviews the production read-back.
+- **Package.** One plain push, exactly one migration; apply script `aedc55b3…`; bundle tar `84ea158b…` (267 files, 0001..0327, with the expected absences); pinned CLI v2.102.0.
+- **Pre-push reads.** 266 history rows, max `0326`, `0327` absent (the same as the Part A result); preflight passed.
+- **Push.** 2026-11-10T00:19:12Z (client side).
+- **Read-back.** 00:19:13Z-00:19:15Z: **OVERALL PASS**. History 267 rows, max `0327`, `0327` once. The owner follow-up read, the export read and the erase-by helper are `postgres`-owned security-definer functions with `search_path` set to `pg_catalog, pg_temp`; EXECUTE is `service_role` only on the two reads and nobody on the helper; no PUBLIC EXECUTE. The follow-up read has the 0327 body (md5 `a1943da8…`); exactly one overload each.
+- **Hosted at that read-back:** 267 rows, max `0327`.
+- **Release.** #1419 (the file of 0327) was held for Sam's review of the read-back; no application change is needed for it. The scheduled cleanup at 10:00 UTC on 2026-11-10 is to record a success heartbeat.
 - **Not captured.** Any server-side apply instant.
 
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
