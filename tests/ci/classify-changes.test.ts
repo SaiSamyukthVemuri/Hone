@@ -993,3 +993,31 @@ describe("classifier - the public booking surface selects every spec that books 
     expect((PUBLIC_BOOKING_PATTERNS as RegExp[]).map(String)).toEqual([String(/^app\/book\//), String(/^lib\/booking\//)]);
   });
 });
+
+describe("HON-73: waitlist source paths select booking, which holds the waitlist specs", () => {
+  const WAITLIST_SOURCES = [
+    "app/(app)/settings/waitlist/capacity-actions.ts",
+    "app/(app)/settings/waitlist/follow-up-actions.ts",
+    "app/(app)/settings/waitlist/page.tsx",
+    "lib/waitlist/decline-copy.ts",
+  ];
+
+  it("each one selects booking (+ smoke), not extended", () => {
+    for (const file of WAITLIST_SOURCES) {
+      const r = selectBrowserGroups([file]) as { groups: string[]; extended: boolean };
+      expect(r.extended, file).toBe(false);
+      expect(r.groups, file).toEqual(["booking", "smoke"]);
+    }
+  });
+
+  it("booking really holds both waitlist browser specs", () => {
+    const specs = specsForGroups(["booking"]) as string[];
+    expect(specs).toContain("new-client-waitlist.spec.ts");
+    expect(specs).toContain("waitlist-invitation-delivery-status.spec.ts");
+  });
+
+  it("a waitlist UNIT test or a rollback file gains no browser lane (the rule is anchored to source dirs)", () => {
+    expect((selectBrowserGroups(["tests/app/settings/waitlist-follow-up.test.ts"]) as { groups: string[] }).groups).toEqual([]);
+    expect((selectBrowserGroups(["supabase/rollbacks/0327_waitlist_followup_read_bound.down.sql"]) as { groups: string[] }).groups).toEqual([]);
+  });
+});
