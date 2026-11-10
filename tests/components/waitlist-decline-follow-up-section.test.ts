@@ -89,9 +89,11 @@ describe("the owner follow-up section", () => {
       expect(html).not.toContain("Yes, erase the answers");
     }
   });
-  it("the erase copy says it is every answer of this person, including earlier responses", () => {
+  it("the erase copy says it is every answer of this person, on other responses earlier or later, and that downloaded copies are not affected", () => {
     const html = render([row()]);
-    expect(html).toContain("Erase all of this person&#x27;s answers on the waitlist now, including earlier responses?");
+    expect(html).toContain("Erase all of this person&#x27;s answers now, including those on their other responses, earlier or later?");
+    expect(html).toContain("Copies you have already downloaded are not affected.");
+    expect(html).not.toContain("on the waitlist now");
   });
   it("More actions has an accessible name that includes the person and the action, and is a native keyboard-operable disclosure", () => {
     const html = render([row({ clientName: "Ada Lovelace" })]);

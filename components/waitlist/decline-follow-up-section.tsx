@@ -45,7 +45,7 @@ const BUTTON =
  *  Erase is ENTRY-WIDE (every response of this person), so the copy says so; it sits behind a "More actions" disclosure so the primary actions stay the only
  *  things in the owner's way. Both disclosures are native <details>: keyboard reachable, no client JavaScript. */
 export const ERASE_CONFIRM_COPY =
-  "Erase all of this person's answers on the waitlist now, including earlier responses? This cannot be undone. The responses themselves stay, so you can still follow up.";
+  "Erase all of this person's answers now, including those on their other responses, earlier or later? This cannot be undone. The responses themselves stay, so you can still follow up. Copies you have already downloaded are not affected.";
 
 function EraseControl({ id }: { id: string }) {
   return (
