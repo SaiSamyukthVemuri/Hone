@@ -24,9 +24,9 @@ it("an absent or unreadable LXD snap never invokes the installer wrapper", () =>
       env: { ...process.env, PATH: root + path.delimiter + process.env.PATH, WRAPPER_MARKER: marker },
       timeout: 5000,
     });
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(2);
     expect(result.stdout).toContain("Installed LXD snap not confirmed");
-    expect(result.stdout).toContain("Disk admission passes");
+    expect(result.stdout).not.toContain("passes");
     expect(existsSync(marker)).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -39,10 +39,10 @@ Do not remove or weaken a test to make a new runner green.
 - OPS previously estimated 231,000 job-minutes/month: roughly 5.3 workers
   continuously busy and peak concurrency 29. These are prior OPS estimates,
   not a fresh billing export. One pilot cannot promise this throughput.
-- Sam's last VPS output had 108 GiB free. This candidate proposes an 80 GiB
-  reserve plus a 30 GiB per-job budget: at least 110 GiB before one pilot,
-  BEFORE any extra image-cache allowance. These are conservative proposed
-  limits, not measured peaks. Do not prune or delete to pass admission.
+- Sam's last VPS output had 108 GiB free on root. Preserve an 80 GiB root
+  reserve; the 30 GiB per-job disk budget now belongs to the separate CI Volume
+  described below. These are conservative proposals, not measured peaks.
+  Do not prune or delete to pass admission.
 - This preparation environment has no route to `100.123.145.56`; SSH returns
   `Network is unreachable`. No runner has been registered or launched here.
 - Sam's Mac-side checks confirm 108 GiB free on root, 28 GiB available RAM and
@@ -77,9 +77,34 @@ On an error/timeout, inspect the device and pool before retrying.
 
 Put the runner roots, nested Docker data, images and scratch in this pool.
 Preserve the root reserve and inspect pool free/data/metadata consumption
-separately; the earlier root-only 110 GiB calculation is not admission proof
-for this new layout. Hetzner server backups do not cover attached Volumes, so
+separately. The preflight no longer uses the obsolete root-only 110 GiB sum.
+Hetzner server backups do not cover attached Volumes, so
 keep CI data reproducible/disposable and retain required evidence elsewhere.
+
+`scripts/ci/check-vps-storage.py` is a read-only snapshot check, not a worker
+launcher. Run the reviewed checkout via `sudo bash scripts/ci/vps-host-preflight.sh`
+so LXD/LVM reads have permission; the script never escalates itself or grants
+CI host access. It refuses a missing Volume or pool, a different serial/size,
+a VG spanning root/another disk, a directory pool, changed ext4/30 GiB settings,
+and inactive/unhealthy/unknown thin-pool state. It does not require a filesystem
+mount on the whole disk: LVM/ext4 mounts belong to individual runner LVs.
+
+Proposed single-pilot storage ceilings:
+
+- Root free: at least 80 GiB, checked separately from the CI pool.
+- Thin data free: at least 40 GiB (30 GiB new job plus 10 GiB pool reserve),
+  with a conservative allowance for rounded LVM Data%.
+- Existing thin LVs' full logical sizes, including images/snapshots, plus the
+  new 30 GiB job and 10 GiB reserve must fit physically. Low current Data%
+  alone does not prove room for already promised future writes.
+- Thin metadata: strictly below 50%; invalid/missing reads refuse admission.
+  This is a conservative proposed stop threshold, not a measured peak bound.
+
+The future host supervisor must hold an exclusive admission lock, exclude
+other pool writers and rerun the snapshot before each launch. A standalone
+passing snapshot does not reserve space or prove memory, network or isolation.
+Record actual data/metadata peaks and qualify exhaustion/cancellation recovery
+before permitting unattended work. No live pool receipt has been observed.
 
 ## Exact provisioning scope for the pilot
 
@@ -87,9 +112,11 @@ Do this only from the VPS-connected OPS environment after reviewing the actual
 disk, LXD storage and network state. No host-wide install script is supplied
 because those facts are not available in this environment.
 
-1. Run `bash scripts/ci/vps-host-preflight.sh` on the VPS. It reads capacity,
-   running Docker workloads and LXD availability, and exits 2 if disk admission
-   fails. It does not install, register, restart, prune or delete anything.
+1. Run the reviewed `sudo bash scripts/ci/vps-host-preflight.sh` on the VPS.
+   It reads capacity, existing Docker workloads and the separate LXD/LVM pool.
+   An unavailable installed snap or failed storage policy exits 2; other failed
+   commands also stop the script. It does not install, register, restart, prune
+   or delete anything. Missing tools/access require inspection, never fallback.
 2. Preserve the existing HON-8 QA containers, host Docker engine, production
    assets, backups, worktrees and rollback images. Export the current branch
    controls before any later required-check change. Do not grant CI access to
@@ -192,6 +219,16 @@ hosted compute; there is deliberately no automatic hosted fallback.
 - Pool setup guard tests accept the exact new-disk facts and reject another
   serial/size, root or mounted storage, partitions, signatures, unknown reads
   and a pre-existing CI pool. They do not run a host initialization command.
+- Storage-snapshot tests exercise the actual policy and fixture collector:
+  separate root reserve, exact Volume/VG identity, thin data/metadata ceilings,
+  missing devices/reads and logical overcommit despite low current Data%.
+  None of these fixtures is live VPS capacity or isolation evidence.
+- Current focused preparation run: 252 tests pass (201 existing CI contracts,
+  9 routing, 1 preflight, 12 pool-setup and 29 storage-snapshot tests). Removing
+  the logical-commitment refusal deliberately makes its regression test fail;
+  the exact original script was restored afterward. Python compilation,
+  Bash syntax and the changed tests' TypeScript check pass. Independent review
+  and live VPS qualification remain outstanding.
 - Committed-tree verification and the canonical schema-snapshot check pass
   after materializing the 264 unchanged migration sources at the pinned head.
 - Full repository build, DB/browser tests, live runner isolation/capacity and
@@ -202,3 +239,5 @@ hosted compute; there is deliberately no automatic hosted fallback.
 - [GitHub: self-hosted runner routing and ephemeral runners](https://docs.github.com/en/actions/reference/runners/self-hosted-runners)
 - [GitHub: secure use of self-hosted runners](https://docs.github.com/en/actions/reference/security/secure-use)
 - [Canonical: LXD hardening and resource limits](https://canonical.com/lxd/docs/latest/howto/security_harden/)
+- [Canonical: LXD 5.21 LVM storage and thin overcommit](https://canonical.com/lxd/docs/v5.21/reference/storage_lvm/)
+- [LVM2: reporting field definitions](https://github.com/lvmteam/lvm2/blob/main/lib/report/columns.h)
