@@ -352,6 +352,15 @@ export async function sendWaitlistEmailIdempotent(args: {
    * `waitlistEventOnlyIdempotencyKey`.
    */
   payloadCarriesSecret?: boolean;
+  /**
+   * Key on the EVENT ALONE, with no payload digest, for a send whose recipient or link may legitimately change between an ambiguous
+   * attempt and its retry (an address change, a different app origin). A payload-hashed key would change with it and the provider could
+   * deliver a second email. Same key shape as `payloadCarriesSecret`, but a different reason: nothing here is secret. Requires
+   * `eventScope`. The caller takes on the corollary: if the bytes differ under one key the provider REFUSES (`invalid_idempotent_request`),
+   * which must be handled as "the first request may have been delivered", never as a new send. Existing callers do not set this, so
+   * their keys are unchanged.
+   */
+  eventOnlyKey?: boolean;
   /** Test seam. Defaults to the shared Resend client. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<WaitlistSendOutcome> {
@@ -386,7 +395,7 @@ export async function sendWaitlistEmailIdempotent(args: {
     typeof args.eventScope === "string" && args.eventScope.length > 0
       ? args.eventScope
       : null;
-  if (args.payloadCarriesSecret && !eventScopeValue) {
+  if ((args.payloadCarriesSecret || args.eventOnlyKey) && !eventScopeValue) {
     // FAIL CLOSED. Falling back to the payload digest here would put the
     // credential into the transmitted key, which is the one thing this flag
     // exists to prevent — and it would do so silently, at exactly the call
@@ -408,7 +417,7 @@ export async function sendWaitlistEmailIdempotent(args: {
   // neither component can drift from what is actually transmitted. A
   // credential-bearing payload takes the event-only shape instead, so the
   // secret never reaches the provider header.
-  const idempotencyKey = args.payloadCarriesSecret
+  const idempotencyKey = args.payloadCarriesSecret || args.eventOnlyKey
     ? waitlistEventOnlyIdempotencyKey(
         args.namespace,
         args.studioId,

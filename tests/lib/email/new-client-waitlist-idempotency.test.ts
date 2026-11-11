@@ -439,3 +439,42 @@ describe("definite refusals", () => {
     expect(attempts).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// eventOnlyKey (HON-7 owner decline email): a key that does NOT track the payload, for a send whose address or link may change between an
+// ambiguous attempt and its retry. Existing callers never set it, so their keys are the payload-hashed ones above.
+// ---------------------------------------------------------------------------
+describe("eventOnlyKey", () => {
+  const send = (over: Record<string, unknown>) => {
+    const keys: string[] = [];
+    const transport: IdempotentEmailTransport = {
+      emails: { send: async (_p, o) => { keys.push(o?.idempotencyKey ?? ""); return { data: { id: "m1" }, error: null }; } },
+    };
+    return sendWaitlistEmailIdempotent({
+      namespace: "studio", studioId: STUDIO_A, to: "a@example.test", subject: "S", html: "<p>h</p>", text: "t", transport, ...over,
+    } as Parameters<typeof sendWaitlistEmailIdempotent>[0]).then((outcome) => ({ outcome, keys }));
+  };
+
+  it("the key follows the event, not the recipient or the bytes", async () => {
+    const a = await send({ eventScope: "ev/1", eventOnlyKey: true });
+    const b = await send({ eventScope: "ev/1", eventOnlyKey: true, to: "b@example.test", text: "different" });
+    expect(a.keys[0]).toBe(b.keys[0]);
+    expect(a.keys[0]).not.toMatch(/[0-9a-f]{64}/);
+  });
+  it("different events get different keys", async () => {
+    const a = await send({ eventScope: "ev/1", eventOnlyKey: true });
+    const b = await send({ eventScope: "ev/2", eventOnlyKey: true });
+    expect(a.keys[0]).not.toBe(b.keys[0]);
+  });
+  it("refuses locally, sending nothing, when no event scope is given", async () => {
+    const r = await send({ eventOnlyKey: true });
+    expect(r.keys).toHaveLength(0);
+    expect(r.outcome).toMatchObject({ status: "rejected", code: "missing_event_scope" });
+  });
+  it("without the flag the key still tracks the payload (existing callers unchanged)", async () => {
+    const a = await send({ eventScope: "ev/1" });
+    const b = await send({ eventScope: "ev/1", text: "different" });
+    expect(a.keys[0]).not.toBe(b.keys[0]);
+    expect(a.keys[0]).toMatch(/[0-9a-f]{64}$/);
+  });
+});

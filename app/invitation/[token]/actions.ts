@@ -18,13 +18,22 @@
 //                         with no business in browser state)
 
 import { cookies, headers } from "next/headers";
+import { after } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { TIMES_FEEDBACK_NOTE_MAX, waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
+import { validateNoTimesWork } from "@/lib/waitlist/decline-responses";
+import { dispatchDeclineOwnerEmail } from "@/lib/waitlist/decline-owner-email";
+import { waitlistBookingCommandEnabled } from "@/lib/booking/waitlist-booking-command";
 import {
   beginRecipientProof,
   completeRecipientProof,
   declineInvitation,
+  declineTimesUnsuitable,
+  declineWithAnswers,
+  requestWithdrawal,
   resolveInvitation,
   type ResolveOutcome,
 } from "@/lib/booking/waitlist-invitation";
@@ -35,6 +44,7 @@ import {
   filterSlotsToScope,
   slotWithinScope,
   groupSlotsByDay,
+  formatSlotDayLabel,
   proofStageFromBegin,
   proofStageFromComplete,
   type InvitationViewState,
@@ -46,6 +56,15 @@ import {
 // window with it exhausts the caller's own quota and silently drops the tail.
 // The range helper is throttled ONCE by this surface instead.
 import { isBookableByNewClient } from "@/lib/booking/consultation";
+import {
+  NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+  getNewClientAdmissionMode,
+  invitedBookingRefusalKind,
+} from "@/lib/booking/new-client-admission";
+import {
+  FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
+  isFreeConsultWaitlistOnlyReschedule,
+} from "@/lib/booking/free-consult-reschedule-policy";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
@@ -90,7 +109,12 @@ import type { BeginProofOutcome } from "@/lib/booking/waitlist-invitation";
 // first, and the first then simply asks for proof again.
 
 const CAPABILITY_COOKIE = "wl_proof_capability";
-/** The database owns the capability's 30 minutes; this only bounds the cookie. */
+/**
+ * The database owns the capability's lifetime; this only bounds the cookie. The
+ * SQL source is the assignment `proof_capability_expires_at = v_now + interval
+ * '30 minutes'` in the LATEST migration that sets it (0192 at the time of
+ * writing), and tests/app/invitation/recipient-actions.test.ts compares the two.
+ */
 const CAPABILITY_COOKIE_MAX_AGE_SECONDS = 30 * 60;
 
 // P3-A. The cookie is SIGNED and BOUND to one invitation.
@@ -139,6 +163,11 @@ function bindingFor(
   return createHmac("sha256", secret).update(bound).digest("hex");
 }
 
+// DESIGN: the proof is a SELF-CONTAINED SIGNED COOKIE, not a server session. A
+// successful booking clears it only in the browser that booked. A second browser
+// that had already proven keeps its cookie, so it keeps the booked view of a
+// spent invitation until that cookie expires (30 minutes at most). This is
+// intended; the database's own check at every mutation is what authorises.
 async function readCapability(rawToken: string): Promise<string | null> {
   const secret = proofSecret();
   // No secret configured is a FAIL-CLOSED condition, not a bypass: without it
@@ -250,6 +279,11 @@ type StudioContext = {
    * retry something that will never work.
    */
   bookableByNewClient: boolean;
+  /**
+   * HON-7. The cancellation consequence to disclose before booking, or null.
+   * Resolved by the policy module from the server-read slug and service row.
+   */
+  bookingNotice: string | null;
 };
 
 /** First row of a `returns table` RPC payload, whatever shape the driver used. */
@@ -420,7 +454,7 @@ async function loadStudioContext(
       // loader answers that with a RETRYABLE error — telling the recipient to
       // try again on an offer that is permanently unusable. The row is read
       // whatever its state and judged one line down.
-      .select("name, default_duration_minutes, modality, active")
+      .select("name, default_duration_minutes, modality, active, price_cents")
       .eq("id", serviceId)
       .eq("studio_id", studioId)
       .maybeSingle(),
@@ -450,6 +484,16 @@ async function loadStudioContext(
     // an invitation scoped to an ordinary treatment, or to a service since
     // deactivated, rendered selectable times that the booking command would
     // then refuse.
+    bookingNotice: isFreeConsultWaitlistOnlyReschedule({
+      studioSlug: studio.slug as string,
+      service: {
+        name: service.name as string,
+        modality: (service.modality as string | null) ?? null,
+        price_cents: (service.price_cents as number | null) ?? null,
+      },
+    })
+      ? `Before you book: ${FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING}`
+      : null,
     bookableByNewClient: isBookableByNewClient({
       name: service.name as string,
       modality: (service.modality as string | null) ?? null,
@@ -458,9 +502,62 @@ async function loadStudioContext(
   };
 }
 
+/**
+ * The screen for a spent invitation whose entry the database says is converted.
+ * Null when the state is anything else or cannot be read (including a database
+ * without the 0313 function). Never throws.
+ *
+ * CALLED ONLY FOR A PROVEN HOLDER (see loadContext: an unproven holder gets the
+ * neutral "already used" view without this being asked, so nothing about the
+ * booking is even read for them). A proven holder sees the booked service, date
+ * and time ONLY for a live appointment the explicit link names; every other
+ * converted case (no link, cancelled) is "contact the studio", which never
+ * mentions an appointment.
+ */
+async function bookedViewOnReopen(
+  rawToken: string,
+  resolved: ResolveOutcome,
+): Promise<InvitationViewState | null> {
+  try {
+    const { data } = await createAdminClient().rpc("waitlist_invitation_booking_state", {
+      p_raw_token: rawToken,
+    });
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row?.state !== "booked" && row?.state !== "booked_cancelled") return null;
+    if (
+      row.state === "booked_cancelled" ||
+      typeof row.starts_at !== "string" ||
+      typeof row.studio_id !== "string" ||
+      typeof row.service_id !== "string"
+    ) {
+      return { kind: "closed", reason: "used_contact_studio", presentation: null };
+    }
+    const studio = await loadStudioContext(row.studio_id, row.service_id);
+    const at = new Date(row.starts_at);
+    if (!studio || Number.isNaN(at.getTime())) {
+      return { kind: "closed", reason: "used_contact_studio", presentation: null };
+    }
+    const tz = studio.presentation.studioTimezone;
+    return deriveInvitationViewState({
+      resolve: resolved,
+      presentation: studio.presentation,
+      proof: { kind: "required" },
+      slots: [],
+      booked: { startLabel: localTimeString12h(at, tz), dateLabel: localDateString(at, tz) },
+      declined: false,
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve plus presentation, or a view state describing why we cannot. */
 async function loadContext(
   rawToken: string,
+  // ONLY THE RELOAD PATH asks for the spent-invitation view. Book, decline,
+  // request-proof and the rest share this function and must see a spent
+  // invitation exactly as they always did.
+  opts: { reopen?: boolean } = {},
 ): Promise<
   | {
       ok: true;
@@ -470,6 +567,23 @@ async function loadContext(
   | { ok: false; state: InvitationViewState }
 > {
   const resolved = await resolveInvitation(rawToken);
+  // REOPEN AFTER A BOOKING. A spent invitation used to land on "we couldn't
+  // confirm your booking" even when the booking had just succeeded, because
+  // nothing here could see the appointment. This runs whichever booking path
+  // made the booking (the flag gates the booking, not this read-only check): a
+  // converted entry is shown as used, and as booked (with its time) only to a
+  // holder who has proven the emailed code in this browser. Anything else keeps
+  // the honest "couldn't confirm" screen.
+  if (opts.reopen && resolved.kind === "already_redeemed") {
+    // EVERY unproven holder gets the SAME sentence, converted or not, so the
+    // link alone cannot be used to tell a booked invitation from an unbooked
+    // one. Nothing about the booking is read for them.
+    if ((await readCapability(rawToken)) === null) {
+      return { ok: false, state: { kind: "closed", reason: "already_used", presentation: null } };
+    }
+    const reopened = await bookedViewOnReopen(rawToken, resolved);
+    if (reopened) return { ok: false, state: reopened };
+  }
   if (resolved.kind !== "live") {
     return {
       ok: false,
@@ -514,6 +628,24 @@ async function loadContext(
   // exchange, and sending a real person a verification code for an offer that
   // can never be booked is the surface this is removing, not one to keep. The
   // operator releases the invitation from their side; the copy says so.
+  // ADMISSION, ASKED ON THE SAME FUNNEL. 0204 refuses an invited booking while the
+  // studio is closed (or its mode is unreadable), so listing times here would offer
+  // what Book can only fail. Nothing is consumed: this is a read.
+  const admission = await getNewClientAdmissionMode({
+    id: resolved.invitation.studioId,
+    slug: studio.slug,
+  });
+  const refusal = await invitedBookingRefusalKind(admission);
+  if (refusal) {
+    return {
+      ok: false,
+      state: {
+        kind: "closed",
+        reason: refusal === "closed" ? "admission_closed" : "admission_unreadable",
+        presentation: studio.presentation,
+      },
+    };
+  }
   if (!studio.bookableByNewClient) {
     return {
       ok: false,
@@ -639,7 +771,7 @@ async function offeredDays(
   // A refusal is now the operation's refusal, and it is reported rather than
   // silently swallowed per day.
   const gate = await limitPublicSlots({ headers: await headers(), slug: studio.slug });
-  if (!gate.allowed) return { days: [], unreadable: true };
+  if (!gate.allowed) return { days: [], noTimeDays: [], unreadable: true };
 
   const range = await fetchPublicSlotsForDates({
     slug: studio.slug,
@@ -649,7 +781,7 @@ async function offeredDays(
   // ANY failure to read is UNREADABLE, not empty. Throttled, studio not found,
   // service withdrawn — none of them means "no times are open", and rendering
   // an empty offer would state that as a fact about the studio's diary.
-  if (!range.ok) return { days: [], unreadable: true };
+  if (!range.ok) return { days: [], noTimeDays: [], unreadable: true };
 
   const collected: OfferedSlot[] = range.slots.map((s) => ({
     start: s.start,
@@ -658,10 +790,12 @@ async function offeredDays(
   }));
   // Still narrowed by the same evaluator: the day filter above is an
   // optimisation, never the authority, and nothing past endDate is collected.
-  return {
-    days: groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected)),
-    unreadable: false,
-  };
+  const days = groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected));
+  // The window's other days, named: dates the offer permits that came back with
+  // nothing open. Computed from the same `dates` the fetch asked about.
+  const withTimes = new Set(days.map((d) => d.date));
+  const noTimeDays = dates.filter((d) => !withTimes.has(d)).map(formatSlotDayLabel);
+  return { days, noTimeDays, unreadable: false };
 }
 
 /**
@@ -711,7 +845,7 @@ async function offerState(
   const [offered, identity] = await Promise.all([
     proven
       ? offeredDays(resolve, studio)
-      : Promise.resolve({ days: [], unreadable: false }),
+      : Promise.resolve({ days: [], noTimeDays: [] as string[], unreadable: false }),
     capability
       ? invitedIdentity(rawToken, capability)
       : Promise.resolve<IdentityOutcome>({ kind: "unusable", reason: "no_capability" }),
@@ -744,6 +878,8 @@ async function offerState(
     // recipient to supply one the studio may already hold. It stays false, the
     // Book attempt then fails closed, and the booking path reports it.
     phoneNeeded: identity.kind === "resolved" && identity.identity.phone === null,
+    ...(studio.bookingNotice ? { bookingNotice: studio.bookingNotice } : {}),
+    noTimeDays: offered.noTimeDays,
   });
 }
 
@@ -755,7 +891,7 @@ async function offerState(
 export async function loadInvitationAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
-  const ctx = await loadContext(rawToken);
+  const ctx = await loadContext(rawToken, { reopen: true });
   if (!ctx.ok) return ctx.state;
   // A capability already in the jar means this browser proved recently. The
   // database still re-checks it at the mutation, so trusting it for RENDERING
@@ -1020,6 +1156,9 @@ export async function submitInvitationProofAction(
 export async function declineInvitationAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
+  // 0325: with the decline-answers flag on, the recipient's choices are book, "None of these times work" (both answers required) or "I no
+  // longer need an appointment". A plain decline is not one of them, so a direct POST is refused here too, before any read or mutation.
+  if (waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
   const capability = await readCapability(rawToken);
   // P2-A. THE CONTEXT IS RESOLVED BEFORE THE COMMAND, NOT ONLY AFTER IT FAILS.
   //
@@ -1070,6 +1209,178 @@ export async function declineInvitationAction(
     booked: null,
     declined: false,
     proofNotice: notice,
+  });
+}
+
+/**
+ * 0325 — "None of these times work": BOTH answers required. Behind WAITLIST_DECLINE_ANSWERS (off by default; the off path re-reads the offer and
+ * writes nothing). The database command saves the answers, closes the invitation, returns the SAME entry to waiting in its original place, writes
+ * the bell row and one held email row per verified owner, all in one transaction. After it commits, and only on `declined`, the owner emails are
+ * handed to the dispatcher. That call never throws and is not awaited past the response (`after`), so an email problem can never undo or delay
+ * the decline; the daily cron is the safety net. The invitation id never reaches the browser.
+ */
+export async function noTimesWorkAction(rawToken: string, why: string, better: string): Promise<InvitationViewState> {
+  if (!waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
+  const gate = await limitPublicSlots({ headers: await headers(), slug: "invitation-no-times-work" });
+  if (!gate.allowed) return { kind: "error", retryable: true };
+  const capability = await readCapability(rawToken);
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
+  if (!capability) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
+  // The same rules as the form, re-checked here: the browser is not trusted. The database validates again.
+  const checked = validateNoTimesWork({ why, better });
+  if (!checked.ok) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
+  const out = await declineWithAnswers({
+    rawToken,
+    rawCapability: capability,
+    whyNotWork: checked.answers.why,
+    betterTimes: checked.answers.better,
+  });
+  if (out.kind === "declined") {
+    await clearCapability();
+    const invitationId = out.invitationId;
+    after(async () => {
+      await dispatchDeclineOwnerEmail({ admin: createAdminClient() }, { invitationId });
+    });
+    return { kind: "declined", keptOnList: true, answered: "answers" };
+  }
+  if (out.kind === "already_declined") {
+    await clearCapability();
+    return { kind: "declined", keptOnList: true, answered: "answers" };
+  }
+  const after_ = await loadContext(rawToken);
+  if (!after_.ok) return after_.state;
+  if (out.kind === "invalid_input" || out.kind === "unavailable") {
+    return offerState(
+      rawToken,
+      after_.resolve,
+      after_.studio,
+      { kind: "proven" },
+      out.kind === "invalid_input" ? "note_invalid" : "feedback_unavailable",
+    );
+  }
+  if (out.kind === "not_live" || out.kind === "invalid_token") {
+    // Not a proof problem: the invitation is simply not active. Say that, neutrally, and keep the capability out of it.
+    await clearCapability();
+    return { kind: "closed", reason: "no_longer_active", presentation: after_.studio.presentation };
+  }
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve: after_.resolve,
+    presentation: after_.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
+  });
+}
+
+/**
+ * 0325 — "I no longer need an appointment". Same gate and capability rules. The database answers one neutral `recorded` for every non-proof
+ * outcome, so the confirmation says nothing about the studio's state. Withdrawals do not email in V1 (bell only).
+ */
+export async function noLongerNeedAction(rawToken: string): Promise<InvitationViewState> {
+  if (!waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
+  const gate = await limitPublicSlots({ headers: await headers(), slug: "invitation-withdrawal" });
+  if (!gate.allowed) return { kind: "error", retryable: true };
+  const capability = await readCapability(rawToken);
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
+  if (!capability) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
+  const out = await requestWithdrawal({ rawToken, rawCapability: capability });
+  if (out.kind === "recorded") {
+    await clearCapability();
+    return { kind: "declined", answered: "withdrawal" };
+  }
+  const after_ = await loadContext(rawToken);
+  if (!after_.ok) return after_.state;
+  if (out.kind === "unavailable") {
+    return offerState(rawToken, after_.resolve, after_.studio, { kind: "proven" }, "feedback_unavailable");
+  }
+  if (out.kind === "invalid_token") {
+    await clearCapability();
+    return { kind: "closed", reason: "no_longer_active", presentation: after_.studio.presentation };
+  }
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve: after_.resolve,
+    presentation: after_.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
+  });
+}
+
+/**
+ * 0319 — "These times don't work". Optional text, kept against the original
+ * waitlist entry; the person returns to waiting with their original priority.
+ *
+ * Behind WAITLIST_TIMES_FEEDBACK (off by default). With the flag off nothing is
+ * declined or written: the current offer is simply re-read. The confirmation
+ * (`keptOnList`) is returned ONLY when the command answered
+ * `returned_to_waiting`; every other answer leaves the invitation as it was and
+ * says so.
+ */
+export async function timesDontWorkAction(
+  rawToken: string,
+  note: string,
+): Promise<InvitationViewState> {
+  if (!waitlistTimesFeedbackEnabled()) return loadInvitationAction(rawToken);
+  // 0325: the answers flow replaces this free-note decline; a direct POST is refused while it is on.
+  if (waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
+  // THROTTLED BEFORE THE FIRST DATABASE READ, like proof submission: a wrong
+  // capability would otherwise drive unlimited locked lookups on a public path.
+  const gate = await limitPublicSlots({
+    headers: await headers(),
+    slug: "invitation-times-feedback",
+  });
+  if (!gate.allowed) return { kind: "error", retryable: true };
+  const capability = await readCapability(rawToken);
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
+  if (!capability) {
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
+  }
+  const trimmed = typeof note === "string" ? note.trim() : "";
+  if (trimmed.length > TIMES_FEEDBACK_NOTE_MAX || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u0085\u00ad\u061c\u180e\u2028\u2029]/.test(trimmed)) {
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
+  }
+  const out = await declineTimesUnsuitable({
+    rawToken,
+    rawCapability: capability,
+    note: trimmed.length > 0 ? trimmed : null,
+  });
+  if (out.kind === "returned_to_waiting") {
+    await clearCapability();
+    return { kind: "declined", keptOnList: true };
+  }
+
+  // Re-resolve: the invitation can die between the first read and this failure,
+  // and a terminal state outranks any notice.
+  const after = await loadContext(rawToken);
+  if (!after.ok) return after.state;
+  if (out.kind === "invalid_note" || out.kind === "unavailable") {
+    return offerState(
+      rawToken,
+      after.resolve,
+      after.studio,
+      { kind: "proven" },
+      out.kind === "invalid_note" ? "note_invalid" : "feedback_unavailable",
+    );
+  }
+  // The capability did not satisfy the gate: drop it and ask to prove again.
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve: after.resolve,
+    presentation: after.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
   });
 }
 
@@ -1159,6 +1470,39 @@ export async function bookInvitationSlotAction(
       reason: "booking_outcome_unknown",
       presentation: ctx.studio.presentation,
     };
+  }
+  // The studio closed new-client admission between the load and the tap. The
+  // commit refused BEFORE any redeem, so the invitation is intact; say why, not "try again".
+  if (!booked.ok && booked.code === NEW_CLIENT_ADMISSION_REFUSAL_CODE) {
+    // ONE refusal code covers closed and unreadable, so re-read to say which; if it is
+    // not provably closed, use the wording that asserts nothing about the studio.
+    const now = await getNewClientAdmissionMode({ id: ctx.resolve.invitation.studioId, slug: ctx.studio.slug });
+    return {
+      kind: "closed",
+      reason:
+        (await invitedBookingRefusalKind(now)) === "closed"
+          ? "admission_closed"
+          : "admission_unreadable",
+      presentation: ctx.studio.presentation,
+    };
+  }
+  if (!booked.ok && booked.code === "invitation_already_booked" && booked.startsAt) {
+    // The response was lost and the database confirmed the booking. Show the
+    // booked state with the time the database holds, not the requested one.
+    await clearCapability();
+    const tz = ctx.studio.presentation.studioTimezone;
+    const at = new Date(booked.startsAt);
+    return deriveInvitationViewState({
+      resolve: ctx.resolve,
+      presentation: ctx.studio.presentation,
+      proof: { kind: "proven" },
+      slots: [],
+      booked: {
+        startLabel: localTimeString12h(at, tz),
+        dateLabel: localDateString(at, tz),
+      },
+      declined: false,
+    });
   }
   if (!booked.ok && booked.code === "invitation_consumed") {
     // P2-A. THE OFFER IS SPENT. The redeem committed and the appointment did

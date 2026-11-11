@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { handleWorkerRoute } from "@/lib/google-calendar/sync/worker-runtime";
 import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
+import { checkRetentionHealthForCron } from "@/lib/waitlist/retention-run";
 import { thrownErrorClass } from "@/lib/logging/error-class";
 
 // Google Calendar: Phase B2.3-c2: the authenticated, bounded worker-drain route.
@@ -61,6 +62,8 @@ export async function GET(req: Request) {
         }),
       );
     }
+    // 0326: independent detector for the scheduled erase of overdue waitlist answers (see the 08:00 and 09:00 routes). Never throws.
+    await checkRetentionHealthForCron("/api/cron/calendar-sync");
   }
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
