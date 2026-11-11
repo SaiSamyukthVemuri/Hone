@@ -1181,22 +1181,22 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
 // ---------------------------------------------------------------------------
 describe("S6: the 0287 permission-engine functions refuse a no-studio user at the actor check and leak nothing", () => {
   const REFUSED = { ok: false, code: "refused" };
-  type Fn = { name: string; sql: (studio: string | null, other?: string) => string; boolean?: boolean };
+  type Fn = { name: string; sql: (studio: string | null, ver?: number) => string; boolean?: boolean; read?: boolean };
   const lit = (studio: string | null) => (studio === null ? "null::uuid" : `'${studio}'::uuid`);
   const FNS: Fn[] = [
-    { name: "activate_released_permissions", sql: (st) => `select public.activate_released_permissions(${lit(st)}, array['appt.cancel'], 1, 'because', 'x', false) r` },
-    { name: "adopt_new_defaults", sql: (st) => `select public.adopt_new_defaults(${lit(st)}, 1, 'because', false) r` },
+    { name: "activate_released_permissions", sql: (st, v = 1) => `select public.activate_released_permissions(${lit(st)}, array['appt.cancel'], ${v}, 'because', 'x', false) r` },
+    { name: "adopt_new_defaults", sql: (st, v = 1) => `select public.adopt_new_defaults(${lit(st)}, ${v}, 'because', false) r` },
     { name: "change_staff_role", sql: (st) => `select public.change_staff_role(${lit(st)}, '${randomUUID()}'::uuid, 'practitioner', 'practitioner', 'because') r` },
-    { name: "effective_access", sql: (st) => `select public.effective_access(${lit(st)}, '${randomUUID()}'::uuid) r` },
-    { name: "get_role_permissions", sql: (st) => `select public.get_role_permissions(${lit(st)}) r` },
+    { name: "effective_access", read: true, sql: (st) => `select public.effective_access(${lit(st)}, '${A.practitionerId}'::uuid) r` },
+    { name: "get_role_permissions", read: true, sql: (st) => `select public.get_role_permissions(${lit(st)}) r` },
     { name: "has_studio_permission", boolean: true, sql: (st) => `select public.has_studio_permission(${lit(st)}, 'appt.cancel', null, null, null) r` },
-    { name: "list_permission_audit", sql: (st) => `select public.list_permission_audit(${lit(st)}, 10, null) r` },
+    { name: "list_permission_audit", read: true, sql: (st) => `select public.list_permission_audit(${lit(st)}, 10, null) r` },
     { name: "preview_activation", sql: (st) => `select public.preview_activation(${lit(st)}, null) r` },
     { name: "preview_adopt_new_defaults", sql: (st) => `select public.preview_adopt_new_defaults(${lit(st)}) r` },
     { name: "preview_reset", sql: (st) => `select public.preview_reset(${lit(st)}, 'practitioner') r` },
     { name: "preview_role_changes", sql: (st) => `select public.preview_role_changes(${lit(st)}, '{}'::jsonb) r` },
-    { name: "reset_role_to_defaults", sql: (st) => `select public.reset_role_to_defaults(${lit(st)}, 'practitioner', 1, 'because', false) r` },
-    { name: "save_role_permissions", sql: (st) => `select public.save_role_permissions(${lit(st)}, 1, '{}'::jsonb, 'because', false) r` },
+    { name: "reset_role_to_defaults", sql: (st, v = 1) => `select public.reset_role_to_defaults(${lit(st)}, 'practitioner', ${v}, 'because', false) r` },
+    { name: "save_role_permissions", sql: (st, v = 1) => `select public.save_role_permissions(${lit(st)}, ${v}, '{}'::jsonb, 'because', false) r` },
   ];
   const ENGINE_TABLES = ["permission_audit", "studio_permission_policy", "studio_role_permissions", "permission_key_activation"];
   const as = async (c: Client, userId: string) => {
@@ -1241,7 +1241,24 @@ describe("S6: the 0287 permission-engine functions refuse a no-studio user at th
       await c.end();
     }
   };
+  // toEqual against the FIXED refusal object also proves the answer carries nothing else: no studio id, no key, no version (the extra
+  // no-echo assertion below is a belt on a rule that equality already implies).
   const refusal = (f: Fn) => (f.boolean ? false : REFUSED);
+  // Callers that must be refused exactly like the stranger (A3): a REMOVED member (inactive row), an ACTIVE receptionist (perm_actor's
+  // second branch, role 'receptionist', never 'owner'), and an authenticated session with no `sub` claim (auth.uid() is null).
+  const noSub = async (c: Client) => { await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ role: "authenticated" })]); };
+  const seedCaller = async (kind: "removed" | "receptionist") => {
+    const userId = randomUUID();
+    await adminQuery("insert into auth.users (id,email) values ($1,$2)", [userId, `s6-${kind}-${userId.slice(0, 8)}@harness.local`]);
+    if (kind === "removed") {
+      await adminQuery(
+        "insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'Removed member',$4,'practitioner',false)",
+        [randomUUID(), A.studioId, userId, `s6-removed-${userId.slice(0, 8)}@harness.local`]);
+    } else {
+      await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic Front Desk',true)", [A.studioId, userId]);
+    }
+    return userId;
+  };
 
   it("the stranger gets exactly the refusal (false for has_studio_permission) for a real, a random and a NULL studio; no studio id echoed; no engine row added anywhere", async () => {
     await withTx(async (c) => {
@@ -1287,8 +1304,29 @@ describe("S6: the 0287 permission-engine functions refuse a no-studio user at th
     });
   });
 
+  it("a removed member, an active receptionist and a session with no sub claim are refused like the stranger (false for has_studio_permission), adding no row", async () => {
+    const removed = await seedCaller("removed");
+    const desk = await seedCaller("receptionist");
+    await withTx(async (c) => {
+      const callers: Array<[string, () => Promise<void>]> = [
+        ["removed member", () => as(c, removed)],
+        ["active receptionist", () => as(c, desk)],
+        ["no sub claim", () => noSub(c)],
+      ];
+      for (const [who, become] of callers) {
+        for (const f of FNS) {
+          await become();
+          const out = await callCounting(c, f, A.studioId);
+          expect(out.raised, `${who}: ${f.name} must answer, not raise`).toBeNull();
+          expect(out.answer, `${who}: ${f.name}`).toEqual(refusal(f));
+          expect(out.added, `${who}: ${f.name} adds no engine row anywhere`).toBe(0);
+        }
+      }
+    });
+  });
+
   for (const f of FNS.filter((x) => !x.boolean)) {
-    it(`${f.name}: a scratch copy without the owner check no longer refuses the stranger (can fail)`, async () => {
+    it(`${f.name}: a scratch copy without the owner check returns real data or a structured answer to the stranger, never the refusal (can fail)`, async () => {
       const gate = /if not found or a\.role <> 'owner' then return public\.perm_fail\('refused'\); end if;/;
       const defs = (
         await adminQuery(
@@ -1297,14 +1335,32 @@ describe("S6: the 0287 permission-engine functions refuse a no-studio user at th
       ).rows as Array<{ proname: string; d: string }>;
       const carrying = defs.filter((r) => gate.test(r.d));
       expect(carrying.length, "the owner check must be present in the function or a perm_run_* body (else this probe is stale)").toBeGreaterThan(0);
+      // One owner-side row, so a read with the check removed has something REAL to return (A1); it is rolled back with the transaction.
       const out = await withTx(async (c) => {
         await c.query("reset role");
+        await c.query(
+          "insert into public.permission_audit (studio_id, kind, before, after, reason) values ($1, 'role_permissions_saved', '{}'::jsonb, '{}'::jsonb, 's6 seeded row')", [A.studioId]);
+        const ver = Number((await c.query("select coalesce((select version from public.studio_permission_policy where studio_id = $1), 0) v", [A.studioId])).rows[0].v);
         for (const r of carrying) await c.query(r.d.replace(gate, ""));
         await c.query("set local role authenticated");
         await as(c, S);
-        return callCounting(c, f, A.studioId);
+        // callCounting runs f.sql(studio) with its default version; run once more with the real one for the writers.
+        const probe: Fn = { ...f, sql: (st) => f.sql(st, ver) };
+        return callCounting(c, probe, A.studioId);
       });
-      expect(out.answer, "with the owner check removed the stranger is no longer refused").not.toEqual(REFUSED);
+      if (f.read) {
+        expect(out.raised, "a read with the owner check removed must return data, not raise").toBeNull();
+        expect((out.answer as { ok?: boolean } | undefined)?.ok, "a read with the owner check removed returns ok:true data").toBe(true);
+        if (f.name === "list_permission_audit") {
+          expect(JSON.stringify(out.answer), "the seeded audit row is returned to the stranger once the check is gone").toContain("role_permissions_saved");
+        }
+      } else {
+        // A writer or preview past the gate answers with a structured object (ok/code) or the engine's own PM001 stale-version signal;
+        // undefined, any other raised code, and the refusal itself all fail.
+        const structured = typeof out.answer === "object" && out.answer !== null && "ok" in (out.answer as object);
+        expect(structured || out.raised === "PM001", `past the gate the call must answer structurally (answer ${JSON.stringify(out.answer)}, raised ${out.raised})`).toBe(true);
+      }
+      expect(JSON.stringify(out.answer) ?? "", "with the owner check removed the stranger is no longer refused").not.toBe(JSON.stringify(REFUSED));
       // the real function is unchanged after the rollback
       await withTx(async (c) => { await as(c, S); expect((await callCounting(c, f, A.studioId)).answer).toEqual(REFUSED); });
     });
@@ -1316,6 +1372,7 @@ describe("S6: the 0287 permission-engine functions refuse a no-studio user at th
         `select has_function_privilege('anon', p.oid, 'execute') a, has_function_privilege('service_role', p.oid, 'execute') s, has_function_privilege('authenticated', p.oid, 'execute') u,
                 exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x where x.grantee = 0) pub
            from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=$1`, [f.name]);
+      expect(r.rows, `${f.name}: exactly one public function of this name (no overload hides behind the first row)`).toHaveLength(1);
       expect(r.rows[0]).toEqual({ a: false, s: false, u: true, pub: false });
     });
   }
