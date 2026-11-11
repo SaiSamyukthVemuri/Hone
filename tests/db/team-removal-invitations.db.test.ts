@@ -134,7 +134,7 @@ describe("P4: the revoke is scoped by studio, and the studio comes from the sess
     const B = await seedStudio("xsB");
     const m = await seedMember(A, "xsM");
     const mInvite = await invite(A.studioId, await emailOf(m.practitionerId));
-    await remove(B, m.practitionerId);
+    await expect(remove(B, m.practitionerId)).rejects.toThrow("Practitioner not found in this studio.");
     expect(await activeOf(m.practitionerId)).toBe(true);
     expect(await statusOf(mInvite)).toBe("pending");
   });

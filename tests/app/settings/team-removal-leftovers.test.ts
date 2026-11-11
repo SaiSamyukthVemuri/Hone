@@ -19,6 +19,8 @@ const DB = vi.hoisted(() => ({
   targetEmail: "Removed.Person@Example.test" as string | null,
   targetReadError: null as unknown,
   inviteUpdateError: null as unknown,
+  pendingInvites: [] as Array<{ id: string; email: string | null }>,
+  pendingReadError: null as unknown,
   invitesTouched: [] as Array<Record<string, unknown>>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   order: [] as string[],
@@ -69,6 +71,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         filters[col] = val;
         return chain;
       };
+      chain.in = (col: string, val: unknown) => {
+        filters[col] = val;
+        return chain;
+      };
       chain.maybeSingle = async () => {
         DB.order.push(`read:${table}`);
         return DB.targetReadError
@@ -81,6 +87,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           DB.order.push("update:pending_invitations");
           DB.invitesTouched.push({ patch, filters: { ...filters } });
           resolve({ error: DB.inviteUpdateError });
+        } else if (table === "pending_invitations") {
+          // the studio's pending invitations, read before the revoke
+          DB.order.push("read:pending_invitations");
+          resolve({ data: DB.pendingInvites, error: DB.pendingReadError });
         } else resolve({ error: null });
       };
       return chain;
@@ -138,6 +148,8 @@ beforeEach(() => {
   DB.targetEmail = "Removed.Person@Example.test";
   DB.targetReadError = null;
   DB.inviteUpdateError = null;
+  DB.pendingReadError = null;
+  DB.pendingInvites = [{ id: "inv-1", email: "Removed.Person@Example.test" }, { id: "inv-2", email: "someone.else@example.test" }];
   DB.invitesTouched = [];
   DB.rpcCalls = [];
   DB.order = [];
@@ -159,7 +171,7 @@ describe("removing a member ends their outstanding invitations and Google Calend
       { fn: "set_practitioner_active_locked", args: { p_studio_id: "studio-1", p_actor_practitioner_id: "owner-1", p_target_practitioner_id: "member-1", p_active: false } },
     ]);
     expect(DB.invitesTouched).toEqual([
-      { patch: { status: "revoked" }, filters: { studio_id: "studio-1", email: "removed.person@example.test", status: "pending" } },
+      { patch: { status: "revoked" }, filters: { id: ["inv-1"], studio_id: "studio-1", status: "pending" } },
     ]);
     expect(DB.order.indexOf("rpc:set_practitioner_active_locked")).toBeLessThan(DB.order.indexOf("update:pending_invitations"));
   });
@@ -192,6 +204,20 @@ describe("removing a member ends their outstanding invitations and Google Calend
     const r = await outcome("member-1");
     expect(r).toEqual({ redirectedTo: "/settings/team?removed=partial&left=invitations,google_access" }); // the Google notice rides along: a stored credential was deleted
     expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed READ of the pending invitations is reported as invitations, nothing is revoked on a guess, and the Google clear still runs", async () => {
+    DB.pendingReadError = { code: "XX000", message: "db text that must not surface" };
+    const r = await outcome("member-1");
+    expect(r).toEqual({ redirectedTo: "/settings/team?removed=partial&left=invitations,google_access" });
+    expect(DB.invitesTouched).toEqual([]);
+    expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("no pending invitation for the member's email means no update at all (nothing to revoke, nothing unscoped)", async () => {
+    DB.pendingInvites = [{ id: "inv-2", email: "someone.else@example.test" }, { id: "inv-3", email: null }];
+    await outcome("member-1");
+    expect(DB.invitesTouched).toEqual([]);
   });
 
   it("a failed Google clear is REPORTED by a redirect code and the invitation clear still ran", async () => {

@@ -295,13 +295,27 @@ async function endRemovedMemberLeftovers(
     if (readErr) throw readErr;
     const email = typeof target?.email === "string" ? target.email.trim().toLowerCase() : "";
     if (email) {
-      const { error: revokeErr } = await admin
+      // Match the email CASE-INSENSITIVELY, as sign-in and the invitation lookup do (lower(email) uniqueness, ilike): an invitation stored as
+      // "Name@X.com" must still end when the member row says "name@x.com". An ilike filter would treat "_" and "%" in an address as wildcards and could
+      // revoke a different person's invitation, so this reads the studio's pending invitations and compares in code, then revokes by id.
+      const { data: pending, error: pendingErr } = await admin
         .from("pending_invitations")
-        .update({ status: "revoked" })
+        .select("id,email")
         .eq("studio_id", studioId)
-        .eq("email", email)
         .eq("status", "pending");
-      if (revokeErr) throw revokeErr;
+      if (pendingErr) throw pendingErr;
+      const ids = (pending ?? [])
+        .filter((r: { id: string; email: string | null }) => typeof r.email === "string" && r.email.trim().toLowerCase() === email)
+        .map((r: { id: string }) => r.id);
+      if (ids.length > 0) {
+        const { error: revokeErr } = await admin
+          .from("pending_invitations")
+          .update({ status: "revoked" })
+          .in("id", ids)
+          .eq("studio_id", studioId)
+          .eq("status", "pending");
+        if (revokeErr) throw revokeErr;
+      }
     }
   } catch (e) {
     console.error(`team_action_db_error:remove_revoke_invitations:${dbErrorCode(e)}`);
