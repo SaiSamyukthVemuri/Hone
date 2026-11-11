@@ -68,6 +68,7 @@ import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { buildTimeInsights, insightPeriod } from "@/lib/calendar/time-insights";
 import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
+import { publishedServicePriceReads } from "@/lib/booking/service-price-visibility";
 import { practitionerInitials } from "@/lib/calendar/practitioner-identity";
 import { buildSidebarModel } from "@/lib/calendar/sidebar-model";
 import {
@@ -197,7 +198,10 @@ export default async function CalendarPage({
       startUtc.toISOString(),
       endUtc.toISOString(),
     ),
-    getActiveServices(studio.id),
+    // Published service prices follow the studio's "See published service prices and booking fees" control
+    // (owners always; staff only while ON). OFF: the read names no price column, so no price is in the page
+    // payload or the quick-book label.
+    publishedServicePriceReads(studio.id, isOwner).then((reads) => getActiveServices(studio.id, reads)),
     getClientsForStudio(studio.id),
     // Studio-scoped availability rows for the calendar's neutral tint,
     // projected by effective scope below; never feeds booking math.
@@ -774,7 +778,10 @@ async function renderTeamDayView(opts: {
       startUtc.toISOString(),
       endUtc.toISOString(),
     ),
-    getActiveServices(studio.id),
+    // Published service prices follow the studio's "See published service prices and booking fees" control
+    // (owners always; staff only while ON). OFF: the read names no price column, so no price is in the page
+    // payload or the quick-book label.
+    publishedServicePriceReads(studio.id, isOwner).then((reads) => getActiveServices(studio.id, reads)),
     getClientsForStudio(studio.id),
     getAvailabilityDefaults(studio.id),
     getOverridesForRange(studio.id, date, date),

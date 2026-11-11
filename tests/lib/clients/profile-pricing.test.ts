@@ -114,7 +114,7 @@ describe("the profile page wires the ruling", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
     expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner \};/);
     expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
-    expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
+    expect(PAGE).toContain("publishedServicePriceReads(studio.id, isOwner)");
   });
   it("the Pricing card is owner-only", () => {
     expect(PAGE).toMatch(/\{isOwner && \(\s*<section[^>]*>\s*<h2[^>]*>\s*Pricing\s*<\/h2>/);
