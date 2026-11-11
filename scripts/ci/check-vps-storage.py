@@ -39,12 +39,26 @@ def rows(report, key):
     return reports[0][key]
 
 
+def validate_lvm_children(node):
+    # An initialized LVM disk legitimately has mapper descendants in lsblk.
+    # These are not partitions. The PV/VG check below still binds the pool to
+    # the exact dedicated disk; reject partitions and other/unknown mappings.
+    children = node.get("children", [])
+    if not isinstance(children, list):
+        raise ValueError("Unknown block-device descendants")
+    for child in children:
+        if not isinstance(child, dict) or child.get("type") != "lvm":
+            raise ValueError("Unexpected non-LVM block-device descendant")
+        validate_lvm_children(child)
+
+
 def validate(root_free, disk, pool, pvs, lvs, device_path):
     if number(root_free) < ROOT_RESERVE:
         raise ValueError("Root reserve below 80 GiB; no automatic cleanup")
     if (str(disk["serial"]).strip() != SERIAL or number(disk["size"]) != BYTES
-            or disk["type"] != "disk" or disk.get("children")):
+            or disk["type"] != "disk"):
         raise ValueError("Dedicated Volume identity changed")
+    validate_lvm_children(disk)
     if pool["name"] != POOL or pool["driver"] != "lvm" or pool["status"] != "Created":
         raise ValueError("Expected created hone-ci LVM pool")
     config = pool["config"]

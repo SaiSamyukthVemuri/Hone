@@ -25,12 +25,23 @@ describe("dedicated CI storage snapshot (not worker authorization)", () => {
   it("accepts 108 GiB root free with a separately qualified thin pool", () => {
     expect(invoke().status).toBe(0);
   });
+  it("accepts initialized LVM descendants with the observed empty-pool readings", () => {
+    const result = invoke(`
+disk["children"] = [{"type":"lvm", "children":[{"type":"lvm"}]}, {"type":"lvm"}]
+thin["data_percent"] = "0.00"
+thin["metadata_percent"] = "10.42"
+lvs["report"][0]["lv"] = [thin]`);
+    expect(result.status, result.stderr).toBe(0);
+  });
   it.each([
     ["root reserve breach", "root = 80*m.GIB-1"],
     ["unknown root read", 'root = "NaN"'],
     ["different Volume", 'disk["serial"] = "root-disk"'],
     ["changed Volume size", 'disk["size"] -= 1'],
     ["partitioned Volume", 'disk["children"] = [{"type": "part"}]'],
+    ["partition beneath LVM", 'disk["children"] = [{"type":"lvm", "children":[{"type":"part"}]}]'],
+    ["unknown device descendant", 'disk["children"] = [{"type":"crypt"}]'],
+    ["unreadable descendant list", 'disk["children"] = None'],
     ["directory pool", 'pool["driver"] = "dir"'],
     ["unavailable pool", 'pool["status"] = "Unavailable"'],
     ["thin provisioning disabled", 'pool["config"]["lvm.use_thinpool"] = "false"'],

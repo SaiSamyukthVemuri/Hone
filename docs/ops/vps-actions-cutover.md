@@ -71,6 +71,12 @@ driver `lvm`, status `Created`, `lvm.use_thinpool=true`, VG `hone-ci`, thin pool
 a successful admission snapshot. Actual thin data/metadata and full logical
 commitments still need the read-only LVM check before any job.
 
+Sam's subsequent read-back confirms active thin pool `twi-a-tz--`, data 0.00%,
+metadata 10.42%, a 92 MiB metadata LV and 92 MiB metadata spare. Root still
+reports 108 GiB available. No runner/image LVs are listed yet. This supersedes
+interpreting LXD's 18.74 GiB figure as actual job data. Full sole-PV identity,
+machine-readable capacity and network receipts remain pending.
+
 Pool choice: LVM thin provisioning with ext4 runner disks, default size 30 GiB.
 This is a deliberate bounded-block layout compatible with Docker overlay2.
 Btrfs qgroups are not a strict isolation limit for nested subvolumes and are
@@ -99,6 +105,9 @@ CI host access. It refuses a missing Volume or pool, a different serial/size,
 a VG spanning root/another disk, a directory pool, changed ext4/30 GiB settings,
 and inactive/unhealthy/unknown thin-pool state. It does not require a filesystem
 mount on the whole disk: LVM/ext4 mounts belong to individual runner LVs.
+The initialized-disk check allows LVM mapper descendants reported by `lsblk`,
+while rejecting actual partitions and unknown mapping types. The separate
+blank-disk setup guard intentionally continues to reject all descendants.
 
 Proposed single-pilot storage ceilings:
 
@@ -241,6 +250,12 @@ hosted compute; there is deliberately no automatic hosted fallback.
   the exact original script was restored afterward. Python compilation,
   Bash syntax and the changed tests' TypeScript check pass. Independent review
   and live VPS qualification remain outstanding.
+- The initialized-LVM repair adds four storage cases (33 total in that file):
+  the new valid-mapper regression failed against the previous code, then passed
+  after repair; direct/nested partitions and unknown mappings remain refused.
+  The latest combined CI/routing/preflight/pool/storage run passes 256 tests.
+  This preparation uses available local Vitest 4.1.12; repository dependency
+  manifests and lockfile are unchanged. No live VPS job result is implied.
 - Committed-tree verification and the canonical schema-snapshot check pass
   after materializing the 264 unchanged migration sources at the pinned head.
 - Full repository build, DB/browser tests, live runner isolation/capacity and
