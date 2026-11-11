@@ -359,12 +359,12 @@ function checkStripeGates() {
     timeout: 60_000,
   });
   if (out.error) {
-    fail("Stripe gates (1/1/0/0)", "could not run check-stripe-gates.mjs");
+    fail("Stripe gates (1/1/0/1)", "could not run check-stripe-gates.mjs");
     return;
   }
   out.status === 0
-    ? pass("Stripe gates (1/1/0/0)", "check-stripe-gates.mjs passed")
-    : fail("Stripe gates (1/1/0/0)", `check-stripe-gates.mjs exit ${out.status}`);
+    ? pass("Stripe gates (1/1/0/1)", "check-stripe-gates.mjs passed")
+    : fail("Stripe gates (1/1/0/1)", `check-stripe-gates.mjs exit ${out.status}`);
 }
 
 // ---------------------------------------------------------------------------
