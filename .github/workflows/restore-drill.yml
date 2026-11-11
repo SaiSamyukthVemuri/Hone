@@ -1,3 +1,6 @@
+# HON-73 VPS cutover candidate. All compute, including detection and aggregation,
+# stays on the VPS. No hosted fallback. Merge only after the disposable-runner
+# pilot in docs/ops/vps-actions-cutover.md passes; offline runners leave checks queued.
 # DR-01A. The isolated, synthetic restore drill (#848, scripts/ops/restore-drill.sh)
 # plus its application-readability check (scripts/ops/restore-drill-app-check.mjs):
 # after the rows and object bytes are restored, the Hone production build signs
@@ -6,8 +9,8 @@
 #
 # NOT REQUIRED. Branch protection never names this job. It runs only when the
 # drill's own files change, or on demand (workflow_dispatch), on a disposable
-# GitHub runner: the drill creates and destroys two Supabase projects, which is
-# too heavy for a shared host.
+# isolated VPS runner: the drill creates and destroys two synthetic Supabase
+# projects inside that job's disposable container, never the host Docker engine.
 #
 # Synthetic only. No hosted project, no production data, no live provider:
 #   * the drill refuses any hosted Supabase URL and runs on its own ports;
@@ -42,7 +45,7 @@ concurrency:
 jobs:
   restore-drill:
     name: restore drill + app readability (not required)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -53,6 +56,20 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -187,3 +204,4 @@ jobs:
           name: restore-drill-evidence
           path: ${{ runner.temp }}/drill-evidence/
           retention-days: 7
+
