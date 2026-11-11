@@ -822,7 +822,7 @@ const PINNED: string[] = [
   "fn public.can_use_client_legal_identity(target_studio_id uuid)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
-  "fn public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text, p_preview_hash text, p_sensi",
+  "fn public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text, p_preview_hash text, p_sensitiv",
   "fn public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean)",
   "fn public.change_staff_role(p_studio uuid, p_membership uuid, p_new_role text, p_expected_current_role text, p_reason text)",
   "fn public.effective_access(p_studio uuid, p_membership uuid)",
