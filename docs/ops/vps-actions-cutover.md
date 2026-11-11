@@ -127,6 +127,95 @@ Record actual data/metadata peaks and qualify exhaustion/cancellation recovery
 before permitting unattended work. Pool creation is confirmed; network/image
 setup, runner registration and live job execution are not yet evidenced.
 
+### Storage admission and closed network staging
+
+Sam's checksum-verified storage check at 2026-11-11 12:15 UTC passed the
+proposed pilot storage budgets: root available 115746578432 bytes, CI thin pool
+193076396032 bytes, conservative thin data free 193057088392 bytes, zero
+logical commitments and metadata 10.42%. His PV inventory lists only the
+dedicated disk in VG `hone-ci`; VG `PFree=0` is allocation to the thin pool,
+not evidence that thin data is full. This is a real storage snapshot,
+not live job capacity or an exclusive admission reservation.
+
+His all-table IPv4/IPv6 route and Docker IPAM/default-pool inventory leaves
+`10.203.0.0/24` unused in that snapshot. Proposed bridge: `honeci0`,
+host address `10.203.0.1/24`. Current managed LXD network count is zero.
+The firewall read-back uses iptables-nft 1.8.10: IPv4 FORWARD policy DROP,
+IPv6 FORWARD policy ACCEPT, host INPUT/OUTPUT ACCEPT with Tailscale chains.
+Existing Docker rules publish HON-8 ports 59991/59992/59994. Preserve them
+and the existing `cve_2026_98432` nftables table; their presence is not proof
+that a CI guest would be isolated.
+
+The following explicit operator step stages ONLY an empty bridge and a
+separate `inet hone_ci_guard` table. First verify the inventory is still current.
+Its four drop rules match only traffic entering/leaving `honeci0`, in both
+IPv4 and IPv6. No existing rule/table is flushed or rewritten, no global
+forwarding policy is changed, no external NIC is bridged and no instance,
+image or runner is launched. The guard is installed before bridge creation.
+LXD's own filtering is disabled for this bridge because the separate guard
+owns its packet policy. NAT, routing and DHCP start disabled; `ipv6.address=none`
+alone is NOT the IPv6 enforcement mechanism.
+
+```bash
+(
+  set -euo pipefail
+
+  ip -j link show | python3 -I -c '
+import json, sys
+if any(x["ifname"] == "honeci0" for x in json.load(sys.stdin)):
+    raise SystemExit("honeci0 already exists; stop and inspect")
+'
+  sudo /snap/bin/lxc --force-local network list --format=json |
+    python3 -I -c '
+import json, sys
+if any(x["name"] == "honeci0" for x in json.load(sys.stdin)):
+    raise SystemExit("LXD honeci0 already exists; stop and inspect")
+'
+
+  ci_rules=$(mktemp)
+  trap 'rm -f "$ci_rules"' EXIT
+  cat > "$ci_rules" <<'HONE_CI_RULES'
+create table inet hone_ci_guard
+add chain inet hone_ci_guard ci_input { type filter hook input priority -20; policy accept; }
+add rule inet hone_ci_guard ci_input iifname "honeci0" counter drop
+add chain inet hone_ci_guard ci_forward { type filter hook forward priority -20; policy accept; }
+add rule inet hone_ci_guard ci_forward iifname "honeci0" counter drop
+add rule inet hone_ci_guard ci_forward oifname "honeci0" counter drop
+add chain inet hone_ci_guard ci_output { type filter hook output priority -20; policy accept; }
+add rule inet hone_ci_guard ci_output oifname "honeci0" counter drop
+HONE_CI_RULES
+
+  sudo nft --check --file "$ci_rules"
+  sudo nft --file "$ci_rules"
+
+  sudo /snap/bin/lxc --force-local network create honeci0 --type=bridge \
+    ipv4.address=10.203.0.1/24 ipv4.nat=false \
+    ipv4.routing=false ipv4.dhcp=false ipv6.address=none \
+    ipv4.firewall=false ipv6.firewall=false
+
+  sudo /snap/bin/lxc --force-local network show honeci0
+  sudo nft list table inet hone_ci_guard
+)
+```
+
+The kernel checks the nftables batch before application. `create table`
+refuses an existing table rather than appending to an unknown guard; an
+existing bridge name also stops the command. If any step fails, inspect the
+result: do not flush, remove or automatically retry unknown state.
+
+This guard deliberately denies ALL guest IP traffic, including host DNS.
+It is a staging configuration, not usable CI egress or proof of live isolation.
+The table is runtime-only at this step: boot persistence and supervisor
+fail-closed verification remain required before any worker is attached.
+Read back `used_by: []` and all four rules. Then qualify scoped egress, host
+and QA/private/public production endpoint denies, IPv6 negatives and restart
+behavior before image/runner admission. Do not attach a worker to a plain
+NAT bridge or add a broad Docker-USER ACCEPT workaround.
+
+Reference: [Netfilter nft manual](https://netfilter.org/projects/nftables/manpage.html)
+(`--check`, exclusive `create`, `inet`, interface-name matches) and
+[LXD 5.21 bridge options](https://canonical.com/lxd/docs/v5.21/reference/network_bridge/).
+
 ## Exact provisioning scope for the pilot
 
 Do this only from the VPS-connected OPS environment after reviewing the actual
