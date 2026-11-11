@@ -117,6 +117,35 @@ describe("P2: removal revokes THIS studio's pending invitation for THAT email, a
   });
 });
 
+describe("N1: a studio with more pending invitations than the API row cap still has the member's invitation found and revoked", () => {
+  it("1,100 other pending invitations in the same studio (above the default PostgREST max-rows of 1,000), the match last in id order, is revoked through the real client", async () => {
+    const A = await seedStudio("capA");
+    const m = await seedMember(A, "capM");
+    const mEmail = await emailOf(m.practitionerId);
+    const FILLERS = 1100;
+    await adminQuery(
+      `insert into public.pending_invitations (id, studio_id, email, role, display_name, status)
+       select ('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid, $1, 'cap-filler-' || g || '-' || $2 || '@harness.local', 'practitioner', 'Filler', 'pending'
+         from generate_series(1, $3::int) g`,
+      [A.studioId, A.studioId.slice(0, 8), FILLERS],
+    );
+    const matchId = "ffffffff-ffff-4fff-8fff-ffffffffffff"; // sorts after every filler id
+    await adminQuery(
+      `insert into public.pending_invitations (id, studio_id, email, role, display_name, status) values ($1,$2,$3,'practitioner','Invited','pending')`,
+      [matchId, A.studioId, mEmail.toUpperCase()],
+    );
+    const before = await adminQuery("select count(*)::int as n from public.pending_invitations where studio_id = $1 and status = 'pending'", [A.studioId]);
+    expect(before.rows[0].n).toBe(FILLERS + 1); // the rows really are above the cap
+
+    await remove(A, m.practitionerId);
+
+    expect(await statusOf(matchId)).toBe("revoked");
+    const stillPending = await adminQuery("select count(*)::int as n from public.pending_invitations where studio_id = $1 and status = 'pending'", [A.studioId]);
+    expect(stillPending.rows[0].n).toBe(FILLERS); // every filler untouched
+    await adminQuery("delete from public.pending_invitations where studio_id = $1", [A.studioId]);
+  });
+});
+
 describe("P4: the revoke is scoped by studio, and the studio comes from the session, never from input", () => {
   it("removing the member from A does not touch the same email's pending invitation to studio B", async () => {
     const A = await seedStudio("scA");
