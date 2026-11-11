@@ -21,7 +21,8 @@ const DB = vi.hoisted(() => ({
   inviteUpdateError: null as unknown,
   pendingInvites: [] as Array<{ id: string; email: string | null }>,
   pendingReadError: null as unknown,
-  pagesRead: [] as Array<[number, number]>,
+  pagesRead: [] as Array<[string | null, number]>,
+  onPendingRead: null as null | ((readIndex: number) => void),
   rowCap: null as number | null,
   invitesTouched: [] as Array<Record<string, unknown>>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
@@ -74,8 +75,12 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         return chain;
       };
       chain.order = () => chain;
-      chain.range = (from: number, to: number) => {
-        filters.__range = [from, to];
+      chain.limit = (n: number) => {
+        filters.__limit = n;
+        return chain;
+      };
+      chain.gt = (col: string, val: unknown) => {
+        filters[`${col}__gt`] = val;
         return chain;
       };
       chain.in = (col: string, val: unknown) => {
@@ -97,9 +102,14 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         } else if (table === "pending_invitations") {
           // the studio's pending invitations, read before the revoke
           DB.order.push("read:pending_invitations");
-          const [from, to] = (filters.__range as [number, number] | undefined) ?? [0, DB.pendingInvites.length];
-          DB.pagesRead.push([from, to]);
-          resolve({ data: DB.pendingReadError ? null : DB.pendingInvites.slice(from, DB.rowCap === null ? to + 1 : Math.min(to + 1, from + DB.rowCap)), error: DB.pendingReadError });
+          // keyset read: rows ordered by id, strictly after the cursor, at most `limit` (and at most the server row cap)
+          const after = (filters.id__gt as string | undefined) ?? null;
+          const limit = (filters.__limit as number | undefined) ?? DB.pendingInvites.length;
+          DB.onPendingRead?.(DB.pagesRead.length);
+          DB.pagesRead.push([after, limit]);
+          const ordered = [...DB.pendingInvites].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+          const page = ordered.filter((r) => after === null || r.id > after).slice(0, DB.rowCap === null ? limit : Math.min(limit, DB.rowCap));
+          resolve({ data: DB.pendingReadError ? null : page, error: DB.pendingReadError });
         } else resolve({ error: null });
       };
       return chain;
@@ -160,6 +170,7 @@ beforeEach(() => {
   DB.inviteUpdateError = null;
   DB.pendingReadError = null;
   DB.pagesRead = [];
+  DB.onPendingRead = null;
   DB.rowCap = null;
   DB.pendingInvites = [{ id: "inv-1", email: "Removed.Person@Example.test" }, { id: "inv-2", email: "someone.else@example.test" }];
   DB.invitesTouched = [];
@@ -222,7 +233,19 @@ describe("removing a member ends their outstanding invitations and Google Calend
     const filler = Array.from({ length: 1100 }, (_, i) => ({ id: `f-${String(i).padStart(4, "0")}`, email: `filler${i}@example.test` }));
     DB.pendingInvites = [...filler, { id: "zz-last", email: "REMOVED.person@example.test" }];
     await outcome("member-1");
-    expect(DB.pagesRead).toEqual([[0, 499], [500, 999], [1000, 1499], [1101, 1600]]); // ends on the empty page
+    expect(DB.pagesRead).toEqual([[null, 500], ["f-0499", 500], ["f-0999", 500], ["zz-last", 500]]); // each page starts after the last id received; ends on the empty page
+    expect(DB.invitesTouched).toEqual([{ patch: { status: "revoked" }, filters: { id: ["zz-last"], studio_id: "studio-1", status: "pending" } }]);
+  });
+
+  it("an invitation revoked or accepted EARLIER in the list between page reads cannot make the scan skip the match (keyset, not offset)", async () => {
+    const filler = Array.from({ length: 500 }, (_, i) => ({ id: `f-${String(i).padStart(4, "0")}`, email: `filler${i}@example.test` }));
+    DB.pendingInvites = [...filler, { id: "zz-last", email: "removed.person@example.test" }];
+    // 501 pending with the target last (one full page + the target). After the first page is read another request revokes the first row: with an OFFSET the
+    // target slides to position 499, the next page starts at 500 and is empty, and the scan ends having missed it.
+    DB.onPendingRead = (i) => {
+      if (i === 1) DB.pendingInvites = DB.pendingInvites.filter((r) => r.id !== "f-0000");
+    };
+    await outcome("member-1");
     expect(DB.invitesTouched).toEqual([{ patch: { status: "revoked" }, filters: { id: ["zz-last"], studio_id: "studio-1", status: "pending" } }]);
   });
 
