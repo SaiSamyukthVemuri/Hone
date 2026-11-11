@@ -1494,3 +1494,109 @@ describe("an unrelated draft field survives each lost-answer recovery, and the n
     expect(host!.textContent).toMatch(/changed elsewhere/i);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// INSURANCE T1/T2 (#1369 9febb15ca, PEER-1369-9FEBB15CA): THE IN-SESSION HALF OF THE STALE-SNAPSHOT PROPERTY.
+//
+// create-mode step 11 used to prove this in a browser by clearing the machine and re-picking it. Since HON-8 a saved native area refuses a
+// clear and the saved view has no entry element, so that step now reloads (a server-fresh snapshot, step 10's path) and can no longer reach a
+// remount that keeps the panel's OWN in-memory snapshot. A MODE change on a saved area still remounts the entry (its key includes the mode),
+// without a reload, so it is the real in-session remount: save two groups, change the mode, change back, and the entry must be seeded from the
+// snapshot the post-save refresh installed. If the refresh stopped updating `ctx.recordedSetup`, the entry would offer ONE fresh g1 while the
+// screen showed two probes' captures, and a change to the former g2 would be filed as a revision of g1.
+// ---------------------------------------------------------------------------------------------------------------------------------
+describe("an in-session remount of the entry is seeded from the snapshot the post-save refresh installed (Insurance T1, T2)", () => {
+  const GROUPS_PROFILE: MachineProfile = {
+    ...PROFILE,
+    profileId: "fixture:groups",
+    channels: { count: 2, nativeLabel: "Channel", associationRequired: false, supportsDistinctSettingGroups: true, verification: "device-confirmed", evidence: ["p"] },
+  };
+  const GROUPS_DEVICE: StudioDevice = { ...DEVICE, profileId: "fixture:groups" };
+  const reading = (groupKey: string, fieldKey: string, value: number) => ({
+    blockId: "b1",
+    captureId: "cap-1",
+    revision: 1,
+    deviceId: "room-9",
+    profileId: "fixture:groups",
+    profileVersion: 1,
+    modeKey: "galvanic",
+    groupKey,
+    channels: [groupKey === "g1" ? 1 : 2],
+    stageKey: null,
+    fieldKey,
+    value: { kind: "value", value },
+    nativeUnit: fieldKey === "current" ? "µA" : "s",
+    decimals: fieldKey === "current" ? 0 : 1,
+    observationSource: null,
+    recordedAt: "2026-11-11T10:00:00Z",
+  });
+  const TWO_GROUPS = [
+    reading("g1", "current", 111),
+    reading("g1", "duration", 300.5),
+    reading("g2", "current", 222),
+    reading("g2", "duration", 300.5),
+  ];
+  const type = async (testid: string, value: string) => {
+    const el = host!.querySelector<HTMLInputElement>(`[data-testid="${testid}"]`)!;
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const click = async (testid: string) =>
+    act(async () => {
+      host!.querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)!.click();
+    });
+  const clickMode = async (label: string) => {
+    const btn = [...host!.querySelectorAll<HTMLButtonElement>('[data-testid="machine-mode-picker"] button')].find((b) => b.textContent === label)!;
+    await act(async () => btn.click());
+  };
+  const groupsShown = () => ["g1", "g2"].map((g) => host!.querySelector(`[data-testid="setting-group-${g}"]`) !== null);
+
+  async function saveTwoGroups() {
+    actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 4, reused: false } as never);
+    actions.readingsForBlockAction.mockResolvedValue({ ok: true, readings: TWO_GROUPS, unitNames: {} } as never);
+    actions.recordBlockMachineIdentityAction.mockResolvedValue({ ok: true, updatedAt: "v2" } as never);
+    await mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "fixture:groups", deviceId: "room-9", modeKey: "galvanic" },
+      ctx: { devices: [GROUPS_DEVICE], catalogue: [GROUPS_PROFILE], recordedSetup: [] },
+    });
+    await click("setting-group-add");
+    expect(groupsShown(), "the form offers two groups before the save").toEqual([true, true]);
+    await type("reading-g1-current", "111");
+    await type("reading-g1-duration", "300.5");
+    await type("reading-g2-current", "222");
+    await type("reading-g2-duration", "300.5");
+    await click("machine-reading-save");
+    expect(host!.querySelector('[data-testid="machine-reading-saved"]'), "the save is confirmed").not.toBeNull();
+  }
+
+  it("T2 (step 9's half): 'Record a setting change' right after the save offers BOTH groups, because the refresh replaced the snapshot", async () => {
+    await saveTwoGroups();
+    await click("machine-reading-record-change");
+    expect(groupsShown(), "both recorded groups are back; a stale snapshot would offer one fresh g1").toEqual([true, true]);
+  });
+
+  it("T1 (step 11's half): a mode change and back remounts the entry IN SESSION, with no reload, and it is seeded from the refreshed snapshot", async () => {
+    await saveTwoGroups();
+    await clickMode("Second");
+    await clickMode("Galvanic");
+    expect(host!.querySelector('[data-testid="machine-reading-entry"]'), "the entry is mounted afresh for the mode").not.toBeNull();
+    expect(groupsShown(), "both groups survive an in-session remount; the entry must not read a never-refreshed copy").toEqual([true, true]);
+  });
+
+  it("NEGATIVE CONTROL: with nothing recorded (a snapshot that was never refreshed) the remounted entry offers only ONE group", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValue({ ok: true, updatedAt: "v2" } as never);
+    actions.readingsForBlockAction.mockResolvedValue({ ok: true, readings: [], unitNames: {} } as never);
+    await mount({
+      blockId: "b1",
+      savedIdentity: { profileId: "fixture:groups", deviceId: "room-9", modeKey: "galvanic" },
+      ctx: { devices: [GROUPS_DEVICE], catalogue: [GROUPS_PROFILE], recordedSetup: [] },
+    });
+    await clickMode("Second");
+    await clickMode("Galvanic");
+    expect(groupsShown()).toEqual([true, false]);
+  });
+});

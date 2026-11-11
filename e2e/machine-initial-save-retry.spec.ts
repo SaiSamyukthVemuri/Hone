@@ -415,6 +415,9 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
     // journey went stale.
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
     await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+    // HON-8: A SAVED CHOICE OPENS THE PANEL BY ITSELF, asserted with no click (the helper below accepts either state; Insurance, #1369 9febb15ca).
+    await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-first-open")).toHaveCount(0);
     expect(await openMachinePanel(page)).toBe(true);
     await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
       timeout: T,

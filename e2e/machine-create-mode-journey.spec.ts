@@ -1055,7 +1055,7 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await noOverflow(page);
   });
 
-  await test.step("11: SAVE TWO GROUPS, SWITCH AWAY, SWITCH BACK — g2 survives", async () => {
+  await test.step("11: a THIRD area, SAVE TWO GROUPS, RELOAD AND REOPEN — both groups survive (server-fresh snapshot; the in-session half is a component test)", async () => {
     // THE ROUND-11 P1 (Codex, #860 4300386011), and the fifth way into one
     // invariant: a group identity must survive every remount.
     //
@@ -1072,6 +1072,14 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // and so happens to be current. Only switching away and back remounts
     // the form while the panel keeps its original snapshot — the one path
     // where the seed source is stale rather than absent.
+    //
+    // WHAT THIS STEP COVERS NOW, stated plainly (Insurance T1, #1369 9febb15ca). Since HON-8 a saved native area refuses a clear and its saved
+    // view has no `machine-reading-entry`, so the "switch away and back" below can no longer remount the form through the UI on the panel's
+    // OWN in-memory snapshot. This step therefore reloads and reopens the area, which re-reads the context from the server: the same path as
+    // step 10, on a fresh area with two groups. It does NOT cover the in-session remount. THAT half is pinned in a component test:
+    // tests/components/machine-saved-identity-mounted.test.ts, "an in-session remount of the entry is seeded from the snapshot the post-save
+    // refresh installed" (a mode change and back remounts the entry without a reload; and a save followed by "Record a setting change" shows
+    // both groups, which is step 9's half).
     //
     // A FRESH AREA, so no count in steps 5 to 10 moves.
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
@@ -1128,6 +1136,10 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // remounts the form nor proves anything (its "count 0" held vacuously). A RELOAD AND REOPEN is the remount that reads the seed, as step 6 does.
     await page.reload();
     await page.getByTestId(`edit-area-${thirdBlock}`).click({ timeout: T });
+    // HON-8: A SAVED CHOICE OPENS THE PANEL BY ITSELF. Asserted with NO click, because `openMachinePanel` below accepts either an open panel
+    // or a clickable trigger and would pass whether or not this happens (Insurance, #1369 9febb15ca).
+    await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-first-open")).toHaveCount(0);
     expect(await openMachinePanel(page)).toBe(true);
     await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
       timeout: T,
