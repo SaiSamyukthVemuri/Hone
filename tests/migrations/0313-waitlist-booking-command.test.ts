@@ -1,0 +1,143 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+
+// 0313 — waitlist booking command. STATIC contract. Behaviour is proved against a
+// real database in tests/db/waitlist-booking-command.db.test.ts and the lock
+// order in tests/db/waitlist-booking-command-locks.db.test.ts.
+
+const ROOT = join(__dirname, "..", "..");
+const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
+const M = read("supabase/migrations/0313_waitlist_booking_command.sql");
+const DOWN = read("supabase/rollbacks/0313_waitlist_booking_command.down.sql");
+const exec = (sql: string) => sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+
+describe("0313 — migration state", () => {
+  // A successor (0319) was authored, so this is no longer the maximum, per
+  // CLAUDE.md §2.
+  it("consumes exactly one number and a successor sits above it", () => {
+    expect(isRepoMax("0313")).toBe(false);
+    expect(versionsAbove("0313").length).toBeGreaterThan(0);
+    expect(countVersion("0313")).toBe(1);
+  });
+});
+
+describe("0313 — shape", () => {
+  it("opens its own transaction and arms lock_timeout inside it", () => {
+    const e = exec(M).trim();
+    expect(e).toMatch(/^begin;\s*set local lock_timeout = '5s';/);
+    expect(e.endsWith("commit;")).toBe(true);
+  });
+
+  it("every definer function pins search_path to pg_catalog, pg_temp (every reference is schema-qualified)", () => {
+    const fns = exec(M).match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
+    expect(fns).toHaveLength(4);
+    for (const f of fns) expect(f).toMatch(/set search_path = pg_catalog, pg_temp/);
+  });
+
+  it("revokes from all default grantees by name and grants service_role only", () => {
+    const e = exec(M);
+    const names = [
+      "redeem_and_book_waitlist_invitation",
+      "waitlist_invitation_booking_state",
+      "record_waitlist_invitation_followup",
+      "resolve_waitlist_invitation_followup",
+    ];
+    for (const n of names) {
+      expect(e).toMatch(new RegExp(`revoke all on function public\\.${n}\\([^)]*\\) from public, anon, authenticated, service_role;`));
+      expect(e).toMatch(new RegExp(`grant execute on function public\\.${n}\\([^)]*\\) to service_role;`));
+    }
+    expect(e).not.toMatch(/grant execute[^;]*to (anon|authenticated|public)/);
+  });
+
+  it("the follow-ups table has RLS, no policy and no grant", () => {
+    const e = exec(M);
+    expect(e).toMatch(/alter table public\.waitlist_invitation_followups enable row level security;/);
+    expect(e).not.toMatch(/create policy/);
+    expect(e).toMatch(/revoke all on public\.waitlist_invitation_followups from public, anon, authenticated, service_role;/);
+    expect(e).toMatch(/constraint waitlist_invitation_followups_invitation_key unique \(invitation_id\)/);
+    expect(e).toMatch(/reason\s+text not null\s+constraint waitlist_invitation_followups_reason_check/);
+  });
+
+  it("decides a refusal by 'no appointment', rolls back through one private SQLSTATE", () => {
+    const e = exec(M);
+    expect(e).toMatch(/if v_row\.appointment_id is null then/);
+    expect(e).toMatch(/errcode = 'WA313'/);
+    expect(e).toMatch(/when sqlstate 'WA313' then/);
+  });
+
+  it("takes studios, then the round, then the entry, BEFORE it redeems", () => {
+    const e = exec(M);
+    const iStudio = e.indexOf("from public.studios where id = p_studio_id for no key update");
+    const iRound = e.indexOf("from public.studio_waitlist_admission_rounds ar");
+    const iEntry = e.indexOf("from public.new_client_waitlist_entries e\n   where e.id = v_entry");
+    const iRedeem = e.indexOf("redeem_new_client_waitlist_invitation_verified(p_raw_token");
+    expect(iStudio).toBeGreaterThan(0);
+    expect(iRound).toBeGreaterThan(iStudio);
+    expect(iEntry).toBeGreaterThan(iRound);
+    expect(iRedeem).toBeGreaterThan(iEntry);
+  });
+
+  it("does not redefine the 0192, 0195 or 0228 commands", () => {
+    const e = exec(M);
+    expect(e).not.toMatch(/create or replace function public\.(redeem_new_client_waitlist_invitation_verified|create_waitlist_public_appointment|create_public_appointment_for_new_client)\(/);
+  });
+});
+
+describe("0313 — held rollback", () => {
+  it("refuses while follow-up rows exist, then drops the objects", () => {
+    expect(DOWN).toMatch(/errcode = '55000'/);
+    expect(DOWN).toMatch(/drop table if exists public\.waitlist_invitation_followups;/);
+    expect(DOWN).toMatch(/not a migration|NOT a migration/);
+  });
+});
+
+describe("0313 — the explicit invitation -> appointment link", () => {
+  const E = exec(M);
+
+  it("has a link table with RLS on, no policy and no grants", () => {
+    expect(E).toMatch(/create table if not exists public\.waitlist_invitation_bookings/);
+    expect(E).toMatch(/alter table public\.waitlist_invitation_bookings enable row level security;/);
+    expect(E).toMatch(/revoke all on public\.waitlist_invitation_bookings from public, anon, authenticated, service_role;/);
+    expect(E).not.toMatch(/create policy[^;]*waitlist_invitation_bookings/);
+  });
+
+  it("the command writes the link INSIDE the protected block, after the booking and before the handler", () => {
+    const book = E.indexOf("create_public_appointment_for_new_client(");
+    const link = E.indexOf("insert into public.waitlist_invitation_bookings");
+    const handler = E.indexOf("exception\n    when sqlstate 'WA313'");
+    expect(book).toBeGreaterThan(0);
+    expect(link).toBeGreaterThan(book);
+    expect(handler).toBeGreaterThan(link);
+  });
+
+  it("the state function reads the link and infers nothing from timestamps", () => {
+    const fn = E.slice(E.indexOf("function public.waitlist_invitation_booking_state"));
+    expect(fn).toMatch(/from public\.waitlist_invitation_bookings b/);
+    expect(fn).not.toMatch(/interval '60 seconds'|converted_at|a\.created_at/);
+  });
+
+  it("the held down file drops the link table too", () => {
+    expect(exec(DOWN)).toMatch(/drop table if exists public\.waitlist_invitation_bookings;/);
+  });
+
+  it("the link insert must write exactly one row, or the booking aborts", () => {
+    expect(E).toMatch(/get diagnostics v_links = row_count;/);
+    expect(E).toMatch(/if v_links is distinct from 1 then\s+raise exception 'waitlist_invitation_link_not_written'/);
+    expect(E.indexOf("get diagnostics v_links")).toBeLessThan(E.indexOf("when sqlstate 'WA313'"));
+  });
+
+  it("carries an in-migration self-check that the link table has no API-role privilege", () => {
+    const at = E.indexOf("aclexplode(c.relacl)");
+    expect(at).toBeGreaterThan(0);
+    // Effective privileges (inheritance included) for each API role, tables and columns ...
+    expect(E).toMatch(/has_table_privilege\(v_role, 'public\.waitlist_invitation_bookings', v_priv\)/);
+    expect(E).toMatch(/has_any_column_privilege\(v_role, 'public\.waitlist_invitation_bookings', v_priv\)/);
+    expect(E).toMatch(/array\['anon', 'authenticated', 'service_role'\]/);
+    // ... and the stored ACL scan, which is what can name PUBLIC.
+    expect(E.slice(at - 400, at + 900)).toMatch(/anon', 'authenticated', 'service_role'/);
+    expect(E.slice(at)).toMatch(/raise exception 'waitlist_invitation_bookings must carry no privilege/);
+    expect(E.indexOf("aclexplode(c.relacl)")).toBeLessThan(E.lastIndexOf("commit;"));
+  });
+});

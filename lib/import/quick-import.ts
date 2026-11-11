@@ -12,6 +12,7 @@
 //     same-name rows with conflicting contact/DOB stay separate.
 //   * the raw pasted text is parsed transiently and never returned/stored.
 
+import { CLIENT_NAME_MAX } from "@/lib/clients/identity";
 import type { ImportSourceType } from "@/lib/types/database";
 
 export const IMPORT_SOURCE_TYPES: readonly ImportSourceType[] = [
@@ -479,7 +480,8 @@ export function groupRows(rows: ParsedRow[]): {
   const errorRows: ParsedRow[] = [];
   const byKey = new Map<string, ParsedRow[]>();
   for (const row of rows) {
-    if (!rowFullName(row.fields)) {
+    const fullName = rowFullName(row.fields);
+    if (!fullName || fullName.length > CLIENT_NAME_MAX) {
       errorRows.push(row);
       continue;
     }

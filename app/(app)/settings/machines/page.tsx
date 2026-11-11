@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { listStudioMachines, type MachineDb } from "@/lib/machines/machine-queries";
+import { listStudioMachines, publishedModesFor, type MachineDb } from "@/lib/machines/machine-queries";
+import { listableProfiles } from "@/lib/machines/listable-profiles";
 import { activeProfiles } from "@/lib/machines/profile-contract";
 import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
@@ -19,16 +20,24 @@ export default async function MachineSettingsPage() {
     return <OwnerOnlyNotice>Only studio owners can register machines.</OwnerOnlyNotice>;
   }
 
-  // Reviewed models only. `registerMachineAction` re-checks the same rule and
-  // also refuses a model whose field contract is not published, so this list
-  // is a convenience, never the gate.
+  // Reviewed models whose field contract is PUBLISHED. `registerMachineAction`
+  // re-checks both rules; the list only avoids offering a model that would
+  // then refuse. A failed contract read lists nothing.
+  const db = (await createClient()) as unknown as MachineDb;
   const catalogue = catalogueForRuntime();
-  const models = activeProfiles(catalogue).map((p) => ({
+  const active = activeProfiles(catalogue);
+  const published = new Map<string, readonly string[] | null>();
+  let checkFailed = false;
+  for (const p of active) {
+    const res = await publishedModesFor(db, p.profileId, p.version);
+    if (!res.ok) checkFailed = true;
+    published.set(`${p.profileId}@${p.version}`, res.ok ? res.value : null);
+  }
+  const models = listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null).map((p) => ({
     profileId: p.profileId,
     label: `${p.manufacturer} ${p.model}`,
   }));
 
-  const db = (await createClient()) as unknown as MachineDb;
   const listed = await listStudioMachines(db, studio.id);
 
   async function register(input: {
@@ -61,7 +70,7 @@ export default async function MachineSettingsPage() {
           Register a machine
         </h3>
         <div className="mt-3">
-          <MachineRegisterForm models={models} register={register} />
+          <MachineRegisterForm models={models} register={register} contractCheckFailed={checkFailed && models.length === 0} />
         </div>
       </section>
 

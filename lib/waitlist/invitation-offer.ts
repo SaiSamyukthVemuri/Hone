@@ -1,4 +1,4 @@
-import { localDateString, localDayOfWeek, formatLocalDateLabel } from "@/lib/booking/tz";
+import { localDateString, localDayOfWeek, formatLocalDateLabel, localTimeString12h } from "@/lib/booking/tz";
 import {
   evaluateInvitationScope,
   type InvitationScope,
@@ -160,7 +160,11 @@ export type BookingRefusal =
   /** The offer does not cover that request -- wrong service, day or date. */
   | "not_permitted"
   /** In doubt: the attempt may or may not have reached the studio. */
-  | "unavailable";
+  | "unavailable"
+  /** 0319: the optional text was refused. Nothing changed; the offer is intact. */
+  | "note_invalid"
+  /** 0319: the "these times don't work" tap did not complete. Nothing changed. */
+  | "feedback_unavailable";
 
 /**
  * Why the recipient is being asked to prove again, when they did not ask to be.
@@ -187,6 +191,17 @@ export type InvitationClosedReason =
   | "expired"
   | "revoked"
   | "already_redeemed"
+  /**
+   * The invitation is spent and the holder has NOT proven they are its
+   * recipient in this browser. Says only that it was used: no service, time,
+   * studio detail or booking outcome (a link alone must not disclose them).
+   */
+  | "already_used"
+  /**
+   * The invitation is spent, the holder is proven, and the database cannot
+   * confirm a live booking behind it. Says nothing about an appointment.
+   */
+  | "used_contact_studio"
   /**
    * The redeem committed and the appointment did not.
    *
@@ -230,7 +245,23 @@ export type InvitationClosedReason =
    * help: the service will still be the wrong service on the next tap.
    */
   | "unsupported_offer"
-  | "declined";
+  /**
+   * The studio is not taking NEW-client bookings at all (admission `closed`, or
+   * unreadable). 0204's `invited_book` refuses even a valid invitation there, so
+   * no times are shown and nothing is consumed. Says nothing about the offer.
+   */
+  | "admission_closed"
+  /**
+   * Same refusal, but the mode could NOT be read. Fails closed like `admission_closed`,
+   * and must not claim the studio is closed.
+   */
+  | "admission_unreadable"
+  | "declined"
+  /**
+   * 0325: the answers command said the invitation is not live (or the token is not valid) although the page could still read it. Says only that
+   * it is no longer active: not that it expired, was revoked, used or declined, and nothing about proof.
+   */
+  | "no_longer_active";
 
 export type InvitationViewState =
   | { kind: "loading" }
@@ -302,10 +333,31 @@ export type InvitationViewState =
        * not after.
        */
       phoneRequired?: boolean;
+      /**
+       * HON-7. Server-resolved text the recipient must see BEFORE booking, when
+       * the studio's free-consultation rule says this appointment can be
+       * cancelled but not self-service rescheduled. The screen renders the
+       * string and decides nothing: the policy module owns both the rule and the
+       * words, so this surface cannot promise what the cancel page refuses.
+       */
+      bookingNotice?: string;
+      /**
+       * HON-7. Day labels inside the offered window on which NOTHING is open, so
+       * the recipient sees the whole window rather than only the days that have
+       * times. Derived from the same scan that produced `days`; never guessed.
+       */
+      noTimeDays?: string[];
+      /**
+       * HON-7. When THIS INVITATION closes (the fixed 48-hour opportunity), in
+       * the studio's own zone. It is a different thing from the booking window,
+       * which is the range of days the times may fall on; the screen says so.
+       */
+      inviteOpenUntil?: string;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
-  | { kind: "declined" }
+  /** `keptOnList` is true only when 0319 returned the entry to waiting. */
+  | { kind: "declined"; keptOnList?: boolean; answered?: "answers" | "withdrawal" }
   | { kind: "error"; retryable: boolean };
 
 /**
@@ -379,8 +431,15 @@ export function groupSlotsByDay(
     });
 }
 
+/** "Thu, Nov 13 at 3:00 PM" in the studio's zone, or nothing for an unreadable instant. */
+export function openUntil(expiresAt: string, tz: string): { inviteOpenUntil?: string } {
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return {};
+  return { inviteOpenUntil: `${formatSlotDayLabel(localDateString(at, tz))} at ${localTimeString12h(at, tz)} (studio time)` };
+}
+
 /** "Mon, Sep 7" -- short enough for a phone, unambiguous across a week. */
-function formatSlotDayLabel(ymd: string): string {
+export function formatSlotDayLabel(ymd: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
   if (!m) return ymd;
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
@@ -453,6 +512,10 @@ export type RecipientContext = {
    * one is the invited person's own datum.
    */
   phoneNeeded?: boolean;
+  /** HON-7: see the offer variant's `bookingNotice`. */
+  bookingNotice?: string;
+  /** HON-7: see the offer variant's `noTimeDays`. */
+  noTimeDays?: string[];
 };
 
 /**
@@ -555,6 +618,9 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
         // number the studio already holds would be a worse surface than the
         // silent failure this replaces.
         ...(ctx.phoneNeeded ? { phoneRequired: true } : {}),
+        ...(ctx.bookingNotice ? { bookingNotice: ctx.bookingNotice } : {}),
+        ...(ctx.noTimeDays && ctx.noTimeDays.length > 0 ? { noTimeDays: ctx.noTimeDays } : {}),
+        ...openUntil(resolve.invitation.expiresAt, ctx.presentation.studioTimezone),
       };
     }
   }
