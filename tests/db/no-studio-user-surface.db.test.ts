@@ -46,7 +46,7 @@ import {
 //             does not call a membership/ownership/uid check.
 //   storage   buckets and storage.objects policies applicable to authenticated.
 
-// WHAT THIS DOES NOT CLAIM. The 51 pinned functions are the set that RAN for a no-studio user in
+// WHAT THIS DOES NOT CLAIM. The 64 pinned functions are the set that RAN for a no-studio user in
 // the seeded local fixture. That is a reviewed list, not a proof that they are harmless, and the
 // census does not scrub or otherwise vouch for the report it writes. Behavioural role-check
 // proofs (valid fixture ids, an asserted refusal, a rolled-back scratch copy that stops
@@ -59,6 +59,12 @@ import {
 // realtime.send (S1, hosted read), graphql_public.graphql (S2, hosted read).
 // The four 0298 dismissal functions (dismiss/restore/restore_if_latest/list_dismissed_attention) have
 // behavioural proofs in the S5 block at the end of this file.
+// The thirteen 0287 permission-engine functions (activate_released_permissions, adopt_new_defaults, change_staff_role,
+// effective_access, get_role_permissions, has_studio_permission, list_permission_audit, preview_activation,
+// preview_adopt_new_defaults, preview_reset, preview_role_changes, reset_role_to_defaults, save_role_permissions) are
+// SECURITY DEFINER and granted to authenticated. Each resolves perm_actor(p_studio) (an active membership of THAT studio for auth.uid())
+// and answers {ok:false, code:'refused'} unless the actor is the studio owner; has_studio_permission answers false when there is no
+// actor. Behavioural proofs are in the S6 block at the end of this file.
 
 
 /**
@@ -816,6 +822,19 @@ const PINNED: string[] = [
   "fn public.can_use_client_legal_identity(target_studio_id uuid)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
+  "fn public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text, p_preview_hash text, p_sensi",
+  "fn public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean)",
+  "fn public.change_staff_role(p_studio uuid, p_membership uuid, p_new_role text, p_expected_current_role text, p_reason text)",
+  "fn public.effective_access(p_studio uuid, p_membership uuid)",
+  "fn public.get_role_permissions(p_studio uuid)",
+  "fn public.has_studio_permission(p_studio uuid, p_key text, p_client uuid, p_appointment uuid, p_practitioner uuid)",
+  "fn public.list_permission_audit(p_studio uuid, p_limit integer, p_before bigint)",
+  "fn public.preview_activation(p_studio uuid, p_keys text[])",
+  "fn public.preview_adopt_new_defaults(p_studio uuid)",
+  "fn public.preview_reset(p_studio uuid, p_role text)",
+  "fn public.preview_role_changes(p_studio uuid, p_changes jsonb)",
+  "fn public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean)",
+  "fn public.save_role_permissions(p_studio uuid, p_expected_version bigint, p_changes jsonb, p_reason text, p_sensitive_confirmed boolean)",
   "fn public.is_studio_member(target_studio_id uuid)",
   "fn public.is_studio_owner(target_studio_id uuid)",
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",
@@ -1135,6 +1154,163 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
       await withTx(async (c) => { await as(c, S); expect(await call(c, f, A.studioId)).toBe(REFUSED); });
     });
 
+    it(`${f.name}: not executable by anon, public or service_role`, async () => {
+      const r = await adminQuery(
+        `select has_function_privilege('anon', p.oid, 'execute') a, has_function_privilege('service_role', p.oid, 'execute') s, has_function_privilege('authenticated', p.oid, 'execute') u,
+                exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x where x.grantee = 0) pub
+           from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=$1`, [f.name]);
+      expect(r.rows[0]).toEqual({ a: false, s: false, u: true, pub: false });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S6: the thirteen 0287 permission-engine functions are reachable by a no-studio user (SECURITY DEFINER, granted to
+// authenticated). Each stops at perm_actor(p_studio) (an ACTIVE membership of that studio for auth.uid(); none for a stranger) and answers
+// {ok:false, code:'refused'} unless the actor is the studio owner; has_studio_permission answers false when there is no actor. Proven here:
+//   1. a stranger gets exactly the refusal (false for has_studio_permission) for the owner's real studio, a random studio and a NULL
+//      studio, and the answer echoes no studio id;
+//   2. the calls add no row to any of the four tables the engine writes (permission_audit, studio_permission_policy,
+//      studio_role_permissions, permission_key_activation) in ANY studio: the whole tables are counted before and after, on the same
+//      connection (reset role, count, back to the savepoint);
+//   3. the owner of a DIFFERENT studio, naming this studio, and a member who is not an owner, are refused the same way; the owner is not (control);
+//   4. a rolled-back scratch copy with the owner check removed (from the function and every perm_run_* body that carries it) no longer
+//      returns the refusal to the stranger (the probe can fail). has_studio_permission has no owner check to remove (it only reports),
+//      so it has no scratch case; its stranger answer is false and its owner answer is true.
+// The scratch probe runs CREATE OR REPLACE FUNCTION inside a transaction it always rolls back. Local-stack only.
+// ---------------------------------------------------------------------------
+describe("S6: the 0287 permission-engine functions refuse a no-studio user at the actor check and leak nothing", () => {
+  const REFUSED = { ok: false, code: "refused" };
+  type Fn = { name: string; sql: (studio: string | null, other?: string) => string; boolean?: boolean };
+  const lit = (studio: string | null) => (studio === null ? "null::uuid" : `'${studio}'::uuid`);
+  const FNS: Fn[] = [
+    { name: "activate_released_permissions", sql: (st) => `select public.activate_released_permissions(${lit(st)}, array['appt.cancel'], 1, 'because', 'x', false) r` },
+    { name: "adopt_new_defaults", sql: (st) => `select public.adopt_new_defaults(${lit(st)}, 1, 'because', false) r` },
+    { name: "change_staff_role", sql: (st) => `select public.change_staff_role(${lit(st)}, '${randomUUID()}'::uuid, 'practitioner', 'practitioner', 'because') r` },
+    { name: "effective_access", sql: (st) => `select public.effective_access(${lit(st)}, '${randomUUID()}'::uuid) r` },
+    { name: "get_role_permissions", sql: (st) => `select public.get_role_permissions(${lit(st)}) r` },
+    { name: "has_studio_permission", boolean: true, sql: (st) => `select public.has_studio_permission(${lit(st)}, 'appt.cancel', null, null, null) r` },
+    { name: "list_permission_audit", sql: (st) => `select public.list_permission_audit(${lit(st)}, 10, null) r` },
+    { name: "preview_activation", sql: (st) => `select public.preview_activation(${lit(st)}, null) r` },
+    { name: "preview_adopt_new_defaults", sql: (st) => `select public.preview_adopt_new_defaults(${lit(st)}) r` },
+    { name: "preview_reset", sql: (st) => `select public.preview_reset(${lit(st)}, 'practitioner') r` },
+    { name: "preview_role_changes", sql: (st) => `select public.preview_role_changes(${lit(st)}, '{}'::jsonb) r` },
+    { name: "reset_role_to_defaults", sql: (st) => `select public.reset_role_to_defaults(${lit(st)}, 'practitioner', 1, 'because', false) r` },
+    { name: "save_role_permissions", sql: (st) => `select public.save_role_permissions(${lit(st)}, 1, '{}'::jsonb, 'because', false) r` },
+  ];
+  const ENGINE_TABLES = ["permission_audit", "studio_permission_policy", "studio_role_permissions", "permission_key_activation"];
+  const as = async (c: Client, userId: string) => {
+    await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+  };
+  const rowsInEngineTables = async (c: Client) => {
+    let n = 0;
+    for (const t of ENGINE_TABLES) n += Number((await c.query(`select count(*)::int n from public.${t}`)).rows[0].n);
+    return n;
+  };
+  // The answer (parsed) or the error code the call raised, plus how many rows it added to the engine tables in ALL studios.
+  const callCounting = async (c: Client, f: Fn, studio: string | null) => {
+    await c.query("savepoint s6");
+    try {
+      await c.query("reset role");
+      const before = await rowsInEngineTables(c);
+      await c.query("set local role authenticated");
+      let answer: unknown;
+      let raised: string | null = null;
+      try {
+        answer = (await c.query(f.sql(studio))).rows[0].r;
+      } catch (e) {
+        raised = (e as { code?: string }).code ?? "?";
+        await c.query("rollback to savepoint s6");
+        await c.query("savepoint s6");
+      }
+      await c.query("reset role");
+      return { answer, raised, added: (await rowsInEngineTables(c)) - before };
+    } finally {
+      await c.query("rollback to savepoint s6");
+    }
+  };
+  const withTx = async <T,>(fn: (c: Client) => Promise<T>): Promise<T> => {
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    try {
+      await c.query("begin");
+      await c.query("set local role authenticated");
+      return await fn(c);
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+  };
+  const refusal = (f: Fn) => (f.boolean ? false : REFUSED);
+
+  it("the stranger gets exactly the refusal (false for has_studio_permission) for a real, a random and a NULL studio; no studio id echoed; no engine row added anywhere", async () => {
+    await withTx(async (c) => {
+      await as(c, S);
+      for (const f of FNS) {
+        for (const st of [A.studioId, randomUUID(), null]) {
+          const out = await callCounting(c, f, st);
+          const label = `${f.name}(${st === null ? "null" : "studio"})`;
+          expect(out.raised, `${label} must answer, not raise`).toBeNull();
+          expect(out.answer, label).toEqual(refusal(f));
+          expect(JSON.stringify(out.answer), label).not.toContain(A.studioId);
+          expect(out.added, `${label}: a refused stranger call must add no engine row anywhere`).toBe(0);
+        }
+      }
+    });
+  });
+
+  it("the owner of a DIFFERENT studio, naming this studio, is refused the same way and adds no row anywhere", async () => {
+    const B = await seedStudio("nsu-s6-other-owner");
+    await withTx(async (c) => {
+      await as(c, B.userId);
+      for (const f of FNS) {
+        const out = await callCounting(c, f, A.studioId);
+        expect(out.raised, f.name).toBeNull();
+        expect(out.answer, `other-studio owner ${f.name}`).toEqual(refusal(f));
+        expect(out.added, `${f.name}: no engine row anywhere`).toBe(0);
+      }
+    });
+  });
+
+  it("a member who is not an owner is refused (has_studio_permission only reports); the owner is not refused (control)", async () => {
+    await withTx(async (c) => {
+      for (const f of FNS) {
+        await as(c, M.userId);
+        const member = await callCounting(c, f, A.studioId);
+        if (f.boolean) expect(typeof member.answer, `member ${f.name} answers a boolean`).toBe("boolean");
+        else expect(member.answer, `member ${f.name}`).toEqual(REFUSED);
+        await as(c, A.userId);
+        const owner = await callCounting(c, f, A.studioId);
+        if (f.boolean) expect(owner.answer, "control: the owner holds appt.cancel").toBe(true);
+        else expect(JSON.stringify(owner.answer ?? { raised: owner.raised }), `owner ${f.name} is not refused`).not.toBe(JSON.stringify(REFUSED));
+      }
+    });
+  });
+
+  for (const f of FNS.filter((x) => !x.boolean)) {
+    it(`${f.name}: a scratch copy without the owner check no longer refuses the stranger (can fail)`, async () => {
+      const gate = /if not found or a\.role <> 'owner' then return public\.perm_fail\('refused'\); end if;/;
+      const defs = (
+        await adminQuery(
+          `select p.proname, pg_get_functiondef(p.oid) d from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+            where n.nspname='public' and (p.proname=$1 or p.proname like 'perm\\_run\\_%') order by 1`, [f.name])
+      ).rows as Array<{ proname: string; d: string }>;
+      const carrying = defs.filter((r) => gate.test(r.d));
+      expect(carrying.length, "the owner check must be present in the function or a perm_run_* body (else this probe is stale)").toBeGreaterThan(0);
+      const out = await withTx(async (c) => {
+        await c.query("reset role");
+        for (const r of carrying) await c.query(r.d.replace(gate, ""));
+        await c.query("set local role authenticated");
+        await as(c, S);
+        return callCounting(c, f, A.studioId);
+      });
+      expect(out.answer, "with the owner check removed the stranger is no longer refused").not.toEqual(REFUSED);
+      // the real function is unchanged after the rollback
+      await withTx(async (c) => { await as(c, S); expect((await callCounting(c, f, A.studioId)).answer).toEqual(REFUSED); });
+    });
+  }
+
+  for (const f of FNS) {
     it(`${f.name}: not executable by anon, public or service_role`, async () => {
       const r = await adminQuery(
         `select has_function_privilege('anon', p.oid, 'execute') a, has_function_privilege('service_role', p.oid, 'execute') s, has_function_privilege('authenticated', p.oid, 'execute') u,
