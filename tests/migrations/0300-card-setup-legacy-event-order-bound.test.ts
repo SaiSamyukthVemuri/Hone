@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // 0300 — PAY-006 legacy-history upper bound. STATIC contract.
 //
@@ -33,10 +33,11 @@ const LEGACY_START = "  -- Removed history retains its watermark.";
 const KNOWN_START = "  select pg_catalog.max(c.stripe_setup_success_event_created) into v_max";
 
 describe("0300 — migration state", () => {
-  // Current maximum on this branch. When a successor is authored, convert this
-  // to isRepoMax(false) + versionsAbove, per CLAUDE.md §2.
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0300")).toBe(true);
+  // A successor (0313) was authored, so this is no longer the maximum, per
+  // CLAUDE.md §2.
+  it("consumes exactly one number and a successor sits above it", () => {
+    expect(isRepoMax("0300")).toBe(false);
+    expect(versionsAbove("0300").length).toBeGreaterThan(0);
     expect(countVersion("0300")).toBe(1);
   });
 });

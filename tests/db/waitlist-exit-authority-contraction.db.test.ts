@@ -232,7 +232,7 @@ async function invitedProspect(
   const from = opts.from ?? new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
   const to = opts.to ?? new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
   const a = await q<{ result: string; raw_token: string }>(
-    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,72)`,
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,72,1000)`,
     [f.studioId, f.userId, e[0].entry_id, f.serviceId, from, to, opts.dows ?? null],
   );
   expect(a[0].result, "the fixture failed to admit").toBe("admitted");
