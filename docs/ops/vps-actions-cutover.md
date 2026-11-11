@@ -216,6 +216,89 @@ Reference: [Netfilter nft manual](https://netfilter.org/projects/nftables/manpag
 (`--check`, exclusive `create`, `inet`, interface-name matches) and
 [LXD 5.21 bridge options](https://canonical.com/lxd/docs/v5.21/reference/network_bridge/).
 
+### Closed bridge receipt and boot persistence
+
+Sam's 2026-11-11 12:22 UTC terminal read-back confirms `honeci0` Created,
+managed, `10.203.0.1/24`, NAT/routing/DHCP/firewall false, IPv6 address none,
+and `used_by: []`. The separate `inet hone_ci_guard` exists with the expected
+three filter hooks at priority -20 and all four interface-scoped drops. Its
+OUTPUT rule recorded two packets blocked. This confirms staged configuration
+and that those host packets were blocked; it is not a guest isolation test,
+reboot proof, working CI egress or worker/runner receipt. Do not rerun the
+exclusive bridge-creation procedure above.
+
+The next explicit operator step persists ONLY that observed closed guard.
+It captures that table without counter state, validates the scoped replacement
+batch and unit before installing new root-owned CI-only files, and enables
+one oneshot service. The `destroy` plus table declaration is one nftables
+batch scoped to `inet hone_ci_guard`, permitting a boot with no table and
+repeat service starts without duplicate rules. Other tables are untouched.
+Existing persistence paths refuse overwrite. A failed step requires inspection.
+
+```bash
+(
+  set -euo pipefail
+
+  for ci_path in /etc/hone-ci/closed-network.nft \
+    /etc/systemd/system/hone-ci-closed-network.service; do
+    sudo test ! -e "$ci_path"
+    sudo test ! -L "$ci_path"
+  done
+  sudo test -x /usr/sbin/nft
+
+  ci_tmp=$(mktemp -d)
+  trap 'rm -f "$ci_tmp/closed-network.nft" "$ci_tmp/hone-ci-closed-network.service"; rmdir "$ci_tmp"' EXIT
+
+  printf 'destroy table inet hone_ci_guard\n' > "$ci_tmp/closed-network.nft"
+  sudo nft --stateless list table inet hone_ci_guard >> "$ci_tmp/closed-network.nft"
+  sudo nft --check --file "$ci_tmp/closed-network.nft"
+
+  cat > "$ci_tmp/hone-ci-closed-network.service" <<'HONE_CI_UNIT'
+[Unit]
+Description=Hone CI closed bridge guard
+After=local-fs.target
+Before=snap.lxd.daemon.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/sbin/nft --check --file /etc/hone-ci/closed-network.nft
+ExecStart=/usr/sbin/nft --file /etc/hone-ci/closed-network.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+HONE_CI_UNIT
+
+  sudo systemd-analyze verify "$ci_tmp/hone-ci-closed-network.service"
+  sudo install -d -m 0755 /etc/hone-ci
+  sudo install -o root -g root -m 0644 "$ci_tmp/closed-network.nft" /etc/hone-ci/closed-network.nft
+  sudo install -o root -g root -m 0644 "$ci_tmp/hone-ci-closed-network.service" /etc/systemd/system/hone-ci-closed-network.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now hone-ci-closed-network.service
+
+  sudo systemctl is-enabled hone-ci-closed-network.service
+  sudo systemctl is-active hone-ci-closed-network.service
+  sudo nft --stateless list table inet hone_ci_guard
+  sudo /snap/bin/lxc --force-local config get storage.images_volume
+  sudo /snap/bin/lxc --force-local remote list
+)
+```
+
+Expected enabled/active and the same four drops. The service has no ExecStop
+that removes blocking rules. It is ordered before the snap LXD daemon when
+both units are started; it does not restart that daemon or the host. This is
+not a hard dependency that prevents all LXD starts. A future worker supervisor
+MUST require an active guard service AND verify the exact live rules, network
+configuration and absence of unapproved attachments before every admission.
+A service being active alone cannot detect a deleted or changed firewall table.
+
+The read-only image-cache configuration and client remote inventory at the
+end prepare the next image-storage/source decision; no image is copied and
+no cache is migrated. Use the actual LXD key `storage.images_volume`.
+Unit enablement/read-back is not a successful boot drill. Keep worker autostart
+off and qualify boot recovery, permitted egress and guest IPv4/IPv6 negatives
+before attaching a worker. No server reboot is requested by this procedure.
+
 ## Exact provisioning scope for the pilot
 
 Do this only from the VPS-connected OPS environment after reviewing the actual
