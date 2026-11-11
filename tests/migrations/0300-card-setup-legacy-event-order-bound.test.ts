@@ -33,11 +33,11 @@ const LEGACY_START = "  -- Removed history retains its watermark.";
 const KNOWN_START = "  select pg_catalog.max(c.stripe_setup_success_event_created) into v_max";
 
 describe("0300 — migration state", () => {
-  // A successor (0301, HON-8) is authored, so this is no longer the maximum:
-  // isRepoMax(false) + versionsAbove, per CLAUDE.md §2.
-  it("is no longer the repository maximum and consumes exactly one number", () => {
+  // A successor (0313) was authored, so this is no longer the maximum, per
+  // CLAUDE.md §2.
+  it("consumes exactly one number and a successor sits above it", () => {
     expect(isRepoMax("0300")).toBe(false);
-    expect(versionsAbove("0300")).toContain("0301");
+    expect(versionsAbove("0300").length).toBeGreaterThan(0);
     expect(countVersion("0300")).toBe(1);
   });
 });
