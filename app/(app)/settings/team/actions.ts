@@ -12,7 +12,7 @@ import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
-import { disconnectConnection, getRefreshTokenCiphertext } from "@/lib/google-calendar/connection";
+import { disconnectConnection, getOwnConnectionMetadata } from "@/lib/google-calendar/connection";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -278,6 +278,10 @@ export async function removePractitionerAction(formData: FormData): Promise<void
 // link_invited_membership) and their Google Calendar connection (the studio's calendar-owner connection keeps syncing appointments
 // to their Google account otherwise: the sync reads the connection, never `practitioners.active`). Both are scoped to this studio
 // and to the target the locked command just deactivated. Returns what could not be cleared, plus the google_access NOTICE (Hone's stored credential was deleted; any grant at Google is the person's to remove); clears the rest regardless.
+// A studio's pending invitations are read in pages below the API row cap; past the page ceiling the scan fails closed and is REPORTED, never ignored.
+const PENDING_INVITATION_PAGE_SIZE = 500;
+const PENDING_INVITATION_MAX_PAGES = 40;
+
 async function endRemovedMemberLeftovers(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
@@ -297,16 +301,23 @@ async function endRemovedMemberLeftovers(
     if (email) {
       // Match the email CASE-INSENSITIVELY, as sign-in and the invitation lookup do (lower(email) uniqueness, ilike): an invitation stored as
       // "Name@X.com" must still end when the member row says "name@x.com". An ilike filter would treat "_" and "%" in an address as wildcards and could
-      // revoke a different person's invitation, so this reads the studio's pending invitations and compares in code, then revokes by id.
-      const { data: pending, error: pendingErr } = await admin
-        .from("pending_invitations")
-        .select("id,email")
-        .eq("studio_id", studioId)
-        .eq("status", "pending");
-      if (pendingErr) throw pendingErr;
-      const ids = (pending ?? [])
-        .filter((r: { id: string; email: string | null }) => typeof r.email === "string" && r.email.trim().toLowerCase() === email)
-        .map((r: { id: string }) => r.id);
+      // revoke a different person's invitation, so this reads the studio's pending invitations PAGE BY PAGE (a single read stops at the API row cap and
+      // could miss the match) and compares in code, then revokes by id.
+      const ids: string[] = [];
+      for (let page = 0; ; page++) {
+        if (page >= PENDING_INVITATION_MAX_PAGES) throw new Error("pending_invitations_scan_exceeded");
+        const { data: rows, error: pendingErr } = await admin
+          .from("pending_invitations")
+          .select("id,email")
+          .eq("studio_id", studioId)
+          .eq("status", "pending")
+          .order("id", { ascending: true })
+          .range(page * PENDING_INVITATION_PAGE_SIZE, (page + 1) * PENDING_INVITATION_PAGE_SIZE - 1);
+        if (pendingErr) throw pendingErr;
+        const batch = (rows ?? []) as Array<{ id: string; email: string | null }>;
+        for (const r of batch) if (typeof r.email === "string" && r.email.trim().toLowerCase() === email) ids.push(r.id);
+        if (batch.length < PENDING_INVITATION_PAGE_SIZE) break;
+      }
       if (ids.length > 0) {
         const { error: revokeErr } = await admin
           .from("pending_invitations")
@@ -327,7 +338,8 @@ async function endRemovedMemberLeftovers(
     // marks THIS studio's connection disconnected; it never calls Google. A Google revoke acts on the person's grant to Hone, so it
     // could end the same person's sync in a DIFFERENT studio, which this studio's owner has no right to do. The grant at Google, if any,
     // is the person's to remove: google_access tells the owner so. It is reported whenever a connection row existed: a grant may remain at Google even when no local secret was stored.
-    await getRefreshTokenCiphertext(studioId, practitionerId);
+    // Connection METADATA only, to fail early if the store cannot be read; the encrypted token is never read on this path.
+    await getOwnConnectionMetadata(studioId, practitionerId);
     if (await disconnectConnection(studioId, practitionerId)) failed.push("google_access");
   } catch {
     console.error("team_action_error:remove_disconnect_google");

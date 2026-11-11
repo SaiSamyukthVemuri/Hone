@@ -21,6 +21,7 @@ const DB = vi.hoisted(() => ({
   inviteUpdateError: null as unknown,
   pendingInvites: [] as Array<{ id: string; email: string | null }>,
   pendingReadError: null as unknown,
+  pagesRead: [] as Array<[number, number]>,
   invitesTouched: [] as Array<Record<string, unknown>>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   order: [] as string[],
@@ -71,6 +72,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         filters[col] = val;
         return chain;
       };
+      chain.order = () => chain;
+      chain.range = (from: number, to: number) => {
+        filters.__range = [from, to];
+        return chain;
+      };
       chain.in = (col: string, val: unknown) => {
         filters[col] = val;
         return chain;
@@ -90,7 +96,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         } else if (table === "pending_invitations") {
           // the studio's pending invitations, read before the revoke
           DB.order.push("read:pending_invitations");
-          resolve({ data: DB.pendingInvites, error: DB.pendingReadError });
+          const [from, to] = (filters.__range as [number, number] | undefined) ?? [0, DB.pendingInvites.length];
+          DB.pagesRead.push([from, to]);
+          resolve({ data: DB.pendingReadError ? null : DB.pendingInvites.slice(from, to + 1), error: DB.pendingReadError });
         } else resolve({ error: null });
       };
       return chain;
@@ -98,9 +106,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 vi.mock("@/lib/google-calendar/connection", () => ({
-  getRefreshTokenCiphertext: vi.fn(async () => {
-    if (GOOGLE.cipherThrows) throw new Error("calendar_connection_store_error:read_connection");
-    return GOOGLE.cipher;
+  // Removal reads connection METADATA only (never the encrypted token): the fake has no ciphertext reader at all, so a call to one would throw.
+  getOwnConnectionMetadata: vi.fn(async () => {
+    if (GOOGLE.cipherThrows) throw new Error("calendar_connection_store_error:read_metadata");
+    return GOOGLE.cipher === null ? null : { id: "conn-1" };
   }),
   disconnectConnection: vi.fn(async (...a: unknown[]) => {
     GOOGLE.disconnect(...(a as []));
@@ -149,6 +158,7 @@ beforeEach(() => {
   DB.targetReadError = null;
   DB.inviteUpdateError = null;
   DB.pendingReadError = null;
+  DB.pagesRead = [];
   DB.pendingInvites = [{ id: "inv-1", email: "Removed.Person@Example.test" }, { id: "inv-2", email: "someone.else@example.test" }];
   DB.invitesTouched = [];
   DB.rpcCalls = [];
@@ -204,6 +214,27 @@ describe("removing a member ends their outstanding invitations and Google Calend
     const r = await outcome("member-1");
     expect(r).toEqual({ redirectedTo: "/settings/team?removed=partial&left=invitations,google_access" }); // the Google notice rides along: a stored credential was deleted
     expect(GOOGLE.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("the pending invitations are read PAGE BY PAGE, so a match beyond the first 500 rows is still found and revoked", async () => {
+    const filler = Array.from({ length: 1100 }, (_, i) => ({ id: `f-${String(i).padStart(4, "0")}`, email: `filler${i}@example.test` }));
+    DB.pendingInvites = [...filler, { id: "zz-last", email: "REMOVED.person@example.test" }];
+    await outcome("member-1");
+    expect(DB.pagesRead).toEqual([[0, 499], [500, 999], [1000, 1499]]);
+    expect(DB.invitesTouched).toEqual([{ patch: { status: "revoked" }, filters: { id: ["zz-last"], studio_id: "studio-1", status: "pending" } }]);
+  });
+
+  it("a scan that never ends (more pages than the ceiling) fails closed and is REPORTED as invitations, revoking nothing", async () => {
+    DB.pendingInvites = Array.from({ length: 40 * 500 + 5 }, (_, i) => ({ id: `g-${i}`, email: `x${i}@example.test` }));
+    const r = await outcome("member-1");
+    expect(r.redirectedTo).toContain("invitations");
+    expect(DB.invitesTouched).toEqual([]);
+  });
+
+  it("removal reads connection metadata and never the encrypted token (source pin)", () => {
+    const src = readFileSync(join(__dirname, "../../../app/(app)/settings/team/actions.ts"), "utf8");
+    expect(src).toContain("getOwnConnectionMetadata(studioId, practitionerId)");
+    expect(src).not.toContain("getRefreshTokenCiphertext");
   });
 
   it("a failed READ of the pending invitations is reported as invitations, nothing is revoked on a guess, and the Google clear still runs", async () => {

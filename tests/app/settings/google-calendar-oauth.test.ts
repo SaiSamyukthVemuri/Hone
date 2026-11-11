@@ -177,14 +177,14 @@ describe("disconnectGoogleCalendarAction — studio-local disconnection, never a
   });
 
   it("a connection row with NO stored secret still gets the notice (a grant may remain at Google)", async () => {
-    vi.mocked(getRefreshTokenCiphertext).mockResolvedValueOnce(null as never);
+    vi.mocked(getOwnConnectionMetadata).mockResolvedValueOnce(null as never);
     const r = await disconnectGoogleCalendarAction();
     expect((r as { notice?: string }).notice).toMatch(/Google authorization may remain/);
     expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
   });
 
   it("no connection row at all: disconnected idempotently with plain ok and NO notice", async () => {
-    vi.mocked(getRefreshTokenCiphertext).mockResolvedValueOnce(null as never);
+    vi.mocked(getOwnConnectionMetadata).mockResolvedValueOnce(null as never);
     vi.mocked(disconnectConnection).mockResolvedValueOnce(false as never);
     const r = await disconnectGoogleCalendarAction();
     expect(r).toEqual({ ok: true });
@@ -196,11 +196,12 @@ describe("disconnectGoogleCalendarAction — studio-local disconnection, never a
     const src = readFileSync(join(__dirname, "../../../app/(app)/settings/profile/google-calendar-actions.ts"), "utf8");
     const body = src.slice(src.indexOf("export async function disconnectGoogleCalendarAction"), src.indexOf("export async function listWritableCalendarsAction"));
     expect(body).not.toMatch(/revokeToken|decryptGoogleSecret/);
+    expect(body).not.toContain("getRefreshTokenCiphertext"); // the Disconnect path reads connection metadata, not the encrypted token
     expect(src).not.toMatch(/revokeToken/);
   });
 
   it("an unreadable connection store stops BEFORE anything is destroyed (the grant status is unknown)", async () => {
-    vi.mocked(getRefreshTokenCiphertext).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:read_connection"));
+    vi.mocked(getOwnConnectionMetadata).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:read_metadata"));
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const r = await disconnectGoogleCalendarAction();
