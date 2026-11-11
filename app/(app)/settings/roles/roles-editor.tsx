@@ -1212,6 +1212,7 @@ function ReviewPanel({
   );
 }
 
+const ACTIVATION_DISCARDED_LINE = "Activated. Your unsaved changes were discarded when the page re-read the saved state.";
 const ACTIVATION_DRAFT_LINE = "You have unsaved changes. Save or discard them first; activating replaces this page with the saved state.";
 
 function ActivationSection({
@@ -1308,7 +1309,7 @@ function ActivationSection({
       setBusy(false);
       // Insurance N1: the draft is locked while this runs, but a result must never be applied over one that became dirty anyway.
       if (draftRef.current && r.ok) {
-        setMessage(ACTIVATION_DRAFT_LINE);
+        setMessage(ACTIVATION_DISCARDED_LINE);
         onActivated();
         return;
       }
