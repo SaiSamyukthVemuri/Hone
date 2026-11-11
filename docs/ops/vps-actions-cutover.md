@@ -385,6 +385,104 @@ References: [LXD image storage volume](https://canonical.com/lxd/docs/v5.21/serv
 [custom volumes](https://canonical.com/lxd/docs/v5.21/howto/storage_volumes/) and
 [remote image inspection](https://canonical.com/lxd/docs/v5.21/reference/manpages/lxc/image/info/).
 
+### Confirmed cache/image and stopped offline build container
+
+Sam's 2026-11-11 12:44 UTC receipt confirms `ci-image-cache` Created as a
+10 GiB custom ext4 filesystem volume in `hone-ci`, selected by
+`storage.images_volume=hone-ci/ci-image-cache`. The post-allocation snapshot
+passed: logical commitment 10737418240 bytes, metadata 10.47%, root available
+115746394112 bytes and conservative thin data free 192825396717 bytes.
+The daemon mount-namespace read resolves image storage to
+`/dev/hone-ci/custom_default_ci--image--cache`, ext4, not the root filesystem.
+
+Sam's 13:09 UTC receipt then confirms successful image copy after the image-store
+and kernel device-number checks. Exact local fingerprint:
+`12a0de07e1683f41b169af0612897eae462efdeb84322281e91724c97e32fe0d`,
+alias `hone-ci-ubuntu-24.04-base`, Ubuntu 24.04 noble, amd64/x86_64,
+type container, serial 20261017, 263.54 MiB, local public=false, auto-update
+disabled. Cache usage was 263.55 MiB / 10 GiB. This is base-image import,
+not an instance/runner/job receipt.
+
+The image's suggested default profile is NOT a reviewed CI boundary.
+The next operator step uses `--no-profiles`, one explicit CI-pool root disk
+and no NIC or host-directory device. It creates ONLY a stopped `hone-ci-build`.
+Proposed limits: six CPUs, hard 12 GiB memory, swap discouraged, 1024 tasks,
+30 GiB root disk, unprivileged/isolated idmap, DevLXD and nesting disabled,
+autostart off. These are qualification budgets, not measured job requirements.
+Before any start, inspect actual expanded configuration, root quota and state.
+
+```bash
+(
+  set -euo pipefail
+
+  ci_check=$(mktemp)
+  trap 'rm -f "$ci_check"' EXIT
+  gh api \
+    'repos/SaiSamyukthVemuri/Hone/contents/scripts/ci/check-vps-storage.py?ref=976741b30a474509faaaedb34f573608111a5039' \
+    --jq .content | base64 --decode > "$ci_check"
+  printf '%s  %s\n' \
+    '4e4b4090af13f5c3d7fd5fe2e56648b26ec2dbb59460e54dc6a1dda0ed5db87c' \
+    "$ci_check" | sha256sum --check -
+  ci_snapshot=$(sudo python3 -I "$ci_check")
+  printf '%s\n' "$ci_snapshot"
+  printf '%s\n' "$ci_snapshot" | python3 -I -c '
+import json, sys
+r = json.loads(sys.stdin.readline())
+need = 70 * 1024**3
+if (r["pool_free_bytes_conservative"] < need
+    or r["existing_logical_commitment_bytes"] + need > r["pool_bytes"]):
+    raise SystemExit("Insufficient room for base image + build disk + reserve; stopped")
+'
+
+  sudo /snap/bin/lxc --force-local list --all-projects --format=json |
+    python3 -I -c '
+import json, sys
+instances = json.load(sys.stdin)
+if not isinstance(instances, list) or instances:
+    raise SystemExit("Existing/unknown instances found; inspect before creating the pilot")
+'
+
+  sudo /snap/bin/lxc --force-local init \
+    12a0de07e1683f41b169af0612897eae462efdeb84322281e91724c97e32fe0d \
+    hone-ci-build --no-profiles --storage hone-ci \
+    --device root,size=30GiB \
+    --config limits.cpu=6 \
+    --config limits.memory=12GiB \
+    --config limits.memory.enforce=hard \
+    --config limits.memory.swap=false \
+    --config limits.processes=1024 \
+    --config security.privileged=false \
+    --config security.idmap.isolated=true \
+    --config security.devlxd=false \
+    --config security.nesting=false \
+    --config boot.autostart=false
+
+  sudo /snap/bin/lxc --force-local config show hone-ci-build --expanded
+  sudo /snap/bin/lxc --force-local storage volume show hone-ci container/hone-ci-build
+  sudo /snap/bin/lxc --force-local info hone-ci-build
+  sudo python3 -I "$ci_check"
+  free -h
+)
+```
+
+The extra pre-create check allows 60 GiB full logical allocation (optimized
+base image plus build disk) and 10 GiB reserve beyond existing commitments.
+It checks both physical thin data free and logical promises. The pinned
+snapshot retains the separate 80 GiB root reserve and metadata ceiling.
+This is a single operator provisioning step, not a concurrent admission lock.
+If unrelated instances or ambiguous state exist, stop rather than adopting
+or deleting them. After creation, repeat storage accounting. No existing
+profile is changed and no container is started, so no guest networking,
+GitHub registration, credential injection or application checkout occurs.
+
+Next, a VPS-connected operator must validate the stopped configuration, take
+fresh host memory admission, boot it offline and read actual namespace/cgroup
+limits and socket/mount exposure before provisioning Docker or any CI job.
+Keep live egress/isolation/cancellation/restore acceptance held.
+
+Reference: [LXD init flags](https://canonical.com/lxd/docs/v5.21/reference/manpages/lxc/init/)
+and [instance limits/security options](https://canonical.com/lxd/docs/v5.21/reference/instance_options/).
+
 ## Exact provisioning scope for the pilot
 
 Do this only from the VPS-connected OPS environment after reviewing the actual
