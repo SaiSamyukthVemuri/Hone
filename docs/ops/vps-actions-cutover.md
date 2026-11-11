@@ -47,8 +47,9 @@ Do not remove or weaken a test to make a new runner green.
   `Network is unreachable`. No runner has been registered or launched here.
 - Sam's Mac-side checks confirm 108 GiB free on root, 28 GiB available RAM and
   all eight HON-8 QA containers still running. LXD 5.21.9 LTS was installed
-  explicitly and its client/server versions responded. Its pool/instance
-  inventories are empty and it has no managed network yet. The preflight
+  explicitly and its client/server versions responded. Initial inventories at
+  03:44 UTC had no pools, instances or managed networks; the later pool-creation
+  receipt below supersedes only the empty-pool inventory. The preflight
   checks the installed snap and invokes only the actual local client, avoiding
   Ubuntu's potentially mutating `/usr/sbin/lxc` installer wrapper.
 
@@ -58,8 +59,17 @@ Sam created and attached `hone-ci-runners`, Volume `107429924`, in Helsinki
 using manual filesystem management. The console reports 180 GB; Linux reports
 193273528320 bytes (180 GiB), serial `107429924`, at the stable path
 `/dev/disk/by-id/scsi-0HC_Volume_107429924` (currently `/dev/sdb`).
-His read-only check shows a whole disk, no filesystem or mountpoint, and no
-signatures reported by `wipefs --no-act`.
+Before setup, his read-only check showed a whole disk, no filesystem or mountpoint,
+and no signatures reported by `wipefs --no-act`.
+
+Sam's 11 November terminal receipt now confirms `Storage pool hone-ci created`
+after the pinned script verified the exact Volume and byte size. Read-back:
+driver `lvm`, status `Created`, `lvm.use_thinpool=true`, VG `hone-ci`, thin pool
+`LXDThinPool`, original source the exact by-id path above, ext4 volumes and
+`volume.size=30GiB`, with `used_by: []`. LXD reports 179.82 GiB total and
+18.74 GiB used. This is a pool-creation receipt, not a measured CI job peak or
+a successful admission snapshot. Actual thin data/metadata and full logical
+commitments still need the read-only LVM check before any job.
 
 Pool choice: LVM thin provisioning with ext4 runner disks, default size 30 GiB.
 This is a deliberate bounded-block layout compatible with Docker overlay2.
@@ -72,8 +82,9 @@ thin-pool consumption still require live pilot proof and admission accounting.
 the `hone-ci` LXD pool, after repeating serial/byte-size, no-partition,
 filesystem, mount, signature and existing-pool checks. A failed read stops it.
 It has no force-wipe, force-reuse, removal, network or Docker action. Guard tests
-run only against synthetic facts; actual pool creation is not yet observed.
-On an error/timeout, inspect the device and pool before retrying.
+run only against synthetic facts; Sam has now supplied the successful creation
+receipt above. Do not rerun `--create` against this initialized pool. On any
+later error/timeout, inspect the device and pool; never automatically wipe/retry.
 
 Put the runner roots, nested Docker data, images and scratch in this pool.
 Preserve the root reserve and inspect pool free/data/metadata consumption
@@ -104,7 +115,8 @@ The future host supervisor must hold an exclusive admission lock, exclude
 other pool writers and rerun the snapshot before each launch. A standalone
 passing snapshot does not reserve space or prove memory, network or isolation.
 Record actual data/metadata peaks and qualify exhaustion/cancellation recovery
-before permitting unattended work. No live pool receipt has been observed.
+before permitting unattended work. Pool creation is confirmed; network/image
+setup, runner registration and live job execution are not yet evidenced.
 
 ## Exact provisioning scope for the pilot
 
