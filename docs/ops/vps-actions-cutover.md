@@ -299,6 +299,92 @@ Unit enablement/read-back is not a successful boot drill. Keep worker autostart
 off and qualify boot recovery, permitted egress and guest IPv4/IPv6 negatives
 before attaching a worker. No server reboot is requested by this procedure.
 
+### Guard service receipt and image-cache staging
+
+Sam's terminal receipt at 2026-11-11 12:33 UTC confirms
+`hone-ci-closed-network.service` enabled and active, with the startup symlink
+created and the same four live drops read back. The image-cache configuration
+read was empty. Root's configured `ubuntu` remote is the official
+`https://cloud-images.ubuntu.com/releases/` SimpleStreams source.
+This is service installation/read-back, not a reboot drill or guest proof.
+
+Next explicit operator step: cap a new `ci-image-cache` custom filesystem
+volume at 10 GiB inside the existing exact-disk `hone-ci` pool, and select it
+as LXD's image-tarball store using `storage.images_volume`. This initial cap
+is a proposal for one base/candidate image, not a measured CI storage peak.
+It does not change the 30 GiB per-runner default. Before changing the daemon-wide
+image store, require an unset current destination and zero images across all
+projects, so an existing image inventory is not silently migrated.
+Existing cache-volume names refuse creation rather than being reused.
+
+```bash
+(
+  set -euo pipefail
+
+  ci_check=$(mktemp)
+  trap 'rm -f "$ci_check"' EXIT
+  gh api \
+    'repos/SaiSamyukthVemuri/Hone/contents/scripts/ci/check-vps-storage.py?ref=976741b30a474509faaaedb34f573608111a5039' \
+    --jq .content | base64 --decode > "$ci_check"
+  printf '%s  %s\n' \
+    '4e4b4090af13f5c3d7fd5fe2e56648b26ec2dbb59460e54dc6a1dda0ed5db87c' \
+    "$ci_check" | sha256sum --check -
+  sudo python3 -I "$ci_check"
+
+  ci_current=$(sudo /snap/bin/lxc --force-local config get storage.images_volume)
+  if [ -n "$ci_current" ]; then
+    printf 'Image storage already configured: %s; stop and inspect\n' "$ci_current"
+    exit 1
+  fi
+
+  sudo /snap/bin/lxc --force-local image list --all-projects --format=json |
+    python3 -I -c '
+import json, sys
+images = json.load(sys.stdin)
+if not isinstance(images, list) or images:
+    raise SystemExit("Existing/unknown images found; stop before changing image storage")
+'
+
+  sudo /snap/bin/lxc --force-local storage volume create \
+    hone-ci ci-image-cache size=10GiB
+  sudo /snap/bin/lxc --force-local config set \
+    storage.images_volume=hone-ci/ci-image-cache
+
+  sudo /snap/bin/lxc --force-local storage volume show hone-ci ci-image-cache
+  sudo /snap/bin/lxc --force-local config get storage.images_volume
+  sudo python3 -I "$ci_check"
+
+  ci_lxd_pid=$(sudo systemctl show snap.lxd.daemon.service --property=MainPID --value)
+  case "$ci_lxd_pid" in
+    ''|0|*[!0-9]*) echo "LXD daemon PID unavailable; stop and inspect"; exit 1 ;;
+  esac
+  sudo nsenter --target "$ci_lxd_pid" --mount -- \
+    findmnt --target /var/snap/lxd/common/lxd/images \
+    --output TARGET,SOURCE,FSTYPE,SIZE,AVAIL
+
+  sudo timeout 60s /snap/bin/lxc image info ubuntu:24.04
+)
+```
+
+A fresh pinned/checksum-verified storage snapshot precedes allocation and is
+repeated after it to account for the new LV's full logical commitment.
+The mount read uses the actual systemd LXD daemon's mount namespace because
+Snap mounts need not appear in the host's mount table. Inspect its exact
+source/backing against `hone-ci` before any image-tarball download; a root
+filesystem or missing/unknown mount refuses the later import, never a fallback.
+No pool or disk is formatted again and no existing image is deleted.
+
+The final explicit `ubuntu:24.04` command queries official remote metadata
+with the installed client; local mutations retain `--force-local`.
+Record a full fingerprint, container type, x86_64 architecture and Ubuntu
+24.04 properties before copying that exact fingerprint. This step does not
+copy an image, create/start a container or register a runner. If it stops
+after creating the cache, inspect actual state instead of rerunning setup.
+
+References: [LXD image storage volume](https://canonical.com/lxd/docs/v5.21/server/),
+[custom volumes](https://canonical.com/lxd/docs/v5.21/howto/storage_volumes/) and
+[remote image inspection](https://canonical.com/lxd/docs/v5.21/reference/manpages/lxc/image/info/).
+
 ## Exact provisioning scope for the pilot
 
 Do this only from the VPS-connected OPS environment after reviewing the actual
