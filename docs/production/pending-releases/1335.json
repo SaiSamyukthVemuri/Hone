@@ -1,8 +1,1 @@
-{
-  "pr": 1335,
-  "runtime": true,
-  "migrations": [
-    "supabase/migrations/0287_roles_permission_engine.sql"
-  ],
-  "release_receipt": "01-ops/1335-release-receipt.json"
-}
+{"pr":1335,"runtime":true,"migrations":["supabase/migrations/0287_roles_permission_engine.sql"],"release_receipt":"01-ops/1335-release-receipt.json"}
