@@ -22,6 +22,7 @@ const DB = vi.hoisted(() => ({
   pendingInvites: [] as Array<{ id: string; email: string | null }>,
   pendingReadError: null as unknown,
   pagesRead: [] as Array<[number, number]>,
+  rowCap: null as number | null,
   invitesTouched: [] as Array<Record<string, unknown>>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   order: [] as string[],
@@ -98,7 +99,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           DB.order.push("read:pending_invitations");
           const [from, to] = (filters.__range as [number, number] | undefined) ?? [0, DB.pendingInvites.length];
           DB.pagesRead.push([from, to]);
-          resolve({ data: DB.pendingReadError ? null : DB.pendingInvites.slice(from, to + 1), error: DB.pendingReadError });
+          resolve({ data: DB.pendingReadError ? null : DB.pendingInvites.slice(from, DB.rowCap === null ? to + 1 : Math.min(to + 1, from + DB.rowCap)), error: DB.pendingReadError });
         } else resolve({ error: null });
       };
       return chain;
@@ -159,6 +160,7 @@ beforeEach(() => {
   DB.inviteUpdateError = null;
   DB.pendingReadError = null;
   DB.pagesRead = [];
+  DB.rowCap = null;
   DB.pendingInvites = [{ id: "inv-1", email: "Removed.Person@Example.test" }, { id: "inv-2", email: "someone.else@example.test" }];
   DB.invitesTouched = [];
   DB.rpcCalls = [];
@@ -220,12 +222,12 @@ describe("removing a member ends their outstanding invitations and Google Calend
     const filler = Array.from({ length: 1100 }, (_, i) => ({ id: `f-${String(i).padStart(4, "0")}`, email: `filler${i}@example.test` }));
     DB.pendingInvites = [...filler, { id: "zz-last", email: "REMOVED.person@example.test" }];
     await outcome("member-1");
-    expect(DB.pagesRead).toEqual([[0, 499], [500, 999], [1000, 1499]]);
+    expect(DB.pagesRead).toEqual([[0, 499], [500, 999], [1000, 1499], [1101, 1600]]); // ends on the empty page
     expect(DB.invitesTouched).toEqual([{ patch: { status: "revoked" }, filters: { id: ["zz-last"], studio_id: "studio-1", status: "pending" } }]);
   });
 
   it("a scan that never ends (more pages than the ceiling) fails closed and is REPORTED as invitations, revoking nothing", async () => {
-    DB.pendingInvites = Array.from({ length: 40 * 500 + 5 }, (_, i) => ({ id: `g-${i}`, email: `x${i}@example.test` }));
+    DB.pendingInvites = Array.from({ length: 60 * 500 + 5 }, (_, i) => ({ id: `g-${i}`, email: `x${i}@example.test` }));
     const r = await outcome("member-1");
     expect(r.redirectedTo).toContain("invitations");
     expect(DB.invitesTouched).toEqual([]);
@@ -235,6 +237,14 @@ describe("removing a member ends their outstanding invitations and Google Calend
     const src = readFileSync(join(__dirname, "../../../app/(app)/settings/team/actions.ts"), "utf8");
     expect(src).toContain("getOwnConnectionMetadata(studioId, practitionerId)");
     expect(src).not.toContain("getRefreshTokenCiphertext");
+  });
+
+  it("a server row cap SMALLER than the page size cannot end the scan early: pages advance by the rows received and end only on an empty page", async () => {
+    const CAP = 200;
+    DB.rowCap = CAP;
+    DB.pendingInvites = [...Array.from({ length: 700 }, (_, i) => ({ id: `f-${String(i).padStart(4, "0")}`, email: `filler${i}@example.test` })), { id: "zz-last", email: "removed.person@example.test" }];
+    await outcome("member-1");
+    expect(DB.invitesTouched).toEqual([{ patch: { status: "revoked" }, filters: { id: ["zz-last"], studio_id: "studio-1", status: "pending" } }]);
   });
 
   it("a failed READ of the pending invitations is reported as invitations, nothing is revoked on a guess, and the Google clear still runs", async () => {

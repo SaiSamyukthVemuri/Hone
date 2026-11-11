@@ -280,7 +280,7 @@ export async function removePractitionerAction(formData: FormData): Promise<void
 // and to the target the locked command just deactivated. Returns what could not be cleared, plus the google_access NOTICE (Hone's stored credential was deleted; any grant at Google is the person's to remove); clears the rest regardless.
 // A studio's pending invitations are read in pages below the API row cap; past the page ceiling the scan fails closed and is REPORTED, never ignored.
 const PENDING_INVITATION_PAGE_SIZE = 500;
-const PENDING_INVITATION_MAX_PAGES = 40;
+const PENDING_INVITATION_MAX_PAGES = 60;
 
 async function endRemovedMemberLeftovers(
   admin: ReturnType<typeof createAdminClient>,
@@ -303,7 +303,10 @@ async function endRemovedMemberLeftovers(
       // "Name@X.com" must still end when the member row says "name@x.com". An ilike filter would treat "_" and "%" in an address as wildcards and could
       // revoke a different person's invitation, so this reads the studio's pending invitations PAGE BY PAGE (a single read stops at the API row cap and
       // could miss the match) and compares in code, then revokes by id.
+      // The next page starts after the rows actually RECEIVED and the scan ends only on an EMPTY page, so a server row cap smaller than the page
+      // size (it is a deployment setting) cannot end the scan early.
       const ids: string[] = [];
+      let offset = 0;
       for (let page = 0; ; page++) {
         if (page >= PENDING_INVITATION_MAX_PAGES) throw new Error("pending_invitations_scan_exceeded");
         const { data: rows, error: pendingErr } = await admin
@@ -312,11 +315,12 @@ async function endRemovedMemberLeftovers(
           .eq("studio_id", studioId)
           .eq("status", "pending")
           .order("id", { ascending: true })
-          .range(page * PENDING_INVITATION_PAGE_SIZE, (page + 1) * PENDING_INVITATION_PAGE_SIZE - 1);
+          .range(offset, offset + PENDING_INVITATION_PAGE_SIZE - 1);
         if (pendingErr) throw pendingErr;
         const batch = (rows ?? []) as Array<{ id: string; email: string | null }>;
+        if (batch.length === 0) break;
         for (const r of batch) if (typeof r.email === "string" && r.email.trim().toLowerCase() === email) ids.push(r.id);
-        if (batch.length < PENDING_INVITATION_PAGE_SIZE) break;
+        offset += batch.length;
       }
       if (ids.length > 0) {
         const { error: revokeErr } = await admin
