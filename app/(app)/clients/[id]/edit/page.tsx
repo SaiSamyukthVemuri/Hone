@@ -27,7 +27,6 @@ export default async function EditClientPage({
   // a save does not touch it.
   let canViewRecords = false;
   const data = await getClientById(studio.id, id, {
-    includePrices: true,
     includeSessions: false,
     clinicalFields: async () => {
       canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed;
