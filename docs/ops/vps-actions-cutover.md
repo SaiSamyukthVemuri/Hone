@@ -45,6 +45,28 @@ Do not remove or weaken a test to make a new runner green.
   limits, not measured peaks. Do not prune or delete to pass admission.
 - This preparation environment has no route to `100.123.145.56`; SSH returns
   `Network is unreachable`. No runner has been registered or launched here.
+- Sam's fresh Mac-side check confirms SSH access, 108 GiB free on the root
+  filesystem and 28 GiB available RAM. The only disk is the root disk.
+  `/usr/sbin/lxc` is an installation launcher: the attempted LXD queries
+  report that snap installation could not be triggered. Neither an installed
+  LXD daemon nor a storage pool is confirmed. The preflight now checks the
+  installed snap and calls only `/snap/bin/lxc --force-local`, avoiding that
+  potentially mutating launcher.
+
+### Optional CI storage
+
+Sam is willing to add storage if needed, but has not authorized a purchase.
+A dedicated 100 GB CI Volume is a provisional option to price after measuring
+the image and job footprint. It is a separate filesystem, not extra free space
+on the root filesystem. Put the CI storage pool, nested Docker data and scratch
+on it deliberately; refuse admission if the expected mount is missing. Adapt
+admission to preserve the host reserve and check the Volume separately, rather
+than carrying the root-only 110 GiB threshold over unchanged.
+
+Confirm the exact checkout price and size before purchase. Hetzner server
+backups do not cover attached Volumes: keep CI data reproducible/disposable,
+and retain required evidence elsewhere. Extra disk does not qualify CPU,
+isolation, network access or the runner lifecycle.
 
 ## Exact provisioning scope for the pilot
 
@@ -152,6 +174,8 @@ hosted compute; there is deliberately no automatic hosted fallback.
 - Parsed-YAML comparison against the pinned source verifies all 13 definitions:
   only runner selection and the initial boundary check change execution.
 - Host preflight passes Bash syntax validation; it has NOT run on the VPS.
+- A disposable-fixture test executes the preflight with an unavailable snap
+  and a trap installer wrapper, proving the wrapper is never invoked.
 - Committed-tree verification and the canonical schema-snapshot check pass
   after materializing the 264 unchanged migration sources at the pinned head.
 - Full repository build, DB/browser tests, live runner isolation/capacity and

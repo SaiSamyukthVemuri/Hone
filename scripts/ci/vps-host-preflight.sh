@@ -14,11 +14,13 @@ docker ps --format 'table {{.Names}}\t{{.Status}}'
 printf '\n--- Isolation prerequisites ---\n'
 printf 'Virtualization: '; systemd-detect-virt || true
 test ! -e /dev/kvm || ls -l /dev/kvm
-if command -v lxc >/dev/null 2>&1; then
-  lxc version
-  lxc project list --format csv -c n
+if command -v snap >/dev/null 2>&1 &&
+   timeout 10s snap list lxd >/dev/null 2>&1 &&
+   [ -x /snap/bin/lxc ]; then
+  timeout 10s /snap/bin/lxc --force-local version
+  timeout 10s /snap/bin/lxc --force-local project list --format csv -c n
 else
-  printf 'LXD is not installed or lxc is not on PATH\n'
+  printf 'Installed LXD snap not confirmed; no LXC installer wrapper was invoked.\n'
 fi
 printf '\n--- Admission calculation for ONE runner ---\n'
 # Bytes throughout: an 80 GiB host reserve plus a 30 GiB runner budget.
