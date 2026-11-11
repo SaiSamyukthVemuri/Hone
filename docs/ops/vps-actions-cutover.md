@@ -45,28 +45,41 @@ Do not remove or weaken a test to make a new runner green.
   limits, not measured peaks. Do not prune or delete to pass admission.
 - This preparation environment has no route to `100.123.145.56`; SSH returns
   `Network is unreachable`. No runner has been registered or launched here.
-- Sam's fresh Mac-side check confirms SSH access, 108 GiB free on the root
-  filesystem and 28 GiB available RAM. The only disk is the root disk.
-  `/usr/sbin/lxc` is an installation launcher: the attempted LXD queries
-  report that snap installation could not be triggered. Neither an installed
-  LXD daemon nor a storage pool is confirmed. The preflight now checks the
-  installed snap and calls only `/snap/bin/lxc --force-local`, avoiding that
-  potentially mutating launcher.
+- Sam's Mac-side checks confirm 108 GiB free on root, 28 GiB available RAM and
+  all eight HON-8 QA containers still running. LXD 5.21.9 LTS was installed
+  explicitly and its client/server versions responded. Its pool/instance
+  inventories are empty and it has no managed network yet. The preflight
+  checks the installed snap and invokes only the actual local client, avoiding
+  Ubuntu's potentially mutating `/usr/sbin/lxc` installer wrapper.
 
-### Optional CI storage
+### Dedicated CI storage
 
-Sam is willing to add storage if needed, but has not authorized a purchase.
-A dedicated 100 GB CI Volume is a provisional option to price after measuring
-the image and job footprint. It is a separate filesystem, not extra free space
-on the root filesystem. Put the CI storage pool, nested Docker data and scratch
-on it deliberately; refuse admission if the expected mount is missing. Adapt
-admission to preserve the host reserve and check the Volume separately, rather
-than carrying the root-only 110 GiB threshold over unchanged.
+Sam created and attached `hone-ci-runners`, Volume `107429924`, in Helsinki
+using manual filesystem management. The console reports 180 GB; Linux reports
+193273528320 bytes (180 GiB), serial `107429924`, at the stable path
+`/dev/disk/by-id/scsi-0HC_Volume_107429924` (currently `/dev/sdb`).
+His read-only check shows a whole disk, no filesystem or mountpoint, and no
+signatures reported by `wipefs --no-act`.
 
-Confirm the exact checkout price and size before purchase. Hetzner server
-backups do not cover attached Volumes: keep CI data reproducible/disposable,
-and retain required evidence elsewhere. Extra disk does not qualify CPU,
-isolation, network access or the runner lifecycle.
+Pool choice: LVM thin provisioning with ext4 runner disks, default size 30 GiB.
+This is a deliberate bounded-block layout compatible with Docker overlay2.
+Btrfs qgroups are not a strict isolation limit for nested subvolumes and are
+not the chosen enforcement mechanism. Snapshot/image size limits and total
+thin-pool consumption still require live pilot proof and admission accounting.
+
+`scripts/ci/create-vps-pool.py` defaults to read-only checks. Its explicit
+`--create` mode initializes ONLY this exact newly verified blank Volume as
+the `hone-ci` LXD pool, after repeating serial/byte-size, no-partition,
+filesystem, mount, signature and existing-pool checks. A failed read stops it.
+It has no force-wipe, force-reuse, removal, network or Docker action. Guard tests
+run only against synthetic facts; actual pool creation is not yet observed.
+On an error/timeout, inspect the device and pool before retrying.
+
+Put the runner roots, nested Docker data, images and scratch in this pool.
+Preserve the root reserve and inspect pool free/data/metadata consumption
+separately; the earlier root-only 110 GiB calculation is not admission proof
+for this new layout. Hetzner server backups do not cover attached Volumes, so
+keep CI data reproducible/disposable and retain required evidence elsewhere.
 
 ## Exact provisioning scope for the pilot
 
@@ -176,6 +189,9 @@ hosted compute; there is deliberately no automatic hosted fallback.
 - Host preflight passes Bash syntax validation; it has NOT run on the VPS.
 - A disposable-fixture test executes the preflight with an unavailable snap
   and a trap installer wrapper, proving the wrapper is never invoked.
+- Pool setup guard tests accept the exact new-disk facts and reject another
+  serial/size, root or mounted storage, partitions, signatures, unknown reads
+  and a pre-existing CI pool. They do not run a host initialization command.
 - Committed-tree verification and the canonical schema-snapshot check pass
   after materializing the 264 unchanged migration sources at the pinned head.
 - Full repository build, DB/browser tests, live runner isolation/capacity and
