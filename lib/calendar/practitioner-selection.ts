@@ -149,6 +149,26 @@ export function restoreParam(stored: string | null): string | null {
   return stored === null || stored === ALL ? null : stored;
 }
 
+/**
+ * The param a link with no `people` param should land on. A stored preference (including an explicit
+ * "all") always wins and is handled by restoreParam. Only when the viewer has never chosen
+ * (stored === null) AND `ownFirstId` is a listed practitioner AND there is someone else to look at,
+ * the first visit opens on the viewer's own column.
+ *
+ * This is a DEFAULT, not an access control: every other listed practitioner is one tap away and the
+ * candidate list is the one the page already loaded, so nothing is hidden that the viewer could not
+ * open. `ownFirstId` is null for an owner or a viewer without a practitioner record (everyone, as before).
+ */
+export function firstVisitParam(
+  stored: string | null,
+  ownFirstId: string | null | undefined,
+  listedIds: ReadonlyArray<string>,
+): string | null {
+  if (stored !== null) return restoreParam(stored);
+  if (!ownFirstId || listedIds.length < 2 || !listedIds.includes(ownFirstId)) return null;
+  return serializeSelection([ownFirstId], listedIds) ?? null;
+}
+
 // ---- mini calendar ------------------------------------------------------------------------
 
 /** Where picking `date` in the mini calendar takes the CURRENT view. Selection is carried on top. */

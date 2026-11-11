@@ -6,6 +6,7 @@ import {
   SELECTION_PARAM,
   SELECTION_STORAGE_PREFIX,
   filterBySelection,
+  firstVisitParam,
   isSelected,
   miniCalendarHref,
   parseSelection,
@@ -208,5 +209,40 @@ describe("duplicate ids never widen a selection (Y1)", () => {
   });
   it("a stored preference is stored without its duplicates", () => {
     expect(sanitizeStoredSelection("p1,p1,p2")).toBe("p1,p2");
+  });
+});
+
+describe("first visit opens on the viewer's own column (a default, never an access control)", () => {
+  it("never chosen + a listed practitioner + others to see = the viewer's own id", () => {
+    expect(firstVisitParam(null, "p2", LISTED)).toBe("p2");
+  });
+
+  it("a stored preference always wins: 'all' stays everyone, a list is restored, none is kept", () => {
+    expect(firstVisitParam("all", "p2", LISTED)).toBeNull();
+    expect(firstVisitParam("p3,p4", "p2", LISTED)).toBe("p3,p4");
+    expect(firstVisitParam("none", "p2", LISTED)).toBe("none");
+  });
+
+  it("an owner or a viewer with no practitioner record stays on everyone", () => {
+    expect(firstVisitParam(null, null, LISTED)).toBeNull();
+    expect(firstVisitParam(null, undefined, LISTED)).toBeNull();
+    expect(firstVisitParam(null, "", LISTED)).toBeNull();
+  });
+
+  it("an id that is not listed (deactivated, foreign) never becomes a selection", () => {
+    expect(firstVisitParam(null, "ghost", LISTED)).toBeNull();
+  });
+
+  it("a studio with only the viewer listed has nothing to narrow: everyone", () => {
+    expect(firstVisitParam(null, "p1", ["p1"])).toBeNull();
+    expect(firstVisitParam(null, "p1", [])).toBeNull();
+  });
+
+  it("the result round-trips: parsing it selects exactly the viewer, and every other person is one tap away", () => {
+    const param = firstVisitParam(null, "p2", LISTED);
+    const sel = parseSelection(param, LISTED);
+    expect(sel.mode).toBe("some");
+    expect([...sel.ids]).toEqual(["p2"]);
+    expect(serializeSelection([...sel.ids, "p3"], LISTED)).toBe("p2,p3");
   });
 });
