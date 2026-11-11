@@ -1124,11 +1124,11 @@ test("create mode: choose the machine, save the block, record one save, retrieve
 
     // SWITCH AWAY AND BACK. Clearing the machine unmounts the entry form;
     // choosing it again mounts a new one, which is where the seed is read.
-    await page.getByTestId("machine-select").selectOption("");
-    await expect(page.getByTestId("machine-reading-entry")).toHaveCount(0, {
-      timeout: T,
-    });
-    await page.getByTestId("machine-select").selectOption(machineId);
+    // HON-8: a saved native area refuses a clear, and the saved view has no `machine-reading-entry` at all, so a clear/re-pick neither
+    // remounts the form nor proves anything (its "count 0" held vacuously). A RELOAD AND REOPEN is the remount that reads the seed, as step 6 does.
+    await page.reload();
+    await page.getByTestId(`edit-area-${thirdBlock}`).click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
     await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
       timeout: T,
     });
