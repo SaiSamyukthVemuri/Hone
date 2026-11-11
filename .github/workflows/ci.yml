@@ -1,3 +1,6 @@
+# HON-73 VPS cutover candidate. All compute, including detection and aggregation,
+# stays on the VPS. No hosted fallback. Merge only after the disposable-runner
+# pilot in docs/ops/vps-actions-cutover.md passes; offline runners leave checks queued.
 # PR #154. Continuous integration for Hone.
 #
 # Runs the same validation gates every contributor (and every AI
@@ -88,7 +91,7 @@ jobs:
   # -------------------------------------------------------------------------
   changes:
     name: changed-path detection
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     timeout-minutes: 2
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
@@ -119,6 +122,20 @@ jobs:
       browser_photos: ${{ steps.browser.outputs.browser_photos }}
       browser_time_inputs: ${{ steps.browser.outputs.browser_time_inputs }}
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # CI-HARDEN-01B. The checkout credential is not left behind for the rest
@@ -305,7 +322,7 @@ jobs:
     name: typecheck / lint / build / test / safety gates
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
     # UNCHANGED; 25 minutes is only the point at which a run is declared broken,
     # and is NOT an acceptable runtime.
@@ -362,6 +379,20 @@ jobs:
       ADMIN_EMAILS: "ci@example.com"
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -480,9 +511,23 @@ jobs:
     name: canonical production record (docs-only)
     needs: changes
     if: ${{ needs.changes.outputs.docs_only == 'true' && (needs.changes.outputs.production_record == 'true' || needs.changes.outputs.docs_consistency == 'true') }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     timeout-minutes: 8
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -538,7 +583,7 @@ jobs:
     name: db integration (local supabase)
     needs: changes
     if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -584,6 +629,20 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -838,7 +897,7 @@ jobs:
     name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
     needs: changes
     if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -912,6 +971,20 @@ jobs:
         shard: ${{ fromJson(needs.changes.outputs.browser_shards) }}
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1254,9 +1327,23 @@ jobs:
     # Codex P1 4296967177): branch protection must never point at a new name.
     needs: [changes, browser-e2e-shard, canonical-record]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     timeout-minutes: 2
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Aggregate browser shard results
         env:
           # The GATE's own outcome, not just its outputs. Load-bearing: see the
@@ -1378,7 +1465,7 @@ jobs:
     name: payment browser e2e (fake stripe)
     needs: changes
     if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -1398,6 +1485,20 @@ jobs:
     timeout-minutes: 18
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1647,7 +1748,7 @@ jobs:
     name: mobile completion e2e (chromium iphone-profile)
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -1663,6 +1764,20 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1899,7 +2014,7 @@ jobs:
     name: google browser e2e (fake google)
     needs: changes
     if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -1924,6 +2039,20 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2167,7 +2296,7 @@ jobs:
     name: storage photos (not required)
     needs: changes
     if: ${{ needs.changes.outputs.full_matrix_required == 'true' || (github.event_name == 'push' && needs.changes.outputs.docs_only != 'true') || needs.changes.outputs.browser_shared == 'true' || needs.changes.outputs.browser_photos == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -2178,6 +2307,20 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2422,7 +2565,7 @@ jobs:
     name: webkit time inputs (HON-62, not required)
     needs: changes
     if: ${{ needs.changes.outputs.full_matrix_required == 'true' || (github.event_name == 'push' && needs.changes.outputs.docs_only != 'true') || needs.changes.outputs.browser_shared == 'true' || needs.changes.outputs.browser_time_inputs == 'true' || needs.changes.outputs.browser_photos == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, hone-ci-ubuntu-24.04]
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
@@ -2430,6 +2573,20 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Require disposable VPS runner
+        shell: bash
+        env:
+          HONE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "${HONE_REPOSITORY_PRIVATE:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$(systemd-detect-virt --container)" = lxc
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          test "$(stat -c '%u:%a' /etc/hone-ci-ephemeral)" = 0:444
+          grep -qx 'hone-ci-v1' /etc/hone-ci-ephemeral
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2630,3 +2787,4 @@ jobs:
             test-results/
             test-results-payment/
           retention-days: 7
+

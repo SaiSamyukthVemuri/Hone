@@ -2992,15 +2992,12 @@ describe("NODE-HEAP-01: typecheck and the webServer build keep a 4 GB Node heap"
 });
 
 describe("runner image is explicit", () => {
-  // `ubuntu-latest` moved to Ubuntu 26.04 between two runs on 2026-11-03: the
-  // playwright-system-deps CONTROL case failed on every branch and Playwright
-  // refused webkit ("does not support webkit on ubuntu26.04-x64"). An image that
-  // moves under the repo is the same class of problem as a mutable action tag,
-  // so every job names its image, like the SHA-pinned actions. Moving to a new
-  // image is a deliberate change of this constant, with its own proof.
-  const RUNNER = "ubuntu-24.04";
+  // The VPS label retains the Ubuntu 24.04 contract. A hosted fallback would
+  // silently resume consuming billed minutes; an unlabelled self-hosted job
+  // could land on the developer host. Every workflow must name all four labels.
+  const RUNNER = "[self-hosted, linux, x64, hone-ci-ubuntu-24.04]";
 
-  it("every job in every workflow runs on the pinned image, never a -latest label", () => {
+  it("every job in every workflow selects the pinned disposable VPS image", () => {
     const bad: string[] = [];
     const workflows = readWorkflowDir();
     expect(workflows.length, "no workflow found").toBeGreaterThan(0);
@@ -3012,3 +3009,4 @@ describe("runner image is explicit", () => {
     expect(bad).toEqual([]);
   });
 });
+
