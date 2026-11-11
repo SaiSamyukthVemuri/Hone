@@ -8,7 +8,7 @@ import {
   SELECTION_PARAM,
   SIDEBAR_STORAGE_KEY,
   readStoredSelection,
-  restoreParam,
+  firstVisitParam,
   serializeSelection,
   writeStoredSelection,
 } from "@/lib/calendar/practitioner-selection";
@@ -41,6 +41,7 @@ export function CalendarSidebar({
   practitioners,
   selectedIds,
   selectionParam,
+  ownFirstId,
   insights,
   children,
 }: {
@@ -55,6 +56,8 @@ export function CalendarSidebar({
   selectedIds: ReadonlyArray<string>;
   /** The server's selection as a param (undefined = everyone). */
   selectionParam: string | undefined;
+  /** The viewer's own practitioner id when a first visit should open on their column; null/absent = everyone. */
+  ownFirstId?: string | null;
   /** Booked hours and count for the displayed period and selection (lib/calendar/time-insights.ts). */
   insights: TimeInsightsModel;
   children: ReactNode;
@@ -75,6 +78,8 @@ export function CalendarSidebar({
   useEffect(() => setChecked(selectedIds), [serverKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const listedIds = practitioners.map((p) => p.id);
+  const listedIdsRef = useRef(listedIds); // read by the one-time restore below without re-running it every render
+  listedIdsRef.current = listedIds;
   const hasParam = search.has(SELECTION_PARAM);
   const restored = useRef(false);
 
@@ -120,9 +125,9 @@ export function CalendarSidebar({
     }
     if (restored.current) return;
     restored.current = true;
-    const param = restoreParam(readStoredSelection(storage, studioId));
+    const param = firstVisitParam(readStoredSelection(storage, studioId), ownFirstId, listedIdsRef.current);
     if (param !== null) replaceWith(param);
-  }, [hasParam, selectionParam, studioId, replaceWith]);
+  }, [hasParam, selectionParam, studioId, replaceWith, ownFirstId]);
 
   function toggle(id: string) {
     const next = checked.includes(id) ? checked.filter((x) => x !== id) : [...checked, id];

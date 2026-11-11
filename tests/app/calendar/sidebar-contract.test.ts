@@ -59,8 +59,15 @@ describe("persistence and the URL", () => {
     expect(SIDEBAR).not.toMatch(/fetch\(|\.rpc\(|from "@\/lib\/supabase|"use server"|actions"/);
   });
   it("a link with no param restores the viewer's own last selection, once", () => {
-    expect(SIDEBAR).toContain("restoreParam(readStoredSelection(");
+    // The stored preference is read first and passed through; firstVisitParam falls back to the viewer's own column only when nothing is stored.
+    expect(SIDEBAR).toContain("firstVisitParam(readStoredSelection(");
     expect(SIDEBAR).toContain("restored.current");
+  });
+  it("all three sidebar sites pass the viewer's own id, and an owner passes null (everyone)", () => {
+    const sites = [...PAGE.matchAll(/<CalendarSidebar[\s\S]*?>/g)].map((m) => m[0]);
+    expect(sites).toHaveLength(3);
+    for (const site of sites) expect(site).toMatch(/ownFirstId=\{(?:isOwner \? null : practitioner\.id|ownFirstId)\}/);
+    expect(PAGE).toContain("ownFirstId: isOwner ? null : practitioner.id");
   });
   it("every toolbar link in all three views carries the selection", () => {
     // None of the 17 toolbar hrefs (6 per view, the week view's day link included) is a bare string.

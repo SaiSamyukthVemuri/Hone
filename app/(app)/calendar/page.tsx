@@ -155,6 +155,7 @@ export default async function CalendarPage({
       lastWeekParam: params.week,
       peopleParam: params.people,
       isOwner,
+      ownFirstId: isOwner ? null : practitioner.id,
       reviewAssignmentsHref,
     });
   }
@@ -333,6 +334,7 @@ export default async function CalendarPage({
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      ownFirstId={isOwner ? null : practitioner.id}
       insights={insights}
     >
     <div className="flex flex-col gap-6">
@@ -555,9 +557,11 @@ async function renderMonthView(opts: {
   lastWeekParam: string | undefined;
   peopleParam: string | undefined;
   isOwner: boolean;
+  /** The viewer's practitioner id when a first visit should open on their own column (null for an owner). */
+  ownFirstId: string | null;
   reviewAssignmentsHref: Promise<string | undefined>;
 }) {
-  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, reviewAssignmentsHref } = opts;
+  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, reviewAssignmentsHref } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
@@ -668,6 +672,7 @@ async function renderMonthView(opts: {
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      ownFirstId={ownFirstId}
       insights={insights}
     >
     <div className="flex flex-col gap-6">
@@ -839,6 +844,7 @@ async function renderTeamDayView(opts: {
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      ownFirstId={isOwner ? null : practitioner.id}
       insights={insights}
     >
     <div className="flex flex-col gap-6">
