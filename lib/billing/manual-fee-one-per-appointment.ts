@@ -35,6 +35,11 @@ export type OneFeeAttempt = {
   updated_at?: string | null;
 };
 
+// 0338 index: any feature that revives, retries or re-opens a failed or cancelled
+// fee row (flips it back to ready/pending_stripe/succeeded) can collide with a
+// sibling attempt that took the slot in the meantime. That collision surfaces as
+// Postgres 23505 on payment_charge_attempts_one_fee_per_appointment_uniq and must
+// be handled deliberately (map to ONE_FEE_PER_APPOINTMENT_MESSAGE), never swallowed.
 const FREES_THE_APPOINTMENT = new Set<FeeAttemptStateKind>(["failed", "cancelled"]);
 
 export function attemptBlocksAnotherFee(a: OneFeeAttempt, now: Date): boolean {
