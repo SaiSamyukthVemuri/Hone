@@ -280,8 +280,8 @@ export default async function ClientCheatSheetPage({
         .then((d) => d.allowed),
     ),
   );
-  const priceReads = { includePrices: isOwner, includeSessions: recordsGate };
-  const data = await getClientById(studio.id, id, priceReads);
+  const priceReads = { includePrices: isOwner };
+  const data = await getClientById(studio.id, id, { ...priceReads, includeSessions: recordsGate });
 
   if (!data) {
     notFound();
