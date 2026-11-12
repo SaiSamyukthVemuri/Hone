@@ -8,6 +8,32 @@ import { canViewClientBilling } from "@/lib/clients/profile-tabs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
+// RBAC G-1: how a page states the price option on getClientById. Every call's argument text is read (balanced parens), and:
+//   - a call with a spread (`...x`) is accepted ONLY as EXACTLY `{ ...priceReads, includeSessions: recordsGate }` (R4: sessions are gated on
+//     clin.view_records; the price option still comes only from priceReads) AND only where `const priceReads = { includePrices: isOwner };` is
+//     declared in the same file; any other spread (a later `includePrices: true`, an unknown `...x`) is refused, so the extension cannot slip a price in;
+//   - without a spread, the call names `includePrices` or passes the bare `priceReads`.
+export function getClientByIdStatesPriceOption(src: string): boolean {
+  const calls: string[] = [];
+  for (let i = src.indexOf("getClientById("); i !== -1; i = src.indexOf("getClientById(", i + 1)) {
+    let depth = 0;
+    let j = i + "getClientById".length;
+    for (; j < src.length; j += 1) {
+      if (src[j] === "(") depth += 1;
+      else if (src[j] === ")" && (depth -= 1) === 0) break;
+    }
+    calls.push(src.slice(i + "getClientById(".length, j));
+  }
+  if (calls.length === 0) return false;
+  const declared = /const priceReads = \{ includePrices: isOwner \};/.test(src);
+  return calls.every((args) => {
+    if (/\.\.\./.test(args)) {
+      return declared && /^studio\.id, id, \{ \.\.\.priceReads, includeSessions: recordsGate \}$/.test(args.trim());
+    }
+    return /includePrices/.test(args) || /^studio\.id, id, priceReads$/.test(args.trim());
+  });
+}
+
 function typeKeys(name: string): string[] {
   const src = read("lib/types/database.ts");
   const start = src.indexOf(`export type ${name} = {`);
@@ -97,8 +123,22 @@ describe("the loaders do not fetch a price for a non-owner (Sam's ruling)", () =
       "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
     ];
     for (const f of withOption) {
-      expect(readFileSync(f, "utf8"), f).toMatch(/getClientById\([^)]*includePrices|getClientById\(studio\.id, id, priceReads\)/);
+      expect(getClientByIdStatesPriceOption(readFileSync(f, "utf8")), f).toBe(true);
     }
+  });
+
+  it("the extension cannot be used to slip a price through (negative fixtures)", () => {
+    const ok = "const priceReads = { includePrices: isOwner };\n";
+    expect(getClientByIdStatesPriceOption(ok + "await getClientById(studio.id, id, priceReads);")).toBe(true);
+    expect(getClientByIdStatesPriceOption(ok + "await getClientById(studio.id, id, { ...priceReads, includeSessions: recordsGate });")).toBe(true);
+    // refused: a later includePrices after the spread, an unknown spread, a spread with no declared priceReads, a bare call
+    expect(getClientByIdStatesPriceOption(ok + "await getClientById(studio.id, id, { ...priceReads, includePrices: true });")).toBe(false);
+    expect(getClientByIdStatesPriceOption(ok + "await getClientById(studio.id, id, { includePrices: true, ...x });")).toBe(false);
+    expect(getClientByIdStatesPriceOption(ok + "await getClientById(studio.id, id, { ...x, includeSessions: recordsGate });")).toBe(false);
+    expect(getClientByIdStatesPriceOption("await getClientById(studio.id, id, { ...priceReads, includeSessions: recordsGate });")).toBe(false);
+    expect(getClientByIdStatesPriceOption("await getClientById(studio.id, id);")).toBe(false);
+    // one good call does not excuse a second bad one
+    expect(getClientByIdStatesPriceOption(ok + "getClientById(studio.id, id, priceReads); getClientById(studio.id, id, { ...priceReads, includePrices: true });")).toBe(false);
   });
 
   it("getActiveServices({ includePrices:false }) selects no price column and returns price_cents null", async () => {
@@ -115,8 +155,12 @@ describe("the profile page wires the ruling", () => {
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
   it("the owner decision gates both loaders", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
-    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate \};/);
-    expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
+    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner \};/);
+    // Exactly one of: production's `priceReads`, or R4's call. R4: sessions are gated on clin.view_records; the price option still comes
+    // only from priceReads.
+    const prod = PAGE.includes("getClientById(studio.id, id, priceReads)");
+    const r4 = PAGE.includes("getClientById(studio.id, id, { ...priceReads, includeSessions: recordsGate })");
+    expect(prod !== r4, "exactly one accepted getClientById call shape").toBe(true);
     expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
   });
   it("the Pricing card is owner-only", () => {
