@@ -24,7 +24,7 @@ export type RefundDisplayKind =
   | "pending" // in flight: our claim is held, or the provider says pending
   | "needs_action" // the provider says the refund needs action
   | "failed" // our refund attempt ended without moving money and left NO provider trace; a new attempt is allowed
-  | "needs_review" // the provider has recorded an object or an outcome for a refund that did not complete: the studio operator reviews it; no new attempt
+  | "needs_review" // the provider has recorded an object or an outcome for a refund that did not complete: the studio owner reviews it; no new attempt
   | "unclear"; // the two sides disagree, or a value is unknown: do not guess
 
 export type RefundDisplay = {
