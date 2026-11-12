@@ -135,3 +135,87 @@ describe("fees: per-mode active uniqueness on (appointment, reason)", () => {
     await expect(insertFeeAttempt(appt, "no_show_fee", true)).resolves.toBeDefined();
   });
 });
+
+// Manual-fee duplicate protection (cancellation / no-show fees). Fee attempts live on the
+// canonical ledger, so the same claim RPC and the same partial unique index protect them. These
+// cases prove it for the FEE reasons rather than assume it from the session-payment cases above.
+async function newFeeAttempt(
+  appointmentId: string,
+  reason: "no_show_fee" | "late_cancellation_fee",
+  livemode: boolean,
+  status = "ready",
+): Promise<string> {
+  const id = randomUUID();
+  await adminQuery(
+    `insert into public.payment_charge_attempts
+       (id, studio_id, client_id, appointment_id, charge_reason,
+        created_by_practitioner_id, amount_cents, status,
+        stripe_livemode, stripe_account_id)
+     values ($1, $2, $3, $4, $5, $6, 3000, $7, $8, $9)`,
+    [id, s.studioId, s.clientId, appointmentId, reason, s.practitionerId, status, livemode, livemode ? "acct_attempt_mode_live" : null],
+  );
+  return id;
+}
+const ACTIVE = ["ready", "pending_stripe", "succeeded"];
+const FREE = ["failed", "cancelled"];
+
+describe("fees: a second prepare for the same appointment and fee type", () => {
+  for (const reason of ["no_show_fee", "late_cancellation_fee"] as const) {
+    for (const status of ACTIVE) {
+      it(`${reason}: an existing ${status} attempt refuses a second one (unique index)`, async () => {
+        const appt = await seedAppointment();
+        await newFeeAttempt(appt, reason, false, status);
+        await expect(newFeeAttempt(appt, reason, false, "ready")).rejects.toThrow(
+          /payment_charge_attempts_active_fee_per_appointment_uniq/,
+        );
+      });
+    }
+    for (const status of FREE) {
+      it(`${reason}: a ${status} attempt frees the slot (a definite end, nothing in flight)`, async () => {
+        const appt = await seedAppointment();
+        await newFeeAttempt(appt, reason, false, status);
+        await expect(newFeeAttempt(appt, reason, false, "ready")).resolves.toBeDefined();
+      });
+    }
+  }
+});
+
+describe("fees: the claim is atomic and an execute retry reuses the idempotency key", () => {
+  it("a fee attempt claims exactly once; the second call sees already_pending and stores the same key", async () => {
+    const appt = await seedAppointment();
+    const attemptId = await newFeeAttempt(appt, "no_show_fee", false);
+    const key = `hone:no_show_fee:${attemptId}:v1`;
+    const first = await adminQuery(
+      `select result from public.claim_session_payment_charge_attempt($1, $2, $3)`,
+      [attemptId, s.practitionerId, key],
+    );
+    expect(first.rows[0].result).toBe("claimed");
+    const second = await adminQuery(
+      `select result from public.claim_session_payment_charge_attempt($1, $2, $3)`,
+      [attemptId, s.practitionerId, key],
+    );
+    expect(second.rows[0].result).toBe("already_pending");
+    const row = await adminQuery(
+      `select status, stripe_idempotency_key from public.payment_charge_attempts where id = $1`,
+      [attemptId],
+    );
+    expect(row.rows[0]).toMatchObject({ status: "pending_stripe", stripe_idempotency_key: key });
+  });
+
+  it("a double click or two tabs: two simultaneous claims give exactly ONE claimed", async () => {
+    const appt = await seedAppointment();
+    const attemptId = await newFeeAttempt(appt, "late_cancellation_fee", false);
+    const key = `hone:late_cancellation_fee:${attemptId}:v1`;
+    const results = await Promise.all(
+      [0, 1, 2].map(() =>
+        adminQuery(
+          `select result from public.claim_session_payment_charge_attempt($1, $2, $3)`,
+          [attemptId, s.practitionerId, key],
+        ),
+      ),
+    );
+    const outcomes = results.map((r) => r.rows[0].result as string).sort();
+    expect(outcomes.filter((o) => o === "claimed")).toHaveLength(1);
+    expect(outcomes.filter((o) => o === "already_pending")).toHaveLength(2);
+  });
+});
