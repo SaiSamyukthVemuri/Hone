@@ -34,6 +34,7 @@ function attempt(
     receiptFailureCode: null,
     receiptFailureMessageSafe: null,
     refundStatus: null,
+    stripeRefundStatus: null,
     refundAmountCents: null,
     refundedAt: null,
     stripeRefundId: null,

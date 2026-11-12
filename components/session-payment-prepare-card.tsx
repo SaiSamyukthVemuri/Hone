@@ -1,5 +1,6 @@
 "use client";
 
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -1192,9 +1193,21 @@ function RefundSubPanel({
   // Persisted state takes precedence; local in-session state is
   // for the same-render-cycle flip before the page revalidatePath
   // catches up.
-  const persistedSucceeded = attempt.refundStatus === "succeeded";
-  const persistedPending = attempt.refundStatus === "pending_stripe";
-  const persistedFailed = attempt.refundStatus === "failed";
+  // R1: ONE reading of our refund column AND the provider's (0240), so a refund the provider reports
+  // failed/canceled is never shown as "succeeded", an unknown is never shown as "failed", and a New refund is
+  // offered only when none can be in flight or done.
+  const display = refundDisplayState({
+    chargeStatus: attempt.status,
+    amountCents: attempt.amountCents,
+    refundStatus: attempt.refundStatus,
+    refundAmountCents: attempt.refundAmountCents,
+    providerRefundStatus: attempt.stripeRefundStatus,
+  });
+  const persistedSucceeded = display.kind === "refunded";
+  const persistedPending = display.kind === "pending";
+  const persistedNeedsAction = display.kind === "needs_action";
+  const persistedUnclear = display.kind === "unclear";
+  const persistedFailed = display.kind === "failed";
 
   // v1 refunds are full-only. The amount the practitioner is
   // confirming equals the charge amount; partial refunds may
@@ -1245,6 +1258,22 @@ function RefundSubPanel({
         </div>
       )}
 
+      {persistedNeedsAction && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">Refund needs action at Stripe.</p>
+          <p className="mt-1">Stripe has not finished this refund. Do not refund again.</p>
+        </div>
+      )}
+
+      {persistedUnclear && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">Refund status is unclear.</p>
+          <p className="mt-1">
+            Our record and Stripe do not agree. Do not refund again until this is checked.
+          </p>
+        </div>
+      )}
+
       {persistedFailed && !localRefunded && (
         <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
           <p className="font-medium">Refund failed.</p>
@@ -1259,8 +1288,7 @@ function RefundSubPanel({
       )}
 
       {isOwner &&
-        !persistedSucceeded &&
-        !persistedPending &&
+        display.mayStartRefund &&
         !localRefunded && (
           <>
             <p className="text-xs text-neutral-600 dark:text-neutral-400">

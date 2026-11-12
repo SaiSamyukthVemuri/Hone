@@ -198,9 +198,10 @@ describe("HON-11 #1 refund: the pending row keeps the deterministic key", () => 
 
   it("the card renders a pending refund as 'Refund pending', not 'Refund failed'", () => {
     const card = readFileSync(join(__dirname, "../../../components/session-payment-prepare-card.tsx"), "utf8");
-    expect(card).toMatch(/const persistedPending = attempt\.refundStatus === "pending_stripe";/);
+    // R1: the card reads our column AND the provider's through refundDisplayState; pending_stripe maps to "pending".
+    expect(card).toMatch(/const persistedPending = display\.kind === "pending";/);
     expect(card).toMatch(/\{persistedPending && !localRefunded && \([\s\S]{0,400}Refund pending\./);
-    expect(card).toMatch(/const persistedFailed = attempt\.refundStatus === "failed";/);
+    expect(card).toMatch(/const persistedFailed = display\.kind === "failed";/);
   });
 });
 
