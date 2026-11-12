@@ -58,7 +58,7 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
 export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
-export const ENFORCEMENT_SCOPE_LINE = "This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
+export const ENFORCEMENT_SCOPE_LINE = "Enforced in the app once you activate them: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
   const v = catalogEnforcementOf(key);
@@ -75,7 +75,7 @@ export type RoleRow = {
   defaultScope: Scope; // what a NEW studio ships with, shown beside the current value
   chosen: Scope; // what the owner has set (or the basis value)
   effective: Scope; // what is actually in force after prerequisites and gates
-  inactiveBecause: string | null; // set when effective is lower than chosen
+  inactiveBecause: string | null; // set when effective is lower than chosen, or (an inert key) HIGHER than chosen: the access still in force
   // NQ-10: set when the saved choice is ALSO held down by a prerequisite that is off (judged from the core's effective values), even
   // while the more general "not in force yet" line is showing. Names what must be on; the choice is kept.
   inactiveUntil: string | null;
@@ -113,6 +113,11 @@ const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scop
 // turns the prerequisite on for the owner: the row says what it needs and the owner decides.
 // The core says this saved choice is not in force: its key is not released yet, or the release has not been activated by the owner.
 export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. It takes effect when this setting is released and you activate it.";
+
+// The OPPOSITE case (Codex P1 on 30555b1d0): an owner's saved or drafted choice is LOWER than what the core keeps in force, because the key is
+// not released yet (or released and not activated). Without this line the page shows Off while practitioners still have the access.
+export const notActiveYetKeeps = (role: Role, inForce: string): string =>
+  `Saved, but not in force yet. Until this setting is released and you activate it, ${ROLE_LABELS[role].toLowerCase()}s keep: ${inForce}.`;
 
 export const inactiveUntilOn = (labels: string[]): string => `Inactive until ${labels.join(" and ")} ${labels.length > 1 ? "are" : "is"} on. Your choice is kept.`;
 
@@ -162,7 +167,9 @@ export function buildRoleModel(role: Role, policy: PolicyWithServer): RoleGroupM
               : gate && policy.gates?.[gate] !== true && scopeRank(chosen) > scopeRank(d.existingSnapshot[role])
               ? `Inactive: not yet available: ${GATES[gate]}.`
               : inactiveNeeds(d.requires.map((r) => catalogByKey.get(r)?.label ?? r))
-            : null,
+            : scopeRank(effective) > scopeRank(chosen) && isInertUntilReleased(policy.server?.source[d.key])
+              ? notActiveYetKeeps(role, scopeLabel(d, effective))
+              : null,
         inactiveUntil: (() => {
           if (scopeRank(effective) >= scopeRank(chosen) || !isInertUntilReleased(policy.server?.source[d.key])) return null;
           const off = d.requires.filter((r) => scopeRank(shownEffectiveScope(role, r, policy)) < scopeRank(chosen));

@@ -50,6 +50,7 @@ const render = (over: Record<string, unknown> = {}) =>
       activate: noop,
       loadHistory: noop,
       loadAccess: noop,
+      changeRole: noop,
       reload: noop,
       ...over,
     }),
@@ -125,7 +126,7 @@ describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
   it("says at the top of Permissions what this release enforces", () => {
     const html = render({ initialView: "permissions" });
     expect(html).toContain('data-testid="enforcement-scope"');
-    expect(html).toContain("This release enforces: appointments, clinical viewing, photos, availability; other areas are shown for planning.");
+    expect(html).toContain("Enforced in the app once you activate them: appointments, clinical viewing, photos, availability; other areas are shown for planning.");
   });
   it("fails SAFE: a key with no enforcement in the catalog reads Not enforced yet", () => {
     const r = row(withEnforcement({ "appt.move": undefined }, () => render({ initialView: "permissions" })), "appt.move");
@@ -187,5 +188,36 @@ describe("NQ-10: an inactive-by-prerequisite row says so on the page", () => {
     expect(r).toContain("Inactive: needs View clinical records.");
     expect(r).toContain("Your choice is kept");
     expect(r).not.toContain("Chosen but not in force");
+  });
+});
+
+describe("Codex P1 (r4468128665): a saved Off the core is not enforcing yet says so on the page", () => {
+  const row = (html: string, key: string) => html.split(`data-permission-row="${key}"`)[1]?.split("data-permission-row=")[0] ?? "";
+  const VIEW = "clin.view_records";
+  const withServer = (source: string, effective: "off" | "own" | "studio") => {
+    const p = {
+      basis: "existing_snapshot" as const,
+      values: { [VIEW]: "off" as const },
+      gates: {},
+      server: { stored: { [VIEW]: "off" as const }, effective: { [VIEW]: effective }, source: { [VIEW]: source } },
+    };
+    return withEnforcement({ [VIEW]: "enforced" }, () =>
+      render({ initialView: "permissions", writable: true, notWritableReason: null, policies: { practitioner: p, receptionist: p } }),
+    );
+  };
+  it("a key not released yet: Off is saved, practitioners still have access, and the row says so", () => {
+    const r = row(withServer("unreleased", "studio"), VIEW);
+    expect(r).toContain('data-testid="inactive-because"');
+    expect(r).toMatch(/Saved, but not in force yet\. Until this setting is released and you activate it, practitioners keep: /);
+  });
+  it("a released key awaiting the owner's activation says the same", () => {
+    const r = row(withServer("inactive_until_activated", "studio"), VIEW);
+    expect(r).toContain('data-testid="inactive-because"');
+    expect(r).toContain("practitioners keep: ");
+  });
+  it("control: an Off that IS in force (stored, effective off) shows no such line", () => {
+    const r = row(withServer("stored", "off"), VIEW);
+    expect(r).not.toContain('data-testid="inactive-because"');
+    expect(r).not.toContain("not in force yet");
   });
 });

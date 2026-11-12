@@ -8,7 +8,7 @@ import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudi
 type J = Record<string, any>;
 const GOOD = "Reviewed the front desk duties with the team";
 const SEED: { key: string; kind: "full" | "narrow" }[] = [
-  ...["appt.cancel", "appt.mark_no_show", "appt.edit_notes", "clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare"].map((key) => ({ key, kind: "full" as const })),
+  ...["appt.cancel", "appt.mark_no_show", "appt.edit_notes", "clin.view_records", "clin.view_photos", "clin.view_intake", "clin.view_aftercare", "clin.edit_records"].map((key) => ({ key, kind: "full" as const })),
   ...["appt.book", "appt.move", "appt.reassign", "avail.manage_own", "avail.manage_others", "avail.manage_studio_hours"].map((key) => ({ key, kind: "narrow" as const })),
 ];
 const call = async (userId: string, sql: string, params: unknown[]): Promise<J> => asUser(userId, async (q) => (await q(sql, params)).rows[0].r as J);
@@ -31,6 +31,8 @@ afterAll(async () => {
   for (const r of SAVED) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,$2,$3,$4)", [r.key, r.released_at, r.release_tag, r.release_kind]);
   await closePool();
 });
+// Put a key's release row back to PENDING so a case does not depend on what an earlier case marked.
+const unrelease = (key: string, kind: "full" | "narrow") => adminQuery("update public.permission_key_release set released_at=null, release_tag='R1-R2', release_kind=$2 where key=$1", [key, kind]);
 const mark = (keys: string[], tag: string, kind = "full") => adminQuery("select public.mark_permissions_released($1::text[],$2,$3) n", [keys, tag, kind]);
 
 describe("production configuration: releases are pending", () => {
@@ -38,6 +40,15 @@ describe("production configuration: releases are pending", () => {
     const rows = (await adminQuery("select key, release_kind, released_at from public.permission_key_release order by key")).rows;
     expect(rows.map((r) => r.key)).not.toContain("appt.complete");
     expect(rows.filter((r) => r.release_kind === "narrow").map((r) => r.key).sort()).toEqual(SEED.filter((r) => r.kind === "narrow").map((r) => r.key).sort());
+  });
+
+  it("clin.edit_records is seeded PENDING: an owner's Off has no effect, the chart stays editable, until the operator releases it", async () => {
+    const s = await seedStudio("prod0e");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    expect((await adminQuery("select release_kind, released_at from public.permission_key_release where key='clin.edit_records'")).rows[0]).toMatchObject({ release_kind: "full", released_at: null });
+    await stored(s, "clin.edit_records", "off");
+    expect(await eff(s, "practitioner", "clin.edit_records")).toBe(await snap("clin.edit_records"));
+    expect((await getp(s.userId, s.studioId)).roles.practitioner["clin.edit_records"]).toMatchObject({ stored: "off", source: "unreleased" });
   });
 
   it("while pending, an owner's stored choice for a full key is inert and the practitioner keeps today's access", async () => {
@@ -50,13 +61,44 @@ describe("production configuration: releases are pending", () => {
     expect(m.userId).toBeTruthy();
   });
 
-  it("marking a key released does NOT make an earlier stored choice active; it waits for the owner's activation", async () => {
+  it("marking a key released does NOT make an earlier WIDENING active (it waits for the owner's activation), but an earlier NARROWING applies at once (AZ1)", async () => {
     const s = await seedStudio("prod2");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
     await stored(s, "appt.mark_no_show", "off");
     await mark(["appt.mark_no_show"], "R1-R2", "full");
-    expect(await eff(s, "practitioner", "appt.mark_no_show")).toBe(await snap("appt.mark_no_show"));
-    expect((await getp(s.userId, s.studioId)).roles.practitioner["appt.mark_no_show"]).toMatchObject({ stored: "off", source: "inactive_until_activated" });
+    // Narrowing never waits for activation: a stored Off below the snapshot applies the moment the key is released.
+    expect(await eff(s, "practitioner", "appt.mark_no_show")).toBe("off");
+    expect((await getp(s.userId, s.studioId)).roles.practitioner["appt.mark_no_show"]).toMatchObject({ stored: "off", effective: "off", source: "stored" });
+  });
+
+  it("AZ1: narrow release, the owner stores a deny, the key is upgraded to full under a new tag: access stays denied; a widening still waits for activation", async () => {
+    const s = await seedStudio("az1");
+    await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    await unrelease("appt.move", "narrow");
+    const snapMove = await snap("appt.move");
+    expect(snapMove).not.toBe("off"); // otherwise "stays denied" proves nothing
+    await mark(["appt.move"], "R1-R2", "narrow");
+    await stored(s, "appt.move", "off");
+    expect(await eff(s, "practitioner", "appt.move")).toBe("off"); // narrow release: the deny applies at once
+    await mark(["appt.move"], "R3", "full"); // the upgrade
+    expect(await eff(s, "practitioner", "appt.move")).toBe("off"); // the deny the owner withdrew access with is NOT handed back
+    expect((await getp(s.userId, s.studioId)).roles.practitioner["appt.move"]).toMatchObject({ stored: "off", effective: "off", source: "stored" });
+    // (a widening stored before an upgrade stays at the snapshot until activation: covered by the 'later FULL release' case below)
+  });
+
+  it("AZ1: a NEW-STUDIO default narrower than the snapshot also keeps applying after a narrow key is upgraded to full", async () => {
+    const k = (await adminQuery(
+      `select key from public.permission_catalog c join public.permission_key_release r using (key)
+        where r.release_kind = 'narrow' and r.released_at is null and public.perm_rank(c.new_practitioner) < public.perm_rank(c.snapshot_practitioner)
+        order by key limit 1`)).rows[0]?.key as string | undefined;
+    if (!k) return; // no narrow key has a narrower new-studio default today; the stored-value case above carries AZ1
+    const s = await seedStudio("az1d");
+    await mark([k], "R1-R2", "narrow");
+    await adminQuery("update public.studio_permission_policy set basis='new_studio', basis_at = now() where studio_id=$1", [s.studioId]); // after the narrow release
+    const narrowed = await eff(s, "practitioner", k);
+    expect(narrowed).not.toBe(await snap(k)); // the default really narrows
+    await mark([k], "R3", "full"); // released_at moves past basis_at: the default is now 'older than the release'
+    expect(await eff(s, "practitioner", k)).toBe(narrowed);
   });
 
   it("a pending narrow key ignores an owner's 'turn off' until it is released; a released narrow key applies a narrowing at once and holds a widening at the snapshot (AH1)", async () => {
@@ -76,6 +118,7 @@ describe("production configuration: releases are pending", () => {
   it("a later FULL release under a new tag lets a widening take effect only after the owner activates it", async () => {
     const s = await seedStudio("prod4");
     await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+    await unrelease("appt.move", "narrow");
     await mark(["appt.move"], "R1-R2", "narrow");
     await stored(s, "appt.move", "studio");
     const snapMove = await snap("appt.move");

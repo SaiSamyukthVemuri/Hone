@@ -24,7 +24,7 @@ describe("the Roles actions", () => {
   const bodies = actions.split(/^export async function /m).slice(1);
   it("re-check the owner on the server before the core is called, in every action", () => {
     expect(actions).toMatch(/practitioner\.role === "owner"/);
-    expect(bodies).toHaveLength(11);
+    expect(bodies).toHaveLength(12);
     for (const b of bodies) {
       const name = b.slice(0, b.indexOf("("));
       expect(b.indexOf("await assertOwner()"), name).toBeGreaterThan(-1);
@@ -83,16 +83,52 @@ describe("Codex 3 Nov on #1335: a reset is confirmed for the role that was previ
     expect(editor).toMatch(/onCancel=\{\(\) => \{\s*\n\s*previewSeq\.current \+= 1;/);
   });
   it("after a successful save the saved and draft policies come from the core, not from the draft", () => {
-    expect(save).toMatch(/await props\.reload\(\)/);
+    expect(save).toMatch(/await readBack\(\)/); // readBack wraps props.reload() so a rejection is a failed read, not a stuck editor (B-2)
     expect(save).not.toMatch(/setSaved\(drafts\)/);
     expect(save).toMatch(/setSaved\(fresh\.state\.policies\)/);
     expect(save).toMatch(/setDrafts\(fresh\.state\.policies\)/);
     // If the read-back fails nothing is claimed: the page is refreshed from the server.
-    expect(save).toMatch(/router\.refresh\(\)/);
+    expect(save).toMatch(/refreshNow\(\)/);
   });
   it("reloadPolicyAction is owner-only and refuses to hand back the read-only snapshot as if it were authoritative", () => {
     const b = actions.slice(actions.indexOf("export async function reloadPolicyAction"), actions.indexOf("export async function previewRoleChangesAction"));
     expect(b).toMatch(/await assertOwner\(\)/);
     expect(b).toMatch(/state\.writable \? \{ ok: true, state \} : refuse\(\{ code: "unavailable" \}\)/);
+  });
+});
+
+describe("Codex P2 (30555b1d0): reset and adopt collect the sensitive confirmation", () => {
+  it("the preview shows the checkbox when it would newly enable a sensitive permission, gates Confirm on it, and passes it to the action", () => {
+    const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(src).toContain('data-testid="preview-sensitive-confirm"');
+    expect(src).toMatch(/newlyEnabledSensitive, 0\) === 0 \|\| previewConfirmed/);
+    expect(src).toMatch(/props\.adopt\(boundVersion, reason\.trim\(\), previewConfirmed\)/);
+    expect(src).toMatch(/props\.reset\(preview\.role, boundVersion, reason\.trim\(\), previewConfirmed\)/);
+  });
+});
+
+describe("Codex threads from 3 Nov that GitHub still anchors to the head (already fixed in earlier commits)", () => {
+  it("History pages past 50 (4456759405, fixed in dad7f777c): the panel keeps the cursor and offers Load older", () => {
+    const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(src).toContain('data-testid="history-load-older"');
+    expect(src).toMatch(/loadOlder\(state\.next as string\)/);
+  });
+  it("the existing-studio adoption preview names archive_clients, delete_treatment_records_and_photos and restore_deleted_records (4449283700)", async () => {
+    const { parsePreview } = await import("@/lib/settings/roles/core-parse");
+    const ids = ["archive_clients", "delete_treatment_records_and_photos", "restore_deleted_records"];
+    const r = parsePreview({
+      ok: true,
+      version: 0,
+      changes: { practitioner: [], receptionist: [] },
+      affected: {},
+      fixed_narrowings: ids.map((id) => ({ id, label: id, notice: "n", practitioner_access: "narrows" })),
+    });
+    if (!r.ok) throw new Error("expected ok");
+    const kinds = r.preview.roles.find((x) => x.role === "practitioner")!.diff.fixedNarrowings;
+    expect(kinds.map((k) => k.id)).toEqual(ids);
+    expect(kinds.every((k) => k.kind === "narrows")).toBe(true);
+    // and the migration the core ships names all three in the notices the preview returns
+    const mig = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+    for (const id of ids) expect(mig).toContain(`('${id}', 'DN-25'`);
   });
 });

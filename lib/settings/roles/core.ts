@@ -2,8 +2,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import type { Role } from "@/lib/permissions/catalog";
-import type { AccessResult, ActivationPreviewResult, CommandResult, HistoryResult, PreviewResult } from "./api";
-import { UNEXPECTED, parseAccess, parseActivationPreview, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
+import type { AccessResult, ActivationPreviewResult, ChangeRoleResult, CommandResult, HistoryResult, PreviewResult } from "./api";
+import { UNEXPECTED, parseAccess, parseActivationPreview, parseChangeRole, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
 
 // The ONLY place the Roles page talks to the permission core (0287). Every call runs as the signed-in user, so the core decides who the
 // owner is from the CURRENT membership row (never from anything passed here) and refuses everyone else with a code. A transport error
@@ -51,12 +51,16 @@ export async function coreSave(
   );
 }
 
-export async function coreReset(studioId: string, role: Role, version: number, reason: string): Promise<CommandResult> {
-  return parseCommand(await call("reset_role_to_defaults", { p_studio: studioId, p_role: role, p_expected_version: version, p_reason: reason }));
+// Reset and adopt can widen a SENSITIVE key (a role whose override is Off goes back to the default). The core then requires the owner's explicit
+// confirmation (`sensitive_unconfirmed` otherwise), exactly as for a save (Codex P2 on 30555b1d0).
+export async function coreReset(studioId: string, role: Role, version: number, reason: string, sensitiveConfirmed: boolean): Promise<CommandResult> {
+  return parseCommand(
+    await call("reset_role_to_defaults", { p_studio: studioId, p_role: role, p_expected_version: version, p_reason: reason, p_sensitive_confirmed: sensitiveConfirmed }),
+  );
 }
 
-export async function coreAdopt(studioId: string, version: number, reason: string): Promise<CommandResult> {
-  return parseCommand(await call("adopt_new_defaults", { p_studio: studioId, p_expected_version: version, p_reason: reason }));
+export async function coreAdopt(studioId: string, version: number, reason: string, sensitiveConfirmed: boolean): Promise<CommandResult> {
+  return parseCommand(await call("adopt_new_defaults", { p_studio: studioId, p_expected_version: version, p_reason: reason, p_sensitive_confirmed: sensitiveConfirmed }));
 }
 
 export async function corePreviewActivation(studioId: string, keys: string[]): Promise<ActivationPreviewResult> {
@@ -90,4 +94,24 @@ export async function coreHistory(studioId: string, before: string | null): Prom
 
 export async function coreAccess(studioId: string, membershipId: string): Promise<AccessResult> {
   return parseAccess(await call("effective_access", { p_studio: studioId, p_membership: membershipId }));
+}
+
+/** Move one person between practitioner and receptionist. The core refuses self, an owner on either side, a gate that is off, a stale
+ *  `expectedCurrentRole`, and a practitioner who still has upcoming appointments; it writes the audit row in the same transaction. */
+export async function coreChangeRole(
+  studioId: string,
+  membershipId: string,
+  newRole: Role,
+  expectedCurrentRole: Role,
+  reason: string,
+): Promise<ChangeRoleResult> {
+  return parseChangeRole(
+    await call("change_staff_role", {
+      p_studio: studioId,
+      p_membership: membershipId,
+      p_new_role: newRole,
+      p_expected_current_role: expectedCurrentRole,
+      p_reason: reason === "" ? null : reason,
+    }),
+  );
 }

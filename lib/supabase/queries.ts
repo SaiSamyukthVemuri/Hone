@@ -477,12 +477,14 @@ function stripDeletedEntries(session: SessionWithEntries): SessionWithEntries {
 export async function getClientById(
   studioId: string,
   clientId: string,
-  // Default true: every other caller is unchanged. The Client Profile passes
-  // `{ includePrices: false }` for a non-owner, and then no client pricing row
-  // and no `price_paid_cents` is fetched at all.
-  options: ProfileReadOptions = { includePrices: true },
+  // Default is the SAFE direction (RBAC G-1): no client pricing row and no
+  // `price_paid_cents` is fetched unless the caller passes `{ includePrices: true }`,
+  // which only an owner's request may do. Five pages call this loader and four of
+  // them never needed a price; the default used to be true, so each of them fetched
+  // spend for a practitioner.
+  options: ProfileReadOptions = {},
 ): Promise<ClientCheatSheet | null> {
-  const includePrices = options.includePrices !== false;
+  const includePrices = options.includePrices === true;
   const supabase = await createClient();
   // What the sessions gate answered (true when no gate was passed). Returned so the page needs no second await for the same decision.
   let sessionsAllowed = true;
@@ -496,6 +498,10 @@ export async function getClientById(
 
   if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) return null;
+  // Roles (clin.view_records, Codex P1 4476375636): skin type and legacy skin notes are clinical-record fields on the client row. A viewer
+  // the gate refuses gets them as null from here on, so no page, form or payload downstream can render or forward them.
+  const clinicalFieldsAllowed =
+    typeof options.clinicalFields === "function" ? await options.clinicalFields() : options.clinicalFields === true;
 
   const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     includePrices
@@ -529,7 +535,7 @@ export async function getClientById(
     throw new Error(`Failed to load sessions: ${dbErrorCode(sessionsRes.error)}`);
 
   return {
-    client: client as Client,
+    client: (clinicalFieldsAllowed ? client : { ...client, fitzpatrick_type: null, skin_notes: null }) as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
     sessions: ((sessionsRes.data ?? []) as unknown as SessionWithEntries[]).map(
       stripDeletedEntries,
@@ -932,40 +938,8 @@ export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> 
   return (data ?? []) as ProbeLot[];
 }
 
-// Returns clients with a session that started today (in the studio's timezone, naive: server time).
-export async function getTodayRosterForStudio(studioId: string): Promise<
-  Array<{ client: Client; sessions: Session[] }>
-> {
-  const supabase = await createClient();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .select("*, client:clients(*)")
-    .eq("studio_id", studioId)
-    .is("deleted_at", null)
-    .gte("started_at", start.toISOString())
-    .lte("started_at", end.toISOString())
-    .order("started_at", { ascending: true });
-
-  if (error) throw new Error(`Failed to load today's roster: ${dbErrorCode(error)}`);
-
-  const grouped = new Map<string, { client: Client; sessions: Session[] }>();
-  for (const row of data ?? []) {
-    const { client, ...session } = row as Session & { client: Client };
-    if (!client) continue;
-    const existing = grouped.get(client.id);
-    if (existing) {
-      existing.sessions.push(session as Session);
-    } else {
-      grouped.set(client.id, { client, sessions: [session as Session] });
-    }
-  }
-  return Array.from(grouped.values());
-}
+// getTodayRosterForStudio (a wildcard client read with no caller) was deleted: a client row carries skin type and legacy skin notes, which
+// need the clin.view_records gate (Privacy EW-2). New client-row readers go through getClientById with `clinicalFields`.
 
 // Migration 0019: session block helpers.
 // 17.5b.2 will use these to render blocks in the UI. They exist now so the

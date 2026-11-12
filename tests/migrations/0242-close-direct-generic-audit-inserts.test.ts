@@ -60,7 +60,19 @@ describe("0242 atomic governed service commands", () => {
   it("pins the operation-specific SQL metadata map to the actual export registry", () => {
     const raw = sql.match(/\$registry\$([\s\S]*?)\$registry\$/)?.[1];
     expect(raw).toBeDefined();
-    expect(JSON.parse(raw!)).toEqual(Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file])));
+    const registry = Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file]));
+    // 0242 is frozen history: every entry it carries is still the registry's file for that resource.
+    for (const [resource, file] of Object.entries(JSON.parse(raw!))) expect(registry[resource], resource).toBe(file);
+  });
+  it("0325 replaces the map with 0242's plus exactly waitlist_decline_answers, and the registry never outruns it", () => {
+    const later = readFileSync("supabase/migrations/0325_waitlist_decline_followups.sql", "utf8");
+    const raw = sql.match(/\$registry\$([\s\S]*?)\$registry\$/)?.[1];
+    const next = later.match(/\$registry\$([\s\S]*?)\$registry\$/)?.[1];
+    expect(next).toBeDefined();
+    expect(JSON.parse(next!)).toEqual({ ...JSON.parse(raw!), waitlist_decline_answers: "waitlist-decline-answers.csv" });
+    const registry = Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file]));
+    // Every exported resource must be in the LATEST map (otherwise a production export would fail its audit step).
+    for (const [resource, file] of Object.entries(registry)) expect(JSON.parse(next!)[resource], resource).toBe(file);
   });
   it("preserves0178 SELECT-only runtimes and validates actual trusted owner separately from ACLs", () => {
     const frozen = readFileSync("supabase/migrations/0178_practitioner_identity_boundary.sql", "utf8");

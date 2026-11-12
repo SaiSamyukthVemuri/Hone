@@ -10,6 +10,7 @@ Dropping the engine does not tighten anything. Every owner restriction stored in
 So: dropping the engine, or deploying the app before 0287 is applied, restores legacy behaviour plus an alert. It is not a lockout.
 
 ## Order
+The full apply, deploy, release and owner-activation sequence (keys pending until the operator releases them) is in [activation-0287-roles-engine.md](./activation-0287-roles-engine.md).
 0287 applied and verified first, then the app that enforces. The pending-release receipt for the app PR states the dependency.
 
 ## Data loss

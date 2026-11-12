@@ -40,17 +40,23 @@ export const ROLE_ERROR_CODES = [
 export type RoleErrorCode = (typeof ROLE_ERROR_CODES)[number];
 
 /** `key` and `role` are present on the per-key refusals so the message lands on the row; `currentVersion` on `stale_version`. */
-export type RoleError = { code: RoleErrorCode; key?: string; role?: Role; currentVersion?: number };
+export type RoleError = { code: RoleErrorCode; key?: string; role?: Role; currentVersion?: number; count?: number };
 
 export type PersonRef = { id: string; name: string; state: "active" | "invited" | "deactivated" };
 
-export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; count: number };
+/** A stored choice a reset would delete (0287 stored_removed). When access in force does not move, the choice was held inactive: not released, not activated, or blocked by a prerequisite. */
+export type StoredRemoval = { key: string; label: string; stored: string; effectiveBefore: string; effectiveAfter: string };
+
+export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; count: number; storedRemoved: StoredRemoval[] };
 
 /** What every preview returns: the diff per role AND the policy version it was computed against. A save binds to that version. */
 export type ServerPreview = { version: number; roles: RolePreview[] };
 
 export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; error: RoleError };
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
+
+/** change_staff_role: the membership the person now holds and the role they now have. */
+export type ChangeRoleResult = { ok: true; membershipId: string; role: Role } | { ok: false; error: RoleError };
 
 /** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 Insurance AA-1). */
 export type ActivationPreview = ServerPreview & { keys: string[]; digest: string; sensitiveKeys: string[]; confirmationRequired: boolean };
@@ -69,8 +75,13 @@ export type AuditRow = {
   personState: "active" | "deactivated" | null;
   reason: string | null;
   // Only what changed, as display strings keyed by permission key (or "role" for a staff role change).
+  // What was IN FORCE (the effective scope).
   before: Record<string, string>;
   after: Record<string, string>;
+  // The owner's SAVED choice, where the audit row recorded one. It differs from the effective scope while a setting is not released or not
+  // activated yet, or is held inactive by a prerequisite; History shows both so "Studio to Off" is never printed as "Studio to Studio".
+  storedBefore: Record<string, string>;
+  storedAfter: Record<string, string>;
 };
 
 /** One row of effective_access: the scope in force, where it came from, and what capped it. */
@@ -145,17 +156,20 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   version_required: "This page is out of date. Reload it and try again.",
   unknown_role: "That role does not exist. Nothing was saved.",
   reason_invalid: "That reason is not meaningful. Say why in your own words.",
-  not_found: "That person was not found in this studio.",
+  not_found: "That person was not found with that role. Their role may have just changed. Reload the page to see the current state. Nothing was changed.",
   owner_role_fixed: "The owner role is fixed and cannot be changed here.",
   self_change: "You cannot change your own role.",
-  not_active: "That person is not active.",
+  not_active: "That person is not active. Their role may have just changed. Reload the page to see the current state. Nothing was changed.",
   has_upcoming_appointments: "That practitioner still has upcoming appointments. Move them first.",
   email_required: "That person needs an email address on file first.",
   unexpected: "Something went wrong and we could not confirm the result. Reload the page to see what is saved.",
   unavailable: "Saving role changes turns on with the permission core. Nothing was changed.",
 };
 
-export const roleErrorMessage = (e: RoleError): string => MESSAGES[e.code];
+export const roleErrorMessage = (e: RoleError): string =>
+  e.code === "has_upcoming_appointments" && typeof e.count === "number" && e.count > 0
+    ? `That practitioner still has ${e.count} upcoming appointment${e.count === 1 ? "" : "s"}. Move or cancel ${e.count === 1 ? "it" : "them"} first. Nothing was changed.`
+    : MESSAGES[e.code];
 
 /** Codes that point at one row. The page keeps the draft, opens that role and shows the message on the row. */
 export const isRowError = (e: RoleError): e is RoleError & { key: string } =>

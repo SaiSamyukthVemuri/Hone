@@ -17,12 +17,15 @@ const getp = (u: string, s: string) => call(u, "select public.get_role_permissio
 const effMap = async (s: SeededStudio) =>
   (await adminQuery("select role, key, public.perm_effective_scope($1,role,key) as e from public.permission_catalog cross join (values ('practitioner'),('receptionist')) v(role) order by 1,2", [s.studioId])).rows;
 
+const SAVED_EXTRA: { key: string; released_at: string | null; release_tag: string; release_kind: string }[] = [];
 let KEYS: { key: string; practitioner_new: string; practitioner_snap: string }[] = [];
 let SAVED: { key: string; released_at: string | null; release_tag: string; release_kind: string }[] = [];
 afterAll(async () => {
   // Put the registry back exactly as found (other suites released every key long ago).
   await adminQuery("delete from public.permission_key_release where key = any($1)", [KEYS.map((k) => k.key)]);
   for (const r of SAVED) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,$2,$3,$4)", [r.key, r.released_at, r.release_tag, r.release_kind]);
+  await adminQuery("delete from public.permission_key_release where key = any($1)", [SAVED_EXTRA.map((r) => r.key)]);
+  for (const r of SAVED_EXTRA) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,$2,$3,$4) on conflict (key) do update set released_at=excluded.released_at, release_tag=excluded.release_tag, release_kind=excluded.release_kind", [r.key, r.released_at, r.release_tag, r.release_kind]);
   await closePool();
 });
 beforeAll(async () => {
@@ -130,6 +133,29 @@ describe("activation rule", () => {
     expect(audit.length).toBeGreaterThan(0);
     expect(audit[0]).toMatchObject({ reason: GOOD, actor_user_id: s.userId });
     expect(m.userId).toBeTruthy();
+  });
+
+  it("unreleased key: an Off has no effect, and the page says so (no release row, and a PENDING row, both)", async () => {
+    // A practitioner-offered, owner-configurable boolean-or-scope key whose snapshot is NOT off, so "Off had no effect" is a real observation.
+    const k = (await adminQuery(
+      `select key, snapshot_practitioner as practitioner_snap from public.permission_catalog
+        where owner_configurable and offered_practitioner and gate_practitioner is null and requires = '{}' and snapshot_practitioner <> 'off'
+        order by key limit 1`)).rows[0] as { key: string; practitioner_snap: string };
+    expect(k, "a key whose snapshot is not off must exist").toBeTruthy();
+    SAVED_EXTRA.push(...(await adminQuery("select key, released_at::text released_at, release_tag, release_kind from public.permission_key_release where key = $1", [k.key])).rows);
+    for (const [label, pending] of [["no release row", false], ["pending release row", true]] as const) {
+      const s = await seedStudio(pending ? "unrel2" : "unrel1");
+      await adminQuery("update public.studio_permission_policy set basis='existing_snapshot' where studio_id=$1", [s.studioId]);
+      await adminQuery("delete from public.permission_key_release where key = $1", [k.key]);
+      if (pending) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,null,'ACT-TEST','full')", [k.key]);
+      await dated(s, k.key, "off", 3);
+      expect((await adminQuery("select public.perm_effective_scope($1,'practitioner',$2) e", [s.studioId, k.key])).rows[0].e, label).toBe(k.practitioner_snap);
+      const row = (await getp(s.userId, s.studioId)).roles.practitioner[k.key];
+      expect(row, label).toMatchObject({ stored: "off", effective: k.practitioner_snap, source: "unreleased" });
+      // There is nothing to activate yet: the preview and the commit both answer not_released, and no activation row is written.
+      expect(await call(s.userId, "select public.preview_activation($1,$2::text[]) as r", [s.studioId, [k.key]]), label).toMatchObject({ ok: false, code: "not_released" });
+      expect(Number((await adminQuery("select count(*) n from public.permission_key_activation where studio_id=$1", [s.studioId])).rows[0].n), label).toBe(0);
+    }
   });
 
   it("non-owners, other studios, stale versions, missing reasons and unreleased keys are refused", async () => {

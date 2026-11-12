@@ -1,6 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getNewClientAdmissionMode,
+  invitedBookingRefusalKind,
+} from "@/lib/booking/new-client-admission";
 import {
   inviteSubmissionFromFormData,
   WINDOW_DAYS_MAX,
@@ -57,7 +63,7 @@ import type { InvitationOutcome } from "@/lib/waitlist/invite-to-book-contract";
  */
 export type InviteActionResult =
   | { outcome: InvitationOutcome }
-  | { outcome: null; reason: "malformed_submission" };
+  | { outcome: null; reason: "malformed_submission" | "admission_closed" | "admission_unreadable" };
 
 /**
  * Has a service actually been chosen?
@@ -134,6 +140,8 @@ function rejectSubmission(s: InviteSubmission): "malformed_submission" | null {
  * -> #683 `InvitationOutcome`.
  */
 export async function inviteToBookAction(formData: FormData): Promise<InviteActionResult> {
+  // An outcome notice from an earlier action must not re-show after this one.
+  await clearLifecycleNotice();
   const parsed = inviteSubmissionFromFormData(formData);
   // The parser's ONE failure: an allowed-days preset it does not recognise.
   // There is nowhere safe to put that, because `null` days is a real answer
@@ -166,6 +174,21 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // clearer message, never the guarantee.
   if (validateInviteInput(input)) {
     return { outcome: null, reason: "malformed_submission" };
+  }
+
+  // CLOSED ADMISSION BLOCKS THE SEND. 0204 refuses an invited booking while new-client
+  // admission is closed (or unreadable), so an invitation created now could only fail at
+  // Book. Refused BEFORE the command, so nothing is created or counted against capacity.
+  // Fails closed: an unreadable studio or mode is a refusal, not a send.
+  try {
+    const { studio } = await getCurrentPractitionerWithStudio();
+    const admission = await getNewClientAdmissionMode(studio);
+    const refusal = await invitedBookingRefusalKind(admission);
+    if (refusal) {
+      return { outcome: null, reason: refusal === "closed" ? "admission_closed" : "admission_unreadable" };
+    }
+  } catch {
+    return { outcome: null, reason: "admission_unreadable" };
   }
 
   const outcome = await admissionCommandAdapter.inviteToBook(input);

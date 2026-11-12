@@ -7,6 +7,7 @@ import type { Role } from "@/lib/permissions/catalog";
 import {
   activatePermissionsAction,
   adoptNewDefaultsAction,
+  changeStaffRoleAction,
   effectiveAccessAction,
   listPermissionAuditAction,
   previewActivationAction,
@@ -79,7 +80,7 @@ export default async function RolesSettingsPage() {
 
   // Real members only. An invitation has no access, and a deactivated person has none either; the People view says so.
   const people: PersonView[] = [
-    ...[...staff, ...receptionists].map((p): PersonView => ({ id: p.id, name: p.display_name, email: p.email ?? "", role: asRole(p.role), state: p.active ? "active" : "deactivated" })),
+    ...[...staff, ...receptionists].map((p): PersonView => ({ id: p.id, name: p.display_name, email: p.email ?? "", role: asRole(p.role), state: p.active ? "active" : "deactivated", isSelf: p.id === practitioner.id })),
     ...invitations.map((i): PersonView => ({ id: i.id, name: i.display_name ?? "No name set", email: i.email, role: asRole(i.role), state: "invited" })),
   ];
 
@@ -108,6 +109,7 @@ export default async function RolesSettingsPage() {
         activate={activatePermissionsAction}
         loadHistory={listPermissionAuditAction}
         loadAccess={effectiveAccessAction}
+        changeRole={changeStaffRoleAction}
       />
     </div>
   );

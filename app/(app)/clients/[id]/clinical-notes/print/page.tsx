@@ -53,7 +53,7 @@ export default async function ClinicalNotesPrintPage({
   const { studio } = await requirePractitionerWithStudio();
   // Printing the clinical notes is reading the treatment record: clin.view_records, before any note is read.
   if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed) notFound();
-  const data = await getClientById(studio.id, id, { includePrices: true, includeSessions: false });
+  const data = await getClientById(studio.id, id, { includeSessions: false });
   if (!data) notFound();
   const { client } = data;
 

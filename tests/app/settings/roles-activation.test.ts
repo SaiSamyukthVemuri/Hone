@@ -176,6 +176,7 @@ describe("the page", () => {
         activate: noop,
         loadHistory: noop,
         loadAccess: noop,
+        changeRole: noop,
         reload: noop,
       }),
     );

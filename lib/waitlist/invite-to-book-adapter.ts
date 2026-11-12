@@ -11,6 +11,8 @@ import {
 import { sendWaitlistInvitationSms } from "@/lib/waitlist/delivery/sms";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
+import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
+import { ensureOpenRound } from "@/lib/waitlist/auto-round";
 import {
   type BookingScope,
   type DefiniteInviteToBookRefusal,
@@ -546,6 +548,8 @@ export function validateInviteInput(input: InviteToBookInput): InviteToBookFailu
   return null;
 }
 
+const SEND_COMMAND_ABSENT = new Set(["PGRST202", "42883"]);
+
 class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
   readonly capabilities = {
     // `admit_` carries serviceId, the date window and allowedWeekdays into the
@@ -570,19 +574,49 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
 
     const { start, end } = windowToDates(input.scope, timezone, new Date());
     const admin = createAdminClient();
-    const { data, error } = await admin.rpc("admit_new_client_waitlist_entry", {
-      p_studio_id: studioId,
-      p_actor_user_id: actorUserId,
-      p_entry_id: input.entryId,
-      p_service_id: input.scope.serviceId,
-      p_start_date: start,
-      p_end_date: end,
-      p_allowed_weekdays: weekdays === null ? null : [...weekdays],
-      // THE ONE FIXED WINDOW, supplied here and named by nobody. There is no
-      // `input.expiresInHours` to read: the contract no longer has the field,
-      // so this cannot silently fall back to a caller's value.
-      p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
+
+    // THE FIT IS COMPUTED HERE, AT SEND TIME, from the slot engine and the exact selections being
+    // sent. It is never read from the browser: no field of `input` carries one. 0324's guard
+    // enforces this number under the studio lock. Not computable -> nothing is sent.
+    const fit = await computeConsultationFit({
+      admin,
+      studioId,
+      serviceId: input.scope.serviceId,
+      windowDays: input.scope.windowDays,
+      allowedWeekdays: weekdays,
     });
+    if (!fit.ok) return refusedOrIndeterminate("unavailable");
+
+    // The admission round is plumbing the owner never sees (lib/waitlist/auto-round.ts). It is NOT opened
+    // before the send: when 0324 is not applied the send answers "not yet available" and a round opened
+    // beforehand would be a write for a send that cannot happen. A missing round is opened only on the
+    // send's own `no_round_open` answer, below.
+    const admit = () =>
+      admin.rpc("admit_new_client_waitlist_entry", {
+        p_studio_id: studioId,
+        p_actor_user_id: actorUserId,
+        p_entry_id: input.entryId,
+        p_service_id: input.scope.serviceId,
+        p_start_date: start,
+        p_end_date: end,
+        p_allowed_weekdays: weekdays === null ? null : [...weekdays],
+        // THE ONE FIXED WINDOW, supplied here and named by nobody. There is no
+        // `input.expiresInHours` to read: the contract no longer has the field,
+        // so this cannot silently fall back to a caller's value.
+        p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
+        p_fit: fit.fit,
+      });
+    let { data, error } = await admit();
+    // A FULL ROUND IS NO LONGER RETRIED HERE: 0324's admit rotates a full round itself, under its own
+    // studio lock, so `round_full` cannot come back from it (any remaining one maps to a truthful
+    // "couldn't prepare invitations" message). Only a missing round is retried, once: it is refused BEFORE
+    // anything is created, so the retry cannot double-issue.
+    if (!error) {
+      const first = (Array.isArray(data) ? data[0] : data) as { result?: unknown } | null;
+      if (first?.result === "no_round_open") {
+        if (await ensureOpenRound(admin, studioId, actorUserId)) ({ data, error } = await admit());
+      }
+    }
 
     // A LOST ANSWER IS NOT A REFUSAL, AND THIS IS THE WHOLE REASON THE THIRD
     // STATE EXISTS.
@@ -600,6 +634,11 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // that inference wrong — and nothing here correlates an attempt with a row.
     // Until an attempt-correlated mechanism exists, indeterminate is the honest
     // answer and the copy sends the practitioner to look at the waitlist.
+    // THE COMMAND IS NOT THERE (0324 not applied yet). PostgREST answers PGRST202 and Postgres 42883 BEFORE
+    // any function runs, so nothing can have been created: that is a definite refusal, not a lost answer.
+    if (error && SEND_COMMAND_ABSENT.has(String((error as { code?: unknown }).code))) {
+      return { state: "refused", code: "not_yet_available" };
+    }
     if (error) return INDETERMINATE_ADMISSION;
 
     const row = Array.isArray(data) ? data[0] : data;

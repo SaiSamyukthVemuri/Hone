@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { RETURN_TO_COOKIE, RETURN_TO_COOKIE_MAX_AGE_SECONDS, returnToKeyFor } from "@/lib/auth/return-to";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -158,7 +159,19 @@ export async function updateSession(request: NextRequest) {
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    // HON-7. Remember WHICH allowlisted internal page was asked for (a key, never a path), so the sign-in can land there. See lib/auth/return-to.ts.
+    const returnKey = returnToKeyFor(pathname, request.nextUrl.search);
+    if (returnKey) {
+      redirect.cookies.set(RETURN_TO_COOKIE, returnKey, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: request.nextUrl.protocol === "https:",
+        path: "/",
+        maxAge: RETURN_TO_COOKIE_MAX_AGE_SECONDS,
+      });
+    }
+    return redirect;
   }
 
   // PR #253 invite-only gate: an AUTHENTICATED user with no active

@@ -34,7 +34,7 @@ const responses: Record<string, Rows> = {
 };
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+  createClient: async () => ((globalThis as { __mkSb?: () => unknown }).__mkSb = () => ({
     from: (table: string) => {
       const q: Record<string, unknown> = {};
       const chain = () => q;
@@ -46,7 +46,11 @@ vi.mock("@/lib/supabase/server", () => ({
       q.then = (resolve: (v: Rows) => unknown) => resolve(responses[table]);
       return q;
     },
-  }),
+  }))(),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  // 0303: client_pricing reads run on the service role; serve the same fake as the user client.
+  createAdminClient: () => (globalThis as { __mkSb?: () => unknown }).__mkSb!(),
 }));
 
 import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-state";

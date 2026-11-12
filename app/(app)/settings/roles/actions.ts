@@ -5,6 +5,7 @@ import {
   coreAccess,
   coreActivate,
   coreAdopt,
+  coreChangeRole,
   coreHistory,
   corePreviewActivation,
   corePreviewAdopt,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/settings/roles/core";
 import { enforcementRefusal } from "@/lib/settings/roles/model";
 import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
-import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
+import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type ChangeRoleResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
 // Server actions of the Roles page (R2). Each one re-checks on the server that the caller is the owner, then hands the request to the
 // permission core, which decides everything again from the CURRENT membership row and answers with a code. The page never computes a
@@ -120,22 +121,22 @@ export async function saveRolePolicyAction(
 }
 
 /** Reset one role to the studio's own basis. Separate from Save; it has its own preview. */
-export async function resetRolePolicyAction(role: unknown, expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
+export async function resetRolePolicyAction(role: unknown, expectedVersion: unknown, reason: unknown, sensitiveConfirmed: unknown): Promise<CommandResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   if (!isRole(role)) return refuse({ code: "unknown_role" });
   if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
   if (!reasonAcceptable("reset", false, reasonText(reason))) return refuse({ code: "reason_required" });
-  return coreReset(owner.studioId, role, expectedVersion, reasonText(reason).trim());
+  return coreReset(owner.studioId, role, expectedVersion, reasonText(reason).trim(), sensitiveConfirmed === true);
 }
 
 /** The only way an existing studio takes the new defaults. */
-export async function adoptNewDefaultsAction(expectedVersion: unknown, reason: unknown): Promise<CommandResult> {
+export async function adoptNewDefaultsAction(expectedVersion: unknown, reason: unknown, sensitiveConfirmed: unknown): Promise<CommandResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
   if (!reasonAcceptable("adopt", false, reasonText(reason))) return refuse({ code: "reason_required" });
-  return coreAdopt(owner.studioId, expectedVersion, reasonText(reason).trim());
+  return coreAdopt(owner.studioId, expectedVersion, reasonText(reason).trim(), sensitiveConfirmed === true);
 }
 
 /** The change history, newest first. Read-only. */
@@ -183,4 +184,23 @@ export async function activatePermissionsAction(
   if (typeof previewHash !== "string" || previewHash === "") return refuse({ code: "preview_required" });
   if (!reasonAcceptable("adopt", false, reasonText(reason))) return refuse({ code: "reason_required" });
   return coreActivate(owner.studioId, list, expectedVersion, reasonText(reason).trim(), previewHash, sensitiveConfirmed === true);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Change one person's role (practitioner <-> receptionist). Owner-only here and again in the core. The core is the only writer: it
+ * refuses a gate that is off, yourself, an owner, a stale `expectedCurrentRole` and a practitioner with upcoming appointments. Moving a
+ * receptionist to practitioner widens clinical access, so a meaningful reason is required (the core requires one too).
+ */
+export async function changeStaffRoleAction(membershipId: unknown, newRole: unknown, expectedCurrentRole: unknown, reason: unknown): Promise<ChangeRoleResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  if (typeof membershipId !== "string" || !UUID.test(membershipId)) return refuse({ code: "not_found" });
+  if (!isRole(newRole) || !isRole(expectedCurrentRole)) return refuse({ code: "owner_role_fixed" });
+  if (newRole === expectedCurrentRole) return refuse({ code: "nothing_changed" });
+  const text = reasonText(reason);
+  const widens = expectedCurrentRole === "receptionist" && newRole === "practitioner";
+  if (widens ? !reasonAcceptable("adopt", false, text) : !reasonAcceptable("save", false, text)) return refuse({ code: widens && text.trim() === "" ? "reason_required" : "reason_invalid" });
+  return coreChangeRole(owner.studioId, membershipId, newRole, expectedCurrentRole, text.trim());
 }

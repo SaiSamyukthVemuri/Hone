@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
+import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
+import { changeRoleCopy } from "@/lib/settings/roles/change-role";
 import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
 import {
@@ -20,6 +22,7 @@ import {
   type ActivationPreview,
   type ActivationPreviewResult,
   type AuditRow,
+  type ChangeRoleResult,
   type CommandResult,
   type HistoryResult,
   type PreviewResult,
@@ -50,6 +53,8 @@ export type PersonView = {
   email: string;
   role: "owner" | Role;
   state: "active" | "invited" | "deactivated";
+  // The signed-in owner's own row. Their role cannot be changed here (the core refuses it too).
+  isSelf?: boolean;
 };
 
 export type RolesEditorProps = {
@@ -70,13 +75,16 @@ export type RolesEditorProps = {
   save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string) => Promise<CommandResult>;
   // The authoritative policy as the core holds it now; read after a save so the page never assumes its draft became the saved state.
   reload: () => Promise<{ ok: true; state: StudioPolicyState } | { ok: false; error: RoleError }>;
-  reset: (role: Role, expectedVersion: number, reason: string) => Promise<CommandResult>;
-  adopt: (expectedVersion: number, reason: string) => Promise<CommandResult>;
+  reset: (role: Role, expectedVersion: number, reason: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
+  adopt: (expectedVersion: number, reason: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
   // Released settings the owner has not activated yet: the core previews the change (with a digest) and commits only that exact preview.
   previewActivation: (keys: string[]) => Promise<ActivationPreviewResult>;
   activate: (keys: string[], expectedVersion: number, reason: string, previewDigest: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
   loadHistory: (before: string | null) => Promise<HistoryResult>;
   loadAccess: (membershipId: string) => Promise<AccessResult>;
+  // Move one person between practitioner and receptionist. The core is the only writer and the only judge (gate, self, owner, stale
+  // role, upcoming appointments); the page shows exactly what it answers.
+  changeRole: (membershipId: string, newRole: Role, expectedCurrentRole: Role, reason: string) => Promise<ChangeRoleResult>;
 };
 
 type View = "people" | "permissions" | "history";
@@ -92,16 +100,29 @@ export function RolesEditor(props: RolesEditorProps) {
   const [drafts, setDrafts] = useState<Record<Role, StudioPolicy>>(props.policies);
   const [rowError, setRowError] = useState<{ key: string; message: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  // The owner's explicit confirmation when a reset or adopt would newly enable a sensitive permission (the core refuses without it).
+  const [previewConfirmed, setPreviewConfirmed] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [reviewData, setReviewData] = useState<ServerPreview | null>(null);
   const [reason, setReason] = useState("");
   const router = useRouter();
+  // router.refresh() returns void, not a promise, so awaiting it would not hold anything. A transition is pending until the refreshed server
+  // payload has been applied: busy covers that tail too, so the draft cannot be edited between "saved" and the page showing the new state.
+  const [refreshing, startRefresh] = useTransition();
+  const refreshNow = () => startRefresh(() => router.refresh());
   const [confirmed, setConfirmed] = useState(false);
   const [reviewed, setReviewed] = useState(props.reviewed);
   const feedback = useSaveFeedback();
   const baseId = useId();
   // Bumped whenever a pending preview stops being wanted (tab switch, cancel), so a late response is ignored.
   const previewSeq = useRef(0);
+  // Codex P2 4476375641: a reset or adoption preview describes the SAVED state and its confirm replaces the page with the result, so it must not
+  // outlive an edit. Any edit drops it (and ignores a preview response still in flight); confirm also refuses while the draft is dirty.
+  function dropPreview() {
+    previewSeq.current += 1;
+    setPreview(null);
+    setPreviewConfirmed(false);
+  }
   // PY-3. The review is sequenced the same way: a late preview from an earlier click is ignored, and Save sends the edits that were
   // PREVIEWED (not whatever the draft has become), so the owner cannot confirm a consequence list that is not the one being saved.
   const reviewSeq = useRef(0);
@@ -110,7 +131,14 @@ export function RolesEditor(props: RolesEditorProps) {
   const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
   const dirty = dirtyRoles.length > 0;
   useUnsavedChangesGuard("roles-draft", dirty);
-  const readOnly = !props.writable;
+  // Codex P2 4477378035: while a save, reset, adopt or the read-back after it is in flight, the draft must not change: the read-back replaces
+  // it with the saved policy, so an edit made in that window would be silently lost. Editing is disabled for the whole window (feedback
+  // stays "saving" until the read-back has been applied), and the edit entry points refuse as well.
+  // Codex P2 on #1335 (401cbff82): the same window applies to an activation in flight: confirming it replaces the page with the saved state,
+  // so the draft is locked from the moment the owner confirms until the request (and the refresh it triggers) has settled.
+  const [activating, setActivating] = useState(false);
+  const busy = feedback.state.kind === "saving" || refreshing || activating;
+  const readOnly = !props.writable || busy;
 
   const sections = useMemo(() => buildRoleSections(role, drafts[role]), [role, drafts]);
   const savedRows = useMemo(
@@ -125,6 +153,7 @@ export function RolesEditor(props: RolesEditorProps) {
   const sensitiveCount = (reviewData?.roles ?? []).reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0);
 
   function choose(key: string, scope: Scope) {
+    if (busy) return;
     const result = applyEdit(role, drafts[role], key, scope);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
@@ -136,12 +165,14 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    dropPreview();
     setDrafts((d) => ({ ...d, [role]: result.policy }));
   }
 
   // Discard a saved choice that is waiting on a release: stage the key back on the studio's basis in the draft. Nothing is written
   // until the owner goes through the usual Review and Save, so the core previews it and records who did it.
   function stageBasisChoice(forRole: Role, key: string, basis: Scope) {
+    if (busy) return;
     const result = applyEdit(forRole, drafts[forRole], key, basis);
     if (!result.ok) {
       setRowError({ key, message: result.reason });
@@ -154,6 +185,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    dropPreview();
     setDrafts((d) => ({ ...d, [forRole]: result.policy }));
   }
 
@@ -203,58 +235,94 @@ export function RolesEditor(props: RolesEditorProps) {
   const needsReason = reviewing && reasonRequired("save", sensitiveCount > 0);
   const reasonOk = reasonAcceptable("save", sensitiveCount > 0, reason);
 
+  const LOST_MESSAGE = "We could not confirm whether that was saved. Reload the page to check before trying again.";
+  // A rejected promise from the server action (network drop, thrown error) must never leave the editor in "saving", which is read-only.
+  const readBack = async () => {
+    try {
+      return await props.reload();
+    } catch {
+      return { ok: false as const };
+    }
+  };
+
   async function onSave() {
     if (!reviewData || !reviewedEdits.current) return;
     feedback.saving();
     const boundVersion = reviewData.version;
-    const result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim());
-    if (result.ok) {
-      // The core owns what was saved: read it back rather than assume the draft became the saved state.
-      const fresh = await props.reload();
-      if (fresh.ok) {
-        setSaved(fresh.state.policies);
-        setDrafts(fresh.state.policies);
-        setReviewed(fresh.state.reviewed);
-      } else {
-        // Could not read it back: do not claim a state we have not seen. Refresh the page from the server.
-        router.refresh();
+    try {
+      let result: Awaited<ReturnType<typeof props.save>>;
+      try {
+        result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim());
+      } catch {
+        // The request may or may not have committed: read it back and say which, exactly as for an unexpected core answer.
+        await resolveUnexpected(boundVersion, reviewedEdits.current);
+        return;
       }
-      setReviewing(false);
-      setReviewData(null);
-      setConfirmed(false);
-      setReason("");
-      feedback.saved();
-    } else if (result.error.code === "unexpected") {
-      await resolveUnexpected(boundVersion);
-    } else {
-      handleError(result.error);
+      if (result.ok) {
+        // The core owns what was saved: read it back rather than assume the draft became the saved state.
+        const fresh = await readBack();
+        if (fresh.ok) {
+          setSaved(fresh.state.policies);
+          setDrafts(fresh.state.policies);
+          setReviewed(fresh.state.reviewed);
+        } else {
+          // Could not read it back: do not claim a state we have not seen. Refresh the page from the server.
+          refreshNow();
+        }
+        setReviewing(false);
+        setReviewData(null);
+        setConfirmed(false);
+        setReason("");
+        feedback.saved();
+      } else if (result.error.code === "unexpected") {
+        await resolveUnexpected(boundVersion, reviewedEdits.current);
+      } else {
+        handleError(result.error);
+      }
+    } catch {
+      feedback.failed(LOST_MESSAGE);
     }
   }
 
   // PY-6. A transport error after a commit looks the same as a failure, so "Nothing was changed" cannot be claimed. Read the policy
   // back: a moved version means it went through; the same version means it did not; an unreadable policy is said plainly.
-  async function resolveUnexpected(boundVersion: number) {
-    const fresh = await props.reload();
-    if (!fresh.ok) {
+  // A moved version alone is never proof (another writer may have committed): success is claimed only when the reloaded choices equal
+  // the exact set this operation attempted. Otherwise the draft is kept and the outcome is said to be uncertain.
+  async function resolveUnexpected(boundVersion: number, attempted: AttemptedEdits | null) {
+    const fresh = await readBack();
+    const outcome = classifyUnexpected({
+      boundVersion,
+      attempted,
+      fresh: fresh.ok ? { version: fresh.state.version, policies: fresh.state.policies } : null,
+    });
+    if (outcome === "unreadable" || !fresh.ok) {
       feedback.failed("We could not confirm whether that was saved. Reload the page to check before trying again.");
       return;
     }
-    if (fresh.state.version === boundVersion) {
+    if (outcome === "unchanged") {
       feedback.failed("Something went wrong. We checked, and nothing was changed.");
       return;
     }
     setSaved(fresh.state.policies);
-    setDrafts(fresh.state.policies);
     setReviewed(fresh.state.reviewed);
     setReviewing(false);
     setReviewData(null);
     setPreview(null);
     setConfirmed(false);
-    setReason("");
-    feedback.failed("The response was lost, but the change went through. The page now shows what is saved.");
+    if (outcome === "landed") {
+      setDrafts(fresh.state.policies);
+      setReason("");
+      feedback.failed("The response was lost, but the change went through. The page now shows what is saved.");
+      return;
+    }
+    // Uncertain: only the choices THIS person changed stay on top of the permissions as they are now. Keys they never touched take the
+    // fresh stored value, so another owner's concurrent change is not turned into an edit to undo on the next save (Codex P2, #1335 f2bee2d07).
+    setDrafts((current) => rebaseDrafts(current, saved, fresh.state.policies));
+    feedback.failed(UNCERTAIN_SAVE_MESSAGE);
   }
 
   function discard() {
+    if (busy) return;
     reviewSeq.current += 1;
     setDrafts(saved);
     setReviewing(false);
@@ -266,6 +334,7 @@ export function RolesEditor(props: RolesEditorProps) {
   }
 
   async function openPreview(kind: Preview["kind"]) {
+    if (busy) return;
     // PY-4. Reset and adopt replace the page with the saved state and would drop every unsaved choice, on both roles, without a
     // warning. They are refused while there are unsaved choices.
     if (dirty) {
@@ -273,6 +342,7 @@ export function RolesEditor(props: RolesEditorProps) {
       return;
     }
     setReason("");
+    setPreviewConfirmed(false);
     const forRole = role;
     const seq = ++previewSeq.current;
     const r = await (kind === "adopt" ? props.previewAdopt() : props.previewReset(forRole));
@@ -284,21 +354,39 @@ export function RolesEditor(props: RolesEditorProps) {
 
   async function confirmPreview() {
     if (!preview) return;
-    feedback.saving();
-    const boundVersion = preview.data.version;
-    const result = preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim()) : await props.reset(preview.role, boundVersion, reason.trim());
-    if (!result.ok && result.error.code === "unexpected") {
-      await resolveUnexpected(boundVersion);
+    // Defence in depth: the preview is dropped on every edit, but a confirm that still arrives with unsaved choices is refused, never run.
+    if (dirty) {
+      dropPreview();
+      feedback.failed("You have unsaved changes. Save or discard them first; resetting or adopting would replace them.");
       return;
     }
-    if (result.ok) {
-      // The core owns the resulting policy; reload to read it rather than guess it here.
-      setPreview(null);
-      setReason("");
-      feedback.saved();
-      router.refresh();
-    } else {
-      handleError(result.error);
+    feedback.saving();
+    const boundVersion = preview.data.version;
+    try {
+      let result: Awaited<ReturnType<typeof props.reset>>;
+      try {
+        result =
+          preview.kind === "adopt" ? await props.adopt(boundVersion, reason.trim(), previewConfirmed) : await props.reset(preview.role, boundVersion, reason.trim(), previewConfirmed);
+      } catch {
+        await resolveUnexpected(boundVersion, null);
+        return;
+      }
+      if (!result.ok && result.error.code === "unexpected") {
+        await resolveUnexpected(boundVersion, null);
+        return;
+      }
+      if (result.ok) {
+        // The core owns the resulting policy; refresh to read it rather than guess it here. The refresh transition keeps the editor busy until
+        // the new state has been applied.
+        setPreview(null);
+        setReason("");
+        feedback.saved();
+        refreshNow();
+      } else {
+        handleError(result.error);
+      }
+    } catch {
+      feedback.failed(LOST_MESSAGE);
     }
   }
 
@@ -347,7 +435,7 @@ export function RolesEditor(props: RolesEditorProps) {
         </section>
       )}
 
-      {readOnly && props.notWritableReason && (
+      {!props.writable && props.notWritableReason && (
         <p data-testid="roles-read-only" className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           {props.notWritableReason}
         </p>
@@ -375,7 +463,7 @@ export function RolesEditor(props: RolesEditorProps) {
         ))}
       </div>
 
-      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} />}
+      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} changeRole={props.changeRole} refresh={() => router.refresh()} />}
 
       {view === "history" && <HistoryPanel load={props.loadHistory} timeZone={props.timezone} />}
 
@@ -387,7 +475,8 @@ export function RolesEditor(props: RolesEditorProps) {
             blockedByDraft={dirty}
             previewActivation={props.previewActivation}
             activate={props.activate}
-            onActivated={() => router.refresh()}
+            onInFlight={setActivating}
+            onActivated={() => refreshNow()}
             onDiscard={stageBasisChoice}
           />
           <div role="tablist" aria-label="Role" className="flex gap-2">
@@ -432,7 +521,10 @@ export function RolesEditor(props: RolesEditorProps) {
               kind={preview.kind}
               role={preview.role}
               data={preview.data}
-              canConfirm={props.writable && reasonAcceptable(preview.kind, false, reason)}
+              sensitiveCount={preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0)}
+              confirmed={previewConfirmed}
+              onConfirmed={setPreviewConfirmed}
+              canConfirm={props.writable && !dirty && reasonAcceptable(preview.kind, false, reason) && (preview.data.roles.reduce((n, r) => n + r.diff.newlyEnabledSensitive, 0) === 0 || previewConfirmed)}
               blockedReason={props.writable ? null : props.notWritableReason}
               reason={reason}
               onReason={setReason}
@@ -480,7 +572,7 @@ export function RolesEditor(props: RolesEditorProps) {
               <button
                 type="button"
                 onClick={onReview}
-                disabled={!dirty}
+                disabled={!dirty || busy}
                 className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
                 Review changes{dirty ? ` (${dirtyRoles.length === 1 ? "1 role" : "2 roles"})` : ""}
@@ -489,13 +581,13 @@ export function RolesEditor(props: RolesEditorProps) {
               <button
                 type="button"
                 onClick={onSave}
-                disabled={!props.writable || !reviewData || feedback.state.kind === "saving" || (sensitiveCount > 0 && !confirmed) || !reasonOk}
+                disabled={!props.writable || !reviewData || busy || (sensitiveCount > 0 && !confirmed) || !reasonOk}
                 className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
               >
                 Save changes
               </button>
             )}
-            <button type="button" onClick={discard} disabled={!dirty} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-neutral-700">
+            <button type="button" onClick={discard} disabled={!dirty || busy} className="min-h-[44px] rounded-md border border-neutral-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-neutral-700">
               Discard changes
             </button>
             <button
@@ -507,7 +599,7 @@ export function RolesEditor(props: RolesEditorProps) {
             </button>
             <SaveStatus state={feedback.state} />
           </div>
-          <p className="text-xs text-neutral-500">A saved change applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
+          <p className="text-xs text-neutral-500">Once activated, a saved change applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
         </div>
       )}
     </div>
@@ -697,7 +789,7 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
     <section data-testid="roles-history" className="flex min-w-0 flex-col gap-3">
       <h3 className="text-base font-medium">Change history</h3>
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        Every role and permission change: who made it, when, who or what it affected, and the before and after. Staff cannot edit or delete it.
+        Every change made on this page: who made it, when, who or what it affected, and the before and after. Staff cannot edit or delete it.
       </p>
       {state.kind === "loading" && <p className="text-sm text-neutral-500">Loading&hellip;</p>}
       {state.kind === "error" && (
@@ -718,11 +810,29 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
               </p>
               {r.reason && <p className="mt-1">Reason: {r.reason}</p>}
               <ul className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                {Object.keys(r.after).map((k) => (
-                  <li key={k}>
-                    {k}: {r.before[k] ?? "unset"} to {r.after[k]}
-                  </li>
-                ))}
+                {Object.keys(r.after).map((k) => {
+                  const hasStored = r.storedAfter[k] !== undefined || r.storedBefore[k] !== undefined;
+                  // The saved choice and what is in force are shown SEPARATELY only when they differ: a setting not released or activated
+                  // yet, or held inactive by a prerequisite, can be saved Off while access stays where it was.
+                  const differs = hasStored && (r.storedBefore[k] !== r.before[k] || r.storedAfter[k] !== r.after[k]);
+                  if (!differs) {
+                    return (
+                      <li key={k}>
+                        {k}: {r.before[k] ?? "unset"} to {r.after[k]}
+                      </li>
+                    );
+                  }
+                  return (
+                    <li key={k}>
+                      <span data-testid="history-stored">
+                        {k}: saved choice {r.storedBefore[k] ?? "unset"} to {r.storedAfter[k] ?? "unset"}
+                      </span>
+                      <span data-testid="history-in-force" className="block pl-3">
+                        {r.before[k] === r.after[k] ? `in force: stays ${r.after[k]}` : `in force: ${r.before[k] ?? "unset"} to ${r.after[k]}`}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </li>
           ))}
@@ -772,8 +882,23 @@ function OwnerOnlySettingsNotes(): ReactNode {
   );
 }
 
-function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonView[]; loadAccess: RolesEditorProps["loadAccess"]; staffRoleChange: boolean }) {
+function PeoplePanel({
+  people,
+  loadAccess,
+  staffRoleChange,
+  changeRole,
+  refresh,
+}: {
+  people: PersonView[];
+  loadAccess: RolesEditorProps["loadAccess"];
+  staffRoleChange: boolean;
+  changeRole: RolesEditorProps["changeRole"];
+  refresh: () => void;
+}) {
   const [open, setOpen] = useState<string | null>(null);
+  // A role change gives the person a NEW membership id, so their old row is gone after the refresh. The confirmation therefore lives
+  // here, above the lists, and survives the row that produced it.
+  const [notice, setNotice] = useState<string | null>(null);
   const groups: { state: PersonView["state"]; label: string; empty: string }[] = [
     { state: "active", label: "Active", empty: "" },
     { state: "invited", label: "Invitation pending", empty: "Nobody is waiting to join." },
@@ -788,6 +913,11 @@ function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonVi
         </a>
         . Ownership changes use their own protected steps.
       </p>
+      {notice && (
+        <p role="status" data-testid="change-role-ok" className="break-words rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700">
+          {notice}
+        </p>
+      )}
       {groups.map((g) => {
         const list = people.filter((p) => p.state === g.state);
         return (
@@ -823,6 +953,14 @@ function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonVi
                         Change role: not available yet.
                       </p>
                     )}
+                    {p.state === "active" && p.role !== "owner" && staffRoleChange && p.isSelf && (
+                      <p data-testid="change-role-self" className="break-words text-xs text-neutral-500">
+                        You cannot change your own role.
+                      </p>
+                    )}
+                    {p.state === "active" && p.role !== "owner" && staffRoleChange && !p.isSelf && (
+                      <ChangeRole person={p as PersonView & { role: Role }} changeRole={changeRole} onChanged={(text) => { setNotice(text); refresh(); }} />
+                    )}
                     {open === p.id && <AccessSummary person={p} load={loadAccess} />}
                   </li>
                 ))}
@@ -831,6 +969,97 @@ function PeoplePanel({ people, loadAccess, staffRoleChange }: { people: PersonVi
           </section>
         );
       })}
+    </div>
+  );
+}
+
+// Change one person's role. The consequences are stated before the owner confirms; the core decides everything else and its answer is
+// shown as is. Nothing is deleted: the old membership is deactivated and the person keeps their sign-in.
+function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { role: Role }; changeRole: RolesEditorProps["changeRole"]; onChanged: (notice: string) => void }) {
+  const copy = changeRoleCopy(person.role);
+  const target = copy.to;
+  const widens = target === "practitioner";
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ kind: "error"; text: string } | null>(null);
+  const id = useId();
+  const needsReason = copy.reasonRequired;
+  const reasonOk = reasonAcceptable(widens ? "adopt" : "save", false, reason);
+  const canConfirm = !busy && reasonOk && (!needsReason || reason.trim() !== "");
+
+  async function confirm() {
+    if (!canConfirm) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await changeRole(person.id, target, person.role, reason.trim());
+      if (r.ok) {
+        setOpen(false);
+        setReason("");
+        onChanged(`${person.name} is now a ${ROLE_LABELS[target].toLowerCase()}. It is in the history.`);
+      } else {
+        setResult({ kind: "error", text: roleErrorMessage(r.error) });
+      }
+    } catch {
+      setResult({ kind: "error", text: roleErrorMessage({ code: "unexpected" }) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div data-testid="change-role" className="mt-1 flex min-w-0 flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${id}-panel`}
+        onClick={() => {
+          setOpen(!open);
+          setResult(null);
+        }}
+        className="min-h-[44px] self-start text-sm font-medium underline underline-offset-2"
+      >
+        {open ? "Cancel role change" : "Change role"}
+      </button>
+      {open && (
+        <div id={`${id}-panel`} data-testid="change-role-panel" className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+          <p className="break-words font-medium">{copy.title(person.name)}</p>
+          <ul className="list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            {copy.bullets.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+          <label className="flex flex-col gap-1">
+            <span className="font-medium">{copy.reasonLabel}</span>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              maxLength={500}
+              data-testid="change-role-reason"
+              className="w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-base dark:border-neutral-700"
+            />
+          </label>
+          {reason.trim() !== "" && !reasonOk && <p className="text-xs text-red-700 dark:text-red-400">Say why in your own words.</p>}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!canConfirm}
+              onClick={confirm}
+              data-testid="change-role-confirm"
+              className="min-h-[44px] rounded-md bg-neutral-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+            >
+              {busy ? "Changing…" : copy.confirmLabel}
+            </button>
+          </div>
+        </div>
+      )}
+      {result && (
+        <p role="alert" data-testid="change-role-error" className="break-words text-xs text-red-700 dark:text-red-400">
+          {result.text}
+        </p>
+      )}
     </div>
   );
 }
@@ -938,6 +1167,7 @@ function ReasonField({ id, value, onChange, required }: { id: string; value: str
       />
       <span id={`${id}-hint`} className="text-xs text-neutral-500">
         {required ? "Required: say why in your own words. " : ""}The before and after are recorded automatically; your reason is kept with them in the change history.
+        {" "}Please don&rsquo;t include client names or clinical details.
       </span>
     </label>
   );
@@ -984,6 +1214,7 @@ function ReviewPanel({
   );
 }
 
+const ACTIVATION_DISCARDED_LINE = "Activated. Your unsaved changes were discarded when the page re-read the saved state.";
 const ACTIVATION_DRAFT_LINE = "You have unsaved changes. Save or discard them first; activating replaces this page with the saved state.";
 
 function ActivationSection({
@@ -992,6 +1223,7 @@ function ActivationSection({
   blockedByDraft,
   previewActivation,
   activate,
+  onInFlight,
   onActivated,
   onDiscard,
 }: {
@@ -1000,6 +1232,7 @@ function ActivationSection({
   blockedByDraft: boolean;
   previewActivation: RolesEditorProps["previewActivation"];
   activate: RolesEditorProps["activate"];
+  onInFlight: (inFlight: boolean) => void;
   onActivated: () => void;
   onDiscard: (role: Role, key: string, basis: Scope) => void;
 }): ReactNode {
@@ -1011,6 +1244,23 @@ function ActivationSection({
   const [message, setMessage] = useState<string | null>(null);
   // A late preview from an earlier click is ignored, so the owner never confirms a list that is not the one being committed.
   const seq = useRef(0);
+  // Codex P2 on #1335: an edit made AFTER the preview opened (or while it loads) must not leave a confirmable activation. Activating
+  // refreshes the page and its version-keyed editor would drop the unsaved draft, so the preview is dropped and the commit refused.
+  const draftRef = useRef(blockedByDraft);
+  draftRef.current = blockedByDraft;
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  useEffect(() => {
+    if (!blockedByDraft) return;
+    seq.current += 1;
+    if (reviewRef.current !== null || busyRef.current) setMessage(ACTIVATION_DRAFT_LINE);
+    setReview(null);
+    setReason("");
+    setConfirmed(false);
+    setBusy(false);
+  }, [blockedByDraft]);
   if (pending.length === 0) return null;
 
   async function open() {
@@ -1024,6 +1274,10 @@ function ActivationSection({
     const r = await previewActivation(pending.map((p) => p.key));
     if (mine !== seq.current) return;
     setBusy(false);
+    if (draftRef.current) {
+      setMessage(ACTIVATION_DRAFT_LINE);
+      return;
+    }
     if (r.ok) {
       setReview(r.preview);
       setReason("");
@@ -1044,22 +1298,42 @@ function ActivationSection({
 
   async function commit() {
     if (!review) return;
+    if (draftRef.current) {
+      setMessage(ACTIVATION_DRAFT_LINE);
+      return;
+    }
     setBusy(true);
     setMessage(null);
-    // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
-    const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
-    setBusy(false);
-    if (r.ok) {
-      cancel();
+    onInFlight(true);
+    try {
+      // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
+      const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
+      setBusy(false);
+      // Insurance N1: the draft is locked while this runs, but a result must never be applied over one that became dirty anyway.
+      if (draftRef.current && r.ok) {
+        setMessage(ACTIVATION_DISCARDED_LINE);
+        onActivated();
+        return;
+      }
+      if (r.ok) {
+        cancel();
+        onActivated();
+      } else {
+        setMessage(roleErrorMessage(r.error));
+        if (r.error.code === "unexpected" || r.error.code === "stale_version" || r.error.code === "stale_preview") onActivated();
+      }
+    } catch {
+      // A rejected promise must never leave the editor locked: say so and re-read the saved state.
+      setBusy(false);
+      setMessage("Could not confirm the activation. Reload the page to see the saved state.");
       onActivated();
-    } else {
-      setMessage(roleErrorMessage(r.error));
-      if (r.error.code === "unexpected" || r.error.code === "stale_version" || r.error.code === "stale_preview") onActivated();
+    } finally {
+      onInFlight(false);
     }
   }
 
   const needsConfirm = review?.confirmationRequired === true;
-  const canCommit = review !== null && !busy && writable && reasonAcceptable("adopt", false, reason) && (!needsConfirm || confirmed);
+  const canCommit = review !== null && !busy && writable && !blockedByDraft && reasonAcceptable("adopt", false, reason) && (!needsConfirm || confirmed);
   return (
     <section data-testid="activation-pending" aria-label="Settings waiting for activation" className="flex min-w-0 flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
       <h3 className="font-medium">Pending activation</h3>
@@ -1142,6 +1416,9 @@ function PreviewPanel({
   kind,
   role,
   data,
+  sensitiveCount,
+  confirmed,
+  onConfirmed,
   canConfirm,
   blockedReason,
   reason,
@@ -1152,6 +1429,9 @@ function PreviewPanel({
   kind: "reset" | "adopt";
   role: Role;
   data: ServerPreview;
+  sensitiveCount: number;
+  confirmed: boolean;
+  onConfirmed: (v: boolean) => void;
   canConfirm: boolean;
   blockedReason: string | null;
   reason: string;
@@ -1160,7 +1440,7 @@ function PreviewPanel({
   onCancel: () => void;
 }) {
   const id = useId();
-  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0);
+  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0 && r.storedRemoved.length === 0);
   return (
     <section data-testid="roles-preview" aria-label={kind === "adopt" ? "Review new defaults" : "Reset to defaults"} className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
       <h3 className="text-base font-medium">
@@ -1173,8 +1453,31 @@ function PreviewPanel({
           <div key={item.role} data-preview-role={item.role} className="flex min-w-0 flex-col gap-2">
             {data.roles.length > 1 && <h4 className="font-medium">{ROLE_LABELS[item.role]}s</h4>}
             <DiffList item={item} testPrefix="preview" />
+            {item.storedRemoved.length > 0 && (
+              <div data-testid="preview-stored-removed" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
+                <p className="font-medium">Removes your saved choices:</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {item.storedRemoved.map((r) => (
+                    <li key={r.key} data-stored-removed={r.key} className="break-words">
+                      {/* Access in force did not move: the choice was held inactive, so say that rather than imply a change in access. */}
+                      {r.effectiveBefore === r.effectiveAfter
+                        ? `${r.label}: removes your saved ${r.stored}, not in force yet. Access stays ${r.effectiveAfter}.`
+                        : `${r.label}: removes your saved ${r.stored}. Access in force: ${r.effectiveBefore} to ${r.effectiveAfter}.`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         ))
+      )}
+      {sensitiveCount > 0 && (
+        <label className="flex items-start gap-2 text-sm font-medium">
+          <input type="checkbox" data-testid="preview-sensitive-confirm" checked={confirmed} onChange={(e) => onConfirmed(e.target.checked)} className="mt-1" />
+          <span data-testid="preview-sensitive">
+            I understand this newly enables {sensitiveCount} financial or sensitive {sensitiveCount === 1 ? "permission" : "permissions"}.
+          </span>
+        </label>
       )}
       <ReasonField id={`${id}-reason`} value={reason} onChange={onReason} required={reasonRequired(kind, false)} />
       <div className="flex flex-wrap items-center gap-3">

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { todayInTz } from "@/lib/booking/tz";
 import {
   resolveAuthoritativeSessionPaymentAmount,
@@ -35,6 +36,8 @@ export type AuthoritativeAmountContext = {
 // Reasons the CONTEXT itself could not be established, distinct from the
 // pricing outcomes the pure resolver owns.
 export type AuthoritativeAmountLoadFailure =
+  // The viewer is not the studio owner. Prices, including the owner's pricing notes, are owner-only (HON-44).
+  | { kind: "owner_only" }
   | { kind: "session_not_found" }
   | { kind: "no_linked_appointment" }
   | { kind: "appointment_lineage_mismatch" }
@@ -63,7 +66,11 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
   studioId: string;
   sessionId: string;
   studioTimezone: string;
+  /** The caller's explicit owner context (derived from the authenticated practitioner's role). Required. */
+  viewerIsOwner: boolean;
 }): Promise<AuthoritativeAmountLoad> {
+  // Closed refusal BEFORE any read: no price and no pricing note for a non-owner.
+  if (args.viewerIsOwner !== true) return { ok: false, failure: { kind: "owner_only" } };
   const supabase = await createClient();
 
   // 1. The session, scoped to the studio and required to be live.
@@ -123,7 +130,10 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
     svc && svc.name ? { name: svc.name, price_cents: svc.price_cents ?? null } : null;
 
   // 4. Current client-specific pricing for this client, studio-scoped.
-  const { data: pricingRows, error: pricingError } = await supabase
+  // client_pricing becomes owner-only through the Data API (0303), so this read uses the service role. Membership
+  // and scope are proven by the RLS-scoped reads above (same studio; the client comes from that row, never from an
+  // argument). OWNERSHIP is this function's own `viewerIsOwner` refusal at the top, not the scoped reads.
+  const { data: pricingRows, error: pricingError } = await createAdminClient()
     .from("client_pricing")
     .select("service_name, price_cents, notes, effective_from")
     .eq("studio_id", args.studioId)
@@ -160,6 +170,8 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
 // about internals: a mismatch is not something to explain in detail.
 export function loadFailureMessage(f: AuthoritativeAmountLoadFailure): string {
   switch (f.kind) {
+    case "owner_only":
+      return "Only the studio owner can view payment amounts.";
     case "session_not_found":
       return "This session is not available for payment.";
     case "no_linked_appointment":

@@ -75,6 +75,7 @@ type ClientBriefing = Pick<
   | "fitzpatrick_type"
   | "skin_notes"
 >;
+// Without clin.view_records the two clinical-record columns are not selected, so they are absent at runtime.
 
 type Joined = Appointment & {
   client: ClientBriefing | null;
@@ -101,12 +102,14 @@ export default async function AppointmentDetailPage({
     day?: string | string[];
     week?: string | string[];
     month?: string | string[];
+    cancelled?: string | string[];
   }>;
 }) {
   const { id } = await params;
   // Safe, internal-only back link: returns to the view/date the practitioner
   // came from (falls back to /calendar). Never an external URL.
   const backHref = calendarReturnHref(await searchParams);
+  const justCancelled = (await searchParams).cancelled === "1";
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
@@ -121,7 +124,7 @@ export default async function AppointmentDetailPage({
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
+      `*, client:clients(id, name, email, phone, pronouns, allergies${canViewRecords ? ", fitzpatrick_type, skin_notes" : ""}), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
     )
     .eq("id", id)
     .eq("studio_id", studio.id)
@@ -409,7 +412,8 @@ export default async function AppointmentDetailPage({
   }
 
   const activePlans = treatmentPlans.filter((p) => p.status === "active");
-  const fitzpatrick = fitzpatrickLabel(data.client?.fitzpatrick_type ?? null);
+  // Clinical-record fields on the client row: not selected without clin.view_records, so there is nothing to label.
+  const fitzpatrick = canViewRecords ? fitzpatrickLabel(data.client?.fitzpatrick_type ?? null) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -419,6 +423,15 @@ export default async function AppointmentDetailPage({
       >
         ← Calendar
       </Link>
+
+      {isCancelled && justCancelled ? (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+        >
+          Appointment cancelled.
+        </p>
+      ) : null}
 
       <StatusHeader
         serviceName={data.service?.name ?? "Appointment"}

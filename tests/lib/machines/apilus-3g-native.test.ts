@@ -64,7 +64,8 @@ describe("separate manufacturer-documented 3G v2 native contracts", () => {
     }
   });
   it("the activation hold and incomplete categorical capture cannot be bypassed by publication", () => {
-    expect(planContractPublication().publish).toEqual([]);
+    // The real plan publishes only the first-slice v3 modes; the v2 native contracts stay held.
+    expect(planContractPublication().publish.every((m) => m.p_machine_profile_version === 3)).toBe(true);
     for (const p of APILUS_3G_PROFILES) {
       // In-memory candidates test readiness only; they do not activate the catalogue.
       const candidate = structuredClone(p); candidate.availability = "active";

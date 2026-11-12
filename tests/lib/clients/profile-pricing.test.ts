@@ -76,10 +76,29 @@ describe("the loaders do not fetch a price for a non-owner (Sam's ruling)", () =
     expect(log.find((l) => l.table === "sessions")?.select).toMatch(/^\*,/);
   });
 
-  it("the default (every other caller) is the owner read", async () => {
+  it.each([undefined, null, "true", 1])("a non-boolean includePrices (%j) is also the SAFE read: only exactly true fetches prices", async (v) => {
+    const { getClientById } = await import("@/lib/supabase/queries");
+    await getClientById("s1", "c1", { includePrices: v } as never);
+    expect(log.map((l) => l.table)).not.toContain("client_pricing");
+    expect(log.find((l) => l.table === "sessions")?.select).not.toMatch(/price|^\*/);
+  });
+
+  it("the default (a caller that names nothing) is the SAFE read: no client pricing, no price column", async () => {
     const { getClientById } = await import("@/lib/supabase/queries");
     await getClientById("s1", "c1");
-    expect(log.map((l) => l.table)).toContain("client_pricing");
+    expect(log.map((l) => l.table)).not.toContain("client_pricing");
+    expect(log.find((l) => l.table === "sessions")?.select).not.toMatch(/price|^\*/);
+  });
+
+  it("no page calls getClientById without stating the price option or needing none (RBAC G-1)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const withOption = [
+      "app/(app)/clients/[id]/page.tsx",
+      "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+    ];
+    for (const f of withOption) {
+      expect(readFileSync(f, "utf8"), f).toMatch(/getClientById\([^)]*includePrices|getClientById\(studio\.id, id, priceReads\)/);
+    }
   });
 
   it("getActiveServices({ includePrices:false }) selects no price column and returns price_cents null", async () => {
@@ -96,7 +115,8 @@ describe("the profile page wires the ruling", () => {
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
   it("the owner decision gates both loaders", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
-    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate \};/);
+    // clinicalFields: the SAME clin.view_records decision also governs skin type and legacy skin notes on the client row (Codex P1 4476375636).
+    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate, clinicalFields: recordsGate \};/);
     expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
     expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
   });

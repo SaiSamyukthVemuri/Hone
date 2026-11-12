@@ -20,8 +20,18 @@ import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 
 const rpc = vi.fn();
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ rpc }),
+  createAdminClient: () => ({
+    // The admission round is plumbing (lib/waitlist/auto-round.ts); this suite is about the admit call.
+    rpc: (name: string, args: unknown) =>
+      name === "open_new_client_waitlist_admission_round"
+        ? Promise.resolve({ data: [{ result: "opened" }], error: null })
+        : rpc(name, args),
+  }),
 }));
+vi.mock("@/lib/waitlist/send-time-fit", () => ({
+  computeConsultationFit: async () => ({ ok: true, fit: 5, firstDate: "2026-09-22" }),
+}));
+
 
 const getCurrentPractitionerWithStudio = vi.fn();
 vi.mock("@/lib/supabase/queries", () => ({

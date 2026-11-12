@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { unsupportedModes } from "@/lib/machines/unsupported-modes";
 import { Button } from "@/components/ui/button";
 import { FieldLabel, fieldControlClass } from "@/components/ui/field";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -506,6 +507,7 @@ export function MachineFirstSetupPanel({
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
+  const unsupported = chosen ? unsupportedModes(chosen.profile) : [];
 
   /**
    * onRecord, plus the one side effect the status line needs. Counting here
@@ -775,6 +777,22 @@ export function MachineFirstSetupPanel({
                   </Button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* MODES THE MODEL HAS BUT HONE CANNOT CHART YET: shown, with the reason, never hidden and never capturable. */}
+          {unsupported.length > 0 && (
+            <div className="flex flex-col gap-1" data-testid="machine-unsupported-modes">
+              <SectionLabel size="caption">Not supported yet</SectionLabel>
+              <ul className="flex flex-col gap-1 text-sm text-neutral-600 dark:text-neutral-400">
+                {unsupported.map((u) => (
+                  <li key={u.key} data-testid={`machine-unsupported-${u.key}`}>
+                    <span className="font-medium text-neutral-800 dark:text-neutral-200">{u.label}</span>
+                    {" - unsupported, not capturable. "}
+                    {u.reason}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

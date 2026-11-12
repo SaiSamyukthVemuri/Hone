@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseState } from "@/lib/settings/roles/core-parse";
-import { buildRoleModel, applyEdit, NOT_ACTIVE_YET_LINE } from "@/lib/settings/roles/model";
+import { buildRoleModel, applyEdit, NOT_ACTIVE_YET_LINE, notActiveYetKeeps } from "@/lib/settings/roles/model";
 import { shownEffectiveScope, type PolicyWithServer } from "@/lib/settings/roles/server-effective";
 import { effectiveScope } from "@/lib/permissions/catalog";
 
@@ -30,6 +30,25 @@ describe("page shows the core's effective value", () => {
   it("an unreleased key also stays at the core's value", () => {
     const p = policy({ effective: { [KEY]: "off" }, source: { [KEY]: "unreleased" } }, { [KEY]: "studio" });
     expect(rowOf(p).effective).toBe("off");
+  });
+  it("Codex P1: a saved Off on a key that is not released yet says what is STILL in force, never just Off", () => {
+    const p = policy({ effective: { [KEY]: "studio" }, source: { [KEY]: "unreleased" } }, { [KEY]: "off" });
+    const r = rowOf(p);
+    expect(r.chosen).toBe("off");
+    expect(r.effective).toBe("studio");
+    expect(r.inactiveBecause).toBe(notActiveYetKeeps("practitioner", "Whole studio"));
+    expect(r.inactiveBecause).toMatch(/practitioners keep: Whole studio/);
+  });
+  it("the same for a released key awaiting activation, and for a draft that tightens it", () => {
+    const p = policy({ effective: { [KEY]: "studio" }, source: { [KEY]: "inactive_until_activated" } }, { [KEY]: "studio" });
+    expect(rowOf(p).inactiveBecause).toBeNull(); // nothing differs, nothing to say
+    const edited = applyEdit("practitioner", p, KEY, "off");
+    expect(edited.ok).toBe(true);
+    if (edited.ok) expect(rowOf(edited.policy as PolicyWithServer).inactiveBecause).toMatch(/keep: Whole studio/);
+  });
+  it("a live (stored) lower value is NOT flagged: it is in force", () => {
+    const p = policy({ effective: { [KEY]: "off" }, source: { [KEY]: "stored" } }, { [KEY]: "off" });
+    expect(rowOf(p).inactiveBecause).toBeNull();
   });
   it("a draft change cannot lift an inert key above the core's value", () => {
     const p = policy({ effective: { [KEY]: "own" }, source: { [KEY]: "inactive_until_activated" } }, { [KEY]: "studio" });
