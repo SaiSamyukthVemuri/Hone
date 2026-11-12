@@ -238,3 +238,25 @@ describe("Sam's batch 1 (3 Nov): Q1, Q3, Q4, Q6, Q7", () => {
     expect(MANDATORY.join("\n")).toMatch(/if the shared fallback cannot enforce a bound, submissions are refused safely/);
   });
 });
+
+describe("Codex P2s on #1332 (f8f3b8883): field-level booking rules, and receptionist scheduling is keyed", () => {
+  it("SET-7: admit.booking_rules is mapped as a field-level split, so identity, duration and buffers are not delegated through it", () => {
+    const row = COVERAGE["SET-7"]!;
+    expect(row.cls).toBe("key");
+    expect(row.keys).toEqual(["admit.booking_rules"]);
+    expect(row.enforcement ?? "").toMatch(/ONLY the booking window/);
+    expect(row.enforcement ?? "").toMatch(/slug, timezone, address, intro\) stays owner-only/);
+    expect(row.enforcement ?? "").toMatch(/duration and buffers stay under their own service controls/);
+    // The row states what the catalog key's own decided note states.
+    expect(catalogByKey.get("admit.booking_rules")!.note).toMatch(/covers booking windows and new-client booking rules ONLY/);
+  });
+  it("RC-4: receptionist book / move / reassign / cancel map to the same scheduling keys as SCH-4..7, not to an unconditional owner-only", () => {
+    const row = COVERAGE["RC-4"]!;
+    expect(row.cls).toBe("key");
+    expect([...row.keys].sort()).toEqual(["appt.book", "appt.cancel", "appt.move", "appt.reassign"]);
+    const sch = ["SCH-4", "SCH-5", "SCH-6", "SCH-7"].flatMap((id) => [...COVERAGE[id]!.keys]);
+    expect([...row.keys].sort()).toEqual([...sch].sort());
+    // Each of these keys is offered to the receptionist, so the map describes something a receptionist can actually be granted.
+    for (const k of row.keys) expect(catalogByKey.get(k)!.offeredTo.receptionist, k).toBe(true);
+  });
+});
