@@ -29,17 +29,6 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function stripComments(text: string): string {
-  const sf = ts.createSourceFile("x.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const parts: string[] = [];
-  const visit = (n: ts.Node) => {
-    if (ts.isStringLiteralLike(n) || ts.isIdentifier(n) || ts.isNoSubstitutionTemplateLiteral(n)) parts.push(n.getText(sf));
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return parts.join(" ");
-}
-
 type UnitInfo = { reads: boolean; usesAdmin: boolean; ownerOrPay: boolean; clin: boolean };
 
 const isOwnerLiteral = (n: ts.Node) => ts.isStringLiteralLike(n) && n.text === "owner";
@@ -87,6 +76,23 @@ export function classify(file: string, text: string): { readsSessionsViaUserClie
   return { readsSessionsViaUserClient: readers.length > 0, ownerOrPayGated, clinGated: readers.length > 0 && readers.every((u) => u.clin) };
 }
 
+/** The source with every comment blanked to spaces (length preserved), so a commented-out gate cannot satisfy a pin (Team M7 / G-1). */
+export function stripComments(file: string, text: string): string {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const ranges = new Map<number, number>();
+  const add = (rs: ts.CommentRange[] | undefined) => { for (const r of rs ?? []) ranges.set(r.pos, r.end); };
+  const visit = (n: ts.Node) => {
+    add(ts.getLeadingCommentRanges(text, n.pos));
+    add(ts.getTrailingCommentRanges(text, n.end));
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  add(ts.getLeadingCommentRanges(text, sf.endOfFileToken.pos));
+  let out = text;
+  for (const [pos, end] of ranges) out = out.slice(0, pos) + out.slice(pos, end).replace(/[^\n]/g, " ") + out.slice(end);
+  return out;
+}
+
 // An exemption is only valid while the reader STAYS owner-only (Codex P2 on 9218d1d33). Each EXEMPT row pins the specific gate that keeps it so, and
 // the file must not acquire a pay.* / records.* requirePermission. If the pin stops matching, or such a key appears, the exemption no longer holds.
 const PAY_OR_RECORDS_KEY_CALL = /requirePermission\s*\([\s\S]{0,120}?["'`](?:pay|records)\.[a-z_]+["'`]/;
@@ -99,10 +105,11 @@ export function scan(files: Array<{ file: string; text: string }>, exempt: Recor
     if (matches && !exempt[file]) out.push({ file, why: "owner/pay/records-gated loader reads sessions through the user client with no documented exemption" });
     if (!matches && exempt[file]) out.push({ file, why: "stale exemption: this file no longer matches the rule" });
     if (matches && exempt[file]) {
+      const code = stripComments(file, text);
       for (const pin of pins[file] ?? []) {
-        if (!pin.test(text)) out.push({ file, why: `exempt reader lost its pinned owner-only gate: ${pin}` });
+        if (!pin.test(code)) out.push({ file, why: `exempt reader lost its pinned owner-only gate: ${pin}` });
       }
-      if (PAY_OR_RECORDS_KEY_CALL.test(text)) out.push({ file, why: "exempt reader now gates on a pay.*/records.* key; it must read sessions through the admin client or a projection, not the user client" });
+      if (PAY_OR_RECORDS_KEY_CALL.test(code)) out.push({ file, why: "exempt reader now gates on a pay.*/records.* key; it must read sessions through the admin client or a projection, not the user client" });
     }
   }
   return out;
@@ -207,6 +214,25 @@ export async function ownerLoader(viewerIsOwner: boolean){ if(!viewerIsOwner) re
       expect(why).toMatch(/now gates on a pay\.\*\/records\.\* key/);
       // control: the real file passes
       expect(scan([{ file: f, text: real }], EXEMPT, GATE_PINS)).toEqual([]);
+    });
+    it("G-1 / M7: a commented-out owner gate does not satisfy the pin", () => {
+      const f = "lib/dashboard/unpaid-attention.ts";
+      const real = readFileSync(f, "utf8");
+      const refusal = "if (!opts.viewerIsOwner) return { ok: false };";
+      const commented = real.replace(refusal, "// " + refusal);
+      expect(scan([{ file: f, text: commented }], EXEMPT, GATE_PINS).map((h) => h.why).join("|")).toMatch(/lost its pinned owner-only gate/);
+      const block = real.replace(refusal, "/* " + refusal + " */");
+      expect(scan([{ file: f, text: block }], EXEMPT, GATE_PINS).map((h) => h.why).join("|")).toMatch(/lost its pinned owner-only gate/);
+    });
+    it("G-1: a pay.* key call that appears only in a comment is not counted, and stripComments keeps real code and line structure", () => {
+      const f = "lib/dashboard/unpaid-attention.ts";
+      const real = readFileSync(f, "utf8");
+      const withComment = real + '\n// requirePermission(supabase, id, "pay.view_appointment")\n';
+      expect(scan([{ file: f, text: withComment }], EXEMPT, GATE_PINS)).toEqual([]);
+      const stripped = stripComments(f, real);
+      expect(stripped.length).toBe(real.length);
+      expect(stripped.split("\n").length).toBe(real.split("\n").length);
+      expect(stripped).toContain("if (!opts.viewerIsOwner) return { ok: false };");
     });
     it("removing the owner gate altogether from an exempt reader is refused", () => {
       const f = "lib/billing/authoritative-session-payment.ts";
