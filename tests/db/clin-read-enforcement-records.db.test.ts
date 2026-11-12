@@ -235,3 +235,131 @@ describe("0333, shape: policies and privileges", () => {
     expect(anon.rows[0].n).toBe(0);
   });
 });
+
+// ---- G1: the other nine record tables, behaviourally (one synthetic row each) ----------------------------------------------------------
+type Seeded = Array<{ table: string; id: string }>;
+async function seedNineTables(f: Fix): Promise<Seeded> {
+  const s = f.s;
+  const out: Seeded = [];
+  const add = async (table: string, sql: string, params: unknown[]) => {
+    const r = await adminQuery(`${sql} returning id`, params);
+    out.push({ table, id: r.rows[0].id as string });
+  };
+  await add("session_block_areas", "insert into public.session_block_areas(session_block_id, studio_id, area, laterality) values ($1,$2,'lip','midline')", [f.blockId, s.studioId]);
+  const sourceSession = (await seedSession(s)).sessionId;
+  await add(
+    "session_copy_operations",
+    "insert into public.session_copy_operations(studio_id, target_session_id, source_session_id, created_by_practitioner_id, idempotency_key, request_hash, source_fingerprint, copied_block_count) values ($1,$2,$3,$4,'idem-333-key','h','f',0)",
+    [s.studioId, f.sessionId, sourceSession, s.practitionerId],
+  );
+  const machine = randomUUID();
+  await adminQuery("insert into public.studio_machines(id, studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,'synthetic:333',1,'Synthetic machine')", [machine, s.studioId]);
+  await add(
+    "treatment_setup_submissions",
+    "insert into public.treatment_setup_submissions(studio_id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, idempotency_key, payload_digest) values ($1,$2,$3,'synthetic:333',1,'galvanic','idem-333-sub',repeat('a',32))",
+    [s.studioId, f.blockId, machine],
+  );
+  await add(
+    "treatment_area_create_claims",
+    "insert into public.treatment_area_create_claims(studio_id, session_id, idempotency_key, payload_digest, block_id) values ($1,$2,'idem-333-claim',repeat('b',32),$3)",
+    [s.studioId, f.sessionId, f.blockId],
+  );
+  await add(
+    "treatment_setup_captures",
+    "insert into public.treatment_setup_captures(studio_id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, revision) values ($1,$2,$3,'synthetic:333',1,'galvanic','g1',1)",
+    [s.studioId, f.blockId, machine],
+  );
+  await add(
+    "treatment_setup_readings",
+    "insert into public.treatment_setup_readings(studio_id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, field_key, value_numeric, native_unit, decimals, observation_source) values ($1,$2,$3,'synthetic:333',1,'galvanic','g1','preset',1,'none',0,'practitioner-entered')",
+    [s.studioId, f.blockId, machine],
+  );
+  const batch = randomUUID();
+  await adminQuery("insert into public.import_batches(id, studio_id) values ($1,$2)", [batch, s.studioId]);
+  await add("imported_treatment_memories", "insert into public.imported_treatment_memories(studio_id, client_id, import_batch_id) values ($1,$2,$3)", [s.studioId, s.clientId, batch]);
+  await add(
+    "imported_treatment_memory_audit_events",
+    "insert into public.imported_treatment_memory_audit_events(studio_id, record_type, record_id, action) values ($1,'import_batch',$2,'created')",
+    [s.studioId, batch],
+  );
+  await add(
+    "treatment_reading_change_events",
+    "insert into public.treatment_reading_change_events(studio_id, session_id, client_id, source_table, source_id, actor_practitioner_id, actor_user_id, actor_display_name, changed_fields, changes) values ($1,$2,$3,'session_blocks',$4,$5,$6,'Synthetic',array['area'],'{}'::jsonb)",
+    [s.studioId, f.sessionId, s.clientId, f.blockId, s.practitionerId, s.userId],
+  );
+  return out;
+}
+const countRow = async (userId: string, table: string, id: string): Promise<number> =>
+  asUser(userId, async (q) => (await q(`select count(*)::int n from public.${table} where id = $1`, [id])).rows[0].n);
+
+describe("0333, G1: the nine remaining record tables, behaviourally", () => {
+  it("keyed member sees each row, the owner sees each row, the restricted member gets zero", async () => {
+    for (const k of KEYS) await setRelease(k, true);
+    const f = await seedClinical("c333g1");
+    const rows = await seedNineTables(f);
+    expect(rows.map((r) => r.table).sort()).toEqual([
+      "imported_treatment_memories", "imported_treatment_memory_audit_events", "session_block_areas", "session_copy_operations",
+      "treatment_area_create_claims", "treatment_reading_change_events", "treatment_setup_captures", "treatment_setup_readings", "treatment_setup_submissions",
+    ]);
+    for (const r of rows) {
+      expect(await countRow(f.member.userId, r.table, r.id), `keyed ${r.table}`).toBe(1);
+      expect(await countRow(f.s.userId, r.table, r.id), `owner ${r.table}`).toBe(1);
+    }
+    await deny(f.s.studioId, "clin.view_records");
+    for (const r of rows) {
+      expect(await countRow(f.member.userId, r.table, r.id), `restricted ${r.table}`).toBe(0);
+      expect(await countRow(f.s.userId, r.table, r.id), `owner after denial ${r.table}`).toBe(1);
+    }
+    const other = await seedClinical("c333g1x");
+    for (const r of rows) expect(await countRow(other.member.userId, r.table, r.id), `cross-studio ${r.table}`).toBe(0);
+  });
+});
+
+describe("0333, G2: the helper requires an ACTIVE practitioner", () => {
+  it("an inactive practitioner who holds the key reads zero rows (mutation: dropping pr.active from the helper fails here)", async () => {
+    for (const k of KEYS) await setRelease(k, true);
+    const f = await seedClinical("c333g2");
+    expect(await counts(f.member.userId, RECORD_TABLES, f)).toEqual(all(RECORD_TABLES, 1));
+    await adminQuery("update public.practitioners set active=false where id=$1", [f.member.practitionerId]);
+    expect(await counts(f.member.userId, RECORD_TABLES, f)).toEqual(all(RECORD_TABLES, 0));
+    expect(await counts(f.member.userId, PHOTO_TABLES, f)).toEqual(all(PHOTO_TABLES, 0));
+  });
+});
+
+describe("0333, G5: a user in two studios reads only the studio where the key is held", () => {
+  it("keyed in A, restricted in B: rows of A visible, rows of B zero (and B's owner still sees B)", async () => {
+    for (const k of KEYS) await setRelease(k, true);
+    const a = await seedClinical("c333g5a");
+    const b = await seedClinical("c333g5b");
+    await adminQuery(
+      "insert into public.practitioners(id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'Two-studio user','two-studio@harness.local','practitioner',true)",
+      [randomUUID(), b.s.studioId, a.member.userId],
+    );
+    await deny(b.s.studioId, "clin.view_records");
+    expect(await counts(a.member.userId, RECORD_TABLES, a)).toEqual(all(RECORD_TABLES, 1));
+    expect(await counts(a.member.userId, RECORD_TABLES, b)).toEqual(all(RECORD_TABLES, 0));
+    expect(await counts(b.s.userId, RECORD_TABLES, b)).toEqual(all(RECORD_TABLES, 1));
+  });
+});
+
+describe("0333, G7: the receptionist desk projection still works as a receptionist", () => {
+  it("receptionist_calendar_v2 returns the appointment and receptionist_studio_timezone returns the zone", async () => {
+    for (const k of KEYS) await setRelease(k, true);
+    const f = await seedClinical("c333g7");
+    const appt = randomUUID();
+    await adminQuery(
+      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, status) values ($1,$2,$3,$4,'2031-03-03T15:00:00Z','2031-03-03T16:00:00Z','confirmed')",
+      [appt, f.s.studioId, f.s.clientId, f.s.practitionerId],
+    );
+    await adminQuery("update public.sessions set appointment_id=$2 where id=$1", [f.sessionId, appt]);
+    const recUser = randomUUID();
+    await adminQuery("insert into auth.users(id,email) values ($1,$2)", [recUser, `rec7-${recUser.slice(0, 8)}@harness.local`]);
+    await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name) values ($1,$2,'Synthetic Receptionist')", [f.s.studioId, recUser]);
+    await deny(f.s.studioId, "clin.view_records"); // even with the clinical key off for practitioners, the desk projection is a definer read
+    const cal = await asUser(recUser, (q) => q("select * from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [f.s.studioId]));
+    expect(cal.rows.map((r) => r.appointment_id)).toContain(appt);
+    const tz = await asUser(recUser, (q) => q("select public.receptionist_studio_timezone($1) as tz", [f.s.studioId]));
+    expect(typeof tz.rows[0].tz).toBe("string");
+    expect(tz.rows[0].tz.length).toBeGreaterThan(0);
+  });
+});
