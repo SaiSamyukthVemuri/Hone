@@ -101,6 +101,9 @@ describe("wiring: the rule is used at prepare and re-checked before the claim", 
   it("the execute action runs feeExecuteBlock BEFORE the shared runner, reads both types, and fails closed", () => {
     const x = read("app/(app)/calendar/[id]/manual-fee-actions.ts");
     const charge = x.slice(x.indexOf("export async function chargeManualFeeAttemptAction"));
+    // The verdict must be USED: assigned, and a non-null verdict returns blocked.
+    expect(charge).toMatch(/const oneFee = feeExecuteBlock\(/);
+    expect(charge).toMatch(/if \(oneFee\) \{\s*return \{ ok: false, outcome: "blocked", error: oneFee \}/);
     const check = charge.indexOf("feeExecuteBlock(");
     const run = charge.indexOf("runSessionPaymentCharge(");
     expect(check).toBeGreaterThan(-1);
