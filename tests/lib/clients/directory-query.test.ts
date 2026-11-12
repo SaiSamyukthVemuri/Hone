@@ -24,13 +24,15 @@ describe("search lists the best match first (G2), from shown fields only", () =>
     const p = queryDirectory(rows, agg({}, {}), P({ q: "ann" }));
     expect(names(p)).toEqual(["Ann", "Ann Brown", "Annie Zed", "Mary Ann Cole", "Hannah Lee", "Joann Ray"]);
   });
-  it("an exact multi-word name beats a longer name that starts with it", () => {
-    const rows = [src("1", "Jane Smithson"), src("2", "Jane Smith")];
-    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "jane smith" })))).toEqual(["Jane Smith", "Jane Smithson"]);
+  it("an exact name beats a name that starts with it, which beats a later word-start match", () => {
+    // Alphabetical would put "Abe Smith" first; the exact name must come before the word-start match.
+    const rows = [src("1", "Abe Smith"), src("2", "Smith"), src("3", "Smithson Abe")];
+    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "smith" })))).toEqual(["Smith", "Smithson Abe", "Abe Smith"]);
   });
   it("a name match ranks above an email-only match", () => {
-    const rows = [{ ...src("1", "Zed Quill"), email: "ann@example.com" }, src("2", "Ann Zed")];
-    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "ann" })))).toEqual(["Ann Zed", "Zed Quill"]);
+    // Alphabetical would put "Zed Quill" first.
+    const rows = [{ ...src("1", "Zed Quill"), email: "ann@example.com" }, src("2", "Zoe Ann")];
+    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "ann" })))).toEqual(["Zoe Ann", "Zed Quill"]);
   });
   it("with no query the order is still plain name order, and ties still break by id", () => {
     const rows = [src("2", "Bea"), src("1", "Bea"), src("3", "Al")];
