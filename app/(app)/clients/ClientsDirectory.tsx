@@ -1,3 +1,4 @@
+import { RestrictedNote } from "@/components/restricted-note";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -45,6 +46,7 @@ const INTAKE_LABEL: Record<IntakeState, string> = {
   awaiting_review: "Awaiting review",
   reviewed: "Reviewed",
   unavailable: "Unavailable",
+  restricted: "Not available to your role",
 };
 
 const INTAKE_TONE: Record<IntakeState, string> = {
@@ -52,6 +54,7 @@ const INTAKE_TONE: Record<IntakeState, string> = {
   awaiting_review: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
   reviewed: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
   unavailable: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
+  restricted: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
 };
 
 function href(state: DirectoryState, over: { page?: number; client?: string } = {}): string {
@@ -78,6 +81,9 @@ export function DirectoryResults({
   const archived = state.view === "archived";
   const filtered = state.q.length > 0 || state.filters.length > 0;
 
+  if (data.intakeRestricted && state.filters.includes("intake_review")) {
+    return <RestrictedNote testId="directory-intake-filter-restricted" className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900" />;
+  }
   if (data.blockedFilters.length > 0) {
     return (
       <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">

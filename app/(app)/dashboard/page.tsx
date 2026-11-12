@@ -70,7 +70,7 @@ import {
 import { withDisplayNamesOnDetailGaps } from "@/lib/dashboard/client-display-names";
 import { getPersonalChartedWithin24h } from "@/lib/dashboard/personal-charting";
 import { getClientIdsWithUpcomingVisits } from "@/lib/dashboard/upcoming-visit-clients";
-import { CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
+import { CHECK_RESTRICTED, CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
 import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import {
   loadStaffManagedClinicChecked,
@@ -311,7 +311,14 @@ export default async function DashboardPage({
     Promise.all([
       // Insurance B2: a failure here is "unavailable" for THIS count only. It
       // must not reject the bundle and hide every other Needs attention item.
-      getIntakesAwaitingReview(supabase, studio.id).catch(() => CHECK_UNAVAILABLE),
+      // Reads client_intake_forms with the caller's session: only a viewer holding clin.view_intake runs it (owner holds every key). The key
+      // is the one intake review is enforced by today; a later key swap (clin.review_intake) is this one string. A failed gate check is
+      // "unavailable", never an empty result.
+      (async () => {
+        // The owner holds every key (has_studio_permission), so no gate call is spent on the owner.
+        const allowed = isOwner || (await requirePermission(supabase, studio.id, "clin.view_intake")).allowed;
+        return allowed ? await getIntakesAwaitingReview(supabase, studio.id) : CHECK_RESTRICTED;
+      })().catch(() => CHECK_UNAVAILABLE),
       countActiveServices(studio.id),
       isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
       // Birthday reminders: month-of-year only, derived from

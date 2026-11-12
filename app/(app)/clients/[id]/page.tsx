@@ -69,8 +69,7 @@ import {
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import { intakeForViewer } from "@/lib/intake/status-only";
-import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
-import { questionnaireForRow } from "@/lib/intake/questionnaire";
+import { selfReportedFitzpatrickFor } from "@/lib/intake/self-reported-fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
 import { StartAssistedIntakeButton } from "./intake/StartAssistedIntakeButton";
 import { PortalAccessCard } from "./PortalAccessCard";
@@ -95,6 +94,7 @@ import {
   getLatestSignaturesForPractitionerView,
 } from "@/lib/consent/queries";
 import { ConsentSignaturesCard } from "@/components/consent-signatures-card";
+import { RestrictedNote } from "@/components/restricted-note";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
 import { PaymentMethodCard } from "@/components/payment-method-card";
 import {
@@ -349,6 +349,8 @@ export default async function ClientCheatSheetPage({
   // Consent templates and signatures feed the Overview consent card, the Messages
   // pending tasks and the owner Billing card-authorization state.
   const isOwnerBilling = activeTab === "billing" && isOwner;
+  // Signed consents ride on clin.view_intake (Team census v2 section 3, proposed default, Sam to confirm: consent is collected with intake):
+  // without it nothing about them is read (the two loads below wait on the gate), counted or rendered (RestrictedNote).
   const needsConsent = isOverview || isMessages || isOwnerBilling;
   // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
   const needsCard = isOwnerBilling;
@@ -409,6 +411,8 @@ export default async function ClientCheatSheetPage({
     portalAccessEvents,
     overviewVisitAppointments,
     canViewAftercare,
+    // The intake gate's verdict. A viewer without clin.view_intake is RESTRICTED: "not read" must never render as "Not completed".
+    intakeAllowed,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -472,10 +476,10 @@ export default async function ClientCheatSheetPage({
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
     // both feed computePortalPendingTasks.
     needsConsent
-      ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
+      ? canViewIntakePromise.then((ok) => (ok ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner }) : []))
       : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
     needsConsent
-      ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner })
+      ? canViewIntakePromise.then((ok) => (ok ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner }) : []))
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
     // PR #135 (migration 0058): card-on-file metadata only; Stripe identifiers
     // stay off the wire. Overview card.
@@ -500,19 +504,13 @@ export default async function ClientCheatSheetPage({
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
     canViewAftercarePromise,
+    canViewIntakePromise,
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
   // shape uses legacy decoding; a present undefined/malformed snapshot refuses
   // the derived summary just as the intake review page does.
-  const selfReportedFitzpatrick = submittedIntake &&
-    questionnaireForRow(Object.hasOwn(submittedIntake, "questionnaire_snapshot")
-      ? submittedIntake.questionnaire_snapshot
-      : null).kind !== "invalid"
-    ? computeFitzpatrickEstimate(
-        (submittedIntake.responses ?? {}) as Record<string, unknown>,
-      )
-    : null;
+  const selfReportedFitzpatrick = selfReportedFitzpatrickFor(intakeAllowed, submittedIntake);
   // tags read removed: Tags no longer renders on the main profile.
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
@@ -524,6 +522,7 @@ export default async function ClientCheatSheetPage({
     intakeStatus: intake?.status ?? null,
     activeConsentTemplates: consentTemplatesAll,
     latestSignatures: consentLatestSignatures,
+    consentRestricted: !intakeAllowed,
     portalMessages,
   });
 
@@ -1143,13 +1142,15 @@ export default async function ClientCheatSheetPage({
                   Fitzpatrick · self-reported intake
                 </dt>
                 <dd className="font-medium text-neutral-700 dark:text-neutral-300">
-                  {selfReportedFitzpatrick
-                    ? `Type ${selfReportedFitzpatrick.type}, score ${selfReportedFitzpatrick.score}/40`
+                  {selfReportedFitzpatrick.kind === "restricted" ? (
+                    <RestrictedNote testId="self-reported-intake-not-available" className="text-sm font-normal text-neutral-500" />
+                  ) : selfReportedFitzpatrick.kind === "ok" && selfReportedFitzpatrick.value
+                    ? `Type ${selfReportedFitzpatrick.value.type}, score ${selfReportedFitzpatrick.value.score}/40`
                     : "Not completed"}
                 </dd>
               </div>
             </dl>
-            {selfReportedFitzpatrick && (
+            {selfReportedFitzpatrick.kind === "ok" && selfReportedFitzpatrick.value && (
               <p className="mt-2 text-xs text-neutral-500">
                 Self-reported intake estimate. Not a clinical
                 assessment; the practitioner-confirmed value above is
@@ -1263,6 +1264,7 @@ export default async function ClientCheatSheetPage({
               and draft templates do not appear here. View-only in
               v1; the practitioner authoring surface lives in
               Settings &rarr; Consent forms. */}
+          {intakeAllowed ? (
           <ConsentSignaturesCard
             clientName={clientDisplay}
             activeTemplates={consentTemplatesAll
@@ -1275,6 +1277,9 @@ export default async function ClientCheatSheetPage({
               }))}
             latestSignatures={consentLatestSignatures}
           />
+          ) : (
+            <RestrictedNote testId="consent-signatures-not-available" />
+          )}
 
           {/* PR #194: allergies moved to the top of Overview (under
               pinned notes); see the block above the Messages
