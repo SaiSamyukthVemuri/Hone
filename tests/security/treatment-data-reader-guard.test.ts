@@ -67,6 +67,7 @@ const ALLOW: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
   "lib/audit/governed-writes.ts": { cls: "write-path", why: "audit write RPC (write only, returns no content)" },
   "lib/billing/appointment-payment-state.ts": { cls: "billing-owner", why: "payment state is owner-only (HON-44)" },
   "lib/billing/authoritative-session-payment.ts": { cls: "billing-owner", why: "payment ledger path, owner-only" },
+  "app/(app)/dashboard/secondary-stack.tsx": { cls: "billing-owner", why: "imports loadUnpaidAttention (production dashboard): owner-only money, refused before any query for a non-owner; the records follow-up sources it renders are gated inside their own loaders (RO-1: notAvailable when clin.view_records is off)" },
   "lib/billing/quick-checkout.ts": { cls: "billing-owner", why: "checkout is owner-only (HON-44)" },
   "lib/billing/session-payment-eligibility.ts": { cls: "billing-owner", why: "payment eligibility, owner-only" },
   "lib/billing/session-payment-charge.ts": { cls: "billing-owner", why: "claim_session_payment_charge_attempt RPC, payment path, owner-only" },
