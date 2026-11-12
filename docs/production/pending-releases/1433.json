@@ -1,1 +1,1 @@
-{"pr":1433,"runtime":true,"migrations":[],"release_receipt":"01-ops/1433-release-receipt.json"}
+{"pr":1433,"runtime":true,"migrations":["supabase/migrations/0338_one_manual_fee_per_appointment.sql"],"release_receipt":"01-ops/1433-release-receipt.json"}

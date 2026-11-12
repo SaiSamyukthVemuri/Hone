@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
@@ -1336,7 +1337,7 @@ export async function runSessionPaymentCharge(args: {
   const { data: attemptRow } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, charge_reason, client_id, session_id, appointment_id, amount_cents, currency, status, stripe_livemode, client_payment_method_id, card_authorization_signature_id, stripe_account_id, stripe_customer_id, stripe_payment_method_id, stripe_payment_intent_id, stripe_idempotency_key, updated_at",
+      "id, studio_id, charge_reason, client_id, session_id, appointment_id, amount_cents, currency, status, stripe_livemode, client_payment_method_id, card_authorization_signature_id, stripe_account_id, stripe_customer_id, stripe_payment_method_id, stripe_payment_intent_id, stripe_idempotency_key, updated_at, created_at",
     )
     .eq("id", args.attemptId)
     .eq("studio_id", args.studioId)
@@ -1531,6 +1532,20 @@ export async function runSessionPaymentCharge(args: {
   if (countryCheckedBeforeClaim && !(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
     return { ok: false, outcome: "blocked",
       message: "The studio's payment country or Stripe account country could not be verified. Refresh the payment settings or contact Hone support before charging." };
+  }
+
+  // One manual fee per appointment, across BOTH fee types, checked here at the point of money so that
+  // every caller of this runner is covered (not only the fee action). It runs only for a NEW charge
+  // (the same condition as the country check above); resuming a pending attempt creates no new money.
+  // Fails closed: an unreadable history refuses. Immediately before the claim, nothing in between.
+  if (
+    countryCheckedBeforeClaim &&
+    (attemptRow.charge_reason === "no_show_fee" || attemptRow.charge_reason === "late_cancellation_fee")
+  ) {
+    const oneFeeRefusal = await oneFeeExecuteVerdict(admin, attemptRow, livemode, new Date());
+    if (oneFeeRefusal) {
+      return { ok: false, outcome: "blocked", message: oneFeeRefusal };
+    }
   }
 
   // 5. Atomically claim the attempt. Idempotency key is deterministic

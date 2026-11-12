@@ -16,7 +16,8 @@ import {
   autoSendReceiptAfterCharge,
   type AutoReceiptOutcome,
 } from "@/lib/billing/auto-payment-receipt";
-import { feeExecuteBlock } from "@/lib/billing/manual-fee-one-per-appointment";
+import { ONE_FEE_PER_APPOINTMENT_MESSAGE } from "@/lib/billing/manual-fee-one-per-appointment";
+import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
@@ -222,7 +223,14 @@ export async function prepareManualFeeChargeAction(
     // eligibility check. The user-facing error matches what we
     // would have shown if the pre-INSERT check had caught it.
     if (insertErr.code === "23505") {
-      return { ok: false, error: DUPLICATE_ATTEMPT_ERROR };
+      // 0338: the cross-type index (one manual fee per appointment, either type) gets the one-fee message;
+      // the same-type indexes keep the existing duplicate message.
+      return {
+        ok: false,
+        error: String(insertErr.message ?? "").includes("payment_charge_attempts_one_fee_per_appointment_uniq")
+          ? ONE_FEE_PER_APPOINTMENT_MESSAGE
+          : DUPLICATE_ATTEMPT_ERROR,
+      };
     }
     logInternal("manual_fee_prepare_insert_failed", {
       code: dbErrorCode(insertErr),
@@ -394,38 +402,18 @@ export async function chargeManualFeeAttemptAction(
     return { ok: false, outcome: "blocked", error: hold };
   }
 
-  // One manual fee per appointment, across both types. Re-checked HERE, just before the claim, so two
-  // prepares of different types that raced past prepare still give exactly one charge: a `ready` rival
-  // only blocks the LATER attempt. FAIL-CLOSED: an unreadable history refuses.
+  // One manual fee per appointment, across both types: the earlier, friendlier refusal. The shared
+  // runner re-checks the same rule immediately before the claim, so this is not the only guard.
   {
-    const apptId = (attemptRow as { appointment_id?: string | null }).appointment_id ?? null;
-    const createdAt = (attemptRow as { created_at?: string | null }).created_at ?? null;
-    if (!apptId || !createdAt) {
-      return { ok: false, outcome: "blocked", error: GENERIC_PRACTITIONER_ERROR };
-    }
-    const { data: siblings, error: siblingsError } = await admin
-      .from("payment_charge_attempts")
-      .select("id, charge_reason, status, created_at, failure_code, stripe_payment_intent_id, charged_at, updated_at")
-      .eq("studio_id", studioId)
-      .eq("appointment_id", apptId)
-      .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
-      .eq("stripe_livemode", inferStripeLivemode())
-      .neq("id", attemptId);
-    if (siblingsError || !siblings) {
-      return { ok: false, outcome: "blocked", error: GENERIC_PRACTITIONER_ERROR };
-    }
-    const oneFee = feeExecuteBlock(
-      { id: attemptId, created_at: createdAt },
-      siblings.map((r) => ({
-        id: r.id as string,
-        charge_type: r.charge_reason === "no_show_fee" ? ("no_show" as const) : ("late_cancel" as const),
-        status: r.status as string,
-        created_at: r.created_at as string,
-        failure_code: (r.failure_code as string | null) ?? null,
-        stripe_payment_intent_id: (r.stripe_payment_intent_id as string | null) ?? null,
-        charged_at: (r.charged_at as string | null) ?? null,
-        updated_at: (r.updated_at as string | null) ?? null,
-      })),
+    const oneFee = await oneFeeExecuteVerdict(
+      admin,
+      {
+        id: attemptId,
+        studio_id: studioId,
+        appointment_id: (attemptRow as { appointment_id?: string | null }).appointment_id ?? null,
+        created_at: (attemptRow as { created_at?: string | null }).created_at ?? null,
+      },
+      inferStripeLivemode(),
       new Date(),
     );
     if (oneFee) {

@@ -98,18 +98,23 @@ describe("wiring: the rule is used at prepare and re-checked before the claim", 
     expect(e).toMatch(/feePrepareBlock\(existingAttempts, serverChargeType, new Date\(\)\)/);
     expect(e).not.toMatch(/row\.charge_type === serverChargeType && ACTIVE_STATUSES/);
   });
-  it("the execute action runs feeExecuteBlock BEFORE the shared runner, reads both types, and fails closed", () => {
+  it("the execute action runs the shared guard BEFORE the shared runner and returns its refusal", () => {
     const x = read("app/(app)/calendar/[id]/manual-fee-actions.ts");
     const charge = x.slice(x.indexOf("export async function chargeManualFeeAttemptAction"));
-    // The verdict must be USED: assigned, and a non-null verdict returns blocked.
-    expect(charge).toMatch(/const oneFee = feeExecuteBlock\(/);
+    expect(charge).toMatch(/const oneFee = await oneFeeExecuteVerdict\(/);
     expect(charge).toMatch(/if \(oneFee\) \{\s*return \{ ok: false, outcome: "blocked", error: oneFee \}/);
-    const check = charge.indexOf("feeExecuteBlock(");
-    const run = charge.indexOf("runSessionPaymentCharge(");
-    expect(check).toBeGreaterThan(-1);
-    expect(check).toBeLessThan(run);
-    expect(charge).toMatch(/\.in\("charge_reason", \["no_show_fee", "late_cancellation_fee"\]\)/);
-    expect(charge).toMatch(/\.neq\("id", attemptId\)/);
-    expect(charge).toMatch(/if \(siblingsError \|\| !siblings\) \{\s*return \{ ok: false, outcome: "blocked"/);
+    expect(charge.indexOf("oneFeeExecuteVerdict(")).toBeLessThan(charge.indexOf("runSessionPaymentCharge("));
+  });
+  it("the shared runner runs the same guard for a NEW fee charge, immediately before the claim, and fails closed", () => {
+    const r = read("lib/billing/session-payment-charge.ts");
+    const run = r.slice(r.indexOf("export async function runSessionPaymentCharge"));
+    const guard = run.indexOf("oneFeeExecuteVerdict(admin, attemptRow, livemode");
+    const claim = run.indexOf("const { data: claimRows, error: claimErr }");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(claim);
+    expect(run.slice(guard, claim).replace(/\/\/.*$/gm, "")).not.toMatch(/\.rpc\(|paymentIntents|\.from\(/);
+    expect(run).toMatch(/countryCheckedBeforeClaim &&\s*\(attemptRow\.charge_reason === "no_show_fee" \|\| attemptRow\.charge_reason === "late_cancellation_fee"\)/);
+    const g = read("lib/billing/manual-fee-execute-guard.ts");
+    expect(g).toMatch(/if \(res\.error \|\| !res\.data\) return ONE_FEE_UNREADABLE_MESSAGE;/);
   });
 });
