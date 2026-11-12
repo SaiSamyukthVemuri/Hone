@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 254,
-    "last": "0287_roles_permission_engine.sql",
-    "sha256": "7a4713dd6f43ee20b70bc4bb3249d58c1f1922dd0b1ef661b5bce28751be6e45"
+    "count": 255,
+    "last": "0331_permission_stored_denial_before_default.sql",
+    "sha256": "4a46f9671dd900fcef9e4e42bdace55d90253a99d30d96120787056800bf64a3"
   },
   "public": {
     "tables": [
