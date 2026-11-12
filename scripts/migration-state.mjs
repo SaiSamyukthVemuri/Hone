@@ -135,6 +135,21 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
 }
 
 /**
+ * The operator's apply records come in three shapes under the 01-ops handoff folder, and the record must be for THIS version:
+ *   01-ops/RECORD-NNNN-APPLIED-YYYYMMDD.md
+ *   01-ops/NNNN-APPLY-RESULT-YYYYMMDDTHHMMZ.md
+ *   01-ops/rmin-NNNN-apply-YYYYMMDD/NOTES.md
+ */
+export function applyRecordNamesVersion(path, version) {
+  if (typeof path !== "string" || !/^\d{4}$/.test(version)) return false;
+  return [
+    new RegExp(`^01-ops/RECORD-${version}-APPLIED-\\d{8}\\.md$`),
+    new RegExp(`^01-ops/${version}-APPLY-RESULT-\\d{8}T\\d{4}Z\\.md$`),
+    new RegExp(`^01-ops/rmin-${version}-apply-\\d{8}/NOTES\\.md$`),
+  ].some((re) => re.test(path));
+}
+
+/**
  * OUT-OF-ORDER STAGES. A stage may apply a migration ahead of lower, still
  * unapplied ones (0248 ahead of 0247). The canonical record declares each such
  * migration in `hosted_out_of_order`:
@@ -218,6 +233,8 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
       }
       if (typeof entry.apply_record !== "string" || entry.apply_record.trim() === "") {
         invalid.push(`${label} must name the apply record it comes from (apply_record)`);
+      } else if (!applyRecordNamesVersion(entry.apply_record, label)) {
+        invalid.push(`${label} apply_record is not an operator apply-record path for ${label}: ${JSON.stringify(entry.apply_record)}`);
       }
       if (n > hostedMaxNumber) invalid.push(`${label} is declared hosted_without_repo_file but is above hosted_migration_max`);
       if (present.has(n)) invalid.push(`${label} is declared hosted_without_repo_file but has a repo file`);
