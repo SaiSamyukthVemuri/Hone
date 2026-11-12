@@ -272,7 +272,7 @@ describe("Today intake projection (source pins)", () => {
     // inside the appointment map.
     expect(PAGE.match(/loadIntakeStatusByClient\(/g) ?? []).toHaveLength(2); // decl + 1 call
     expect(PAGE).toMatch(
-      /Promise\.all\(\[[\s\S]{0,400}?loadIntakeStatusByClient\(supabase, studio\.id, selectedDayClientIds\)/,
+      /Promise\.all\(\[[\s\S]{0,400}?loadIntakeStatusByClient\(supabase, studio\.id, selectedDayClientIds, isOwner\)/,
     );
     // The row renderer reads the prepared map; it never queries.
     expect(PAGE).toMatch(/intakeStatus=\{intakeByClient\.get\(appt\.client_id\) \?\? null\}/);
@@ -291,7 +291,7 @@ describe("Today intake projection (source pins)", () => {
 
   it("the row resolves the action from already-loaded status", () => {
     expect(PAGE).toMatch(
-      /resolveTodayIntakeAction\(\{\s*status: intakeStatus,\s*clientId: appt\.client_id,\s*\}\)/,
+      /resolveTodayIntakeAction\(\{\s*status: intakeRestricted \? null : intakeStatus,\s*clientId: appt\.client_id,\s*\}\)/,
     );
   });
 

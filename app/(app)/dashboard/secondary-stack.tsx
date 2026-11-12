@@ -651,7 +651,8 @@ async function resolveNeedsAttentionInput({
     intakesAwaitingReview,
     todo: dashboardTodo,
     // Roles R4 (RO-1): a viewer without clin.view_records is told so; an empty list is never presented as "all caught up".
-    intakeReviewNotAvailable: intakesRestricted,
+    // Also restricted when the follow-up assistant could not read intake status for this viewer (neither status key): its "intake incomplete" part is unread, not empty.
+    intakeReviewNotAvailable: intakesRestricted || followUpAssistant.intakeNotAvailable === true,
     notAvailableToRole: followUpAssistant.notAvailable === true || clientsNeedingAttention.notAvailable === true,
     unavailableChecks: [
       ...(intakesUnavailable ? [UNAVAILABLE_INTAKE_REVIEW] : []),

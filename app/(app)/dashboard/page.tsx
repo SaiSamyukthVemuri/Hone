@@ -145,6 +145,9 @@ import type {
 import { DashboardGreeting } from "./DashboardGreeting";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { readIntakeStatusProjection } from "@/lib/intake/status-projection";
+import { canReadIntakeStatus } from "@/lib/intake/status-access";
+import { GATED_RESTRICTED, gatedOk, type Gated } from "@/lib/permissions/gated";
+import { RestrictedNote } from "@/components/restricted-note";
 
 // ---------------------------------------------------------------------------
 // Color convention (Chloe P0 feedback). Kept here as the canonical note
@@ -508,11 +511,11 @@ export default async function DashboardPage({
 
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
-  const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad] =
+  const [practitioners, pinnedByClient, intakeLoad, cardOnFileLoad] =
     await Promise.all([
       getPractitionersForStudio(studio.id),
       getPinnedNotesByClient(studio.id, selectedDayClientIds),
-      loadIntakeStatusByClient(supabase, studio.id, selectedDayClientIds),
+      loadIntakeStatusByClient(supabase, studio.id, selectedDayClientIds, isOwner),
       // Chloe: card-on-file status beside each name. Capability is asked
       // FIRST: a studio with no card-on-file route gets `null` and pays ZERO
       // card-status queries, because "no card" is not a truthful thing to say
@@ -529,6 +532,9 @@ export default async function DashboardPage({
         ? loadCardOnFileForStudio(studio.id, selectedDayClientIds)
         : Promise.resolve(null),
     ]);
+  // Restricted is carried separately from the map so a row can say "Not available to your role." instead of "No intake on file".
+  const intakeRestricted = intakeLoad.kind === "restricted";
+  const intakeByClient = intakeLoad.kind === "ok" ? intakeLoad.value : new Map<string, ClientIntakeForm["status"]>();
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
   // may surface here without paying an extra round-trip.
@@ -736,7 +742,8 @@ export default async function DashboardPage({
           : // Without clin.view_records the lookup was not issued, so "no linked session" is UNKNOWN, never "needs charting".
             "none";
       const intakeStatus = intakeByClient.get(appt.client_id) ?? null;
-      const intake: TodayIntake = intakeStatus ?? "none";
+      // A restricted viewer's rows are ranked as if intake were reviewed: the order must not reveal intake state they may not read.
+      const intake: TodayIntake = intakeRestricted ? "reviewed" : intakeStatus ?? "none";
       return {
         appointmentId: appt.id,
         clientId: appt.client_id,
@@ -1004,6 +1011,7 @@ export default async function DashboardPage({
                   workflow={workflowByAppointment.get(appt.id) ?? null}
                   pinnedNotes={pinnedByClient.get(appt.client_id) ?? null}
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
+                  intakeRestricted={intakeRestricted}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
                   isOwner={isOwner}
@@ -1151,6 +1159,7 @@ function AppointmentRow({
   workflow,
   pinnedNotes,
   intakeStatus,
+  intakeRestricted,
   linkedSession,
   paymentState,
   isOwner,
@@ -1168,6 +1177,8 @@ function AppointmentRow({
   workflow: TodayWorkflowItem | null;
   pinnedNotes: ReadonlyArray<{ id: string; text: string }> | null;
   intakeStatus: ClientIntakeForm["status"] | null;
+  // The viewer holds neither intake key: nothing was read, so the row says so instead of "No intake on file" and offers no review action.
+  intakeRestricted: boolean;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
   // The viewer is the studio owner. Checkout is owner-only (HON-44).
@@ -1245,7 +1256,7 @@ function AppointmentRow({
   // Null for in-progress and no-intake states, where the IntakePill below is
   // the truthful statement and there is nothing to review.
   const intakeAction = resolveTodayIntakeAction({
-    status: intakeStatus,
+    status: intakeRestricted ? null : intakeStatus,
     clientId: appt.client_id,
   });
   const time = formatTimeForStudio(new Date(appt.starts_at), tz, timeFormat);
@@ -1368,7 +1379,7 @@ function AppointmentRow({
               )}
               {/* Closed-state row (Insurance D-1): the intake status stays on the collapsed row, inline on
                   the name line where it fits (it wraps below the name when it does not). */}
-              <IntakePill status={intakeStatus} />
+              {intakeRestricted ? <RestrictedNote testId="today-intake-not-available" className="text-xs text-neutral-500" /> : <IntakePill status={intakeStatus} />}
             </div>
             {/* COMPACT ROW: service · modality · duration · practitioner on ONE line; allergy flag stays
                 visible; everything else about the visit is in the details below the row. */}
@@ -1806,9 +1817,12 @@ async function loadIntakeStatusByClient(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
   clientIds: ReadonlyArray<string>,
-): Promise<Map<string, ClientIntakeForm["status"]>> {
+  isOwner: boolean,
+): Promise<Gated<Map<string, ClientIntakeForm["status"]>>> {
+  // Roles (RO-1): a viewer holding neither intake key is RESTRICTED, which is not "no intake". Nothing is read for them.
+  if (!(await canReadIntakeStatus(supabase, studioId, isOwner))) return GATED_RESTRICTED;
   if (clientIds.length === 0) {
-    return new Map<string, ClientIntakeForm["status"]>();
+    return gatedOk(new Map<string, ClientIntakeForm["status"]>());
   }
   // ONE bounded read of the 0334 status projection for the day's clients: status and created_at of each client's newest non-deleted form, never the
   // answers. `client_intake_forms` itself needs clin.view_intake to read, so a status-only reader goes through the projection.
@@ -1820,7 +1834,7 @@ async function loadIntakeStatusByClient(
   // Hone's canonical current-intake rule (newest non-deleted row by
   // created_at), applied in memory across the batch by the shared pure helper
   // so Today can never disagree with the page its link opens.
-  return selectCurrentIntakeByClient(projected as TodayIntakeRow[]);
+  return gatedOk(selectCurrentIntakeByClient(projected as TodayIntakeRow[]));
 }
 
 async function countActiveServices(studioId: string): Promise<number> {
