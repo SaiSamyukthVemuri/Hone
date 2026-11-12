@@ -71,7 +71,8 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
         return {
           kind: "needs_action",
           label: "Needs the client's action; nothing was taken",
-          blocksNewCharge: false,
+          // Blocks a new fee until the owner resolves it (one manual fee per appointment).
+          blocksNewCharge: true,
           mayRefreshCharge: false,
         };
       }

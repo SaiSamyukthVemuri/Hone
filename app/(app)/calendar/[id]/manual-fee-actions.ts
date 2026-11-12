@@ -16,6 +16,7 @@ import {
   autoSendReceiptAfterCharge,
   type AutoReceiptOutcome,
 } from "@/lib/billing/auto-payment-receipt";
+import { feeExecuteBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
@@ -346,7 +347,7 @@ export async function chargeManualFeeAttemptAction(
   const admin = createAdminClient();
   const { data: attemptRow, error: attemptRowError } = await admin
     .from("payment_charge_attempts")
-    .select("charge_reason, currency")
+    .select("charge_reason, currency, appointment_id, created_at")
     .eq("id", attemptId)
     .eq("studio_id", studioId)
     .maybeSingle();
@@ -391,6 +392,45 @@ export async function chargeManualFeeAttemptAction(
   );
   if (hold) {
     return { ok: false, outcome: "blocked", error: hold };
+  }
+
+  // One manual fee per appointment, across both types. Re-checked HERE, just before the claim, so two
+  // prepares of different types that raced past prepare still give exactly one charge: a `ready` rival
+  // only blocks the LATER attempt. FAIL-CLOSED: an unreadable history refuses.
+  {
+    const apptId = (attemptRow as { appointment_id?: string | null }).appointment_id ?? null;
+    const createdAt = (attemptRow as { created_at?: string | null }).created_at ?? null;
+    if (!apptId || !createdAt) {
+      return { ok: false, outcome: "blocked", error: GENERIC_PRACTITIONER_ERROR };
+    }
+    const { data: siblings, error: siblingsError } = await admin
+      .from("payment_charge_attempts")
+      .select("id, charge_reason, status, created_at, failure_code, stripe_payment_intent_id, charged_at, updated_at")
+      .eq("studio_id", studioId)
+      .eq("appointment_id", apptId)
+      .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
+      .eq("stripe_livemode", inferStripeLivemode())
+      .neq("id", attemptId);
+    if (siblingsError || !siblings) {
+      return { ok: false, outcome: "blocked", error: GENERIC_PRACTITIONER_ERROR };
+    }
+    const oneFee = feeExecuteBlock(
+      { id: attemptId, created_at: createdAt },
+      siblings.map((r) => ({
+        id: r.id as string,
+        charge_type: r.charge_reason === "no_show_fee" ? ("no_show" as const) : ("late_cancel" as const),
+        status: r.status as string,
+        created_at: r.created_at as string,
+        failure_code: (r.failure_code as string | null) ?? null,
+        stripe_payment_intent_id: (r.stripe_payment_intent_id as string | null) ?? null,
+        charged_at: (r.charged_at as string | null) ?? null,
+        updated_at: (r.updated_at as string | null) ?? null,
+      })),
+      new Date(),
+    );
+    if (oneFee) {
+      return { ok: false, outcome: "blocked", error: oneFee };
+    }
   }
 
   // PR #196: fee attempts execute through the unified canonical

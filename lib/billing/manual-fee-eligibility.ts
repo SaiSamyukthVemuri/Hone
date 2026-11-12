@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import {
   MANUAL_FEE_AMOUNT_CEILING_CENTS,
@@ -500,20 +501,10 @@ export async function getManualFeeChargeEligibility(
       cancelled_reason: (row.cancelled_reason as string | null) ?? null,
     })),
   ].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  const ACTIVE_STATUSES = new Set([
-    "ready",
-    "pending_stripe",
-    "succeeded",
-  ]);
-  const activeForType = existingAttempts.find(
-    (row) =>
-      row.charge_type === serverChargeType && ACTIVE_STATUSES.has(row.status),
-  );
-  if (activeForType) {
-    reasons.push(
-      "An active fee charge attempt already exists for this appointment.",
-    );
-  }
+  // One manual fee per appointment, across BOTH types (lib/billing/manual-fee-one-per-appointment.ts).
+  // Only a failed or cancelled attempt frees the appointment.
+  const oneFee = feePrepareBlock(existingAttempts, serverChargeType, new Date());
+  if (oneFee) reasons.push(oneFee);
 
   if (
     reasons.length === 0 &&
