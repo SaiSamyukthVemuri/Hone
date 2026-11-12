@@ -80,6 +80,42 @@ describe("hosted_without_repo_file", () => {
     }
   });
 
+  // Insurance F1: every shape gets its own wrong-folder, wrong-version and wrong-suffix case, plus anchors.
+  const refused = (v: string, rec: string) =>
+    run(range(1, Number(v) - 1).concat(Number(v) + 1), Number(v) + 1, [{ version: v, apply_record: rec }]).invalid_declarations.join(" ");
+  const NOT_A_PATH = /apply_record is not an operator apply-record path/;
+  const SHAPE2 = (v: string) => `01-ops/${v}-APPLY-RESULT-20261108T1929Z.md`;
+  const SHAPE3 = (v: string) => `01-ops/rmin-${v}-apply-20261108/NOTES.md`;
+
+  it("accepts shape 2 and shape 3 for the matching version", () => {
+    expect(refused("0313", SHAPE2("0313"))).toBe("");
+    expect(refused("0303", SHAPE3("0303"))).toBe("");
+  });
+
+  it.each([
+    ["shape 2 wrong folder", "0313", "docs/0313-APPLY-RESULT-20261108T1929Z.md"],
+    ["shape 2 wrong version (another record's)", "0313", SHAPE2("0302")],
+    ["shape 2 wrong suffix (.txt)", "0313", "01-ops/0313-APPLY-RESULT-20261108T1929Z.md.txt"],
+    ["shape 2 wrong suffix (.json)", "0313", "01-ops/0313-APPLY-RESULT-20261108T1929Z.json"],
+    ["shape 2 truncated time", "0313", "01-ops/0313-APPLY-RESULT-20261108T19Z.md"],
+    ["shape 3 wrong folder", "0303", "docs/rmin-0303-apply-20261108/NOTES.md"],
+    ["shape 3 wrong version (another record's)", "0303", SHAPE3("0302")],
+    ["shape 3 wrong suffix (NOTES.md.txt)", "0303", "01-ops/rmin-0303-apply-20261108/NOTES.md.txt"],
+    ["shape 3 wrong file name (README.md, NOTES.md is not a wildcard)", "0303", "01-ops/rmin-0303-apply-20261108/README.md"],
+    ["shape 3 wrong file name (ANYTHING.md)", "0303", "01-ops/rmin-0303-apply-20261108/other-NOTES.md"],
+    ["shape 3 deeper path", "0303", "01-ops/rmin-0303-apply-20261108/x/NOTES.md"],
+    ["anchor: prefix before 01-ops (shape 1)", "0301", "x/01-ops/RECORD-0301-APPLIED-20261106.md"],
+    ["anchor: prefix before 01-ops (shape 2)", "0313", "x/" + SHAPE2("0313")],
+    ["anchor: prefix before 01-ops (shape 3)", "0303", "x/" + SHAPE3("0303")],
+    ["anchor: trailing text (shape 1)", "0301", "01-ops/RECORD-0301-APPLIED-20261106.md/extra"],
+    ["anchor: trailing text (shape 2)", "0313", SHAPE2("0313") + "/extra"],
+    ["anchor: trailing text (shape 3)", "0303", SHAPE3("0303") + "/extra"],
+    ["anchor: a second line carrying a valid path", "0301", "x\n01-ops/RECORD-0301-APPLIED-20261106.md"],
+    ["anchor: a valid path then a second line", "0301", "01-ops/RECORD-0301-APPLIED-20261106.md\nx"],
+  ])("NEGATIVE: %s is refused", (_name, v, rec) => {
+    expect(refused(v, rec as string)).toMatch(NOT_A_PATH);
+  });
+
   it("NEGATIVE: a duplicate is refused", () => {
     const r = run(range(1, 300).concat(302), 302, [
       { version: "0301", apply_record: REC },
