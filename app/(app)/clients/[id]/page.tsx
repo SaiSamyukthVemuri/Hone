@@ -69,8 +69,7 @@ import {
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import { intakeForViewer } from "@/lib/intake/status-only";
-import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
-import { questionnaireForRow } from "@/lib/intake/questionnaire";
+import { selfReportedFitzpatrickFor } from "@/lib/intake/self-reported-fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
 import { StartAssistedIntakeButton } from "./intake/StartAssistedIntakeButton";
 import { PortalAccessCard } from "./PortalAccessCard";
@@ -95,6 +94,7 @@ import {
   getLatestSignaturesForPractitionerView,
 } from "@/lib/consent/queries";
 import { ConsentSignaturesCard } from "@/components/consent-signatures-card";
+import { RestrictedNote } from "@/components/restricted-note";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
 import { PaymentMethodCard } from "@/components/payment-method-card";
 import {
@@ -293,6 +293,9 @@ export default async function ClientCheatSheetPage({
       .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
       .then((d) => d.allowed),
   );
+  // The intake gate's verdict. A viewer without clin.view_intake is RESTRICTED: "not read" must never render as "Not completed". Signed consents and
+  // policy acknowledgements ride on the same key (Team census v2 section 3, proposed default, Sam to confirm: consent is collected with intake).
+  const intakeAllowed = await canViewIntakePromise;
   const canViewAftercarePromise = contained("clin.view_aftercare", () =>
     gateClient()
       .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
@@ -349,7 +352,8 @@ export default async function ClientCheatSheetPage({
   // Consent templates and signatures feed the Overview consent card, the Messages
   // pending tasks and the owner Billing card-authorization state.
   const isOwnerBilling = activeTab === "billing" && isOwner;
-  const needsConsent = isOverview || isMessages || isOwnerBilling;
+  // Signed consents ride on clin.view_intake (proposed default): without it nothing about them is read, counted or rendered (RestrictedNote).
+  const needsConsent = (isOverview || isMessages || isOwnerBilling) && intakeAllowed;
   // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
   const needsCard = isOwnerBilling;
   const needsSessionsData = activeTab === "sessions" && canViewRecords;
@@ -505,14 +509,7 @@ export default async function ClientCheatSheetPage({
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
   // shape uses legacy decoding; a present undefined/malformed snapshot refuses
   // the derived summary just as the intake review page does.
-  const selfReportedFitzpatrick = submittedIntake &&
-    questionnaireForRow(Object.hasOwn(submittedIntake, "questionnaire_snapshot")
-      ? submittedIntake.questionnaire_snapshot
-      : null).kind !== "invalid"
-    ? computeFitzpatrickEstimate(
-        (submittedIntake.responses ?? {}) as Record<string, unknown>,
-      )
-    : null;
+  const selfReportedFitzpatrick = selfReportedFitzpatrickFor(intakeAllowed, submittedIntake);
   // tags read removed: Tags no longer renders on the main profile.
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
@@ -524,6 +521,7 @@ export default async function ClientCheatSheetPage({
     intakeStatus: intake?.status ?? null,
     activeConsentTemplates: consentTemplatesAll,
     latestSignatures: consentLatestSignatures,
+    consentRestricted: !intakeAllowed,
     portalMessages,
   });
 
@@ -1143,13 +1141,15 @@ export default async function ClientCheatSheetPage({
                   Fitzpatrick · self-reported intake
                 </dt>
                 <dd className="font-medium text-neutral-700 dark:text-neutral-300">
-                  {selfReportedFitzpatrick
-                    ? `Type ${selfReportedFitzpatrick.type}, score ${selfReportedFitzpatrick.score}/40`
+                  {selfReportedFitzpatrick.kind === "restricted" ? (
+                    <RestrictedNote testId="self-reported-intake-not-available" className="text-sm font-normal text-neutral-500" />
+                  ) : selfReportedFitzpatrick.kind === "ok" && selfReportedFitzpatrick.value
+                    ? `Type ${selfReportedFitzpatrick.value.type}, score ${selfReportedFitzpatrick.value.score}/40`
                     : "Not completed"}
                 </dd>
               </div>
             </dl>
-            {selfReportedFitzpatrick && (
+            {selfReportedFitzpatrick.kind === "ok" && selfReportedFitzpatrick.value && (
               <p className="mt-2 text-xs text-neutral-500">
                 Self-reported intake estimate. Not a clinical
                 assessment; the practitioner-confirmed value above is
@@ -1263,6 +1263,7 @@ export default async function ClientCheatSheetPage({
               and draft templates do not appear here. View-only in
               v1; the practitioner authoring surface lives in
               Settings &rarr; Consent forms. */}
+          {intakeAllowed ? (
           <ConsentSignaturesCard
             clientName={clientDisplay}
             activeTemplates={consentTemplatesAll
@@ -1275,6 +1276,9 @@ export default async function ClientCheatSheetPage({
               }))}
             latestSignatures={consentLatestSignatures}
           />
+          ) : (
+            <RestrictedNote testId="consent-signatures-not-available" />
+          )}
 
           {/* PR #194: allergies moved to the top of Overview (under
               pinned notes); see the block above the Messages

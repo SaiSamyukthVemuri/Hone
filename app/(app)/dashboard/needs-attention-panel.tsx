@@ -317,10 +317,19 @@ export function NeedsAttentionPanel({
     ) : null;
 
   // Roles R4 (RO-1): a viewer without clin.view_records is told so; an empty list is never presented as "all caught up".
-  const restrictedNote = needs.notAvailableToRole ? (
-    <p role="status" data-testid="needs-attention-not-available" className="text-sm text-neutral-600 dark:text-neutral-400">
-      Records follow-up is not available to your role.
-    </p>
+  const restrictedNote = needs.notAvailableToRole || needs.intakeReviewNotAvailable ? (
+    <div className="flex flex-col gap-1">
+      {needs.notAvailableToRole ? (
+        <p role="status" data-testid="needs-attention-not-available" className="text-sm text-neutral-600 dark:text-neutral-400">
+          Records follow-up is not available to your role.
+        </p>
+      ) : null}
+      {needs.intakeReviewNotAvailable ? (
+        <p role="status" data-testid="needs-attention-intake-not-available" className="text-sm text-neutral-600 dark:text-neutral-400">
+          Intake review is not available to your role.
+        </p>
+      ) : null}
+    </div>
   ) : null;
 
   if (needs.clients.length === 0 && needs.studioItems.length === 0) {

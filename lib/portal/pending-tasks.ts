@@ -10,7 +10,8 @@ export type PortalPendingTasks = {
   intakeIncomplete: boolean;
   // Active consent templates the client has not signed at the current version
   // (covers both "never signed" and "signed an older version" = outdated).
-  consentToSignCount: number;
+  // null = the viewer may not read consent records (clin.view_records): not a zero, never counted.
+  consentToSignCount: number | null;
   // Published portal messages the client has not yet opened.
   unreadMessageCount: number;
   hasAny: boolean;
@@ -20,6 +21,8 @@ export function computePortalPendingTasks(input: {
   intakeStatus: string | null | undefined;
   activeConsentTemplates: Array<{ id: string; version: number; status?: string }>;
   latestSignatures: Array<{ template_id: string; template_version: number }>;
+  // true when the viewer lacks clin.view_records: the consent half is NOT computed (the arrays are empty because nothing was read).
+  consentRestricted?: boolean;
   portalMessages: Array<{
     status: string;
     client_reviewed_at: string | null;
@@ -34,7 +37,7 @@ export function computePortalPendingTasks(input: {
       (s) => `${s.template_id}:${s.template_version}`,
     ),
   );
-  const consentToSignCount = (input.activeConsentTemplates ?? [])
+  const consentToSignCount: number | null = input.consentRestricted ? null : (input.activeConsentTemplates ?? [])
     .filter((t) => (t.status ? t.status === "active" : true))
     .filter((t) => !signedAtCurrent.has(`${t.id}:${t.version}`)).length;
 
@@ -50,6 +53,6 @@ export function computePortalPendingTasks(input: {
     consentToSignCount,
     unreadMessageCount,
     hasAny:
-      intakeIncomplete || consentToSignCount > 0 || unreadMessageCount > 0,
+      intakeIncomplete || (consentToSignCount ?? 0) > 0 || unreadMessageCount > 0,
   };
 }

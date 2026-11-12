@@ -5,6 +5,7 @@ import { sendPortalLinkAction } from "./portal-link-actions";
 import { PORTAL_OFF_STAFF_MESSAGE } from "@/lib/booking/client-self-service-policy";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { PortalPendingTasks } from "@/lib/portal/pending-tasks";
+import { RestrictedNote } from "@/components/restricted-note";
 
 // Minimal, safe-to-render shape of a portal access event (structurally
 // satisfied by lib/portal/queries PortalAccessEventRow). No token/URL/PII.
@@ -159,7 +160,7 @@ export function PortalAccessCard({
               {pendingTasks.intakeIncomplete && (
                 <li>&bull; Intake not yet submitted</li>
               )}
-              {pendingTasks.consentToSignCount > 0 && (
+              {pendingTasks.consentToSignCount !== null && pendingTasks.consentToSignCount > 0 && (
                 <li>
                   &bull; {pendingTasks.consentToSignCount} consent form
                   {pendingTasks.consentToSignCount === 1 ? "" : "s"} to sign
@@ -172,10 +173,16 @@ export function PortalAccessCard({
                 </li>
               )}
             </ul>
-          ) : (
+          ) : pendingTasks.consentToSignCount === null ? null : (
             <p className="mt-1 text-xs text-neutral-500">
               No pending portal tasks.
             </p>
+          )}
+          {pendingTasks.consentToSignCount === null && (
+            <div className="mt-1 text-xs" data-testid="pending-consent-restricted">
+              <span className="text-neutral-600 dark:text-neutral-300">Consent forms: </span>
+              <RestrictedNote className="inline text-xs text-neutral-500" testId="pending-consent-restricted-note" />
+            </div>
           )}
         </div>
       )}

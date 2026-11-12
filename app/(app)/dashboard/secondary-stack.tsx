@@ -24,6 +24,7 @@ import { NeedsAttentionPanel } from "./needs-attention-panel";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
 import {
   buildNeedsAttention,
+  CHECK_RESTRICTED,
   CHECK_UNAVAILABLE,
   type NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
@@ -82,7 +83,7 @@ type AttentionSources = readonly [
   // R3: the clients whose CURRENT intake is awaiting review (not a row count).
   // `unavailable` = the intake read failed or hit its ceiling (this one count
   // only; the rest of Needs attention still renders).
-  ReadonlyArray<IntakeAwaitingReview> | typeof CHECK_UNAVAILABLE,
+  ReadonlyArray<IntakeAwaitingReview> | typeof CHECK_UNAVAILABLE | typeof CHECK_RESTRICTED,
   number,
   // `unavailable` = the owner's payment read failed (not "no payment setup").
   | Parameters<typeof buildDashboardTodo>[0]["studio"]["paymentStatus"]
@@ -606,7 +607,9 @@ async function resolveNeedsAttentionInput({
   const [intakesRead, activeServicesCount, paymentStatusRead] =
     await attentionSources;
   const intakesUnavailable = intakesRead === CHECK_UNAVAILABLE;
-  const intakesAwaitingReview = intakesUnavailable ? [] : intakesRead;
+  // clin.view_intake: a viewer without it never has the intake read run (page.tsx), so no row, name, date or count exists to show.
+  const intakesRestricted = intakesRead === CHECK_RESTRICTED;
+  const intakesAwaitingReview = intakesUnavailable || intakesRestricted ? [] : intakesRead;
   const paymentUnavailable = paymentStatusRead === CHECK_UNAVAILABLE;
   const paymentStatus = paymentUnavailable ? null : paymentStatusRead;
   const staffManaged = await staffManagedPromise;
@@ -648,6 +651,7 @@ async function resolveNeedsAttentionInput({
     intakesAwaitingReview,
     todo: dashboardTodo,
     // Roles R4 (RO-1): a viewer without clin.view_records is told so; an empty list is never presented as "all caught up".
+    intakeReviewNotAvailable: intakesRestricted,
     notAvailableToRole: followUpAssistant.notAvailable === true || clientsNeedingAttention.notAvailable === true,
     unavailableChecks: [
       ...(intakesUnavailable ? [UNAVAILABLE_INTAKE_REVIEW] : []),
@@ -758,8 +762,9 @@ async function HeadingCountValue(props: OwnerNeedsInputs) {
     const v = await resolveVisibleNeeds(props);
     const { clients, items } = headingCount(v.shown);
     // A check that feeds the client cards could not run: no number, never "0".
+    // A viewer without clin.view_intake gets no number either: a count that leaves intake review out could read as "nothing needs review".
     // Roles R4 (RO-1): a viewer without clin.view_records is never given a number that could read as "nothing needs review" (or count records follow-up).
-    text = v.shown.notAvailableToRole
+    text = v.shown.notAvailableToRole || v.shown.intakeReviewNotAvailable
       ? "Not available to your role"
       : v.countKnown ? `${clients} ${clients === 1 ? "client" : "clients"}, ${items} ${items === 1 ? "item" : "items"}` : "Unavailable";
   } catch {

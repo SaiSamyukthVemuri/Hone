@@ -20,6 +20,7 @@ const empty: NeedsAttention = {
   notReturnedCount: 0,
   unavailableChecks: [],
   notAvailableToRole: false,
+  intakeReviewNotAvailable: false,
   detailsWindow: null,
 };
 const html = (n: NeedsAttention) =>

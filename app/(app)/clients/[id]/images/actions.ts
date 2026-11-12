@@ -20,6 +20,7 @@ import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import { signTreatmentImageUrl } from "./sign-treatment-image";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 
 // PR #271. Practitioner-only secure treatment image actions.
@@ -90,6 +91,12 @@ export async function uploadTreatmentImageAction(
     //     can never be attached without its session).
     let sessionId: string | null = null;
     let sessionBlockId: string | null = null;
+    // Linking a photo to a session reads session records. Without clin.view_records the picker is not offered (images page), and a forged
+    // session/block id is refused here before any session row is read. Upload itself is unchanged (clin.upload_photos); this widens nothing.
+    if (requestedSessionBlockId || requestedSessionId) {
+      const records = await requirePermission(supabase, studio.id, "clin.view_records", { client: clientId });
+      if (!records.allowed) return { ok: false, error: "Not available to your role." };
+    }
     if (requestedSessionBlockId) {
       // A block attach requires its session. Derive it from the block row so a
       // mismatched (block, session) pair cannot be stored even if both were
