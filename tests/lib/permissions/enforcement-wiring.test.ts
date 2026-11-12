@@ -4,6 +4,21 @@ import { describe, expect, it } from "vitest";
 import { CATALOG, catalogByKey, enforcementOf } from "@/lib/permissions/catalog";
 
 const read = (p: string) => readFileSync(p, "utf8");
+
+// Files under supabase/migrations with comments stripped.
+const migrationFiles = (): Array<{ name: string; text: string }> =>
+  readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql")).map((name) => ({ name, text: read(`supabase/migrations/${name}`).replace(/\/\*[\s\S]*?\*\//g, "").replace(/--[^\n]*/g, "") }));
+/** Statements (insert, upsert, update, merge) on permission_key_release that name one of the keys as a quoted literal: the files that RELEASE them. */
+export function releasesOf(files: Array<{ name: string; text: string }>, keys: string[]): string[] {
+  const hits: string[] = [];
+  for (const f of files) {
+    for (const stmt of f.text.split(";")) {
+      if (!/permission_key_release/i.test(stmt) || !/\b(insert|upsert|update|merge)\b/i.test(stmt)) continue;
+      for (const k of keys) if (stmt.includes(`'${k}'`)) hits.push(`${f.name}: ${k}`);
+    }
+  }
+  return hits.sort();
+}
 const body = (src: string, fn: string) => {
   const i = src.indexOf(`export async function ${fn}(`);
   expect(i, fn).toBeGreaterThan(-1);
@@ -177,11 +192,11 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     // catalog, because the enforced flag is tied to release state (0287: every enforced key is in the release seed) and the permission-activation hold
     // stands. The flip commit removes this carve-out. It FAILS once the key is released (seeded), so it cannot outlive the hold.
     const ASKED_AHEAD_OF_FLIP = ["clin.view_intake_status"];
-    const seedKeys = [...read("supabase/migrations/0287_roles_permission_engine.sql").replace(/^\s*--.*$/gm, "").matchAll(/\('([a-z_.]+)', null, '[^']+', '(?:full|narrow)'\)/g)].map((m) => m[1]!);
     for (const k of ASKED_AHEAD_OF_FLIP) {
       expect(asked, `${k} is no longer asked: remove it from ASKED_AHEAD_OF_FLIP`).toContain(k);
       expect(enforcementOf(k)).toBe("not_yet");
-      expect(seedKeys, `${k} is now released: mark it enforced in the catalog and remove it from ASKED_AHEAD_OF_FLIP`).not.toContain(k);
+      // EVERY migration is scanned (not only the 0287 seed): a later migration that releases the key must flip the catalog in the same change.
+      expect(releasesOf(migrationFiles(), [k]), `${k} is now released by a migration: mark it enforced in the catalog and remove it from ASKED_AHEAD_OF_FLIP`).toEqual([]);
       asked.delete(k);
     }
     expect([...asked].sort()).toEqual([...marked].sort());
@@ -223,5 +238,27 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
         expect(LEGACY[k], k).toBeUndefined();
       }
     });
+  });
+});
+
+describe("the ASKED_AHEAD_OF_FLIP release scan (fixtures)", () => {
+  const K = ["clin.view_intake_status"];
+  it("flags a later migration that inserts the key into permission_key_release", () => {
+    expect(releasesOf([{ name: "0999_x.sql", text: "insert into public.permission_key_release(key, released_at, release_tag, release_kind) values ('clin.view_intake_status', now(), 'T', 'full');" }], K)).toEqual(["0999_x.sql: clin.view_intake_status"]);
+  });
+  it("flags an upsert and an update", () => {
+    expect(releasesOf([{ name: "a.sql", text: "insert into permission_key_release values ('clin.view_intake_status') on conflict (key) do update set released_at = now();" }], K)).toHaveLength(1);
+    expect(releasesOf([{ name: "b.sql", text: "update public.permission_key_release set released_at = now() where key = 'clin.view_intake_status';" }], K)).toHaveLength(1);
+  });
+  it("ignores another key, a statement that does not touch the release table, and a mention in a comment", () => {
+    expect(releasesOf([{ name: "c.sql", text: "insert into public.permission_key_release values ('clin.view_photos');" }], K)).toEqual([]);
+    expect(releasesOf([{ name: "d.sql", text: "insert into public.other values ('clin.view_intake_status');" }], K)).toEqual([]);
+    expect(releasesOf([{ name: "e.sql", text: "insert into public.permission_key_release values ('x');" }].map((f) => ({ ...f, text: f.text.replace("'x'", "'x'") })), K)).toEqual([]);
+  });
+  it("the real migrations release none of the carved-out keys today (the scan reads all of them, not vacuous)", () => {
+    const files = migrationFiles();
+    expect(files.length).toBeGreaterThan(200);
+    expect(files.some((f) => /permission_key_release/i.test(f.text))).toBe(true);
+    expect(releasesOf(files, K)).toEqual([]);
   });
 });
