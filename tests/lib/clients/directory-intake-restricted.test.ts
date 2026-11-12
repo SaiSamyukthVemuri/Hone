@@ -95,3 +95,28 @@ describe("the directory page reads intake only behind the gate (AST, comments ig
     expect(ui).toContain("directory-intake-filter-restricted");
   });
 });
+
+// R-3 (Team, recorded on I2 / 0334): once client_intake_forms has a clin.view_intake SELECT policy, a member holding ONLY clin.view_intake_status reads
+// zero rows there, and the directory would say "Not submitted". In the SAME change as that migration readCurrentIntake must read the definer enum projection.
+// This is a tripwire that arms itself: it passes while no such policy exists, and fails the moment one does without the reader switching.
+import { readdirSync } from "node:fs";
+export function intakePolicyRequiresViewIntake(files: Array<{ name: string; text: string }>): string[] {
+  return files
+    .filter((f) => /create\s+policy[^;]*on\s+(public\.)?client_intake_forms[^;]*for\s+select[^;]*clin\.view_intake['"]/is.test(f.text) || /on\s+(public\.)?client_intake_forms[\s\S]{0,400}for\s+select[\s\S]{0,400}has_studio_permission[\s\S]{0,200}'clin\.view_intake'/i.test(f.text))
+    .map((f) => f.name);
+}
+describe("R-3: the directory reader follows the I2 policy", () => {
+  const migrations = readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql")).map((name) => ({ name, text: readFileSync(`supabase/migrations/${name}`, "utf8") }));
+  const reader = readFileSync("lib/clients/directory-read.ts", "utf8");
+  it("detector fixtures: a clin.view_intake SELECT policy on client_intake_forms is recognised; an unrelated one is not", () => {
+    const yes = `create policy cif_select on public.client_intake_forms for select to authenticated using (public.has_studio_permission(studio_id, 'clin.view_intake'));`;
+    expect(intakePolicyRequiresViewIntake([{ name: "x.sql", text: yes }])).toEqual(["x.sql"]);
+    expect(intakePolicyRequiresViewIntake([{ name: "y.sql", text: `create policy p on public.sessions for select using (true);` }])).toEqual([]);
+  });
+  it("while such a policy exists, readCurrentIntake does not read client_intake_forms directly (it uses the enum projection)", () => {
+    const armed = intakePolicyRequiresViewIntake(migrations);
+    if (armed.length === 0) return; // not yet: I2 has not landed
+    const body = reader.slice(reader.indexOf("export async function readCurrentIntake"));
+    expect(body, `I2 policy present in ${armed.join(", ")}: switch readCurrentIntake to the clin.view_intake_status projection`).not.toMatch(/\.from\("client_intake_forms"\)/);
+  });
+});
