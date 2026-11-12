@@ -433,7 +433,7 @@ export async function getManualFeeChargeEligibility(
     admin
       .from("payment_charge_attempts")
       .select(
-        "id, charge_reason, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, stripe_refund_status, stripe_refund_id, refunded_at, receipt_sent_at, updated_at",
+        "id, charge_reason, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, refunded_at, receipt_sent_at, updated_at",
       )
       .eq("studio_id", args.studioId)
       .eq("appointment_id", args.appointmentId)
@@ -475,6 +475,7 @@ export async function getManualFeeChargeEligibility(
       cancelled_at: (row.cancelled_at as string | null) ?? null,
       cancelled_reason: (row.cancelled_reason as string | null) ?? null,
       refund_status: (row.refund_status as string | null) ?? null,
+      refund_amount_cents: (row.refund_amount_cents as number | null) ?? null,
       stripe_refund_status: (row.stripe_refund_status as string | null) ?? null,
       stripe_refund_id: (row.stripe_refund_id as string | null) ?? null,
       receipt_sent_at: (row.receipt_sent_at as string | null) ?? null,

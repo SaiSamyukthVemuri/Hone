@@ -105,6 +105,7 @@ export type EligibilityExistingAttemptSummary = {
   // PR #196: canonical-ledger fee attempts carry refund/receipt state;
   // legacy rows leave these undefined.
   refund_status?: string | null;
+  refund_amount_cents?: number | null;
   /** The provider's own refund status (0240) and refund id: used to say "unclear" on disagreement. */
   stripe_refund_status?: string | null;
   stripe_refund_id?: string | null;

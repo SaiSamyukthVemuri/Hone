@@ -17,6 +17,9 @@
 //   * `mayRefreshCharge` is true only while pending (the existing refresh re-runs the same
 //     idempotent claim; it cannot create a second PaymentIntent). It is false when unclear.
 
+import { refundDisplayState, type RefundDisplay } from "@/lib/billing/refund-display-state";
+import { REFUND_ACTION_HEADING, REFUND_REVIEW_HEADING } from "@/lib/payments/payment-summary-presenter";
+
 export type FeeAttemptStateKind =
   | "ready"
   | "pending"
@@ -79,24 +82,42 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
 }
 
 /**
- * The refund line for the charge history. Conservative on purpose: our own `refund_status` is
- * trusted only when the provider's record agrees (no provider refund recorded), and anything else
- * says the status is unclear rather than guessing "refunded" or "failed". Whether the full
- * refund-status panel built for session payments (R1) also belongs on the fee card is the
- * owner's ruling; this is the minimum honest line.
+ * The refund half of a fee attempt, read through the SHARED refund-status logic (R1,
+ * `refundDisplayState`) so the fee card, the session card and the retry rules never disagree.
+ * No forked copy: this only maps the shared kind to a label. `line` is null when nothing was
+ * refunded and nothing is in flight.
  */
-export function feeRefundLine(a: {
+export type FeeRefundInput = {
   status: string | null | undefined;
+  amount_cents: number | null | undefined;
   refund_status?: string | null;
+  refund_amount_cents?: number | null;
   stripe_refund_status?: string | null;
   stripe_refund_id?: string | null;
-}): string | null {
-  if (a.status !== "succeeded") return null;
-  const ours = a.refund_status ?? null;
-  const provider = a.stripe_refund_status ?? null;
-  const hasProviderTrace = provider !== null || (a.stripe_refund_id ?? null) !== null;
-  if (ours === null && !hasProviderTrace) return null; // never refunded: say nothing
-  if (ours === "succeeded" && provider === "succeeded") return "Refunded";
-  if (ours === "pending_stripe" && (provider === null || provider === "pending")) return "Refund processing";
-  return "Refund status unclear. Do not refund again until this is checked.";
+};
+
+export function feeRefund(a: FeeRefundInput): { display: RefundDisplay; line: string | null } {
+  const display = refundDisplayState({
+    chargeStatus: a.status ?? null,
+    amountCents: typeof a.amount_cents === "number" ? a.amount_cents : null,
+    refundStatus: a.refund_status ?? null,
+    refundAmountCents: typeof a.refund_amount_cents === "number" ? a.refund_amount_cents : null,
+    providerRefundStatus: a.stripe_refund_status ?? null,
+    stripeRefundId: a.stripe_refund_id ?? null,
+  });
+  switch (display.kind) {
+    case "refunded":
+      return { display, line: "Refunded" };
+    case "pending":
+      return { display, line: "Refund processing" };
+    case "needs_action":
+      return { display, line: REFUND_ACTION_HEADING };
+    case "failed":
+      return { display, line: "Refund did not go through; no money moved" };
+    case "needs_review":
+    case "unclear":
+      return { display, line: REFUND_REVIEW_HEADING };
+    case "not_refunded":
+      return { display, line: null };
+  }
 }

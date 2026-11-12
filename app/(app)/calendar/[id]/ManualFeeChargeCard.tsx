@@ -9,6 +9,7 @@ import {
   type ManualFeeEligibility,
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-types";
+import { FEE_UNCLEAR_MESSAGE, feeAttemptState, feeRefund } from "@/lib/billing/manual-fee-attempt-state";
 import {
   prepareManualFeeChargeAction,
   chargeManualFeeAttemptAction,
@@ -142,27 +143,41 @@ export function ManualFeeChargeCard({
       </div>
 
       {allAttempts.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+        <div
+          data-testid="fee-charge-history"
+          className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs dark:border-neutral-800 dark:bg-neutral-900"
+        >
           <span className="font-medium text-neutral-700 dark:text-neutral-300">
-            Existing attempts
+            Charge history
           </span>
           <ul className="flex flex-col gap-1">
-            {allAttempts.map((row) => (
-              <li
-                key={row.id}
-                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-neutral-600 dark:text-neutral-400"
-              >
-                <span className="font-medium text-neutral-800 dark:text-neutral-200">
-                  {chargeTypeLabel(row.charge_type)}
-                </span>
-                <span>·</span>
-                <span>{formatCents(row.amount_cents, row.currency)}</span>
-                <span>·</span>
-                <span className="uppercase tracking-wider">{row.status}</span>
-                <span>·</span>
-                <FormattedDateTime iso={row.created_at} />
-              </li>
-            ))}
+            {allAttempts.map((row) => {
+              const state = feeAttemptState(row, new Date());
+              const refund = feeRefund(row).line;
+              return (
+                <li
+                  key={row.id}
+                  data-testid="fee-history-row"
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 text-neutral-600 dark:text-neutral-400"
+                >
+                  <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                    {chargeTypeLabel(row.charge_type)}
+                  </span>
+                  <span>·</span>
+                  <span>{formatCents(row.amount_cents, row.currency)}</span>
+                  <span>·</span>
+                  <span data-testid="fee-history-status">{state.label}</span>
+                  <span>·</span>
+                  <FormattedDateTime iso={row.created_at} />
+                  {refund && (
+                    <>
+                      <span>·</span>
+                      <span data-testid="fee-history-refund">{refund}</span>
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -279,6 +294,10 @@ function PreparePanel({
         </PreviewRow>
       </dl>
 
+      <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+        The saved fixed {chargeTypeLabel(chargeType).toLowerCase()} of{" "}
+        {formatCents(eligibility.amountCents, eligibility.currency)} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+      </p>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
         Timing classification is manual for this version. Confirm this
         appointment qualifies under the policy before preparing the
@@ -345,7 +364,8 @@ function AttemptStatusPanel({
   appointmentId: string;
   card: ManualFeeEligibility["card"] | null;
 }) {
-  switch (attempt.status) {
+  const state = feeAttemptState(attempt, new Date());
+  switch (state.kind) {
     case "ready":
       return (
         <ReadyPanel
@@ -354,20 +374,19 @@ function AttemptStatusPanel({
           card={card}
         />
       );
-    case "pending_stripe":
+    case "pending":
       return <PendingPanel attempt={attempt} appointmentId={appointmentId} />;
     case "succeeded":
       return <SucceededPanel attempt={attempt} />;
     case "failed":
       return <FailedPanel attempt={attempt} />;
+    case "needs_action":
+      return <NeedsActionPanel />;
     case "cancelled":
       return <CancelledPanel attempt={attempt} />;
     default:
-      return (
-        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-          Attempt status: {attempt.status}
-        </div>
-      );
+      // unclear: no charge, refresh or retry control of any kind.
+      return <UnclearPanel />;
   }
 }
 
@@ -438,6 +457,10 @@ function ReadyPanel({
         <li>policy acknowledged</li>
         <li>internal note recorded</li>
       </ul>
+      <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+        The saved fixed {chargeTypeLabel(attempt.charge_type).toLowerCase()} of{" "}
+        {formatCents(attempt.amount_cents, attempt.currency)} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+      </p>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
         The client&apos;s saved card on file will be charged this fee.
       </p>
@@ -451,7 +474,7 @@ function ReadyPanel({
         >
           {chargePending
             ? "Running…"
-            : `Run charge (${formatCents(attempt.amount_cents, attempt.currency)})`}
+            : `Charge ${chargeTypeLabel(attempt.charge_type).toLowerCase()} (${formatCents(attempt.amount_cents, attempt.currency)})`}
         </button>
         <button
           type="button"
@@ -513,6 +536,36 @@ function ReadyPanel({
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+function UnclearPanel() {
+  return (
+    <div
+      role="status"
+      data-testid="fee-unclear-panel"
+      className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    >
+      <h4 className="font-medium">{FEE_UNCLEAR_MESSAGE}</h4>
+      <p className="text-xs">
+        Hone cannot tell whether the card was charged. No new charge is offered while this is open.
+      </p>
+    </div>
+  );
+}
+
+function NeedsActionPanel() {
+  return (
+    <div
+      role="status"
+      data-testid="fee-needs-action-panel"
+      className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    >
+      <h4 className="font-medium">The card needs the client&apos;s action.</h4>
+      <p className="text-xs">
+        The client&apos;s bank asked them to confirm this charge. The attempt was cancelled and nothing was taken.
+      </p>
     </div>
   );
 }
@@ -618,7 +671,7 @@ function FeeReceiptRefundControls({
       router.refresh();
     });
   }
-  const refunded = attempt.refund_status === "succeeded";
+  const refund = feeRefund(attempt);
   const receiptSent = !!attempt.receipt_sent_at;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -634,17 +687,26 @@ function FeeReceiptRefundControls({
           Send receipt
         </button>
       )}
-      {refunded ? (
-        <span className="text-xs font-medium">Payment refunded.</span>
+      {refund.display.kind === "refunded" ? (
+        <span data-testid="fee-refund-line" className="text-xs font-medium">{refund.line}</span>
+      ) : refund.display.mayStartRefund ? (
+        <>
+          {refund.line && (
+            <span data-testid="fee-refund-line" className="text-xs">{refund.line}</span>
+          )}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => run(refundFeeAttemptAction)}
+            className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:hover:bg-emerald-900"
+          >
+            Refund charge
+          </button>
+        </>
       ) : (
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => run(refundFeeAttemptAction)}
-          className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
-        >
-          Refund charge
-        </button>
+        refund.line && (
+          <span data-testid="fee-refund-line" className="text-xs font-medium">{refund.line}</span>
+        )
       )}
       {message && <span className="text-xs">{message}</span>}
     </div>
