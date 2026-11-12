@@ -1292,8 +1292,8 @@ function RefundSubPanel({
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
           <p className="font-medium">Refund needs review.</p>
           <p className="mt-1">
-            Stripe has recorded a refund that did not complete. The studio operator must review it before another
-            refund is started.
+            Stripe has a record of a refund here that we could not confirm. The studio operator must review it before
+            another refund is started.
           </p>
         </div>
       )}

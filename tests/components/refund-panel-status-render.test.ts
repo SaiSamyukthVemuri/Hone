@@ -109,7 +109,9 @@ describe("refund panel: a provider trace blocks a new attempt (Insurance F1; the
       for (const p of ["failed", "canceled"]) {
         const html = render({ refundStatus: o, stripeRefundStatus: p });
         expect(html, `${o}/${p}`).toContain("Refund needs review.");
+        expect(html, `${o}/${p}`).toContain("Stripe has a record of a refund here that we could not confirm.");
         expect(html, `${o}/${p}`).toContain("studio operator must review");
+        expect(html, `${o}/${p}`).not.toContain("did not complete");
         expect(html, `${o}/${p}`).not.toContain("Refund failed.");
         expect(canRetry(html), `${o}/${p}`).toBe(false);
       }
@@ -204,5 +206,25 @@ describe("settlement gate (F3): cash-replacement controls open only when BOTH co
   });
   it("an unreadable refund amount holds card money: no controls", () => {
     expect(controls(renderWithAppointment({ refundStatus: "succeeded", refundAmountCents: null }))).toBe(false);
+  });
+});
+
+// Pre-existing disclosure (Privacy): the refund id appears in the technical-details row. WHO sees it is decided by
+// TechnicalPaymentDetails, which returns null for a non-owner, so the id is not in a non-owner's DOM.
+describe("the refund id is owner-only in the DOM (technicalRowsForAttempt -> TechnicalPaymentDetails)", () => {
+  const ID = "re_SECRET_REFUND_ID";
+  it("owner: the id appears only inside the collapsed technical-payment-details disclosure", () => {
+    const html = render({ refundStatus: "succeeded", refundAmountCents: 12_000, stripeRefundId: ID }, true);
+    const at = html.indexOf(ID);
+    expect(at).toBeGreaterThan(-1);
+    const open = html.lastIndexOf("technical-payment-details", at);
+    expect(open, "inside the disclosure").toBeGreaterThan(-1);
+    expect(html.slice(open, at)).not.toContain("</details>");
+    expect(html.split(ID)).toHaveLength(2); // exactly once
+  });
+  it("non-owner: the id is nowhere in the rendered HTML", () => {
+    const html = render({ refundStatus: "succeeded", refundAmountCents: 12_000, stripeRefundId: ID }, false);
+    expect(html).not.toContain(ID);
+    expect(html).not.toContain("technical-payment-details");
   });
 });
