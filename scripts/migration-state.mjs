@@ -144,6 +144,11 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
  * meaning: 0248 IS hosted, and 0247 is deliberately NOT hosted yet. This is the
  * only way a number at or below the hosted max may be absent from production.
  *
+ * A migration production HAS applied whose file is not in this tree yet is declared in `hosted_without_repo_file`
+ * ([{ "version": "0301", "apply_record": "01-ops/RECORD-0301-APPLIED-20261106.md" }]); it is neither a gap nor unhosted.
+ * It is refused when it has a repo file, is above the hosted max, lacks an apply record, is duplicated, or also appears in
+ * `unhosted_below` or as a hosted_out_of_order entry.
+ *
  * Two failures, both fatal in tests/docs/canonical-production-facts.test.ts:
  *   undeclared_gaps       a number between the first migration and the hosted
  *                         max that has no repo file, is not permanently
@@ -155,7 +160,7 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
  *                         declared hosted and declared unhosted
  * Pure on its inputs so the negative controls can drive it directly.
  */
-export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANENTLY_SKIPPED, declared = [] }) {
+export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANENTLY_SKIPPED, declared = [], hostedWithoutFile = [] }) {
   const present = new Set(numbers);
   const invalid = [];
   const asNumber = (v) => (typeof v === "string" && /^\d{4}$/.test(v) ? Number.parseInt(v, 10) : null);
@@ -192,11 +197,40 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
     if (hostedDeclared.has(n)) invalid.push(`${pad(n)} is declared both hosted and unhosted`);
   }
 
+  // HOSTED WITHOUT A REPO FILE. A migration production HAS applied whose file is not in this tree yet (its carrier PR has not merged).
+  // `unhosted_below` cannot say that (it means "deliberately NOT hosted"), and a hosted_out_of_order entry requires a repo file.
+  // Each entry is { version, apply_record }; the apply record is the operator's record the claim comes from.
+  const withoutFile = new Set();
+  if (!Array.isArray(hostedWithoutFile)) {
+    invalid.push("hosted_without_repo_file must be an array");
+  } else {
+    for (const entry of hostedWithoutFile) {
+      const n = asNumber(entry?.version);
+      if (n === null) {
+        invalid.push(`hosted_without_repo_file entry has no four-digit version: ${JSON.stringify(entry)}`);
+        continue;
+      }
+      const label = pad(n);
+      if (withoutFile.has(n)) invalid.push(`${label} is declared twice in hosted_without_repo_file`);
+      withoutFile.add(n);
+      for (const k of Object.keys(entry)) {
+        if (k !== "version" && k !== "apply_record") invalid.push(`${label} has an unknown key: ${k}`);
+      }
+      if (typeof entry.apply_record !== "string" || entry.apply_record.trim() === "") {
+        invalid.push(`${label} must name the apply record it comes from (apply_record)`);
+      }
+      if (n > hostedMaxNumber) invalid.push(`${label} is declared hosted_without_repo_file but is above hosted_migration_max`);
+      if (present.has(n)) invalid.push(`${label} is declared hosted_without_repo_file but has a repo file`);
+      if (unhostedDeclared.has(n)) invalid.push(`${label} is declared both hosted_without_repo_file and unhosted_below`);
+      if (hostedDeclared.has(n)) invalid.push(`${label} is declared both hosted_without_repo_file and a hosted_out_of_order entry`);
+    }
+  }
+
   const first = Math.min(...numbers);
   const skippedSet = new Set(skipped);
   const gaps = [];
   for (let n = first; n <= hostedMaxNumber; n += 1) {
-    if (!present.has(n) && !skippedSet.has(n) && !unhostedDeclared.has(n)) gaps.push(pad(n));
+    if (!present.has(n) && !skippedSet.has(n) && !unhostedDeclared.has(n) && !withoutFile.has(n)) gaps.push(pad(n));
   }
   return { undeclared_gaps: gaps, invalid_declarations: invalid };
 }
@@ -283,6 +317,7 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     numbers,
     hostedMaxNumber,
     declared: record.hosted_out_of_order ?? [],
+    hostedWithoutFile: record.hosted_without_repo_file ?? [],
   });
 
   const reservedEval = evaluateReserved({
@@ -313,6 +348,7 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     repo_equals_hosted: repoMaxNumber === hostedMaxNumber,
     pending_migrations: pending,
     hosted_out_of_order: record.hosted_out_of_order ?? [],
+    hosted_without_repo_file: record.hosted_without_repo_file ?? [],
     reserved_unallocated_above_hosted: reservedEval.reserved,
     invalid_reserved_declarations: reservedEval.invalid,
     undeclared_gaps: outOfOrder.undeclared_gaps,
