@@ -77,6 +77,16 @@ describe("the directory page reads intake only behind the gate (AST, comments ig
     // the owner branch must not pass true for the key results
     expect(gateCalls.some((c) => /statusAllowed:\s*status\.allowed/.test(c.getText()) && /answersAllowed:\s*answers\.allowed/.test(c.getText()))).toBe(true);
   });
+  it("MJ: intakeRestricted derives from intakeAllowed (a constant false would show Unavailable instead of the restricted copy)", () => {
+    const { sf } = pageFacts();
+    let init = "";
+    const visit = (n: ts.Node) => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "intakeRestricted" && n.initializer) init = n.initializer.getText(sf);
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    expect(init.replace(/\s+/g, " ")).toMatch(/!intakeAllowed/);
+  });
   it("both readCurrentIntake calls sit inside a branch that waits on the gate result (MC: allow → true is caught by the truth table above)", () => {
     const { readCalls, sf } = pageFacts();
     expect(readCalls.length).toBe(2);
@@ -101,8 +111,21 @@ describe("the directory page reads intake only behind the gate (AST, comments ig
 // This is a tripwire that arms itself: it passes while no such policy exists, and fails the moment one does without the reader switching.
 import { readdirSync } from "node:fs";
 export function intakePolicyRequiresViewIntake(files: Array<{ name: string; text: string }>): string[] {
+  const BENIGN = new Set(["is_studio_member", "session_is_visible", "auth.uid", "current_setting", "coalesce", "exists", "in", "any", "select", "lower", "now"]);
   return files
-    .filter((f) => /create\s+policy[^;]*on\s+(public\.)?client_intake_forms[^;]*for\s+select[^;]*clin\.view_intake['"]/is.test(f.text) || /on\s+(public\.)?client_intake_forms[\s\S]{0,400}for\s+select[\s\S]{0,400}has_studio_permission[\s\S]{0,200}'clin\.view_intake'/i.test(f.text))
+    .filter((f) => {
+      const text = f.text.replace(/--[^\n]*/g, "");
+      const mentionsKey = /clin\.view_intake\b/.test(text);
+      // every create/alter policy statement that targets client_intake_forms
+      for (const stmt of text.split(";")) {
+        if (!/\b(create|alter)\s+policy\b[\s\S]*\bon\s+(public\.)?client_intake_forms\b/i.test(stmt)) continue;
+        if (/has_studio_permission|clin\.view_intake|clin_view_intake/i.test(stmt)) return true;
+        // a helper that checks the key: any function call other than the membership-only ones, in a file that names the key
+        const calls = [...stmt.matchAll(/([a-z_][\w.]*)\s*\(/gi)].map((m) => m[1].replace(/^public\./, "").toLowerCase());
+        if (mentionsKey && calls.some((c) => !BENIGN.has(c) && !/^(create|alter)$/.test(c) && c !== "policy")) return true;
+      }
+      return false;
+    })
     .map((f) => f.name);
 }
 describe("R-3: the directory reader follows the I2 policy", () => {
@@ -112,6 +135,15 @@ describe("R-3: the directory reader follows the I2 policy", () => {
     const yes = `create policy cif_select on public.client_intake_forms for select to authenticated using (public.has_studio_permission(studio_id, 'clin.view_intake'));`;
     expect(intakePolicyRequiresViewIntake([{ name: "x.sql", text: yes }])).toEqual(["x.sql"]);
     expect(intakePolicyRequiresViewIntake([{ name: "y.sql", text: `create policy p on public.sessions for select using (true);` }])).toEqual([]);
+    // R-3 hardening: alter policy, and a policy that calls a helper which checks the key
+    const alter = `alter policy cif_select on public.client_intake_forms using (public.has_studio_permission(studio_id, 'clin.view_intake'));`;
+    expect(intakePolicyRequiresViewIntake([{ name: "a.sql", text: alter }])).toEqual(["a.sql"]);
+    const helper = `-- clin.view_intake\ncreate function public.can_read_intake(s uuid) returns boolean language sql as $$ select public.has_studio_permission(s,'clin.view_intake') $$;\ncreate policy cif_select on public.client_intake_forms for select to authenticated using (public.can_read_intake(studio_id));`;
+    expect(intakePolicyRequiresViewIntake([{ name: "h.sql", text: helper }])).toEqual(["h.sql"]);
+    // controls: a membership-only policy on the same table, and a comment that merely names the key, do not arm it
+    const member = `create policy cif_select on public.client_intake_forms for select to authenticated using (public.is_studio_member(studio_id));`;
+    expect(intakePolicyRequiresViewIntake([{ name: "m.sql", text: member }])).toEqual([]);
+    expect(intakePolicyRequiresViewIntake([{ name: "c.sql", text: "-- clin.view_intake later\n" + member }])).toEqual([]);
   });
   it("while such a policy exists, readCurrentIntake does not read client_intake_forms directly (it uses the enum projection)", () => {
     const armed = intakePolicyRequiresViewIntake(migrations);
