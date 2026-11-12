@@ -809,26 +809,41 @@ describe("no-studio authenticated user: what can be reached", () => {
 // hosted catalog read. A NEW entry fails this test and must be reviewed.
 const PINNED: string[] = [
   "fn graphql_public.graphql(\"operationName\" text, query text, variables jsonb, extensions jsonb)",
+  // 0287 c03 (rmin-0287-apply-20261107, Insurance PASS, Privacy no objection): the 13 Roles-engine commands granted to authenticated alone.
+  // Reachable is not usable: every one refuses a no-studio caller (see the S6 describe at the end of this file). 0331 and 0332 add nothing here.
+  "fn public.activate_released_permissions(p_studio uuid, p_keys text[], p_expected_version bigint, p_reason text, p_preview_hash text, p_sensitiv",
+  "fn public.adopt_new_defaults(p_studio uuid, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean)",
   "fn public.appointment_transition_allowed(p_old_status text, p_new_status text)",
   "fn public.archive_treatment_image(p_image_id uuid, p_client_id uuid)",
   "fn public.audit_actor_is_caller(target_actor_id uuid, target_studio_id uuid)",
   "fn public.can_read_client_legal_identity(target_studio_id uuid)",
   "fn public.can_use_client_legal_identity(target_studio_id uuid)",
+  "fn public.change_staff_role(p_studio uuid, p_membership uuid, p_new_role text, p_expected_current_role text, p_reason text)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
+  "fn public.effective_access(p_studio uuid, p_membership uuid)",
+  "fn public.get_role_permissions(p_studio uuid)",
+  "fn public.has_studio_permission(p_studio uuid, p_key text, p_client uuid, p_appointment uuid, p_practitioner uuid)",
   "fn public.is_studio_member(target_studio_id uuid)",
   "fn public.is_studio_owner(target_studio_id uuid)",
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",
   "fn public.list_dismissed_attention(p_studio uuid)",
+  "fn public.list_permission_audit(p_studio uuid, p_limit integer, p_before bigint)",
   "fn public.member_owns_scoped_timed_block(p_studio_id uuid, p_practitioner_id uuid)",
   "fn public.my_pending_invitation()",
+  "fn public.preview_activation(p_studio uuid, p_keys text[])",
+  "fn public.preview_adopt_new_defaults(p_studio uuid)",
+  "fn public.preview_reset(p_studio uuid, p_role text)",
+  "fn public.preview_role_changes(p_studio uuid, p_changes jsonb)",
   "fn public.receptionist_cancel_appointment(p_studio_id uuid, p_appointment_id uuid, p_reason text)",
   "fn public.receptionist_create_appointment(p_studio_id uuid, p_target_practitioner_id uuid, p_client_id uuid, p_service_id uuid, p_starts_at tim",
   "fn public.receptionist_move_appointment(p_studio_id uuid, p_appointment_id uuid, p_target_practitioner_id uuid, p_expected_starts_at timestamp ",
   "fn public.reconcile_my_pending_invitation()",
   "fn public.record_appointment_settlement(p_studio_id uuid, p_appointment_id uuid, p_method text, p_amount_cents integer, p_note text, p_livemode",
+  "fn public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean)",
   "fn public.restore_attention_item(p_studio uuid, p_item_key text)",
   "fn public.restore_attention_item_if_latest(p_studio uuid, p_item_key text, p_observed_seq bigint)",
+  "fn public.save_role_permissions(p_studio uuid, p_expected_version bigint, p_changes jsonb, p_reason text, p_sensitive_confirmed boolean)",
   "fn public.session_is_visible(target_session_id uuid)",
   "fn public.set_new_client_admission_mode(p_studio_id uuid, p_mode text)",
   "fn public.set_own_calendar_feed_token_hash(p_studio_id uuid, p_token_hash text)",
@@ -1141,6 +1156,65 @@ describe("S5: the 0298 dismissal functions refuse a no-studio user at the owners
                 exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x where x.grantee = 0) pub
            from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=$1`, [f.name]);
       expect(r.rows[0]).toEqual({ a: false, s: false, u: true, pub: false });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S6: the 13 authenticated-EXECUTE functions 0287 granted (rmin-0287-apply-20261107 c03). Reachable is not usable: a
+// no-studio caller gets a refusal and no data from each one, for a real studio, a random studio and a NULL studio.
+// The owner-only commands stop at `perm_actor(p_studio)` + `role <> 'owner'` and answer only {ok:false, code:'refused'};
+// has_studio_permission answers false. Also pins that the granted set is EXACTLY these 13 (0331 and 0332 grant nothing).
+// ---------------------------------------------------------------------------
+describe("S6: the 0287 Roles-engine functions refuse a no-studio user and leak nothing", () => {
+  const REFUSED = JSON.stringify({ ok: false, code: "refused" });
+  const lit = (studio: string | null) => (studio === null ? "null::uuid" : `'${studio}'::uuid`);
+  type Cmd = { name: string; sql: (st: string | null) => string; expect: string };
+  const ZERO = "'00000000-0000-0000-0000-000000000000'::uuid";
+  const CMDS: Cmd[] = [
+    { name: "has_studio_permission", sql: (st) => `select public.has_studio_permission(${lit(st)}, 'appt.cancel', null, null, null) r`, expect: "false" },
+    { name: "preview_role_changes", sql: (st) => `select public.preview_role_changes(${lit(st)}, '[]'::jsonb) r`, expect: REFUSED },
+    { name: "save_role_permissions", sql: (st) => `select public.save_role_permissions(${lit(st)}, 0, '[]'::jsonb, 'probe', false) r`, expect: REFUSED },
+    { name: "preview_reset", sql: (st) => `select public.preview_reset(${lit(st)}, 'practitioner') r`, expect: REFUSED },
+    { name: "reset_role_to_defaults", sql: (st) => `select public.reset_role_to_defaults(${lit(st)}, 'practitioner', 0, 'probe', false) r`, expect: REFUSED },
+    { name: "preview_adopt_new_defaults", sql: (st) => `select public.preview_adopt_new_defaults(${lit(st)}) r`, expect: REFUSED },
+    { name: "adopt_new_defaults", sql: (st) => `select public.adopt_new_defaults(${lit(st)}, 0, 'probe', false) r`, expect: REFUSED },
+    { name: "get_role_permissions", sql: (st) => `select public.get_role_permissions(${lit(st)}) r`, expect: REFUSED },
+    { name: "preview_activation", sql: (st) => `select public.preview_activation(${lit(st)}, array[]::text[]) r`, expect: REFUSED },
+    { name: "activate_released_permissions", sql: (st) => `select public.activate_released_permissions(${lit(st)}, array[]::text[], 0, 'probe', 'x', false) r`, expect: REFUSED },
+    { name: "effective_access", sql: (st) => `select public.effective_access(${lit(st)}, ${ZERO}) r`, expect: REFUSED },
+    { name: "list_permission_audit", sql: (st) => `select public.list_permission_audit(${lit(st)}, 10, null) r`, expect: REFUSED },
+    { name: "change_staff_role", sql: (st) => `select public.change_staff_role(${lit(st)}, ${ZERO}, 'receptionist', 'practitioner', 'probe') r`, expect: REFUSED },
+  ];
+
+  it("the 13 are executable by authenticated, and NO other perm_* helper is (0331 and 0332 replace helpers and grant nothing)", async () => {
+    const granted = (await adminQuery(
+      `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = any($1::text[]) and has_function_privilege('authenticated', p.oid, 'execute')
+        order by 1`, [CMDS.map((c) => c.name)])).rows.map((r: J) => r.proname as string);
+    expect(granted).toEqual(CMDS.map((c) => c.name).sort());
+    const helpers = (await adminQuery(
+      `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname like 'perm\\_%'
+          and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute')
+               or has_function_privilege('service_role', p.oid, 'execute'))
+        order by 1`)).rows.map((r: J) => r.proname as string);
+    expect(helpers, "perm_base_scope, perm_scope_source, perm_activation_hash and every other perm_* helper stay closed").toEqual([]);
+  });
+
+  for (const c of CMDS) {
+    it(`${c.name}: a no-studio caller is refused for a real, a random and a NULL studio, with no data and no studio id echoed`, async () => {
+      for (const st of [A.studioId, randomUUID(), null]) {
+        const out = await asJwt(S, async (q) => {
+          await q("savepoint s6");
+          try {
+            const r = await q(c.sql(st));
+            return JSON.stringify(r.rows[0].r);
+          } finally { await q("rollback to savepoint s6"); }
+        });
+        expect(out, `${c.name}(${st === null ? "null" : "studio"})`).toBe(c.expect);
+        expect(out).not.toContain(A.studioId);
+      }
     });
   }
 });
