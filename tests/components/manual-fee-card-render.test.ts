@@ -136,6 +136,12 @@ describe("E1: Close declined attempt is offered only where it can apply", () => 
       expect(render([attempt({ ...declined, ...over })]), JSON.stringify(over)).not.toContain("fee-close-declined");
     }
   });
+  it("Privacy defence in depth: the projection carries mayCloseDeclined only for the OWNER", () => {
+    const row = attempt({ ...declined, stripe_status: "requires_payment_method" });
+    const e = { ...eligible([row]), existingAttempts: [row] } as never;
+    expect(projectFeeEligibility(e, new Date(), true).attempts[0].state.mayCloseDeclined).toBe(true);
+    expect(projectFeeEligibility(e, new Date(), false).attempts[0].state.mayCloseDeclined).toBe(false);
+  });
   it("the plain unclear states (old pending, odd status) never offer it", () => {
     expect(render([attempt({ ...LC, status: "pending_stripe", updated_at: "2026-11-01T00:00:00.000Z", stripe_payment_intent_id: "pi_x" })])).not.toContain("fee-close-declined");
     expect(render([attempt({ ...LC, status: "weird", stripe_payment_intent_id: "pi_x" })])).not.toContain("fee-close-declined");

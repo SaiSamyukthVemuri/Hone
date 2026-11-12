@@ -89,7 +89,8 @@ export function projectFeeAttempt(
       label: state.label,
       blocksNewCharge: state.blocksNewCharge,
       mayRefreshCharge: state.mayRefreshCharge,
-      mayCloseDeclined: !!state.mayCloseDeclined,
+      // Owner-only, like mayStartRefund: a future change to the card gate cannot expose the button to staff.
+      mayCloseDeclined: isOwner && !!state.mayCloseDeclined,
     },
     // Only the owner may start a refund (the server refuses anyone else; the button is hidden too).
     refund: { kind: r.display.kind, line: r.line, mayStartRefund: isOwner && r.display.mayStartRefund },

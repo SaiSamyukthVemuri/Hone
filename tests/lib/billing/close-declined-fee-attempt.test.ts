@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { feeAttemptState } from "@/lib/billing/manual-fee-attempt-state";
 
@@ -261,6 +261,30 @@ describe("source shape: one cancel site, no create, owner-only action", () => {
   });
   it("the close function never creates, confirms, captures or refunds anything", () => {
     expect(close).not.toMatch(/paymentIntents\.(create|confirm|capture)|refunds\.create|charges\.create/);
+  });
+  it("J1: exactly the finalizer and close-declined import/use cancelPaymentIntentConfirmed - a new caller fails this test", () => {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(path.join(root, dir), { withFileTypes: true })) {
+        const rel = path.join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== "node_modules" && e.name !== ".next") walk(rel); continue; }
+        if (/\.(ts|tsx|js|jsx|mjs)$/.test(e.name) && readFileSync(path.join(root, rel), "utf8").includes("cancelPaymentIntentConfirmed")) files.push(rel);
+      }
+    };
+    for (const d of ["app", "lib", "components"]) walk(d);
+    expect(files.sort()).toEqual(["lib/billing/close-declined-fee-attempt.ts", "lib/billing/session-payment-charge.ts"]);
+  });
+  it("J2: the manual-review queue surfaces a webhook terminal_mismatch for FEE rows (reason-agnostic) and this module's own critical alerts", async () => {
+    const wh = readFileSync(path.join(root, "lib/billing/payment-webhook-reconciliation.ts"), "utf8");
+    expect(wh).not.toMatch(/\.(eq|in|neq)\(\s*"charge_reason"/);
+    expect(wh).not.toMatch(/attempt\.charge_reason\s*(===|!==)\s*"(no_show_fee|late_cancellation_fee|session_payment)"/);
+    const { isPaymentManualReviewEvent } = await import("@/lib/billing/payment-manual-review");
+    expect(isPaymentManualReviewEvent("payment_intent_succeeded_local_terminal_mismatch")).toBe(true);
+    expect(isPaymentManualReviewEvent("payment_intent_failed_local_terminal_mismatch")).toBe(true);
+    // our own unclear alert must be visible in the queue too (the prefix is what the queue keys on)
+    expect(isPaymentManualReviewEvent("payment_charge_close_declined_unclear")).toBe(true);
+    expect(close).toContain('event: "payment_charge_close_declined_unclear"');
+    expect(close).toContain('event: "payment_charge_declined_attempt_closed"');
   });
   it("the server action checks the owner role before calling the close function", () => {
     const src = readFileSync(path.join(root, "app/(app)/calendar/[id]/manual-fee-actions.ts"), "utf8");

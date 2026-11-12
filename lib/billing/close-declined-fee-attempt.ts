@@ -55,14 +55,16 @@ export async function closeDeclinedFeeAttempt(args: {
     .maybeSingle();
   if (error || !row) return { ok: false, outcome: "not_found", message: CLOSE_DECLINED_NOT_ELIGIBLE_MESSAGE };
 
+  const piId = row.stripe_payment_intent_id as string | null;
   const unclear = async (reason: string, severity: "warning" | "critical", extra: Record<string, unknown> = {}) => {
     await recordOpsAlert({
       severity,
-      event: "manual_fee_close_declined_unclear",
+      event: "payment_charge_close_declined_unclear",
       message: "Close declined attempt could not prove the PaymentIntent is canceled and uncaptured; the appointment stays blocked.",
       studioId: row.studio_id as string,
       clientId: (row.client_id as string | null) ?? undefined,
-      route: "lib/billing/session-payment-charge:closeDeclinedFeeAttempt",
+      stripePaymentIntentId: piId ?? undefined,
+      route: "lib/billing/close-declined-fee-attempt:closeDeclinedFeeAttempt",
       safeDetails: { attempt_id: row.id, reason, ...extra },
     });
     return { ok: false as const, outcome: "unclear" as const, message: CLOSE_DECLINED_UNCLEAR_MESSAGE };
@@ -75,7 +77,6 @@ export async function closeDeclinedFeeAttempt(args: {
   if (row.status !== "failed" || row.stripe_livemode !== livemode || row.charged_at || row.stripe_charge_id) {
     return { ok: false, outcome: "not_eligible", message: CLOSE_DECLINED_NOT_ELIGIBLE_MESSAGE };
   }
-  const piId = row.stripe_payment_intent_id as string | null;
   if (!piId || !row.stripe_account_id) return unclear("no_stored_payment_intent", "warning");
   if (row.stripe_status === "canceled") return { ok: true, outcome: "already_closed", appointmentId: (row.appointment_id as string | null) ?? null };
 
@@ -137,11 +138,12 @@ export async function closeDeclinedFeeAttempt(args: {
   }
   await recordOpsAlert({
     severity: "info",
-    event: "manual_fee_declined_attempt_closed",
+    event: "payment_charge_declined_attempt_closed",
     message: "Owner closed a declined manual-fee attempt; Stripe confirmed the PaymentIntent canceled with nothing captured.",
     studioId: row.studio_id as string,
     clientId: (row.client_id as string | null) ?? undefined,
-    route: "lib/billing/session-payment-charge:closeDeclinedFeeAttempt",
+    stripePaymentIntentId: piId,
+    route: "lib/billing/close-declined-fee-attempt:closeDeclinedFeeAttempt",
     safeDetails: { attempt_id: row.id, appointment_id: row.appointment_id ?? null, stripe_payment_intent_id: piId },
   });
   return { ok: true, outcome: "closed", appointmentId: (row.appointment_id as string | null) ?? null };
