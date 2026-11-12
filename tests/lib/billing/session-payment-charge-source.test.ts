@@ -266,7 +266,9 @@ describe("PR #320: requires_action is canceled, never silently terminal", () => 
     const fn = HELPER.slice(
       HELPER.indexOf("async function finalizeRequiresActionPaymentIntent"),
     );
-    expect(fn).toMatch(/await args\.stripe\.paymentIntents\.cancel\(/);
+    // E1: the single call site is now the shared helper; the finalizer routes through it.
+    expect(fn).toMatch(/await cancelPaymentIntentConfirmed\(args\.stripe, args\.pi, args\.stripeAccountId\)/);
+    expect(HELPER).toMatch(/export async function cancelPaymentIntentConfirmed[\s\S]{0,700}paymentIntents\.cancel\(/);
   });
 
   it("on cancel SUCCESS: writes terminal failed with failure code requires_action_canceled", () => {

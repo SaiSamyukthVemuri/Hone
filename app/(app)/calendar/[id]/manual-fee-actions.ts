@@ -12,6 +12,7 @@ import {
 import { isManualFeeChargeReason } from "@/lib/billing/manual-fee-types";
 import { checkDisplayedCurrency } from "@/lib/billing/payment-jurisdiction";
 import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
+import { closeDeclinedFeeAttempt } from "@/lib/billing/close-declined-fee-attempt";
 import {
   autoSendReceiptAfterCharge,
   type AutoReceiptOutcome,
@@ -559,6 +560,31 @@ export async function cancelManualFeeChargeAttemptAction(
   }
 
   revalidatePath(`/calendar/${data.appointment_id}`);
+  return { ok: true };
+}
+
+// E1: owner-only "Close declined attempt". Cancels the attempt's OWN existing PaymentIntent through the
+// shared runner module (the single cancel call site) and frees the appointment only after Stripe confirms
+// it canceled with nothing captured. It never creates a PaymentIntent and never charges.
+export type CloseDeclinedFeeAttemptResult = { ok: true } | { ok: false; error: string };
+
+export async function closeDeclinedFeeAttemptAction(
+  formData: FormData,
+): Promise<CloseDeclinedFeeAttemptResult> {
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    if (practitioner.role !== "owner") throw new Error("owner_only");
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("manual_fee_close_declined_auth_failed", { errorClass: thrownErrorClass(err) });
+    return { ok: false, error: NOT_AUTHORIZED_ERROR };
+  }
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  if (!attemptId) return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  const result = await closeDeclinedFeeAttempt({ attemptId, studioId });
+  if (!result.ok) return { ok: false, error: result.message };
+  if (result.appointmentId) revalidatePath(`/calendar/${result.appointmentId}`);
   return { ok: true };
 }
 

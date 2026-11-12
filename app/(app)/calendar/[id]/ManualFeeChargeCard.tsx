@@ -15,6 +15,7 @@ import {
   cancelManualFeeChargeAttemptAction,
   sendFeeReceiptAction,
   refundFeeAttemptAction,
+  closeDeclinedFeeAttemptAction,
 } from "./manual-fee-actions";
 
 // ---------------------------------------------------------------------------
@@ -392,7 +393,7 @@ function AttemptStatusPanel({
       return <CancelledPanel attempt={attempt} />;
     default:
       // unclear: no charge, refresh or retry control of any kind.
-      return <UnclearPanel />;
+      return <UnclearPanel attempt={attempt} />;
   }
 }
 
@@ -546,7 +547,20 @@ function ReadyPanel({
   );
 }
 
-function UnclearPanel() {
+function UnclearPanel({ attempt }: { attempt: FeeCardAttempt }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  function closeDeclined() {
+    setError(null);
+    const fd = new FormData();
+    fd.set("attempt_id", attempt.id);
+    startTransition(async () => {
+      const r = await closeDeclinedFeeAttemptAction(fd);
+      if (!r.ok) setError(r.error);
+      else router.refresh();
+    });
+  }
   return (
     <div
       role="status"
@@ -557,6 +571,28 @@ function UnclearPanel() {
       <p className="text-xs">
         Hone cannot tell whether the card was charged. No new charge is offered while this is open.
       </p>
+      {attempt.state.mayCloseDeclined && (
+        <>
+          <p className="text-xs">
+            If the client&apos;s bank declined this charge, you can close this attempt. Hone asks the payment
+            provider to cancel this same payment and only then lets you prepare a new fee. Nothing is charged.
+          </p>
+          <button
+            type="button"
+            data-testid="fee-close-declined"
+            onClick={closeDeclined}
+            disabled={pending}
+            className="self-start rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-50 dark:bg-amber-950"
+          >
+            {pending ? "Closing…" : "Close declined attempt"}
+          </button>
+        </>
+      )}
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

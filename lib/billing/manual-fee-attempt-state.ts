@@ -48,6 +48,8 @@ export type FeeAttemptState = {
   /** True while a new prepare/charge would risk a second charge: in flight or unclear. */
   blocksNewCharge: boolean;
   mayRefreshCharge: boolean;
+  /** E1: an owner may ask us to cancel THIS attempt's PaymentIntent (never to create one). Only a failed row that holds a PaymentIntent and shows no capture. */
+  mayCloseDeclined?: boolean;
 };
 
 /**
@@ -88,7 +90,14 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
         ((a.stripe_status === "canceled" && !!a.has_payment_intent) ||
           (a.stripe_status === STRIPE_NO_INTENT_CREATED && !a.has_payment_intent));
       if (!proven) {
-        return { kind: "unclear", label: "Charge status unclear", blocksNewCharge: true, mayRefreshCharge: false };
+        return {
+          kind: "unclear",
+          label: "Charge status unclear",
+          blocksNewCharge: true,
+          mayRefreshCharge: false,
+          // The server re-verifies everything with Stripe; this only decides whether to OFFER the control.
+          mayCloseDeclined: uncaptured && !!a.has_payment_intent,
+        };
       }
       if (a.failure_code === "requires_action_canceled") {
         return {

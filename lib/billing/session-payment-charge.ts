@@ -941,6 +941,24 @@ async function retainNonterminalPaymentIntent(args: {
   return false;
 }
 
+// The ONE paymentIntents.cancel call site (pinned in scripts/check-stripe-gates.mjs). Both the
+// off-session requires_action finalizer below and the owner-only "Close declined attempt"
+// (lib/billing/close-declined-fee-attempt.ts) route through it, so there is exactly one place that voids a PaymentIntent. It returns the
+// cancelled PaymentIntent ONLY when Stripe's own response confirms the same id, amount and currency
+// are `canceled`; anything else throws, and the caller must treat the outcome as unresolved.
+export async function cancelPaymentIntentConfirmed(
+  stripe: Stripe,
+  pi: { id: string; amount: number; currency: string },
+  stripeAccountId: string,
+): Promise<Stripe.PaymentIntent> {
+  const canceled = await stripe.paymentIntents.cancel(pi.id, undefined, { stripeAccount: stripeAccountId });
+  if (canceled.status !== "canceled" || canceled.id !== pi.id
+      || canceled.amount !== pi.amount || canceled.currency !== pi.currency) {
+    throw new Error("payment_intent_cancel_not_confirmed");
+  }
+  return canceled;
+}
+
 // PR #320: safely finalize a PaymentIntent that resolved to `requires_action`
 // (off-session SCA). A `requires_action` PI is NOT terminal on Stripe: the
 // cardholder could complete authentication out-of-band and the PI could later
@@ -971,15 +989,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
       stripePaymentIntentId: args.pi.id, attemptId: args.attemptId };
   }
   try {
-    const canceled = await args.stripe.paymentIntents.cancel(
-      args.pi.id,
-      undefined,
-      { stripeAccount: args.stripeAccountId },
-    );
-    if (canceled.status !== "canceled" || canceled.id !== args.pi.id
-        || canceled.amount !== args.pi.amount || canceled.currency !== args.pi.currency) {
-      throw new Error("payment_intent_cancel_not_confirmed");
-    }
+    const canceled = await cancelPaymentIntentConfirmed(args.stripe, args.pi, args.stripeAccountId);
     // PI is now 'canceled' on Stripe and can never succeed: terminal 'failed'
     // is now truthful and cannot diverge.
     const failedPersisted = await writeFailedOutcome({

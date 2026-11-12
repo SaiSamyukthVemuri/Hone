@@ -31,6 +31,8 @@ export type FeeCardAttempt = {
     label: string;
     blocksNewCharge: boolean;
     mayRefreshCharge: boolean;
+    /** Owner may ask to cancel this attempt's own PaymentIntent (E1). */
+    mayCloseDeclined: boolean;
   };
   /** Server-computed through the shared refundDisplayState. `line` is null when nothing is refunded or in flight. */
   refund: { kind: string; line: string | null; mayStartRefund: boolean };
@@ -87,6 +89,7 @@ export function projectFeeAttempt(
       label: state.label,
       blocksNewCharge: state.blocksNewCharge,
       mayRefreshCharge: state.mayRefreshCharge,
+      mayCloseDeclined: !!state.mayCloseDeclined,
     },
     // Only the owner may start a refund (the server refuses anyone else; the button is hidden too).
     refund: { kind: r.display.kind, line: r.line, mayStartRefund: isOwner && r.display.mayStartRefund },
