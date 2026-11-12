@@ -50,6 +50,15 @@ export type FeeAttemptState = {
   mayRefreshCharge: boolean;
 };
 
+/**
+ * E2 (Sam, 13 Nov): the stored fact "Stripe definitively refused the create and no PaymentIntent exists".
+ * The runner writes it into stripe_status ONLY after a definitive, non-card refusal (invalid request,
+ * authentication, permission, rate limit) whose error carries no PaymentIntent. A card error without an
+ * intent is ambiguous and never gets it. It is not a Stripe status value, so it can never be confused
+ * with a live PaymentIntent state.
+ */
+export const STRIPE_NO_INTENT_CREATED = "no_intent_created";
+
 /** A pending charge older than this has had time to finish; if it did not, nobody knows. */
 export const FEE_PENDING_WINDOW_MS = 10 * 60 * 1000;
 
@@ -66,12 +75,18 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
       return { kind: "cancelled", label: "Cancelled before charging", blocksNewCharge: false, mayRefreshCharge: false };
     case "failed": {
       // Sam's ruling: "failed" and "needs action" are OUR labels. The appointment is freed only when the
-      // stored provider facts prove the PaymentIntent is terminal and uncollectable: Stripe status
-      // `canceled`, a PaymentIntent id on the attempt, and no capture (no charged_at, no charge id).
+      // stored provider facts prove nothing can collect: a PaymentIntent Stripe confirmed `canceled` with no
+      // capture, or a definitive refusal that created no PaymentIntent (E2).
       // (The runner verified id/amount/currency against the cancel response before writing `canceled`.)
       // Anything missing or contradictory BLOCKS: the PaymentIntent may still collect, so a second one
       // must never be created. No control is offered; the same attempt is reconciled by webhook/review.
-      const proven = a.stripe_status === "canceled" && !!a.has_payment_intent && !a.charged_at && !a.stripe_charge_id;
+      const uncaptured = !a.charged_at && !a.stripe_charge_id;
+      // Proof 1: the PaymentIntent exists and Stripe confirmed it canceled.
+      // Proof 2 (E2): Stripe definitively refused the create and no PaymentIntent exists (nothing can collect).
+      const proven =
+        uncaptured &&
+        ((a.stripe_status === "canceled" && !!a.has_payment_intent) ||
+          (a.stripe_status === STRIPE_NO_INTENT_CREATED && !a.has_payment_intent));
       if (!proven) {
         return { kind: "unclear", label: "Charge status unclear", blocksNewCharge: true, mayRefreshCharge: false };
       }

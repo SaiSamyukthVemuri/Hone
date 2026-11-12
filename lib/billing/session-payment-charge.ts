@@ -7,6 +7,7 @@ import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
+import { STRIPE_NO_INTENT_CREATED } from "@/lib/billing/manual-fee-attempt-state";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
@@ -1774,12 +1775,15 @@ export async function runSessionPaymentCharge(args: {
         return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
           attemptId: attemptRow.id, ...(piId ? { stripePaymentIntentId: piId } : {}) };
       }
+      // E2: record "no PaymentIntent was created" only when Stripe definitively refused AND the error
+      // carries no intent AND it is not a card error (a card error without an intent is ambiguous).
+      const noIntentProven = !piId && !piStatus && !(err instanceof Stripe.errors.StripeCardError);
       const failedPersisted = await writeFailedOutcome({
         attemptId: attemptRow.id,
         studioId: attemptRow.studio_id,
         clientId: attemptRow.client_id,
         paymentIntentId: piId,
-        stripeStatus: piStatus,
+        stripeStatus: piStatus ?? (noIntentProven ? STRIPE_NO_INTENT_CREATED : null),
         failureCode: err.code ?? piStatus,
         failureMessage: "Stripe could not charge the saved card.",
         expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,

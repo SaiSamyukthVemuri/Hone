@@ -64,6 +64,22 @@ describe("feeAttemptState", () => {
         expect(s.label).not.toMatch(/nothing was taken/);
       }
     });
+    describe("E2: a definitive refusal that created no PaymentIntent frees; anything ambiguous blocks", () => {
+      const NOINTENT = { status: "failed", failure_code: "parameter_invalid_empty", has_payment_intent: false, stripe_status: "no_intent_created", charged_at: null, stripe_charge_id: null };
+      it("the stored fact with no PaymentIntent and no capture frees the appointment", () => {
+        expect(feeAttemptState(NOINTENT, NOW)).toMatchObject({ kind: "failed", blocksNewCharge: false });
+      });
+      it("contradicted by a PaymentIntent id, a capture or a charge id: BLOCKS", () => {
+        for (const over of [{ has_payment_intent: true }, { charged_at: "2026-11-01T10:00:00Z" }, { stripe_charge_id: "ch_x" }]) {
+          expect(feeAttemptState({ ...NOINTENT, ...over }, NOW), JSON.stringify(over)).toMatchObject({ kind: "unclear", blocksNewCharge: true });
+        }
+      });
+      it("a failed row with NO stored fact at all (null/unknown/odd), or the wrong fact for its shape, BLOCKS", () => {
+        for (const stripe_status of [null, undefined, "", "weird", "no_intent", "requires_payment_method", "canceled"]) {
+          expect(feeAttemptState({ ...NOINTENT, stripe_status }, NOW), String(stripe_status)).toMatchObject({ blocksNewCharge: true });
+        }
+      });
+    });
     it("a failed LABEL with missing or contradictory provider fields BLOCKS", () => {
       for (const over of [{ has_payment_intent: false }, { charged_at: "2026-11-01T10:00:00Z" }, { stripe_charge_id: "ch_x" }, { stripe_status: undefined, has_payment_intent: undefined }]) {
         expect(feeAttemptState({ ...PROVEN, ...over }, NOW), JSON.stringify(over)).toMatchObject({ blocksNewCharge: true });

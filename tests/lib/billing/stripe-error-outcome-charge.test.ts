@@ -273,6 +273,29 @@ describe("HON-11 #1 charge: a DEFINITIVE refusal is still terminal (unchanged)",
     });
   }
 
+  describe("E2: the stored 'no PaymentIntent was created' fact", () => {
+    const failedWrite = () => h.updates.find((u) => u.status === "failed") as Record<string, unknown> | undefined;
+    for (const [name, make] of DEFINITIVE.filter(([n]) => !n.includes("CardError"))) {
+      it(`${name} with no intent: records no_intent_created (this is what frees the appointment)`, async () => {
+        h.createError = make();
+        await run();
+        expect(failedWrite()).toMatchObject({ stripe_payment_intent_id: null, stripe_status: "no_intent_created" });
+      });
+    }
+    it("a CardError with NO intent on it is ambiguous: failed, but NO no_intent_created fact (it keeps blocking)", async () => {
+      h.createError = new Stripe.errors.StripeCardError(raw({ code: "card_declined", type: "card_error", statusCode: 402 }));
+      await run();
+      expect(failedWrite()).toMatchObject({ stripe_payment_intent_id: null, stripe_status: null });
+    });
+    for (const [name, make] of AMBIGUOUS) {
+      it(`${name}: never records the fact (the row is not even written failed)`, async () => {
+        h.createError = make();
+        await run();
+        expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(false);
+      });
+    }
+  });
+
   it("authentication_required still shows its own message", async () => {
     h.createError = new Stripe.errors.StripeCardError(
       raw({ code: "authentication_required", type: "card_error", statusCode: 402 }),
