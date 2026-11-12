@@ -23,7 +23,7 @@ export default async function ConsentSettingsPage() {
   if (practitioner.role !== "owner") {
     return <OwnerOnlyNotice>Only studio owners can manage consent forms.</OwnerOnlyNotice>;
   }
-  const templates = await getConsentTemplatesForStudio(studio.id);
+  const templates = await getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: true });
 
   return (
     <section className="flex flex-col gap-8">

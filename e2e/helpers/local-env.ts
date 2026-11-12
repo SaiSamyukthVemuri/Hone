@@ -242,6 +242,12 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // when the outer process asks for it, so ordinary e2e runs are unmeasured
   // and unaffected.
   ...(process.env.HONE_PERF_TIMING === "1" ? { HONE_PERF_TIMING: "1" } : {}),
+  // Dashboard Needs attention "Dismiss" is OFF unless the outer process turns it on (lib/dashboard/dismissals-gate.ts). It needs
+  // migration 0298, so only a run on a stack that has it sets this; every ordinary run is the gate-OFF regression proof.
+  ...(process.env.HONE_DASHBOARD_DISMISSALS_ENABLED === "true" ? { HONE_DASHBOARD_DISMISSALS_ENABLED: "true" } : {}),
+  // Needs attention unpaid reminders are OFF unless the outer process turns them on (lib/dashboard/unpaid-gate.ts, HON-65). Forwarded
+  // only when set, so every ordinary run is the gate-OFF proof.
+  ...(process.env.HONE_DASHBOARD_UNPAID_ENABLED === "true" ? { HONE_DASHBOARD_UNPAID_ENABLED: "true" } : {}),
   // MPX-03's synthetic machine profile, forwarded on EXACTLY the same terms as
   // HONE_PERF_TIMING above and for the same reason: webServer.env REPLACES
   // process.env, so a variable the Next server must see has to be listed here.

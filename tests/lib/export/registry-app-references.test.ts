@@ -83,6 +83,13 @@ const EXPORT_MODULES = [
 const readsTable = (code: string, table: string) =>
   new RegExp(String.raw`\.from\(\s*["'\`]${table}["'\`]\s*\)`).test(code);
 
+/** The code calls `fn` through the RPC door: `.rpc("fn"`, any quote style. */
+const callsRpc = (code: string, fn: string) => new RegExp(String.raw`\.rpc\(\s*["'\`]${fn}["'\`]`).test(code);
+
+/** Exported-through-a-function resources whose migration is not in this tree yet. Each entry is deleted, by the guard itself going red, the
+ * moment the snapshot contains the table and the function. */
+const MIGRATION_PENDING_RPC_EXPORTS: Readonly<Record<string, string>> = {};
+
 /** Application files a reason names, e.g. app/(app)/calendar/x.ts or lib/stripe/account.ts. */
 const NAMED_FILE = /\b(?:app|lib|components)\/[\w\-[\]().\/]*?\.tsx?\b/g;
 
@@ -96,12 +103,27 @@ function appReferenceFaults(
   sources: Source[],
   fileExists: (rel: string) => boolean,
   exportModules: readonly string[] = EXPORT_MODULES,
+  migrationPending: Readonly<Record<string, string>> = MIGRATION_PENDING_RPC_EXPORTS,
 ): string[] {
   const faults: string[] = [];
   const tables = new Set(snapshot.public.tables);
   const exportCode = sources.filter((s) => exportModules.includes(s.rel));
   for (const rel of exportModules) if (!fileExists(rel)) faults.push(`export module ${rel} does not exist`);
   for (const [resource, d] of Object.entries(registry)) {
+    if (d.kind === "exported" && d.rpcSource) {
+      // An rpc-sourced table has no browser surface: the claim is that the app CALLS its function and never reads the table.
+      const fn = d.rpcSource.fn;
+      if (!sources.some((s) => callsRpc(s.code, fn))) faults.push(`exported ${resource} is not read by the export (no .rpc("${fn}") in application source)`);
+      if (sources.some((s) => readsTable(s.code, resource))) faults.push(`exported ${resource} is read directly with .from(); it may only be read through ${fn}`);
+      const present = tables.has(resource) && snapshot.public.functions.includes(fn);
+      if (migrationPending[resource] === undefined) {
+        if (!tables.has(resource)) faults.push(`exported ${resource} is not a table in the schema snapshot`);
+        if (!snapshot.public.functions.includes(fn)) faults.push(`exported ${resource}: ${fn} is not a function in the schema snapshot`);
+      } else if (present) {
+        faults.push(`${resource} is listed as waiting for migration ${migrationPending[resource]} but the schema snapshot now has it; delete the allowance`);
+      }
+      continue;
+    }
     if (d.kind === "exported" && !resource.startsWith(STORAGE_RESOURCE_PREFIX)) {
       if (!tables.has(resource)) faults.push(`exported ${resource} is not a table in the schema snapshot`);
       if (!exportCode.some((s) => readsTable(s.code, resource))) {
@@ -183,6 +205,32 @@ describe("the export registry's application claims hold against application sour
     expect(appReferenceFaults(registry, snapshot, sources, exists, fixtureExport)).toEqual([
       'exported widgets is not read by the export (no .from("widgets") in lib/export/build.ts)',
     ]);
+  });
+
+  describe("an rpc-sourced export (a table no browser role can read)", () => {
+    const rpcRegistry = {
+      ...registry,
+      answers: { kind: "exported", rpcSource: { fn: "export_answers", keyColumn: "id", returns: ["id"] } } as unknown as ResourceDisposition,
+    };
+    const snap: Snapshot = { ...snapshot, public: { tables: [...snapshot.public.tables, "answers"], functions: [...snapshot.public.functions, "export_answers"] } };
+    const withRpc: Source[] = [...good, { rel: "lib/waitlist/x.ts", code: 'admin.rpc("export_answers", {})' }];
+    it("is clean when the function is called, the table is never read, and both are in the snapshot", () => {
+      expect(appReferenceFaults(rpcRegistry, snap, withRpc, () => true, fixtureExport, {})).toEqual([]);
+    });
+    it("RED when nothing calls the function", () => {
+      expect(appReferenceFaults(rpcRegistry, snap, good, () => true, fixtureExport, {}).join()).toMatch(/no \.rpc\("export_answers"\)/);
+    });
+    it("RED when the table is read directly", () => {
+      const direct = [...withRpc, { rel: "lib/export/build.ts", code: 'supabase.from("widgets"); supabase.from("answers")' }];
+      expect(appReferenceFaults(rpcRegistry, snap, direct, () => true, fixtureExport, {}).join()).toMatch(/read directly with \.from\(\)/);
+    });
+    it("RED when the function is missing from the snapshot, unless its migration is explicitly pending", () => {
+      expect(appReferenceFaults(rpcRegistry, snapshot, withRpc, () => true, fixtureExport, {}).join()).toMatch(/not a table in the schema snapshot/);
+      expect(appReferenceFaults(rpcRegistry, snapshot, withRpc, () => true, fixtureExport, { answers: "0325" })).toEqual([]);
+    });
+    it("RED when the allowance outlives the migration", () => {
+      expect(appReferenceFaults(rpcRegistry, snap, withRpc, () => true, fixtureExport, { answers: "0325" }).join()).toMatch(/delete the allowance/);
+    });
   });
 
   it("RED when an export module is gone", () => {
