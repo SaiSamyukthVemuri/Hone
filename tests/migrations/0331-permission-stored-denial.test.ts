@@ -1,16 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0331 corrects two helpers of the APPLIED migration 0287 by create-or-replace. 0287's bytes stay frozen.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0331")}`, "utf8");
 const code = () => sql().replace(/--.*$/gm, "");
 
 describe("0331 stored denial before default (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once (0332 is the repo maximum now; only the maximum asserts isRepoMax)", () => {
     expect(countVersion("0331")).toBe(1);
-    expect(isRepoMax("0331")).toBe(true);
   });
   it("0287 is byte-identical to the applied version (f302e7ba…), so the correction can only be forward", () => {
     const h = createHash("sha256").update(readFileSync("supabase/migrations/0287_roles_permission_engine.sql")).digest("hex");
