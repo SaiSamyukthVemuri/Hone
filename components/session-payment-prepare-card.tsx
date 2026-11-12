@@ -28,6 +28,8 @@ import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   derivePaymentSummary,
+  REFUND_REVIEW_HEADING,
+  REFUND_ACTION_HEADING,
   humanChargeFailure,
   maskReceiptEmail,
   technicalRowsForAttempt,
@@ -977,28 +979,25 @@ function SucceededPanel({
   // "Paid" for a live charge, "Refunded" once the row carries
   // refund_status='succeeded', so the practitioner never sees a paid heading
   // and a refunded sub-panel fighting each other. Sub-panels handle the rest.
-  const refunded =
-    refundDisplayState({
-      chargeStatus: attempt.status,
-      amountCents: attempt.amountCents,
-      refundStatus: attempt.refundStatus,
-      refundAmountCents: attempt.refundAmountCents,
-      providerRefundStatus: attempt.stripeRefundStatus,
-      stripeRefundId: attempt.stripeRefundId,
-    }).kind === "refunded";
+  const summary = derivePaymentSummary(attempt);
+  const refunded = summary.kind === "refunded";
   return (
     <div
       className={
-        refunded
-          ? "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
-          : "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+        // Keyed on the SUMMARY KIND (Insurance N1): only a paid charge is styled as paid. Refunded, pending and
+        // unresolved states are never dressed in the emerald "paid" container.
+        summary.kind === "paid" || summary.kind === "paid_receipt_failed"
+          ? "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+          : summary.kind === "refund_review" || summary.kind === "refund_action"
+            ? "rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20"
+            : "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
       }
     >
       {/* Compact practitioner face: "Paid · $X" (or "Refunded · $X"), with the
           charge date. Processor identifiers move into the owner-only disclosure
           below, never shown in the default charting view. */}
       <PaymentSummaryCard
-        summary={derivePaymentSummary(attempt)}
+        summary={summary}
         subLine={
           refunded ? (
             attempt.refundedAt ? (
@@ -1283,27 +1282,26 @@ function RefundSubPanel({
 
       {persistedNeedsAction && !localRefunded && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          <p className="font-medium">Refund needs action at Stripe.</p>
+          <p className="font-medium">{REFUND_ACTION_HEADING}.</p>
           <p className="mt-1">Stripe has not finished this refund. Do not refund again.</p>
         </div>
       )}
 
-      {persistedNeedsReview && !localRefunded && (
+      {(persistedNeedsReview || persistedUnclear) && !localRefunded && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          <p className="font-medium">Refund needs review.</p>
-          <p className="mt-1">
-            Stripe has a record of a refund here that we could not confirm. The studio operator must review it before
-            another refund is started.
-          </p>
-        </div>
-      )}
-
-      {persistedUnclear && !localRefunded && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          <p className="font-medium">Refund status is unclear.</p>
-          <p className="mt-1">
-            Our record and Stripe do not agree. Do not refund again until this is checked.
-          </p>
+          {/* ONE heading for every unresolved state (Sam, 12 Nov): the same words as the card header
+              (REFUND_REVIEW_HEADING). The explanation under it differs by cause. */}
+          <p className="font-medium">{REFUND_REVIEW_HEADING}.</p>
+          {persistedNeedsReview ? (
+            <p className="mt-1">
+              Stripe has a record of a refund here that we could not confirm. The studio owner must review it before
+              another refund is started.
+            </p>
+          ) : (
+            <p className="mt-1">
+              Our record and Stripe do not agree. Do not refund again until the studio owner has reviewed this.
+            </p>
+          )}
         </div>
       )}
 

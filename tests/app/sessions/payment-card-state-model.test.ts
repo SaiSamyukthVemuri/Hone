@@ -81,10 +81,11 @@ describe("PR #181: prepareJustSucceeded banner is single-render", () => {
 });
 
 describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top heading", () => {
-  it("the panel declares a refunded discriminator off refundDisplayState (both refund columns), not the single column", () => {
+  it("the panel derives ONE summary (derivePaymentSummary, which reads both refund columns) and `refunded` is its kind, never the single column", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/const refunded =\s*refundDisplayState\(\{[\s\S]{0,400}providerRefundStatus:\s*attempt\.stripeRefundStatus[\s\S]{0,120}\}\)\.kind === "refunded";/);
-    expect(block).not.toMatch(/const refunded = attempt\.refundStatus/);
+    expect(block).toMatch(/const summary = derivePaymentSummary\(attempt\);/);
+    expect(block).toMatch(/const refunded = summary\.kind === "refunded";/);
+    expect(block).not.toMatch(/attempt\.refundStatus/);
   });
 
   it("the single headline comes from derivePaymentSummary ('Paid' / 'Refunded'), not dual headings", () => {
@@ -98,9 +99,9 @@ describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top 
 
   it("the refunded variant uses a neutral (not green) palette", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/refunded\s*\?[\s\S]{0,200}border-neutral-200/);
-    // The paid (non-refunded) branch is the emerald one.
-    expect(block).toMatch(/border-emerald-200/);
+    // Insurance N1: the container is keyed on the SUMMARY KIND. Only paid / paid_receipt_failed are emerald.
+    expect(block).toMatch(/summary\.kind === "paid" \|\| summary\.kind === "paid_receipt_failed"\s*\?[\s\S]{0,120}border-emerald-200/);
+    expect(block).toMatch(/border-neutral-200 bg-white/);
   });
 
   it("the refund amount + timestamp render in the compact subline (refund id is owner-only)", () => {

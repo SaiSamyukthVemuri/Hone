@@ -63,7 +63,7 @@ describe("refund panel: the provider's state is read, not only ours", () => {
   it("ours says succeeded, the provider says FAILED or CANCELED: unclear, never 'succeeded', no retry", () => {
     for (const p of ["failed", "canceled"]) {
       const html = render({ refundStatus: "succeeded", refundAmountCents: 12_000, stripeRefundStatus: p });
-      expect(html, p).toContain("Refund status is unclear.");
+      expect(html, p).toContain("Our record and Stripe do not agree.");
       expect(html, p).toContain("Do not refund again");
       expect(html, p).not.toContain("Refund succeeded.");
       expect(html, p).not.toContain("Refund failed.");
@@ -87,30 +87,89 @@ describe("refund panel: the provider's state is read, not only ours", () => {
   it("our claim held but the provider says failed/canceled: unclear (a held claim is never released on a guess), no retry", () => {
     for (const p of ["failed", "canceled"]) {
       const html = render({ refundStatus: "pending_stripe", stripeRefundStatus: p });
-      expect(html, p).toContain("Refund status is unclear.");
+      expect(html, p).toContain("Our record and Stripe do not agree.");
       expect(html, p).not.toContain("Refund failed.");
       expect(canRetry(html), p).toBe(false);
     }
   });
   it("a provider refund we never recorded is unclear and cannot be retried", () => {
     const html = render({ refundStatus: null, stripeRefundStatus: "succeeded" });
-    expect(html).toContain("Refund status is unclear.");
+    expect(html).toContain("Our record and Stripe do not agree.");
     expect(canRetry(html)).toBe(false);
   });
   it("an unrecognised value on either side is unclear", () => {
-    expect(render({ refundStatus: "weird" })).toContain("Refund status is unclear.");
-    expect(render({ stripeRefundStatus: "weird" })).toContain("Refund status is unclear.");
+    expect(render({ refundStatus: "weird" })).toContain("Our record and Stripe do not agree.");
+    expect(render({ stripeRefundStatus: "weird" })).toContain("Our record and Stripe do not agree.");
+  });
+});
+
+const REVIEW = "Refund needs review";
+const panelHeading = (html: string) => html.match(/<p class="font-medium">(Refund needs [^<]*?)\.<\/p>/)?.[1] ?? null;
+const headerHeading = (html: string) => html.match(/data-testid="payment-summary-(?:refund_review|refund_action)"[\s\S]*?<span>([^<]*?)(?: · [^<]*)?<\/span><\/p>/)?.[1] ?? null;
+
+describe("Sam, 12 Nov: ONE heading 'Refund needs review' in the header AND the panel, for every unresolved state", () => {
+  const unresolved: Array<[string, Record<string, unknown>]> = [
+    ["unclear: disagreement", { refundStatus: "succeeded", refundAmountCents: 12_000, stripeRefundStatus: "failed" }],
+    ["unclear: unknown value", { refundStatus: "weird" }],
+    ["unclear: unrecorded provider refund", { refundStatus: null, stripeRefundStatus: "succeeded" }],
+    ["needs_review: provider failed", { refundStatus: null, stripeRefundStatus: "failed" }],
+    ["needs_review: id only", { refundStatus: "failed", stripeRefundId: "re_1" }],
+  ];
+  for (const [name, a] of unresolved) {
+    it(`${name}: header and panel headings are EQUAL and read '${REVIEW}'`, () => {
+      const html = render(a);
+      expect(headerHeading(html), "header").toBe(REVIEW);
+      expect(panelHeading(html), "panel").toBe(REVIEW);
+      expect(headerHeading(html)).toBe(panelHeading(html));
+      expect(html).toContain("studio owner");
+      expect(html).not.toContain("studio operator");
+      expect(html).not.toContain("Refund status is unclear");
+    });
+  }
+  it("the explanation is accurate per cause: an id with no status says 'we could not confirm', never 'did not complete'", () => {
+    const idOnly = render({ refundStatus: "failed", stripeRefundId: "re_1" });
+    expect(idOnly).toContain("Stripe has a record of a refund here that we could not confirm.");
+    expect(idOnly).not.toContain("did not complete");
+    expect(render({ refundStatus: "weird" })).toContain("Our record and Stripe do not agree. Do not refund again until the studio owner has reviewed this.");
+  });
+  it("requires_action: header AND panel both say action is needed at Stripe (not 'processing')", () => {
+    const html = render({ refundStatus: "succeeded", refundAmountCents: 12_000, stripeRefundStatus: "requires_action" });
+    expect(headerHeading(html)).toBe("Refund needs action at Stripe");
+    expect(panelHeading(html)).toBe("Refund needs action at Stripe");
+    expect(html).not.toContain("Refund processing");
+  });
+  it("the refund id is never printed in an unresolved state's panel or header (disclosure only, exactly once)", () => {
+    const ID = "re_SECRET_REFUND_ID";
+    const html = render({ refundStatus: "failed", stripeRefundId: ID }, true);
+    expect(html.split(ID)).toHaveLength(2);
+    const at = html.indexOf(ID);
+    const open = html.lastIndexOf("technical-payment-details", at);
+    expect(open).toBeGreaterThan(-1);
+    expect(html.slice(open, at)).not.toContain("</details>");
+    expect(render({ refundStatus: "failed", stripeRefundId: ID }, false)).not.toContain(ID);
+  });
+});
+
+describe("Insurance N1: the card container is keyed on the summary kind, not styled as paid", () => {
+  const emerald = (html: string) => html.includes("border-emerald-200 bg-emerald-50/60");
+  it("paid -> emerald; refunded / pending / unresolved / action -> never emerald", () => {
+    expect(emerald(render({}))).toBe(true);
+    expect(emerald(render({ refundStatus: "succeeded", refundAmountCents: 12_000 }))).toBe(false);
+    expect(emerald(render({ refundStatus: "pending_stripe" }))).toBe(false);
+    expect(emerald(render({ refundStatus: "succeeded" }))).toBe(false); // no readable amount -> review
+    expect(emerald(render({ refundStatus: "succeeded", refundAmountCents: 12_000, stripeRefundStatus: "requires_action" }))).toBe(false);
+    expect(emerald(render({ refundStatus: null, stripeRefundStatus: "failed" }))).toBe(false);
   });
 });
 
 describe("refund panel: a provider trace blocks a new attempt (Insurance F1; the runner refuses it as needs_manual_review)", () => {
-  it("ours failed or null + provider failed/canceled: 'needs review' for the studio operator, never 'failed', NO retry button", () => {
+  it("ours failed or null + provider failed/canceled: 'needs review' for the studio owner, never 'failed', NO retry button", () => {
     for (const o of [null, "failed"]) {
       for (const p of ["failed", "canceled"]) {
         const html = render({ refundStatus: o, stripeRefundStatus: p });
         expect(html, `${o}/${p}`).toContain("Refund needs review.");
         expect(html, `${o}/${p}`).toContain("Stripe has a record of a refund here that we could not confirm.");
-        expect(html, `${o}/${p}`).toContain("studio operator must review");
+        expect(html, `${o}/${p}`).toContain("studio owner must review");
         expect(html, `${o}/${p}`).not.toContain("did not complete");
         expect(html, `${o}/${p}`).not.toContain("Refund failed.");
         expect(canRetry(html), `${o}/${p}`).toBe(false);
@@ -176,18 +235,21 @@ describe("header (F2): never 'Refunded' beside a panel that says the status is u
     for (const p of ["failed", "canceled"]) {
       const html = render({ ...FULL, stripeRefundStatus: p, refundedAt: "2026-08-02T00:00:00.000Z" });
       expect(html, p).toContain("Refund needs review");
-      expect(html, p).toContain("Refund status is unclear.");
+      expect(html, p).toContain("Our record and Stripe do not agree.");
       expect(html, p).not.toMatch(/>Refunded</);
       expect(html, p).not.toMatch(/Refunded\s*<[^>]*>[^<]*<\/time>|Refunded \d/);
     }
   });
-  it("ours succeeded, provider still pending/requires_action: header 'Refund processing'", () => {
-    for (const p of ["pending", "requires_action"]) {
-      const html = render({ ...FULL, stripeRefundStatus: p });
-      expect(html, p).toContain("Refund processing");
-      expect(html, p).not.toMatch(/>Refunded</);
-    }
+  it("ours succeeded, provider still pending: header 'Refund processing'; requires_action: 'Refund needs action at Stripe' (never 'processing')", () => {
+    const pending = render({ ...FULL, stripeRefundStatus: "pending" });
+    expect(pending).toContain("Refund processing");
+    expect(pending).not.toMatch(/>Refunded</);
+    const action = render({ ...FULL, stripeRefundStatus: "requires_action" });
+    expect(action).toContain("Refund needs action at Stripe");
+    expect(action).not.toContain("Refund processing");
+    expect(action).not.toMatch(/>Refunded</);
   });
+
 });
 
 describe("settlement gate (F3): cash-replacement controls open only when BOTH columns agree the whole charge went back", () => {

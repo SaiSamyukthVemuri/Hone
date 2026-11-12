@@ -105,6 +105,7 @@ export type PaymentSummaryKind =
   | "refunded"
   | "refund_pending"
   | "refund_review"
+  | "refund_action"
   | "failed";
 
 export type PaymentSummary = {
@@ -117,6 +118,11 @@ export type PaymentSummary = {
   // The persisted attempt currency; null with an amount means UNKNOWN (printed as such).
   currency: PaymentCurrency | null;
 };
+
+// The words for an unresolved refund, ONE source for the card header and the refund panel (Sam, 12 Nov): the panel
+// heading and the header are equal by construction, and a test pins it.
+export const REFUND_REVIEW_HEADING = "Refund needs review";
+export const REFUND_ACTION_HEADING = "Refund needs action at Stripe";
 
 export function derivePaymentSummary(
   attempt: SessionPaymentExistingAttemptSummary | null,
@@ -140,11 +146,15 @@ export function derivePaymentSummary(
     if (refund.kind === "refunded") {
       return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents, currency };
     }
-    if (refund.kind === "pending" || refund.kind === "needs_action") {
+    if (refund.kind === "pending") {
       return { kind: "refund_pending", headline: "Refund processing", tone: "processing", amountCents, currency };
     }
+    // The provider says the refund needs action: the header says so too (it must not read "processing").
+    if (refund.kind === "needs_action") {
+      return { kind: "refund_action", headline: REFUND_ACTION_HEADING, tone: "issue", amountCents, currency };
+    }
     if (refund.kind === "unclear" || refund.kind === "needs_review") {
-      return { kind: "refund_review", headline: "Refund needs review", tone: "issue", amountCents, currency };
+      return { kind: "refund_review", headline: REFUND_REVIEW_HEADING, tone: "issue", amountCents, currency };
     }
     if (attempt.receiptStatus === "failed") {
       return { kind: "paid_receipt_failed", headline: "Paid", tone: "paid", amountCents, currency };

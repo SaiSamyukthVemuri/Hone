@@ -137,9 +137,12 @@ describe("derivePaymentSummary — one current headline per state", () => {
         tone: "issue",
       });
     }
-    for (const p of ["pending", "requires_action"]) {
-      expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: p }))).toMatchObject({ kind: "refund_pending" });
-    }
+    expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: "pending" }))).toMatchObject({ kind: "refund_pending" });
+    // N2: requires_action must say action is needed, not "processing"
+    expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: "requires_action" }))).toMatchObject({
+      kind: "refund_action",
+      headline: "Refund needs action at Stripe",
+    });
     // no readable refund amount, or an unknown value: not "Refunded"
     expect(derivePaymentSummary(attempt({ refundStatus: "succeeded" }))).toMatchObject({ kind: "refund_review" });
     expect(derivePaymentSummary(attempt({ refundStatus: "weird" }))).toMatchObject({ kind: "refund_review" });
