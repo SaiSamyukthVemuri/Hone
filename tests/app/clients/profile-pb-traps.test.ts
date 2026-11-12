@@ -36,12 +36,12 @@ describe("Billing is owner-only on the server (card, authorization, pricing)", (
     expect(PAGE.indexOf("redirect(`/clients/")).toBeLessThan(PAGE.indexOf("getClientById("));
   });
   it("the one session price on Sessions renders only from a price the loader returned (null for a non-owner)", () => {
-    expect(tabBlock('{activeTab === "sessions" && (')).toMatch(
+    expect(tabBlock('{activeTab === "sessions" && canViewRecords && (')).toMatch(
       /lastTreatment\.price_paid_cents != null &&\s*` · Session price/,
     );
   });
   it("no billing control is rendered on any other tab", () => {
-    for (const open of ['{activeTab === "overview" && (', '{activeTab === "messages" && (', '{activeTab === "sessions" && (']) {
+    for (const open of ['{activeTab === "overview" && (', '{activeTab === "messages" && (', '{activeTab === "sessions" && canViewRecords && (']) {
       const b = tabBlock(open);
       expect(b, open).not.toMatch(/<PaymentMethodCard|<AddPricingForm|lifetimeCents/);
     }

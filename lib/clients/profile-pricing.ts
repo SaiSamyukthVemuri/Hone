@@ -52,6 +52,16 @@ export const SERVICE_COLUMNS_WITHOUT_PRICE = [
 export type ProfileReadOptions = {
   /** Owners only. Absent or false: no client pricing, session price or service price is fetched. */
   includePrices?: boolean;
+  /** Absent or true: the client's sessions are read. false (the viewer lacks clin.view_records): no session or entry row is read at all. */
+  // A thunk is asked only AFTER the client has resolved for the studio (the Roles gate, clin.view_records): no gate and no session read happens
+  // for a client the viewer must not serve.
+  includeSessions?: boolean | (() => Promise<boolean>);
+  /**
+   * Skin type and legacy skin notes live on the client row but are part of the clinical record (clin.view_records, catalog DN-5). Absent or
+   * false (DENY by default), or a thunk that answers false: both arrive as null, so no surface can render or pass them on. Only true, or a thunk
+   * that answers true, carries them.
+   */
+  clinicalFields?: boolean | (() => Promise<boolean>);
 };
 
 /** The services column list for a read: "*" unless the caller must not carry the price. */

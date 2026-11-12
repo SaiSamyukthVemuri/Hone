@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
@@ -56,6 +57,12 @@ export async function signTreatmentImageUrl(
     const { data: row, error } = await query.maybeSingle();
     if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
     if (!row) return refused;
+
+    // Roles engine (0287), the STORAGE plane: no signed URL is issued unless the caller may view photos. The refusal is the
+    // same generic result as a missing image. Existing-snapshot basis: every active practitioner (unchanged).
+    if (!(await requirePermission(supabase, studioId, "clin.view_photos", { client: row.client_id })).allowed) {
+      return refused;
+    }
 
     // Trust boundary (PR #276): NEVER sign a path that does not bind to the
     // caller's studio + client. With a clientId, the path's client segment is

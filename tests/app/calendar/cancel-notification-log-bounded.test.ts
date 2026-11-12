@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
   sendCancellationEmail: vi.fn<(params: Record<string, unknown>) => Promise<unknown>>(),
 }));
 
+// The Roles engine has its own tests; this file is about the action around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://app.example.test" }));
 vi.mock("@/lib/supabase/queries", () => ({

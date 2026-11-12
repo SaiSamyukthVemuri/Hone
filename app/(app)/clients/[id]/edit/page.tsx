@@ -11,6 +11,7 @@ import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identit
 import { readLegalIdentity } from "@/lib/clients/legal-identity";
 import { LegalIdentityForm } from "@/components/legal-identity-form";
 import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { updateClientAction, unarchiveClientAction } from "../actions";
 import { ArchiveClientControl } from "./ArchiveClientControl";
 
@@ -21,7 +22,17 @@ export default async function EditClientPage({
 }) {
   const { id } = await params;
   const { studio } = await requirePractitionerWithStudio();
-  const data = await getClientById(studio.id, id);
+  // The edit form needs the client row only; no treatment record is read (clin.view_records).
+  // Skin type is a clinical-record field (clin.view_records): without it the value is not read into the form, the field is not shown and
+  // a save does not touch it.
+  let canViewRecords = false;
+  const data = await getClientById(studio.id, id, {
+    includeSessions: false,
+    clinicalFields: async () => {
+      canViewRecords = (await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed;
+      return canViewRecords;
+    },
+  });
   if (!data) notFound();
 
   const c = data.client;
@@ -70,6 +81,7 @@ export default async function EditClientPage({
         hiddenFields={{ client_id: id }}
         baseline={baselineFromRow(c as unknown as Record<string, unknown>)}
         saveAnywayLabel="Save changes anyway"
+        showSkinType={canViewRecords}
       />
 
       {legal.ok ? (
