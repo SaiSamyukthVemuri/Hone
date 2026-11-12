@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { dayPacketEntryHref } from "@/lib/records/print/day-entry";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
@@ -585,6 +586,12 @@ export default async function SessionDetailPage({
   // Everything above is server work the practitioner waits on; the render
   // below is what they finally see.
   domainSpan.end();
+  const printDayHref = dayPacketEntryHref({
+    viewer: practitioner,
+    clientId: id,
+    sessionStartedAt: session.started_at,
+    timezone: studio.timezone,
+  });
 
   return (
     <div className="flex flex-col gap-8">
@@ -605,6 +612,20 @@ export default async function SessionDetailPage({
             startedAtIso={session.started_at}
           />
         </div>
+        {/* HON-46: owner-only entry to the audited day packet for THIS client and THIS studio-local day. Built
+            only by dayPacketEntryHref (null for a non-owner, a future day or an unusable start), and never
+            prefetched or sent with a referrer: opening the page runs the audit and the clinical read. */}
+        {printDayHref !== null && (
+          <Link
+            href={printDayHref}
+            prefetch={false}
+            referrerPolicy="no-referrer"
+            data-testid="print-day-record-link"
+            className="inline-flex min-h-[44px] w-fit items-center text-sm text-neutral-600 underline hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            Print this day&rsquo;s record
+          </Link>
+        )}
         {/* PR #199 (Chloe iPad retest): the inline line under the
             title is the ONLY performer surface. The separate
             "Performed by" card/dropdown is gone; this line carries a
