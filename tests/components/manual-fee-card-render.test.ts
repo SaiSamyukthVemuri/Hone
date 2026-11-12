@@ -109,14 +109,14 @@ describe("states that must NOT offer a charge or a retry", () => {
     expect(html).not.toContain("fee-unclear-panel");
   });
   it("needs the client's action: says nothing was taken, offers no charge", () => {
-    const html = render([attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x" })]);
+    const html = render([attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x", stripe_status: "canceled" })]);
     expect(html).toContain("fee-needs-action-panel");
     expect(html).toContain("nothing was taken");
     expect(html).not.toContain("Charge failed.");
     noControls(html);
   });
   it("failed is failed, with the reason", () => {
-    const html = render([attempt({ ...LC, status: "failed", failure_code: "card_declined", failure_message: "Declined" })]);
+    const html = render([attempt({ ...LC, status: "failed", failure_code: "card_declined", failure_message: "Declined", stripe_status: "canceled", stripe_payment_intent_id: "pi_x" })]);
     expect(html).toContain("Charge failed.");
   });
 });
@@ -124,7 +124,7 @@ describe("states that must NOT offer a charge or a retry", () => {
 describe("charge history lists every attempt: amount, type, status, time, refund", () => {
   const rows = [
     attempt({ id: "a", ...LC, status: "succeeded", amount_cents: 5000, charged_at: "2026-11-02T10:00:00.000Z", refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded", refunded_at: "2026-11-03T09:00:00.000Z" }),
-    attempt({ id: "b", charge_type: "no_show", status: "failed", amount_cents: 3000, failure_code: "card_declined" }),
+    attempt({ id: "b", charge_type: "no_show", status: "failed", amount_cents: 3000, failure_code: "card_declined", stripe_status: "canceled", stripe_payment_intent_id: "pi_y" }),
     attempt({ id: "c", ...LC, status: "cancelled", amount_cents: 5000, cancelled_at: "2026-11-01T11:00:00.000Z" }),
   ];
   const html = render(rows);
@@ -180,7 +180,7 @@ describe("the card never calls an action while rendering", () => {
 });
 
 describe("F3: 'nothing was taken' only where the provider fact supports it", () => {
-  const cancelled = { status: "failed", failure_code: "requires_action_canceled" };
+  const cancelled = { status: "failed", failure_code: "requires_action_canceled", stripe_status: "canceled" };
   it("a requires_action cancel WITH the PaymentIntent and no capture says nothing was taken", () => {
     expect(render([attempt({ ...LC, ...cancelled, stripe_payment_intent_id: "pi_x" })])).toContain("nothing was taken");
   });

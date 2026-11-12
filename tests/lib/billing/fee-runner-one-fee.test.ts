@@ -229,7 +229,7 @@ const OK_PI = { id: "pi_ok", status: "succeeded", amount: AMOUNT, currency: "cad
 const sib = (over: Record<string, unknown>) => ({
   id: "77777777-7777-4777-8777-777777777777", charge_reason: "late_cancellation_fee", status: "succeeded",
   created_at: "2026-11-12T09:00:00.000Z", failure_code: null, stripe_payment_intent_id: "pi_other",
-  charged_at: "2026-11-12T09:01:00.000Z", updated_at: new Date().toISOString(), ...over,
+  charged_at: "2026-11-12T09:01:00.000Z", stripe_status: null, stripe_charge_id: null, updated_at: new Date().toISOString(), ...over,
 });
 
 describe("runner: the cross-type one-fee check runs before the claim and before any Stripe call", () => {
@@ -257,7 +257,7 @@ describe("runner: the cross-type one-fee check runs before the claim and before 
   }
   it("a definitively failed (or cancelled) other fee frees it: the charge runs", async () => {
     h.createReply = OK_PI;
-    h.siblings = [sib({ status: "failed", failure_code: "card_declined", charged_at: null }), sib({ id: "88888888-8888-4888-8888-888888888888", status: "cancelled", stripe_payment_intent_id: null, charged_at: null })];
+    h.siblings = [sib({ status: "failed", failure_code: "card_declined", charged_at: null, stripe_status: "canceled", stripe_charge_id: null }), sib({ id: "88888888-8888-4888-8888-888888888888", status: "cancelled", stripe_payment_intent_id: null, charged_at: null })];
     await run();
     expect(h.claimCalls).toBe(1);
     expect(h.createKeys).toHaveLength(1);

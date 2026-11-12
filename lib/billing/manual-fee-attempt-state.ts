@@ -35,6 +35,9 @@ export type FeeAttemptStateInput = {
   /** The provider's PaymentIntent id and our captured-at time: "nothing was taken" needs a provider object and no capture. */
   has_payment_intent?: boolean;
   charged_at?: string | null;
+  /** Stored provider facts (Sam's needs-action ruling): a `failed` row frees the appointment only when these PROVE the PaymentIntent is canceled and uncaptured. */
+  stripe_status?: string | null;
+  stripe_charge_id?: string | null;
   /** payment_charge_attempts.updated_at: when the row last changed (the claim sets pending_stripe). */
   updated_at?: string | null;
 };
@@ -61,22 +64,28 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
       return { kind: "succeeded", label: "Charged", blocksNewCharge: true, mayRefreshCharge: false };
     case "cancelled":
       return { kind: "cancelled", label: "Cancelled before charging", blocksNewCharge: false, mayRefreshCharge: false };
-    case "failed":
+    case "failed": {
+      // Sam's ruling: "failed" and "needs action" are OUR labels. The appointment is freed only when the
+      // stored provider facts prove the PaymentIntent is terminal and uncollectable: Stripe status
+      // `canceled`, a PaymentIntent id on the attempt, and no capture (no charged_at, no charge id).
+      // (The runner verified id/amount/currency against the cancel response before writing `canceled`.)
+      // Anything missing or contradictory BLOCKS: the PaymentIntent may still collect, so a second one
+      // must never be created. No control is offered; the same attempt is reconciled by webhook/review.
+      const proven = a.stripe_status === "canceled" && !!a.has_payment_intent && !a.charged_at && !a.stripe_charge_id;
+      if (!proven) {
+        return { kind: "unclear", label: "Charge status unclear", blocksNewCharge: true, mayRefreshCharge: false };
+      }
       if (a.failure_code === "requires_action_canceled") {
-        // "Nothing was taken" is a provider fact: it needs the PaymentIntent the runner cancelled and no
-        // capture time. Without both, we cannot say it, so the state is unclear and no charge is offered.
-        if (!a.has_payment_intent || a.charged_at) {
-          return { kind: "unclear", label: "Charge status unclear", blocksNewCharge: true, mayRefreshCharge: false };
-        }
         return {
           kind: "needs_action",
           label: "Needs the client's action; nothing was taken",
-          // Blocks a new fee until the owner resolves it (one manual fee per appointment).
-          blocksNewCharge: true,
+          // Provider-proven cancelled and uncaptured: it can never collect, so a new fee may be prepared.
+          blocksNewCharge: false,
           mayRefreshCharge: false,
         };
       }
       return { kind: "failed", label: "Charge failed", blocksNewCharge: false, mayRefreshCharge: false };
+    }
     case "pending_stripe": {
       const t = a.updated_at ? Date.parse(a.updated_at) : Number.NaN;
       const age = now.getTime() - t;

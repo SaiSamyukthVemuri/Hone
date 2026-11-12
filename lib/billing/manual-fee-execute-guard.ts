@@ -27,7 +27,7 @@ export async function oneFeeExecuteVerdict(
   if (!attempt.appointment_id || !attempt.created_at) return ONE_FEE_UNREADABLE_MESSAGE;
   const res: { data: Array<Record<string, unknown>> | null; error: unknown } = await (admin
     .from("payment_charge_attempts")
-    .select("id, charge_reason, status, created_at, failure_code, stripe_payment_intent_id, charged_at, updated_at")
+    .select("id, charge_reason, status, created_at, failure_code, stripe_payment_intent_id, stripe_charge_id, stripe_status, charged_at, updated_at")
     .eq("studio_id", attempt.studio_id)
     .eq("appointment_id", attempt.appointment_id)
     .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
@@ -41,6 +41,8 @@ export async function oneFeeExecuteVerdict(
     created_at: r.created_at as string,
     failure_code: (r.failure_code as string | null) ?? null,
     stripe_payment_intent_id: (r.stripe_payment_intent_id as string | null) ?? null,
+    stripe_charge_id: (r.stripe_charge_id as string | null) ?? null,
+    stripe_status: (r.stripe_status as string | null) ?? null,
     charged_at: (r.charged_at as string | null) ?? null,
     updated_at: (r.updated_at as string | null) ?? null,
   }));

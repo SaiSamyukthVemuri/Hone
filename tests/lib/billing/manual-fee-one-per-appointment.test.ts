@@ -12,6 +12,7 @@ import {
 // One manual fee per appointment, across both types. Synthetic rows; no Stripe, no database.
 const NOW = new Date("2026-11-12T12:00:00.000Z");
 const at = (i: number) => `2026-11-12T10:0${i}:00.000Z`;
+const PROVEN = { stripe_status: "canceled", stripe_payment_intent_id: "pi_x", charged_at: null, stripe_charge_id: null };
 function a(over: Partial<OneFeeAttempt> & { id: string }): OneFeeAttempt {
   return { charge_type: "late_cancel", status: "ready", created_at: at(0), updated_at: NOW.toISOString(), ...over };
 }
@@ -32,14 +33,20 @@ describe("prepare: any fee of EITHER type that is open or taken blocks a new one
       { status: "pending_stripe", updated_at: "2026-11-01T00:00:00.000Z" },
       { status: "weird" },
       { status: null },
-      { status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x" },
+      { status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x", stripe_status: "requires_action" },
     ];
     for (const o of open) {
       expect(feePrepareBlock([a({ id: "1", charge_type: "no_show", ...o })], "late_cancel", NOW), JSON.stringify(o)).toBe(ONE_FEE_PER_APPOINTMENT_MESSAGE);
     }
   });
   it("only a failed or cancelled attempt frees the appointment: the other type is allowed", () => {
-    expect(feePrepareBlock([a({ id: "1", status: "failed", failure_code: "card_declined", charge_type: "late_cancel" })], "no_show", NOW)).toBeNull();
+    expect(feePrepareBlock([a({ id: "1", status: "failed", failure_code: "card_declined", charge_type: "late_cancel", ...PROVEN })], "no_show", NOW)).toBeNull();
+    expect(feePrepareBlock([a({ id: "1", status: "failed", failure_code: "requires_action_canceled", charge_type: "late_cancel", ...PROVEN })], "no_show", NOW)).toBeNull();
+    // the label alone never frees
+    expect(feePrepareBlock([a({ id: "1", status: "failed", failure_code: "card_declined", charge_type: "late_cancel" })], "no_show", NOW)).toBe(ONE_FEE_PER_APPOINTMENT_MESSAGE);
+    for (const stripe_status of ["requires_action", "requires_payment_method", "processing", "requires_capture", null]) {
+      expect(feePrepareBlock([a({ id: "1", status: "failed", failure_code: "requires_action_canceled", charge_type: "late_cancel", ...PROVEN, stripe_status })], "no_show", NOW), String(stripe_status)).toBe(ONE_FEE_PER_APPOINTMENT_MESSAGE);
+    }
     expect(feePrepareBlock([a({ id: "1", status: "cancelled", charge_type: "no_show" })], "late_cancel", NOW)).toBeNull();
     expect(feePrepareBlock([], "no_show", NOW)).toBeNull();
   });
@@ -56,7 +63,7 @@ describe("execute: the re-check just before the claim closes the two-tab race", 
   const lc = { id: "lc", created_at: at(1) };
   const ns = { id: "ns", created_at: at(2) };
   const rowOf = (x: { id: string; created_at: string }, type: OneFeeAttempt["charge_type"], status = "ready"): OneFeeAttempt =>
-    a({ id: x.id, created_at: x.created_at, charge_type: type, status });
+    a({ id: x.id, created_at: x.created_at, charge_type: type, status, ...(status === "failed" ? PROVEN : {}) });
 
   it("two prepares of different types raced: BOTH exist as ready; exactly one of them may execute", () => {
     const first = feeExecuteBlock(lc, [rowOf(ns, "no_show")], NOW); // earlier attempt runs

@@ -31,6 +31,8 @@ export type OneFeeAttempt = {
   created_at: string;
   failure_code?: string | null;
   stripe_payment_intent_id?: string | null;
+  stripe_charge_id?: string | null;
+  stripe_status?: string | null;
   charged_at?: string | null;
   updated_at?: string | null;
 };
@@ -40,7 +42,9 @@ export type OneFeeAttempt = {
 // sibling attempt that took the slot in the meantime. That collision surfaces as
 // Postgres 23505 on payment_charge_attempts_one_fee_per_appointment_uniq and must
 // be handled deliberately (map to ONE_FEE_PER_APPOINTMENT_MESSAGE), never swallowed.
-const FREES_THE_APPOINTMENT = new Set<FeeAttemptStateKind>(["failed", "cancelled"]);
+// Frees: cancelled before charging, or a failed/needs_action row whose STORED PROVIDER FACTS prove the
+// PaymentIntent is canceled and uncaptured (feeAttemptState decides; the label alone never frees).
+const FREES_THE_APPOINTMENT = new Set<FeeAttemptStateKind>(["failed", "cancelled", "needs_action"]);
 
 export function attemptBlocksAnotherFee(a: OneFeeAttempt, now: Date): boolean {
   const s = feeAttemptState(
@@ -48,6 +52,8 @@ export function attemptBlocksAnotherFee(a: OneFeeAttempt, now: Date): boolean {
       status: a.status,
       failure_code: a.failure_code ?? null,
       has_payment_intent: !!a.stripe_payment_intent_id,
+      stripe_status: a.stripe_status ?? null,
+      stripe_charge_id: a.stripe_charge_id ?? null,
       charged_at: a.charged_at ?? null,
       updated_at: a.updated_at ?? null,
     },

@@ -37,16 +37,37 @@ describe("feeAttemptState", () => {
     }
   });
   it("failed is failed; the requires_action cancel is its own state that says nothing was taken", () => {
-    expect(feeAttemptState({ status: "failed", failure_code: "card_declined" }, NOW).kind).toBe("failed");
-    const s = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", has_payment_intent: true }, NOW);
-    expect(s.kind).toBe("needs_action");
+    const P = { has_payment_intent: true, stripe_status: "canceled" };
+    expect(feeAttemptState({ status: "failed", failure_code: "card_declined", ...P }, NOW)).toMatchObject({ kind: "failed", blocksNewCharge: false });
+    const s = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", ...P }, NOW);
+    expect(s).toMatchObject({ kind: "needs_action", blocksNewCharge: false });
     expect(s.label).toMatch(/nothing was taken/);
     // F3: without the provider object, or with a capture time, the claim is not supported: unclear, no charge.
-    for (const extra of [{ has_payment_intent: false }, { has_payment_intent: true, charged_at: "2026-11-01T10:00:00Z" }, {}]) {
+    for (const extra of [{ has_payment_intent: false, stripe_status: "canceled" }, { has_payment_intent: true, stripe_status: "canceled", charged_at: "2026-11-01T10:00:00Z" }, {}]) {
       const u = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", ...extra }, NOW);
       expect(u).toMatchObject({ kind: "unclear", blocksNewCharge: true });
       expect(u.label).not.toMatch(/nothing was taken/);
     }
+  });
+  describe("Sam's needs-action ruling: free ONLY on provider-proven canceled + uncaptured; the label alone never frees", () => {
+    const PROVEN = { status: "failed", failure_code: "requires_action_canceled", has_payment_intent: true, stripe_status: "canceled", charged_at: null, stripe_charge_id: null };
+    it("canceled + same PaymentIntent on the attempt + no capture frees the appointment", () => {
+      expect(feeAttemptState(PROVEN, NOW).blocksNewCharge).toBe(false);
+      expect(feeAttemptState({ ...PROVEN, failure_code: "card_declined" }, NOW).blocksNewCharge).toBe(false);
+    });
+    it("every still-collectable or unknown provider status BLOCKS (requires_action, requires_payment_method, processing, requires_capture, null, odd)", () => {
+      for (const stripe_status of ["requires_action", "requires_payment_method", "requires_confirmation", "processing", "requires_capture", "succeeded", null, undefined, "", "weird"]) {
+        const s = feeAttemptState({ ...PROVEN, stripe_status }, NOW);
+        expect(s, String(stripe_status)).toMatchObject({ kind: "unclear", blocksNewCharge: true });
+        expect(s.label).not.toMatch(/nothing was taken/);
+      }
+    });
+    it("a failed LABEL with missing or contradictory provider fields BLOCKS", () => {
+      for (const over of [{ has_payment_intent: false }, { charged_at: "2026-11-01T10:00:00Z" }, { stripe_charge_id: "ch_x" }, { stripe_status: undefined, has_payment_intent: undefined }]) {
+        expect(feeAttemptState({ ...PROVEN, ...over }, NOW), JSON.stringify(over)).toMatchObject({ blocksNewCharge: true });
+      }
+      expect(feeAttemptState({ status: "failed", failure_code: "card_declined" }, NOW).blocksNewCharge).toBe(true);
+    });
   });
   it("the unclear message is the required wording", () => {
     expect(FEE_UNCLEAR_MESSAGE).toBe("Charge status is unclear. Do not charge again until this is checked.");

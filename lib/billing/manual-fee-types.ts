@@ -96,6 +96,8 @@ export type EligibilityExistingAttemptSummary = {
   // 'ready' row still passes the type check before any Stripe call.
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
+  /** Stored provider PaymentIntent status; null for legacy rows (a failed legacy row therefore cannot prove it is uncollectable). */
+  stripe_status?: string | null;
   charged_at: string | null;
   failed_at: string | null;
   failure_code: string | null;

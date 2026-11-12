@@ -68,6 +68,8 @@ export function projectFeeAttempt(
       status: a.status,
       failure_code: a.failure_code,
       has_payment_intent: !!a.stripe_payment_intent_id,
+      stripe_status: a.stripe_status ?? null,
+      stripe_charge_id: a.stripe_charge_id ?? null,
       charged_at: a.charged_at,
       updated_at: a.updated_at ?? null,
     },

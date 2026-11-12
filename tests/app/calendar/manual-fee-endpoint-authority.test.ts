@@ -308,7 +308,7 @@ describe("one manual fee per appointment: the execute action re-checks just befo
     siblings.rows = [sib({ status: "ready", stripe_payment_intent_id: null, charged_at: null })];
     expect((await run()).ok).toBe(false);
     expect(runCharge).not.toHaveBeenCalled();
-    siblings.rows = [sib({ status: "failed", failure_code: "card_declined" })];
+    siblings.rows = [sib({ status: "failed", failure_code: "card_declined", stripe_status: "canceled", stripe_charge_id: null, charged_at: null })];
     expect((await run()).ok).toBe(true);
     expect(runCharge).toHaveBeenCalledTimes(1);
     siblings.rows = [];
