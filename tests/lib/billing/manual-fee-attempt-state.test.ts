@@ -42,6 +42,8 @@ describe("feeAttemptState", () => {
     const s = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", ...P }, NOW);
     expect(s).toMatchObject({ kind: "needs_action", blocksNewCharge: false });
     expect(s.label).toMatch(/nothing was taken/);
+    expect(s.label).toMatch(/prepare a new fee/);
+    expect(s.label).not.toMatch(/needs the client/i);
     // F3: without the provider object, or with a capture time, the claim is not supported: unclear, no charge.
     for (const extra of [{ has_payment_intent: false, stripe_status: "canceled" }, { has_payment_intent: true, stripe_status: "canceled", charged_at: "2026-11-01T10:00:00Z" }, {}]) {
       const u = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", ...extra }, NOW);

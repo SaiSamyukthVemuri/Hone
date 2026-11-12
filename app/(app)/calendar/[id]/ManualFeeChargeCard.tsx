@@ -568,9 +568,9 @@ function NeedsActionPanel() {
       data-testid="fee-needs-action-panel"
       className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
     >
-      <h4 className="font-medium">The card needs the client&apos;s action.</h4>
+      <h4 className="font-medium">Cancelled: nothing was taken.</h4>
       <p className="text-xs">
-        The client&apos;s bank asked them to confirm this charge. The attempt was cancelled and nothing was taken.
+        The client&apos;s bank asked them to confirm this charge, so the attempt was cancelled with the payment provider. It can no longer be completed and nothing was taken. You can prepare a new fee.
       </p>
     </div>
   );

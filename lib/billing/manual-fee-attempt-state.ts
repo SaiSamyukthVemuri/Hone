@@ -78,7 +78,7 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
       if (a.failure_code === "requires_action_canceled") {
         return {
           kind: "needs_action",
-          label: "Needs the client's action; nothing was taken",
+          label: "Cancelled: nothing was taken. You can prepare a new fee.",
           // Provider-proven cancelled and uncaptured: it can never collect, so a new fee may be prepared.
           blocksNewCharge: false,
           mayRefreshCharge: false,

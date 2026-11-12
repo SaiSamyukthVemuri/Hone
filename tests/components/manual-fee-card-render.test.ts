@@ -211,6 +211,11 @@ describe("F1: the client receives no provider identifier", () => {
     const e = projectFeeEligibility({ ...eligible([rich]), existingAttempts: [rich] } as never, new Date(), true);
     const json = JSON.stringify(e);
     expect(json).not.toMatch(/stripe_/i);
+    // N1: a failed row carrying stored provider facts projects no stripe_* key either.
+    const failed = attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_SECRET4", stripe_status: "canceled", stripe_charge_id: null });
+    const fj = JSON.stringify(projectFeeEligibility({ ...eligible([failed]), existingAttempts: [failed] } as never, new Date(), true));
+    expect(fj).not.toMatch(/stripe_/i);
+    expect(fj).not.toContain("pi_SECRET4");
     expect(json).not.toMatch(/\b(pi|ch|re|pm|sig|ack)[_-][A-Za-z0-9]/);
     expect(json).not.toContain("policySnapshotHash");
   });
