@@ -1048,6 +1048,15 @@ describe("0171 — the financial census is complete", () => {
         "sms_outbound_messages", //        SMS-00 delivery ledger, ON DELETE CASCADE; no money
         "email_outbound_messages", //      0212 email delivery ledger, ON DELETE CASCADE; no money
         "delivery_concerns", //            0221 owner-reported delivery concern, ON DELETE CASCADE; no money
+        // 0313 invitation-to-appointment link (appointment_id, ON DELETE CASCADE). Holds ids
+        // only, no amount, no payment reference, no client text. It records which
+        // appointment a waitlist invitation produced so a reopened link can say so;
+        // it is evidence, not payment state, and stays on the ORIGINAL appointment
+        // (a free consultation at a waitlist studio is cancel-only, never rescheduled).
+        "waitlist_invitation_bookings",
+        // 0325 owner follow-up (appointment_id, ON DELETE RESTRICT, set only when a follow-up is closed as
+        // booked). Ids and dates only, no amount, no payment reference, no client text; evidence of the link, not payment state.
+        "waitlist_followups",
         // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
         // (PAY-SETTLE / 0187):
         "appointment_settlements", //      see the justification below

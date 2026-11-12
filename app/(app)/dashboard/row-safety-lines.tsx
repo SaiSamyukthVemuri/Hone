@@ -10,12 +10,15 @@ export function RowSafetyLines({
   pinnedNotes,
   unavailable,
   caution,
+  lastTreatment,
 }: {
   pinnedNotes: ReadonlyArray<{ id: string; text: string }> | null;
   /** The Before-Today read for this row FAILED (not "nothing recorded"). */
   unavailable: boolean;
   /** The newest caution/watch text, already resolved by the caller from an answered read with history. */
   caution: string | null;
+  /** The one-line previous-treatment summary (the prep authority's compactSummary), or null when none was proved. */
+  lastTreatment?: string | null;
 }) {
   return (
     <>
@@ -47,6 +50,17 @@ export function RowSafetyLines({
       {unavailable && (
         <span data-testid="today-row-unavailable" className="mt-1 block text-xs text-neutral-500">
           {CLINICAL_UNAVAILABLE_HEADLINE}
+        </span>
+      )}
+      {/* HON-65 (Chloe, 4 Nov): "Last treatment" is the line a practitioner reads first, so it stays on the CLOSED row.
+          Only the full chart (the toggle in the details) is collapsed. Plain text: the row body is a link. */}
+      {lastTreatment && (
+        <span
+          data-testid="dashboard-memory-compact"
+          className="mt-1 block whitespace-pre-wrap break-words text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          <span className="font-medium text-neutral-500">Last treatment: </span>
+          {lastTreatment}
         </span>
       )}
       {/* Insurance D-1: the caution/watch line, FULL text, wrapped, never inside the details. The caller

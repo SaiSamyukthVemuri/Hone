@@ -107,8 +107,9 @@ mode is rejected. Both modes go through the SAME `moveAppointmentAction` + the S
 - **Custom time (owner-only override).** `loadMoveSlotsAction` returns
   `canUseCustomTime = true` **only** when the live server-resolved `practitioner.role ===
   "owner"`; the UI renders the custom option solely from that flag, and the action
-  re-authorizes on submit. The owner enters a studio-local time (native `<input type=time>`,
-  15-min step) that **may be outside published operating hours**, and must tick
+  re-authorizes on submit. The owner picks a studio-local time or uses **Type a time
+  instead** to enter it as `3:30 PM` or `15:30`. It **may be outside published
+  operating hours**. The owner must tick
   *"I understand this time overrides regular availability."* (`outsideAvailabilityConfirmed`).
   A non-owner request is rejected (`"Only the studio owner can move appointments outside
   regular availability."`); a missing acknowledgement is rejected too.

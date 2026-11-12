@@ -892,6 +892,144 @@ export async function declineInvitation(input: {
 }
 
 // ---------------------------------------------------------------------------
+// 6b. "THESE TIMES DON'T WORK" (0319)
+//
+// Closes the invitation like a decline but returns the SAME entry to waiting, so
+// the person keeps their join date and priority. The command returns a scalar
+// text code. Fail closed on a missing function: the caller must not claim the
+// person was kept on the list when the command did not run.
+// ---------------------------------------------------------------------------
+
+export type TimesUnsuitableOutcome =
+  | { kind: "returned_to_waiting" }
+  | { kind: "invalid_note" }
+  | { kind: "proof_required" }
+  | { kind: "proof_expired" }
+  | { kind: "proof_invalid" }
+  | { kind: "invalid_token" }
+  | { kind: "not_live" }
+  | { kind: "invalid_input" }
+  | Unavailable;
+
+export async function declineTimesUnsuitable(input: {
+  rawToken: string;
+  rawCapability: string;
+  note: string | null;
+}): Promise<TimesUnsuitableOutcome> {
+  if (!RAW_SECRET.test(input.rawToken ?? "")) return { kind: "invalid_token" };
+  if (!RAW_SECRET.test(input.rawCapability ?? "")) return { kind: "proof_invalid" };
+  const admin = createAdminClient();
+  try {
+    const { data, error } = await admin.rpc("decline_waitlist_invitation_times_unsuitable", {
+      p_raw_token: input.rawToken,
+      p_raw_capability: input.rawCapability,
+      p_note: input.note,
+    });
+    if (error) return { kind: "unavailable" };
+    switch (data) {
+      case "returned_to_waiting":
+      case "invalid_note":
+      case "proof_required":
+      case "proof_expired":
+      case "proof_invalid":
+      case "invalid_token":
+      case "not_live":
+      case "invalid_input":
+        return { kind: data };
+      default:
+        return { kind: "unavailable" };
+    }
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6c. "NONE OF THESE TIMES WORK" WITH BOTH ANSWERS, AND THE WITHDRAWAL (0325)
+//
+// decline_waitlist_invitation_with_answers returns a ROW (result, invitation_id). `invitation_id` is set only on `declined`; the caller hands
+// it to dispatchDeclineOwnerEmail after the commit. It is the ONLY place an invitation id leaves this module, and it is never returned to the
+// browser. request_waitlist_withdrawal returns one neutral `recorded` for every non-proof outcome (recorded now, already requested, unknown,
+// removed, converted), so the recipient cannot learn the studio's state from the answer.
+// ---------------------------------------------------------------------------
+
+export type DeclineWithAnswersOutcome =
+  | { kind: "declined"; invitationId: string }
+  | { kind: "already_declined" }
+  | { kind: "invalid_input" }
+  | { kind: "invalid_token" }
+  | { kind: "not_live" }
+  | { kind: "proof_required" }
+  | { kind: "proof_expired" }
+  | { kind: "proof_invalid" }
+  | Unavailable;
+
+export async function declineWithAnswers(input: {
+  rawToken: string;
+  rawCapability: string;
+  whyNotWork: string;
+  betterTimes: string;
+}): Promise<DeclineWithAnswersOutcome> {
+  if (!RAW_SECRET.test(input.rawToken ?? "")) return { kind: "invalid_token" };
+  if (!RAW_SECRET.test(input.rawCapability ?? "")) return { kind: "proof_invalid" };
+  try {
+    const { data, error } = await createAdminClient().rpc("decline_waitlist_invitation_with_answers", {
+      p_raw_token: input.rawToken,
+      p_raw_capability: input.rawCapability,
+      p_why_not_work: input.whyNotWork,
+      p_better_times: input.betterTimes,
+    });
+    if (error || !Array.isArray(data) || data.length !== 1) return { kind: "unavailable" };
+    const row = data[0] as { result?: unknown; invitation_id?: unknown };
+    switch (row.result) {
+      case "declined":
+        // A `declined` without an id cannot be followed by the owner email; treat it as the command not having answered cleanly.
+        return typeof row.invitation_id === "string" && row.invitation_id.length > 0
+          ? { kind: "declined", invitationId: row.invitation_id }
+          : { kind: "unavailable" };
+      case "already_declined":
+      case "invalid_input":
+      case "invalid_token":
+      case "not_live":
+      case "proof_required":
+      case "proof_expired":
+      case "proof_invalid":
+        return { kind: row.result };
+      default:
+        return { kind: "unavailable" };
+    }
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+export type WithdrawalOutcome =
+  | { kind: "recorded" }
+  | { kind: "proof_required" }
+  | { kind: "proof_expired" }
+  | { kind: "proof_invalid" }
+  | { kind: "invalid_token" }
+  | Unavailable;
+
+export async function requestWithdrawal(input: { rawToken: string; rawCapability: string }): Promise<WithdrawalOutcome> {
+  if (!RAW_SECRET.test(input.rawToken ?? "")) return { kind: "invalid_token" };
+  if (!RAW_SECRET.test(input.rawCapability ?? "")) return { kind: "proof_invalid" };
+  try {
+    const { data, error } = await createAdminClient().rpc("request_waitlist_withdrawal", {
+      p_raw_token: input.rawToken,
+      p_raw_capability: input.rawCapability,
+    });
+    if (error || !Array.isArray(data) || data.length !== 1) return { kind: "unavailable" };
+    const result = (data[0] as { result?: unknown }).result;
+    return result === "recorded" || result === "proof_required" || result === "proof_expired" || result === "proof_invalid"
+      ? { kind: result }
+      : { kind: "unavailable" };
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 7. REVOKE and EXPIRE — practitioner-authorised lifecycle
 //
 // Neither is a new command. The applied chain has no `revoke_..._invitation`:

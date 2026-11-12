@@ -21,7 +21,7 @@ describe("Needs Attention panel interaction contract", () => {
   });
 
   it("expanding never scrolls or moves focus programmatically", () => {
-    expect(SRC).not.toMatch(/scrollIntoView|scrollTo\(|\.focus\(|window\.location|router\./);
+    expect(SRC).not.toMatch(/scrollIntoView|scrollTo\(|\.focus\(|window\.location|router\.(push|replace|back|prefetch)/);
   });
 
   it("the toggle states what it controls and whether it is open", () => {
@@ -42,8 +42,20 @@ describe("Needs Attention panel interaction contract", () => {
     expect(SRC).toContain("key={card.clientId}");
   });
 
-  it("opening an item is navigation only: the panel carries no write", () => {
+  it("opening an item is navigation only; the only writes are the owner's Dismiss and Restore of a reminder", () => {
     expect(SRC).not.toMatch(/use server|formAction|<form|fetch\(|\.rpc\(|\.from\(/);
+    const actions = [...SRC.matchAll(/\b(\w+Action)\(/g)].map((m) => m[1]);
+    expect([...new Set(actions)].sort()).toEqual(["dismissAttentionAction", "restoreAttentionAction"]);
+  });
+
+  it("Dismiss exists only for the owner, and only when the owner's dismissals could be read", () => {
+    expect(SRC).toMatch(/enabled: isOwner && dismissalsEnabled && !dismissalsUnavailable/);
+    expect(SRC).toMatch(/if \(!api\.enabled \|\| identity === null\) return null/);
+  });
+
+  it("an unknown balance reads Amount unavailable, never 0, and a known one is the authoritative figure", () => {
+    expect(SRC).toContain('return "Amount unavailable"');
+    expect(SRC).toMatch(/Hone can see \$\{formatMoney\(item\.balance\.outstandingCents/);
   });
 
   it("starts compact", () => {
