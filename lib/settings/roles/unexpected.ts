@@ -35,4 +35,26 @@ export function classifyUnexpected(args: {
   return attemptLanded(args.attempted, args.fresh.policies) ? "landed" : "uncertain";
 }
 
+/**
+ * After an uncertain save the page shows the permissions as they are NOW, with this owner's unsaved choices still on top. Only the keys
+ * this owner actually changed (draft differs from the saved policy the draft was made against) are carried over; every other key takes
+ * the fresh stored value. Keeping the whole old draft would make the next save "undo" another owner's concurrent change to a key this
+ * owner never touched. A carried-over choice that already equals the fresh value is no longer an edit and drops out by itself. PURE.
+ */
+export function rebaseDrafts(
+  drafts: Record<Role, StudioPolicy>,
+  oldSaved: Record<Role, StudioPolicy>,
+  fresh: Record<Role, StudioPolicy>,
+): Record<Role, StudioPolicy> {
+  const out = { ...fresh } as Record<Role, StudioPolicy>;
+  for (const role of Object.keys(fresh) as Role[]) {
+    const values = { ...fresh[role].values } as Record<string, Scope>;
+    for (const [key, scope] of Object.entries(drafts[role].values) as [string, Scope][]) {
+      if (oldSaved[role].values[key as keyof typeof oldSaved[Role]["values"]] !== scope) values[key] = scope;
+    }
+    out[role] = { ...fresh[role], values: values as unknown as StudioPolicy["values"] };
+  }
+  return out;
+}
+
 export const UNCERTAIN_SAVE_MESSAGE = "We couldn't confirm your change was saved. Review the current permissions below.";

@@ -7,7 +7,7 @@ import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioP
 import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
-import { classifyUnexpected, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
+import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
 import { changeRoleCopy } from "@/lib/settings/roles/change-role";
 import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
@@ -315,7 +315,9 @@ export function RolesEditor(props: RolesEditorProps) {
       feedback.failed("The response was lost, but the change went through. The page now shows what is saved.");
       return;
     }
-    // Uncertain: our draft stays exactly as the person left it, against the permissions as they are now.
+    // Uncertain: only the choices THIS person changed stay on top of the permissions as they are now. Keys they never touched take the
+    // fresh stored value, so another owner's concurrent change is not turned into an edit to undo on the next save (Codex P2, #1335 f2bee2d07).
+    setDrafts((current) => rebaseDrafts(current, saved, fresh.state.policies));
     feedback.failed(UNCERTAIN_SAVE_MESSAGE);
   }
 
