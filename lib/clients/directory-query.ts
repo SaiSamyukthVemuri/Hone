@@ -27,7 +27,7 @@ import type { DirectoryIdentityRow } from "@/lib/clients/directory-rules";
 export const DIRECTORY_PAGE_SIZE = 25;
 
 export type IntakeStatusValue = "in_progress" | "submitted" | "reviewed";
-export type IntakeState = "not_submitted" | "awaiting_review" | "reviewed" | "unavailable";
+export type IntakeState = "not_submitted" | "awaiting_review" | "reviewed" | "unavailable" | "restricted";
 export type NextAppointment =
   | { state: "scheduled"; startsAt: string }
   | { state: "none" }
@@ -48,6 +48,8 @@ export type DirectoryAggregates = {
   nextAppointments: ReadonlyMap<string, string> | null;
   /** client id -> canonical current intake status; null when the read failed. */
   intake: ReadonlyMap<string, IntakeStatusValue> | null;
+  /** The viewer holds neither clin.view_intake_status nor clin.view_intake: intake was NOT read, which is not "no intake" (RO-1). */
+  intakeRestricted?: boolean;
 };
 
 export type DirectoryRow = DirectoryIdentityRow & {
@@ -73,6 +75,8 @@ export type DirectoryPage = {
   sortDegraded: boolean;
   nextUnavailable: boolean;
   intakeUnavailable: boolean;
+  /** Intake status is not available to this viewer's role: the pill and the intake filter say so, never "Not submitted". */
+  intakeRestricted: boolean;
 };
 
 const FILTERS: ReadonlyArray<DirectoryFilter> = ["intake_review", "no_upcoming"];
@@ -124,7 +128,8 @@ export function buildDirectoryRows(
   aggregates: DirectoryAggregates,
 ): DirectoryRow[] {
   const nextUnavailable = aggregates.nextAppointments === null;
-  const intakeUnavailable = aggregates.intake === null;
+  const intakeRestricted = aggregates.intakeRestricted === true;
+  const intakeUnavailable = !intakeRestricted && aggregates.intake === null;
   return source.map((r) => {
     const startsAt = aggregates.nextAppointments?.get(r.id);
     return {
@@ -134,7 +139,7 @@ export function buildDirectoryRows(
         : startsAt
           ? { state: "scheduled", startsAt }
           : { state: "none" },
-      intake: intakeUnavailable ? "unavailable" : intakeState(aggregates.intake?.get(r.id)),
+      intake: intakeRestricted ? "restricted" : intakeUnavailable ? "unavailable" : intakeState(aggregates.intake?.get(r.id)),
     };
   });
 }
@@ -145,7 +150,8 @@ export function queryDirectory(
   params: DirectoryParams,
 ): DirectoryPage {
   const nextUnavailable = aggregates.nextAppointments === null;
-  const intakeUnavailable = aggregates.intake === null;
+  const intakeRestricted = aggregates.intakeRestricted === true;
+  const intakeUnavailable = !intakeRestricted && aggregates.intake === null;
 
   const rows = buildDirectoryRows(source, aggregates);
 
@@ -165,8 +171,11 @@ export function queryDirectory(
     sortDegraded,
     nextUnavailable,
     intakeUnavailable,
+    intakeRestricted,
   };
   if (blockedFilters.length > 0) return { ...base, rows: [], total: 0 };
+  // The intake filter cannot be answered for a restricted viewer: no rows, and the page says why (never an empty "nothing needs review").
+  if (intakeRestricted && params.filters.includes("intake_review")) return { ...base, rows: [], total: 0 };
 
   let set = rows.filter((r) => matchesDirectoryQuery(r, params.q));
   if (params.filters.includes("intake_review")) set = set.filter((r) => r.intake === "awaiting_review");

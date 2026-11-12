@@ -79,13 +79,23 @@ export default async function ClientsPage({
   const needAllIntake = !archived && query.filters.includes("intake_review");
   const none = <T,>() => Promise.resolve(new Map<string, T>());
 
-  const [source, wholeNext, wholeIntake] = await Promise.all([
+  // Intake status is read only with clin.view_intake_status or clin.view_intake. Without either, "not read" is RESTRICTED, never "no intake".
+  const intakeAllowedPromise: Promise<boolean> =
+    practitioner.role === "owner"
+      ? Promise.resolve(true)
+      : Promise.all([
+          requirePermission(supabase, studio.id, "clin.view_intake_status"),
+          requirePermission(supabase, studio.id, "clin.view_intake"),
+        ]).then(([status, answers]) => status.allowed || answers.allowed);
+  const [source, wholeNext, wholeIntake, intakeAllowed] = await Promise.all([
     readDirectoryClients(db, studio.id, archived),
     needAllNext ? readNextAppointments(db, studio.id, nowIso) : none<string>(),
-    needAllIntake ? readCurrentIntake(db, studio.id) : none<"in_progress">(),
+    needAllIntake ? intakeAllowedPromise.then((ok) => (ok ? readCurrentIntake(db, studio.id) : null)) : none<"in_progress">(),
+    intakeAllowedPromise,
   ]);
+  const intakeRestricted = !archived && !intakeAllowed;
   const identityRows = source.map(projectStaffRow);
-  let aggregates: DirectoryAggregates = { nextAppointments: wholeNext, intake: wholeIntake };
+  let aggregates: DirectoryAggregates = { nextAppointments: wholeNext, intake: wholeIntake, intakeRestricted };
   let data = queryDirectory(identityRows, aggregates, query);
 
   // The overview's client comes from the same authorized set; the page's rows are
@@ -97,9 +107,9 @@ export default async function ClientsPage({
   if (!archived && (!needAllNext || !needAllIntake)) {
     const [pageNext, pageIntake] = await Promise.all([
       needAllNext ? Promise.resolve(wholeNext) : readNextAppointments(db, studio.id, nowIso, pageIds),
-      needAllIntake ? Promise.resolve(wholeIntake) : readCurrentIntake(db, studio.id, pageIds),
+      needAllIntake ? Promise.resolve(wholeIntake) : intakeAllowed ? readCurrentIntake(db, studio.id, pageIds) : Promise.resolve(null),
     ]);
-    aggregates = { nextAppointments: pageNext, intake: pageIntake };
+    aggregates = { nextAppointments: pageNext, intake: pageIntake, intakeRestricted };
     // Same set, order and count (neither aggregate decided them); only the shown values are now real.
     data = queryDirectory(identityRows, aggregates, query);
   }
