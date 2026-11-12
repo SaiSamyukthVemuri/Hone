@@ -1,3 +1,4 @@
+import { intakeReadAllowed } from "@/lib/clients/intake-read-gate";
 import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -80,13 +81,13 @@ export default async function ClientsPage({
   const none = <T,>() => Promise.resolve(new Map<string, T>());
 
   // Intake status is read only with clin.view_intake_status or clin.view_intake. Without either, "not read" is RESTRICTED, never "no intake".
-  const intakeAllowedPromise: Promise<boolean> =
-    practitioner.role === "owner"
-      ? Promise.resolve(true)
-      : Promise.all([
-          requirePermission(supabase, studio.id, "clin.view_intake_status"),
-          requirePermission(supabase, studio.id, "clin.view_intake"),
-        ]).then(([status, answers]) => status.allowed || answers.allowed);
+  const isOwner = practitioner.role === "owner";
+  const intakeAllowedPromise: Promise<boolean> = isOwner
+    ? Promise.resolve(intakeReadAllowed({ isOwner, statusAllowed: false, answersAllowed: false }))
+    : Promise.all([
+        requirePermission(supabase, studio.id, "clin.view_intake_status"),
+        requirePermission(supabase, studio.id, "clin.view_intake"),
+      ]).then(([status, answers]) => intakeReadAllowed({ isOwner, statusAllowed: status.allowed, answersAllowed: answers.allowed }));
   const [source, wholeNext, wholeIntake, intakeAllowed] = await Promise.all([
     readDirectoryClients(db, studio.id, archived),
     needAllNext ? readNextAppointments(db, studio.id, nowIso) : none<string>(),
