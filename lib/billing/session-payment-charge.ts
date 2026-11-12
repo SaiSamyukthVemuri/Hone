@@ -6,7 +6,7 @@ import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-a
 import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
+import { isDefinitiveChargeRefusal } from "@/lib/billing/stripe-error-outcome";
 import { STRIPE_NO_INTENT_CREATED } from "@/lib/billing/manual-fee-attempt-state";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
@@ -1752,7 +1752,7 @@ export async function runSessionPaymentCharge(args: {
     // the unknown-outcome path below (row stays pending_stripe).
     if (
       err instanceof Stripe.errors.StripeError &&
-      isDefinitiveStripeRefusal(err)
+      isDefinitiveChargeRefusal(err)
     ) {
       const decline = err as unknown as {
         code?: string;

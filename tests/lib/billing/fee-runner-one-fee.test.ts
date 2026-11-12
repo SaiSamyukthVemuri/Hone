@@ -49,6 +49,8 @@ vi.mock("@/lib/billing/stripe-error-outcome", async (importOriginal) => {
   return {
     isDefinitiveStripeRefusal: (err: unknown) =>
       h.legacyRule ? err instanceof S.errors.StripeError : real.isDefinitiveStripeRefusal(err),
+    isDefinitiveChargeRefusal: (err: unknown) =>
+      h.legacyRule ? err instanceof S.errors.StripeError : real.isDefinitiveChargeRefusal(err),
   };
 });
 vi.mock("@/lib/stripe/server", () => ({

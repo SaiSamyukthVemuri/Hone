@@ -63,6 +63,8 @@ vi.mock("@/lib/billing/stripe-error-outcome", async (importOriginal) => {
   return {
     isDefinitiveStripeRefusal: (err: unknown) =>
       h.legacyRule ? err instanceof S.errors.StripeError : real.isDefinitiveStripeRefusal(err),
+    isDefinitiveChargeRefusal: (err: unknown) =>
+      h.legacyRule ? err instanceof S.errors.StripeError : real.isDefinitiveChargeRefusal(err),
   };
 });
 vi.mock("@/lib/stripe/server", () => ({
@@ -238,6 +240,7 @@ const AMBIGUOUS: Array<[string, () => unknown]> = [
   ["StripeAPIError (5xx)", () => new Stripe.errors.StripeAPIError(raw({ statusCode: 500, type: "api_error" }))],
   ["an unrecognised StripeError subtype (TemporarySessionExpiredError)", () => new Stripe.errors.TemporarySessionExpiredError(raw())],
   ["a bare StripeError", () => new Stripe.errors.StripeError(raw())],
+  ["StripeRateLimitError (429: transient, retrying may succeed, an intent may exist)", () => new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 }))],
   ["StripeIdempotencyError (key reused; the earlier request may have succeeded)", () => new Stripe.errors.StripeIdempotencyError(raw({ type: "idempotency_error", statusCode: 400 }))],
 ];
 
@@ -247,7 +250,6 @@ const DEFINITIVE: Array<[string, () => unknown]> = [
   ["StripeInvalidRequestError", () => new Stripe.errors.StripeInvalidRequestError(raw({ type: "invalid_request_error", statusCode: 400 }))],
   ["StripeAuthenticationError", () => new Stripe.errors.StripeAuthenticationError(raw({ statusCode: 401 }))],
   ["StripePermissionError", () => new Stripe.errors.StripePermissionError(raw({ statusCode: 403 }))],
-  ["StripeRateLimitError", () => new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 }))],
 ];
 
 describe("HON-11 #1 charge: an UNKNOWN outcome stays pending for manual review", () => {
@@ -357,9 +359,9 @@ describe("NEGATIVE CONTROL: the retired rule fails these tests", () => {
 
 describe("source shape: the runner consults the classifier in its terminal branch", () => {
   const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
-  it("the terminal branch is gated on isDefinitiveStripeRefusal", () => {
+  it("the terminal branch is gated on isDefinitiveChargeRefusal (a 429 is not a refusal)", () => {
     expect(src).toMatch(
-      /if \(\s*err instanceof Stripe\.errors\.StripeError &&\s*isDefinitiveStripeRefusal\(err\)\s*\) \{/,
+      /if \(\s*err instanceof Stripe\.errors\.StripeError &&\s*isDefinitiveChargeRefusal\(err\)\s*\) \{/,
     );
     expect(src.match(/instanceof Stripe\.errors\.StripeError/g)).toHaveLength(1);
   });
