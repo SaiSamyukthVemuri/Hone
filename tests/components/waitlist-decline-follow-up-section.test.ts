@@ -188,6 +188,23 @@ describe("the owner follow-up section", () => {
     const page = readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8");
     expect(page).toContain("capped={followUps.capped === true}");
   });
+  // X1 (Photos, ae4e592cb): opening /settings/waitlist#follow-up scrolled the section so its heading sat at 17 px under a sticky bar reaching 69 px
+  // (hit-test: covered at 1280 and 390). The anchor target needs the same scroll offset the invite composer uses for its own anchor: the settings
+  // shell hands the header height down as --settings-top; below 700px a second sticky bar sits under it.
+  const SCROLL_MT = "scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)]";
+  const SCROLL_MT_WIDE = "min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)]";
+  it("X1: the #follow-up anchor target clears the sticky bars (section, both widths)", () => {
+    const html = render([row()]);
+    const section = html.match(/<section[^>]*id="follow-up"[^>]*>/)?.[0] ?? "";
+    expect(section).toContain(SCROLL_MT);
+    expect(section).toContain(SCROLL_MT_WIDE);
+  });
+  it("X1: the load-failure fallback that also carries id=follow-up has the same offset", () => {
+    const page = readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8");
+    const fallback = page.match(/<p id="follow-up"[^>]*>/)?.[0] ?? "";
+    expect(fallback).toContain(SCROLL_MT);
+    expect(fallback).toContain(SCROLL_MT_WIDE);
+  });
   it("an empty list says so", () => {
     expect(render([])).toContain("No responses need follow-up");
   });

@@ -108,7 +108,7 @@ export function DeclineFollowUpSection({
       id="follow-up"
       aria-labelledby="follow-up-heading"
       data-testid="decline-follow-up"
-      className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+      className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:border-amber-700 dark:bg-amber-950"
     >
       <h2 id="follow-up-heading" className="font-medium">
         {`Waitlist responses (${open.length}${capped ? "+" : ""})`}
