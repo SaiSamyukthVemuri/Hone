@@ -16,6 +16,8 @@ test.skip(process.env.CAL_OWN_FIRST_E2E !== "1", "opt-in #1424 own-calendar-firs
 //   3  choosing everyone, then a plain load: everyone (an explicit "all" wins over the default)
 //   4  owner first visit: everyone, no people param is added
 //   5  an explicit ?people=<B> link is the selection and is not rewritten to the viewer's own id
+//   7  (Photos O4) a shared browser: A's default is stored, cookies are cleared (localStorage kept), B signs in on the same browser and
+//      opens on B's OWN column, not A's; A's later sign-in still gets A's own choice. An old per-studio key naming A is ignored.
 //   6  a load with no people param lands on the own default again; a later choice is stored and then wins. NOTE (measured): the default
 //      itself is also written to the stored preference right after the first load (the hasParam branch of the sidebar effect)
 //
@@ -25,6 +27,8 @@ test.skip(process.env.CAL_OWN_FIRST_E2E !== "1", "opt-in #1424 own-calendar-firs
 const TZ = "America/Los_Angeles";
 const SHOTS = process.env.CAL_SHOTS_DIR ?? "test-results/cal-own-first";
 const STORAGE_PREFIX = "hone:calendar:selection:v1:"; // lib/calendar/practitioner-selection.ts SELECTION_STORAGE_PREFIX
+// The stored choice is per studio AND per viewer (Photos O4): `<prefix><studioId>:<viewer practitioner id>`. The pre-fix per-studio key is never read.
+const storageKey = (studioId: string, viewerId: string): string => `${STORAGE_PREFIX}${studioId}:${viewerId}`;
 
 const VIEWPORTS = {
   desktop: { viewport: { width: 1280, height: 800 }, hasTouch: false, isMobile: false },
@@ -149,7 +153,7 @@ for (const [vpName, vp] of Object.entries(VIEWPORTS)) {
 
     test("6: the default re-applies on a load with no people param until the person chooses; a choice is stored and then wins", async ({ page }) => {
       const t = await getTeam();
-      const key = STORAGE_PREFIX + t.seed.studioId;
+      const key = storageKey(t.seed.studioId, t.a.id);
       await loginByMagicLink(page, t.a.email);
       const stored = () => page.evaluate((k) => window.localStorage.getItem(k), key);
 
@@ -168,6 +172,42 @@ for (const [vpName, vp] of Object.entries(VIEWPORTS)) {
       await expect.poll(() => headerIds(page)).toEqual(sorted(t.a.id, t.b.id));
       expect(peopleParam(page)).not.toBe(t.a.id);
       await shot(page, "6-choice-stored-and-wins");
+    });
+
+    test("7: a shared browser: the next practitioner opens on their own column, not the previous person's (Photos O4)", async ({ page }) => {
+      const t = await getTeam();
+      const aKey = storageKey(t.seed.studioId, t.a.id);
+      const bKey = storageKey(t.seed.studioId, t.b.id);
+      const legacyKey = STORAGE_PREFIX + t.seed.studioId; // the pre-fix per-studio key
+      const read = (k: string) => page.evaluate((key) => window.localStorage.getItem(key), k);
+
+      // A signs in and opens the calendar: the own-column default lands in A's key only.
+      await loginByMagicLink(page, t.a.email);
+      await plainLoad(page);
+      await expect.poll(() => peopleParam(page)).toBe(t.a.id);
+      await expect.poll(() => read(aKey)).toBe(t.a.id);
+      expect(await read(bKey)).toBeNull();
+      // An older build left A's choice under the per-studio key: plant it, as a browser that ran the pre-fix code would hold it.
+      await page.evaluate(([k, v]) => window.localStorage.setItem(k, v), [legacyKey, t.a.id] as const);
+
+      // Clear cookies ONLY (localStorage stays), then B signs in on the same browser.
+      await page.context().clearCookies();
+      await loginByMagicLink(page, t.b.email);
+      await plainLoad(page);
+      await expect.poll(() => peopleParam(page)).toBe(t.b.id);
+      await expect.poll(() => headerIds(page)).toEqual([t.b.id]);
+      await openSidebar(page);
+      await expect(checkbox(page, t.b.id)).toBeChecked();
+      await expect(checkbox(page, t.a.id)).not.toBeChecked();
+      await expect.poll(() => read(bKey)).toBe(t.b.id);
+      expect(await read(aKey)).toBe(t.a.id); // B did not touch A's stored choice
+      await shot(page, "7-shared-browser-next-practitioner");
+
+      // A comes back on the same browser: still A's own choice.
+      await page.context().clearCookies();
+      await loginByMagicLink(page, t.a.email);
+      await plainLoad(page);
+      await expect.poll(() => headerIds(page)).toEqual([t.a.id]);
     });
   });
 }

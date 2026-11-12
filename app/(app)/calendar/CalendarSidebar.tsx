@@ -34,6 +34,7 @@ const DESKTOP_QUERY = "(min-width: 768px)";
 
 export function CalendarSidebar({
   studioId,
+  viewerId,
   view,
   anchorDate,
   selectedDate,
@@ -46,6 +47,8 @@ export function CalendarSidebar({
   children,
 }: {
   studioId: string;
+  /** The viewer's practitioner id: the stored selection is per studio AND per viewer (shared browsers). */
+  viewerId: string;
   view: "day" | "week" | "month";
   anchorDate: string;
   /** The date the view is on (null for Month, which has no single date). */
@@ -120,21 +123,21 @@ export function CalendarSidebar({
       storage = null;
     }
     if (hasParam) {
-      writeStoredSelection(storage, studioId, selectionParam);
+      writeStoredSelection(storage, studioId, viewerId, selectionParam);
       return;
     }
     if (restored.current) return;
     restored.current = true;
-    const param = firstVisitParam(readStoredSelection(storage, studioId), ownFirstId, listedIdsRef.current);
+    const param = firstVisitParam(readStoredSelection(storage, studioId, viewerId), ownFirstId, listedIdsRef.current);
     if (param !== null) replaceWith(param);
-  }, [hasParam, selectionParam, studioId, replaceWith, ownFirstId]);
+  }, [hasParam, selectionParam, studioId, viewerId, replaceWith, ownFirstId]);
 
   function toggle(id: string) {
     const next = checked.includes(id) ? checked.filter((x) => x !== id) : [...checked, id];
     setChecked(next);
     const param = serializeSelection(next, listedIds);
     try {
-      writeStoredSelection(window.localStorage, studioId, param);
+      writeStoredSelection(window.localStorage, studioId, viewerId, param);
     } catch {
       /* the URL carries it */
     }

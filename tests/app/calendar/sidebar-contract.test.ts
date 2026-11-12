@@ -60,7 +60,7 @@ describe("persistence and the URL", () => {
   });
   it("a link with no param restores the viewer's own last selection, once", () => {
     // The stored preference is read first and passed through; firstVisitParam falls back to the viewer's own column only when nothing is stored.
-    expect(SIDEBAR).toContain("firstVisitParam(readStoredSelection(");
+    expect(SIDEBAR).toContain("firstVisitParam(readStoredSelection(storage, studioId, viewerId)");
     expect(SIDEBAR).toContain("restored.current");
   });
   it("all three sidebar sites pass the viewer's own id, and an owner passes null (everyone)", () => {
@@ -68,6 +68,14 @@ describe("persistence and the URL", () => {
     expect(sites).toHaveLength(3);
     for (const site of sites) expect(site).toMatch(/ownFirstId=\{(?:isOwner \? null : practitioner\.id|ownFirstId)\}/);
     expect(PAGE).toContain("ownFirstId: isOwner ? null : practitioner.id");
+  });
+  it("all three sidebar sites pass the viewer's practitioner id, so the stored choice is per viewer (Photos O4)", () => {
+    const sites = [...PAGE.matchAll(/<CalendarSidebar[\s\S]*?>/g)].map((m) => m[0]);
+    expect(sites).toHaveLength(3);
+    for (const site of sites) expect(site).toMatch(/viewerId=\{(?:practitioner\.id|viewerId)\}/);
+    expect(PAGE).toContain("viewerId: practitioner.id");
+    expect(SIDEBAR).toContain("writeStoredSelection(storage, studioId, viewerId, selectionParam)");
+    expect(SIDEBAR).toContain("writeStoredSelection(window.localStorage, studioId, viewerId, param)");
   });
   it("every toolbar link in all three views carries the selection", () => {
     // None of the 17 toolbar hrefs (6 per view, the week view's day link included) is a bare string.

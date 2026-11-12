@@ -156,6 +156,7 @@ export default async function CalendarPage({
       peopleParam: params.people,
       isOwner,
       ownFirstId: isOwner ? null : practitioner.id,
+      viewerId: practitioner.id,
       reviewAssignmentsHref,
     });
   }
@@ -327,6 +328,7 @@ export default async function CalendarPage({
   return (
     <CalendarSidebar
       studioId={studio.id}
+      viewerId={practitioner.id}
       view="week"
       anchorDate={initialSelectedDate}
       selectedDate={initialSelectedDate}
@@ -559,9 +561,11 @@ async function renderMonthView(opts: {
   isOwner: boolean;
   /** The viewer's practitioner id when a first visit should open on their own column (null for an owner). */
   ownFirstId: string | null;
+  /** The viewer's practitioner id (an owner has one too): scopes the stored selection to the viewer. */
+  viewerId: string;
   reviewAssignmentsHref: Promise<string | undefined>;
 }) {
-  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, reviewAssignmentsHref } = opts;
+  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, viewerId, reviewAssignmentsHref } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
@@ -665,6 +669,7 @@ async function renderMonthView(opts: {
   return (
     <CalendarSidebar
       studioId={studio.id}
+      viewerId={viewerId}
       view="month"
       anchorDate={monthAnchor}
       selectedDate={null}
@@ -837,6 +842,7 @@ async function renderTeamDayView(opts: {
   return (
     <CalendarSidebar
       studioId={studio.id}
+      viewerId={practitioner.id}
       view="day"
       anchorDate={date}
       selectedDate={date}

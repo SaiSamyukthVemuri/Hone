@@ -11,6 +11,7 @@ import {
   miniCalendarHref,
   parseSelection,
   readStoredSelection,
+  selectionStorageKey,
   restoreParam,
   sanitizeStoredSelection,
   selectedPractitioners,
@@ -110,14 +111,44 @@ describe("persistence: URL param plus a per-viewer local preference, no DB write
     const m = new Map<string, string>();
     return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), m };
   };
-  it("stores and reads the serialised selection per studio", () => {
+  it("stores and reads the serialised selection per studio AND per viewer", () => {
     const s = mem();
-    writeStoredSelection(s, "studio-1", "p1,p2");
-    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1")).toBe("p1,p2");
-    expect(readStoredSelection(s, "studio-1")).toBe("p1,p2");
-    expect(readStoredSelection(s, "studio-2")).toBeNull();
-    writeStoredSelection(s, "studio-1", undefined); // everyone
-    expect(readStoredSelection(s, "studio-1")).toBe("all");
+    writeStoredSelection(s, "studio-1", "viewer-d", "p1,p2");
+    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1:viewer-d")).toBe("p1,p2");
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("p1,p2");
+    expect(readStoredSelection(s, "studio-2", "viewer-d")).toBeNull();
+    writeStoredSelection(s, "studio-1", "viewer-d", undefined); // everyone
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("all");
+  });
+  it("a second viewer on the same browser never reads the first viewer's choice (Photos O4)", () => {
+    const s = mem();
+    writeStoredSelection(s, "studio-1", "viewer-d", "p-d");
+    expect(readStoredSelection(s, "studio-1", "viewer-e")).toBeNull();
+    // First visit for E: nothing stored, so E lands on E's own column, not D's.
+    expect(firstVisitParam(readStoredSelection(s, "studio-1", "viewer-e"), "p-e", ["p-d", "p-e"])).toBe("p-e");
+    // E's own later choice is E's alone and D's is untouched.
+    writeStoredSelection(s, "studio-1", "viewer-e", "p-d,p-e");
+    expect(readStoredSelection(s, "studio-1", "viewer-e")).toBe("p-d,p-e");
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("p-d");
+  });
+  it("the pre-fix per-studio key is never read or written, so nobody inherits it and D's later choice is unaffected", () => {
+    const s = mem();
+    s.setItem(SELECTION_STORAGE_PREFIX + "studio-1", "p-d"); // left by an older build
+    expect(readStoredSelection(s, "studio-1", "viewer-e")).toBeNull();
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBeNull();
+    writeStoredSelection(s, "studio-1", "viewer-d", "p-x");
+    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1")).toBe("p-d"); // untouched
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("p-x");
+  });
+  it("without a usable viewer id nothing is read or written (no shared fallback key)", () => {
+    const s = mem();
+    for (const bad of [null, undefined, "", "a b", "x:y", "<s>"]) {
+      writeStoredSelection(s, "studio-1", bad, "p1");
+      expect(readStoredSelection(s, "studio-1", bad)).toBeNull();
+    }
+    expect(s.m.size).toBe(0);
+    expect(selectionStorageKey("studio-1", "viewer-d")).toBe(SELECTION_STORAGE_PREFIX + "studio-1:viewer-d");
+    expect(selectionStorageKey("", "viewer-d")).toBeNull();
   });
   it("restores a stored subset or none, never 'all' (nothing to change)", () => {
     expect(restoreParam("p1,p2")).toBe("p1,p2");
@@ -133,9 +164,9 @@ describe("persistence: URL param plus a per-viewer local preference, no DB write
   });
   it("survives unavailable storage", () => {
     const boom = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(readStoredSelection(boom, "s")).toBeNull();
-    expect(() => writeStoredSelection(boom, "s", "p1")).not.toThrow();
-    expect(readStoredSelection(null, "s")).toBeNull();
+    expect(readStoredSelection(boom, "s", "v")).toBeNull();
+    expect(() => writeStoredSelection(boom, "s", "v", "p1")).not.toThrow();
+    expect(readStoredSelection(null, "s", "v")).toBeNull();
   });
   it("carries the selection onto hrefs, across date and view changes, and omits it for everyone", () => {
     expect(withSelection("/calendar?view=day&day=2026-11-02", "p1,p2")).toBe(`/calendar?view=day&day=2026-11-02&${SELECTION_PARAM}=p1%2Cp2`);

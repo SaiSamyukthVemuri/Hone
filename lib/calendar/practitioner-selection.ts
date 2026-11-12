@@ -123,9 +123,26 @@ export function sanitizeStoredSelection(raw: string | null | undefined): string 
   return ids.join(",");
 }
 
-export function readStoredSelection(storage: StorageLike | null | undefined, studioId: string): string | null {
+/**
+ * The storage key is per studio AND per viewer. A browser is shared (a front-desk machine, a second
+ * practitioner on the same laptop), so a per-studio key made the next person land on the previous
+ * person's column (Photos O4, #1424). The pre-fix per-studio key (`...:v1:<studioId>`) is never read
+ * or written: its owner is unknown, so nobody inherits it. A viewer id that is not id-shaped yields
+ * no key, and nothing is read or written.
+ */
+export function selectionStorageKey(studioId: string, viewerId: string | null | undefined): string | null {
+  if (!viewerId || !ID_RE.test(viewerId) || !studioId) return null;
+  return `${SELECTION_STORAGE_PREFIX}${studioId}:${viewerId}`;
+}
+
+export function readStoredSelection(
+  storage: StorageLike | null | undefined,
+  studioId: string,
+  viewerId: string | null | undefined,
+): string | null {
   try {
-    return sanitizeStoredSelection(storage?.getItem(SELECTION_STORAGE_PREFIX + studioId));
+    const key = selectionStorageKey(studioId, viewerId);
+    return key === null ? null : sanitizeStoredSelection(storage?.getItem(key));
   } catch {
     return null;
   }
@@ -135,10 +152,13 @@ export function readStoredSelection(storage: StorageLike | null | undefined, stu
 export function writeStoredSelection(
   storage: StorageLike | null | undefined,
   studioId: string,
+  viewerId: string | null | undefined,
   param: string | undefined,
 ): void {
   try {
-    storage?.setItem(SELECTION_STORAGE_PREFIX + studioId, param ?? ALL);
+    const key = selectionStorageKey(studioId, viewerId);
+    if (key === null) return;
+    storage?.setItem(key, param ?? ALL);
   } catch {
     // storage unavailable (private window, blocked): the URL alone carries the selection.
   }
