@@ -13,6 +13,7 @@ import { evaluateOutOfOrder, getMigrationState, PERMANENTLY_SKIPPED } from "../.
 const range = (a: number, b: number) =>
   Array.from({ length: b - a + 1 }, (_, i) => a + i).filter((n) => !PERMANENTLY_SKIPPED.includes(n));
 const REC = "01-ops/RECORD-0301-APPLIED-20261106.md";
+const recFor = (v: string) => `01-ops/RECORD-${v}-APPLIED-20261106.md`;
 const run = (numbers: number[], hostedMaxNumber: number, hostedWithoutFile: unknown, declared: unknown[] = []) =>
   evaluateOutOfOrder({ numbers, hostedMaxNumber, declared, hostedWithoutFile });
 // Files 1..299 and 303, hosted max 303: 0300..0302 have no file.
@@ -41,9 +42,9 @@ describe("hosted_without_repo_file", () => {
 
   it("accepts several entries", () => {
     const r = run(NUMBERS, 303, [
-      { version: "0300", apply_record: "01-ops/a.md" },
+      { version: "0300", apply_record: recFor("0300") },
       { version: "0301", apply_record: REC },
-      { version: "0302", apply_record: "01-ops/b.md" },
+      { version: "0302", apply_record: recFor("0302") },
     ]);
     expect(r).toEqual({ undeclared_gaps: [], invalid_declarations: [] });
   });
@@ -87,10 +88,35 @@ describe("hosted_without_repo_file", () => {
     expect(r.invalid_declarations.join(" ")).toMatch(/0301 is declared twice in hosted_without_repo_file/);
   });
 
-  it("NEGATIVE: a malformed version is refused", () => {
-    for (const bad of ["301", "03011", "abc", 301, null, undefined]) {
-      const r = run(range(1, 300).concat(302), 302, [{ version: bad, apply_record: REC }]);
-      expect(r.invalid_declarations.join(" "), String(bad)).toMatch(/hosted_without_repo_file entry has no four-digit version/);
+  const malformed = (bad: unknown) => run(range(1, 300).concat(302), 302, [{ version: bad, apply_record: REC }]).invalid_declarations.join(" ");
+  it('NEGATIVE: the three-digit STRING "301" is refused (the four-digit rule is pinned, not parseInt)', () => {
+    expect(malformed("301")).toMatch(/hosted_without_repo_file entry has no four-digit version/);
+  });
+  it("NEGATIVE: the NUMBER 301 is refused", () => {
+    expect(malformed(301)).toMatch(/hosted_without_repo_file entry has no four-digit version/);
+  });
+  it("NEGATIVE: other malformed versions are refused", () => {
+    for (const bad of ["03011", "0301x", " 0301", "abc", null, undefined]) {
+      expect(malformed(bad), String(bad)).toMatch(/hosted_without_repo_file entry has no four-digit version/);
+    }
+  });
+
+  it("accepts each of the three real apply-record shapes, for the matching version", () => {
+    for (const rec of [
+      "01-ops/RECORD-0301-APPLIED-20261106.md",
+      "01-ops/0313-APPLY-RESULT-20261108T1929Z.md",
+      "01-ops/rmin-0303-apply-20261108/NOTES.md",
+    ]) {
+      const v = rec.match(/\d{4}/)![0];
+      const n = Number(v);
+      const r = run(range(1, n - 1).concat(n + 1), n + 1, [{ version: v, apply_record: rec }]);
+      expect(r.invalid_declarations, rec).toEqual([]);
+    }
+  });
+  it("NEGATIVE: an apply_record of the wrong shape, the wrong folder or ANOTHER version's record is refused", () => {
+    for (const bad of ["notes.md", "01-ops/a.md", "docs/RECORD-0301-APPLIED-20261106.md", "01-ops/RECORD-0302-APPLIED-20261106.md", "01-ops/RECORD-0301-APPLIED-2026.md", "01-ops/RECORD-0301-APPLIED-20261106.md.txt", "../01-ops/RECORD-0301-APPLIED-20261106.md"]) {
+      const r = run(range(1, 300).concat(302), 302, [{ version: "0301", apply_record: bad }]);
+      expect(r.invalid_declarations.join(" "), bad).toMatch(/0301 apply_record is not an operator apply-record path for 0301/);
     }
   });
 
@@ -125,8 +151,8 @@ describe("hosted_without_repo_file through getMigrationState", () => {
   const files = ["0001_a.sql", "0002_b.sql", "0003_c.sql"].filter((f) => f !== "0002_b.sql");
 
   it("exposes the list, and a hosted number with no file is neither a gap nor pending", () => {
-    const st = fixture("ok", files, { ...base, hosted_without_repo_file: [{ version: "0002", apply_record: REC }] });
-    expect(st.hosted_without_repo_file).toEqual([{ version: "0002", apply_record: REC }]);
+    const st = fixture("ok", files, { ...base, hosted_without_repo_file: [{ version: "0002", apply_record: recFor("0002") }] });
+    expect(st.hosted_without_repo_file).toEqual([{ version: "0002", apply_record: recFor("0002") }]);
     expect(st.undeclared_gaps).toEqual([]);
     expect(st.invalid_out_of_order_declarations).toEqual([]);
     expect(st.pending_migrations).toEqual([]);
@@ -145,7 +171,7 @@ describe("hosted_without_repo_file through getMigrationState", () => {
   it("a declared number whose file later lands is refused, so a stale entry cannot linger", () => {
     const st = fixture("landed", ["0001_a.sql", "0002_b.sql", "0003_c.sql"], {
       ...base,
-      hosted_without_repo_file: [{ version: "0002", apply_record: REC }],
+      hosted_without_repo_file: [{ version: "0002", apply_record: recFor("0002") }],
     });
     expect(st.invalid_out_of_order_declarations.join(" ")).toMatch(/0002 is declared hosted_without_repo_file but has a repo file/);
   });
