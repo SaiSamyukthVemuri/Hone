@@ -60,8 +60,13 @@ describe("persistence and the URL", () => {
   });
   it("a link with no param restores the viewer's own last selection, once", () => {
     // The stored preference is read first and passed through; firstVisitParam falls back to the viewer's own column only when nothing is stored.
-    expect(SIDEBAR).toContain("firstVisitParam(readStoredSelection(storage, studioId, viewerId)");
+    expect(SIDEBAR).toContain("decideFirstVisit({");
+    expect(SIDEBAR).toContain("readStored: () => readStoredSelection(storage, studioId, viewerId)");
     expect(SIDEBAR).toContain("restored.current");
+    expect(SIDEBAR).toContain("if (!restored.current) clearLegacySelection(storage, studioId);"); // once per mount, never read
+    // The in-memory flag is set by the decision AND by a checkbox, so a blocked storage cannot re-arm the default.
+    expect(SIDEBAR).toMatch(/restored\.current = decided/);
+    expect(SIDEBAR).toMatch(/restored\.current = true;[^\n]*first-visit default/);
   });
   it("all three sidebar sites pass the viewer's own id, and an owner passes null (everyone)", () => {
     const sites = [...PAGE.matchAll(/<CalendarSidebar[\s\S]*?>/g)].map((m) => m[0]);

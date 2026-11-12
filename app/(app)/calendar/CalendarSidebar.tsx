@@ -7,8 +7,9 @@ import { INSIGHTS_RULE, type TimeInsightsModel } from "@/lib/calendar/time-insig
 import {
   SELECTION_PARAM,
   SIDEBAR_STORAGE_KEY,
+  clearLegacySelection,
   readStoredSelection,
-  firstVisitParam,
+  decideFirstVisit,
   serializeSelection,
   writeStoredSelection,
 } from "@/lib/calendar/practitioner-selection";
@@ -122,13 +123,19 @@ export function CalendarSidebar({
     } catch {
       storage = null;
     }
-    if (hasParam) {
-      writeStoredSelection(storage, studioId, viewerId, selectionParam);
-      return;
-    }
-    if (restored.current) return;
-    restored.current = true;
-    const param = firstVisitParam(readStoredSelection(storage, studioId, viewerId), ownFirstId, listedIdsRef.current);
+    // Once per mount, drop the pre-fix per-studio key without reading it (it belonged to an unknown person).
+    if (!restored.current) clearLegacySelection(storage, studioId);
+    if (hasParam) writeStoredSelection(storage, studioId, viewerId, selectionParam);
+    // An explicit `?people=` is a choice: from here the own-first default never re-applies in this mount,
+    // even when storage is blocked and nothing was remembered (decideFirstVisit).
+    const { decided, param } = decideFirstVisit({
+      decided: restored.current,
+      hasParam,
+      readStored: () => readStoredSelection(storage, studioId, viewerId),
+      ownFirstId,
+      listedIds: listedIdsRef.current,
+    });
+    restored.current = decided;
     if (param !== null) replaceWith(param);
   }, [hasParam, selectionParam, studioId, viewerId, replaceWith, ownFirstId]);
 
@@ -136,6 +143,7 @@ export function CalendarSidebar({
     const next = checked.includes(id) ? checked.filter((x) => x !== id) : [...checked, id];
     setChecked(next);
     const param = serializeSelection(next, listedIds);
+    restored.current = true; // the viewer chose: the first-visit default is done for this mount
     try {
       writeStoredSelection(window.localStorage, studioId, viewerId, param);
     } catch {

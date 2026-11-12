@@ -148,6 +148,21 @@ export function readStoredSelection(
   }
 }
 
+/**
+ * Remove the pre-fix per-studio key (`...:v1:<studioId>`), so the last user's selection does not linger
+ * on a shared browser (Privacy N1, #1424). It removes the EXACT key and nothing else: no read (the value
+ * is never inspected or migrated), and the per-viewer keys, other studios' legacy keys and the sidebar
+ * key are untouched. Failure is swallowed (storage blocked: nothing to remove).
+ */
+export function clearLegacySelection(storage: Pick<Storage, "removeItem"> | null | undefined, studioId: string): void {
+  try {
+    if (!studioId) return;
+    storage?.removeItem(SELECTION_STORAGE_PREFIX + studioId);
+  } catch {
+    // storage unavailable: nothing was stored here to remove.
+  }
+}
+
 /** `param` is the serialised selection (undefined = everyone). */
 export function writeStoredSelection(
   storage: StorageLike | null | undefined,
@@ -187,6 +202,25 @@ export function firstVisitParam(
   if (stored !== null) return restoreParam(stored);
   if (!ownFirstId || listedIds.length < 2 || !listedIds.includes(ownFirstId)) return null;
   return serializeSelection([ownFirstId], listedIds) ?? null;
+}
+
+/**
+ * The once-per-mount decision about what a link with no `people` param lands on. `decided` is in-memory
+ * state held by the caller (a ref), NOT storage: once the viewer, or an explicit `?people=` link, has made a
+ * choice in this mount, the first-visit default never re-applies, whether or not storage works (Codex P2 on
+ * #1424: with storage blocked, an explicit link followed by ticking everyone removed the param and
+ * reinstated the own-only default, so the viewer could not switch to everyone).
+ * `readStored` is only called when a stored preference is actually needed.
+ */
+export function decideFirstVisit(input: {
+  decided: boolean;
+  hasParam: boolean;
+  readStored: () => string | null;
+  ownFirstId: string | null | undefined;
+  listedIds: ReadonlyArray<string>;
+}): { decided: true; param: string | null } {
+  if (input.hasParam || input.decided) return { decided: true, param: null };
+  return { decided: true, param: firstVisitParam(input.readStored(), input.ownFirstId, input.listedIds) };
 }
 
 // ---- mini calendar ------------------------------------------------------------------------

@@ -6,6 +6,8 @@ import {
   SELECTION_PARAM,
   SELECTION_STORAGE_PREFIX,
   filterBySelection,
+  clearLegacySelection,
+  decideFirstVisit,
   firstVisitParam,
   isSelected,
   miniCalendarHref,
@@ -275,5 +277,84 @@ describe("first visit opens on the viewer's own column (a default, never an acce
     expect(sel.mode).toBe("some");
     expect([...sel.ids]).toEqual(["p2"]);
     expect(serializeSelection([...sel.ids, "p3"], LISTED)).toBe("p2,p3");
+  });
+});
+
+describe("an explicit choice in this mount is never undone by the first-visit default, even with storage blocked (Codex P2, #1424)", () => {
+  const LISTED = ["p1", "p2", "p3"];
+  const blocked = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+  // The caller's in-memory flag, driven the way the sidebar effect drives it.
+  function mount() {
+    let decided = false;
+    return (hasParam: boolean, ownFirstId: string | null) => {
+      const r = decideFirstVisit({ decided, hasParam, readStored: () => readStoredSelection(blocked, "s", "v"), ownFirstId, listedIds: LISTED });
+      decided = r.decided;
+      return r.param;
+    };
+  }
+  it("explicit ?people= link, then ticking everyone removes the param: nothing is reinstated", () => {
+    const effect = mount();
+    expect(effect(true, "p1")).toBeNull(); // the link carries the selection
+    expect(effect(false, "p1")).toBeNull(); // everyone ticked, param removed, storage unreadable
+  });
+  it("a plain first visit applies the own default once; unticking back to everyone then stays everyone", () => {
+    const effect = mount();
+    expect(effect(false, "p1")).toBe("p1"); // first visit, nothing stored (blocked)
+    expect(effect(true, "p1")).toBeNull(); // the URL now carries it
+    expect(effect(false, "p1")).toBeNull(); // viewer chose everyone: no re-apply
+  });
+  it("a new mount (reload) with storage blocked applies the default again: that is the first visit, by design", () => {
+    expect(mount()(false, "p1")).toBe("p1");
+  });
+  it("with working storage the stored preference still wins over the default on the first decision", () => {
+    const s = { m: new Map<string, string>(), getItem(k: string) { return this.m.get(k) ?? null; }, setItem(k: string, v: string) { this.m.set(k, v); } };
+    writeStoredSelection(s, "s", "v", "p2,p3");
+    expect(decideFirstVisit({ decided: false, hasParam: false, readStored: () => readStoredSelection(s, "s", "v"), ownFirstId: "p1", listedIds: LISTED }).param).toBe("p2,p3");
+  });
+  it("readStored is not even called once a choice exists", () => {
+    let reads = 0;
+    const read = () => { reads += 1; return null; };
+    decideFirstVisit({ decided: true, hasParam: false, readStored: read, ownFirstId: "p1", listedIds: LISTED });
+    decideFirstVisit({ decided: false, hasParam: true, readStored: read, ownFirstId: "p1", listedIds: LISTED });
+    expect(reads).toBe(0);
+  });
+});
+
+describe("the pre-fix per-studio key is removed once, unread (Privacy N1, #1424)", () => {
+  function store(initial: Record<string, string>) {
+    const m = new Map(Object.entries(initial));
+    const reads: string[] = [];
+    return { m, reads, getItem: (k: string) => { reads.push(k); return m.get(k) ?? null; }, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
+  }
+  it("removes exactly the legacy key and leaves every other key, without reading anything", () => {
+    const s = store({
+      [SELECTION_STORAGE_PREFIX + "studio-1"]: "p-d", // legacy, studio-1
+      [SELECTION_STORAGE_PREFIX + "studio-1:viewer-d"]: "p-d", // per-viewer key
+      [SELECTION_STORAGE_PREFIX + "studio-2"]: "p-x", // another studio's legacy key
+      "hone:calendar:sidebar:v1": "closed",
+    });
+    clearLegacySelection(s, "studio-1");
+    expect([...s.m.keys()].sort()).toEqual(
+      [
+        "hone:calendar:sidebar:v1",
+        SELECTION_STORAGE_PREFIX + "studio-1:viewer-d",
+        SELECTION_STORAGE_PREFIX + "studio-2",
+      ].sort(),
+    );
+    expect(s.reads).toEqual([]); // never inspected
+  });
+  it("does not widen what the per-viewer key stores, and a later choice still round-trips", () => {
+    const s = store({ [SELECTION_STORAGE_PREFIX + "studio-1"]: "p-d" });
+    clearLegacySelection(s, "studio-1");
+    writeStoredSelection(s, "studio-1", "viewer-d", "p1,p2");
+    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1:viewer-d")).toBe("p1,p2");
+    expect(s.m.has(SELECTION_STORAGE_PREFIX + "studio-1")).toBe(false);
+  });
+  it("is harmless when there is nothing to remove, no studio id, no storage, or storage throws", () => {
+    const s = store({});
+    expect(() => clearLegacySelection(s, "studio-1")).not.toThrow();
+    expect(() => clearLegacySelection(s, "")).not.toThrow();
+    expect(() => clearLegacySelection(null, "studio-1")).not.toThrow();
+    expect(() => clearLegacySelection({ removeItem: () => { throw new Error("blocked"); } }, "studio-1")).not.toThrow();
   });
 });

@@ -201,6 +201,7 @@ for (const [vpName, vp] of Object.entries(VIEWPORTS)) {
       await expect(checkbox(page, t.a.id)).not.toBeChecked();
       await expect.poll(() => read(bKey)).toBe(t.b.id);
       expect(await read(aKey)).toBe(t.a.id); // B did not touch A's stored choice
+      expect(await read(legacyKey)).toBeNull(); // the pre-fix per-studio key was removed unread (Privacy N1)
       await shot(page, "7-shared-browser-next-practitioner");
 
       // A comes back on the same browser: still A's own choice.
