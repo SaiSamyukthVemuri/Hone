@@ -2,6 +2,8 @@ import type {
   ClaimRow,
   FailResult,
   FinalizeResult,
+  OwnerAuthority,
+  ProviderResourceBinding,
   ProvisioningStore,
 } from "@/lib/sms/provisioning";
 
@@ -73,7 +75,59 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
   /** Force what the IDENTIFIER write answers, independently of the parking write. */
   failReturnsFinalize: FinalizeResult | null = null;
 
+  /**
+   * Attempts started. Lets a test prove a refusal happened BEFORE any claim --
+   * a malformed target must never reach the authority check, let alone the
+   * provider.
+   */
+  claimCalls = 0;
+
+  /**
+   * Finalize attempts. "This capability never activates a sender" is only
+   * worth stating if it is a NUMBER that is asserted, not a comment.
+   */
+  finalizeCalls = 0;
+
+  /**
+   * Finalize calls that asked to ACTIVATE (testOk = true).
+   *
+   * The configure capability may reserve identifiers with testOk = false; it may
+   * never activate. Counting the two separately is what lets that be asserted as
+   * a number instead of a promise.
+   */
+  activationCalls = 0;
+
+  /**
+   * Force the fence to refuse, modelling a worker displaced by a takeover
+   * between claiming and acting.
+   */
+  denyRenew = false;
+
   constructor(private readonly members: Membership[]) {}
+
+  /**
+   * Seed an ALREADY ACTIVE sender: the one state a configuration change must
+   * refuse, because its webhooks are carrying live client traffic.
+   */
+  forceActive(studioId: string, phoneNumber: string): Row {
+    const row: Row = {
+      id: `sender-active-${this.rows.length + 1}`,
+      studioId,
+      status: "active",
+      claimKey: this.nextKey(),
+      claimedPhoneNumber: phoneNumber,
+      phoneNumber,
+      phoneNumberSid: `PN${"f".repeat(32)}`,
+      messagingServiceSid: `MG${"f".repeat(32)}`,
+      provisionedAt: "2026-01-01T00:00:00.000Z",
+      lastTestOkAt: "2026-01-01T00:00:00.000Z",
+      lastErrorCode: null,
+      claimAt: this.now,
+      leaseGeneration: 1,
+    };
+    this.rows.push(row);
+    return row;
+  }
 
   private nextKey(): string {
     this.seq += 1;
@@ -84,6 +138,86 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     return this.rows.find((r) => r.studioId === studioId && r.status !== "released");
   }
 
+  /** Authority reads performed, so a test can prove inspect still checked. */
+  authorityCalls = 0;
+
+  /** Model an unreadable authority table: the answer is "we do not know". */
+  authorityUnavailable = false;
+
+  /**
+   * READ-ONLY authority. Mirrors 0191's own derivation and, critically, writes
+   * NOTHING -- no row, no claim, no lease. A test asserting `claimCalls === 0`
+   * after an inspection is asserting exactly that.
+   */
+  async readOwnerAuthority(input: {
+    studioId: string;
+    actorUserId: string;
+  }): Promise<OwnerAuthority> {
+    this.authorityCalls += 1;
+    if (this.authorityUnavailable) return "unavailable";
+    const member = this.members.find(
+      (m) => m.studioId === input.studioId && m.userId === input.actorUserId,
+    );
+    if (!member) {
+      const studioExists = this.members.some((m) => m.studioId === input.studioId);
+      return studioExists ? "not_a_member" : "studio_not_found";
+    }
+    return member.role === "owner" ? "owner" : "not_owner";
+  }
+
+  /**
+   * Which studio each provider resource is bound to, keyed by SID. Empty means
+   * genuinely unbound, which is the ordinary case for a studio adopting a
+   * number Hone has never recorded.
+   */
+  readonly resourceBindings = new Map<string, string>();
+
+  /** Model an authority that cannot answer, so the fail-closed path is testable. */
+  bindingUnavailable: "phone" | "service" | "both" | null = null;
+
+  /** Bind both provider identifiers of a sender to a studio, as finalize would. */
+  bindResources(studioId: string, phoneNumberSid: string, messagingServiceSid: string): void {
+    this.resourceBindings.set(phoneNumberSid, studioId);
+    this.resourceBindings.set(messagingServiceSid, studioId);
+  }
+
+  /**
+   * A resource recorded against another studio -- including one bound by a lane
+   * this store never saw as a row, which is how a concurrent adoption running
+   * in another process appears from here.
+   */
+  private resourceBoundElsewhere(input: {
+    studioId: string;
+    phoneNumberSid: string;
+    messagingServiceSid: string;
+  }): boolean {
+    for (const sid of [input.phoneNumberSid, input.messagingServiceSid]) {
+      const owner = this.resourceBindings.get(sid);
+      if (owner !== undefined && owner !== input.studioId) return true;
+    }
+    return false;
+  }
+
+  async readProviderResourceBindings(input: {
+    phoneNumberSid: string;
+    messagingServiceSid: string;
+  }): Promise<{
+    phoneNumberSid: ProviderResourceBinding;
+    messagingServiceSid: ProviderResourceBinding;
+  }> {
+    const look = (sid: string, which: "phone" | "service"): ProviderResourceBinding => {
+      if (this.bindingUnavailable === which || this.bindingUnavailable === "both") {
+        return { kind: "unavailable", reason: "forced" };
+      }
+      const owner = this.resourceBindings.get(sid);
+      return owner ? { kind: "bound", studioId: owner } : { kind: "unbound" };
+    };
+    return {
+      phoneNumberSid: look(input.phoneNumberSid, "phone"),
+      messagingServiceSid: look(input.messagingServiceSid, "service"),
+    };
+  }
+
   async claim(input: {
     studioId: string;
     actorUserId: string;
@@ -91,6 +225,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     areaCode: string | null;
     phoneNumber: string;
   }): Promise<ClaimRow> {
+    this.claimCalls += 1;
     const refuse = (result: ClaimRow["result"]): ClaimRow => ({
       result,
       senderId: null,
@@ -228,6 +363,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
       (r) => r.studioId === input.studioId && r.claimKey === input.claimKey && r.status !== "released",
     );
     const granted =
+      this.denyRenew !== true &&
       row !== undefined &&
       row.status === "provisioning" &&
       row.leaseGeneration === input.leaseGeneration &&
@@ -252,6 +388,8 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     messagingServiceSid: string;
     testOk: boolean;
   }): Promise<FinalizeResult> {
+    this.finalizeCalls += 1;
+    if (input.testOk) this.activationCalls += 1;
     if (this.failReturnsFinalize !== null) return this.failReturnsFinalize;
     if (this.failFinalizeWithoutCommitting) return "invalid_input";
     const row = this.rows.find(
@@ -276,6 +414,22 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     ) {
       return "conflict";
     }
+
+    // THE UNIQUE INDEXES, modelled. 0191 carries partial unique indexes on
+    // phone_number_sid and on messaging_service_sid, so one provider resource
+    // belongs to exactly one studio whatever a caller supplies, and the
+    // violation is caught and returned as `conflict` rather than raised. That is
+    // the ATOMIC half of the reservation -- without modelling it here, a
+    // concurrency test would be a statement about the fake.
+    const takenByAnother = this.rows.some(
+      (r) =>
+        r !== row &&
+        r.status !== "released" &&
+        ((r.phoneNumberSid !== null && r.phoneNumberSid === input.phoneNumberSid) ||
+          (r.messagingServiceSid !== null &&
+            r.messagingServiceSid === input.messagingServiceSid)),
+    );
+    if (takenByAnother || this.resourceBoundElsewhere(input)) return "conflict";
 
     row.phoneNumber ??= input.phoneNumber;
     row.phoneNumberSid ??= input.phoneNumberSid;
