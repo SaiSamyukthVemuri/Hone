@@ -173,6 +173,17 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     // availability actions pick one of three keys through assertAvailabilityKey
     for (const m of read("app/(app)/settings/availability/actions.ts").matchAll(/"(avail\.manage_[a-z_]+)"/g)) asked.add(m[1]!);
     const marked = new Set(CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key));
+    // NAMED carve-out (OPS/Team, 12 Nov): clin.view_intake_status is asked by the I2 readers (the 0334 projection serves it) but stays not_yet in the
+    // catalog, because the enforced flag is tied to release state (0287: every enforced key is in the release seed) and the permission-activation hold
+    // stands. The flip commit removes this carve-out. It FAILS once the key is released (seeded), so it cannot outlive the hold.
+    const ASKED_AHEAD_OF_FLIP = ["clin.view_intake_status"];
+    const seedKeys = [...read("supabase/migrations/0287_roles_permission_engine.sql").replace(/^\s*--.*$/gm, "").matchAll(/\('([a-z_.]+)', null, '[^']+', '(?:full|narrow)'\)/g)].map((m) => m[1]!);
+    for (const k of ASKED_AHEAD_OF_FLIP) {
+      expect(asked, `${k} is no longer asked: remove it from ASKED_AHEAD_OF_FLIP`).toContain(k);
+      expect(enforcementOf(k)).toBe("not_yet");
+      expect(seedKeys, `${k} is now released: mark it enforced in the catalog and remove it from ASKED_AHEAD_OF_FLIP`).not.toContain(k);
+      asked.delete(k);
+    }
     expect([...asked].sort()).toEqual([...marked].sort());
     for (const k of asked) expect(["enforced", "deny_only", "observe"]).toContain(enforcementOf(k));
     expect(enforcementOf("appt.complete")).toBe("observe"); // asked, logged, never blocks

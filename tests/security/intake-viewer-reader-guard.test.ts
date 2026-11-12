@@ -15,11 +15,12 @@ function files(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
-const CALLEES = ["getLatestIntakeForClient", "getLatestSubmittedOrReviewedIntakeForClient"];
+const CALLEES = ["getLatestIntakeForClient", "getLatestSubmittedOrReviewedIntakeForClient", "getIntakeById", "getIntakeHistoryForClient"];
 // file -> a pattern that must appear BEFORE the first call, proving the clin.view_intake gate
 const GATES: Record<string, RegExp> = {
   "lib/intake/viewer-intake.ts": /if \(access\.canViewIntake\)/,
   "app/(app)/clients/[id]/intake/assist/page.tsx": /requirePermission\([^)]*"clin\.view_intake"[^)]*\)\)\.allowed\) notFound\(\)/,
+  "app/(app)/clients/[id]/intake/page.tsx": /requirePermission\([^)]*"clin\.view_intake"[^)]*\)\)\.allowed\) notFound\(\)/,
   "app/(app)/clients/[id]/page.tsx": /canViewIntakePromise\.then\(\(ok\) => \(ok \?/,
 };
 
@@ -49,6 +50,8 @@ describe("every reader of the intake ROW stands behind clin.view_intake", () => 
     expect(callersOf([{ file: "app/new/page.tsx", text: "await getLatestIntakeForClient(s, c);" }])).toEqual(["app/new/page.tsx"]);
     expect(ungated([{ file: "app/new/page.tsx", text: "await getLatestIntakeForClient(s, c);" }])).toEqual(["app/new/page.tsx"]);
     expect(ungated([{ file: "lib/intake/viewer-intake.ts", text: "x = await getLatestIntakeForClient(s,c); if (access.canViewIntake) {}" }])).toEqual(["lib/intake/viewer-intake.ts"]);
+    // J-1: the by-id and history readers are callees too, so a new ungated caller of either fails
+    expect(ungated([{ file: "app/new/page.tsx", text: "await getIntakeById(s, i); await getIntakeHistoryForClient(s, c);" }])).toEqual(["app/new/page.tsx"]);
     // control: gate first
     expect(ungated([{ file: "lib/intake/viewer-intake.ts", text: "if (access.canViewIntake) { x = await getLatestIntakeForClient(s,c); }" }])).toEqual([]);
     // a mention in a comment is not a call
