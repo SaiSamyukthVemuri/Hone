@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 267,
-    "last": "0332_permission_activation_hash_includes_gates.sql",
-    "sha256": "3453616928b55379368379218395bb3f878c5bcce816cbfa6df15df5f948a029"
+    "count": 268,
+    "last": "0333_clinical_read_enforcement_records.sql",
+    "sha256": "5ced6f0b093d1179d218444be428cf9ebfb4e771c00ce907f3bbd2df6a1e9a35"
   },
   "public": {
     "tables": [
@@ -244,6 +244,7 @@
       "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
+      "clin_key_studios",
       "close_delivery_concern",
       "close_new_client_waitlist_admission_round",
       "close_unbooked_new_client_waitlist_invitation",
