@@ -201,7 +201,7 @@ export async function getManualFeeChargeEligibility(
   // mode is unaffected. Refund/cancel/display are NOT gated by eligibility.
   const feeChargeReason =
     serverChargeType === "no_show" ? "no_show_fee" : "late_cancellation_fee";
-  const liveHold = liveChargeReasonBlockMessage(feeChargeReason, livemode);
+  const liveHold = liveChargeReasonBlockMessage(feeChargeReason, livemode, args.studioId);
   if (liveHold) {
     reasons.push(liveHold);
   }

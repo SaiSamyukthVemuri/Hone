@@ -387,6 +387,7 @@ export async function chargeManualFeeAttemptAction(
   const hold = liveChargeReasonBlockMessage(
     attemptRow.charge_reason,
     inferStripeLivemode(),
+    studioId,
   );
   if (hold) {
     return { ok: false, outcome: "blocked", error: hold };

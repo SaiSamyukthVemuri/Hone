@@ -61,7 +61,8 @@ describe("prepare gate — manual-fee eligibility", () => {
   const src = read("lib/billing/manual-fee-eligibility.ts");
   it("pushes the live hold into the eligibility blocking reasons", () => {
     expect(src).toMatch(/from "@\/lib\/billing\/live-charge-reason-allowlist"/);
-    expect(src).toMatch(/const liveHold = liveChargeReasonBlockMessage\(feeChargeReason, livemode\)/);
+    // The rule, not the spelling: the studio id is passed so the per-studio allowlist can apply.
+    expect(src).toMatch(/const liveHold = liveChargeReasonBlockMessage\(feeChargeReason, livemode, args\.studioId\)/);
     expect(src).toMatch(/if \(liveHold\) \{\s*\n?\s*reasons\.push\(liveHold\)/);
   });
 });
