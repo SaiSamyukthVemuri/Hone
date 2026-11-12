@@ -14,6 +14,8 @@ export type RefundDisplayInput = {
   refundStatus: string | null;
   refundAmountCents: number | null;
   providerRefundStatus: string | null;
+  /** payment_charge_attempts.stripe_refund_id. The refund runner refuses a NEW attempt once this or the provider status is set. */
+  stripeRefundId: string | null;
 };
 
 export type RefundDisplayKind =
@@ -21,7 +23,8 @@ export type RefundDisplayKind =
   | "refunded" // ours and the provider (or silence) agree it succeeded
   | "pending" // in flight: our claim is held, or the provider says pending
   | "needs_action" // the provider says the refund needs action
-  | "failed" // a refund attempt ended without moving money; a new attempt is allowed
+  | "failed" // our refund attempt ended without moving money and left NO provider trace; a new attempt is allowed
+  | "needs_review" // the provider has recorded an object or an outcome for a refund that did not complete: the studio operator reviews it; no new attempt
   | "unclear"; // the two sides disagree, or a value is unknown: do not guess
 
 export type RefundDisplay = {
@@ -78,9 +81,17 @@ export function refundDisplayState(i: RefundDisplayInput): RefundDisplay {
   }
 
   // ours is null or failed: no refund of ours moved money.
+  // payment-refund.ts refuses a NEW attempt once ANY provider trace exists (stripe_refund_id, stripe_refund_status or the
+  // event columns that travel with the status): "needs_manual_review". So a new attempt is offered ONLY with no trace.
+  const hasProviderTrace = provider !== null || i.stripeRefundId !== null;
   if (provider === null || provider === "failed" || provider === "canceled") {
     const rem = remaining(i, 0);
-    if (ours === "failed" || provider === "failed" || provider === "canceled") {
+    if (hasProviderTrace) {
+      // The provider recorded a refund that did not complete (or an object id with no status). Money stayed, but the
+      // runner will not start another: the operator reviews it. Never "failed" with a retry button that only refuses.
+      return { kind: "needs_review", remainingRefundableCents: rem, mayStartRefund: false };
+    }
+    if (ours === "failed") {
       return { kind: "failed", remainingRefundableCents: rem, mayStartRefund: rem !== null && rem > 0 };
     }
     return { kind: "not_refunded", remainingRefundableCents: rem, mayStartRefund: rem !== null && rem > 0 };

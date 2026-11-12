@@ -7,6 +7,7 @@ const base: RefundDisplayInput = {
   refundStatus: null,
   refundAmountCents: null,
   providerRefundStatus: null,
+  stripeRefundId: null,
 };
 const s = (o: Partial<RefundDisplayInput>) => refundDisplayState({ ...base, ...o });
 
@@ -67,13 +68,33 @@ describe("refundDisplayState (R1)", () => {
     expect(s({ refundStatus: "succeeded", refundAmountCents: -1 }).kind).toBe("unclear");
     expect(s({ refundStatus: "succeeded", refundAmountCents: 5001 }).kind).toBe("unclear");
   });
-  it("a terminal failure of ours (provider silent, failed or canceled): failed, retry allowed, money stayed", () => {
-    for (const p of [null, "failed", "canceled"]) {
-      expect(s({ refundStatus: "failed", providerRefundStatus: p })).toEqual({
-        kind: "failed",
-        remainingRefundableCents: 5000,
-        mayStartRefund: true,
-      });
+  it("a terminal failure of ours with NO provider trace: failed, retry allowed, money stayed", () => {
+    expect(s({ refundStatus: "failed" })).toEqual({ kind: "failed", remainingRefundableCents: 5000, mayStartRefund: true });
+  });
+  it("ANY provider trace blocks a new attempt (the runner returns needs_manual_review): needs_review, no retry (Insurance F1)", () => {
+    for (const o of [null, "failed"]) {
+      for (const p of ["failed", "canceled"]) {
+        expect(s({ refundStatus: o, providerRefundStatus: p })).toEqual({
+          kind: "needs_review",
+          remainingRefundableCents: 5000,
+          mayStartRefund: false,
+        });
+      }
+      // an object id with no status is a trace too
+      expect(s({ refundStatus: o, stripeRefundId: "re_x" }).kind).toBe("needs_review");
+      expect(s({ refundStatus: o, stripeRefundId: "re_x" }).mayStartRefund).toBe(false);
+    }
+  });
+  it("a new attempt is offered ONLY when provider status and refund id are both null", () => {
+    const rows = [
+      [null, null, null, true],
+      ["failed", null, null, true],
+      [null, "failed", null, false],
+      [null, null, "re_1", false],
+      ["failed", "canceled", "re_1", false],
+    ] as const;
+    for (const [o, p, id, may] of rows) {
+      expect(s({ refundStatus: o, providerRefundStatus: p, stripeRefundId: id }).mayStartRefund, `${o}/${p}/${id}`).toBe(may);
     }
   });
   it("a provider refund that we never recorded (any non-failed state) is money we cannot place: unclear, no new refund", () => {

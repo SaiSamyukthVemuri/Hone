@@ -316,11 +316,24 @@ export function SessionPaymentPrepareCard({
   // refundAmountCents < amountCents. A PARTIAL refund therefore still counts as
   // money held, exactly as the database computes it, so nobody can be recorded
   // as paying cash for money the studio is still holding on a card.
+  // R1 (Insurance F3): the same reading as the refund panel, so settlement controls open only when our column AND the
+  // provider's agree the whole charge went back. A disagreement or an unknown keeps the card money HELD.
+  const activeRefund =
+    activeAttempt !== null
+      ? refundDisplayState({
+          chargeStatus: activeAttempt.status,
+          amountCents: activeAttempt.amountCents,
+          refundStatus: activeAttempt.refundStatus,
+          refundAmountCents: activeAttempt.refundAmountCents,
+          providerRefundStatus: activeAttempt.stripeRefundStatus,
+          stripeRefundId: activeAttempt.stripeRefundId,
+        })
+      : null;
   const fullyRefunded =
     activeAttempt !== null &&
     activeAttempt.status === "succeeded" &&
-    activeAttempt.refundStatus === "succeeded" &&
-    (activeAttempt.refundAmountCents ?? 0) >= activeAttempt.amountCents;
+    activeRefund?.kind === "refunded" &&
+    activeRefund.remainingRefundableCents === 0;
   const cardMoneyHeld = activeAttempt !== null && !fullyRefunded;
 
   const previousTerminalAttempt =
@@ -964,7 +977,15 @@ function SucceededPanel({
   // "Paid" for a live charge, "Refunded" once the row carries
   // refund_status='succeeded', so the practitioner never sees a paid heading
   // and a refunded sub-panel fighting each other. Sub-panels handle the rest.
-  const refunded = attempt.refundStatus === "succeeded";
+  const refunded =
+    refundDisplayState({
+      chargeStatus: attempt.status,
+      amountCents: attempt.amountCents,
+      refundStatus: attempt.refundStatus,
+      refundAmountCents: attempt.refundAmountCents,
+      providerRefundStatus: attempt.stripeRefundStatus,
+      stripeRefundId: attempt.stripeRefundId,
+    }).kind === "refunded";
   return (
     <div
       className={
@@ -1202,7 +1223,9 @@ function RefundSubPanel({
     refundStatus: attempt.refundStatus,
     refundAmountCents: attempt.refundAmountCents,
     providerRefundStatus: attempt.stripeRefundStatus,
+    stripeRefundId: attempt.stripeRefundId,
   });
+  const persistedNeedsReview = display.kind === "needs_review";
   const persistedSucceeded = display.kind === "refunded";
   const persistedPending = display.kind === "pending";
   const persistedNeedsAction = display.kind === "needs_action";
@@ -1262,6 +1285,16 @@ function RefundSubPanel({
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
           <p className="font-medium">Refund needs action at Stripe.</p>
           <p className="mt-1">Stripe has not finished this refund. Do not refund again.</p>
+        </div>
+      )}
+
+      {persistedNeedsReview && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">Refund needs review.</p>
+          <p className="mt-1">
+            Stripe has recorded a refund that did not complete. The studio operator must review it before another
+            refund is started.
+          </p>
         </div>
       )}
 

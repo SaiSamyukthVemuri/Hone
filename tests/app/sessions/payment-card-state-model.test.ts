@@ -81,11 +81,10 @@ describe("PR #181: prepareJustSucceeded banner is single-render", () => {
 });
 
 describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top heading", () => {
-  it("the panel declares a refunded discriminator off attempt.refundStatus", () => {
+  it("the panel declares a refunded discriminator off refundDisplayState (both refund columns), not the single column", () => {
     const block = blockFor("SucceededPanel");
-    expect(block).toMatch(
-      /const refunded = attempt\.refundStatus === "succeeded";/,
-    );
+    expect(block).toMatch(/const refunded =\s*refundDisplayState\(\{[\s\S]{0,400}providerRefundStatus:\s*attempt\.stripeRefundStatus[\s\S]{0,120}\}\)\.kind === "refunded";/);
+    expect(block).not.toMatch(/const refunded = attempt\.refundStatus/);
   });
 
   it("the single headline comes from derivePaymentSummary ('Paid' / 'Refunded'), not dual headings", () => {

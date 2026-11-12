@@ -10,6 +10,7 @@
 // stay in storage and are surfaced only through the owner-only technical
 // disclosure and the existing admin surfaces.
 
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import type { SessionPaymentExistingAttemptSummary } from "@/lib/billing/session-payment-types";
 
@@ -103,6 +104,7 @@ export type PaymentSummaryKind =
   | "paid_receipt_failed"
   | "refunded"
   | "refund_pending"
+  | "refund_review"
   | "failed";
 
 export type PaymentSummary = {
@@ -125,11 +127,24 @@ export function derivePaymentSummary(
   const amountCents = attempt.amountCents;
   const currency = attempt.currency;
   if (attempt.status === "succeeded") {
-    if (attempt.refundStatus === "succeeded") {
+    // R1: the headline comes from the SAME reading as the refund panel (our column AND the provider's), so the
+    // header can never say "Refunded" beside a panel that says the status is unclear.
+    const refund = refundDisplayState({
+      chargeStatus: attempt.status,
+      amountCents: attempt.amountCents,
+      refundStatus: attempt.refundStatus,
+      refundAmountCents: attempt.refundAmountCents,
+      providerRefundStatus: attempt.stripeRefundStatus,
+      stripeRefundId: attempt.stripeRefundId,
+    });
+    if (refund.kind === "refunded") {
       return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents, currency };
     }
-    if (attempt.refundStatus === "pending_stripe") {
+    if (refund.kind === "pending" || refund.kind === "needs_action") {
       return { kind: "refund_pending", headline: "Refund processing", tone: "processing", amountCents, currency };
+    }
+    if (refund.kind === "unclear" || refund.kind === "needs_review") {
+      return { kind: "refund_review", headline: "Refund needs review", tone: "issue", amountCents, currency };
     }
     if (attempt.receiptStatus === "failed") {
       return { kind: "paid_receipt_failed", headline: "Paid", tone: "paid", amountCents, currency };

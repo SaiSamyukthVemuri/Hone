@@ -121,11 +121,32 @@ describe("derivePaymentSummary — one current headline per state", () => {
   });
   it("refunded / refund pending promote the headline", () => {
     expect(
-      derivePaymentSummary(attempt({ refundStatus: "succeeded" })),
+      derivePaymentSummary(attempt({ refundStatus: "succeeded", refundAmountCents: 22500 })),
     ).toMatchObject({ kind: "refunded", headline: "Refunded" });
     expect(
       derivePaymentSummary(attempt({ refundStatus: "pending_stripe" })),
     ).toMatchObject({ kind: "refund_pending" });
+  });
+  it("R1 (Insurance F2): the headline reads BOTH refund columns, so it can never say Refunded beside an unclear panel", () => {
+    const ok = { refundStatus: "succeeded", refundAmountCents: 22500 };
+    expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: "succeeded" }))).toMatchObject({ kind: "refunded" });
+    for (const p of ["failed", "canceled"]) {
+      expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: p }))).toMatchObject({
+        kind: "refund_review",
+        headline: "Refund needs review",
+        tone: "issue",
+      });
+    }
+    for (const p of ["pending", "requires_action"]) {
+      expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: p }))).toMatchObject({ kind: "refund_pending" });
+    }
+    // no readable refund amount, or an unknown value: not "Refunded"
+    expect(derivePaymentSummary(attempt({ refundStatus: "succeeded" }))).toMatchObject({ kind: "refund_review" });
+    expect(derivePaymentSummary(attempt({ refundStatus: "weird" }))).toMatchObject({ kind: "refund_review" });
+    // a provider trace on a refund that did not complete: needs review, not "Paid"
+    expect(derivePaymentSummary(attempt({ refundStatus: "failed", stripeRefundStatus: "failed" }))).toMatchObject({ kind: "refund_review" });
+    // our plain failed refund with no trace keeps the charge headline (money stayed, retry allowed)
+    expect(derivePaymentSummary(attempt({ refundStatus: "failed" }))).toMatchObject({ kind: "paid" });
   });
   it("failed → issue tone", () => {
     expect(
