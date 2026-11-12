@@ -87,13 +87,23 @@ export function classify(file: string, text: string): { readsSessionsViaUserClie
   return { readsSessionsViaUserClient: readers.length > 0, ownerOrPayGated, clinGated: readers.length > 0 && readers.every((u) => u.clin) };
 }
 
-export function scan(files: Array<{ file: string; text: string }>, exempt: Record<string, string>): Hit[] {
+// An exemption is only valid while the reader STAYS owner-only (Codex P2 on 9218d1d33). Each EXEMPT row pins the specific gate that keeps it so, and
+// the file must not acquire a pay.* / records.* requirePermission. If the pin stops matching, or such a key appears, the exemption no longer holds.
+const PAY_OR_RECORDS_KEY_CALL = /requirePermission\s*\([\s\S]{0,120}?["'`](?:pay|records)\.[a-z_]+["'`]/;
+
+export function scan(files: Array<{ file: string; text: string }>, exempt: Record<string, string>, pins: Record<string, RegExp[]> = {}): Hit[] {
   const out: Hit[] = [];
   for (const { file, text } of files) {
     const c = classify(file, text);
     const matches = c.readsSessionsViaUserClient && c.ownerOrPayGated && !c.clinGated;
     if (matches && !exempt[file]) out.push({ file, why: "owner/pay/records-gated loader reads sessions through the user client with no documented exemption" });
     if (!matches && exempt[file]) out.push({ file, why: "stale exemption: this file no longer matches the rule" });
+    if (matches && exempt[file]) {
+      for (const pin of pins[file] ?? []) {
+        if (!pin.test(text)) out.push({ file, why: `exempt reader lost its pinned owner-only gate: ${pin}` });
+      }
+      if (PAY_OR_RECORDS_KEY_CALL.test(text)) out.push({ file, why: "exempt reader now gates on a pay.*/records.* key; it must read sessions through the admin client or a projection, not the user client" });
+    }
   }
   return out;
 }
@@ -113,11 +123,25 @@ export const EXEMPT: Record<string, string> = {
   "lib/dashboard/unpaid-attention.ts": "owner-only: `!viewerIsOwner` returns before any query; owner passes the clin policy",
 };
 
+// The gate that keeps each exempt reader owner-only (or ahead of its helper). Matched against the file text.
+export const GATE_PINS: Record<string, RegExp[]> = {
+  "lib/billing/appointment-payment-state.ts": [/if \(!viewerIsOwner\) \{/],
+  "lib/billing/authoritative-session-payment.ts": [/args\.viewerIsOwner !== true\) return \{ ok: false/],
+  "lib/billing/quick-checkout.ts": [/args\.viewerIsOwner/],
+  "lib/dashboard/unpaid-attention.ts": [/if \(!opts\.viewerIsOwner\) return \{ ok: false \}/],
+  "lib/dashboard/practice-metrics.ts": [/viewer\.viewerIsOwner !== true/],
+  "app/(app)/settings/data/page.tsx": [/practitioner\.role !== "owner"/],
+  "app/(app)/settings/data/actions.ts": [/practitioner\.role !== "owner"/],
+  "app/(app)/calendar/check-practitioner/page.tsx": [/practitioner\.role !== "owner"\) notFound\(\)/],
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts": [/requirePermission\([\s\S]{0,80}"clin\.view_records"[\s\S]{0,300}await assertSessionVisible\(/],
+  "app/(app)/global-search-actions.ts": [/const canViewRecords = \(await requirePermission\(supabase, studioId, "clin\.view_records"\)\)\.allowed/, /canViewRecords\s*\?\s*supabase/],
+};
+
 const FILES = ["app", "lib", "components"].flatMap((r) => sourceFiles(r)).map((file) => ({ file, text: readFileSync(file, "utf8") }));
 
 describe("owner/pay-gated loaders do not read sessions through the user client without an exemption", () => {
   it("the real tree has no undocumented or stale case", () => {
-    const hits = scan(FILES, EXEMPT);
+    const hits = scan(FILES, EXEMPT, GATE_PINS);
     expect(hits, JSON.stringify(hits, null, 2)).toEqual([]);
   }, 60_000);
 
@@ -168,6 +192,28 @@ export async function ownerLoader(viewerIsOwner: boolean){ if(!viewerIsOwner) re
       const gated = 'import { readSessions } from "./helper";\nexport async function f(viewerIsOwner: boolean){ if(!viewerIsOwner) return null; return readSessions(); }';
       const helper = 'import { createClient } from "@/lib/supabase/server";\nexport async function readSessions(){ const s = await createClient(); return s.from("sessions").select("id"); }';
       expect(scan([{ file: "gated.ts", text: gated }, { file: "helper.ts", text: helper }], {})).toEqual([]);
+    });
+    it("every EXEMPT row pins a gate", () => {
+      expect(Object.keys(EXEMPT).sort()).toEqual(Object.keys(GATE_PINS).sort());
+    });
+    it("Codex P2: swapping unpaid-attention's owner refusal for requirePermission(pay.view_appointment) is refused, even though the file is exempt", () => {
+      const f = "lib/dashboard/unpaid-attention.ts";
+      const real = readFileSync(f, "utf8");
+      const refusal = "if (!opts.viewerIsOwner) return { ok: false };";
+      expect(real).toContain(refusal);
+      const swapped = real.replace(refusal, 'if (!(await requirePermission(await createClient(), opts.studioId, "pay.view_appointment")).allowed) return { ok: false };');
+      const why = scan([{ file: f, text: swapped }], EXEMPT, GATE_PINS).map((h) => h.why).join("|");
+      expect(why).toMatch(/lost its pinned owner-only gate/);
+      expect(why).toMatch(/now gates on a pay\.\*\/records\.\* key/);
+      // control: the real file passes
+      expect(scan([{ file: f, text: real }], EXEMPT, GATE_PINS)).toEqual([]);
+    });
+    it("removing the owner gate altogether from an exempt reader is refused", () => {
+      const f = "lib/billing/authoritative-session-payment.ts";
+      const real = readFileSync(f, "utf8");
+      const gone = real.replace(/if \(args\.viewerIsOwner !== true\) return \{ ok: false, failure: \{ kind: "owner_only" \} \};/, "");
+      expect(gone).not.toBe(real);
+      expect(scan([{ file: f, text: gone }], EXEMPT, GATE_PINS).map((h) => h.why).join("|")).toMatch(/lost its pinned owner-only gate|stale exemption/);
     });
     it("controls: clin.view_records-gated, admin-only and ungated-by-owner readers are accepted", () => {
       expect(scan([{ file: "a.ts", text: user('await requirePermission(s, id, "clin.view_records"); const o = viewerIsOwner') }], {})).toEqual([]);
