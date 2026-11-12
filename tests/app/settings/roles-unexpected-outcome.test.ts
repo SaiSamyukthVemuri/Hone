@@ -71,6 +71,20 @@ describe("rebaseDrafts: only this owner's own choices survive an uncertain save"
     expect(rebased.practitioner.values).toEqual(fresh.practitioner.values);
     expect(rebased.receptionist.values).toEqual(fresh.receptionist.values);
   });
+  it("Insurance F1: basis and gates come from the FRESH policy, never from the draft", () => {
+    const mk = (basis: string, gate: boolean, v: Record<string, string>) =>
+      ({ basis, values: v, gates: { receptionist_finance: gate } }) as unknown as StudioPolicy;
+    const both = (practitioner: StudioPolicy, receptionist: StudioPolicy) => ({ practitioner, receptionist }) as Record<Role, StudioPolicy>;
+    const oldSaved = both(mk("existing_snapshot", false, { "k.one": "own" }), mk("existing_snapshot", false, {}));
+    const drafts = both(mk("existing_snapshot", false, { "k.one": "off" }), mk("existing_snapshot", false, {}));
+    const fresh = both(mk("new_studio", true, { "k.one": "own" }), mk("new_studio", true, {}));
+    const rebased = rebaseDrafts(drafts, oldSaved, fresh);
+    for (const r of ["practitioner", "receptionist"] as Role[]) {
+      expect(rebased[r].basis, r).toBe("new_studio");
+      expect(rebased[r].gates, r).toEqual({ receptionist_finance: true });
+    }
+    expect(rebased.practitioner.values).toEqual({ "k.one": "off" }); // the owner's own choice still wins
+  });
   it("the editor's uncertain path rebases instead of keeping the old draft", () => {
     const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
     const at = src.indexOf("feedback.failed(UNCERTAIN_SAVE_MESSAGE)");
