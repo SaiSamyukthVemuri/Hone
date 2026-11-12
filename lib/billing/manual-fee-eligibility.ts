@@ -476,6 +476,7 @@ export async function getManualFeeChargeEligibility(
       cancelled_reason: (row.cancelled_reason as string | null) ?? null,
       refund_status: (row.refund_status as string | null) ?? null,
       refund_amount_cents: (row.refund_amount_cents as number | null) ?? null,
+      refunded_at: (row.refunded_at as string | null) ?? null,
       stripe_refund_status: (row.stripe_refund_status as string | null) ?? null,
       stripe_refund_id: (row.stripe_refund_id as string | null) ?? null,
       receipt_sent_at: (row.receipt_sent_at as string | null) ?? null,

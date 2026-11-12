@@ -173,6 +173,9 @@ export function ManualFeeChargeCard({
                     <>
                       <span>·</span>
                       <span data-testid="fee-history-refund">{refund}</span>
+                      {row.refunded_at && feeRefund(row).display.kind === "refunded" && (
+                        <FormattedDateTime iso={row.refunded_at} />
+                      )}
                     </>
                   )}
                 </li>

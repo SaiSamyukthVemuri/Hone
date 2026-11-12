@@ -16,6 +16,11 @@ vi.mock("@/app/(app)/calendar/[id]/manual-fee-actions", () => {
     refundFeeAttemptAction: f("refund"),
   };
 });
+// SSR renders the real timestamp component empty (it fills in on the client), so print the ISO value to pin WHICH time is shown.
+vi.mock("@/components/formatted-date-time", async () => {
+  const react = await import("react");
+  return { FormattedDateTime: (p: { iso: string | null }) => react.createElement("time", { "data-iso": p.iso ?? "" }, p.iso ?? "") };
+});
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
 
 const { createElement } = await import("react");
@@ -111,7 +116,7 @@ describe("states that must NOT offer a charge or a retry", () => {
 
 describe("charge history lists every attempt: amount, type, status, time, refund", () => {
   const rows = [
-    attempt({ id: "a", ...LC, status: "succeeded", amount_cents: 5000, charged_at: "2026-11-02T10:00:00.000Z", refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded" }),
+    attempt({ id: "a", ...LC, status: "succeeded", amount_cents: 5000, charged_at: "2026-11-02T10:00:00.000Z", refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded", refunded_at: "2026-11-03T09:00:00.000Z" }),
     attempt({ id: "b", charge_type: "no_show", status: "failed", amount_cents: 3000, failure_code: "card_declined" }),
     attempt({ id: "c", ...LC, status: "cancelled", amount_cents: 5000, cancelled_at: "2026-11-01T11:00:00.000Z" }),
   ];
@@ -123,11 +128,18 @@ describe("charge history lists every attempt: amount, type, status, time, refund
     expect(html).toContain("No-show fee");
   });
   it("each row has a truthful status label and the refund line only where there is one", () => {
+    expect(html).toContain("2026-11-01T10:00:00.000Z"); // every row shows when the attempt was made
     expect(html).toContain("Charged");
     expect(html).toContain("Charge failed");
     expect(html).toContain("Cancelled before charging");
     expect((html.match(/data-testid="fee-history-refund"/g) ?? []).length).toBe(1);
     expect(html).toContain(">Refunded<");
+  });
+  it("a refunded row carries the refund time; a row with no refund carries none", () => {
+    const refundedRow = html.split('data-testid="fee-history-row"').find((r) => r.includes(">Refunded<")) ?? "";
+    expect(refundedRow).toContain("2026-11-03T09:00:00.000Z");
+    const failedRow = html.split('data-testid="fee-history-row"').find((r) => r.includes("$30.00")) ?? "";
+    expect(failedRow).not.toContain("fee-history-refund");
   });
 });
 
