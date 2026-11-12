@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
-import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import { loadIntakeForViewer, type IntakeSummary } from "@/lib/intake/viewer-intake";
+import { RestrictedNote } from "@/components/restricted-note";
 import { intakeForViewer, type IntakeStatusOnly } from "@/lib/intake/status-only";
 import { practitionerIntakeReviewHref } from "@/lib/dashboard/today-intake";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
@@ -119,6 +120,8 @@ export default async function AppointmentDetailPage({
   const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records", { appointment: id })).allowed;
   // The briefing shows intake STATUS only; without clin.view_intake the row is carried without its answers.
   const canViewIntake = (await requirePermission(supabase, studio.id, "clin.view_intake", { appointment: id })).allowed;
+  // clin.view_intake_status is the status-only key: a holder without clin.view_intake still sees the status (via the 0334 projection); neither key is restricted.
+  const canViewIntakeStatus = canViewIntake || (await requirePermission(supabase, studio.id, "clin.view_intake_status", { appointment: id })).allowed;
 
   const { data, error } = await supabase
     .from("appointments")
@@ -267,6 +270,9 @@ export default async function AppointmentDetailPage({
   let pinnedNotes: Awaited<ReturnType<typeof getPinnedNotesForClient>> = [];
   let tags: ClientTag[] = [];
   let intake: IntakeStatusOnly | null = null;
+  let intakeRestricted = false;
+  let intakeStatusMode = false;
+  let intakeSummary: IntakeSummary | null = null;
   let treatmentPlans: Awaited<
     ReturnType<typeof getTreatmentPlansForClient>
   > = [];
@@ -327,7 +333,7 @@ export default async function AppointmentDetailPage({
     ] = await Promise.all([
       getPinnedNotesForClient(studio.id, clientId),
       getClientTags(studio.id, clientId),
-      getLatestIntakeForClient(studio.id, clientId),
+      loadIntakeForViewer(supabase, studio.id, clientId, { canViewIntake, canViewStatus: canViewIntakeStatus }),
       // Plans carry progress counted from treatment sessions and minutes: clin.view_records (Codex).
       canViewRecords ? getTreatmentPlansForClient(studio.id, clientId) : Promise.resolve([] as Awaited<ReturnType<typeof getTreatmentPlansForClient>>),
       // THE newest charted treatment before this appointment. Same selector,
@@ -379,7 +385,10 @@ export default async function AppointmentDetailPage({
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;
-    intake = intakeForViewer(intakeRes, canViewIntake);
+    if (intakeRes.kind === "restricted") intakeRestricted = true;
+    else if (intakeRes.kind === "ok" && intakeRes.value.mode === "detail") intake = intakeForViewer(intakeRes.value.intake, true);
+    else if (intakeRes.kind === "ok" && intakeRes.value.mode === "status") { intakeStatusMode = true; intakeSummary = intakeRes.value.summary; }
+    else throw new Error("Failed to load intake status"); // the loader throws on a failed read; unavailable is never rendered as "no form"
     treatmentPlans = plansRes;
     if (linkedSessionRes?.error) {
       throw new Error(
@@ -459,6 +468,9 @@ export default async function AppointmentDetailPage({
         client={data.client}
         tags={tags}
         intake={intake}
+        intakeRestricted={intakeRestricted}
+        intakeStatusMode={intakeStatusMode}
+        intakeSummary={intakeSummary}
         fitzpatrick={fitzpatrick}
         appointmentId={id}
       />
@@ -952,12 +964,18 @@ function ClientBriefingCard({
   client,
   tags,
   intake,
+  intakeRestricted,
+  intakeStatusMode,
+  intakeSummary,
   fitzpatrick,
   appointmentId,
 }: {
   client: ClientBriefing | null;
   tags: ClientTag[];
   intake: IntakeStatusOnly | null;
+  intakeRestricted: boolean;
+  intakeStatusMode: boolean;
+  intakeSummary: IntakeSummary | null;
   fitzpatrick: string | null;
   appointmentId: string;
 }) {
@@ -1076,7 +1094,7 @@ function ClientBriefingCard({
           )}
         </div>
       )}
-      <IntakeStatusLine intake={intake} clientId={client.id} />
+      <IntakeStatusLine intake={intake} clientId={client.id} restricted={intakeRestricted} statusMode={intakeStatusMode} summary={intakeSummary} />
     </section>
   );
 }
@@ -1084,10 +1102,26 @@ function ClientBriefingCard({
 function IntakeStatusLine({
   intake,
   clientId,
+  restricted,
+  statusMode,
+  summary,
 }: {
   intake: IntakeStatusOnly | null;
   clientId: string;
+  restricted: boolean;
+  statusMode: boolean;
+  summary: IntakeSummary | null;
 }) {
+  // Neither intake key: nothing was read, so this is NOT "no form on file" (RO-1).
+  if (restricted) return <RestrictedNote testId="briefing-intake-not-available" className="mt-3 text-xs text-neutral-500" />;
+  // clin.view_intake_status only: the status, with no review link (the review page needs clin.view_intake).
+  if (statusMode) {
+    return (
+      <p className="mt-3 text-xs text-neutral-600" data-testid="briefing-intake-status-only">
+        Intake: {summary ? (summary.status === "reviewed" ? "reviewed" : summary.status === "submitted" ? "awaiting review" : "started, not yet submitted") : "no form on file"}.
+      </p>
+    );
+  }
   // Intake color convention (see app/(app)/dashboard/page.tsx):
   //   reviewed → green/calm (good state)
   //   everything else (no form, in progress, awaiting review) → amber,

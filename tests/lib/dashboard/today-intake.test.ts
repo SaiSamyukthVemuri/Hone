@@ -333,7 +333,7 @@ describe("appointment prep surface", () => {
   it("PR #517 appointment-preparation memory is untouched by this change", () => {
     // The intake affordance is a separate line in the client briefing; it must
     // not have absorbed or reshaped the previous-treatment memory.
-    expect(APPOINTMENT).toMatch(/<IntakeStatusLine intake=\{intake\} clientId=\{client\.id\} \/>/);
-    expect(APPOINTMENT).toMatch(/getLatestIntakeForClient\(studio\.id, clientId\)/);
+    expect(APPOINTMENT).toMatch(/<IntakeStatusLine intake=\{intake\} clientId=\{client\.id\} restricted=\{intakeRestricted\} statusMode=\{intakeStatusMode\} summary=\{intakeSummary\} \/>/);
+    expect(APPOINTMENT).toMatch(/loadIntakeForViewer\(supabase, studio\.id, clientId, \{ canViewIntake, canViewStatus: canViewIntakeStatus \}\)/);
   });
 });
