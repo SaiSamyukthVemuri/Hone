@@ -316,14 +316,33 @@ describe("0333, G1: the nine remaining record tables, behaviourally", () => {
   });
 });
 
-describe("0333, G2: the helper requires an ACTIVE practitioner", () => {
-  it("an inactive practitioner who holds the key reads zero rows (mutation: dropping pr.active from the helper fails here)", async () => {
+describe("0333, G2: defence in depth, inactive reads zero", () => {
+  it("an inactive practitioner who holds the key reads zero rows (defence in depth: has_studio_permission already requires an active membership, so dropping pr.active from the helper is an EQUIVALENT mutant and does not fail this)", async () => {
     for (const k of KEYS) await setRelease(k, true);
     const f = await seedClinical("c333g2");
     expect(await counts(f.member.userId, RECORD_TABLES, f)).toEqual(all(RECORD_TABLES, 1));
     await adminQuery("update public.practitioners set active=false where id=$1", [f.member.practitionerId]);
     expect(await counts(f.member.userId, RECORD_TABLES, f)).toEqual(all(RECORD_TABLES, 0));
     expect(await counts(f.member.userId, PHOTO_TABLES, f)).toEqual(all(PHOTO_TABLES, 0));
+  });
+});
+
+describe("0333, N-1: an authenticated user with NO practitioner row (the census stranger)", () => {
+  it("clin_key_studios returns the empty set for clin.view_records and clin.view_photos, and the record and photo tables read zero", async () => {
+    for (const k of KEYS) await setRelease(k, true);
+    const f = await seedClinical("c333n1");
+    const strangerId = randomUUID();
+    await adminQuery("insert into auth.users (id, email) values ($1, $2)", [strangerId, `n1-${strangerId.slice(0, 8)}@harness.local`]);
+    expect((await adminQuery("select count(*)::int n from public.practitioners where user_id=$1", [strangerId])).rows[0].n, "really has no practitioner row").toBe(0);
+    await asUser(strangerId, async (q) => {
+      for (const k of KEYS) {
+        expect((await q("select count(*)::int n from public.clin_key_studios($1)", [k])).rows[0].n, `helper ${k}`).toBe(0);
+      }
+    });
+    expect(await counts(strangerId, RECORD_TABLES, f)).toEqual(all(RECORD_TABLES, 0));
+    expect(await counts(strangerId, PHOTO_TABLES, f)).toEqual(all(PHOTO_TABLES, 0));
+    // control: the keyed member of the same studio still reads one row of each (the seeds are real)
+    expect(await counts(f.member.userId, RECORD_TABLES, f)).toEqual(all(RECORD_TABLES, 1));
   });
 });
 
