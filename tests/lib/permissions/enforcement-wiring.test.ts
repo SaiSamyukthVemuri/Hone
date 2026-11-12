@@ -176,7 +176,7 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     // NAMED carve-out (OPS/Team, 12 Nov): clin.view_intake_status is asked by the I2 readers (the 0334 projection serves it) but stays not_yet in the
     // catalog, because the enforced flag is tied to release state (0287: every enforced key is in the release seed) and the permission-activation hold
     // stands. The flip commit removes this carve-out. It FAILS once the key is released (seeded), so it cannot outlive the hold.
-    const ASKED_AHEAD_OF_FLIP = ["clin.view_intake_status"];
+    const ASKED_AHEAD_OF_FLIP = ["clin.view_intake_status", "client.view_personal_notes", "client.view_budget"]; // the last two: 0335 readers, same hold
     const seedKeys = [...read("supabase/migrations/0287_roles_permission_engine.sql").replace(/^\s*--.*$/gm, "").matchAll(/\('([a-z_.]+)', null, '[^']+', '(?:full|narrow)'\)/g)].map((m) => m[1]!);
     for (const k of ASKED_AHEAD_OF_FLIP) {
       expect(asked, `${k} is no longer asked: remove it from ASKED_AHEAD_OF_FLIP`).toContain(k);

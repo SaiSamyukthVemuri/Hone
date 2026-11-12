@@ -509,12 +509,15 @@ export default async function DashboardPage({
     ? new Set<string>()
     : currentAppointmentIds(visibleAppointments, renderNow.getTime());
 
+  // Roles R4 / 0335: pinned notes are treatment records (clin.view_records). Asked BEFORE the bulk lookups so the pinned read can wait on it:
+  // without the key the read is not issued (the database would return zero rows, which must never read as "no pinned notes").
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
   const [practitioners, pinnedByClient, intakeLoad, cardOnFileLoad] =
     await Promise.all([
       getPractitionersForStudio(studio.id),
-      getPinnedNotesByClient(studio.id, selectedDayClientIds),
+      canViewRecords ? getPinnedNotesByClient(studio.id, selectedDayClientIds) : Promise.resolve(new Map() as Awaited<ReturnType<typeof getPinnedNotesByClient>>),
       loadIntakeStatusByClient(supabase, studio.id, selectedDayClientIds, isOwner),
       // Chloe: card-on-file status beside each name. Capability is asked
       // FIRST: a studio with no card-on-file route gets `null` and pays ZERO
@@ -591,8 +594,7 @@ export default async function DashboardPage({
     string,
     { sessionId: string; hasChartedArea: boolean }
   >();
-  // Roles R4: which visits are charted is treatment data; without clin.view_records the lookup is not issued.
-  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
+  // Roles R4: which visits are charted is treatment data; without clin.view_records the lookup is not issued (canViewRecords is asked above).
   if (apptIds.length > 0 && canViewRecords) {
     const { data: linkedSessions, error: linkedError } = await supabase
       .from("sessions")
@@ -997,7 +999,7 @@ export default async function DashboardPage({
 
         {!canViewRecords && visibleAppointments.length > 0 && (
           <p role="status" data-testid="today-history-not-available" className="mb-2 text-sm text-neutral-500">
-            Treatment history and charting status are not available to your role.
+            Treatment history, pinned notes and charting status are not available to your role.
           </p>
         )}
         {visibleAppointments.length === 0 ? (

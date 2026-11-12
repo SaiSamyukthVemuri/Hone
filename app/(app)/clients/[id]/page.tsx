@@ -305,6 +305,18 @@ export default async function ClientCheatSheetPage({
   );
   // The decision the sessions gate already gave inside getClientById (no second await).
   const canViewRecords = data.sessionsAllowed;
+  // 0335: personal notes and budget context each have their own key (the database enforces the same two). Asked here, un-awaited like the others;
+  // a read waits on its gate, and a restricted viewer sees RestrictedNote, never an empty editor that a Save could overwrite stored text with.
+  const canViewPersonalNotesPromise = contained("client.view_personal_notes", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "client.view_personal_notes", { client: id }))
+      .then((d) => d.allowed),
+  );
+  const canViewBudgetPromise = contained("client.view_budget", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "client.view_budget", { client: id }))
+      .then((d) => d.allowed),
+  );
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
   // HON-58: ONE display identity for the whole profile (preferred name alone when set; else the stored name, labelled Name on file).
@@ -363,8 +375,9 @@ export default async function ClientCheatSheetPage({
   // Plan progress is counted from treatment sessions and logged minutes, so plans follow the same key (never shown as 0 minutes).
   const needsTreatmentPlans = activeTab === "treatment" && canViewRecords;
   const needsPersonalNotes = activeTab === "notes";
-  // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
-  const needsPinnedNotes = isOverview || activeTab === "notes";
+  // Pinned notes: the Overview briefing AND the notes tab, one read and one card. Treatment records: clin.view_records (0335).
+  const wantsPinnedNotes = isOverview || activeTab === "notes";
+  const needsPinnedNotes = wantsPinnedNotes && canViewRecords;
   const needsPortalMessageReplies = activeTab === "messages";
   // Consultation and skin/hair clinical-note history are treatment records: clin.view_records (Codex #1341). Off: not read, not rendered.
   const needsConsultationNotes = activeTab === "treatment" && canViewRecords;
@@ -466,7 +479,7 @@ export default async function ClientCheatSheetPage({
     // Personal notes (migration 0035). Null when the client has no row yet;
     // the editor's defaultValues stay empty.
     needsPersonalNotes
-      ? getClientPersonalNotes(studio.id, client.id)
+      ? canViewPersonalNotesPromise.then((ok) => (ok ? getClientPersonalNotes(studio.id, client.id) : null))
       : Promise.resolve(null),
     // Migration 0053: secure portal messages. Needed on messages (rendered)
     // AND on overview (feeds computePortalPendingTasks below).
@@ -548,8 +561,10 @@ export default async function ClientCheatSheetPage({
   // context, NOT a clinical note kind. Loaded alongside the clinical notes on
   // the same tab so other tabs pay no cost. Fails soft to the empty state
   // (no row yet, or 0183 not yet applied), so the tab never 500s.
+  // 0335: budget is its own key (client.view_budget), asked on the treatment tab and independent of clin.view_records.
+  const canViewBudget = activeTab === "treatment" ? await canViewBudgetPromise : true;
   const budgetContext =
-    needsConsultationNotes
+    activeTab === "treatment" && canViewBudget
       ? await getClientBudgetContext(client.id)
       : null;
 
@@ -981,7 +996,10 @@ export default async function ClientCheatSheetPage({
 
   // ONE card element, rendered on Overview and on the notes tab: the same source, the same
   // visibility and the same three actions, so there is no second write path.
-  const pinnedNotesCard = (
+  const canViewPersonalNotes = await canViewPersonalNotesPromise;
+  const pinnedNotesCard = !canViewRecords ? (
+    <RestrictedNote testId="pinned-notes-not-available" />
+  ) : (
     <ClientPinnedNotesCard
       clientId={client.id}
       viewer={{ isOwner: practitioner.role === "owner", practitionerId: practitioner.id }}
@@ -1422,7 +1440,9 @@ export default async function ClientCheatSheetPage({
 
       {activeTab === "notes" && pinnedNotesCard}
 
-      {activeTab === "notes" && (
+      {activeTab === "notes" && !canViewPersonalNotes && <RestrictedNote testId="personal-notes-not-available" />}
+
+      {activeTab === "notes" && canViewPersonalNotes && (
         <ClientPersonalNotesEditor
           clientId={client.id}
           initial={{
@@ -1923,6 +1943,8 @@ export default async function ClientCheatSheetPage({
                                   over real stored data
             not_installed      -> nothing at all; 0183 is not applied yet and
                                   the rest of the tab must still work */}
+      {activeTab === "treatment" && !canViewBudget && <RestrictedNote testId="budget-not-available" />}
+
       {activeTab === "treatment" &&
         budgetContext &&
         (budgetContext.status === "available" ||
