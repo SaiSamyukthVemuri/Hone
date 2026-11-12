@@ -49,7 +49,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "SET-2": { label: "Rotate or clear own calendar-feed token", cls: "base", keys: [] },
   "SET-3": { label: "Read own calendar feed (iCal) by token URL", cls: "base", keys: [] },
   "SET-4": { label: "Studio settings: details, display, email toggles, client self-service cancel/reschedule, postcar", cls: "owner_only", keys: [], dn: ["DN-4"], team: true },
-  "SET-5": { label: "SMS send toggles and waitlist-text toggle", cls: "key", keys: ["wlrules.policy_and_text"], team: true },
+  "SET-5": { label: "SMS send toggles (appointment confirmations and reminders) and the waitlist-text toggle", cls: "owner_only", keys: [], dn: ["DN-4"], team: true },
   "SET-6": { label: "View the SMS sending number", cls: "owner_only", keys: [], dn: ["DN-4"], team: true },
   "SET-7": { label: "Booking prefs (slug, timezone, duration, buffer, horizon, address, intro)", cls: "key", keys: ["admit.booking_rules"], dn: ["DN-4"], team: true, enforcement: "Field-level (Sam Q12 / DN-4a, DN-4b): admit.booking_rules governs ONLY the booking window (horizon) and the new-client booking rules. Studio identity (slug, timezone, address, intro) stays owner-only (DN-4), and service duration and buffers stay under their own service controls; none of those is delegated through this switch" },
   "SET-8": { label: "New-client admission mode (open / waitlist / closed)", cls: "key", keys: ["admit.change_policy"], team: true },

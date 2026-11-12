@@ -1,1 +1,1 @@
-{"pr":1335,"runtime":true,"migrations":["supabase/migrations/0287_roles_permission_engine.sql", "supabase/migrations/0331_permission_stored_denial_before_default.sql"],"release_receipt":"01-ops/1335-release-receipt.json"}
+{"pr":1335,"runtime":true,"migrations":["supabase/migrations/0287_roles_permission_engine.sql", "supabase/migrations/0331_permission_stored_denial_before_default.sql", "supabase/migrations/0332_permission_activation_hash_includes_gates.sql"],"release_receipt":"01-ops/1335-release-receipt.json"}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASSIGNED_CLIENT, CATALOG, FIXED_OWNER_ONLY, MANDATORY, NARROWINGS, OPERATOR_CONFIG, catalogByKey, scopesFor, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
+import { ASSIGNED_CLIENT, CATALOG, FIXED_OWNER_ONLY, MANDATORY, NARROWINGS, OPERATOR_CONFIG, catalogByKey, NOT_OFFERED_AS_TOGGLES, scopesFor, ROLES, type PermissionDef } from "@/lib/permissions/catalog";
 import { COVERAGE, COVERAGE_ROW_COUNT } from "@/lib/permissions/coverage";
 import { DECISIONS, OPEN_QUESTIONS } from "@/lib/permissions/decisions";
 
@@ -236,6 +236,25 @@ describe("Sam's batch 1 (3 Nov): Q1, Q3, Q4, Q6, Q7", () => {
     expect(byId.anonymous_email_limit!.value).toMatch(/3 attempts per day/);
     for (const o of OPERATOR_CONFIG) expect(catalogByKey.has(o.id), o.id).toBe(false);
     expect(MANDATORY.join("\n")).toMatch(/if the shared fallback cannot enforce a bound, submissions are refused safely/);
+  });
+});
+
+describe("Codex P2 on #1332 (bf050f4b4): SMS toggles stay owner-only and no waitlist-rules grant enables SMS", () => {
+  it("SET-5: the SMS send toggles are owner-only (DN-4b), mapped to no key", () => {
+    const row = COVERAGE["SET-5"]!;
+    expect(row.cls).toBe("owner_only");
+    expect(row.keys).toEqual([]);
+    expect(row.dn ?? []).toContain("DN-4");
+  });
+  it("no coverage row about SMS or text toggles maps to a wlrules key (a waitlist-rules grant never enables SMS)", () => {
+    const sms = Object.entries(COVERAGE).filter(([, r]) => /\bSMS\b|text toggle|send toggle/i.test(r.label));
+    expect(sms.length).toBeGreaterThan(0);
+    for (const [id, r] of sms) {
+      expect([...r.keys].filter((k) => k.startsWith("wlrules.")), `${id} maps an SMS row to a wlrules key`).toEqual([]);
+    }
+  });
+  it("catalog still lists email and text toggles as not offered (DN-4b)", () => {
+    expect(NOT_OFFERED_AS_TOGGLES.join("\n")).toMatch(/email and text toggles/);
   });
 });
 
