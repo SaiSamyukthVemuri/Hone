@@ -239,6 +239,21 @@ describe("Sam's batch 1 (3 Nov): Q1, Q3, Q4, Q6, Q7", () => {
   });
 });
 
+describe("Codex P2 on #1332 (fbe583530): the address read maps to the personal-details key", () => {
+  it("CLI-2: reading a client's address is keyed by client.view_dob_address, not only the directory key", () => {
+    const row = COVERAGE["CLI-2"]!;
+    expect(row.cls).toBe("key");
+    expect([...row.keys].sort()).toEqual(["client.view_directory", "client.view_dob_address"]);
+    expect(row.enforcement ?? "").toMatch(/ADDRESS is a personal detail and follows client\.view_dob_address/);
+  });
+  it("the personal-details key is the one the catalog says covers address, and receptionists default OFF while the directory is ON", () => {
+    const pd = catalogByKey.get("client.view_dob_address")!;
+    expect(pd.label).toMatch(/address/i);
+    expect(pd.newStudioDefault.receptionist).toBe("off");
+    expect(catalogByKey.get("client.view_directory")!.newStudioDefault.receptionist).toBe("studio");
+  });
+});
+
 describe("Codex P2s on #1332 (f8f3b8883): field-level booking rules, and receptionist scheduling is keyed", () => {
   it("SET-7: admit.booking_rules is mapped as a field-level split, so identity, duration and buffers are not delegated through it", () => {
     const row = COVERAGE["SET-7"]!;

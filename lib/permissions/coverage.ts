@@ -60,7 +60,7 @@ export const COVERAGE: Readonly<Record<string, CoverageRow>> = {
   "SET-13": { label: "Intake form preview / template view", cls: "base", keys: ["clin.view_intake"], team: true, matrix: ["clin.view_intake"] },
   "SET-14": { label: "Launch checklist (Setup)", cls: "owner_only", keys: [] },
   "CLI-1": { label: "View the client directory (list, search)", cls: "key", keys: ["client.view_directory"], matrix: ["client.view_directory"] },
-  "CLI-2": { label: "Read client contact (phone, email, address, emergency contact)", cls: "key", keys: ["client.view_directory"], matrix: ["client.view_directory"] },
+  "CLI-2": { label: "Read client contact (phone, email, address, emergency contact)", cls: "key", keys: ["client.view_directory", "client.view_dob_address"], dn: ["DN-5"], team: true, matrix: ["client.view_directory"], enforcement: "Field-level (DN-5): phone, email and emergency contact follow client.view_directory; the ADDRESS is a personal detail and follows client.view_dob_address, which is OFF for receptionists even though client.view_directory is ON for them by default" },
   "CLI-3": { label: "Read date of birth", cls: "key", keys: ["client.view_dob_address"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
   "CLI-4": { label: "Read allergies and health flags on the client record", cls: "key", keys: ["client.view_allergies_cautions"], dn: ["DN-5"], team: true, matrix: ["clin.view_records"], departs: "Sam's DN-5 decision replaces the matrix's chart key with one view and one edit key per client data group" },
   "CLI-5": { label: "Create a client", cls: "key", keys: ["client.create"], matrix: ["client.create"] },
