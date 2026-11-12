@@ -29,7 +29,7 @@ describe("0333: a role holding pay.view_appointment but not clin.view_records", 
     const { sessionId } = await seedSession(s);
     const appt = randomUUID();
     await adminQuery(
-      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, status) values ($1,$2,$3,$4, now(), now() + interval '1 hour', 'confirmed')",
+      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, duration_minutes, status) values ($1,$2,$3,$4, now(), now() + interval '1 hour', 60, 'confirmed')",
       [appt, s.studioId, s.clientId, s.practitionerId],
     );
     await adminQuery("update public.sessions set appointment_id=$2, price_paid_cents=1234 where id=$1", [sessionId, appt]);
@@ -49,7 +49,7 @@ describe("0333: a role holding pay.view_appointment but not clin.view_records", 
     const { sessionId } = await seedSession(s);
     const appt = randomUUID();
     await adminQuery(
-      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, status) values ($1,$2,$3,$4, now(), now() + interval '1 hour', 'confirmed')",
+      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, duration_minutes, status) values ($1,$2,$3,$4, now(), now() + interval '1 hour', 60, 'confirmed')",
       [appt, s.studioId, s.clientId, s.practitionerId],
     );
     await adminQuery("update public.sessions set appointment_id=$2, price_paid_cents=1234 where id=$1", [sessionId, appt]);
@@ -96,27 +96,53 @@ describe("0333: INVOKER functions follow the caller's policy", () => {
     const studio = await seedStudio("i333");
     const keyed = await seedMember(studio, "i333k");
     const { blockId, sessionId } = await seedSession(studio);
-    await asRole("service_role", async (q) => {
+    const len = (v: unknown) => (Array.isArray(v) ? v.length : v && typeof v === "object" ? Object.keys(v as object).length : v ? 1 : 0);
+    // ONE transaction (the contract sync is not committed by asRole, which rolls back): sync as service_role, then act as users, then switch back to
+    // the superuser connection to store the denial, all in the same transaction.
+    const result = await asRole("service_role", async (q) => {
+      const as = async (userId: string) => {
+        await q("reset role");
+        await q("set local role authenticated");
+        await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+      };
       await q("select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)", [c.p_machine_profile_id, c.p_machine_profile_version, c.p_mode_key, c.p_channels_max, c.p_requires_installed_option, JSON.stringify(c.p_fields)]);
-    });
-    await asUser(studio.userId, async (q) => {
+      await as(studio.userId);
       const machine = (await q("select public.register_studio_machine($1,$2,1,'Invoker fixture','{}') as id", [studio.studioId, p.profileId])).rows[0].id;
       const field = p.modes[0].fields[0];
       await q(RECORD_GROUP_SQL, [blockId, machine, p.modes[0].key, "g1", [], JSON.stringify([{ field_key: field.key, value: "1", observation_source: "practitioner-entered" }]), sessionId, studio.clientId]);
+      // each call is isolated by a savepoint: a refusal is recorded as its message and the transaction goes on
+      const attempt = async (sql: string, params: unknown[]): Promise<{ v: unknown } | { err: string }> => {
+        await q("savepoint att");
+        try {
+          const v = (await q(sql, params)).rows[0].d;
+          await q("release savepoint att");
+          return { v };
+        } catch (e) {
+          await q("rollback to savepoint att");
+          return { err: (e as Error).message };
+        }
+      };
+      const read = async (userId: string) => {
+        await as(userId);
+        return {
+          h: await attempt("select public.setup_capture_history_for_block($1) as d", [blockId]),
+          r: await attempt("select public.setup_readings_for_block($1,$2) as d", [blockId, sessionId]),
+          never: await attempt("select public.setup_readings_for_block($1,$2) as d", [randomUUID(), sessionId]), // a block that was never created
+        };
+      };
+      const keyedBefore = await read(keyed.userId);
+      await q("reset role");
+      await q("insert into public.studio_role_permissions(studio_id,role,key,scope,set_at) values ($1,'practitioner','clin.view_records','off', now()) on conflict (studio_id,role,key) do update set scope='off', set_at=now()", [studio.studioId]);
+      return { keyedBefore, restricted: await read(keyed.userId), owner: await read(studio.userId) };
     });
-    const history = (userId: string) => asUser(userId, async (q) => ({
-      h: (await q("select public.setup_capture_history_for_block($1) as d", [blockId])).rows[0].d,
-      r: (await q("select public.setup_readings_for_block($1,$2) as d", [blockId, sessionId])).rows[0].d,
-    }));
-    const len = (v: unknown) => (Array.isArray(v) ? v.length : v && typeof v === "object" ? Object.keys(v as object).length : v ? 1 : 0);
-    const k = await history(keyed.userId);
-    expect(len(k.h), "keyed history").toBeGreaterThan(0);
-    await setStored(studio.studioId, "clin.view_records", "off");
-    const r = await history(keyed.userId);
-    expect(len(r.h), "restricted history").toBe(0);
-    expect(len(r.r), "restricted readings").toBe(0);
-    // the owner of the same studio is unaffected
-    expect(len((await history(studio.userId)).h)).toBeGreaterThan(0);
+    const val = (a: { v: unknown } | { err: string }) => ("v" in a ? a.v : null);
+    expect(len(val(result.keyedBefore.h)), "keyed history").toBeGreaterThan(0);
+    expect(len(val(result.keyedBefore.r)), "keyed readings").toBeGreaterThan(0);
+    // RESTRICTED: no history, and the readings function REFUSES with the same message as a block that was never created (nothing is disclosed)
+    expect("err" in result.restricted.h ? 0 : len(val(result.restricted.h)), "restricted history").toBe(0);
+    expect(result.restricted.r).toEqual({ err: "Unknown treatment block for this session." });
+    expect(result.restricted.r).toEqual(result.restricted.never);
+    expect(len(val(result.owner.h)), "owner history after denial").toBeGreaterThan(0);
   });
 });
 

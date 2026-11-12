@@ -37,7 +37,7 @@ async function seedClinical(label: string): Promise<Fix> {
   await adminQuery("insert into public.session_audit(session_id, field) values ($1,'note')", [sessionId]);
   await adminQuery("insert into public.photos(studio_id, client_id, session_id, storage_path) values ($1,$2,$3,'synthetic/p.jpg')", [s.studioId, s.clientId, sessionId]);
   await adminQuery(
-    "insert into public.treatment_images(studio_id, client_id, session_id, storage_path, content_type, size_bytes) values ($1,$2,$3,'synthetic/t.jpg','image/jpeg',10)",
+    "insert into public.treatment_images(studio_id, client_id, session_id, storage_path, content_type, size_bytes) select $1::uuid, $2::uuid, $3::uuid, $1::uuid::text || '/' || $2::uuid::text || '/t.jpg','image/jpeg',10",
     [s.studioId, s.clientId, sessionId],
   );
   return { s, member, sessionId, blockId };
@@ -269,10 +269,11 @@ async function seedNineTables(f: Fix): Promise<Seeded> {
     "insert into public.treatment_setup_captures(studio_id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, revision) values ($1,$2,$3,'synthetic:333',1,'galvanic','g1',1)",
     [s.studioId, f.blockId, machine],
   );
+  const captureId = out.find((r) => r.table === "treatment_setup_captures")!.id;
   await add(
     "treatment_setup_readings",
-    "insert into public.treatment_setup_readings(studio_id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, field_key, value_numeric, native_unit, decimals, observation_source) values ($1,$2,$3,'synthetic:333',1,'galvanic','g1','preset',1,'none',0,'practitioner-entered')",
-    [s.studioId, f.blockId, machine],
+    "insert into public.treatment_setup_readings(studio_id, session_block_id, capture_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, field_key, value_numeric, native_unit, decimals, observation_source) values ($1,$2,$4,$3,'synthetic:333',1,'galvanic','g1','preset',1,'none',0,'practitioner-entered')",
+    [s.studioId, f.blockId, machine, captureId],
   );
   const batch = randomUUID();
   await adminQuery("insert into public.import_batches(id, studio_id) values ($1,$2)", [batch, s.studioId]);
@@ -348,7 +349,7 @@ describe("0333, G7: the receptionist desk projection still works as a receptioni
     const f = await seedClinical("c333g7");
     const appt = randomUUID();
     await adminQuery(
-      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, status) values ($1,$2,$3,$4,'2031-03-03T15:00:00Z','2031-03-03T16:00:00Z','confirmed')",
+      "insert into public.appointments(id, studio_id, client_id, practitioner_id, starts_at, ends_at, duration_minutes, status) values ($1,$2,$3,$4,'2031-03-03T15:00:00Z','2031-03-03T16:00:00Z',60,'confirmed')",
       [appt, f.s.studioId, f.s.clientId, f.s.practitionerId],
     );
     await adminQuery("update public.sessions set appointment_id=$2 where id=$1", [f.sessionId, appt]);
