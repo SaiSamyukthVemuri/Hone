@@ -35,21 +35,23 @@ describe("0336 (b): anon holds no privilege on any clinical table", () => {
   it("the list is the migration's (not vacuous)", () => {
     expect(TABLES.length).toBe(29);
   });
-  it("has_table_privilege is false for anon on every table and every privilege; authenticated and service_role still hold SELECT", async () => {
+  it("anon holds NOTHING (every privilege), PUBLIC holds NOTHING (no ACL entry for grantee 0), and authenticated and service_role still hold SELECT, on each of the 29 tables", async () => {
     for (const t of TABLES) {
+      const rel = `public.${t}`;
       for (const p of ["select", "insert", "update", "delete", "truncate", "references", "trigger"]) {
-        expect((await adminQuery("select has_table_privilege('anon', $1, $2) p", [`public.${t}`, p])).rows[0].p, `anon ${p} ${t}`).toBe(false);
+        expect((await adminQuery("select has_table_privilege('anon', $1, $2) p", [rel, p])).rows[0].p, `anon ${p} ${t}`).toBe(false);
       }
-      expect((await adminQuery("select has_table_privilege('service_role', $1, 'select') p", [`public.${t}`])).rows[0].p, `service_role ${t}`).toBe(true);
+      // PUBLIC is a pseudo-role: has_table_privilege cannot name it, so read the ACL for grantee 0
+      expect((await adminQuery("select count(*)::int n from pg_class c, aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a where c.oid = $1::regclass and a.grantee = 0", [rel])).rows[0].n, `PUBLIC ${t}`).toBe(0);
+      for (const role of ["authenticated", "service_role"]) {
+        expect((await adminQuery("select has_table_privilege($1, $2, 'select') p", [role, rel])).rows[0].p, `${role} select ${t}`).toBe(true);
+      }
     }
   });
   it("an anon read is SQLSTATE 42501 (permission denied), not an empty list", async () => {
     for (const t of ["sessions", "client_intake_forms", "client_pinned_notes"]) {
       await expect(asRole("anon", (q) => q(`select count(*) from public.${t}`)), t).rejects.toMatchObject({ code: "42501" });
     }
-  });
-  it("authenticated keeps its table privileges (RLS, not grants, gates the members)", async () => {
-    for (const t of TABLES) expect((await adminQuery("select has_table_privilege('authenticated', $1, 'select') p", [`public.${t}`])).rows[0].p, t).toBe(true);
   });
 });
 
