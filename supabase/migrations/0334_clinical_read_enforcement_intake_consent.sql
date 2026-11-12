@@ -7,11 +7,12 @@
 --        client_intake_forms                    (the answers, the acknowledgement, the consent text inside `responses`)
 --        client_consent_signatures              (the signed text snapshot, the response and the signature)
 --        appointment_policy_acknowledgements    (the acknowledged policy snapshot)
---      PROPOSED DEFAULTS, SAM TO CONFIRM: signed consents and policy acknowledgements ride on clin.view_intake (Team census v2, fail-closed); the
---      catalog earlier suggested clin.view_records for signed consents.
+--      Decided (Sam, 12 Nov 2026, ROLES-DECISIONS-LOG "2026-11-12T22:43:59Z: SAM ... clinical I2 design choices"): signed consent contents and policy
+--      acknowledgements are gated under intake access (clin.view_intake). This approves the design, not an apply.
 --   2. A new definer projection, public.intake_status_for_clients(studio, client ids), for the readers that only need the STATUS of a client's
 --      current intake (directory pill and filter, Today, dashboard "awaiting review", missing-records). It returns (client_id, status, created_at)
---      of the newest non-deleted form per client, never `responses`, and only to an active practitioner holding clin.view_intake_status OR
+--      of the newest non-deleted form per client, never `responses` and no consent contents (Sam, same entry: the form-created date stays, for authorized status
+--      readers only), and only to an active practitioner holding clin.view_intake_status OR
 --      clin.view_intake. Without either it returns ZERO rows (not an error), the same as an unknown studio.
 --
 -- WHAT IT DOES NOT CHANGE (by design)

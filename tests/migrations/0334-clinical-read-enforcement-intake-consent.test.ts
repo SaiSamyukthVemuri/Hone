@@ -60,7 +60,15 @@ describe("0334 clinical-read enforcement, intake and consent (source)", () => {
     expect(c).not.toMatch(/\b(grant|revoke)\b[^;]*\bon (table )?public\.(client_|appointment_)/i);
     expect(c).not.toMatch(/drop policy|disable row level security|force row level security/i);
   });
-  it("marks the proposed defaults for Sam", () => {
-    expect(sql()).toMatch(/PROPOSED DEFAULTS, SAM TO CONFIRM/);
+  it("the projection's result columns are EXACTLY (client_id, status, created_at): no answers and no consent contents can ride through it (Sam, 12 Nov)", () => {
+    const fn = /create or replace function public\.intake_status_for_clients[\s\S]*?\$\$;/.exec(code())![0];
+    expect(norm(/returns table \(([^)]*)\)/.exec(fn)![1])).toBe("client_id uuid, status text, created_at timestamptz");
+    // and the select list feeding those columns is exactly the same three columns of the form row
+    expect(norm(/select distinct on \(f\.client_id\) ([\s\S]*?) from /.exec(fn)![1])).toBe("f.client_id, f.status, f.created_at");
+    expect(fn).not.toMatch(/client_consent_signatures|appointment_policy_acknowledgements/);
+  });
+  it("records Sam's decision instead of a pending confirmation", () => {
+    expect(sql()).not.toMatch(/SAM TO CONFIRM|PROPOSED DEFAULTS/);
+    expect(sql()).toMatch(/Decided \(Sam, 12 Nov 2026, ROLES-DECISIONS-LOG/);
   });
 });

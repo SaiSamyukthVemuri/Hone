@@ -3,7 +3,7 @@
   "migrations": {
     "count": 269,
     "last": "0334_clinical_read_enforcement_intake_consent.sql",
-    "sha256": "38204ffbaeaa2c0112e82dad5a9378ea3bdf6d01ae0688f560ac4cedadfbe1d6"
+    "sha256": "04f6e1823493a2be91f149dd041c19760d5806a1db20fb2079887abe6ab75d79"
   },
   "public": {
     "tables": [
