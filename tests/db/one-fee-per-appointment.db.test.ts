@@ -21,12 +21,13 @@ afterAll(async () => {
 
 async function seedAppointment(): Promise<string> {
   const id = randomUUID();
-  const day = String(1 + slot++).padStart(2, "0");
+  // A distinct calendar day per appointment (date arithmetic: a month-day counter overflows past 31).
+  const day = new Date(Date.UTC(2031, 0, 1 + slot++)).toISOString().slice(0, 10);
   await adminQuery(
     `insert into public.appointments
        (id, studio_id, client_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at)
      values ($1, $2, $3, $4, $5, 60, 0, $5)`,
-    [id, s.studioId, s.clientId, `2031-05-${day}T10:00:00Z`, `2031-05-${day}T11:00:00Z`],
+    [id, s.studioId, s.clientId, `${day}T10:00:00Z`, `${day}T11:00:00Z`],
   );
   return id;
 }

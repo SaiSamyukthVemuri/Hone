@@ -262,6 +262,20 @@ describe("runner: the cross-type one-fee check runs before the claim and before 
     expect(h.claimCalls).toBe(1);
     expect(h.createKeys).toHaveLength(1);
   });
+  for (const [first, second] of [["no_show_fee", "late_cancellation_fee"], ["late_cancellation_fee", "no_show_fee"]] as const) {
+    it(`both orders: ${first} then ${second} -> exactly ONE PaymentIntent create in total`, async () => {
+      const as = (reason: string) => ({ ...(h.rows.payment_charge_attempts as object), charge_reason: reason });
+      h.createReply = OK_PI;
+      h.rows = { ...h.rows, payment_charge_attempts: as(first) };
+      expect(await run()).toBeDefined(); // the first fee runs
+      // the second fee, of the OTHER type, now sees the first as a sibling that took the appointment
+      h.rows = { ...h.rows, payment_charge_attempts: as(second) };
+      h.siblings = [sib({ charge_reason: first, status: "succeeded" })];
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "blocked" });
+      expect(h.createKeys, "one create across both fee types").toHaveLength(1);
+    });
+  }
   it("FAIL-CLOSED: an unreadable sibling history refuses before the claim", async () => {
     h.createReply = OK_PI;
     h.siblings = null;

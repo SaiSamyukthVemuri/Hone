@@ -125,14 +125,17 @@ describe("fees: per-mode active uniqueness on (appointment, reason)", () => {
     await expect(insertFeeAttempt(appt, "no_show_fee", true)).resolves.toBeDefined();
   });
 
-  it("a SAME-mode duplicate active fee is still blocked; a different reason is allowed", async () => {
+  it("a SAME-mode duplicate active fee is still blocked; since 0338 a different fee reason is blocked too", async () => {
     const appt = await seedAppointment();
     await insertFeeAttempt(appt, "late_cancellation_fee", true);
     await expect(insertFeeAttempt(appt, "late_cancellation_fee", true)).rejects.toThrow(
       /payment_charge_attempts_active_fee_per_appointment_uniq/,
     );
-    // Different reason on the same appointment + mode is a different slot.
-    await expect(insertFeeAttempt(appt, "no_show_fee", true)).resolves.toBeDefined();
+    // 0338 supersedes the old "different reason is a different slot": one manual fee per appointment and
+    // mode, across both types (the cross-type index). tests/db/one-fee-per-appointment.db.test.ts owns it.
+    await expect(insertFeeAttempt(appt, "no_show_fee", true)).rejects.toThrow(
+      /payment_charge_attempts_one_fee_per_appointment_uniq/,
+    );
   });
 });
 
