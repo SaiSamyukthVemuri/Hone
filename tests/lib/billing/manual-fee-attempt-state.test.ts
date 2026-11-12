@@ -38,9 +38,15 @@ describe("feeAttemptState", () => {
   });
   it("failed is failed; the requires_action cancel is its own state that says nothing was taken", () => {
     expect(feeAttemptState({ status: "failed", failure_code: "card_declined" }, NOW).kind).toBe("failed");
-    const s = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled" }, NOW);
+    const s = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", has_payment_intent: true }, NOW);
     expect(s.kind).toBe("needs_action");
     expect(s.label).toMatch(/nothing was taken/);
+    // F3: without the provider object, or with a capture time, the claim is not supported: unclear, no charge.
+    for (const extra of [{ has_payment_intent: false }, { has_payment_intent: true, charged_at: "2026-11-01T10:00:00Z" }, {}]) {
+      const u = feeAttemptState({ status: "failed", failure_code: "requires_action_canceled", ...extra }, NOW);
+      expect(u).toMatchObject({ kind: "unclear", blocksNewCharge: true });
+      expect(u.label).not.toMatch(/nothing was taken/);
+    }
   });
   it("the unclear message is the required wording", () => {
     expect(FEE_UNCLEAR_MESSAGE).toBe("Charge status is unclear. Do not charge again until this is checked.");
@@ -67,7 +73,7 @@ describe("feeRefund (the shared R1 logic, mapped to labels)", () => {
     expect(p.line).toBe("Refund processing");
     expect(p.display.mayStartRefund).toBe(false);
     const f = feeRefund({ ...base, refund_status: "failed" });
-    expect(f.line).toBe("Refund did not go through; no money moved");
+    expect(f.line).toBe("Refund did not go through");
     expect(f.display.mayStartRefund).toBe(true);
   });
   it("a provider trace on a refund that did not complete is a review, never a retry", () => {

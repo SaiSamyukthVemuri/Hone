@@ -32,6 +32,9 @@ export type FeeAttemptStateKind =
 export type FeeAttemptStateInput = {
   status: string | null | undefined;
   failure_code?: string | null;
+  /** The provider's PaymentIntent id and our captured-at time: "nothing was taken" needs a provider object and no capture. */
+  has_payment_intent?: boolean;
+  charged_at?: string | null;
   /** payment_charge_attempts.updated_at: when the row last changed (the claim sets pending_stripe). */
   updated_at?: string | null;
 };
@@ -60,6 +63,11 @@ export function feeAttemptState(a: FeeAttemptStateInput, now: Date): FeeAttemptS
       return { kind: "cancelled", label: "Cancelled before charging", blocksNewCharge: false, mayRefreshCharge: false };
     case "failed":
       if (a.failure_code === "requires_action_canceled") {
+        // "Nothing was taken" is a provider fact: it needs the PaymentIntent the runner cancelled and no
+        // capture time. Without both, we cannot say it, so the state is unclear and no charge is offered.
+        if (!a.has_payment_intent || a.charged_at) {
+          return { kind: "unclear", label: "Charge status unclear", blocksNewCharge: true, mayRefreshCharge: false };
+        }
         return {
           kind: "needs_action",
           label: "Needs the client's action; nothing was taken",
@@ -113,7 +121,9 @@ export function feeRefund(a: FeeRefundInput): { display: RefundDisplay; line: st
     case "needs_action":
       return { display, line: REFUND_ACTION_HEADING };
     case "failed":
-      return { display, line: "Refund did not go through; no money moved" };
+      // Our own attempt ended and the provider holds no refund object. We do not claim "no money moved":
+      // that is a provider fact we do not have here.
+      return { display, line: "Refund did not go through" };
     case "needs_review":
     case "unclear":
       return { display, line: REFUND_REVIEW_HEADING };

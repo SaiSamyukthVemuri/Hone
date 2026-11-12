@@ -5,11 +5,10 @@ import { useRouter } from "next/navigation";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   MANUAL_FEE_INTERNAL_NOTE_MAX_LENGTH,
-  type EligibilityExistingAttemptSummary,
-  type ManualFeeEligibility,
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-types";
-import { FEE_UNCLEAR_MESSAGE, feeAttemptState, feeRefund } from "@/lib/billing/manual-fee-attempt-state";
+import type { FeeCardAttempt, FeeCardEligibility } from "@/lib/billing/manual-fee-card-view";
+import { FEE_UNCLEAR_MESSAGE } from "@/lib/billing/manual-fee-attempt-state";
 import {
   prepareManualFeeChargeAction,
   chargeManualFeeAttemptAction,
@@ -46,8 +45,9 @@ import {
 
 type Props = {
   appointmentId: string;
-  lateCancel: ManualFeeEligibility;
-  noShow: ManualFeeEligibility;
+  // Server-projected (lib/billing/manual-fee-card-view.ts): no provider ids reach the browser.
+  lateCancel: FeeCardEligibility;
+  noShow: FeeCardEligibility;
 };
 
 function formatCents(cents: number, currency: string): string {
@@ -59,9 +59,7 @@ function chargeTypeLabel(t: ManualFeeChargeType): string {
   return t === "late_cancel" ? "Late cancellation fee" : "No-show fee";
 }
 
-function describeCard(
-  card: NonNullable<ManualFeeEligibility["card"]>,
-): string {
+function describeCard(card: { brand: string; last4: string }): string {
   const brand = card.brand.charAt(0).toUpperCase() + card.brand.slice(1);
   return `${brand} ending in ${card.last4}`;
 }
@@ -80,10 +78,10 @@ export function ManualFeeChargeCard({
   // tab.
   const allAttempts = useMemo(() => {
     const seen = new Set<string>();
-    const merged: EligibilityExistingAttemptSummary[] = [];
+    const merged: FeeCardAttempt[] = [];
     for (const row of [
-      ...lateCancel.existingAttempts,
-      ...noShow.existingAttempts,
+      ...lateCancel.attempts,
+      ...noShow.attempts,
     ]) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
@@ -100,7 +98,7 @@ export function ManualFeeChargeCard({
   const attemptForType = useMemo(() => {
     const sameType = allAttempts.filter((r) => r.charge_type === chargeType);
     const active = sameType.find((r) =>
-      ["ready", "pending_stripe", "succeeded"].includes(r.status),
+      ["ready", "pending", "unclear", "succeeded"].includes(r.state.kind),
     );
     if (active) return active;
     return sameType[0] ?? null;
@@ -152,8 +150,8 @@ export function ManualFeeChargeCard({
           </span>
           <ul className="flex flex-col gap-1">
             {allAttempts.map((row) => {
-              const state = feeAttemptState(row, new Date());
-              const refund = feeRefund(row).line;
+              const state = row.state;
+              const refund = row.refund.line;
               return (
                 <li
                   key={row.id}
@@ -173,7 +171,7 @@ export function ManualFeeChargeCard({
                     <>
                       <span>·</span>
                       <span data-testid="fee-history-refund">{refund}</span>
-                      {row.refunded_at && feeRefund(row).display.kind === "refunded" && (
+                      {row.refunded_at && row.refund.kind === "refunded" && (
                         <FormattedDateTime iso={row.refunded_at} />
                       )}
                     </>
@@ -190,9 +188,7 @@ export function ManualFeeChargeCard({
         <AttemptStatusPanel
           attempt={attemptForType}
           appointmentId={appointmentId}
-          card={
-            selected.eligible ? selected.card : (selected.card ?? null)
-          }
+          card={selected.card}
         />
       ) : !selected.eligible ? (
         <BlockedPanel reasons={selected.blockingReasons} />
@@ -237,7 +233,7 @@ function PreparePanel({
 }: {
   appointmentId: string;
   chargeType: ManualFeeChargeType;
-  eligibility: Extract<ManualFeeEligibility, { eligible: true }>;
+  eligibility: FeeCardEligibility;
 }) {
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
@@ -255,7 +251,7 @@ function PreparePanel({
     fd.set("charge_type", chargeType);
     fd.set("internal_note", note);
     // The currency printed in the preview; the server refuses on a mismatch.
-    fd.set("expected_currency", eligibility.currency.toLowerCase());
+    fd.set("expected_currency", (eligibility.currency ?? "").toLowerCase());
     startTransition(async () => {
       const r = await prepareManualFeeChargeAction(fd);
       if (!r.ok) {
@@ -277,29 +273,36 @@ function PreparePanel({
           {chargeTypeLabel(chargeType)}
         </PreviewRow>
         <PreviewRow label="Amount">
-          {formatCents(eligibility.amountCents, eligibility.currency)}
+          {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")}
         </PreviewRow>
-        <PreviewRow label="Client">{eligibility.client.name}</PreviewRow>
+        <PreviewRow label="Client">{eligibility.clientName}</PreviewRow>
         <PreviewRow label="Appointment">
-          {eligibility.appointment.service_name ?? "Appointment"} ·{" "}
-          <FormattedDateTime iso={eligibility.appointment.starts_at} />
+          {eligibility.serviceName ?? "Appointment"}
+          {eligibility.startsAt && (
+            <>
+              {" "}·{" "}
+              <FormattedDateTime iso={eligibility.startsAt} />
+            </>
+          )}
         </PreviewRow>
         <PreviewRow label="Card">
-          {describeCard(eligibility.card)}
+          {eligibility.card ? describeCard(eligibility.card) : "No saved card"}
         </PreviewRow>
         <PreviewRow label="Card authorization signed">
-          <FormattedDateTime iso={eligibility.cardAuthorization.signed_at} />
+          {eligibility.cardAuthorizationSignedAt && (
+            <FormattedDateTime iso={eligibility.cardAuthorizationSignedAt} />
+          )}
         </PreviewRow>
         <PreviewRow label="Policy acknowledged">
-          <FormattedDateTime
-            iso={eligibility.policyAcknowledgement.acknowledged_at}
-          />
+          {eligibility.policyAcknowledgedAt && (
+            <FormattedDateTime iso={eligibility.policyAcknowledgedAt} />
+          )}
         </PreviewRow>
       </dl>
 
       <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
         The saved fixed {chargeTypeLabel(chargeType).toLowerCase()} of{" "}
-        {formatCents(eligibility.amountCents, eligibility.currency)} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+        {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
       </p>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
         Timing classification is manual for this version. Confirm this
@@ -363,11 +366,11 @@ function AttemptStatusPanel({
   appointmentId,
   card,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
   appointmentId: string;
-  card: ManualFeeEligibility["card"] | null;
+  card: FeeCardEligibility["card"];
 }) {
-  const state = feeAttemptState(attempt, new Date());
+  const state = attempt.state;
   switch (state.kind) {
     case "ready":
       return (
@@ -398,9 +401,9 @@ function ReadyPanel({
   appointmentId,
   card,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
   appointmentId: string;
-  card: ManualFeeEligibility["card"] | null;
+  card: FeeCardEligibility["card"];
 }) {
   const [chargePending, startCharge] = useTransition();
   const [cancelPending, startCancel] = useTransition();
@@ -577,7 +580,7 @@ function PendingPanel({
   attempt,
   appointmentId,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
   appointmentId: string;
 }) {
   const [pending, startTransition] = useTransition();
@@ -626,7 +629,7 @@ function PendingPanel({
 function SucceededPanel({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
@@ -640,11 +643,6 @@ function SucceededPanel({
           </>
         )}
       </p>
-      {attempt.stripe_payment_intent_id && (
-        <p className="text-xs font-mono text-emerald-800 dark:text-emerald-300">
-          PaymentIntent: {attempt.stripe_payment_intent_id}
-        </p>
-      )}
       {/* PR #196: fee attempts live on the canonical ledger, so test
           receipts and test refunds work exactly like session
           payments. Minimal affordances here; outcomes re-render via
@@ -657,7 +655,7 @@ function SucceededPanel({
 function FeeReceiptRefundControls({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -674,8 +672,8 @@ function FeeReceiptRefundControls({
       router.refresh();
     });
   }
-  const refund = feeRefund(attempt);
-  const receiptSent = !!attempt.receipt_sent_at;
+  const refund = attempt.refund;
+  const receiptSent = attempt.receipt_sent;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       {receiptSent ? (
@@ -690,9 +688,9 @@ function FeeReceiptRefundControls({
           Send receipt
         </button>
       )}
-      {refund.display.kind === "refunded" ? (
+      {refund.kind === "refunded" ? (
         <span data-testid="fee-refund-line" className="text-xs font-medium">{refund.line}</span>
-      ) : refund.display.mayStartRefund ? (
+      ) : refund.mayStartRefund ? (
         <>
           {refund.line && (
             <span data-testid="fee-refund-line" className="text-xs">{refund.line}</span>
@@ -719,7 +717,7 @@ function FeeReceiptRefundControls({
 function FailedPanel({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
@@ -742,7 +740,7 @@ function FailedPanel({
 function CancelledPanel({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">

@@ -103,3 +103,19 @@ describe("both call sites pass the studio, and the list never reaches the browse
     expect(read("lib/billing/live-charge-reason-allowlist.ts")).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   });
 });
+
+describe("G1: the shared runner enforces the live gate itself", () => {
+  const SRC = readFileSync(path.resolve(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
+  const RUN = SRC.slice(SRC.indexOf("export async function runSessionPaymentCharge"));
+  it("calls liveChargeReasonBlockMessage with the attempt's reason, the deployment mode and the studio, and returns live_mode_blocked", () => {
+    expect(RUN).toMatch(/liveChargeReasonBlockMessage\(\s*attemptRow\.charge_reason\s*,\s*livemode\s*,\s*args\.studioId\s*\)/);
+    expect(RUN).toMatch(/if \(liveHold\) \{\s*return \{ ok: false, outcome: "live_mode_blocked"/);
+  });
+  it("the gate runs BEFORE the claim and before any Stripe call", () => {
+    const gate = RUN.indexOf("liveChargeReasonBlockMessage(");
+    for (const later of ["claim_session_payment_charge_attempt", "paymentIntents.create", "paymentIntents.retrieve"]) {
+      const at = RUN.indexOf(later);
+      if (at !== -1) expect(gate).toBeLessThan(at);
+    }
+  });
+});

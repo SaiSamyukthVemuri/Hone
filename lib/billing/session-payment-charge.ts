@@ -2,6 +2,7 @@ import "server-only";
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
@@ -1360,6 +1361,14 @@ export async function runSessionPaymentCharge(args: {
       outcome: "blocked",
       message: "This attempt has an unsupported charge reason.",
     };
+  }
+  // Insurance G1 (#1433): the live gate lives in the shared runner too, so a future caller of
+  // this executor (a new fee path, a job, an action) cannot skip it. In live mode a reason that
+  // is not allowed for THIS studio is refused before any claim or Stripe call. session_payment
+  // is unaffected; the call sites' own checks stay as the earlier, friendlier refusal.
+  const liveHold = liveChargeReasonBlockMessage(attemptRow.charge_reason, livemode, args.studioId);
+  if (liveHold) {
+    return { ok: false, outcome: "live_mode_blocked", message: liveHold };
   }
   // Codex P1 #4369182087 (#1035). The currency sent to Stripe is the attempt's
   // PERSISTED currency, and only cad or usd are currencies Hone charges in: an

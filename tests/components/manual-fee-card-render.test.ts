@@ -26,6 +26,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { ManualFeeChargeCard } = await import("@/app/(app)/calendar/[id]/ManualFeeChargeCard");
+const { projectFeeEligibility } = await import("@/lib/billing/manual-fee-card-view");
 
 const CARD = { id: "pm-1", brand: "visa", last4: "4242", exp_month: 1, exp_year: 2030, status: "active" };
 function attempt(over: Record<string, unknown> = {}) {
@@ -51,11 +52,17 @@ function eligible(attempts: unknown[], amountCents = 5000) {
   };
 }
 const blocked = (attempts: unknown[]) => ({ eligible: false as const, blockingReasons: ["An active fee charge attempt already exists for this appointment."], existingAttempts: attempts, card: CARD });
-function render(attempts: unknown[], mode: "eligible" | "blocked" = "blocked"): string {
+function render(attempts: unknown[], mode: "eligible" | "blocked" = "blocked", isOwner = true): string {
   const noShow = mode === "eligible" ? eligible(attempts) : blocked(attempts);
   const lateCancel = blocked(attempts.filter((a) => (a as { charge_type: string }).charge_type === "late_cancel"));
-  // The card reads attempts from BOTH eligibilities; pass each type's attempts on its own side.
-  return renderToStaticMarkup(createElement(ManualFeeChargeCard as never, { appointmentId: "appt-1", lateCancel: { ...lateCancel, existingAttempts: attempts.filter((a) => (a as { charge_type: string }).charge_type === "late_cancel") }, noShow: { ...noShow, existingAttempts: attempts.filter((a) => (a as { charge_type: string }).charge_type === "no_show") } } as never));
+  const of = (e: object, type: string) => ({ ...e, existingAttempts: attempts.filter((a) => (a as { charge_type: string }).charge_type === type) });
+  // The page projects on the server (F1): the client component only ever sees the projection.
+  const props = {
+    appointmentId: "appt-1",
+    lateCancel: projectFeeEligibility(of(lateCancel, "late_cancel") as never, new Date(), isOwner),
+    noShow: projectFeeEligibility(of(noShow, "no_show") as never, new Date(), isOwner),
+  };
+  return renderToStaticMarkup(createElement(ManualFeeChargeCard as never, props as never));
 }
 // The card opens on "late_cancel"; these helpers use a late_cancel attempt so its panel is the one shown.
 const LC = { charge_type: "late_cancel" };
@@ -102,7 +109,7 @@ describe("states that must NOT offer a charge or a retry", () => {
     expect(html).not.toContain("fee-unclear-panel");
   });
   it("needs the client's action: says nothing was taken, offers no charge", () => {
-    const html = render([attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled" })]);
+    const html = render([attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x" })]);
     expect(html).toContain("fee-needs-action-panel");
     expect(html).toContain("nothing was taken");
     expect(html).not.toContain("Charge failed.");
@@ -169,5 +176,55 @@ describe("refund status on a charged fee (shared R1 logic)", () => {
 describe("the card never calls an action while rendering", () => {
   it("rendering fires no charge, refund or prepare", () => {
     expect(calls).toEqual([]);
+  });
+});
+
+describe("F3: 'nothing was taken' only where the provider fact supports it", () => {
+  const cancelled = { status: "failed", failure_code: "requires_action_canceled" };
+  it("a requires_action cancel WITH the PaymentIntent and no capture says nothing was taken", () => {
+    expect(render([attempt({ ...LC, ...cancelled, stripe_payment_intent_id: "pi_x" })])).toContain("nothing was taken");
+  });
+  it("the same code with NO PaymentIntent is unclear: unclear copy, no 'nothing was taken', no charge offered", () => {
+    const html = render([attempt({ ...LC, ...cancelled, stripe_payment_intent_id: null })]);
+    expect(html).toContain("fee-unclear-panel");
+    expect(html).not.toContain("nothing was taken");
+    expect(html).not.toContain("Charge late cancellation fee");
+  });
+  it("the same code with a capture time is unclear, never 'nothing was taken'", () => {
+    const html = render([attempt({ ...LC, ...cancelled, stripe_payment_intent_id: "pi_x", charged_at: "2026-11-01T10:05:00.000Z" })]);
+    expect(html).toContain("fee-unclear-panel");
+    expect(html).not.toContain("nothing was taken");
+  });
+  it("a failed refund line never claims 'no money moved' (our own failure is not a provider fact)", () => {
+    const html = render([attempt({ ...LC, status: "succeeded", amount_cents: 5000, refund_status: "failed" })]);
+    expect(html).toContain("Refund did not go through");
+    expect(html).not.toContain("no money moved");
+  });
+});
+
+describe("F1: the client receives no provider identifier", () => {
+  const rich = attempt({
+    ...LC, status: "succeeded", stripe_payment_intent_id: "pi_SECRET1", stripe_charge_id: "ch_SECRET2", charged_at: "2026-11-01T10:05:00.000Z",
+    refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded", stripe_refund_id: "re_SECRET3",
+  });
+  it("the projected props carry no stripe_* field and no pi_/ch_/re_/pm_ value anywhere", () => {
+    const e = projectFeeEligibility({ ...eligible([rich]), existingAttempts: [rich] } as never, new Date(), true);
+    const json = JSON.stringify(e);
+    expect(json).not.toMatch(/stripe_/i);
+    expect(json).not.toMatch(/\b(pi|ch|re|pm|sig|ack)[_-][A-Za-z0-9]/);
+    expect(json).not.toContain("policySnapshotHash");
+  });
+  it("the rendered card prints none of them either", () => {
+    const html = render([rich]);
+    expect(html).not.toMatch(/pi_SECRET1|ch_SECRET2|re_SECRET3|PaymentIntent:/);
+    expect(html).toContain("Refunded");
+  });
+});
+
+describe("F2: a non-owner is never shown the Refund button", () => {
+  const refundable = attempt({ ...LC, status: "succeeded", amount_cents: 5000, charged_at: "2026-11-01T10:05:00.000Z" });
+  it("owner sees Refund charge; a non-owner projection does not", () => {
+    expect(render([refundable], "blocked", true)).toContain("Refund charge");
+    expect(render([refundable], "blocked", false)).not.toContain("Refund charge");
   });
 });

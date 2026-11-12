@@ -29,6 +29,8 @@ export type CollectedMoneyRow = {
   refundAmountCents: number | null;
   providerRefundStatus: string | null;
   stripeRefundId: string | null;
+  /** payment_charge_attempts.stripe_livemode. Only `true` is real money; a test-mode or unknown mode is never collected. */
+  stripeLivemode: boolean | null;
 };
 
 export type CollectedLine = {
@@ -58,7 +60,8 @@ function emptyLine(): CollectedLine {
 }
 
 function add(line: CollectedLine, row: CollectedMoneyRow, studioCurrency: string): void {
-  if (row.status !== "succeeded") {
+  if (row.status !== "succeeded" || row.stripeLivemode !== true) {
+    // Not succeeded, or a test-mode (or unknown-mode) success: not collected money (Insurance M1).
     line.excluded += 1;
     return;
   }

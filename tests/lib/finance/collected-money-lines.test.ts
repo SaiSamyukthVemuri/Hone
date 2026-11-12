@@ -7,7 +7,7 @@ import { collectedMoneyLines, type CollectedMoneyRow } from "@/lib/finance/colle
 const ROOT = path.resolve(__dirname, "../../..");
 const row = (over: Partial<CollectedMoneyRow> = {}): CollectedMoneyRow => ({
   chargeReason: "no_show_fee", status: "succeeded", amountCents: 5000, currency: "cad",
-  refundStatus: null, refundAmountCents: null, providerRefundStatus: null, stripeRefundId: null, ...over,
+  refundStatus: null, refundAmountCents: null, providerRefundStatus: null, stripeRefundId: null, stripeLivemode: true, ...over,
 });
 const fee = (rows: CollectedMoneyRow[]) => collectedMoneyLines(rows, "cad").cancellationNoShowFees;
 const session = (rows: CollectedMoneyRow[]) => collectedMoneyLines(rows, "cad").sessionPayments;
@@ -92,5 +92,19 @@ describe("placement: the no-money screens cannot reach this module", () => {
     for (const rel of ["lib/finance/financial-briefing-model.ts", "lib/finance/financial-briefing.ts", "lib/finance/financial-fact.ts", "app/(app)/financials/page.tsx", "app/(app)/financials/financial-spine.tsx", "app/(app)/dashboard/practice-snapshot.tsx"]) {
       expect(code(rel), rel).not.toContain("collected-money-lines");
     }
+  });
+});
+
+describe("M1: only live-mode successes are collected money", () => {
+  it("a test-mode success is excluded, not summed, in both lines", () => {
+    const l = collectedMoneyLines([row({ stripeLivemode: false }), row({ chargeReason: "session_payment", stripeLivemode: false })], "cad");
+    expect(l.cancellationNoShowFees.collectedCents).toBe(0);
+    expect(l.cancellationNoShowFees.excluded).toBe(1);
+    expect(l.sessionPayments.collectedCents).toBe(0);
+    expect(l.sessionPayments.excluded).toBe(1);
+  });
+  it("an unknown mode is excluded too (fail safe), and a live success still counts", () => {
+    expect(fee([row({ stripeLivemode: null })]).collectedCents).toBe(0);
+    expect(fee([row({ stripeLivemode: true })]).collectedCents).toBe(5000);
   });
 });
