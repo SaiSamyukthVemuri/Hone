@@ -280,8 +280,8 @@ export default function HomePage() {
                 </p>
                 <Lede className="mt-6 max-w-[42ch]">
                   Hone records the areas treated, the machine settings, probe and lot, how
-                  each area was tolerated and the note for next time, each in its own field.
-                  That keeps every area findable on its own, and lets Hone tell you when
+                  the treatment was tolerated and the note for next time, each in its own field.
+                  That way each area stays findable on its own, and Hone can tell you when
                   something is missing.
                 </Lede>
                 <Link

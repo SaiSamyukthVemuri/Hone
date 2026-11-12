@@ -156,7 +156,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Observations and response",
-    body: "Tag what you saw with quick observation chips, and record how each area was tolerated and any reaction, alongside free-text notes.",
+    body: "Tag what you saw with quick observation chips, and record how the treatment was tolerated and any reaction for each settings block, alongside free-text notes.",
   },
   {
     title: "Procedure records and print views",
@@ -185,8 +185,8 @@ export default function ChartingRecordsPage() {
           <div>
             <Display className="max-w-[18ch]">Electrolysis charting for each treated area</Display>
             <Lede className="mt-5 max-w-[38rem]">
-              Each treated area is charted with its side, the settings used, probe and lot,
-              tolerance and skin response.
+              Each treated area is charted with its side. Machine settings, probe and lot,
+              tolerance and skin response are recorded for the settings block it was treated under.
             </Lede>
             <CTAButton
               href={WALKTHROUGH.href}

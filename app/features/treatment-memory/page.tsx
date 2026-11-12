@@ -39,7 +39,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Memory per treatment area",
-    body: "Each treated area keeps its own history of settings, probe, tolerance and response, so a multi-area session stays readable area by area.",
+    body: "Each treated area keeps its own findable history. Every visit shows the settings, probe, tolerance and response recorded for the settings block it was treated under, so a multi-area session stays readable.",
   },
   {
     title: "Record-gap reminders",
