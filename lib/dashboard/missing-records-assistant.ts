@@ -3,6 +3,7 @@ import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { createClient } from "@/lib/supabase/server";
+import { readIntakeStatusProjection } from "@/lib/intake/status-projection";
 
 // Missing Records / Follow-up Assistant V1 (PR #249). The SECOND
 // agentic-style workflow in Hone, and like Daily Prep Brief (PR #241)
@@ -411,19 +412,11 @@ export async function getMissingRecordsAssistant(
   const scanClientIds = [...new Set(sessions.map((s) => s.row.client_id))];
   const incompleteIntakeClientIds = new Set<string>();
   if (scanClientIds.length > 0) {
-    const { data: intakeRows, error: intakeError } = await supabase
-      .from("client_intake_forms")
-      .select("client_id, status, created_at")
-      .eq("studio_id", studioId)
-      .in("client_id", scanClientIds)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
-    if (intakeError) throw new Error("Failed to load missing records");
+    // The 0334 status projection (newest non-deleted form per client, never the answers).
+    const intakeRows = await readIntakeStatusProjection(supabase, studioId, scanClientIds);
+    if (intakeRows === null) throw new Error("Failed to load missing records");
     const latestByClient = new Map<string, string>();
-    for (const r of (intakeRows ?? []) as Array<{
-      client_id: string;
-      status: string;
-    }>) {
+    for (const r of intakeRows) {
       if (!latestByClient.has(r.client_id)) {
         latestByClient.set(r.client_id, r.status);
       }

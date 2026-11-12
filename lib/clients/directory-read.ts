@@ -26,6 +26,7 @@
 import { readWithPreferredName, preferredNameColumn } from "@/lib/clients/preferred-name-read";
 import type { DirectorySourceClient } from "@/lib/clients/directory-rules";
 import type { IntakeStatusValue } from "@/lib/clients/directory-query";
+import { readIntakeStatusProjection, type IntakeStatusRpc } from "@/lib/intake/status-projection";
 
 export const DIRECTORY_CLIENT_COLUMNS = "id, name, pronouns, email, phone, archived_at";
 
@@ -39,7 +40,7 @@ type Q = {
   order: (c: string, o: { ascending: boolean }) => Q;
   range: (a: number, b: number) => PromiseLike<Result>;
 };
-export type DirectorySupabase = { from: (t: string) => { select: (cols: string) => Q } };
+export type DirectorySupabase = { from: (t: string) => { select: (cols: string) => Q } } & IntakeStatusRpc;
 
 const BLOCK = 1000;
 const MAX_BLOCKS = 50;
@@ -110,36 +111,22 @@ export async function readNextAppointments(
   return null;
 }
 
-/** client id -> canonical current intake status (the newest non-deleted form); null when the read failed. */
+/** client id -> canonical current intake status (the newest non-deleted form); null when the read failed. Reads the 0334 status projection, never the table. */
 export async function readCurrentIntake(
   supabase: DirectorySupabase,
   studioId: string,
   clientIds?: readonly string[],
 ): Promise<Map<string, IntakeStatusValue> | null> {
+  const rows = await readIntakeStatusProjection(supabase, studioId, clientIds);
+  if (rows === null) return null;
   const best = new Map<string, string>();
   const out = new Map<string, IntakeStatusValue>();
-  if (clientIds && clientIds.length === 0) return out;
-  for (let block = 0; block < MAX_BLOCKS; block += 1) {
-    let q = supabase
-      .from("client_intake_forms")
-      .select("client_id, status, created_at")
-      .eq("studio_id", studioId)
-      .is("deleted_at", null);
-    if (clientIds) q = q.in("client_id", [...clientIds]);
-    const res: Result = await q
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(block * BLOCK, block * BLOCK + BLOCK - 1);
-    if (res.error) return null;
-    const rows = (res.data ?? []) as Array<{ client_id: string; status: IntakeStatusValue; created_at: string }>;
-    for (const r of rows) {
-      const cur = best.get(r.client_id);
-      // Canonical rule (today-intake.ts): strictly newer created_at wins.
-      if (cur !== undefined && r.created_at <= cur) continue;
-      best.set(r.client_id, r.created_at);
-      out.set(r.client_id, r.status);
-    }
-    if (rows.length < BLOCK) return out;
+  for (const r of rows) {
+    // The projection already returns one row per client; the canonical rule (today-intake.ts: strictly newer created_at wins) is kept here too.
+    const cur = best.get(r.client_id);
+    if (cur !== undefined && r.created_at <= cur) continue;
+    best.set(r.client_id, r.created_at);
+    out.set(r.client_id, r.status as IntakeStatusValue);
   }
-  return null;
+  return out;
 }

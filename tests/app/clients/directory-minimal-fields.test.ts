@@ -34,6 +34,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 // block), every other table is empty.
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    rpc: () => ({ range: async () => ({ data: [], error: null }) }), // the 0334 intake status projection
     from: (table: string) => {
       let afterId = false;
       const q: Record<string, unknown> = {};

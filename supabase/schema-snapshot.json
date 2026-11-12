@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 268,
-    "last": "0333_clinical_read_enforcement_records.sql",
-    "sha256": "5ced6f0b093d1179d218444be428cf9ebfb4e771c00ce907f3bbd2df6a1e9a35"
+    "count": 269,
+    "last": "0334_clinical_read_enforcement_intake_consent.sql",
+    "sha256": "38204ffbaeaa2c0112e82dad5a9378ea3bdf6d01ae0688f560ac4cedadfbe1d6"
   },
   "public": {
     "tables": [
@@ -352,6 +352,7 @@
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
       "initialize_studio_payment_jurisdiction_from_history_v2",
+      "intake_status_for_clients",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",

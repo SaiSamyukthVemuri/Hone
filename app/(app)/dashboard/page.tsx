@@ -144,6 +144,7 @@ import type {
 } from "@/lib/types/database";
 import { DashboardGreeting } from "./DashboardGreeting";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { readIntakeStatusProjection } from "@/lib/intake/status-projection";
 
 // ---------------------------------------------------------------------------
 // Color convention (Chloe P0 feedback). Kept here as the canonical note
@@ -1809,26 +1810,17 @@ async function loadIntakeStatusByClient(
   if (clientIds.length === 0) {
     return new Map<string, ClientIntakeForm["status"]>();
   }
-  // ONE bounded, studio-scoped, RLS-backed read for EVERY client on the day,
-  // never one query per appointment. The projection is deliberately narrow:
-  // `responses` (the medical answers, the #518 acknowledgement, consent text)
-  // is NEVER loaded here. Today only needs to know which row is current and
-  // what state it is in; the answers belong on the review page.
-  const { data, error } = await supabase
-    .from("client_intake_forms")
-    .select("client_id, status, created_at")
-    .eq("studio_id", studioId)
-    .in("client_id", clientIds as string[])
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
-  if (error) {
+  // ONE bounded read of the 0334 status projection for the day's clients: status and created_at of each client's newest non-deleted form, never the
+  // answers. `client_intake_forms` itself needs clin.view_intake to read, so a status-only reader goes through the projection.
+  const projected = await readIntakeStatusProjection(supabase, studioId, clientIds);
+  if (projected === null) {
     // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
     throw new Error("Failed to load intake status");
   }
   // Hone's canonical current-intake rule (newest non-deleted row by
   // created_at), applied in memory across the batch by the shared pure helper
   // so Today can never disagree with the page its link opens.
-  return selectCurrentIntakeByClient((data ?? []) as TodayIntakeRow[]);
+  return selectCurrentIntakeByClient(projected as TodayIntakeRow[]);
 }
 
 async function countActiveServices(studioId: string): Promise<number> {

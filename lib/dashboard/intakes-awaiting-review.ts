@@ -1,4 +1,5 @@
 import { getClientDisplayNames } from "./client-display-names";
+import { readIntakeStatusProjection } from "@/lib/intake/status-projection";
 import type { createClient } from "@/lib/supabase/server";
 import {
   selectCurrentIntakeByClient,
@@ -84,9 +85,6 @@ export function selectClientsAwaitingIntakeReview(
 // under-count silently, so each step pages and REFUSES (throws) past its
 // ceiling. The CALLER turns a refusal into an honest "unavailable" for this one
 // count; it never takes down the rest of Needs attention.
-const PAGE_SIZE = 1000;
-const MAX_PAGES = 20;
-const CLIENT_CHUNK = 100;
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -96,48 +94,11 @@ export async function getIntakesAwaitingReview(
   supabase: Supabase,
   studioId: string,
 ): Promise<IntakeAwaitingReview[]> {
-  // Step 1: clients with a submitted form.
-  const candidates = new Set<string>();
-  for (let page = 0; ; page++) {
-    if (page >= MAX_PAGES) throw new Error(REFUSAL);
-    const { data, error } = await supabase
-      .from("client_intake_forms")
-      .select("client_id")
-      .eq("studio_id", studioId)
-      .eq("status", "submitted")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
-    if (error) throw new Error(REFUSAL);
-    const batch = (data ?? []) as Array<{ client_id: string }>;
-    for (const r of batch) candidates.add(r.client_id);
-    if (batch.length < PAGE_SIZE) break;
-  }
-  if (candidates.size === 0) return [];
-
-  // Step 2: all rows of just those clients, in chunks.
-  const rows: TodayIntakeRow[] = [];
-  const ids = [...candidates];
-  for (let i = 0; i < ids.length; i += CLIENT_CHUNK) {
-    const chunk = ids.slice(i, i + CLIENT_CHUNK);
-    for (let page = 0; ; page++) {
-      if (page >= MAX_PAGES) throw new Error(REFUSAL);
-      const { data, error } = await supabase
-        .from("client_intake_forms")
-        .select("client_id, status, created_at")
-        .eq("studio_id", studioId)
-        .in("client_id", chunk)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
-      if (error) throw new Error(REFUSAL);
-      const batch = (data ?? []) as TodayIntakeRow[];
-      rows.push(...batch);
-      if (batch.length < PAGE_SIZE) break;
-    }
-  }
+  // ONE read of the 0334 status projection: the newest non-deleted form per client (status and created_at, never the answers). It returns zero
+  // rows to a viewer who holds neither clin.view_intake_status nor clin.view_intake; the page decides restricted-versus-none before it calls this.
+  const projected = await readIntakeStatusProjection(supabase, studioId);
+  if (projected === null) throw new Error(REFUSAL);
+  const rows: TodayIntakeRow[] = projected as TodayIntakeRow[];
 
   const awaiting = selectClientsAwaitingIntakeReview(rows);
   if (awaiting.length === 0) return [];
