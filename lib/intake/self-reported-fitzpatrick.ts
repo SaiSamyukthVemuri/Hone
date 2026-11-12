@@ -3,7 +3,7 @@ import { gatedOk, GATED_RESTRICTED } from "@/lib/permissions/gated";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { questionnaireForRow } from "@/lib/intake/questionnaire";
 
-export type SelfReportedFitzpatrick = { type: number; score: number };
+export type SelfReportedFitzpatrick = NonNullable<ReturnType<typeof computeFitzpatrickEstimate>>;
 
 type SubmittedIntakeRow = { questionnaire_snapshot?: unknown; responses?: unknown } | null | undefined;
 
@@ -19,5 +19,5 @@ export function selfReportedFitzpatrickFor(allowed: boolean, submitted: Submitte
   if (!submitted) return gatedOk(null);
   const snapshot = Object.hasOwn(submitted, "questionnaire_snapshot") ? submitted.questionnaire_snapshot : null;
   if (questionnaireForRow(snapshot as never).kind === "invalid") return gatedOk(null);
-  return gatedOk(computeFitzpatrickEstimate((submitted.responses ?? {}) as Record<string, unknown>) as SelfReportedFitzpatrick | null);
+  return gatedOk(computeFitzpatrickEstimate((submitted.responses ?? {}) as Record<string, unknown>));
 }

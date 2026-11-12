@@ -1,3 +1,4 @@
+import { selfReportedFitzpatrickFor } from "@/lib/intake/self-reported-fitzpatrick";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -243,25 +244,10 @@ describe("nothing widened", () => {
 // gate regression, not page rendering, tab-read, RLS or database proof; the
 // existing DB suites above remain the authority for those boundaries.
 describe("profile Fitzpatrick questionnaire provenance", () => {
+  // The summary is computed by the gated loader (selfReportedFitzpatrickFor): with the key it is the same pure value as before.
   function summaryFor(intake: Record<string, unknown> | null) {
-    let initializer: ts.Expression | undefined;
-    const visit = (node: ts.Node) => {
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
-          node.name.text === "selfReportedFitzpatrick") initializer = node.initializer;
-      ts.forEachChild(node, visit);
-    };
-    visit(pageComponent());
-    if (!initializer) throw new Error("Profile summary initializer missing");
-    const compiled = ts.transpileModule(
-      `const evaluate = (submittedIntake, questionnaireForRow, computeFitzpatrickEstimate) => (${initializer.getText(SF)});`,
-      { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } },
-    ).outputText;
-    const evaluate = new Function(`${compiled}; return evaluate;`)() as (
-      intake: Record<string, unknown> | null,
-      decode: typeof questionnaireForRow,
-      score: typeof computeFitzpatrickEstimate,
-    ) => ReturnType<typeof computeFitzpatrickEstimate>;
-    return evaluate(intake, questionnaireForRow, computeFitzpatrickEstimate);
+    const g = selfReportedFitzpatrickFor(true, intake);
+    return g.kind === "ok" ? g.value : null;
   }
   const responses = Object.fromEntries(FITZ_QUESTION_KEYS.map(key => [key, "2"]));
   const expected = { score: 20, type: "III" };

@@ -315,8 +315,9 @@ export default async function DashboardPage({
       // is the one intake review is enforced by today; a later key swap (clin.review_intake) is this one string. A failed gate check is
       // "unavailable", never an empty result.
       (async () => {
-        const gate = await requirePermission(supabase, studio.id, "clin.view_intake");
-        return gate.allowed ? await getIntakesAwaitingReview(supabase, studio.id) : CHECK_RESTRICTED;
+        // The owner holds every key (has_studio_permission), so no gate call is spent on the owner.
+        const allowed = isOwner || (await requirePermission(supabase, studio.id, "clin.view_intake")).allowed;
+        return allowed ? await getIntakesAwaitingReview(supabase, studio.id) : CHECK_RESTRICTED;
       })().catch(() => CHECK_UNAVAILABLE),
       countActiveServices(studio.id),
       isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),

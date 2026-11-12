@@ -73,7 +73,8 @@ describe("gallery no longer shows the raw filename", () => {
 describe("session date comes from a read-only embed (no schema change)", () => {
   it("the image query embeds sessions ( started_at ) and maps sessionDate", () => {
     expect(PAGE).toMatch(/sessions \( started_at \)/);
-    expect(PAGE).toMatch(/sessionDate: session\?\.started_at \?\? null/);
+    // Roles clinical-read gating: the session date is session RECORD, so it is mapped only with clin.view_records.
+    expect(PAGE).toMatch(/sessionDate: canViewRecords \? \(session\?\.started_at \?\? null\) : null/);
   });
 });
 

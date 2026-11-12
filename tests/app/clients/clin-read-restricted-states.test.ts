@@ -53,7 +53,9 @@ describe("intake card: restricted is never 'Not completed'", () => {
 describe("Overview signed consents: restricted shows no form text, response or signature", () => {
   it("the consent card is replaced by RestrictedNote without clin.view_intake, and nothing is loaded", () => {
     const page = read("app/(app)/clients/[id]/page.tsx");
-    expect(page).toMatch(/\(isOverview \|\| isMessages \|\| isOwnerBilling\) && intakeAllowed/);
+    // both consent loaders wait on the gate: without clin.view_intake they resolve to [] and read nothing
+    expect(page).toMatch(/canViewIntakePromise\.then\(\(ok\) => \(ok \? getConsentTemplatesForStudio\(/);
+    expect(page).toMatch(/canViewIntakePromise\.then\(\(ok\) => \(ok \? getLatestSignaturesForPractitionerView\(/);
     expect(page).toMatch(/\{intakeAllowed \? \(\s*<ConsentSignaturesCard[\s\S]*?\) : \(\s*<RestrictedNote testId="consent-signatures-not-available" \/>/);
     expect(page).toContain("consentRestricted: !intakeAllowed");
   });
@@ -125,7 +127,7 @@ describe("dashboard intake review: a viewer without clin.view_intake gets the re
   });
   it("the reader runs only after the clin.view_intake gate (page.tsx), and the heading never shows a number to a restricted viewer", () => {
     const page = read("app/(app)/dashboard/page.tsx");
-    expect(page).toMatch(/requirePermission\(supabase, studio\.id, "clin\.view_intake"\);\s*return gate\.allowed \? await getIntakesAwaitingReview\(supabase, studio\.id\) : CHECK_RESTRICTED;/);
+    expect(page).toMatch(/isOwner \|\| \(await requirePermission\(supabase, studio\.id, "clin\.view_intake"\)\)\.allowed;\s*return allowed \? await getIntakesAwaitingReview\(supabase, studio\.id\) : CHECK_RESTRICTED;/);
     const stack = read("app/(app)/dashboard/secondary-stack.tsx");
     expect(stack).toMatch(/v\.shown\.notAvailableToRole \|\| v\.shown\.intakeReviewNotAvailable\s*\?\s*"Not available to your role"/);
   });

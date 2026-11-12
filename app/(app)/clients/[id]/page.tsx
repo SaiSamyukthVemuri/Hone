@@ -293,9 +293,6 @@ export default async function ClientCheatSheetPage({
       .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
       .then((d) => d.allowed),
   );
-  // The intake gate's verdict. A viewer without clin.view_intake is RESTRICTED: "not read" must never render as "Not completed". Signed consents and
-  // policy acknowledgements ride on the same key (Team census v2 section 3, proposed default, Sam to confirm: consent is collected with intake).
-  const intakeAllowed = await canViewIntakePromise;
   const canViewAftercarePromise = contained("clin.view_aftercare", () =>
     gateClient()
       .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
@@ -352,8 +349,9 @@ export default async function ClientCheatSheetPage({
   // Consent templates and signatures feed the Overview consent card, the Messages
   // pending tasks and the owner Billing card-authorization state.
   const isOwnerBilling = activeTab === "billing" && isOwner;
-  // Signed consents ride on clin.view_intake (proposed default): without it nothing about them is read, counted or rendered (RestrictedNote).
-  const needsConsent = (isOverview || isMessages || isOwnerBilling) && intakeAllowed;
+  // Signed consents ride on clin.view_intake (Team census v2 section 3, proposed default, Sam to confirm: consent is collected with intake):
+  // without it nothing about them is read (the two loads below wait on the gate), counted or rendered (RestrictedNote).
+  const needsConsent = isOverview || isMessages || isOwnerBilling;
   // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
   const needsCard = isOwnerBilling;
   const needsSessionsData = activeTab === "sessions" && canViewRecords;
@@ -413,6 +411,8 @@ export default async function ClientCheatSheetPage({
     portalAccessEvents,
     overviewVisitAppointments,
     canViewAftercare,
+    // The intake gate's verdict. A viewer without clin.view_intake is RESTRICTED: "not read" must never render as "Not completed".
+    intakeAllowed,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -476,10 +476,10 @@ export default async function ClientCheatSheetPage({
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
     // both feed computePortalPendingTasks.
     needsConsent
-      ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
+      ? canViewIntakePromise.then((ok) => (ok ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner }) : []))
       : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
     needsConsent
-      ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner })
+      ? canViewIntakePromise.then((ok) => (ok ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner }) : []))
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
     // PR #135 (migration 0058): card-on-file metadata only; Stripe identifiers
     // stay off the wire. Overview card.
@@ -504,6 +504,7 @@ export default async function ClientCheatSheetPage({
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
     canViewAftercarePromise,
+    canViewIntakePromise,
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field

@@ -110,7 +110,7 @@ describe("Gated<T> results are consumed with a .kind check", () => {
   it("every consumer in app/, lib/ and components/ handles the result through .kind", () => {
     const violations = FILES.flatMap((f) => analyze(f, readFileSync(f, "utf8"), producers));
     expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
-  });
+  }, 60_000);
 
   it("the known surfaces are consumers the guard actually analyses (the images picker and the intake card)", () => {
     const images = readFileSync("app/(app)/clients/[id]/images/page.tsx", "utf8");

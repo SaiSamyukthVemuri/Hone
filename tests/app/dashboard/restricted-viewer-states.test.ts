@@ -19,7 +19,7 @@ describe("restricted viewer states survive the dashboard restructure", () => {
   };
   it("the heading count says 'Not available to your role' for a restricted viewer, never a client or item count", () => {
     const body = fnBody(stack, "async function HeadingCountValue");
-    expect(body).toContain('v.shown.notAvailableToRole\n      ? "Not available to your role"');
+    expect(body).toContain('v.shown.notAvailableToRole || v.shown.intakeReviewNotAvailable\n      ? "Not available to your role"');
     expect(stack).not.toContain("resolveClientReviewCount"); // the old helper that returned a number is gone, not bypassed
   });
   it("FALL-THROUGH GUARD: in the heading count, the restricted branch comes BEFORE every path that builds a number", () => {
