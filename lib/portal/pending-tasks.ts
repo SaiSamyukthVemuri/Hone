@@ -7,7 +7,8 @@
 
 export type PortalPendingTasks = {
   // Intake started but not yet submitted by the client.
-  intakeIncomplete: boolean;
+  // null = the viewer holds neither intake key: the status was not read, so this is NOT a "no" (RO-1).
+  intakeIncomplete: boolean | null;
   // Active consent templates the client has not signed at the current version
   // (covers both "never signed" and "signed an older version" = outdated).
   // null = the viewer may not read consent records (clin.view_records): not a zero, never counted.
@@ -23,13 +24,15 @@ export function computePortalPendingTasks(input: {
   latestSignatures: Array<{ template_id: string; template_version: number }>;
   // true when the viewer lacks clin.view_records: the consent half is NOT computed (the arrays are empty because nothing was read).
   consentRestricted?: boolean;
+  // true when the viewer holds neither clin.view_intake_status nor clin.view_intake: the intake half is NOT computed.
+  intakeRestricted?: boolean;
   portalMessages: Array<{
     status: string;
     client_reviewed_at: string | null;
     archived_at?: string | null;
   }>;
 }): PortalPendingTasks {
-  const intakeIncomplete = input.intakeStatus === "in_progress";
+  const intakeIncomplete: boolean | null = input.intakeRestricted ? null : input.intakeStatus === "in_progress";
 
   // A template is satisfied only when a signature exists at its CURRENT version.
   const signedAtCurrent = new Set(
@@ -53,6 +56,6 @@ export function computePortalPendingTasks(input: {
     consentToSignCount,
     unreadMessageCount,
     hasAny:
-      intakeIncomplete || (consentToSignCount ?? 0) > 0 || unreadMessageCount > 0,
+      intakeIncomplete === true || (consentToSignCount ?? 0) > 0 || unreadMessageCount > 0,
   };
 }

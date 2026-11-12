@@ -64,11 +64,10 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
 import { resolveTimeFormat, todayInTz } from "@/lib/booking/tz";
 import {
-  getLatestIntakeForClient,
   getLatestSubmittedOrReviewedIntakeForClient,
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
-import { intakeForViewer } from "@/lib/intake/status-only";
+import { loadIntakeForViewer } from "@/lib/intake/viewer-intake";
 import { selfReportedFitzpatrickFor } from "@/lib/intake/self-reported-fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
 import { StartAssistedIntakeButton } from "./intake/StartAssistedIntakeButton";
@@ -293,6 +292,12 @@ export default async function ClientCheatSheetPage({
       .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
       .then((d) => d.allowed),
   );
+  // clin.view_intake_status is the status-only key: a holder without clin.view_intake still sees whether the intake is complete (via the 0334 projection).
+  const canViewIntakeStatusPromise = contained("clin.view_intake_status", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "clin.view_intake_status", { client: id }))
+      .then((d) => d.allowed),
+  );
   const canViewAftercarePromise = contained("clin.view_aftercare", () =>
     gateClient()
       .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
@@ -393,7 +398,7 @@ export default async function ClientCheatSheetPage({
   const [
     appointmentTimeline,
     services,
-    intake,
+    intakeLoad,
     portalAccess,
     submittedIntake,
     pinnedNotes,
@@ -423,9 +428,9 @@ export default async function ClientCheatSheetPage({
     // Rendered outside every tab block, so always needed.
     getActiveServices(studio.id, priceReads),
     needsIntake
-      ? Promise.all([getLatestIntakeForClient(studio.id, client.id), canViewIntakePromise]).then(([row, ok]) =>
-          // Without clin.view_intake only the status-only allow-list survives (id, status, started/submitted/reviewed timestamps).
-          intakeForViewer(row, ok),
+      ? Promise.all([gateClient(), canViewIntakePromise, canViewIntakeStatusPromise]).then(([db, canViewIntake, canViewStatus]) =>
+          // detail (clin.view_intake): the row; status-only: the 0334 projection (status and date, no answers); neither: restricted.
+          loadIntakeForViewer(db, studio.id, client.id, { canViewIntake, canViewStatus }),
         )
       : Promise.resolve(null),
     // Portal access hints (last link sent / last sign-in). Overview card.
@@ -516,10 +521,17 @@ export default async function ClientCheatSheetPage({
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
 
+  // The intake as THIS viewer may see it (0334): the whole row, the status only, or restricted ("not read" is never "no intake").
+  const intakeRestricted = intakeLoad?.kind === "restricted";
+  const intake = intakeLoad?.kind === "ok" && intakeLoad.value.mode === "detail" ? intakeLoad.value.intake : null;
+  const intakeStatusOnly = intakeLoad?.kind === "ok" && intakeLoad.value.mode === "status" ? intakeLoad.value.summary : null;
+  const intakeStatusMode = intakeLoad?.kind === "ok" && intakeLoad.value.mode === "status";
+
   // Portal Access PR 3: outstanding portal tasks, from already-loaded data —
   // no new queries.
   const portalPendingTasks = computePortalPendingTasks({
-    intakeStatus: intake?.status ?? null,
+    intakeStatus: intake?.status ?? intakeStatusOnly?.status ?? null,
+    intakeRestricted,
     activeConsentTemplates: consentTemplatesAll,
     latestSignatures: consentLatestSignatures,
     consentRestricted: !intakeAllowed,
@@ -1624,7 +1636,15 @@ export default async function ClientCheatSheetPage({
               and opens the existing assisted editor. Gated on !intake, so a
               submitted or reviewed record is never a reason to start another
               that path stays Send a new intake form. */}
-          {!intake && (
+          {intakeRestricted && <RestrictedNote testId="health-intake-not-available" className="mt-2 text-sm text-neutral-500" />}
+          {intakeStatusMode && (
+            <p className="mt-2 text-sm text-neutral-600" data-testid="health-intake-status-only">
+              {intakeStatusOnly
+                ? `Intake: ${intakeStatusOnly.status === "reviewed" ? "reviewed" : intakeStatusOnly.status === "submitted" ? "awaiting review" : "started, not yet submitted"}.`
+                : "No intake on file for this client."}
+            </p>
+          )}
+          {!intake && !intakeRestricted && !intakeStatusMode && (
             <div className="mt-2 flex flex-col gap-3">
               <p className="text-sm text-neutral-500">
                 No intake on file for this client. A link is sent automatically

@@ -598,13 +598,13 @@ describe("Sam's group 7 (3 Nov): platform and operations", () => {
 });
 
 describe("enforcement state (Privacy X3)", () => {
-  it("R4 marks exactly the keys the app asks: 7 enforced, 6 deny_only, 1 observe, every other key not_yet", async () => {
+  it("R4 marks exactly the keys the app asks: 8 enforced, 6 deny_only, 1 observe, every other key not_yet", async () => {
     const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
     const by = (st: string) => CATALOG.filter((d) => enforcementOf(d.key) === st).map((d) => d.key).sort();
-    expect(by("enforced")).toEqual(["appt.cancel", "appt.edit_notes", "appt.mark_no_show", "clin.view_aftercare", "clin.view_intake", "clin.view_photos", "clin.view_records"]);
+    expect(by("enforced")).toEqual(["appt.cancel", "appt.edit_notes", "appt.mark_no_show", "clin.view_aftercare", "clin.view_intake", "clin.view_intake_status", "clin.view_photos", "clin.view_records"]);
     expect(by("deny_only")).toEqual(["appt.book", "appt.move", "appt.reassign", "avail.manage_others", "avail.manage_own", "avail.manage_studio_hours"]);
     expect(by("observe")).toEqual(["appt.complete"]);
-    expect(by("not_yet").length).toBe(CATALOG.length - 14);
+    expect(by("not_yet").length).toBe(CATALOG.length - 15);
     expect(enforcementOf("not.a.key")).toBe("not_yet");
   });
 });

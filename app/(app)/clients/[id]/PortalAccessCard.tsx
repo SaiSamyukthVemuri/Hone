@@ -157,7 +157,7 @@ export function PortalAccessCard({
           </p>
           {pendingTasks.hasAny ? (
             <ul className="mt-1 flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-300">
-              {pendingTasks.intakeIncomplete && (
+              {pendingTasks.intakeIncomplete === true && (
                 <li>&bull; Intake not yet submitted</li>
               )}
               {pendingTasks.consentToSignCount !== null && pendingTasks.consentToSignCount > 0 && (
@@ -173,10 +173,16 @@ export function PortalAccessCard({
                 </li>
               )}
             </ul>
-          ) : pendingTasks.consentToSignCount === null ? null : (
+          ) : pendingTasks.consentToSignCount === null || pendingTasks.intakeIncomplete === null ? null : (
             <p className="mt-1 text-xs text-neutral-500">
               No pending portal tasks.
             </p>
+          )}
+          {pendingTasks.intakeIncomplete === null && (
+            <div className="mt-1 text-xs" data-testid="pending-intake-restricted">
+              <span className="text-neutral-600 dark:text-neutral-300">Intake: </span>
+              <RestrictedNote className="inline text-xs text-neutral-500" testId="pending-intake-restricted-note" />
+            </div>
           )}
           {pendingTasks.consentToSignCount === null && (
             <div className="mt-1 text-xs" data-testid="pending-consent-restricted">

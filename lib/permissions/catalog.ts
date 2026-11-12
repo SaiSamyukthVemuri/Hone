@@ -557,6 +557,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
+    enforcement: "enforced",
     note: "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission PLUS this status read. It neither requires nor grants the intake answers (clin.view_intake) or the chart.",
   },
   {
