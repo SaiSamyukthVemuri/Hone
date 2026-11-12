@@ -37,6 +37,33 @@ describe("Needs attention honest states", () => {
     expect(out).not.toMatch(/\b0 (visits|items)/);
   });
 
+  it("a restricted viewer with a NON-EMPTY studio list sees the restricted note and no number (RO-1)", () => {
+    const out = html({
+      ...empty,
+      notAvailableToRole: true,
+      itemCount: 1,
+      studioItems: [
+        {
+          id: "no_services:studio",
+          kind: "no_services",
+          subject: { kind: "studio", id: "studio", label: "Booking" },
+          reason: "No services yet",
+          detail: null,
+          action: { href: "/settings/services", label: "Add a service" },
+          priority: 10,
+          occurredAt: null,
+          state: "no_services",
+          tone: "urgent",
+        },
+      ],
+    });
+    expect(out).toContain("Records follow-up is not available to your role");
+    expect(out).toContain("No services yet"); // the studio item is still listed: it is not records follow-up
+    expect(out).not.toContain("Nothing needs attention right now");
+    expect(out).not.toMatch(/\b\d+ (clients?|items?)\b/);
+    expect(out).not.toContain("needs-attention-count");
+  });
+
   it("an unreadable check on an otherwise empty list is NOT the all-clear", () => {
     const out = html({ ...empty, unavailableChecks: ["payment setup"] });
     expect(out).toContain("Could not check payment setup");
