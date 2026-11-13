@@ -352,21 +352,24 @@ describe("0173 GROUP 5 — appointment lineage is no longer reachable through a 
 });
 
 describe("0173 GROUP 5 — the product workflows it must not break", () => {
-  it("a member can still read, create and UPDATE a service", async () => {
+  it("the owner can still read, create and UPDATE a service; a non-owner member still reads but cannot write (0339)", async () => {
+    // GROUP 5 must not break the services settings workflow. Since 0339 that workflow is the OWNER's
+    // (services INSERT/UPDATE are owner-only, matching settings/services/actions.ts), so the owner performs it here;
+    // a non-owner member keeps the read and is refused the writes.
     const studio = await seedStudio("l23-crud");
     const member = await seedMember(studio, "l23-crud-m");
     const serviceId = randomUUID();
 
-    await asUser(member.userId, async (q) => {
+    await asUser(studio.userId, async (q) => {
       await q(
         `insert into public.services (id, studio_id, name, default_duration_minutes, active)
-         values ($1, $2, 'Member created', 45, true)`,
+         values ($1, $2, 'Owner created', 45, true)`,
         [serviceId, studio.studioId],
       );
       const read = await q(`select name from public.services where id = $1`, [
         serviceId,
       ]);
-      expect(read.rows[0].name).toBe("Member created");
+      expect(read.rows[0].name).toBe("Owner created");
       await q(`update public.services set name = 'Renamed' where id = $1`, [
         serviceId,
       ]);
@@ -377,6 +380,33 @@ describe("0173 GROUP 5 — the product workflows it must not break", () => {
       [serviceId],
     );
     expect(after.rows[0].name).toBe("Renamed");
+
+    await asUser(member.userId, async (q) => {
+      const read = await q(`select name from public.services where id = $1`, [
+        serviceId,
+      ]);
+      expect(read.rows[0].name, "the member read is unchanged").toBe("Renamed");
+    });
+    await expect(
+      asUser(member.userId, (q) =>
+        q(
+          `insert into public.services (id, studio_id, name, default_duration_minutes, active)
+           values ($1, $2, 'Member created', 45, true)`,
+          [randomUUID(), studio.studioId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+    const upd = await asUser(member.userId, (q) =>
+      q(`update public.services set name = 'Member renamed' where id = $1`, [
+        serviceId,
+      ]),
+    );
+    expect(upd.rowCount, "a member update matches no writable row").toBe(0);
+    const still = await adminQuery(
+      `select name from public.services where id = $1`,
+      [serviceId],
+    );
+    expect(still.rows[0].name).toBe("Renamed");
   });
 
   it("DEACTIVATION — the real product workflow — still works for a member", async () => {
