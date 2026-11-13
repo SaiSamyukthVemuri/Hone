@@ -74,10 +74,10 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
     expect(parseWorkflowRuns(realPushRuns()).ok).toBe(true);
   });
 
-  it("the record never carries pull_requests, display_title or head_commit (CAP-01 §4: raw fields stay in the transport)", () => {
+  it("the record never carries the raw pull_requests, display_title or head_commit (CAP-01 §4: raw fields stay in the transport); only the projected PR numbers (SHEP-LATEST-01)", () => {
     const r = parseWorkflowRuns(realRuns());
     const s = canon(r.record);
-    for (const leak of ["pull_requests", "pullRequests", "display_title", "displayTitle", "head_commit", "headCommit", "/pulls/810"])
+    for (const leak of ["pull_requests", "display_title", "displayTitle", "head_commit", "headCommit", "/pulls/810"])
       expect(s.includes(leak), leak).toBe(false);
     expect(s.includes(realRuns().workflow_runs[0].display_title), "the run's title text").toBe(false);
   });
@@ -111,7 +111,7 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
     const rec = parseWorkflowRuns(runsOf(runs)).record;
     const nums = rec.runs.map((x: any) => x.runNumber);
     expect(nums).toEqual([...nums].sort((a: number, b: number) => a - b));
-    const FIELDS = ["id", "runNumber", "workflowId", "event", "headSha", "headBranch", "headRepoId", "status", "conclusion", "runAttempt", "createdAt"];
+    const FIELDS = ["id", "runNumber", "workflowId", "event", "headSha", "headBranch", "headRepoId", "status", "conclusion", "runAttempt", "createdAt", "pullRequests"];
     for (const x of rec.runs) expect(Object.keys(x).sort()).toEqual([...FIELDS].sort());
   });
 
@@ -189,6 +189,7 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
           conclusion: true,
           run_attempt: true,
           created_at: true,
+          pull_requests: [{ number: true }],
         },
       ],
     };
@@ -239,18 +240,19 @@ describe("row 3 verify: parseRunJobs (§3.2)", () => {
     expect(parseRunJobs({ total_count: 1, jobs: [job(1, { status: "", conclusion: null })] }, { runId: RUN_810 }).ok).toBe(true);
   });
 
-  it("the record is { jobs: [{ name, status, conclusion }] } sorted by name, then status, then conclusion (null first)", () => {
+  it("the record is { jobs: [{ name, status, conclusion, steps }] } sorted by name, then status, then conclusion (null first)", () => {
     const listing = [
       job(1, { name: "beta", status: "completed", conclusion: "success" }),
       job(2, { name: "alpha", status: "queued", conclusion: null }),
       job(3, { name: "alpha", status: "completed", conclusion: "failure" }),
       job(4, { name: "alpha", status: "completed", conclusion: null }),
     ];
+    const steps = parseRunJobs({ total_count: 1, jobs: [job(1)] }, { runId: RUN_810 }).record.jobs[0].steps;
     const want = [
-      { name: "alpha", status: "completed", conclusion: null },
-      { name: "alpha", status: "completed", conclusion: "failure" },
-      { name: "alpha", status: "queued", conclusion: null },
-      { name: "beta", status: "completed", conclusion: "success" },
+      { name: "alpha", status: "completed", conclusion: null, steps },
+      { name: "alpha", status: "completed", conclusion: "failure", steps },
+      { name: "alpha", status: "queued", conclusion: null, steps },
+      { name: "beta", status: "completed", conclusion: "success", steps },
     ];
     const r = rng(0x32);
     for (let k = 0; k < 6; k++) {
@@ -285,7 +287,7 @@ describe("row 3 verify: parseRunJobs (§3.2)", () => {
 
   it("REST: stripped to consumed fields or sprinkled with new ones, the result is the same", () => {
     const full = parseRunJobs(realJobsRaw(), { runId: RUN_810 });
-    expect(parseRunJobs(pick(realJobsRaw(), { total_count: true, jobs: [{ name: true, run_id: true, status: true, conclusion: true }] }), { runId: RUN_810 })).toEqual(full);
+    expect(parseRunJobs(pick(realJobsRaw(), { total_count: true, jobs: [{ name: true, run_id: true, status: true, conclusion: true, steps: [{ number: true, name: true, status: true, conclusion: true }] }] }), { runId: RUN_810 })).toEqual(full);
     expect(parseRunJobs(sprinkle(realJobsRaw()), { runId: RUN_810 })).toEqual(full);
   });
 

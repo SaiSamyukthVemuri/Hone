@@ -28,6 +28,7 @@ export const isCompareRecord = (c) =>
 export const isPrContextRecord = (p) =>
   isObject(p) &&
   isIsoUtc(p.createdAt) &&
+  (p.readyForReviewAt === undefined || p.readyForReviewAt === null || isIsoUtc(p.readyForReviewAt)) &&
   isNonNegInt(p.changedFiles) &&
   (isNonNegInt(p.baseRefChanges) || p.baseRefChanges === "too_many") &&
   (arrayOf(p.associatedPrNumbers, isPosInt) || p.associatedPrNumbers === "too_many");
@@ -64,10 +65,19 @@ const isRun = (r) =>
   typeof r.status === "string" &&
   isStringOrNull(r.conclusion) &&
   isPosInt(r.runAttempt) &&
-  isIsoUtc(r.createdAt);
+  isIsoUtc(r.createdAt) &&
+  arrayOf(r.pullRequests, isPosInt);
 export const isRunsRecord = (r) => isObject(r) && arrayOf(r.runs, isRun);
 
-const isJob = (j) => isObject(j) && isNonEmptyString(j.name) && typeof j.status === "string" && isStringOrNull(j.conclusion);
+const isStep = (s) =>
+  isObject(s) && isPosInt(s.number) && isNonEmptyString(s.name) && typeof s.status === "string" && isStringOrNull(s.conclusion);
+// `steps` is null when the listing did not carry them; otherwise the job's steps in runner order.
+const isJob = (j) =>
+  isObject(j) &&
+  isNonEmptyString(j.name) &&
+  typeof j.status === "string" &&
+  isStringOrNull(j.conclusion) &&
+  (j.steps === undefined || j.steps === null || arrayOf(j.steps, isStep));
 export const isJobsRecord = (j) => isObject(j) && arrayOf(j.jobs, isJob);
 
 /** A plain object from run id to a §3.2 jobs record; a Map, an array or a class instance is not one. */

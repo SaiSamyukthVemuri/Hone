@@ -162,7 +162,7 @@ export const SPEC_QUERIES = {
   ),
   context: selection(
     // §2.2 as amended at 4b0662a2 (R-AUTOBASE): the three base-change event types
-    "{repository(owner,name){ pullRequest(number:N){ number createdAt changedFiles baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, AUTOMATIC_BASE_CHANGE_FAILED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } } object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }}".replace(
+    "{repository(owner,name){ pullRequest(number:N){ number createdAt changedFiles baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, AUTOMATIC_BASE_CHANGE_FAILED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } readyForReview: timelineItems(itemTypes:[READY_FOR_REVIEW_EVENT], last:1){ nodes{ ... on ReadyForReviewEvent{ createdAt } } } } object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }}".replace(
       "repository(owner,name)",
       "repository(owner:$owner,name:$name)",
     ),

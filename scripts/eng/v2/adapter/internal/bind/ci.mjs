@@ -110,6 +110,60 @@ export function isApplicableRun(run, key, workflowId) {
   );
 }
 
+// ---- draft deferrals (SPEC-05A step 10, SHEP-LATEST-01) ---------------------------------------------------------------
+const AGGREGATOR_JOB = "browser e2e (local stack)";
+const GATE_JOB = "changed-path detection";
+const DEFERRAL_STEP = "DRAFT-DEFERRED";
+// The two steps the RUNNER adds around a job's own steps (observed on run 43459049109): first and last.
+const RUNNER_LAST_STEP = "Complete job";
+// Insurance final660 (P1): a step that fails BY NAME alone is not enough. The deferral step failing is accepted only beside the
+// prerequisites step having succeeded and the shard aggregation having been skipped, each exactly once.
+const PREREQ_STEP = "Fail closed on prerequisites";
+const AGGREGATE_STEP = "Aggregate browser shard results";
+
+/**
+ * Is this FAILED run positively a draft deferral (CI-DRAFT-01's aggregator failing on purpose)? Only from the run's own
+ * jobs listing; anything missing, ambiguous or different is NOT a deferral (so the run stays FAILED). A cancelled,
+ * timed-out or otherwise failed run is never one.
+ */
+export function isDraftDeferral(run, jobsByRunId) {
+  if (run.status !== "completed" || run.conclusion !== "failure") return false;
+  const listing = Object.hasOwn(jobsByRunId, run.id) ? jobsByRunId[run.id] : undefined;
+  if (listing === undefined) return false;
+  const jobs = listing.jobs;
+  const gate = jobs.filter((j) => j.name === GATE_JOB);
+  const agg = jobs.filter((j) => j.name === AGGREGATOR_JOB);
+  if (gate.length !== 1 || agg.length !== 1) return false;
+  if (gate[0].status !== "completed" || gate[0].conclusion !== "success") return false;
+  const a = agg[0];
+  if (a.status !== "completed" || a.conclusion !== "failure" || !Array.isArray(a.steps)) return false;
+  // every other job succeeded or was skipped: no real failure, cancellation or timeout hides behind the deferral
+  for (const j of jobs) {
+    if (j === a) continue;
+    if (j.status !== "completed" || (j.conclusion !== "success" && j.conclusion !== "skipped")) return false;
+  }
+  const at = a.steps.filter((st) => st.name === DEFERRAL_STEP);
+  if (at.length !== 1 || at[0].status !== "completed" || at[0].conclusion !== "failure") return false;
+  const prereq = a.steps.filter((st) => st.name === PREREQ_STEP);
+  const aggregate = a.steps.filter((st) => st.name === AGGREGATE_STEP);
+  if (prereq.length !== 1 || prereq[0].status !== "completed" || prereq[0].conclusion !== "success") return false;
+  if (aggregate.length !== 1 || aggregate[0].status !== "completed" || aggregate[0].conclusion !== "skipped") return false;
+  if (!(prereq[0].number < at[0].number && at[0].number < aggregate[0].number)) return false;
+  // The three named steps are judged above and only there; every OTHER step (the runner's own) is judged by position.
+  for (const st of a.steps) {
+    if (st === prereq[0] || st === aggregate[0] || st === at[0]) continue;
+    if (st.number < at[0].number) {
+      if (st.status !== "completed" || st.conclusion !== "success") return false;
+    } else if (st.number > at[0].number) {
+      const ok =
+        (st.status === "completed" && st.conclusion === "skipped") ||
+        (st.name === RUNNER_LAST_STEP && st.status === "completed" && st.conclusion === "success");
+      if (!ok) return false;
+    }
+  }
+  return true;
+}
+
 /** The floor of every required set: what even a docs-only diff requires (SPEC-05A §3.3). */
 const ALWAYS_REQUIRED = Object.freeze(
   requiredJobs({
@@ -133,8 +187,9 @@ const isRequiredJobNames = (names) =>
   ALWAYS_REQUIRED.every((n) => names.includes(n));
 
 /** SPEC-05A §3.4: every input has its specified shape, or the result is `malformed` before any rule runs. */
-function inputsValid({ key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId }) {
+function inputsValid({ key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId, readyAt }) {
   return (
+    (readyAt === undefined || readyAt === null || isIsoUtc(readyAt)) &&
     isOpenKey(key) &&
     isBaseValue(base) &&
     isHeadBranchPrsRecord(headBranchPrs) &&
@@ -159,6 +214,7 @@ export function bindCi(input) {
     if (!isObject(input) || !inputsValid(input)) return fail("malformed", "bindCi received an input outside its contract");
     const { key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId } =
       input;
+    const readyAt = input.readyAt ?? null;
     // 1. A fork's head is not a trusted writer in V1.
     if (key.headRepoId !== targetRepoId) return fail("fork_head", "the head repository is not the target repository");
 
@@ -223,10 +279,26 @@ export function bindCi(input) {
       states.push({ run: r, state: s.state });
     }
 
-    // 10. Every applicable run counts.
-    if (states.some((s) => s.state === "FAILED")) return okValue({ outcome: "FAILED", applicableRunIds: ids });
-    if (states.some((s) => s.state === "PENDING")) return okValue({ outcome: "PENDING", applicableRunIds: ids });
-    for (const { run } of states) {
+    // 10. Every applicable run counts, except a draft deferral the PR has since been marked ready past (SHEP-LATEST-01):
+    //     it is ignored only if (a) it is positively a deferral, (b) the PR is not a draft now and its latest ready-for-review
+    //     event is strictly after the run's created_at, and (c) another applicable run that is not itself a deferral was
+    //     created at or after that instant and lists THIS pull request. Instants are compared as parsed dates. A superseding
+    //     run is then aggregated like any other, so a newer pending, failed or cancelled run still decides.
+    const readyMs = readyAt === null ? null : Date.parse(readyAt);
+    const deferral = new Set(states.filter((s) => s.state === "FAILED" && isDraftDeferral(s.run, jobsByRunId)).map((s) => s.run.id));
+    const superseders =
+      key.isDraft === false && readyMs !== null && Number.isFinite(readyMs)
+        ? states.filter(
+            ({ run }) => !deferral.has(run.id) && Date.parse(run.createdAt) >= readyMs && run.pullRequests.includes(key.prNumber),
+          )
+        : [];
+    const counted =
+      superseders.length === 0
+        ? states
+        : states.filter(({ run }) => !(deferral.has(run.id) && Date.parse(run.createdAt) < readyMs));
+    if (counted.some((s) => s.state === "FAILED")) return okValue({ outcome: "FAILED", applicableRunIds: ids });
+    if (counted.some((s) => s.state === "PENDING")) return okValue({ outcome: "PENDING", applicableRunIds: ids });
+    for (const { run } of counted) {
       const listing = Object.hasOwn(jobsByRunId, run.id) ? jobsByRunId[run.id] : undefined;
       if (listing === undefined) {
         return fail("ci_candidate_listing_too_large", `the jobs of run ${run.id} are not available`);

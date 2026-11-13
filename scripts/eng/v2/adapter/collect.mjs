@@ -105,10 +105,15 @@ function readBody(readers, k0, policy) {
   // Jobs for exactly the runs step 7 counts that succeeded: nothing else is ever consulted.
   const jobsByRunId = {};
   for (const run of got.runs.runs) {
-    if (!isApplicableRun(run, k0, policy.workflowId) || run.status !== "completed" || run.conclusion !== "success") {
+    if (!isApplicableRun(run, k0, policy.workflowId) || run.status !== "completed") continue;
+    if (run.conclusion !== "success" && run.conclusion !== "failure") continue;
+    const r = readers.readRunJobs(run.id);
+    if (run.conclusion === "failure") {
+      // SHEP-LATEST-01: a failed run's jobs are read only to tell a draft deferral from any other failure. A listing that
+      // cannot be read leaves the run a plain FAILED run (never a deferral); it never fails the pass.
+      if (r && r.ok === true) jobsByRunId[run.id] = r.record;
       continue;
     }
-    const r = readers.readRunJobs(run.id);
     if (!r || r.ok !== true) return r;
     jobsByRunId[run.id] = r.record;
   }
@@ -160,6 +165,7 @@ function ciRow({ key, base, body, local, observedAt, policy }) {
     observedAt,
     workflowId: policy.workflowId,
     targetRepoId: policy.repoId,
+    readyAt: body.prContext?.readyForReviewAt ?? null,
   });
 }
 
