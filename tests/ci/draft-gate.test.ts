@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { aggregatorSteps, runAggregatorSteps } from "./helpers/aggregator-steps";
 
 // CI-DRAFT-01. Draft PRs skip the heavy lanes; the stable required aggregator must
 // then FAIL (DRAFT-DEFERRED) whenever the diff needs any of them, never report the
@@ -58,7 +59,7 @@ describe("CI-DRAFT-01 triggers", () => {
 describe("CI-DRAFT-01 job conditions", () => {
   const base = baseCi();
   it("every Supabase-starting job is one of the gated heavy jobs (none missed)", () => {
-    const starters = CI.split("\n").flatMap((l, i, a) => {
+    const starters = CI.split("\n").flatMap((l) => {
       if (!/^ {2}[A-Za-z][\w-]*:$/.test(l)) return [];
       const name = l.trim().slice(0, -1);
       return /supabase start/.test(jobBlock(CI, name)) ? [name] : [];
@@ -83,10 +84,7 @@ describe("CI-DRAFT-01 job conditions", () => {
 
 describe("CI-DRAFT-01 spec lists cannot drift from the job conditions (G1)", () => {
   const specsIn = (text: string) => [...text.matchAll(/e2e\/[\w.-]+\.spec\.ts/g)].map((x) => x[0]).sort();
-  const aggregator = (() => {
-    const b = jobBlock(CI, "browser-e2e");
-    return b;
-  })();
+  const aggregator = jobBlock(CI, "browser-e2e");
   // the aggregator's `case` arm that sets a given flag
   const armSpecs = (flag: string) => {
     const m = aggregator.match(new RegExp(`case "\\$\\{BROWSER_SPECS:-\\}" in\\n([^\\n]*)\\n\\s*esac`, "g")) ?? [];
@@ -107,22 +105,9 @@ describe("CI-DRAFT-01 spec lists cannot drift from the job conditions (G1)", () 
 });
 
 // ---- aggregator behaviour ----------------------------------------------------------
-function script(): string {
-  const lines = CI.split("\n");
-  const start = lines.findIndex((l) => l === "  browser-e2e:");
-  const run = lines.findIndex((l, i) => i > start && l === "        run: |");
-  const body: string[] = [];
-  for (let i = run + 1; i < lines.length; i += 1) {
-    const l = lines[i];
-    if (l.trim() === "") { body.push(""); continue; }
-    if (l.length - l.trimStart().length < 10) break;
-    body.push(l.slice(10));
-  }
-  const s = body.join("\n");
-  if (s.length < 1500 || !s.includes("DRAFT-DEFERRED")) throw new Error("wrong aggregator block");
-  return s;
-}
-const SCRIPT = script();
+const STEPS = aggregatorSteps(CI);
+const SCRIPT = STEPS.map((x) => x.script).join("\n# ---- next step ----\n");
+if (SCRIPT.length < 1500 || !SCRIPT.includes("DRAFT-DEFERRED")) throw new Error("wrong aggregator steps");
 
 const GREEN = {
   CHANGES_RESULT: "success", SHARD_RESULT: "skipped", RECORD_RESULT: "skipped",
@@ -132,15 +117,8 @@ const GREEN = {
   MOBILE: "false", GOOGLE_CALENDAR: "false", BROWSER_SPECS: "",
 };
 function run(over: Record<string, string>) {
-  try {
-    const out = execFileSync("bash", ["-c", SCRIPT], {
-      env: { ...process.env, ...GREEN, ...over }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { code: 0, out };
-  } catch (e) {
-    const x = e as { status?: number; stdout?: string; stderr?: string };
-    return { code: x.status ?? 1, out: `${x.stdout ?? ""}${x.stderr ?? ""}` };
-  }
+  const r = runAggregatorSteps(STEPS, { ...GREEN, ...over });
+  return { code: r.code, out: r.out };
 }
 const DEFERRED_LINE =
   "::error title=DRAFT-DEFERRED::draft PR: required coverage for this diff was deferred. Mark the PR ready for review to run it.";
@@ -209,5 +187,64 @@ describe("CI-DRAFT-01 aggregator on ready PRs and production pushes", () => {
   it("a ready PR with a shard failure or cancel is a failure even if nothing else is required", () => {
     expect(run({ ...READY, SHARD_RESULT: "failure" }).code).toBe(1);
     expect(run({ ...READY, SHARD_RESULT: "cancelled" }).code).toBe(1);
+  });
+});
+
+// ---- SHEP-LATEST-01 PR1: the deferral is a step of its own ------------------------
+describe("CI-DRAFT-01 aggregator step structure", () => {
+  const exec = (over: Record<string, string>) => runAggregatorSteps(STEPS, { ...GREEN, ...over });
+  it("one job, three steps, in this order, and the job keeps its required-check name", () => {
+    expect(STEPS.map((s) => s.name)).toEqual([
+      "Fail closed on prerequisites",
+      "DRAFT-DEFERRED",
+      "Aggregate browser shard results",
+    ]);
+    expect(jobBlock(CI, "browser-e2e")).toMatch(/^ {4}name: browser e2e \(local stack\)$/m);
+    expect((jobBlock(CI, "browser-e2e").match(/^ {4}if: always\(\)$/gm) ?? []).length).toBe(1);
+  });
+  it("only the DRAFT-DEFERRED step is conditional, and only on a draft", () => {
+    expect(STEPS.map((s) => s.ifExpr)).toEqual([null, "${{ github.event.pull_request.draft == true }}", null]);
+  });
+  it("every step declares the identical env block", () => {
+    expect(STEPS[0].env.length).toBeGreaterThan(200);
+    expect(STEPS[1].env).toBe(STEPS[0].env);
+    expect(STEPS[2].env).toBe(STEPS[0].env);
+  });
+  it("only the DRAFT-DEFERRED step can emit the deferral error", () => {
+    expect(STEPS[0].script).not.toContain("DRAFT-DEFERRED");
+    expect(STEPS[2].script).not.toContain("DRAFT-DEFERRED");
+    expect(STEPS[1].script).toContain(DEFERRED_LINE);
+  });
+  it("no shell state crosses a step: each step runs alone from the env", () => {
+    const alone = (i: number, over: Record<string, string>) =>
+      runAggregatorSteps([{ ...STEPS[i], ifExpr: null }], { ...GREEN, ...over });
+    expect(alone(1, { DATABASE: "true" }).code).toBe(1);
+    expect(alone(1, { DATABASE: "true" }).out).toContain(DEFERRED_LINE);
+    expect(alone(1, {}).code).toBe(0);
+    expect(alone(0, { CHANGES_RESULT: "failure" }).code).toBe(1);
+    expect(alone(2, { IS_DRAFT: "false", BROWSER_RUN: "true", SHARD_RESULT: "success", SHARDS: "[1]" }).code).toBe(0);
+  });
+  it("a deferral stops the job at the DRAFT-DEFERRED step: the later step is not run", () => {
+    const r = exec({ DATABASE: "true" });
+    expect(r.code).toBe(1);
+    expect(r.ran).toEqual(["Fail closed on prerequisites", "DRAFT-DEFERRED"]);
+  });
+  it("a classifier failure on a draft stops at step 1; the DRAFT-DEFERRED step never runs", () => {
+    const r = exec({ CHANGES_RESULT: "cancelled", DATABASE: "true" });
+    expect(r.ran).toEqual(["Fail closed on prerequisites"]);
+    expect(r.out).not.toContain("DRAFT-DEFERRED");
+  });
+  it("a failing required canonical-record on a draft stops at step 1", () => {
+    const r = exec({ DOCS_ONLY: "true", PRODUCTION_RECORD: "true", RECORD_RESULT: "failure" });
+    expect(r.ran).toEqual(["Fail closed on prerequisites"]);
+  });
+  it("ready PRs and pushes never run the DRAFT-DEFERRED step", () => {
+    const r = exec({ IS_DRAFT: "false", DATABASE: "true", SHARD_RESULT: "skipped" });
+    expect(r.ran).toEqual(["Fail closed on prerequisites", "Aggregate browser shard results"]);
+  });
+  it("a draft that needs nothing runs all three and passes", () => {
+    const r = exec({ DOCS_ONLY: "true" });
+    expect(r.code).toBe(0);
+    expect(r.ran).toHaveLength(3);
   });
 });
