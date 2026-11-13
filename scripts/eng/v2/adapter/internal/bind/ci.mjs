@@ -149,7 +149,9 @@ export function isDraftDeferral(run, jobsByRunId) {
   if (prereq.length !== 1 || prereq[0].status !== "completed" || prereq[0].conclusion !== "success") return false;
   if (aggregate.length !== 1 || aggregate[0].status !== "completed" || aggregate[0].conclusion !== "skipped") return false;
   if (!(prereq[0].number < at[0].number && at[0].number < aggregate[0].number)) return false;
+  // The three named steps are judged above and only there; every OTHER step (the runner's own) is judged by position.
   for (const st of a.steps) {
+    if (st === prereq[0] || st === aggregate[0] || st === at[0]) continue;
     if (st.number < at[0].number) {
       if (st.status !== "completed" || st.conclusion !== "success") return false;
     } else if (st.number > at[0].number) {
