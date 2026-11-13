@@ -459,7 +459,11 @@ describe("PR CI — path-aware lane selection", () => {
     // (the seventh is canonical-record, the docs-only production-record lane,
     // #825 6215529089; the eighth is storage-photos, not required, E-GAPS; the ninth is the non-required webkit-hon-62 lane).
     expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(9);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(9);
+    // CI-DRAFT-01: seven of them (every Supabase-starting heavy lane) are wrapped in
+    // the draft gate; validate and canonical-record stay bare. The exact wrapping
+    // is proved against the base commit in tests/ci/draft-gate.test.ts.
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(2);
+    expect((CI.match(/^ {4}if: \$\{\{ github\.event\.pull_request\.draft != true && \( needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {

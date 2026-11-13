@@ -24,6 +24,7 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - claude/build-hone-saas-hOex7
@@ -515,7 +516,7 @@ jobs:
   db-integration:
     name: db integration (local supabase)
     needs: changes
-    if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -815,7 +816,7 @@ jobs:
     # required check is the `browser-e2e` aggregator at the end of this file.
     name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
     needs: changes
-    if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -1249,6 +1250,15 @@ jobs:
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
           DOCS_CONSISTENCY: ${{ needs.changes.outputs.docs_consistency }}
+          # CI-DRAFT-01. Inputs to the draft-deferral calculation below: exactly the
+          # classifier outputs the draft-gated heavy jobs' own conditions read.
+          IS_DRAFT: ${{ github.event.pull_request.draft == true }}
+          DATABASE: ${{ needs.changes.outputs.database }}
+          SECURITY: ${{ needs.changes.outputs.security }}
+          PAYMENT: ${{ needs.changes.outputs.payment }}
+          MOBILE: ${{ needs.changes.outputs.mobile }}
+          GOOGLE_CALENDAR: ${{ needs.changes.outputs.google_calendar }}
+          BROWSER_SPECS: ${{ needs.changes.outputs.browser_specs }}
         run: |
           set -euo pipefail
 
@@ -1294,6 +1304,53 @@ jobs:
           elif [ "${RECORD_RESULT:-}" = "failure" ] || [ "${RECORD_RESULT:-}" = "cancelled" ]; then
             echo "::error::canonical production record check reported ${RECORD_RESULT}"
             exit 1
+          fi
+
+          # CI-DRAFT-01. DEFERRED DRAFT COVERAGE FAILS CLOSED.
+          #
+          # A draft PR skips the heavy lanes (each carries
+          # `github.event.pull_request.draft != true && (...)`). A skipped job
+          # reports as satisfied, so without this check a draft would show this
+          # required check green having run none of the coverage its diff needs.
+          # The hazard is the SAME SHA: the ready_for_review run on the identical
+          # head starts later and is still pending while an earlier successful or
+          # skipped draft result is already on that commit, which could satisfy
+          # required checks and let an unverified head merge. So when a draft's
+          # diff needs any heavy lane, this check FAILS (DRAFT-DEFERRED) until the
+          # ready_for_review run replaces it.
+          #
+          # "Needs a heavy lane" is derived from the SAME expressions as the lanes'
+          # own `if:` (db-integration, browser-e2e-shard, payment-browser-e2e,
+          # mobile-completion-e2e, google-browser-e2e, storage-photos,
+          # webkit-hon-62), not from the browser flags alone: a database-only diff
+          # has every browser flag false and still needs db-integration.
+          #
+          # Excluded from this calculation, because they are never draft-gated and
+          # so are never deferred: `changes` (the gate, checked first above),
+          # `validate` (ungated, runs on drafts), `canonical-record` (ungated, its
+          # result is checked above). Production push events have no pull_request,
+          # so IS_DRAFT is false there and nothing changes.
+          if [ "${IS_DRAFT:-}" = "true" ]; then
+            SPEC_PHOTO="false"; SPEC_WEBKIT="false"
+            case "${BROWSER_SPECS:-}" in
+              *e2e/fett-photos-thumbnail-recovery.spec.ts*|*e2e/treatment-image-upload-formats.spec.ts*|*e2e/fett-client-portrait.spec.ts*) SPEC_PHOTO="true" ;;
+            esac
+            case "${BROWSER_SPECS:-}" in
+              *e2e/availability-hours-editor.spec.ts*|*e2e/finish-appointment-mobile.spec.ts*|*e2e/fett-photos-touch-floor.spec.ts*) SPEC_WEBKIT="true" ;;
+            esac
+            DEFERRED="false"
+            if [ "${FULL_MATRIX:-}" = "true" ] || [ "${BROWSER_RUN:-}" = "true" ] \
+              || [ "${DATABASE:-}" = "true" ] || [ "${SECURITY:-}" = "true" ] \
+              || [ "${PAYMENT:-}" = "true" ] || [ "${MOBILE:-}" = "true" ] \
+              || [ "${GOOGLE_CALENDAR:-}" = "true" ] || [ "${EXTENDED:-}" = "true" ] \
+              || [ "$SPEC_PHOTO" = "true" ] || [ "$SPEC_WEBKIT" = "true" ]; then
+              DEFERRED="true"
+            fi
+            if [ "$DEFERRED" = "true" ]; then
+              echo "::error title=DRAFT-DEFERRED::draft PR: required coverage for this diff was deferred. Mark the PR ready for review to run it."
+              exit 1
+            fi
+            echo "draft PR: this diff requires no heavy coverage"
           fi
 
           REQUIRED="false"
@@ -1355,7 +1412,7 @@ jobs:
   payment-browser-e2e:
     name: payment browser e2e (fake stripe)
     needs: changes
-    if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -1624,7 +1681,7 @@ jobs:
   mobile-completion-e2e:
     name: mobile completion e2e (chromium iphone-profile)
     needs: changes
-    if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -1876,7 +1933,7 @@ jobs:
   google-browser-e2e:
     name: google browser e2e (fake google)
     needs: changes
-    if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2144,7 +2201,7 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2399,7 +2456,7 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
