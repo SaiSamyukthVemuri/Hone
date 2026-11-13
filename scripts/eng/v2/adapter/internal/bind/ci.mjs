@@ -116,6 +116,10 @@ const GATE_JOB = "changed-path detection";
 const DEFERRAL_STEP = "DRAFT-DEFERRED";
 // The two steps the RUNNER adds around a job's own steps (observed on run 43459049109): first and last.
 const RUNNER_LAST_STEP = "Complete job";
+// Insurance final660 (P1): a step that fails BY NAME alone is not enough. The deferral step failing is accepted only beside the
+// prerequisites step having succeeded and the shard aggregation having been skipped, each exactly once.
+const PREREQ_STEP = "Fail closed on prerequisites";
+const AGGREGATE_STEP = "Aggregate browser shard results";
 
 /**
  * Is this FAILED run positively a draft deferral (CI-DRAFT-01's aggregator failing on purpose)? Only from the run's own
@@ -140,6 +144,11 @@ export function isDraftDeferral(run, jobsByRunId) {
   }
   const at = a.steps.filter((st) => st.name === DEFERRAL_STEP);
   if (at.length !== 1 || at[0].status !== "completed" || at[0].conclusion !== "failure") return false;
+  const prereq = a.steps.filter((st) => st.name === PREREQ_STEP);
+  const aggregate = a.steps.filter((st) => st.name === AGGREGATE_STEP);
+  if (prereq.length !== 1 || prereq[0].status !== "completed" || prereq[0].conclusion !== "success") return false;
+  if (aggregate.length !== 1 || aggregate[0].status !== "completed" || aggregate[0].conclusion !== "skipped") return false;
+  if (!(prereq[0].number < at[0].number && at[0].number < aggregate[0].number)) return false;
   for (const st of a.steps) {
     if (st.number < at[0].number) {
       if (st.status !== "completed" || st.conclusion !== "success") return false;

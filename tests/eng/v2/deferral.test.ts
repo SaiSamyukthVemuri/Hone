@@ -114,6 +114,15 @@ describe("the real deferral listing is positively a draft deferral (and nothing 
   };
   const agg = (jobs: any[]) => jobs.find((j: any) => j.name === "browser e2e (local stack)");
   const cases: Array<[string, (jobs: any[]) => void]> = [
+    // Insurance final660 P1: each of the three named steps is required on its own
+    ["the prerequisites step is missing", (j) => (agg(j).steps = agg(j).steps.filter((st: any) => st.name !== "Fail closed on prerequisites"))],
+    ["the prerequisites step failed", (j) => (agg(j).steps[1].conclusion = "failure")],
+    ["the prerequisites step was skipped", (j) => (agg(j).steps[1].conclusion = "skipped")],
+    ["the prerequisites step is duplicated", (j) => agg(j).steps.push({ number: 6, name: "Fail closed on prerequisites", status: "completed", conclusion: "success" })],
+    ["the shard aggregation step is missing", (j) => (agg(j).steps = agg(j).steps.filter((st: any) => st.name !== "Aggregate browser shard results"))],
+    ["the shard aggregation step ran and succeeded", (j) => (agg(j).steps[3].conclusion = "success")],
+    ["the shard aggregation step is cancelled", (j) => (agg(j).steps[3].conclusion = "cancelled")],
+    ["the steps are out of order (aggregation before the deferral)", (j) => ((agg(j).steps[2].number = 4), (agg(j).steps[3].number = 3))],
     ["the DRAFT-DEFERRED step succeeded", (j) => (agg(j).steps[2].conclusion = "success")],
     ["the DRAFT-DEFERRED step is cancelled", (j) => (agg(j).steps[2].conclusion = "cancelled")],
     ["the step has another name", (j) => (agg(j).steps[2].name = "DRAFT-DEFERRED-X")],

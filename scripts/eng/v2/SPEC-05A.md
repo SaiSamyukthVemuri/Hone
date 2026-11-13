@@ -272,7 +272,9 @@ Rules apply in this order. The first that fires decides.
     - (a) it is **positively a draft deferral**: `status` `completed` and `conclusion` `failure`; its jobs listing (§3.2) has exactly
       one `changed-path detection` job, `completed`/`success`, and exactly one `browser e2e (local stack)` job, `completed`/`failure`,
       with `steps`; every other job is `completed` with `success` or `skipped`; the aggregator has exactly one step named
-      `DRAFT-DEFERRED`, `completed`/`failure`; every step before it is `completed`/`success` (the runner's `Set up job` included);
+      `DRAFT-DEFERRED`, `completed`/`failure`, in the order `Fail closed on prerequisites` (exactly one, `completed`/`success`), `DRAFT-DEFERRED`,
+      `Aggregate browser shard results` (exactly one, `completed`/`skipped`). A step failing by name alone is not a deferral. (Check-run annotations,
+      which carry the error title, are a separate endpoint the shepherd does not read; the step structure is the evidence.) every step before it is `completed`/`success` (the runner's `Set up job` included);
       every step after it is `completed`/`skipped`, except the runner's `Complete job`, which is `completed`/`success`. A run that is
       `cancelled`, `timed_out` or any other failure, a run whose listing is missing, and every other shape, is NOT a deferral and stays FAILED;
     - (b) `key.isDraft` is `false` and `readyAt` is not `null` and is strictly after the run's `created_at`;
