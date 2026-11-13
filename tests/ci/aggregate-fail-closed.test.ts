@@ -42,7 +42,7 @@ const ROOT = path.resolve(__dirname, "../..");
 const CI_PATH = path.join(ROOT, ".github/workflows/ci.yml");
 const CI = readFileSync(CI_PATH, "utf8");
 
-// Mechanically lift the `run:` body of the FIRST step of the `browser-e2e` job.
+// Lift the named aggregator step, allowing provisioning guards before it.
 // Deliberately strict: every failure mode throws rather than returning a partial
 // script that would make the assertions below vacuous.
 function extractAggregateScript(): string {
@@ -59,8 +59,24 @@ function extractAggregateScript(): string {
     }
   }
 
+  const stepIdx = lines.findIndex(
+    (l, i) =>
+      i > jobIdx &&
+      i < jobEnd &&
+      l === "      - name: Aggregate browser shard results",
+  );
+  if (stepIdx < 0) throw new Error("browser aggregator step not found");
+
+  let stepEnd = jobEnd;
+  for (let i = stepIdx + 1; i < jobEnd; i += 1) {
+    if (/^ {6}- /.test(lines[i])) {
+      stepEnd = i;
+      break;
+    }
+  }
+
   const runIdx = lines.findIndex(
-    (l, i) => i > jobIdx && i < jobEnd && l === "        run: |",
+    (l, i) => i > stepIdx && i < stepEnd && l === "        run: |",
   );
   if (runIdx < 0) throw new Error("browser-e2e `run: |` block not found");
 
