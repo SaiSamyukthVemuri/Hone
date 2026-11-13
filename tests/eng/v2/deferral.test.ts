@@ -115,6 +115,10 @@ describe("the real deferral listing is positively a draft deferral (and nothing 
   const agg = (jobs: any[]) => jobs.find((j: any) => j.name === "browser e2e (local stack)");
   const cases: Array<[string, (jobs: any[]) => void]> = [
     // Insurance final660 P1: each of the three named steps is required on its own
+    // the runner's own steps are judged by position: an earlier one that did not succeed refuses the deferral
+    ["Set up job failed", (j) => (agg(j).steps[0].conclusion = "failure")],
+    ["Set up job was cancelled", (j) => (agg(j).steps[0].conclusion = "cancelled")],
+    ["an unknown extra step before the deferral failed", (j) => agg(j).steps.splice(1, 0, { number: 1.5, name: "Extra", status: "completed", conclusion: "failure" })],
     ["the prerequisites step is missing", (j) => (agg(j).steps = agg(j).steps.filter((st: any) => st.name !== "Fail closed on prerequisites"))],
     ["the prerequisites step failed", (j) => (agg(j).steps[1].conclusion = "failure")],
     ["the prerequisites step was skipped", (j) => (agg(j).steps[1].conclusion = "skipped")],
