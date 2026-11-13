@@ -81,6 +81,31 @@ describe("CI-DRAFT-01 job conditions", () => {
   }
 });
 
+describe("CI-DRAFT-01 spec lists cannot drift from the job conditions (G1)", () => {
+  const specsIn = (text: string) => [...text.matchAll(/e2e\/[\w.-]+\.spec\.ts/g)].map((x) => x[0]).sort();
+  const aggregator = (() => {
+    const b = jobBlock(CI, "browser-e2e");
+    return b;
+  })();
+  // the aggregator's `case` arm that sets a given flag
+  const armSpecs = (flag: string) => {
+    const m = aggregator.match(new RegExp(`case "\\$\\{BROWSER_SPECS:-\\}" in\\n([^\\n]*)\\n\\s*esac`, "g")) ?? [];
+    const arm = m.find((a) => a.includes(`${flag}="true"`));
+    if (!arm) throw new Error(`no case arm sets ${flag}`);
+    return specsIn(arm);
+  };
+  const jobSpecs = (job: string) => specsIn(ifLine(CI, job)!);
+
+  it("SPEC_PHOTO lists exactly the spec names in storage-photos' condition", () => {
+    expect(jobSpecs("storage-photos").length).toBeGreaterThan(0);
+    expect(armSpecs("SPEC_PHOTO")).toEqual(jobSpecs("storage-photos"));
+  });
+  it("SPEC_WEBKIT lists exactly the spec names in webkit-hon-62's condition", () => {
+    expect(jobSpecs("webkit-hon-62").length).toBeGreaterThan(0);
+    expect(armSpecs("SPEC_WEBKIT")).toEqual(jobSpecs("webkit-hon-62"));
+  });
+});
+
 // ---- aggregator behaviour ----------------------------------------------------------
 function script(): string {
   const lines = CI.split("\n");
