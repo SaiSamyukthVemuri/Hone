@@ -1,12 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import pg from "pg";
 import {
   adminQuery,
   asUser,
   closePool,
-  resolveLocalDbUrl,
   seedMember,
   seedSession,
   seedStudio,
@@ -17,10 +14,8 @@ import {
 // through PostgREST), direct table writes and RPCs. Every denial has a POSITIVE CONTROL with the same statement shape from the
 // rightful actor, so a denial cannot pass because the statement was malformed or the row never existed.
 //
-// OPEN GAPS (team/HON44-GAPS.md H1, H2) are recorded as AFFIRMATIVE tests, not `it.fails`: they assert the specific outcome that
-// exists today (the owner control succeeds AND a member write succeeds), so a broken fixture fails loudly instead of passing as an
-// "expected failure". When the held fix lands they turn red on purpose; invert them to the denial assertions then. The fix is held
-// (unnumbered SQL, never hosted).
+// H1/H2 rows assert denial (services: 0302/0339; consent_form_templates: 0339). Behaviour per role is in
+// owner-only-catalog-writes.db.test.ts.
 // "Owner-only" here describes PRODUCTION BEHAVIOUR TODAY and the snapshot for existing studios. Under the Roles program (R1/R3/R4)
 // services and consent-template writes become permission-gated, not owner-only by identity; replace these owner-only assertions
 // with the permission-matrix test then.
@@ -47,8 +42,6 @@ type TableSpec = {
   table: string;
   /** owner-only by product design (a non-owner practitioner must not write it) */
   ownerOnly: boolean;
-  /** an OPEN GAP in the current chain (see header) */
-  openGap?: "H1" | "H2";
   seed: (s: SeededStudio) => Promise<string>; // returns the id of a seeded row
   insert: (s: SeededStudio) => { sql: string; params: unknown[] };
 };
@@ -63,7 +56,6 @@ const TABLES: TableSpec[] = [
   {
     table: "services",
     ownerOnly: true,
-    openGap: "H1",
     seed: async (s) => {
       const id = randomUUID();
       await adminQuery(`insert into public.services (id, studio_id, name) values ($1, $2, 'Probe service')`, [id, s.studioId]);
@@ -74,7 +66,6 @@ const TABLES: TableSpec[] = [
   {
     table: "consent_form_templates",
     ownerOnly: true,
-    openGap: "H2",
     seed: async (s) => {
       const id = randomUUID();
       await adminQuery(
@@ -220,23 +211,12 @@ describe("HON-44 role: a non-owner practitioner of the same studio cannot write 
       return { upd, memberIns };
     };
     it(`${t.table}: positive control, the owner can update and insert`, ownerControl);
-    if (t.openGap) {
-      it(`${t.table}: OPEN GAP ${t.openGap} (HON44-GAPS.md): a member CAN update and insert today; invert to a denial when the held fix lands`, async () => {
-        await ownerControl();
-        const { upd, memberIns } = await memberWrite();
-        expect(upd.code).toBeNull();
-        expect(upd.rowCount).toBe(1);
-        expect(memberIns.code).toBeNull();
-        expect(memberIns.rowCount).toBe(1);
-      });
-    } else {
-      it(`${t.table}: member write is denied`, async () => {
-        const { upd, memberIns } = await memberWrite();
-        expect(upd.code).toBeNull();
-        expect(upd.rowCount).toBe(0);
-        expect(memberIns.code).toBe(RLS);
-      });
-    }
+    it(`${t.table}: member write is denied`, async () => {
+      const { upd, memberIns } = await memberWrite();
+      expect(upd.code).toBeNull();
+      expect(upd.rowCount).toBe(0);
+      expect(memberIns.code).toBe(RLS);
+    });
   }
 
   it("a non-owner practitioner CAN write the shared clinical table clients in their own studio (positive control for the matrix)", async () => {
@@ -334,55 +314,5 @@ describe("HON-44 cross-studio RPCs that a signed-in user CAN execute", () => {
     const own = await attempt(C.userId, `select * from public.reorder_studio_service($1::uuid, $2::uuid, 'up', null::int)`, [C.studioId, svcB]);
     expect(own.code).toBeNull();
     expect((await orderC()).map((r) => r.id)).toEqual([svcB, svcFirst]);
-  });
-});
-
-// The fix for H1/H2 is held as unnumbered SQL. When HONE_HELD_FIX_SQL points at it, apply it INSIDE a transaction (DDL is
-// transactional) and prove it: a non-owner practitioner is refused, the owner is not, cross-studio stays refused, and nothing
-// persists. Skipped in CI. Never run against a hosted database.
-const HELD = process.env.HONE_HELD_FIX_SQL;
-describe.skipIf(!HELD)("HON-44 held fix H1/H2 (unnumbered SQL, applied in a rolled-back transaction on an isolated stack only)", () => {
-  it("after the fix: members are refused on services and consent_form_templates, owners are accepted, B stays out of reach", async () => {
-    const sql = readFileSync(HELD!, "utf8").replace(/^\s*begin;\s*$/im, "").replace(/^\s*commit;\s*$/im, "");
-    const pool = new pg.Pool({ connectionString: resolveLocalDbUrl(), max: 1 });
-    const client = await pool.connect();
-    try {
-      await client.query("begin");
-      try {
-        await client.query(sql);
-        const run = async (userId: string, text: string, params: unknown[]) => {
-          await client.query("savepoint s");
-          await client.query("set local role authenticated");
-          await client.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
-          try {
-            const r = await client.query(text, params);
-            return { code: null as string | null, rowCount: r.rowCount ?? 0 };
-          } catch (e) {
-            return { code: (e as { code?: string }).code ?? "ERR", rowCount: 0 };
-          } finally {
-            await client.query("rollback to savepoint s");
-            await client.query("reset role");
-          }
-        };
-        for (const t of TABLES.filter((x) => x.openGap)) {
-          const id = seeded.get(t.table)!.a;
-          const ins = t.insert(A);
-          expect((await run(A.userId, `update public.${t.table} set studio_id = studio_id where id = $1`, [id])).rowCount).toBe(1);
-          expect((await run(A.userId, ins.sql, ins.params)).code).toBeNull();
-          expect((await run(memberA.userId, `update public.${t.table} set studio_id = studio_id where id = $1`, [id])).rowCount).toBe(0);
-          expect((await run(memberA.userId, ins.sql, ins.params)).code).toBe(RLS);
-          const insB = t.insert(B);
-          expect((await run(A.userId, insB.sql, insB.params)).code).toBe(RLS);
-        }
-      } finally {
-        await client.query("rollback");
-      }
-    } finally {
-      client.release();
-      await pool.end();
-    }
-    // nothing persisted: members are still (wrongly) able to update services until the fix is really applied
-    const probe = await attempt(memberA.userId, `update public.services set studio_id = studio_id where id = $1`, [seeded.get("services")!.a]);
-    expect(probe.rowCount).toBe(1);
   });
 });

@@ -77,6 +77,8 @@ describe("HON-44 catalog: every authenticated write policy is scoped to the call
 // screen does. Every policy that grants INSERT/UPDATE/DELETE on these must therefore require ownership.
 const OWNER_ONLY_WRITE_TABLES = [
   "studios",
+  "services", // H1, owner-only writes (0302; 0339 re-creates them); behaviour in owner-only-catalog-writes.db.test.ts
+  "consent_form_templates", // H2, owner-only writes (0339); same behavioural test
   "client_pricing",
   "pending_invitations",
   "studio_availability_default",
@@ -88,28 +90,9 @@ const OWNER_ONLY_WRITE_TABLES = [
   "imported_treatment_memories",
 ];
 
-// OPEN GAPS (team/HON44-GAPS.md H1, H2): member-level write policies exist today. They are recorded affirmatively below (the exact
-// member policies); the test turns red when the gap is closed, which is the signal to move the table into OWNER_ONLY_WRITE_TABLES.
-// The fix is held (unnumbered SQL). Owner-only is production behaviour today, superseded by the Roles permission core (R1/R3/R4).
-const OPEN_OWNER_ONLY_GAPS: [string, string][] = [
-  ["services", "H1"],
-  ["consent_form_templates", "H2"],
-];
+// Owner-only is production behaviour today; the Roles permission core (R1/R3/R4) supersedes it table by table.
 
 describe("HON-44 catalog: owner-only-by-design tables have no member-level write policy", () => {
-  // Affirmative record of the gap as it is TODAY: the table has write policies and exactly these admit members. Invert (and move
-  // the table into OWNER_ONLY_WRITE_TABLES) when the held fix lands. It fails loudly if the table is renamed or loses its policies.
-  const OPEN_GAP_MEMBER_POLICIES: Record<string, string[]> = {
-    services: ["services_member_insert (INSERT)", "services_member_update (UPDATE)"],
-    consent_form_templates: ["consent_form_templates_studio_member_insert (INSERT)", "consent_form_templates_studio_member_update (UPDATE)"],
-  };
-  it.each(OPEN_OWNER_ONLY_GAPS)("%s: OPEN GAP %s, member-level write policies exist today", async (table) => {
-    const pols = (await writePolicies()).filter((p) => p.tablename === table);
-    expect(pols.length).toBeGreaterThan(0);
-    const nonOwner = pols.filter((p) => !requiresOwnerOnly(p)).map((p) => `${p.policyname} (${p.cmd})`).sort();
-    expect(nonOwner).toEqual(OPEN_GAP_MEMBER_POLICIES[table]);
-  });
-
   it.each(OWNER_ONLY_WRITE_TABLES)("%s: has write policies and every one requires ownership", async (table) => {
     const exists = await adminQuery(`select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname = $1`, [table]);
     expect(exists.rowCount).toBe(1);
