@@ -123,6 +123,9 @@ describe("the real deferral listing is positively a draft deferral (and nothing 
     ["a later step failed", (j) => (agg(j).steps[3].conclusion = "failure")],
     ["Complete job did not succeed", (j) => (agg(j).steps[4].conclusion = "cancelled")],
     ["a second DRAFT-DEFERRED step", (j) => agg(j).steps.push({ number: 6, name: "DRAFT-DEFERRED", status: "completed", conclusion: "failure" })],
+    // these two are NOT also caught by the other-jobs / later-steps checks, so only "exactly one" can refuse them
+    ["a second aggregator job that succeeded", (j) => j.push({ ...clone(agg(j)), conclusion: "success", steps: [] })],
+    ["a second, skipped DRAFT-DEFERRED step after the first", (j) => agg(j).steps.push({ number: 6, name: "DRAFT-DEFERRED", status: "completed", conclusion: "skipped" })],
     ["the listing carries no steps", (j) => (agg(j).steps = null)],
     ["a second aggregator job", (j) => j.push(clone(agg(j)))],
     ["the aggregator job is missing", (j) => j.splice(j.indexOf(agg(j)), 1)],
