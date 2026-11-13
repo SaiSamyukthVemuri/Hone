@@ -74,7 +74,8 @@ Record: `{ status, behindBy, aheadBy, baseSha, mergeBaseSha, files: [filenames],
 repository(owner,name){
   pullRequest(number:N){ number createdAt changedFiles
     baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT,
-        AUTOMATIC_BASE_CHANGE_FAILED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } }
+        AUTOMATIC_BASE_CHANGE_FAILED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} }
+    readyForReview: timelineItems(itemTypes:[READY_FOR_REVIEW_EVENT], last:1){ nodes{ ... on ReadyForReviewEvent{ createdAt } } } }
   object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }
 ```
 
@@ -84,11 +85,12 @@ repository(owner,name){
 | `createdAt` | an ISO-8601 UTC timestamp string |
 | `changedFiles` | a non-negative safe integer |
 | `baseRefChanges` | every node is `{ __typename }` with `BaseRefChangedEvent`, `AutomaticBaseChangeSucceededEvent` or `AutomaticBaseChangeFailedEvent`. `hasNextPage: true` → the record carries `baseRefChanges: "too_many"` |
+| `readyForReview` | OPTIONAL (SHEP-LATEST-01; an answer without it reads as no instant). `{ nodes: [{ createdAt }] }` with exactly one node whose `createdAt` is an ISO-8601 UTC timestamp gives `readyForReviewAt`; **anything else (no nodes, more than one node, an extra or missing key, a bad timestamp, a non-object) gives `readyForReviewAt: null` and is NOT `malformed`.** This overrides the usual §4 rule for this one field only: a missing, capped or malformed timeline means no supersession in §3.4 step 10, not a failed row |
 | `object` | a `Commit`; `null` → `read_failed` |
 | `associatedPullRequests` | `nodes[].number` positive integers. `hasNextPage: true` → `"too_many"` |
 
 A GraphQL error → `read_failed`. Any other shape → `malformed`.
-Record: `{ createdAt, changedFiles, baseRefChanges: <count> | "too_many", associatedPrNumbers: [..] | "too_many" }`.
+Record: `{ createdAt, readyForReviewAt: <ISO-8601 UTC> | null, changedFiles, baseRefChanges: <count> | "too_many", associatedPrNumbers: [..] | "too_many" }`.
 
 ### 2.3 `parseHeadBranchPrs(raw, { headRef })` — REST `pulls?head=<owner>:<headRef>&state=all&per_page=100`
 
@@ -150,10 +152,14 @@ Each run carries:
 - `status`: any string, the empty string included. An unknown status is §3.4 step 9's `unrecognized_ci_status`;
 - `conclusion`: a string or `null`;
 - `run_attempt`: a positive integer;
-- `created_at`: ISO-8601.
+- `created_at`: ISO-8601;
+- `pull_requests`: an array whose every element is an object with a positive integer `number` (SHEP-LATEST-01). A missing,
+  non-array or ill-typed value is `malformed`. Only the numbers are kept.
 
 Record: `{ runs: [{ id, runNumber, workflowId, event, headSha, headBranch, headRepoId, status, conclusion,
-runAttempt, createdAt }] }`, sorted by ascending `runNumber`. It never keeps `pull_requests`.
+runAttempt, createdAt, pullRequests }] }`, sorted by ascending `runNumber`. `pullRequests` is the sorted, distinct list of those
+numbers; the raw `pull_requests` objects are never kept. A run's association is GitHub's *current* view, so it is only ever
+used to **refuse** (§3.4 step 10 clause c), never to admit a run. `run_started_at` is never read: `created_at` orders runs.
 
 ### 3.2 `parseRunJobs(raw, { runId })` — REST `actions/runs/{runId}/jobs?filter=latest&per_page=100`
 
@@ -161,8 +167,11 @@ runAttempt, createdAt }] }`, sorted by ascending `runNumber`. It never keeps `pu
 - Each job has a non-empty `name`, `run_id` equal to `runId`, a `status` that is any string, and a `conclusion` that
   is a string or `null`. Otherwise `malformed`.
 - Then `total_count > 100`, or `total_count !== jobs.length`, → `ci_candidate_listing_too_large`.
-- Record: `{ jobs: [{ name, status, conclusion }] }`, sorted by `name`, then `status`, then `conclusion` (`null`
-  first).
+- `steps` (SHEP-LATEST-01) is optional. When present it must be an array of `{ number, name, status, conclusion }` with a positive
+  integer `number` (distinct within the job), a non-empty `name`, a string `status` and a `conclusion` that is a string or `null`;
+  otherwise `malformed`. Absent or `null` → `steps: null`.
+- Record: `{ jobs: [{ name, status, conclusion, steps }] }`, `steps` being `null` or the job's steps in ascending `number`; jobs sorted by
+  `name`, then `status`, then `conclusion` (`null` first), then `steps`.
 
 ### 3.3 Required jobs — `requiredJobs(classification)`
 
@@ -182,7 +191,7 @@ changed files.
 Browser shards are covered by the aggregator. A test pins these names against production's `ci.yml`, so a rename
 there turns CI red rather than leaving the table stale.
 
-### 3.4 `bindCi({ key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId })`
+### 3.4 `bindCi({ key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId, readyAt })`
 
 Inputs:
 - `base`: the §2.6 value;
@@ -192,7 +201,8 @@ Inputs:
 - `requiredJobNames`: the §3.3 set;
 - `rules`: the §2.4 record;
 - `activity`: `{ forcePush, branchDeletion, branchCreation }`, each a §2.5 record;
-- `observedAt`: an ISO-8601 time from 05A.
+- `observedAt`: an ISO-8601 time from 05A;
+- `readyAt`: optional, `null` or an ISO-8601 UTC time: the PR's latest ready-for-review instant (§2.2 `readyForReviewAt`). Any other value is `malformed`.
 
 An input outside these shapes is `malformed`, never a pass. The shapes are checked **before** rule 1, so `malformed`
 wins over every rule below. `requiredJobNames` must be a non-empty list of distinct §3.3 job names that includes
@@ -250,11 +260,30 @@ Rules apply in this order. The first that fires decides.
 
    Step 9 classifies every applicable run before step 10 aggregates, so one unrecognized run is UNKNOWN even beside
    a FAILED one.
-10. Aggregate over **every** applicable run. Any FAILED → `FAILED`; otherwise any PENDING → `PENDING`. Otherwise, every
+10. Aggregate over **every** applicable run, except a *superseded draft deferral* (below). Any FAILED → `FAILED`; otherwise any PENDING → `PENDING`. Otherwise, every
     SUCCEEDED run's latest-attempt jobs must include each required job with `completed`/`success`. A missing or
     non-success required job → `INCOMPLETE`, and so is a required name that appears more than once when any of its
     jobs is not `completed`/`success`; otherwise `SUCCEEDED`. A SUCCEEDED run with no job listing in `jobsByRunId` →
     `ci_candidate_listing_too_large`.
+
+    **Superseded draft deferral (SHEP-LATEST-01, option B).** A draft PR's `browser e2e (local stack)` job fails on purpose
+    (CI-DRAFT-01, a step named `DRAFT-DEFERRED`), and that run stays an applicable FAILED run after the PR is marked ready. Such a run
+    is ignored by this step (only by this step: rule 8 still covers it, and `applicableRunIds` still lists it) iff ALL hold:
+    - (a) it is **positively a draft deferral**: `status` `completed` and `conclusion` `failure`; its jobs listing (§3.2) has exactly
+      one `changed-path detection` job, `completed`/`success`, and exactly one `browser e2e (local stack)` job, `completed`/`failure`,
+      with `steps`; every other job is `completed` with `success` or `skipped`; the aggregator has exactly one step named
+      `DRAFT-DEFERRED`, `completed`/`failure`; every step before it is `completed`/`success` (the runner's `Set up job` included);
+      every step after it is `completed`/`skipped`, except the runner's `Complete job`, which is `completed`/`success`. A run that is
+      `cancelled`, `timed_out` or any other failure, a run whose listing is missing, and every other shape, is NOT a deferral and stays FAILED;
+    - (b) `key.isDraft` is `false` and `readyAt` is not `null` and is strictly after the run's `created_at`;
+    - (c) some other applicable run that is not itself a draft deferral has `created_at` at or after `readyAt` and a `pullRequests` list
+      containing `key.prNumber`. An empty list (a fork's run, a rename) can never be that run: this fails closed, and is accepted
+      because Hone has no forks and rule 1 already rejects a fork head.
+    Instants are compared as parsed dates, never as strings. The superseding run is aggregated like any other: a newer pending, failed,
+    cancelled or timed-out run decides, and a succeeded one must have every required job (an older SUCCESS never rescues a newer
+    non-success). A deferral never supersedes another. A rerun of the deferral after the ready event is itself a deferral created
+    after `readyAt`, so it supersedes nothing and is not superseded. A draft run cancelled when the PR is marked ready is not a
+    deferral: recovery is a new head.
 
 Value: `{ outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_RUN" | "INCOMPLETE", applicableRunIds: [...] }`.
 
@@ -521,8 +550,8 @@ Each is a stated limit, not a hidden assumption. None can make a candidate out o
   - **B3, a permanently deleted PR.** What happens to its runs is undocumented.
 
   `associatedPullRequests` never lists a closed, archived or deleted PR, so step 5's clause does not exclude them.
-  The harm is bounded: every applicable run counts (step 10), so a foreign green run can make CI `SUCCEEDED` only
-  when this PR's own runs at H are all green already or missing — and with `behindBy == 0` a run is missing only if
+  The harm is bounded: every applicable run counts (step 10, except a superseded draft deferral, which needs a run that lists THIS PR),
+  so a foreign green run can make CI `SUCCEEDED` only when this PR's own runs at H are all green already or missing — and with `behindBy == 0` a run is missing only if
   Actions did not run it. Candidate closures, for the operator: an operator-run write experiment in a scratch
   repository; run-side attestation (CI-ATTEST-01); or the partial rule "an applicable run's `created_at` is at or
   after the PR's `createdAt`", which closes B1 and the single-PR forms of B2 and B3 (live, no run precedes its PR in
