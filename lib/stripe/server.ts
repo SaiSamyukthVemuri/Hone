@@ -29,6 +29,7 @@
 
 import Stripe from "stripe";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { isE2eFakeStripeEnabled } from "@/lib/stripe/e2e-fake-guard";
 
 const STRIPE_API_VERSION = "2026-04-22.dahlia" as const;
 
@@ -65,6 +66,19 @@ export function assertStripeKeyAllowed(raw: string): void {
   }
 }
 
+/**
+ * A key that is a harness placeholder, not a Stripe key: the e2e harness and CI use `sk_test_dummy`. Real Stripe secret keys
+ * are long (about 100 characters after the prefix); a short body, or one that reads as a placeholder word, is not one.
+ * Used ONLY to stop a local or test run that forgot to switch the fake processor on from sending real requests to Stripe.
+ *
+ * @internal Exported for unit-test usage only.
+ */
+export function isPlaceholderStripeKey(raw: string): boolean {
+  const body = raw.replace(/^sk_(test|live)_/, "");
+  if (body.length < 24) return true;
+  return /^(dummy|fake|placeholder|anything|your[_-]|example|changeme|test)/i.test(body);
+}
+
 function readSecretOrThrow(): string {
   const raw = process.env.STRIPE_SECRET_KEY;
   if (!raw || raw.length === 0) {
@@ -73,6 +87,14 @@ function readSecretOrThrow(): string {
     );
   }
   assertStripeKeyAllowed(raw);
+  // A placeholder key with the fake processor OFF would only produce real, always-refused requests to api.stripe.com
+  // (a local run that forgot to export the fake flag did exactly that). Refuse to build a network client for it.
+  if (isPlaceholderStripeKey(raw) && !isE2eFakeStripeEnabled(process.env)) {
+    throw new Error(
+      "STRIPE_SECRET_KEY is a placeholder and the fake Stripe processor is off, so no request to Stripe is made. " +
+        "Export HONE_E2E_FAKE_STRIPE=1 and HONE_E2E_RUN_ID for a local run, or use a real sk_test_ key on purpose.",
+    );
+  }
   return raw;
 }
 
