@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, liveStatusLine, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
@@ -635,6 +635,14 @@ function RowList({
               {row.ownMeaning && <p className="mt-0.5 break-words text-xs text-neutral-500">Own assigned means: {row.ownMeaning}.</p>}
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
                 <span data-testid="default-setting">New-studio default: {scopeText(row.defaultScope)}</span>
+                {(() => {
+                  const live = (savedRows.get(row.key) ?? row).live;
+                  return (
+                    <span data-testid="live-vs-saved" data-live-state={live.state}>
+                      {liveStatusLine(live, scopeText)}
+                    </span>
+                  );
+                })()}
                 {unsaved && <span data-testid="unsaved-mark" className="font-medium text-neutral-800 dark:text-neutral-200">Unsaved change</span>}
               </div>
               {row.needs.length > 0 && (

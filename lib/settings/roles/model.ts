@@ -96,8 +96,28 @@ export type RoleRow = {
   // Any other ship gate: raising the key is held until the condition is met. Plain information, not a refusal of current access.
   heldUntil: string | null;
   needs: string[]; // labels of prerequisites
+  live: LiveStatus; // saved vs in force, from the core's own answer (S3)
   alsoSwitchesOff: string[]; // labels of dependents that follow this key down (their stored values are kept)
 };
+
+// S3: one plain line per key saying what the owner SAVED and what is IN FORCE for staff right now. The in-force value is the core's own
+// answer (never the TypeScript mirror), so when the core could not be read the line says so instead of guessing. Read-only: no control.
+export type LiveStatus = { state: "live" | "not_live" | "unknown"; saved: Scope; inForce: Scope | null };
+
+export const liveStatusOf = (saved: Scope, key: string, policy: PolicyWithServer): LiveStatus => {
+  const inForce = policy.server?.effective[key];
+  if (inForce === undefined) return { state: "unknown", saved, inForce: null };
+  const inert = isInertUntilReleased(policy.server?.source[key]);
+  return { state: !inert && inForce === saved ? "live" : "not_live", saved, inForce };
+};
+
+export const LIVE_UNKNOWN_LINE = "In force now: not shown, because the current access could not be read.";
+export const liveStatusLine = (st: LiveStatus, text: (s: Scope) => string): string =>
+  st.state === "unknown"
+    ? `Saved: ${text(st.saved)}. ${LIVE_UNKNOWN_LINE}`
+    : st.state === "live"
+      ? `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}.`
+      : `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}. The saved setting is not in force yet.`;
 
 export type RoleGroupModel = { group: string; label: string; rows: RoleRow[] };
 
@@ -188,6 +208,7 @@ export function buildRoleModel(role: Role, policy: PolicyWithServer): RoleGroupM
         gateNote: gate === "receptionist_legal_name" && role === "receptionist" && policy.gates?.[gate] !== true ? GATES[gate] : null,
         heldUntil: gate && gate !== "receptionist_legal_name" && policy.gates?.[gate] !== true ? GATES[gate] : null,
         needs: d.requires.map((r) => catalogByKey.get(r)?.label ?? r),
+        live: liveStatusOf(chosen, d.key, policy),
         alsoSwitchesOff: dependents.map((x) => x.label),
       });
     }
