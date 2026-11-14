@@ -76,6 +76,9 @@ describe("parsing", () => {
   });
   it("parseStaffActive reads the core's answer and refuses anything malformed as 'unexpected'", () => {
     expect(parseStaffActive({ ok: true, membership_id: M, kind: "practitioner", active: false })).toEqual({ ok: true, membershipId: M, active: false });
+    expect(parseStaffActive({ ok: true, membership_id: M, kind: "practitioner", active: false, upcoming: 2 })).toEqual({ ok: true, membershipId: M, active: false, upcoming: 2 });
+    expect(parseStaffActive({ ok: true, membership_id: M, active: false, upcoming: -1 })).toEqual({ ok: true, membershipId: M, active: false });
+    expect(parseStaffActive({ ok: true, membership_id: M, active: false, upcoming: "2" })).toEqual({ ok: true, membershipId: M, active: false });
     expect(parseStaffActive({ ok: false, code: "not_active" })).toEqual({ ok: false, error: { code: "not_active" } });
     for (const bad of [null, "x", { ok: true }, { ok: true, membership_id: M }, { ok: true, membership_id: M, active: "no" }]) {
       expect(parseStaffActive(bad), JSON.stringify(bad)).toEqual({ ok: false, error: { code: "unexpected" } });
@@ -100,6 +103,12 @@ describe("copy", () => {
     expect(RESTORE_ACCESS_COPY.bullets.join(" ")).toContain("access set in Permissions");
     expect(REMOVE_ACCESS_COPY.reasonLabel).toBe("Why (required)");
     expect(REMOVE_ACCESS_COPY.title("Alex")).toBe("Remove Alex's access");
+    // the count is information after the removal, in the owner's words; none when there are none
+    expect(REMOVE_ACCESS_COPY.doneLine("Alex", 0)).toBe("Alex's access was removed. It is in the history.");
+    expect(REMOVE_ACCESS_COPY.doneLine("Alex")).toBe("Alex's access was removed. It is in the history.");
+    expect(REMOVE_ACCESS_COPY.doneLine("Alex", 1)).toContain("still have 1 upcoming appointment, which stays assigned");
+    expect(REMOVE_ACCESS_COPY.doneLine("Alex", 3)).toContain("3 upcoming appointments");
+    expect(REMOVE_ACCESS_COPY.bullets.join(" ")).not.toContain("cannot be removed");
   });
 });
 
@@ -141,7 +150,11 @@ describe("who gets the controls", () => {
     for (const id of ["o1", "p2", "r1", "me", "i1"]) expect(block(on, id), id).not.toContain('data-testid="restore-access"');
     const off = render(false);
     expect(off).not.toContain('data-testid="restore-access"');
-    for (const id of ["d1", "d2"]) expect(block(off, id)).toContain("Restore access: not available yet.");
+    for (const id of ["d1", "d2"]) {
+      expect(block(off, id)).toContain("Restoring access is not available yet.");
+      expect(block(off, id)).not.toContain("<button type=\"button\" aria-expanded=\"false\" aria-controls=\"" + "restore"); // no dead control
+      expect(block(off, id)).not.toContain("Restore access</button>");
+    }
   });
 });
 

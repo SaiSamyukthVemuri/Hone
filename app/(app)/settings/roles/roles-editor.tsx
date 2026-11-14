@@ -9,7 +9,7 @@ import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
 import { changeRoleCopy } from "@/lib/settings/roles/change-role";
-import { REMOVE_ACCESS_COPY, RESTORE_ACCESS_COPY, type StaffAccessCopy } from "@/lib/settings/roles/staff-access";
+import { REMOVE_ACCESS_COPY, RESTORE_ACCESS_COPY, RESTORE_UNAVAILABLE_LINE, type StaffAccessCopy } from "@/lib/settings/roles/staff-access";
 import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
 import {
@@ -974,7 +974,7 @@ function PeoplePanel({
                     )}
                     {p.state === "deactivated" && p.role !== "owner" && !staffRoleChange && (
                       <p data-testid="restore-access-unavailable" className="break-words text-xs text-neutral-500">
-                        Restore access: not available yet.
+                        {RESTORE_UNAVAILABLE_LINE}
                       </p>
                     )}
                     {p.state === "deactivated" && p.role !== "owner" && staffRoleChange && (
@@ -1010,7 +1010,7 @@ function StaffAccessChange({ person, copy, act, testId, onDone }: { person: Pers
       if (r.ok) {
         setOpen(false);
         setReason("");
-        onDone(copy.doneLine(person.name));
+        onDone(copy.doneLine(person.name, r.upcoming));
       } else {
         setError(roleErrorMessage(r.error));
       }

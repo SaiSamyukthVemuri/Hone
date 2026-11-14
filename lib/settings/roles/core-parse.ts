@@ -168,7 +168,10 @@ export function parseStaffActive(raw: unknown): StaffActiveResult {
   if (!isObj(raw)) return { ok: false, error: UNEXPECTED };
   if (raw.ok !== true) return { ok: false, error: parseError(raw) };
   const id = str(raw.membership_id);
-  return id && typeof raw.active === "boolean" ? { ok: true, membershipId: id, active: raw.active } : { ok: false, error: UNEXPECTED };
+  if (!id || typeof raw.active !== "boolean") return { ok: false, error: UNEXPECTED };
+  // `upcoming` is the number of upcoming appointments the person still has (0342 reports it under every policy); shown as information only.
+  const up = raw.upcoming;
+  return typeof up === "number" && Number.isInteger(up) && up >= 0 ? { ok: true, membershipId: id, active: raw.active, upcoming: up } : { ok: true, membershipId: id, active: raw.active };
 }
 
 const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed", "permissions_activated", "staff_deactivated", "staff_reactivated"];

@@ -59,7 +59,7 @@ export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; 
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
 
 /** change_staff_role: the membership the person now holds and the role they now have. */
-export type StaffActiveResult = { ok: true; membershipId: string; active: boolean } | { ok: false; error: RoleError };
+export type StaffActiveResult = { ok: true; membershipId: string; active: boolean; upcoming?: number } | { ok: false; error: RoleError };
 export type ChangeRoleResult = { ok: true; membershipId: string; role: Role } | { ok: false; error: RoleError };
 
 /** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 Insurance AA-1). */
