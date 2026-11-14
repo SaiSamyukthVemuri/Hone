@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAppointmentCancelNotifications } from "@/lib/notifications/appointment-cancel-notification";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -520,6 +521,15 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
       error: "This appointment cannot be cancelled from its current state.",
     };
   }
+
+  // HON-7. The bell for the studio's owners, EXCEPT the person who just cancelled: nobody is notified of their own action
+  // (an owner who cancels sees a success message on screen instead). Never throws; a failure cannot undo the cancel.
+  await recordAppointmentCancelNotifications(admin, {
+    appointmentId,
+    studioId: studio.id,
+    reasonLabel: null,
+    actorPractitionerId: practitioner.id,
+  });
 
   // Look up enough data to send the client-notification email.
   const supabase = await createClient();

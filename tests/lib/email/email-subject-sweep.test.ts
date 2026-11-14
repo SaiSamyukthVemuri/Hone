@@ -21,6 +21,7 @@ import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { buildWelcomeEmail } from "@/lib/email/templates/welcome";
 import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist-recipient-proof";
 import { buildWaitlistInvitationEmail } from "@/lib/email/templates/waitlist-invitation";
+import { buildWaitlistDeclineOwnerEmail } from "@/lib/email/templates/waitlist-decline-owner";
 import {
   buildNewClientWaitlistClientEmail,
   buildNewClientWaitlistStudioEmail,
@@ -227,6 +228,10 @@ const DECISIONS: Record<string, Decision[]> = {
     kind: "PER_EVENT", event: "each waitlist join (to the owner)",
     build: (s, ref) => buildNewClientWaitlistStudioEmail({ studioName: s, name: CLIENT, email: "zephyrine@synthetic.invalid", phone: null, joinReference: ref }),
   }],
+  buildWaitlistDeclineOwnerEmail: [{
+    kind: "SUPERSEDES", why: "Sam fixed the subject and body: one generic notice, to studio owners, that names no person and carries no per-event reference. Every copy links to the same follow-up list, which shows every open response, so a later email says nothing an earlier one did not. Studio-facing; takes no client data.",
+    build: () => buildWaitlistDeclineOwnerEmail({ appOrigin: "https://hone.care" }),
+  }],
   buildPaymentReceiptEmail: [{ kind: "HELD", owner: "Sam + legal", why: "Lawyer-approved receipt strings (lib/billing/receipt-document.ts 'DO NOT PARAPHRASE'); proposal in privacy/PRIV-EMAIL-REST-END.json R1." }],
   renderReceiptEmail: [{ kind: "HELD", owner: "Sam + legal", why: "Same document as buildPaymentReceiptEmail." }],
 };
@@ -242,6 +247,7 @@ const SEND_SITES: Record<string, string[] | { inline: string }> = {
   "lib/email/send-welcome.ts": ["buildWelcomeEmail"],
   "lib/email/new-client-waitlist-send.ts": { inline: "transport wrapper: sends what its callers built" },
   "lib/waitlist/delivery/send.ts": ["buildWaitlistInvitationEmail", "buildWaitlistRecipientProofEmail"],
+  "lib/waitlist/decline-owner-email.ts": ["buildWaitlistDeclineOwnerEmail"],
   "app/book/[slug]/waitlist-actions.ts": ["buildNewClientWaitlistClientEmail", "buildNewClientWaitlistStudioEmail"],
   "lib/portal/magic-link.ts": ["buildPortalMagicLinkEmail"],
   "app/portal/login/actions.ts": ["buildPortalMagicLinkEmail"],

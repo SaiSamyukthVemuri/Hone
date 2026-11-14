@@ -92,7 +92,7 @@
  * contract. `AdapterCapabilities.enforcesScope` exists so that such an adapter
  * has to say so, and so the surface can refuse to imply otherwise.
  */
-import { CAPACITY_EXHAUSTED_COPY } from "@/lib/waitlist/invitation-capacity";
+import { CAPACITY_EXHAUSTED_COPY, NO_CAPACITY_COPY, NOT_YET_AVAILABLE_COPY } from "@/lib/waitlist/invitation-capacity";
 
 export type BookingScope = {
   /**
@@ -218,7 +218,15 @@ export const INVITE_TO_BOOK_FAILURES = [
   "not_admissible",
   "no_admission_round",
   "admission_round_full",
+  // 0324: the consultations that fit are already spoken for by live invitations.
+  "no_capacity",
+  // The send command this release calls is not in the database yet (0324 not applied). The call was
+  // refused BEFORE it ran, so nothing was created: a definite answer, not a lost one.
+  "not_yet_available",
   "previously_declined",
+  // 0325: the person has a decline or withdrawal response still waiting for the owner's review, and the admit command refuses to invite them
+  // again until the owner has dealt with it. A definite refusal; the answer is to follow up first.
+  "pending_owner_review",
   // The scope the practitioner expressed could not be honoured. NEW: no
   // shipped command can answer this yet, and it is the one code this contract
   // ADDS rather than derives. It exists so an adapter that cannot carry a
@@ -400,6 +408,14 @@ export type InvitationNotice = {
   invitationExists: boolean;
 };
 
+/** Shown when the admit command refuses because the person's reply is waiting for the owner. Neutral: no name, no answer, no reason. */
+export const PENDING_OWNER_REVIEW_COPY =
+  "This person has a response waiting for your review. Follow up below before inviting them again.";
+
+/** Shown when the admit command refuses because this exact window was already declined for this person. Permanent for that window: the fix is a different window. */
+export const PREVIOUSLY_DECLINED_COPY =
+  "No invitation was created: they already said this window didn't work. Change the dates or days and send a different window.";
+
 /**
  * A refusal the server actually gave. The invitation was NOT created.
  *
@@ -432,9 +448,19 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
     // when no capacity is open, but a capacity closed between render and press
     // still lands here, and it must read the same way.
     case "no_admission_round":
-      return "Set your invitation capacity before inviting someone to book.";
+      return CAPACITY_EXHAUSTED_COPY;
     case "admission_round_full":
       return CAPACITY_EXHAUSTED_COPY;
+    case "no_capacity":
+      return NO_CAPACITY_COPY;
+    case "not_yet_available":
+      return NOT_YET_AVAILABLE_COPY;
+    // 0325: not a failure to retry. The person replied to an earlier invitation and the reply is waiting for the owner.
+    case "pending_owner_review":
+      return PENDING_OWNER_REVIEW_COPY;
+    // 0192: the person declined this identical offer (same service, dates and days). Retrying cannot succeed, so this must never read as "try again".
+    case "previously_declined":
+      return PREVIOUSLY_DECLINED_COPY;
     default:
       // TRUE FOR EVERY CODE IN THIS ARM BY CONSTRUCTION — `refused` means the
       // admission did not commit. Naming the code keeps the message honest
@@ -447,12 +473,39 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
 }
 
 /**
+ * Shown when new-client admission is Closed (or unreadable). 0204 refuses an INVITED
+ * booking in that state, so an invitation sent now would list times the invitee cannot
+ * book. Nothing was created. Tied to the check by
+ * tests/source-guards/invited-booking-refusal-copy.test.ts.
+ */
+export const INVITE_ADMISSION_CLOSED_COPY =
+  "No invitation was created. New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
+
+/**
+ * Shown, as neutral information, when admission is Closed and invitations can book (0323 applied).
+ * Keeps the three facts together: Closed; no public booking or joining; invitees can book.
+ */
+export const INVITE_CLOSED_INVITED_ONLY_COPY =
+  "New-client admission is Closed. New clients can’t book or join your waitlist online. People you invite here can still book, using the link and code in their invitation.";
+
+/** The owner's banner / composer reason while admission is Closed. Its own text, not a slice of the notice. */
+export const INVITE_ADMISSION_CLOSED_BANNER_COPY =
+  "New-client admission is set to Closed, and the update that lets invited people book while it is Closed isn’t in place yet, so people you invite couldn’t book. Don’t switch to Waitlist to work around this: that would also let the public join. See Settings → Booking.";
+
+/**
+ * Admission could not be READ. Invitations are paused (fail closed) but nothing is claimed
+ * about the mode. Used for the notice, the banner and the composer reason.
+ */
+export const INVITE_ADMISSION_UNREADABLE_COPY =
+  "We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.";
+
+/**
  * Map the structured result onto what to show. Pure, total, and the ONLY place
  * this translation happens.
  */
 export function invitationNoticeFor(
   outcome: InvitationOutcome | null,
-  reason?: "malformed_submission",
+  reason?: "malformed_submission" | "admission_closed" | "admission_unreadable",
 ): InvitationNotice {
   if (outcome === null) {
     return {
@@ -462,7 +515,11 @@ export function invitationNoticeFor(
       message:
         reason === "malformed_submission"
           ? "No invitation was created: the form was incomplete. Check the service and try again."
-          : "No invitation was created.",
+          : reason === "admission_closed"
+            ? INVITE_ADMISSION_CLOSED_COPY
+            : reason === "admission_unreadable"
+              ? INVITE_ADMISSION_UNREADABLE_COPY
+              : "No invitation was created.",
       invitationExists: false,
     };
   }
@@ -597,6 +654,10 @@ export const ADMIT_SERVER_REFUSALS = [
   "no_round_open",
   /** The open round's allowance is already consumed. */
   "round_full",
+  /** 0324: live competing invitations plus this one would exceed the consultations that fit. */
+  "no_capacity",
+  /** 0324: the sender passed no usable fit. A bug on this side of the wire. */
+  "invalid_fit",
   "invalid_service",
   "invalid_scope_dates",
   "invalid_weekdays",
@@ -608,6 +669,10 @@ export const ADMIT_SERVER_REFUSALS = [
   "already_invited",
   "invalid_ttl",
   "not_claimed",
+
+  // --- 0325, carried by the admit command itself (appended on top of the final 0324 body) ----------------------------------------------
+  /** The entry has an open decline or withdrawal follow-up the owner has not dealt with. */
+  "pending_owner_review",
 ] as const;
 
 export type AdmitServerRefusal = (typeof ADMIT_SERVER_REFUSALS)[number];
@@ -661,7 +726,11 @@ export const ADMIT_REFUSAL_PRESENTATION: Record<
   // Capacity and consent. See the note above: detail is lost here on purpose.
   no_round_open: "no_admission_round",
   round_full: "admission_round_full",
+  no_capacity: "no_capacity",
+  invalid_fit: "invalid_input",
   already_declined_offer: "previously_declined",
+  // The owner can act on this one: the response is waiting in the follow-up section.
+  pending_owner_review: "pending_owner_review",
 };
 
 /**

@@ -104,7 +104,7 @@ export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   // `statusMeaning` below. This sentence is only the no-context default.
   invited: "An invitation has been created for them.",
   converted: "They booked. This entry is closed.",
-  expired: "The invitation ran out before it was used.",
+  expired: "This offer expired. Return them to the waitlist to offer new times; they keep their place.",
   // NEUTRAL, AND FOR THE SAME REASON `invited` IS. This sentence is rendered as
   // the SECTION description, above a group that can now hold two different
   // kinds of released entry: one set aside, which can be returned to the
@@ -306,6 +306,11 @@ export type AdmissionContext = {
    * invitation is withheld while this is true.
    */
   invitationFactsUnknown?: boolean;
+  /**
+   * True when this `released` entry was released BY the person declining the offered times (not set aside
+   * by the owner). Display only: it changes the sentence, never what is available.
+   */
+  declinedByRecipient?: boolean;
 };
 
 export function actionAvailability(
@@ -529,7 +534,7 @@ export function statusMeaning(
       return "The invitation has been used, but no booking has been recorded yet.";
     }
     if (context.invitationElapsed) {
-      return "The invitation ran out and has not been recorded as expired yet.";
+      return "The invitation ran out and has not been recorded as expired yet. Record it, then return them to the waitlist to offer new times; they keep their place.";
     }
     return "Their invitation is active and has not been used yet.";
   }
@@ -552,6 +557,11 @@ export function statusMeaning(
     }
     if (context.invitationRedeemed) {
       return "They used their invitation without booking. This entry cannot go back on the waitlist — remove it, and they can join again themselves.";
+    }
+    if (context.declinedByRecipient) {
+      // They said none of the offered times suit them. Requeue keeps the same row, so their original
+      // place is restored; nothing here promises that the studio has been or will be contacted.
+      return "They said the offered times didn’t work. Return them to the waitlist to restore their original place. The same window can’t be offered again, so send a different one.";
     }
     // THE ORDINARY CASE, AND THE INSTRUCTION LIVES HERE NOW rather than in the
     // status default above: a set-aside entry genuinely can be returned, and

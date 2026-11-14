@@ -46,6 +46,7 @@ export default async function NotificationsPage() {
       )
       .eq("studio_id", studio.id),
     practitioner.role === "owner",
+    practitioner.id,
   )
     .order("created_at", { ascending: false })
     .limit(NOTIFICATION_LIST_LIMIT);

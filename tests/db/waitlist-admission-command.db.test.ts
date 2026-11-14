@@ -18,7 +18,7 @@ afterAll(async () => {
   await closePool();
 });
 
-const ADMIT = `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`;
+const ADMIT = `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000)`;
 const START = "2026-10-01";
 const END = "2026-10-31";
 
@@ -736,7 +736,7 @@ describe("admission returns the database-owned invitation instants", () => {
            to_char(a.issued_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_at_us,
            to_char(a.expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_at_us,
            a.delivery_email, a.delivery_name
-      from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8) a`;
+      from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1000) a`;
 
   async function admitOne(label: string, ttlHours = 72) {
     const studio = await seedStudio(label);
@@ -858,19 +858,12 @@ describe("admission returns the database-owned invitation instants", () => {
     const notFound = await adminQuery(ADMIT, [
       studio.studioId, studio.userId, studio.clientId, service, START, END, null, 72,
     ]);
-    // round full -- refused by 0192 inside the subtransaction
-    const full = await seedStudio("issued-at-refusals-c");
-    await openRound(full, 0);
-    const roundFull = await adminQuery(ADMIT, [
-      full.studioId, full.userId, await seedWaiting(full, "ref-d"), await seedService(full.studioId),
-      START, END, null, 72,
-    ]);
+    // (A full round is no longer a refusal: 0324's admit rotates it. See the rotation tests.)
 
     for (const [label, res] of [
       ["no_round_open", noRound],
       ["not_a_member", notMember],
       ["not_found", notFound],
-      ["round_full", roundFull],
     ] as const) {
       expect(res.rows[0].result, `${label} must still be the refusal code`).toBe(label);
       expect(res.rows[0].issued_at, `${label} must fabricate no mint`).toBeNull();
@@ -987,9 +980,10 @@ describe("admission composes with the durable round contract", () => {
     expect(await roundOf(second.rows[0].invitation_id)).toBe(r2);
   });
 
-  it("still refuses once the OPEN round is full, however empty the closed ones are", async () => {
-    // The other direction, and the reason the test above is not vacuous: a
-    // per-round quota that never refused would pass it just as well.
+  it("rotates once the OPEN round is full: the next send is admitted in a fresh round (0324)", async () => {
+    // 0324 moved the full-round decision out of the refusal path: the studio-wide fit guard is the
+    // limit, and a full round is closed and replaced inside the same transaction. See
+    // tests/db/waitlist-round-rotation.db.test.ts for the full contract.
     const studio = await seedStudio("comp-r2-full");
     const service = await seedService(studio.studioId);
 
@@ -1007,9 +1001,8 @@ describe("admission composes with the durable round contract", () => {
     const second = await adminQuery(ADMIT, [
       studio.studioId, studio.userId, b, service, START, END, null, 72,
     ]);
-    expect(second.rows[0].result).toBe("round_full");
-    await expectStillWaiting(b);
-    expect(await invitationCount(b)).toBe(0);
+    expect(second.rows[0].result).toBe("admitted");
+    expect(await roundOf(second.rows[0].invitation_id)).not.toBe(await roundOf(first.rows[0].invitation_id));
   });
 
   it("will not close a round while an offer it authorised is still answerable", async () => {
@@ -1136,7 +1129,6 @@ describe("negative control A — a downstream refusal leaves NO claimed residue"
   // claimed the entry.
   it.each([
     ["no round open", async (s: Seeded) => { /* no round */ void s; }, "no_round_open"],
-    ["round full", async (s: Seeded) => { await openRound(s, 0); }, "round_full"],
   ])("%s -> %s, and the entry is untouched", async (_label, prepare, expected) => {
     const studio = await seedStudio("admit-negA");
     await prepare(studio);
@@ -1201,23 +1193,24 @@ describe("negative control C — a cross-studio entry is refused", () => {
   });
 });
 
-describe("negative control D — allowance exhausted admits nobody", () => {
-  it("stops at the seat count and leaves the rest waiting", async () => {
+describe("negative control D — an exhausted fit admits nobody", () => {
+  it("stops at the fit and leaves the rest waiting (the round no longer decides)", async () => {
     const studio = await seedStudio("admit-negD");
     await openRound(studio, 1);
     const service = await seedService(studio.studioId);
     const first = await seedWaiting(studio, "negD1");
     const second = await seedWaiting(studio, "negD2");
+    const FIT1 = `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1)`;
 
-    const ok = await adminQuery(ADMIT, [
+    const ok = await adminQuery(FIT1, [
       studio.studioId, studio.userId, first, service, START, END, null, 72,
     ]);
     expect(ok.rows[0].result).toBe("admitted");
 
-    const full = await adminQuery(ADMIT, [
+    const full = await adminQuery(FIT1, [
       studio.studioId, studio.userId, second, service, START, END, null, 72,
     ]);
-    expect(full.rows[0].result).toBe("round_full");
+    expect(full.rows[0].result).toBe("no_capacity");
     await expectStillWaiting(second);
     expect(await invitationCount(second)).toBe(0);
   });
@@ -1290,9 +1283,10 @@ describe("negative control G — concurrent Invite-to-book yields at most one in
     const one = await seedWaiting(studio, "negG2a");
     const two = await seedWaiting(studio, "negG2b");
 
+    const FIT1 = `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8,1)`;
     const [a, b] = await Promise.all([
-      adminQuery(ADMIT, [studio.studioId, studio.userId, one, service, START, END, null, 72]),
-      adminQuery(ADMIT, [studio.studioId, studio.userId, two, service, START, END, null, 72]),
+      adminQuery(FIT1, [studio.studioId, studio.userId, one, service, START, END, null, 72]),
+      adminQuery(FIT1, [studio.studioId, studio.userId, two, service, START, END, null, 72]),
     ]);
     const admitted = [a.rows[0].result, b.rows[0].result].filter((r) => r === "admitted");
     expect(admitted).toHaveLength(1);

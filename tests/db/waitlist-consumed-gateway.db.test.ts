@@ -244,7 +244,7 @@ describe("the gateway's count IS the canonical count", () => {
 
     // A LIVE SEAT.
     const admitted = await adminQuery(
-      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,'2026-10-01','2026-10-31',null,72)`,
+      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,'2026-10-01','2026-10-31',null,72,1000)`,
       [studio.studioId, studio.userId, entry.rows[0].entry_id, service.rows[0].id],
     );
     expect(admitted.rows[0].result).toBe("admitted");

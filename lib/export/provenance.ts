@@ -138,6 +138,88 @@ export async function fetchExportRows<T>(
   return brand(result, { resource, select: observed });
 }
 
+// ---------------------------------------------------------------------------
+// THE RPC SOURCE KIND
+// ---------------------------------------------------------------------------
+//
+// Some studio-owned data lives in a table that no browser role may read (RLS on, no policy), so the owner's export cannot SELECT it. Its owner-gated
+// export function is the only door. There is no `select` on such a request to read back, so the evidence is different but the rule is the same:
+// the columns the function actually RETURNED are compared with the columns the registry declares it returns, in BOTH directions, row by row, and
+// that observed list is what the registry audit sees. A function that grows a column nobody declared, or loses one the CSV needs, fails the export
+// rather than shipping a blank or an unexplained cell.
+//
+// Paging is keyset: each call passes the last key it saw and the loop stops at the first SHORT page. A key that does not strictly increase, or a
+// page budget that runs out, is a refusal ("refusing to return a partial table"), never a silent truncation.
+
+export type RpcPageFactory<T> = (afterId: string | null, limit: number) => PromiseLike<PageResult<T>>;
+
+export type RpcSourceSpec = {
+  /** The column the function pages by, ascending. */
+  readonly keyColumn: string;
+  /** The columns the function is declared to return, exactly. */
+  readonly returns: readonly string[];
+};
+
+export const EXPORT_RPC_PAGE_LIMIT = 1000;
+const MAX_RPC_PAGES = 10_000;
+
+/** The envelope for an rpc-sourced resource that is deliberately not read (its feature is off): zero rows, the declared select, no error. */
+export function emptyExportRpcRead<T>(resource: string, source: RpcSourceSpec): ExportRead<T> {
+  return brand<T>({ data: [], error: null }, { resource, select: source.returns.join(", ") });
+}
+
+export async function fetchExportRpcRows<T extends Record<string, unknown>>(
+  resource: string,
+  source: RpcSourceSpec,
+  call: RpcPageFactory<T>,
+  limit: number = EXPORT_RPC_PAGE_LIMIT,
+): Promise<ExportRead<T>> {
+  const select = source.returns.join(", ");
+  const fail = (message: string): ExportRead<T> =>
+    brand<T>({ data: null, error: { message: `export: ${resource} ${message}` } }, { resource, select });
+  const declared = new Set(source.returns);
+  if (!declared.has(source.keyColumn)) return fail(`declares key column "${source.keyColumn}" that it does not return`);
+
+  const rows: T[] = [];
+  let after: string | null = null;
+  let lastKey: string | null = null;
+  for (let page = 0; page < MAX_RPC_PAGES; page += 1) {
+    let result: PageResult<T>;
+    try {
+      result = await call(after, limit);
+    } catch {
+      return fail("read failed");
+    }
+    if (result.error) {
+      const failed = fail(`read failed: ${result.error.message}`);
+      const code = (result.error as { code?: string }).code;
+      // the database code travels with the refusal so the caller can tell "the function does not exist" from every other failure
+      if (code) (failed.error as { code?: string }).code = code;
+      return failed;
+    }
+    if (!Array.isArray(result.data)) return fail("read returned no data");
+    for (const row of result.data) {
+      const keys = new Set(Object.keys(row));
+      const missing = source.returns.filter((c) => !keys.has(c));
+      const extra = [...keys].filter((c) => !declared.has(c));
+      if (missing.length > 0) return fail(`function did not return declared column(s): ${missing.join(", ")}`);
+      if (extra.length > 0) return fail(`function returned undeclared column(s): ${extra.join(", ")}`);
+      const key = row[source.keyColumn];
+      if (typeof key !== "string" || key.length === 0) return fail(`row has no usable ${source.keyColumn}`);
+      // Every key must be strictly greater than the one before it, across rows AND pages (the first row of a page is compared with the
+      // cursor it was asked after). An unsorted page whose keys are all above the cursor would otherwise skip rows without any signal.
+      if (lastKey !== null && key <= lastKey) return fail(`${source.keyColumn} did not strictly increase between rows (refusing to return a partial table)`);
+      lastKey = key;
+      rows.push(row);
+    }
+    if (result.data.length < limit) return brand<T>({ data: rows, error: null }, { resource, select });
+    const last = result.data[result.data.length - 1][source.keyColumn] as string;
+    if (after !== null && last <= after) return fail(`${source.keyColumn} did not advance between pages (refusing to return a partial table)`);
+    after = last;
+  }
+  return fail("exceeded the page budget (refusing to return a partial table)");
+}
+
 /**
  * Transform the rows while keeping the envelope. The export joins display names
  * onto several resources between reading and writing; without this the
