@@ -13,9 +13,13 @@
 --   unchanged inside a SECURITY DEFINER command, so the check sees the real caller. The commands are NOT rewritten.
 --
 -- WHAT IT ADDS
---   1. public.chart_revisions: append-only history (before/after image of every insert, update and delete on the eight chart tables, who,
---      when). Removal is a versioned edit: a soft delete is an UPDATE whose before-image is kept; the one hard delete that exists (a plan
---      stage) keeps its before-image. History starts at this migration; earlier edits are NOT reconstructed.
+--   1. public.chart_revisions: append-only METADATA history of every insert, update and delete on the eight chart tables (Sam's option A, 14 Nov
+--      2026): who, when, which table and row, the operation, the NAMES of the columns an update changed, and a per-row version counter. It stores NO
+--      before/after image and NO value of any kind (no JSON image, no free text), so no clinical text, plan text or price can enter it; the
+--      content of a finalized record stays in the 0119/0120 clinical_record_snapshots, which this migration does not touch. History starts at
+--      this migration; earlier edits are NOT reconstructed. KNOWN GAPS (documented, not hidden): a write whose auth.uid() is null (service role,
+--      cron, migrations, a definer function run by a system path) is neither CHECKED by the guard nor attributed (the row is written with
+--      changed_by null); a cascaded child whose parent is already gone is neither checked nor recorded.
 --   2. chart_write_guard(): BEFORE INSERT/UPDATE/DELETE on the eight tables. For an end user (auth.uid() is not null) it requires
 --      has_studio_permission(studio, 'clin.edit_records', client) and refuses with SQLSTATE 42501 'edit_records_required'. System paths
 --      (service role, cron, migrations: auth.uid() is null) are not end users and are not checked here. A sessions UPDATE that changes only the
@@ -24,7 +28,8 @@
 --      practitioner_id and client_clinical_notes.practitioner_id cannot be rewritten, except inside the performer correction command below
 --      or the existing trusted finalized-record correction (0120's transaction-local hone.correction_session_id), both of which leave a record.
 --   4. public.session_performer_corrections (append-only) and public.correct_session_performer(): replaces the overwrite. The original
---      attribution stays in history; the correction records who, when and why. public.set_session_performer keeps its signature and grant but may only make the FIRST
+--      performer id stays in session_performer_corrections (previous_performer_id); chart_revisions records only THAT the column changed.
+--      The correction records who, when and why. public.set_session_performer keeps its signature and grant but may only make the FIRST
 --      attribution; changing or clearing an existing performer is refused and points to the correction command.
 --
 -- WHAT IT DOES NOT DO: no source column is dropped; no existing command body is changed; no data is backfilled; nothing is granted to anon or
@@ -36,17 +41,21 @@ set local lock_timeout = '5s';
 -- 1) Append-only history
 -- ---------------------------------------------------------------------------
 create table public.chart_revisions (
-  id            bigint generated always as identity primary key,
-  studio_id     uuid not null,
-  client_id     uuid,
-  table_name    text not null check (table_name in ('sessions','session_blocks','session_block_areas','electrolysis_entries','laser_entries','treatment_plans','treatment_plan_stages','client_clinical_notes')),
-  row_id        uuid not null,
-  op            text not null check (op in ('insert','update','delete')),
-  changed_by    uuid,            -- auth.uid(); null = a system path
-  changed_at    timestamptz not null default now(),
-  before_image  jsonb,
-  after_image   jsonb
+  id              bigint generated always as identity primary key,
+  studio_id       uuid not null,
+  client_id       uuid,
+  table_name      text not null check (table_name in ('sessions','session_blocks','session_block_areas','electrolysis_entries','laser_entries','treatment_plans','treatment_plan_stages','client_clinical_notes')),
+  row_id          uuid not null,
+  op              text not null check (op in ('insert','update','delete')),
+  changed_by      uuid,            -- auth.uid(); null = a system path
+  changed_at      timestamptz not null default now(),
+  changed_columns text[],          -- NAMES ONLY, for an update (null for insert and delete, which touch the whole row); never a value
+  version_no      integer not null check (version_no >= 1),
+  constraint chart_revisions_columns_only_on_update check ((op = 'update') = (changed_columns is not null))
 );
+comment on table public.chart_revisions is
+  '0289 (option A): metadata-only edit history. Holds who, when, table, row id, operation, changed column NAMES and a version counter. Deliberately has no value column of any kind: never add a before/after image, a diff or a free-text field here.';
+create unique index chart_revisions_version_idx on public.chart_revisions (table_name, row_id, version_no);
 create index chart_revisions_row_idx on public.chart_revisions (table_name, row_id, id);
 create index chart_revisions_studio_idx on public.chart_revisions (studio_id, id desc);
 
@@ -63,7 +72,7 @@ create trigger chart_revisions_no_truncate before truncate on public.chart_revis
 
 alter table public.chart_revisions enable row level security;
 revoke all on public.chart_revisions from public, anon, authenticated, service_role;
--- Reading history needs the VIEW key (not the edit key): the history is chart content.
+-- Reading history needs the VIEW key (not the edit key): who edited which client's chart, and when, is still chart metadata.
 grant select on public.chart_revisions to authenticated;
 create policy chart_revisions_view on public.chart_revisions for select to authenticated
   using (public.has_studio_permission(studio_id, 'clin.view_records', client_id));
@@ -139,26 +148,31 @@ begin
 end;
 $$;
 
--- Price and payment columns are not chart content (pay.* / pricing keys govern them): they never enter a revision image.
-create or replace function public.chart_revision_image(p_row jsonb)
-returns jsonb language sql immutable security definer set search_path = '' as $$
-  select case when p_row is null then null
-    else coalesce((select jsonb_object_agg(k, v) from jsonb_each(p_row) e(k, v) where k !~* '(price|cents|paid|amount|payment)'), '{}'::jsonb) end;
-$$;
-
+-- The writer reads the row images only to learn WHICH columns changed and where the row belongs; it stores names, never values.
 create or replace function public.chart_revision_write()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare
-  v_before jsonb := case when tg_op = 'INSERT' then null else public.chart_revision_image(to_jsonb(old)) end;
-  v_after  jsonb := case when tg_op = 'DELETE' then null else public.chart_revision_image(to_jsonb(new)) end;
+  v_old   jsonb := case when tg_op = 'INSERT' then null else to_jsonb(old) end;
+  v_new   jsonb := case when tg_op = 'DELETE' then null else to_jsonb(new) end;
+  v_cols  text[];
+  v_row   uuid;
   v_studio uuid;
   v_client uuid;
 begin
-  if tg_op = 'UPDATE' and v_before = v_after then return null; end if;
-  select c.studio_id, c.client_id into v_studio, v_client from public.chart_scope(tg_table_name, coalesce(v_after, v_before)) c;
+  if tg_op = 'UPDATE' then
+    select array_agg(k order by k) into v_cols
+      from jsonb_object_keys(v_new) k
+     where (v_new -> k) is distinct from (v_old -> k);
+    if v_cols is null then return null; end if;   -- nothing changed: no history row
+  end if;
+  select c.studio_id, c.client_id into v_studio, v_client from public.chart_scope(tg_table_name, coalesce(v_new, v_old)) c;
   if v_studio is null then return null; end if;   -- a cascade whose parent is already gone: documented limit
-  insert into public.chart_revisions (studio_id, client_id, table_name, row_id, op, changed_by, before_image, after_image)
-  values (v_studio, v_client, tg_table_name, coalesce((v_after ->> 'id')::uuid, (v_before ->> 'id')::uuid), lower(tg_op), auth.uid(), v_before, v_after);
+  v_row := coalesce((v_new ->> 'id')::uuid, (v_old ->> 'id')::uuid);
+  -- The version counter is per row. Concurrent writers to one row are serialised by the row lock their own write holds, and the unique index
+  -- (table_name, row_id, version_no) is the backstop.
+  insert into public.chart_revisions (studio_id, client_id, table_name, row_id, op, changed_by, changed_columns, version_no)
+  values (v_studio, v_client, tg_table_name, v_row, lower(tg_op), auth.uid(), v_cols,
+          coalesce((select max(r.version_no) from public.chart_revisions r where r.table_name = tg_table_name and r.row_id = v_row), 0) + 1);
   return null;
 end;
 $$;
@@ -253,7 +267,7 @@ create trigger chart_attribution_guard_plans before update on public.treatment_p
 create trigger chart_attribution_guard_notes before update on public.client_clinical_notes for each row execute function public.chart_attribution_guard();
 
 -- ---------------------------------------------------------------------------
--- 5) Performer CORRECTION (replaces the overwrite). Original attribution stays in chart_revisions; each correction records who, when, why.
+-- 5) Performer CORRECTION (replaces the overwrite). The original performer id is kept in this table (previous_performer_id); each correction records who, when, why. `reason` is user-typed accountability text, not chart content.
 -- ---------------------------------------------------------------------------
 create table public.session_performer_corrections (
   id                    bigint generated always as identity primary key,
@@ -317,7 +331,6 @@ revoke all on function public.chart_revisions_append_only() from public, anon, a
 revoke all on function public.chart_scope(text, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.chart_write_guard() from public, anon, authenticated, service_role;
 revoke all on function public.chart_revision_write() from public, anon, authenticated, service_role;
-revoke all on function public.chart_revision_image(jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.chart_attribution_guard() from public, anon, authenticated, service_role;
 revoke all on function public.correct_session_performer(uuid, uuid, uuid, text) from public, anon, authenticated, service_role;
 revoke execute on function public.correct_session_performer(uuid, uuid, uuid, text) from public;

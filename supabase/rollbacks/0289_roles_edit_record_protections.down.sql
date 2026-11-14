@@ -31,7 +31,6 @@ drop table if exists public.chart_revisions;
 
 drop function if exists public.chart_attribution_guard();
 drop function if exists public.chart_revision_write();
-drop function if exists public.chart_revision_image(jsonb);
 drop function if exists public.chart_lineage_guard();
 drop function if exists public.chart_write_guard();
 drop function if exists public.chart_scope(text, jsonb);

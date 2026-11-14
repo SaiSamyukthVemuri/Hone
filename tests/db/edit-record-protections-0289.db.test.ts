@@ -30,7 +30,7 @@ const insertPlan = (userId: string, s: SeededStudio) =>
 const correct = (userId: string, sessionId: string, clientId: string, performer: string | null, reason: string) =>
   asUser(userId, async (q) => (await q("select public.correct_session_performer($1,$2,$3,$4) as r", [sessionId, clientId, performer, reason])).rows[0].r as boolean);
 const revs = async (table: string, id: string) =>
-  (await adminQuery("select op, changed_by, before_image, after_image from public.chart_revisions where table_name=$1 and row_id=$2 order by id", [table, id])).rows;
+  (await adminQuery("select op, changed_by, changed_columns, version_no from public.chart_revisions where table_name=$1 and row_id=$2 order by id", [table, id])).rows;
 
 describe("0289: edit key at the database", () => {
   it("edit OFF refuses a direct plan write (42501 edit_records_required), edit ON allows it and records history", async () => {
@@ -42,7 +42,7 @@ describe("0289: edit key at the database", () => {
     const id = (await insertPlan(on.m.userId, on.s)).rows[0].id as string;
     const r = await revs("treatment_plans", id);
     expect(r).toHaveLength(1);
-    expect(r[0]).toMatchObject({ op: "insert", changed_by: on.m.userId, before_image: null });
+    expect(r[0]).toMatchObject({ op: "insert", changed_by: on.m.userId, changed_columns: null, version_no: 1 });
   });
 
   it("edit ON but view OFF is refused (NQ-10: the engine caps edit by view)", async () => {
@@ -56,14 +56,17 @@ describe("0289: edit key at the database", () => {
     await expect(insertPlan(b.m.userId, a.s)).rejects.toBeTruthy();
   });
 
-  it("a removal (update of a plan) keeps its before-image; history rows cannot be changed or deleted", async () => {
+  it("an update records the changed column NAMES and a version counter, never a value; history rows cannot be changed or deleted", async () => {
     const on = await setup("e89rem", "studio", "studio");
     const id = (await insertPlan(on.m.userId, on.s)).rows[0].id as string;
     await asUser(on.m.userId, (q) => q("update public.treatment_plans set status='closed' where id=$1", [id]));
     const r = await revs("treatment_plans", id);
     expect(r.map((x) => x.op)).toEqual(["insert", "update"]);
-    expect(r[1].before_image.status).toBe("active");
-    expect(r[1].after_image.status).toBe("closed");
+    expect(r.map((x) => x.version_no)).toEqual([1, 2]);
+    expect(r[1].changed_columns).toContain("status");
+    // the old and new status VALUES are nowhere in the history row (option A: names only)
+    const text = (await adminQuery("select to_jsonb(r)::text t from public.chart_revisions r where row_id=$1 and op='update'", [id])).rows[0].t as string;
+    expect(text).not.toContain("closed");
     await expect(adminQuery("update public.chart_revisions set op='insert' where row_id=$1", [id])).rejects.toMatchObject({ code: "55000" });
     await expect(adminQuery("delete from public.chart_revisions where row_id=$1", [id])).rejects.toMatchObject({ code: "55000" });
     await expect(adminQuery("truncate public.chart_revisions")).rejects.toMatchObject({ code: "55000" });
@@ -131,13 +134,21 @@ describe("0289: guard ordering, attribution cascade, revision images (Codex 113/
     await expect(adminQuery("delete from public.practitioners where id=$1", [on.m.practitionerId])).rejects.toMatchObject({ code: "23503" });
   });
 
-  it("revision images carry no price or payment column; a performer correction record never blocks deleting its session", async () => {
+  it("chart_revisions has NO value column at all (option A); a price or text change records only the column name; a performer correction record never blocks deleting its session", async () => {
     const on = await setup("e89img", "studio", "studio");
+    const cols = (await adminQuery("select column_name c, data_type t from information_schema.columns where table_schema='public' and table_name='chart_revisions' order by column_name")).rows;
+    expect(cols.map((c) => c.c)).toEqual(["changed_at", "changed_by", "changed_columns", "client_id", "id", "op", "row_id", "studio_id", "table_name", "version_no"]);
+    // the only text-bearing columns are the table name, the operation and the array of column NAMES; nothing json or binary
+    expect(cols.filter((c) => ["json", "jsonb", "bytea"].includes(c.t))).toEqual([]);
+    expect(cols.filter((c) => c.t === "text").map((c) => c.c).sort()).toEqual(["op", "table_name"]);
     await adminQuery("update public.sessions set price_paid_cents = 12345 where id=$1", [on.sessionId]);
     await adminQuery("update public.sessions set next_session_note = 'Synthetic next' where id=$1", [on.sessionId]);
     const r = await revs("sessions", on.sessionId);
     expect(r.length).toBeGreaterThan(0);
-    for (const x of r) for (const img of [x.before_image, x.after_image]) if (img) expect(Object.keys(img).filter((k) => /price|cents|paid|amount|payment/i.test(k))).toEqual([]);
+    expect(r.flatMap((x) => x.changed_columns ?? [])).toEqual(expect.arrayContaining(["price_paid_cents", "next_session_note"]));
+    const all = (await adminQuery("select string_agg(to_jsonb(x)::text, ' ') t from public.chart_revisions x where row_id=$1", [on.sessionId])).rows[0].t as string;
+    expect(all).not.toContain("12345");
+    expect(all).not.toContain("Synthetic next");
     expect((await adminQuery("select count(*) n from pg_constraint where conrelid='public.session_performer_corrections'::regclass and contype='f'")).rows[0].n).toBe("0");
   });
 });
@@ -220,8 +231,9 @@ describe("0289: performer correction replaces the overwrite", () => {
     expect(now).toBe(t.m.practitionerId);
     const c = (await adminQuery("select previous_performer_id, new_performer_id, corrected_by, reason from public.session_performer_corrections where session_id=$1", [t.sessionId])).rows;
     expect(c).toEqual([{ previous_performer_id: original, new_performer_id: t.m.practitionerId, corrected_by: t.m.userId, reason: "Entered under the wrong name" }]);
+    // the original performer id is kept in the corrections record above; the history says only THAT the column changed
     const r = await revs("sessions", t.sessionId);
-    expect(r.at(-1)!.before_image.performed_by_practitioner_id).toBe(original);
+    expect(r.at(-1)!.changed_columns).toContain("performed_by_practitioner_id");
     expect(await correct(t.m.userId, t.sessionId, t.s.clientId, t.m.practitionerId, "Same again")).toBe(false);
   });
 
@@ -423,3 +435,109 @@ describe("0289: a row cannot be moved into a studio where the caller may not edi
 // The moves the schema allows at all with edit ON in both studios (measured on a fresh 255|0289 stack). The others (sessions, session_blocks, entries)
 // are refused by other constraints even then, so there is nothing for the guard to add; a schema change that moves this set must be a decision.
 const EXPECTED_MOVABLE: string[] = ["session_block_areas", "treatment_plans"];
+
+// ---- Option A (Sam, 14 Nov 2026): the history carries metadata only. A planted text value must never reach chart_revisions. -------------------
+describe("0289-A: no planted value ever enters chart_revisions (every guarded table, insert / update / delete)", () => {
+  const TABLES = ["sessions", "session_blocks", "session_block_areas", "electrolysis_entries", "laser_entries", "treatment_plans", "treatment_plan_stages", "client_clinical_notes"] as const;
+  const textColumns = async (t: string) =>
+    (await adminQuery(
+      "select column_name c, data_type d from information_schema.columns where table_schema='public' and table_name=$1 and data_type in ('text','character varying','jsonb') and column_name <> 'id' order by ordinal_position",
+      [t],
+    )).rows as Array<{ c: string; d: string }>;
+
+  async function seedRows(label: string) {
+    const c = await setup(label, "studio", "studio");
+    const laserSession = randomUUID();
+    await adminQuery("insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values ($1,$2,$3,$4,'laser')", [laserSession, c.s.studioId, c.s.clientId, c.s.practitionerId]);
+    const ids: Record<string, string> = { sessions: c.sessionId, session_blocks: c.blockId };
+    ids.session_block_areas = randomUUID();
+    await adminQuery("insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order) values ($1,$2,$3,'Chin','left',0)", [ids.session_block_areas, c.s.studioId, c.blockId]);
+    ids.electrolysis_entries = randomUUID();
+    await adminQuery("insert into public.electrolysis_entries (id, session_id, block_id, area) values ($1,$2,$3,'Chin')", [ids.electrolysis_entries, c.sessionId, c.blockId]);
+    ids.laser_entries = randomUUID();
+    await adminQuery("insert into public.laser_entries (id, session_id, zone) values ($1,$2,'upper lip')", [ids.laser_entries, laserSession]);
+    ids.treatment_plans = randomUUID();
+    await adminQuery("insert into public.treatment_plans (id, client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,'Synthetic plan',4)", [ids.treatment_plans, c.s.clientId, c.s.studioId]);
+    ids.treatment_plan_stages = randomUUID();
+    await adminQuery("insert into public.treatment_plan_stages (id, plan_id, studio_id, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit) values ($1,$2,$3,'weekly',30,4,'weeks')", [ids.treatment_plan_stages, ids.treatment_plans, c.s.studioId]);
+    ids.client_clinical_notes = randomUUID();
+    await adminQuery("insert into public.client_clinical_notes (id, client_id, studio_id, practitioner_id, kind, body) values ($1,$2,$3,$4,'consultation','Synthetic note')", [ids.client_clinical_notes, c.s.clientId, c.s.studioId, c.m.practitionerId]);
+    return ids;
+  }
+
+  it("a sentinel planted in every text/json column that accepts it, through insert, update and delete, appears in NO chart_revisions row; the writer did fire", async () => {
+    const ids = await seedRows("e89a-plant");
+    const sentinel = `SENTINEL-${randomUUID()}`;
+    for (const t of TABLES) {
+      const cols = await textColumns(t);
+      // INSERT: clone the seeded row with a new id, planting the sentinel into every text/json column (a temp table has no checks); fall back to an
+      // unchanged clone when a CHECK refuses the planted copy, and plant afterwards by UPDATE.
+      const cloneId = randomUUID();
+      const plant = cols.map((x) => (x.d === "jsonb" ? `${x.c} = to_jsonb($2::text)` : `${x.c} = $2`)).join(", ");
+      const insertClone = async (planted: boolean) => {
+        await adminQuery(`drop table if exists pg_temp.chart_clone`);
+        await adminQuery(`create temp table chart_clone as select * from public.${t} where id = $1`, [ids[t]]);
+        await adminQuery(`update pg_temp.chart_clone set id = $1${planted && plant ? `, ${plant.replace(/\$2/g, "$2")}` : ""}`, planted && plant ? [cloneId, sentinel] : [cloneId]);
+        await adminQuery(`insert into public.${t} select * from pg_temp.chart_clone`);
+      };
+      try { await insertClone(true); } catch { await insertClone(false); }
+      // UPDATE: plant column by column (a column a CHECK or trigger refuses is skipped); at least one must accept, except the append-only notes table
+      let accepted = 0;
+      for (const x of cols) {
+        try {
+          await adminQuery(`update public.${t} set ${x.c} = ${x.d === "jsonb" ? "to_jsonb($2::text)" : "$2"} where id = $1`, [cloneId, sentinel]);
+          accepted += 1;
+        } catch { /* refused by a check or a trigger: fine */ }
+      }
+      if (t !== "client_clinical_notes") expect(accepted, `${t}: the sentinel was accepted by at least one column (otherwise this test proves nothing)`).toBeGreaterThan(0);
+      try { await adminQuery(`delete from public.${t} where id = $1`, [cloneId]); } catch { /* append-only or restricted: fine */ }
+      const n = Number((await adminQuery("select count(*) n from public.chart_revisions where table_name=$1 and row_id=$2", [t, cloneId])).rows[0].n);
+      expect(n, `${t}: the history writer recorded the operations`).toBeGreaterThanOrEqual(1);
+    }
+    const leaked = (await adminQuery("select table_name, row_id from public.chart_revisions where to_jsonb(chart_revisions)::text like $1", [`%${sentinel}%`])).rows;
+    expect(leaked, "a planted value reached chart_revisions").toEqual([]);
+  });
+
+  it("a planted value also stays out when the writer is an end user (the signed-in member), for the plan and note tables", async () => {
+    const c = await setup("e89a-user", "studio", "studio");
+    const sentinel = `SENTINEL-${randomUUID()}`;
+    const id = (await asUser(c.m.userId, async (q) => q("insert into public.treatment_plans (client_id, studio_id, name, suggested_visit_count) values ($1,$2,$3,4) returning id", [c.s.clientId, c.s.studioId, sentinel]))).rows[0].id as string;
+    await asUser(c.m.userId, (q) => q("update public.treatment_plans set name=$2 where id=$1", [id, `${sentinel}-2`]));
+    await asUser(c.m.userId, (q) => q("insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body) values ($1,$2,$3,'consultation',$4)", [c.s.clientId, c.s.studioId, c.m.practitionerId, sentinel]));
+    const leaked = (await adminQuery("select 1 from public.chart_revisions where to_jsonb(chart_revisions)::text like $1", [`%${sentinel}%`])).rows;
+    expect(leaked).toEqual([]);
+    expect((await adminQuery("select count(*)::int n from public.chart_revisions where studio_id=$1", [c.s.studioId])).rows[0].n).toBeGreaterThanOrEqual(3);
+  });
+
+  it("system paths: a write with no signed-in user is recorded WITHOUT an actor (changed_by null), and still carries no value (R-6)", async () => {
+    const c = await setup("e89a-sys", "studio", "studio");
+    await adminQuery("update public.sessions set next_session_note = 'Synthetic system' where id=$1", [c.sessionId]);
+    const r = (await adminQuery("select changed_by, changed_columns from public.chart_revisions where table_name='sessions' and row_id=$1 order by id desc limit 1", [c.sessionId])).rows[0];
+    expect(r.changed_by).toBeNull();
+    expect(r.changed_columns).toContain("next_session_note");
+    expect(JSON.stringify(r)).not.toContain("Synthetic system");
+  });
+});
+
+// ---- R-5: the cascade-delete exemption (pg_trigger_depth() > 1) is not reachable by an end user, and the real delete command is guarded ---------
+describe("0289: R-5 negative controls", () => {
+  it("a practitioner cannot hard-delete a client, a plan or a session by direct DML (nothing is removed)", async () => {
+    const c = await setup("e89r5-direct", "studio", "studio");
+    const planId = (await insertPlan(c.m.userId, c.s)).rows[0].id as string;
+    for (const [t, id] of [["clients", c.s.clientId], ["treatment_plans", planId]] as const) {
+      try { await asUser(c.m.userId, async (q) => { await q(`delete from public.${t} where id = $1`, [id]); }); } catch { /* a refusal is fine */ }
+      expect((await adminQuery(`select count(*)::int n from public.${t} where id=$1`, [id])).rows[0].n, `${t} was deleted by an end user`).toBe(1);
+    }
+    await expect(asUser(c.m.userId, async (q) => { await q("delete from public.sessions where id = $1", [c.sessionId]); })).rejects.toBeDefined();
+    expect((await adminQuery("select count(*)::int n from public.sessions where id=$1", [c.sessionId])).rows[0].n).toBe(1);
+  });
+
+  it("soft_delete_session: refused for a practitioner with edit OFF (session stays), allowed with edit ON (so the refusal is the guard)", async () => {
+    const off = await setup("e89r5-off", "studio", "off");
+    await expect(asUser(off.m.userId, async (q) => { await q("select public.soft_delete_session($1,$2,'probe reason')", [off.sessionId, off.s.clientId]); })).rejects.toBeDefined();
+    expect((await adminQuery("select deleted_at from public.sessions where id=$1", [off.sessionId])).rows[0].deleted_at).toBeNull();
+    const on = await setup("e89r5-on", "studio", "studio");
+    await asUser(on.m.userId, async (q) => { await q("select public.soft_delete_session($1,$2,'probe reason')", [on.sessionId, on.s.clientId]); });
+    expect((await adminQuery("select deleted_at from public.sessions where id=$1", [on.sessionId])).rows[0].deleted_at).not.toBeNull();
+  });
+});

@@ -1085,7 +1085,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "The append-only history of every insert, update and delete on the chart tables (sessions, blocks, areas, entries, plans, plan stages, clinical notes) with the full before and after image, who changed it and when (migration 0289, ROLES R4). It IS clinical record content, so no raw export until the field review has decided what an export may carry.",
+      "The append-only history of every insert, update and delete on the chart tables (sessions, blocks, areas, entries, plans, plan stages, clinical notes) as metadata only: who changed it, when, which table and row, the operation, the changed column names and a version counter (migration 0289, ROLES R4). It holds no before or after value of any kind. It still says who edited which client's chart, so no raw export until the field review has decided what an export may carry.",
   },
   session_performer_corrections: {
     kind: "pending",

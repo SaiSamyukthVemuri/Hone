@@ -22,7 +22,7 @@ describe("0289 edit-record protections: shape", () => {
 
   it("covers all eight chart tables, and its down file removes what it creates", () => {
     for (const t of TABLES) expect(sql).toContain(`'${t}'`);
-    for (const f of ["chart_write_guard", "chart_revision_write", "chart_revision_image", "chart_attribution_guard", "chart_scope", "chart_lineage_guard", "chart_revisions_append_only", "correct_session_performer"])
+    for (const f of ["chart_write_guard", "chart_revision_write", "chart_attribution_guard", "chart_scope", "chart_lineage_guard", "chart_revisions_append_only", "correct_session_performer"])
       expect(down).toContain(f);
     expect(down).toContain("drop table if exists public.chart_revisions");
     expect(down).toContain("create or replace function public.set_session_performer(");
@@ -67,5 +67,22 @@ describe("0289 edit-record protections: shape", () => {
     expect(code).toMatch(/grant execute on function public\.set_session_performer\(uuid, uuid, uuid\) to authenticated;/);
     expect(code).toContain("Use correct_session_performer to change an existing performer.");
     expect(down).toContain("create or replace function public.set_session_performer(");
+  });
+
+  it("option A: chart_revisions is metadata only (no value column, no image, no image function) and the finalized snapshots are not touched", () => {
+    const create = /create table public\.chart_revisions \(([\s\S]*?)\n\);/.exec(code)![1];
+    expect(create).not.toMatch(/\bjsonb?\b|\bbytea\b|before_image|after_image/i);
+    const cols = [...create.matchAll(/^\s*(\w+)\s+(\w+(?:\[\])?)/gm)].filter((m) => !["constraint", "primary"].includes(m[1]));
+    expect(cols.filter((m) => m[2] === "text").map((m) => m[1]).sort()).toEqual(["op", "table_name"]);
+    expect(create).toContain("changed_columns text[]");
+    expect(create).toContain("version_no");
+    expect(code).not.toContain("chart_revision_image");
+    expect(down).not.toContain("chart_revision_image");
+    expect(code).not.toMatch(/before_image|after_image/);
+    // the writer stores names, never values: its INSERT lists exactly the metadata columns
+    const insert = /insert into public\.chart_revisions \(([^)]*)\)/.exec(code)![1].replace(/\s+/g, " ");
+    expect(insert).toBe("studio_id, client_id, table_name, row_id, op, changed_by, changed_columns, version_no");
+    // 0119/0120 finalized snapshots, amendments and audit events are outside this migration
+    expect(code).not.toMatch(/clinical_record_snapshots|clinical_record_amendments|clinical_audit_events/);
   });
 });
