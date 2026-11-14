@@ -107,6 +107,26 @@ describe("feeRefund (the shared R1 logic, mapped to labels)", () => {
     expect(feeRefund({ ...base, refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded" }).line).toBe("Refunded");
     expect(feeRefund({ ...base, refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "failed" }).line).toBe("Refund needs review");
   });
+  // 0240: a signed cumulative receipt sets refund_status='succeeded' with the FULL amount and leaves stripe_refund_status untouched
+  // (a prior single refund may read failed or canceled). The verified boolean is derived on the server; the fee card honours it.
+  describe("a verified cumulative full refund (0240) on a fee attempt", () => {
+    const cum = { ...base, refund_status: "succeeded", refund_amount_cents: 5000, cumulative_full_refund_verified: true };
+    it.each(["failed", "canceled"])("a prior single refund %s, then the verified cumulative full refund: Refunded, no new refund", (single) => {
+      const r = feeRefund({ ...cum, stripe_refund_status: single, stripe_refund_id: "re_prior" });
+      expect(r.line).toBe("Refunded");
+      expect(r.display.mayStartRefund).toBe(false);
+    });
+    it("WITHOUT the verified flag the same columns stay on review", () => {
+      expect(feeRefund({ ...cum, cumulative_full_refund_verified: false, stripe_refund_status: "failed" }).line).toBe("Refund needs review");
+    });
+    it("an omitted flag is the same as false (a caller that forgets it never claims a refund)", () => {
+      const { cumulative_full_refund_verified: _omit, ...rest } = cum;
+      expect(feeRefund({ ...rest, stripe_refund_status: "failed" }).line).toBe("Refund needs review");
+    });
+    it("the receipt never completes a refund that is not the whole charge", () => {
+      expect(feeRefund({ ...cum, refund_amount_cents: 4999, stripe_refund_status: "failed" }).line).toBe("Refund needs review");
+    });
+  });
   it("processing never offers a new refund; a failed refund with no provider trace does", () => {
     const p = feeRefund({ ...base, refund_status: "pending_stripe" });
     expect(p.line).toBe("Refund processing");

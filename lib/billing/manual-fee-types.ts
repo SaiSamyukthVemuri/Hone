@@ -112,6 +112,8 @@ export type EligibilityExistingAttemptSummary = {
   /** The provider's own refund status (0240) and refund id: used to say "unclear" on disagreement. */
   stripe_refund_status?: string | null;
   stripe_refund_id?: string | null;
+  /** TRUE when the signed cumulative full-refund receipt (0240 stripe_charge_refund_event_id) exists. Derived on the server; the event id itself is never carried here or to the client. */
+  cumulative_full_refund_verified?: boolean;
   receipt_sent_at?: string | null;
   /** When the row last changed; the claim sets pending_stripe, so this is when a charge started. */
   updated_at?: string | null;

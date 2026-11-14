@@ -127,6 +127,8 @@ export type FeeRefundInput = {
   refund_amount_cents?: number | null;
   stripe_refund_status?: string | null;
   stripe_refund_id?: string | null;
+  /** Server-derived boolean from the signed cumulative full-refund receipt; never the event id. */
+  cumulative_full_refund_verified?: boolean;
 };
 
 export function feeRefund(a: FeeRefundInput): { display: RefundDisplay; line: string | null } {
@@ -137,6 +139,7 @@ export function feeRefund(a: FeeRefundInput): { display: RefundDisplay; line: st
     refundAmountCents: typeof a.refund_amount_cents === "number" ? a.refund_amount_cents : null,
     providerRefundStatus: a.stripe_refund_status ?? null,
     stripeRefundId: a.stripe_refund_id ?? null,
+    cumulativeFullRefundVerified: a.cumulative_full_refund_verified === true,
   });
   switch (display.kind) {
     case "refunded":
