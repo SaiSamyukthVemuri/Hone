@@ -16,6 +16,14 @@ export type RefundDisplayInput = {
   providerRefundStatus: string | null;
   /** payment_charge_attempts.stripe_refund_id. The refund runner refuses a NEW attempt once this or the provider status is set. */
   stripeRefundId: string | null;
+  /**
+   * TRUE only when the row carries the signed complete charge-level cumulative full-refund receipt
+   * (payment_charge_attempts.stripe_charge_refund_event_id IS NOT NULL, migration 0240). The id itself is never carried to
+   * the display; only whether it exists. That receipt is SEPARATE from the single Refund's id/status and is monotonic: a
+   * later single-refund observation cannot undo it, so a single refund recorded failed/canceled beside it is history, not a
+   * disagreement.
+   */
+  cumulativeFullRefundVerified: boolean;
 };
 
 export type RefundDisplayKind =
@@ -66,6 +74,19 @@ export function refundDisplayState(i: RefundDisplayInput): RefundDisplay {
   }
 
   if (ours === "succeeded") {
+    // Verified cumulative completion comes BEFORE the single refund's status (Codex P2 on #1427). 0240 sets
+    // refund_status='succeeded' with the FULL amount from the signed cumulative receipt and leaves stripe_refund_status
+    // untouched, so a failed single refund followed by a verified full cumulative refund reads ours=succeeded,
+    // provider=failed. That is a completed refund, not a disagreement. Honored only when the receipt is present AND our
+    // recorded amount is exactly the whole charge; anything else falls through to the agreement rules below.
+    if (
+      i.cumulativeFullRefundVerified === true &&
+      typeof i.amountCents === "number" &&
+      typeof i.refundAmountCents === "number" &&
+      remaining(i, i.refundAmountCents) === 0 // exactly the whole charge: valid integers, nothing left
+    ) {
+      return { kind: "refunded", remainingRefundableCents: 0, mayStartRefund: false };
+    }
     if (provider !== null && provider !== "succeeded") {
       if (provider === "pending") return { kind: "pending", remainingRefundableCents: null, mayStartRefund: false };
       if (provider === "requires_action") {

@@ -142,6 +142,7 @@ export function derivePaymentSummary(
       refundAmountCents: attempt.refundAmountCents,
       providerRefundStatus: attempt.stripeRefundStatus,
       stripeRefundId: attempt.stripeRefundId,
+      cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
     });
     if (refund.kind === "refunded") {
       return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents, currency };

@@ -38,6 +38,7 @@ function attempt(
     refundAmountCents: null,
     refundedAt: null,
     stripeRefundId: null,
+    cumulativeFullRefundVerified: false,
     refundFailureCode: null,
     refundFailureMessageSafe: null,
     ...over,
