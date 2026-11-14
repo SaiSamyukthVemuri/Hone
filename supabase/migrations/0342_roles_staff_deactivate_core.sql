@@ -100,7 +100,11 @@ begin
       return public.perm_fail(case when v_policy = 'reassign' then 'reassign_required' else 'has_upcoming_appointments' end,
                               null, null, null, jsonb_build_object('count', v_upcoming));
     end if;
-    update public.practitioners set active = false where id = p_membership;
+    -- S2-4: the private calendar feed (/calendar-feed/<token>) is honoured only while `active`, so a deactivated person's URL is closed today, but
+    -- reactivation would silently reopen the OLD url, which may have been shared or leaked. Revoke it with the deactivation: the hash is the only
+    -- thing stored (0116 dropped the raw token), and a database function cannot mint a token the person could be shown, so NULL (revoked) is the
+    -- rotation. After a restore they generate a fresh feed link in their own profile; the old one stays dead.
+    update public.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership;
   else
     update public.studio_receptionists set active = false, deactivated_at = now() where id = p_membership;
   end if;

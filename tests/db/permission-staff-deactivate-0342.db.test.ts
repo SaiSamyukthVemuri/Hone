@@ -65,6 +65,26 @@ describe("deactivate_staff_member", () => {
     expect(rows[0]).toMatchObject({ membership_id: m.practitionerId, membership_kind: "practitioner", reason: REASON, actor_user_id: s.userId });
     expect(rows[0].before).toEqual({ active: true });
   });
+  it("S2-4: deactivating a practitioner revokes their private calendar feed, and restoring them does not bring the old link back", async () => {
+    const s = await seedStudio("d342f");
+    await openGate(s.studioId);
+    const m = await seedMember(s, "f1");
+    const bystander = await seedMember(s, "f2");
+    const hash = "a".repeat(64);
+    const otherHash = "b".repeat(64);
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, hash]);
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [bystander.practitionerId, otherHash]);
+    const feed = async (id: string) => (await adminQuery("select calendar_feed_token_hash h from public.practitioners where id=$1", [id])).rows[0].h;
+    // A refused removal revokes nothing (the revoke is part of the same statement as the deactivation, not a side effect of trying).
+    expect(await deact(m.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: false, code: "refused" });
+    expect(await feed(m.practitionerId)).toBe(hash);
+    expect(await deact(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, active: false });
+    expect(await feed(m.practitionerId)).toBeNull();
+    expect(await feed(bystander.practitionerId)).toBe(otherHash);
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, active: true });
+    expect(await feed(m.practitionerId)).toBeNull();
+  });
+
   it("deactivates a receptionist (a path that did not exist), stamping deactivated_at", async () => {
     const s = await seedStudio("d342r");
     const d = await seedDesk(s, "d2");

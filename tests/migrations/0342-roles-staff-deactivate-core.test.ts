@@ -34,6 +34,10 @@ describe("0342 staff deactivate through the core (source)", () => {
   it("widens the audit kinds by exactly two and keeps the five existing ones", () => {
     expect(code()).toMatch(/add constraint permission_audit_kind_check\s+check \(kind in \('role_permissions_saved', 'defaults_adopted', 'role_reset', 'staff_role_changed', 'permissions_activated', 'staff_deactivated', 'staff_reactivated'\)\)/);
   });
+  it("S2-4: deactivating a practitioner revokes the private calendar feed hash in the same statement; reactivation never writes it", () => {
+    expect(fn("deactivate_staff_member")).toMatch(/update public\.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership;/);
+    expect(fn("reactivate_staff_member")).not.toMatch(/calendar_feed/);
+  });
   it("every command is SECURITY DEFINER with an empty search_path, and checks the owner FIRST", () => {
     for (const n of ["deactivate_staff_member", "reactivate_staff_member"]) {
       const b = fn(n);
@@ -90,10 +94,10 @@ describe("0342 staff deactivate through the core (source)", () => {
     const strip = (t: string) => t.replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
     expect(strip(fn("change_staff_role"))).toBe(strip(oldBody));
   });
-  it("one audit row per command, with the reason, and the active flag is the only thing flipped", () => {
+  it("one audit row per command, with the reason, and deactivation flips only the active flag (plus the feed revoke, pinned below)", () => {
     expect(fn("deactivate_staff_member")).toMatch(/'staff_deactivated'/);
     expect(fn("reactivate_staff_member")).toMatch(/'staff_reactivated'/);
-    expect(fn("deactivate_staff_member")).toMatch(/update public\.practitioners set active = false where id = p_membership/);
+    expect(fn("deactivate_staff_member")).toMatch(/update public\.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership/);
     expect(fn("deactivate_staff_member")).toMatch(/update public\.studio_receptionists set active = false, deactivated_at = now\(\) where id = p_membership/);
   });
   it("revokes by name from public, anon, authenticated AND service_role, then grants the three commands to authenticated only", () => {
