@@ -142,8 +142,18 @@ export function derivePaymentSummary(
       refundAmountCents: attempt.refundAmountCents,
       providerRefundStatus: attempt.stripeRefundStatus,
       stripeRefundId: attempt.stripeRefundId,
+      cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
     });
     if (refund.kind === "refunded") {
+      // "Refunded" only when nothing remains. Our writers record the FULL amount (v1 is full-only, 0078/0239/0240), so a
+      // smaller recorded refund is not reachable through them, but a row that carries one must not read "Refunded" with
+      // the CHARGE amount beside it (Photos e1, #1427). It says so, with the amount that went back, the same figure the
+      // refund panel shows. The kind stays "refunded": a refund did succeed, and the money controls read refundDisplayState
+      // directly (mayStartRefund / remainingRefundableCents), not this headline.
+      const partial = typeof refund.remainingRefundableCents === "number" && refund.remainingRefundableCents > 0;
+      if (partial && typeof attempt.refundAmountCents === "number") {
+        return { kind: "refunded", headline: "Partly refunded", tone: "neutral", amountCents: attempt.refundAmountCents, currency };
+      }
       return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents, currency };
     }
     if (refund.kind === "pending") {

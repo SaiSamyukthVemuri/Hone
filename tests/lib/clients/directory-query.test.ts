@@ -17,6 +17,41 @@ const agg = (next: Record<string, string> | null, intake: Record<string, "in_pro
 });
 const P = (over: Partial<ReturnType<typeof parseDirectoryParams>> = {}) => ({ ...parseDirectoryParams({}), ...over });
 
+describe("search lists the best match first (G2), from shown fields only", () => {
+  const names = (p: { rows: { displayName: string }[] }) => p.rows.map((r) => r.displayName);
+  it("exact, then starts-with, then word-start, then contains, alphabetical inside a tier", () => {
+    const rows = [src("1", "Joann Ray"), src("2", "Hannah Lee"), src("3", "Ann Brown"), src("4", "Ann"), src("5", "Mary Ann Cole"), src("6", "Annie Zed")];
+    const p = queryDirectory(rows, agg({}, {}), P({ q: "ann" }));
+    expect(names(p)).toEqual(["Ann", "Ann Brown", "Annie Zed", "Mary Ann Cole", "Hannah Lee", "Joann Ray"]);
+  });
+  it("an exact name beats a name that starts with it, which beats a later word-start match", () => {
+    // Alphabetical would put "Abe Smith" first; the exact name must come before the word-start match.
+    const rows = [src("1", "Abe Smith"), src("2", "Smith"), src("3", "Smithson Abe")];
+    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "smith" })))).toEqual(["Smith", "Smithson Abe", "Abe Smith"]);
+  });
+  it("a name match ranks above an email-only match", () => {
+    // Alphabetical would put "Zed Quill" first.
+    const rows = [{ ...src("1", "Zed Quill"), email: "ann@example.com" }, src("2", "Zoe Ann")];
+    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "ann" })))).toEqual(["Zoe Ann", "Zed Quill"]);
+  });
+  it("with no query the order is still plain name order, and ties still break by id", () => {
+    const rows = [src("2", "Bea"), src("1", "Bea"), src("3", "Al")];
+    expect(queryDirectory(rows, agg({}, {}), P({})).rows.map((r) => r.id)).toEqual(["3", "1", "2"]);
+  });
+  it("ranks the SHOWN name: a stored name behind a preferred name changes nothing", () => {
+    const rows = [
+      projectStaffRow({ id: "1", name: "Ann Stored", preferred_name: "Zoe", pronouns: null, email: null, phone: null, archived_at: null }),
+      src("2", "Ann Shown"),
+    ];
+    expect(names(queryDirectory(rows, agg({}, {}), P({ q: "ann" })))).toEqual(["Ann Shown"]);
+  });
+  it("the next-appointment sort is not reordered by the search", () => {
+    const rows = [src("1", "Ann Late"), src("2", "Zed Ann")];
+    const p = queryDirectory(rows, agg({ "1": "2030-02-01T10:00:00Z", "2": "2030-01-01T10:00:00Z" }, {}), P({ q: "ann", sort: "next" }));
+    expect(p.rows.map((r) => r.id)).toEqual(["2", "1"]);
+  });
+});
+
 describe("directory sort (S4)", () => {
   it("sorts by the DISPLAYED name, not the stored name (control: opposite orders)", () => {
     // Stored order: Alpha < Zulu.  Displayed order: "Bea" < "Yan".

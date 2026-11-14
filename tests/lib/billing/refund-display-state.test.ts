@@ -8,6 +8,7 @@ const base: RefundDisplayInput = {
   refundAmountCents: null,
   providerRefundStatus: null,
   stripeRefundId: null,
+  cumulativeFullRefundVerified: false,
 };
 const s = (o: Partial<RefundDisplayInput>) => refundDisplayState({ ...base, ...o });
 
@@ -114,6 +115,44 @@ describe("refundDisplayState (R1)", () => {
     expect(r.remainingRefundableCents).toBeNull();
     expect(r.mayStartRefund).toBe(false);
   });
+  // Codex P2 on #1427 (lib/billing/refund-display-state.ts): 0240 reconcile_bound_payment_event sets refund_status='succeeded' with the
+  // FULL amount from a signed cumulative receipt (stripe_charge_refund_event_id) and leaves stripe_refund_status untouched. Mirrors the
+  // DB test "0240 prior actual single failed|succeeded identity does not block or get rewritten by cumulative full truth".
+  describe("verified cumulative full refund beside a prior single refund (0240)", () => {
+    const cumulative = { refundStatus: "succeeded", refundAmountCents: 5000, cumulativeFullRefundVerified: true };
+    it.each(["failed", "canceled"])("a prior single refund %s, then a verified cumulative full refund: REFUNDED, no new refund", (single) => {
+      expect(s({ ...cumulative, providerRefundStatus: single, stripeRefundId: "re_prior" })).toEqual({
+        kind: "refunded", remainingRefundableCents: 0, mayStartRefund: false,
+      });
+    });
+    it("a prior single refund that SUCCEEDED, then the cumulative receipt: refunded (unchanged)", () => {
+      expect(s({ ...cumulative, providerRefundStatus: "succeeded" }).kind).toBe("refunded");
+    });
+    it.each(["pending", "requires_action"])("a prior single refund %s beside the verified full receipt is still completed (the receipt is monotonic)", (single) => {
+      expect(s({ ...cumulative, providerRefundStatus: single }).kind).toBe("refunded");
+    });
+    it("WITHOUT the receipt the same columns stay unclear (the disagreement rule is unchanged)", () => {
+      expect(s({ ...cumulative, cumulativeFullRefundVerified: false, providerRefundStatus: "failed" }).kind).toBe("unclear");
+    });
+    it("the receipt never completes a refund whose recorded amount is not the whole charge", () => {
+      expect(s({ ...cumulative, refundAmountCents: 4999, providerRefundStatus: "failed" }).kind).toBe("unclear");
+      expect(s({ ...cumulative, refundAmountCents: null, providerRefundStatus: "failed" }).kind).toBe("unclear");
+      expect(s({ ...cumulative, refundAmountCents: 5001, providerRefundStatus: "failed" }).kind).toBe("unclear");
+    });
+    it("an unprovable amount (fractional or negative) is never completed by the receipt", () => {
+      expect(s({ ...cumulative, amountCents: 50.5, refundAmountCents: 50.5, providerRefundStatus: "failed" }).kind).toBe("unclear");
+      expect(s({ ...cumulative, amountCents: -5, refundAmountCents: -5, providerRefundStatus: "failed" }).kind).toBe("unclear");
+    });
+    it("the receipt never turns our failed/none/pending claim into a completed refund", () => {
+      for (const ours of [null, "failed", "pending_stripe"]) {
+        expect(s({ refundStatus: ours, refundAmountCents: 5000, cumulativeFullRefundVerified: true, providerRefundStatus: "failed" }).kind).not.toBe("refunded");
+      }
+    });
+    it("an unknown value still wins: unclear", () => {
+      expect(s({ ...cumulative, providerRefundStatus: "weird" }).kind).toBe("unclear");
+      expect(s({ ...cumulative, refundStatus: "weird" }).kind).toBe("unclear");
+    });
+  });
   it("remaining is never negative", () => {
     for (const a of [0, 1, 5000]) {
       for (const st of [null, "succeeded", "failed", "pending_stripe"]) {
@@ -136,5 +175,17 @@ describe("refund status wiring (R1)", () => {
     expect(elig).toMatch(/"id, status, amount_cents[^"]*\bstripe_refund_status\b/);
     expect(elig).toMatch(/stripeRefundStatus:[\s\S]{0,80}row\.stripe_refund_status/);
     expect(types).toMatch(/stripeRefundStatus:\s*string \| null/);
+  });
+  it("the cumulative receipt reaches the display as a boolean only: selected, derived on the server, never sent as an id", () => {
+    expect(elig).toMatch(/"id, status, amount_cents[^"]*\bstripe_charge_refund_event_id\b/);
+    expect(elig).toMatch(/cumulativeFullRefundVerified:[\s\S]{0,160}row\.stripe_charge_refund_event_id/);
+    expect(types).toMatch(/cumulativeFullRefundVerified:\s*boolean/);
+    expect(types).not.toMatch(/stripeChargeRefundEventId/);
+    for (const f of ["components/session-payment-prepare-card.tsx", "lib/payments/payment-summary-presenter.ts"]) {
+      const src = readFileSync(join(root, f), "utf8");
+      const calls = src.match(/refundDisplayState\(\{[\s\S]*?\}\)/g) ?? [];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const c of calls) expect(c).toMatch(/cumulativeFullRefundVerified:\s*\w+\.cumulativeFullRefundVerified/);
+    }
   });
 });

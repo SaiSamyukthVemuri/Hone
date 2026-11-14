@@ -75,17 +75,78 @@ describe("the owner follow-up section", () => {
     expect(html).not.toContain("WHYMARK");
     expect(html).not.toContain("Answers will be removed from view on");
   });
-  it("Erase answers is offered on open, handled and closed rows while answers exist, and only behind a confirm step", () => {
+  it("Erase is offered on open, handled and closed rows while answers exist, behind More actions AND a confirm step", () => {
     for (const status of ["open", "handled", "kept", "booked", "removed"] as const) {
       const html = render([row({ status })]);
+      expect(html, status).toContain('data-testid="more-actions"');
       expect(html, status).toContain('data-testid="erase-control"');
-      // the summary opens the disclosure; the submit button lives inside the same <details>, so it is not a one-click action
-      const d = html.slice(html.indexOf("<details"), html.indexOf("</details>"));
+      // More actions opens the erase disclosure; the submit button lives inside the inner <details>, so it is not a one-click action
+      const d = html.slice(html.indexOf('<details data-testid="erase-control"'), html.indexOf("</details>", html.indexOf('<details data-testid="erase-control"')));
       expect(d).toContain("<summary");
       expect(d).toContain("This cannot be undone");
-      expect(d).toContain("Yes, erase the answers");
-      expect(html.match(/Yes, erase the answers/g)).toHaveLength(1);
+      expect(d).toContain("Yes, erase all of this person&#x27;s answers");
+      expect(html.match(/Yes, erase all of this person&#x27;s answers/g)).toHaveLength(1);
+      expect(html).not.toContain("Yes, erase the answers");
     }
+  });
+  it("the erase copy says it is every answer of this person, on other responses earlier or later, and that downloaded copies are not affected", () => {
+    const html = render([row()]);
+    expect(html).toContain("Erase all of this person&#x27;s answers now, including those on their other responses, earlier or later?");
+    expect(html).toContain("Copies you have already downloaded are not affected.");
+    expect(html).not.toContain("on the waitlist now");
+  });
+  it("More actions has an accessible name that includes the person and the action, and is a native keyboard-operable disclosure", () => {
+    const html = render([row({ clientName: "Ada Lovelace" })]);
+    expect(html).toContain('aria-label="More actions for Ada Lovelace: erase answers"');
+    expect(html).toMatch(/<details data-testid="more-actions"[^>]*><summary/);
+    expect(html).not.toMatch(/<button[^>]*tabindex="-1"/);
+    expect(render([row({ clientName: "" })])).toContain('aria-label="More actions for this person: erase answers"');
+  });
+  it("More actions sits in the row header, right after the name and BEFORE the answers and the primary actions, so an opened panel grows downward", () => {
+    const html = render([row({ clientName: "Ada Lovelace" })]);
+    const name = html.indexOf("Ada Lovelace");
+    const more = html.indexOf('data-testid="more-actions"');
+    expect(name).toBeGreaterThan(-1);
+    expect(more).toBeGreaterThan(name);
+    expect(more).toBeLessThan(html.indexOf("WHYMARK"));
+    expect(more).toBeLessThan(html.indexOf("Book now"));
+    expect(html).not.toContain("flex-col-reverse");
+  });
+  it("Book now, Mark handled and Keep on the waitlist stay visible OUTSIDE More actions", () => {
+    const html = render([row(), row({ followupId: "44444444-4444-4444-8444-444444444444", kind: "withdrawal" })]);
+    const outside = html.replace(/<details data-testid="more-actions"[\s\S]*?<\/details><\/div><\/details>/g, "");
+    expect(outside).toContain("Book now");
+    expect(outside).toContain("Mark handled");
+    expect(outside).toContain("Keep on the waitlist");
+    const inside = html.match(/<details data-testid="more-actions"[\s\S]*?<\/details><\/div><\/details>/g)?.join("") ?? "";
+    expect(inside).toContain("Erase all of this person");
+    expect(inside).not.toContain("Book now");
+    expect(inside).not.toContain("Mark handled");
+    expect(inside).not.toContain("Keep on the waitlist");
+  });
+  it("open and closed responses are split: closed ones sit in a collapsed 'Closed (n)' disclosure and the heading counts only open ones", () => {
+    const html = render([
+      row({ clientName: "OpenOne" }),
+      row({ followupId: "55555555-5555-4555-8555-555555555555", status: "handled", clientName: "ClosedOne" }),
+      row({ followupId: "66666666-6666-4666-8666-666666666666", status: "booked", clientName: "ClosedTwo" }),
+    ]);
+    expect(html).toContain("Waitlist responses (1)");
+    const closedAt = html.indexOf('data-testid="closed-responses"');
+    expect(closedAt).toBeGreaterThan(-1);
+    expect(html).toContain("Closed (2)");
+    expect(html.indexOf("OpenOne")).toBeLessThan(closedAt);
+    expect(html.indexOf("ClosedOne")).toBeGreaterThan(closedAt);
+    expect(html.indexOf("ClosedTwo")).toBeGreaterThan(closedAt);
+    // not open by default
+    expect(html.slice(closedAt - 10, closedAt + 40)).not.toContain(" open");
+    // no closed rows: no Closed disclosure
+    expect(render([row()])).not.toContain("closed-responses");
+  });
+  it("only closed rows: says there are no open responses, still lists the closed ones", () => {
+    const html = render([row({ status: "handled" })]);
+    expect(html).toContain("No open responses.");
+    expect(html).toContain("Closed (1)");
+    expect(html).toContain("Waitlist responses (0)");
   });
   it("Erase answers is hidden once the answers are erased, for every status", () => {
     for (const status of ["open", "handled", "removed"] as const) {
@@ -126,6 +187,23 @@ describe("the owner follow-up section", () => {
   it("the settings page hands the cap flag from the read to the section, so a partial list is never rendered as complete", () => {
     const page = readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8");
     expect(page).toContain("capped={followUps.capped === true}");
+  });
+  // X1 (Photos, ae4e592cb): opening /settings/waitlist#follow-up scrolled the section so its heading sat at 17 px under a sticky bar reaching 69 px
+  // (hit-test: covered at 1280 and 390). The anchor target needs the same scroll offset the invite composer uses for its own anchor: the settings
+  // shell hands the header height down as --settings-top; below 700px a second sticky bar sits under it.
+  const SCROLL_MT = "scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)]";
+  const SCROLL_MT_WIDE = "min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)]";
+  it("X1: the #follow-up anchor target clears the sticky bars (section, both widths)", () => {
+    const html = render([row()]);
+    const section = html.match(/<section[^>]*id="follow-up"[^>]*>/)?.[0] ?? "";
+    expect(section).toContain(SCROLL_MT);
+    expect(section).toContain(SCROLL_MT_WIDE);
+  });
+  it("X1: the load-failure fallback that also carries id=follow-up has the same offset", () => {
+    const page = readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8");
+    const fallback = page.match(/<p id="follow-up"[^>]*>/)?.[0] ?? "";
+    expect(fallback).toContain(SCROLL_MT);
+    expect(fallback).toContain(SCROLL_MT_WIDE);
   });
   it("an empty list says so", () => {
     expect(render([])).toContain("No responses need follow-up");
