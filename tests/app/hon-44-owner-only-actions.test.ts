@@ -20,6 +20,9 @@ const state = vi.hoisted(() => ({
   role: "practitioner" as string,
   touched: [] as string[],
   eqs: [] as Array<[string, unknown]>,
+  // Engine answer for clin.view_records (the pinned-note edit asks it before it touches the admin client).
+  viewRecords: true,
+  asks: [] as Array<{ studio: string; key: string; client: unknown }>,
 }));
 
 function recorder(label: string): unknown {
@@ -54,6 +57,14 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => {
     state.touched.push("createAdminClient");
     return recorder("admin");
+  },
+}));
+vi.mock("@/lib/permissions/require-permission", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/permissions/require-permission")>()),
+  requirePermission: async (_db: unknown, studio: string, key: string, ctx?: { client?: unknown }) => {
+    state.touched.push("requirePermission");
+    state.asks.push({ studio, key, client: ctx?.client });
+    return { allowed: state.viewRecords, mode: "enforce", engine: state.viewRecords };
   },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -98,6 +109,8 @@ beforeEach(() => {
   state.role = "practitioner";
   state.touched = [];
   state.eqs = [];
+  state.viewRecords = true;
+  state.asks = [];
 });
 
 async function settled(run: () => Promise<unknown>): Promise<{ value?: unknown; error?: string }> {
@@ -271,6 +284,38 @@ describe("pinned cautions: edit own only, owner edits any", () => {
     state.role = "owner";
     await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
     expect(state.eqs.map(([c]) => c)).not.toContain("created_by_practitioner_id");
+    expect(state.eqs).toContainEqual(["studio_id", "studio-1"]);
+  });
+
+  it("a role without clin.view_records is refused before the admin client exists, owner included in the rule's reach", async () => {
+    for (const role of ["practitioner", "owner"]) {
+      state.role = role;
+      state.touched = [];
+      state.eqs = [];
+      state.viewRecords = false;
+      const outcome = await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
+      expect(outcome.error).toBe("Not available to your role.");
+      // Nothing reached the service-role client, so no row was matched, probed or changed.
+      expect(state.touched).not.toContain("createAdminClient");
+      expect(state.eqs).toEqual([]);
+    }
+  });
+
+  it("asks the engine for clin.view_records, for THIS studio and THIS client, with the signed-in user's client, before any admin access", async () => {
+    state.role = "practitioner";
+    await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
+    expect(state.asks).toEqual([{ studio: "studio-1", key: "clin.view_records", client: ID_B }]);
+    // The engine is asked on the user's session (createClient) and only then does the service-role client appear.
+    expect(state.touched.indexOf("createClient")).toBeGreaterThan(-1);
+    expect(state.touched.indexOf("requirePermission")).toBeGreaterThan(state.touched.indexOf("createClient"));
+  });
+
+  it("a holder of clin.view_records still edits as before (the gate narrows nothing for them)", async () => {
+    state.role = "practitioner";
+    state.viewRecords = true;
+    const outcome = await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
+    // The scripted builder matches no row, which is the existing refusal, so we know the action reached the update.
+    expect(outcome.error).toMatch(/changed or is no longer available/);
     expect(state.eqs).toContainEqual(["studio_id", "studio-1"]);
   });
 
