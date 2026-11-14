@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 268,
-    "last": "0338_one_manual_fee_per_appointment.sql",
-    "sha256": "66610dddfd9fb8c15ce22eca0b6301ee98c225ad1a6512f3ebb7f0b43a5d9b74"
+    "count": 269,
+    "last": "0348_client_tags_edit_key_gate.sql",
+    "sha256": "f05f6aced11cc375d665e48f4adb7bce4346d0a2d2fa2d6a8dca8975a0b61bc9"
   },
   "public": {
     "tables": [
