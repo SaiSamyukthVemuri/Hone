@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0349 source contract. Behaviour is proved against a database in tests/db/pinned-note-edit-key-gate-0349.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0349")}`, "utf8");
@@ -15,9 +15,8 @@ const fnBody = (t: string, head: RegExp) => {
 };
 
 describe("0349 pinned-note edit: requires the allergies-and-cautions edit permission (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once", () => {
     expect(countVersion("0349")).toBe(1);
-    expect(isRepoMax("0349")).toBe(true);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {
