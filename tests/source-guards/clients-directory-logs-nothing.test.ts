@@ -25,6 +25,17 @@ import { describe, expect, it } from "vitest";
 // Bindings are resolved first: an import counts by what the module IS, under any local name or alias,
 // and a global is caught by the identifier it resolves to, not by `console.log(` text.
 //
+// WHAT THIS GUARD DOES NOT COVER (stated so the claim matches the check; Privacy decides whether each residual matters):
+//   - code built or run from strings: `eval`, `new Function(...)`, `setTimeout("...")`, `import()` of a computed path
+//     that is not flagged here (a computed specifier IS a violation; the string's CONTENT is never read);
+//   - sinks reached through modules OUTSIDE the clients closure (shared components, supabase clients, next, third-party
+//     code the directory calls): they have their own guards, and a directory file is not judged by what they do;
+//   - runtime-generated names (`Reflect.get(window, name)`, `Reflect.construct(Error, [q])`, a property name assembled at
+//     run time on an object this scanner cannot resolve to a global holder), and an Error class defined outside this file;
+//   - server infrastructure: the host's request logs, Vercel platform logs and browser history record the URL itself.
+// Computed access to a global holder (window, globalThis, self, global, navigator, process, or any alias) is a violation
+// unless the key is a string literal that is not a forbidden name: fail closed.
+//
 // ALLOWED, deliberately: `@/lib/observability/perf-timing` (page.tsx's measurement spans). Its own
 // guard (tests/source-guards/perf-timing-privacy-guards.test.ts) proves it carries no path, term or id.
 //
@@ -177,6 +188,25 @@ function isLiteralText(expr: ts.Expression, sf: ts.SourceFile, depth = 0): boole
   return false;
 }
 
+const ERROR_NAME_RE = /^(Error|[A-Z]\w*Error|DOMException)$/;
+
+/** True when `expr` names an Error constructor: by name, through a same-file `const` alias, a holder property (`globalThis.Error`), or an in-file class extending one. */
+function isErrorCtor(expr: ts.Expression, depth = 0): boolean {
+  if (depth > 6) return false;
+  if (ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr) || ts.isAsExpression(expr)) return isErrorCtor(expr.expression, depth + 1);
+  if (ts.isPropertyAccessExpression(expr)) return ERROR_NAME_RE.test(expr.name.text) && ts.isIdentifier(expr.expression) && GLOBAL_HOLDERS.has(expr.expression.text);
+  if (ts.isElementAccessExpression(expr)) return ts.isStringLiteralLike(expr.argumentExpression) && ERROR_NAME_RE.test(expr.argumentExpression.text) && ts.isIdentifier(expr.expression) && GLOBAL_HOLDERS.has(expr.expression.text);
+  if (!ts.isIdentifier(expr)) return false;
+  const b = resolveBinding(expr);
+  if (b === undefined) return ERROR_NAME_RE.test(expr.text); // a global, or an unresolved name: judged by its name
+  if (ts.isVariableDeclaration(b) && b.initializer) return isErrorCtor(b.initializer, depth + 1);
+  if (ts.isClassDeclaration(b)) {
+    const ext = b.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
+    return ext !== undefined && isErrorCtor(ext, depth + 1);
+  }
+  return false;
+}
+
 export function logsNothingViolations(file: string, source: string): string[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind(file));
   const out: string[] = [];
@@ -281,16 +311,16 @@ export function logsNothingViolations(file: string, source: string): string[] {
         }
       }
     }
-    // 5. error text must be literal
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && /Error$/.test(node.expression.text)) {
+    // 5. error text must be literal: every CALL of an Error constructor, with or without `new`, is error construction
+    if ((ts.isNewExpression(node) || ts.isCallExpression(node)) && isErrorCtor(node.expression)) {
       for (const a of node.arguments ?? []) {
-        if (!ts.isExpression(a) || !isLiteralText(a, sf)) out.push(`${file}:${at(node)} builds ${node.expression.text} text from a non-literal`);
+        if (!ts.isExpression(a) || !isLiteralText(a, sf)) out.push(`${file}:${at(node)} builds ${node.expression.getText(sf)} text from a non-literal`);
       }
     }
     if (ts.isThrowStatement(node)) {
       const e = node.expression;
-      const isNewError = ts.isNewExpression(e) && ts.isIdentifier(e.expression) && /Error$/.test(e.expression.text);
-      if (!isNewError) out.push(`${file}:${at(node)} throws something other than a new ...Error(literal)`);
+      const isErr = (ts.isNewExpression(e) || ts.isCallExpression(e)) && isErrorCtor(e.expression);
+      if (!isErr) out.push(`${file}:${at(node)} throws something other than a new ...Error(literal)`);
     }
     // 1. a reference to a forbidden global (not a property NAME, not a declaration's own name)
     if (ts.isIdentifier(node) && FORBIDDEN_GLOBALS.has(node.text)) {
@@ -311,15 +341,37 @@ export function logsNothingViolations(file: string, source: string): string[] {
     }
     if (ts.isElementAccessExpression(node) && isHolderExpr(node.expression)) {
       const a = node.argumentExpression;
-      if (!ts.isStringLiteralLike(a) || FORBIDDEN_GLOBALS.has(a.text) || a.text === "process") {
+      if (!ts.isStringLiteralLike(a) || FORBIDDEN_GLOBALS.has(a.text) || a.text === "process" || a.text === "navigator") {
         out.push(`${file}:${at(node)} reaches a global through ${node.expression.getText(sf)}[...]`);
       }
     }
-    if (ts.isVariableDeclaration(node) && node.initializer && ts.isObjectBindingPattern(node.name) && isHolderExpr(node.initializer)) {
-      for (const el of node.name.elements) {
-        const key = el.propertyName && (ts.isIdentifier(el.propertyName) || ts.isStringLiteralLike(el.propertyName)) ? el.propertyName.text : ts.isIdentifier(el.name) ? el.name.text : "";
-        if (FORBIDDEN_GLOBALS.has(key) || key === "process" || (el.dotDotDotToken && !GLOBAL_HOLDERS.has(key))) {
-          out.push(`${file}:${at(el)} destructures ${key || "..."} from ${node.initializer.getText(sf)}`);
+    // Destructuring a global holder, in every position it can occur: a declaration, a parameter default, an assignment.
+    // Any computed key is a violation unless it is a string literal that is not a forbidden name (fail closed).
+    const badKey = (k: string) => FORBIDDEN_GLOBALS.has(k) || k === "process" || k === "navigator";
+    const checkKey = (nameNode: ts.PropertyName | undefined, localName: ts.Node | undefined, rest: boolean, src: ts.Expression, at2: ts.Node): void => {
+      let key = "";
+      if (nameNode && ts.isComputedPropertyName(nameNode)) {
+        const inner = nameNode.expression;
+        if (!ts.isStringLiteralLike(inner)) { out.push(`${file}:${at(at2)} destructures a computed key from ${src.getText(sf)}`); return; }
+        key = inner.text;
+      } else if (nameNode && (ts.isIdentifier(nameNode) || ts.isStringLiteralLike(nameNode))) key = nameNode.text;
+      else if (localName && ts.isIdentifier(localName)) key = localName.text;
+      if (badKey(key) || (rest && !GLOBAL_HOLDERS.has(key))) out.push(`${file}:${at(at2)} destructures ${key || "..."} from ${src.getText(sf)}`);
+    };
+    const checkBinding = (pattern: ts.ObjectBindingPattern, src: ts.Expression): void => {
+      for (const el of pattern.elements) checkKey(el.propertyName, el.name, !!el.dotDotDotToken, src, el);
+    };
+    if ((ts.isVariableDeclaration(node) || ts.isParameter(node)) && node.initializer && ts.isObjectBindingPattern(node.name) && isHolderExpr(node.initializer)) {
+      checkBinding(node.name, node.initializer);
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && isHolderExpr(node.right)) {
+      let left: ts.Expression = node.left;
+      while (ts.isParenthesizedExpression(left)) left = left.expression;
+      if (ts.isObjectLiteralExpression(left)) {
+        for (const prop of left.properties) {
+          if (ts.isPropertyAssignment(prop)) checkKey(prop.name, ts.isIdentifier(prop.initializer) ? prop.initializer : undefined, false, node.right, prop);
+          else if (ts.isShorthandPropertyAssignment(prop)) checkKey(prop.name, prop.name, false, node.right, prop);
+          else if (ts.isSpreadAssignment(prop)) checkKey(undefined, undefined, true, node.right, prop);
         }
       }
     }
@@ -451,6 +503,30 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "computed dynamic import": 'export const f = (m: string) => import(m);',
     "an alias import that does not resolve": 'import { x } from "@/lib/does-not-exist-anywhere"; export const f = () => x;',
     "a relative import that does not resolve": 'import { x } from "./nope"; export const f = () => x;',
+    // Codex P2 #4 classes: computed keys on a holder, and Error called without `new`
+    "computed destructuring key": 'const key = "fetch"; const { [key]: send } = window; export const f = (q: string) => send("/x", { body: q });',
+    "computed destructuring key from an alias": 'const g = globalThis; const k = "con" + "sole"; const { [k]: c } = g; export const f = (q: string) => c.log(q);',
+    "computed destructuring key, literal forbidden": 'const { ["fetch"]: send } = window; export const f = (q: string) => send("/x", { body: q });',
+    "computed key in a parameter default": 'const key = "fetch"; export const f = ({ [key]: send } = window) => send("/x");',
+    "computed key in an assignment destructure": 'let send: unknown; const key = "fetch"; ({ [key]: send } = window); export const f = () => send;',
+    "rest destructure of a holder": 'const { location, ...others } = window; export const f = () => [location, others];',
+    "parameter default destructure of fetch": 'export const f = ({ fetch: send } = window) => send;',
+    "assignment destructure of fetch": 'let send: unknown; ({ fetch: send } = window); export const f = () => send;',
+    "shorthand assignment destructure of fetch": 'let fetch2: unknown; ({ fetch: fetch2 } = globalThis); export const f = () => fetch2;',
+    "computed element key on a holder alias": 'const w = self; export const f = (k: string) => w[k];',
+    "navigator by literal key on a holder": 'export const f = () => window["navigator"];',
+    "Error called without new": 'export const f = (q: string) => Promise.reject(Error(q));',
+    "TypeError called without new": 'export const f = (q: string) => TypeError(q);',
+    "throw of an Error call with the term": 'export const f = (q: string) => { throw Error(`no ${q}`); };',
+    "Error alias called": 'const E = Error; export const f = (q: string) => E(q);',
+    "Error alias constructed": 'const E = TypeError; export const f = (q: string) => new E(q);',
+    "holder Error called": 'export const f = (q: string) => globalThis.Error(q);',
+    "holder Error constructed": 'export const f = (q: string) => new window.RangeError(q);',
+    "class extending Error with the term": 'class MyFailure extends Error {} export const f = (q: string) => new MyFailure(q);',
+    "class extending an Error alias": 'const B = Error; class MyFailure extends B {} export const f = (q: string) => MyFailure(q);',
+    "DOMException with the term": 'export const f = (q: string) => new DOMException(q);',
+    "AggregateError with the term": 'export const f = (q: string) => new AggregateError([], q);',
+    "throw of an Error call alias": 'const E = Error; export const f = (q: string) => { throw E(q); };',
     "parameter shadowing a literal const": 'const msg = "Failed to load"; export const f = (msg: string) => { throw new Error(msg); };',
     "inner const shadowing a literal const": 'const msg = "Failed"; export const f = (q: string) => { { const msg = q; throw new Error(msg); } };',
     "catch variable shadowing a literal const": 'const e = "Failed"; export const f = () => { try { return 1; } catch (e) { throw new Error(e as string); } };',
@@ -493,6 +569,12 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "a relative import of a sibling clients module": 'import { matchesDirectoryQuery } from "./directory-search"; export const m = matchesDirectoryQuery;',
     "a parent-relative import of a harmless shared module": 'import { createClient } from "../supabase/server"; export const c = createClient;',
     "an import-equals of a harmless package": 'import path = require("node:path"); export const j = path.join;',
+    "a literal Error called without new": 'export const f = () => { throw Error("Failed to load clients"); };',
+    "a literal Error alias": 'const E = TypeError; export const f = () => new E("Failed to load");',
+    "a class extending Error with a literal": 'class MyFailure extends Error {} export const f = () => { throw new MyFailure("Failed to load clients"); };',
+    "a function merely named like an error check": 'const isError = (x: unknown) => x instanceof Error; export const f = (q: unknown) => isError(q);',
+    "a literal computed destructuring key that is not forbidden": 'const { ["location"]: loc } = window; export const f = () => loc.hash;',
+    "a literal element key on a holder": 'export const f = () => window["location"].hash;',
     "a template without substitutions": 'export const f = () => { throw new Error(`Failed to load clients`); };',
   };
   for (const [name, code] of Object.entries(clean)) {
