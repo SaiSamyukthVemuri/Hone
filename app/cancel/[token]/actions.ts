@@ -7,7 +7,7 @@ import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
-import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { recordAppointmentCancelNotifications } from "@/lib/notifications/appointment-cancel-notification";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import {
   CANCELLATION_NOTE_MAX_LENGTH,
@@ -341,6 +341,17 @@ export async function publicCancelAppointmentAction(
 
   // The command committed. Notification failure must neither undo that
   // outcome nor invite an unsafe replay of cancellation/provider delivery.
+  //
+  // THE BELL IS WRITTEN FIRST AND ON ITS OWN READS. It used to sit inside the joined
+  // appointment read below, so a null studios/clients join (or any throw in the email
+  // composition) suppressed it silently. It now needs only the committed appointment id,
+  // never throws, and writes at most one row per appointment.
+  await recordAppointmentCancelNotifications(admin, {
+    appointmentId: resolved.appointment_id,
+    studioId: outcome.studio_id ?? null,
+    reasonLabel,
+    actorPractitionerId: null,
+  });
   let notificationUnconfirmed = true;
   let notificationStudioId: string | null = outcome.studio_id ?? null;
   try {
@@ -382,26 +393,6 @@ export async function publicCancelAppointmentAction(
       const apptStudio = pickOne(apptRow.studio);
       const apptService = pickOne(apptRow.service);
       const apptClient = pickOne(apptRow.client);
-
-      // PR #164. Fire-and-forget practitioner notification. The
-      // RPC already committed the cancellation; this helper never
-      // throws to the caller. Body composes the client name + the
-      // optional reason label that was already validated above and
-      // is studio-member-safe to display. href links to the
-      // appointment detail page where the full cancellation
-      // insight + audit row live.
-      recordPractitionerNotification({
-        studioId: apptRow.studio_id,
-        practitionerId: apptRow.practitioner_id,
-        eventType: "appointment_cancelled",
-        title: "Appointment cancelled",
-        body: reasonLabel
-          ? `${apptClient?.name ?? "A client"} cancelled their appointment. Reason: ${reasonLabel}.`
-          : `${apptClient?.name ?? "A client"} cancelled their appointment.`,
-        appointmentId: resolved.appointment_id,
-        clientId: apptRow.client_id,
-        href: `/calendar/${resolved.appointment_id}`,
-      });
 
       // PR #132. Write the policy acknowledgement row. studio_id,
       // client_id, and appointment_id are all server-resolved from the

@@ -57,6 +57,7 @@ const loaders: Record<string, () => Promise<PageModule>> = {
   "booking/link/page.tsx": () => import("@/app/(app)/settings/booking/link/page"),
   "booking/window/page.tsx": () => import("@/app/(app)/settings/booking/window/page"),
   "waitlist/page.tsx": () => import("@/app/(app)/settings/waitlist/page"),
+  "waitlist/replies/page.tsx": () => import("@/app/(app)/settings/waitlist/replies/page"),
   "availability/page.tsx": () => import("@/app/(app)/settings/availability/page"),
   "services/page.tsx": () => import("@/app/(app)/settings/services/page"),
   "machines/page.tsx": () => import("@/app/(app)/settings/machines/page"),
@@ -95,6 +96,8 @@ const OWNER_ONLY_ROUTES: Record<string, string> = {
   "/settings/booking/link": "booking/link/page.tsx",
   "/settings/booking/window": "booking/window/page.tsx",
   "/settings/waitlist": "waitlist/page.tsx",
+  // 0319: the recipient's own words are readable by the owner and nobody else.
+  "/settings/waitlist/replies": "waitlist/replies/page.tsx",
   "/settings/availability": "availability/page.tsx",
   "/settings/services": "services/page.tsx",
   "/settings/machines": "machines/page.tsx",
