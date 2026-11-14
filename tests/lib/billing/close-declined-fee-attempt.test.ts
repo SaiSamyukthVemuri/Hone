@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { feeAttemptState } from "@/lib/billing/manual-fee-attempt-state";
+import { feeExecuteBlock, feePrepareBlock, ONE_FEE_PER_APPOINTMENT_MESSAGE, type OneFeeAttempt } from "@/lib/billing/manual-fee-one-per-appointment";
 
 // E1 (Sam, 13 Nov): "Close declined attempt". Fake Stripe, synthetic rows, no network, no database.
 // The function cancels the attempt's OWN PaymentIntent and records stripe_status='canceled' only from
@@ -135,6 +136,49 @@ describe("closes ONLY after Stripe confirms canceled with nothing captured", () 
     expect(await run()).toMatchObject({ ok: true, outcome: "already_closed" });
     expect(h.retrieves + h.cancels + h.creates).toBe(0);
   });
+});
+
+// End to end at the unit level, through the REAL appointment gate (the one prepare and execute use), not only the card state:
+// what the close function writes is fed back as the attempt row, so "freed once the provider proves canceled" is proven by composition.
+describe("the appointment is freed by the close function's own write, and only by it", () => {
+  const AT = "2026-11-12T10:00:00.000Z";
+  const NOW = new Date("2026-11-12T12:00:00.000Z");
+  const attemptAfter = (): OneFeeAttempt => ({
+    id: ATTEMPT, charge_type: "no_show", status: "failed", failure_code: "card_declined", created_at: AT, updated_at: AT,
+    stripe_payment_intent_id: PI, stripe_status: (h.updates[0]?.stripe_status as string) ?? (ROW.stripe_status as string),
+    charged_at: null, stripe_charge_id: null,
+  });
+  it("BEFORE the close: a declined attempt holding a live PaymentIntent blocks a new fee of either type", () => {
+    const before: OneFeeAttempt = { ...attemptAfter(), stripe_status: ROW.stripe_status as string };
+    expect(feePrepareBlock([before], "no_show", NOW)).not.toBeNull();
+    expect(feePrepareBlock([before], "late_cancel", NOW)).toBe(ONE_FEE_PER_APPOINTMENT_MESSAGE);
+    const fresh = { id: "44444444-4444-4444-8444-444444444444", created_at: "2026-11-12T11:00:00.000Z" };
+    expect(feeExecuteBlock(fresh, [before], NOW)).not.toBeNull();
+  });
+  it("HAPPY PATH: metadata and mode match, Stripe says canceled with nothing captured: closed, and prepare and execute are then free for both types", async () => {
+    h.retrieveReply = pi({ status: "requires_payment_method" });
+    expect(await run()).toMatchObject({ ok: true, outcome: "closed", appointmentId: "a1" });
+    expect(h.updates).toEqual([{ stripe_status: "canceled" }]);
+    expect(feePrepareBlock([attemptAfter()], "no_show", NOW)).toBeNull();
+    expect(feePrepareBlock([attemptAfter()], "late_cancel", NOW)).toBeNull();
+    // A NEW fee attempt, created after the close, may execute beside the closed one.
+    const fresh = { id: "44444444-4444-4444-8444-444444444444", created_at: "2026-11-12T11:00:00.000Z" };
+    expect(feeExecuteBlock(fresh, [attemptAfter()], NOW)).toBeNull();
+  });
+  for (const [name, over] of [
+    ["metadata names another attempt", { metadata: { hone_session_payment_charge_attempt_id: "someone-else" } }],
+    ["metadata missing", { metadata: {} }],
+    ["mode differs", { livemode: true }],
+  ] as const) {
+    it(`MISMATCH (${name}): nothing is cancelled or written and the appointment STAYS blocked`, async () => {
+      h.retrieveReply = pi({ status: "requires_payment_method", ...over });
+      expect(await run()).toMatchObject({ ok: false, outcome: "unclear" });
+      expect(h.cancels).toBe(0);
+      expect(h.updates).toHaveLength(0);
+      expect(feePrepareBlock([attemptAfter()], "no_show", NOW)).not.toBeNull();
+      expect(feePrepareBlock([attemptAfter()], "late_cancel", NOW)).toBe(ONE_FEE_PER_APPOINTMENT_MESSAGE);
+    });
+  }
 });
 
 describe("anything unconfirmed, unknown or money-bearing BLOCKS and writes nothing", () => {
