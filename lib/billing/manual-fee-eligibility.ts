@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import {
   MANUAL_FEE_AMOUNT_CEILING_CENTS,
@@ -201,7 +202,7 @@ export async function getManualFeeChargeEligibility(
   // mode is unaffected. Refund/cancel/display are NOT gated by eligibility.
   const feeChargeReason =
     serverChargeType === "no_show" ? "no_show_fee" : "late_cancellation_fee";
-  const liveHold = liveChargeReasonBlockMessage(feeChargeReason, livemode);
+  const liveHold = liveChargeReasonBlockMessage(feeChargeReason, livemode, args.studioId);
   if (liveHold) {
     reasons.push(liveHold);
   }
@@ -433,7 +434,7 @@ export async function getManualFeeChargeEligibility(
     admin
       .from("payment_charge_attempts")
       .select(
-        "id, charge_reason, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refunded_at, receipt_sent_at",
+        "id, charge_reason, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, stripe_status, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, refunded_at, receipt_sent_at, updated_at",
       )
       .eq("studio_id", args.studioId)
       .eq("appointment_id", args.appointmentId)
@@ -468,6 +469,7 @@ export async function getManualFeeChargeEligibility(
       stripe_payment_intent_id:
         (row.stripe_payment_intent_id as string | null) ?? null,
       stripe_charge_id: (row.stripe_charge_id as string | null) ?? null,
+      stripe_status: (row.stripe_status as string | null) ?? null,
       charged_at: (row.charged_at as string | null) ?? null,
       failed_at: (row.failed_at as string | null) ?? null,
       failure_code: (row.failure_code as string | null) ?? null,
@@ -475,7 +477,14 @@ export async function getManualFeeChargeEligibility(
       cancelled_at: (row.cancelled_at as string | null) ?? null,
       cancelled_reason: (row.cancelled_reason as string | null) ?? null,
       refund_status: (row.refund_status as string | null) ?? null,
+      refund_amount_cents: (row.refund_amount_cents as number | null) ?? null,
+      refunded_at: (row.refunded_at as string | null) ?? null,
+      stripe_refund_status: (row.stripe_refund_status as string | null) ?? null,
+      stripe_refund_id: (row.stripe_refund_id as string | null) ?? null,
+      cumulative_full_refund_verified:
+        typeof row.stripe_charge_refund_event_id === "string" && row.stripe_charge_refund_event_id.length > 0,
       receipt_sent_at: (row.receipt_sent_at as string | null) ?? null,
+      updated_at: (row.updated_at as string | null) ?? null,
     })),
     ...(legacyRows ?? []).map((row) => ({
       id: row.id as string,
@@ -495,20 +504,10 @@ export async function getManualFeeChargeEligibility(
       cancelled_reason: (row.cancelled_reason as string | null) ?? null,
     })),
   ].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  const ACTIVE_STATUSES = new Set([
-    "ready",
-    "pending_stripe",
-    "succeeded",
-  ]);
-  const activeForType = existingAttempts.find(
-    (row) =>
-      row.charge_type === serverChargeType && ACTIVE_STATUSES.has(row.status),
-  );
-  if (activeForType) {
-    reasons.push(
-      "An active fee charge attempt already exists for this appointment.",
-    );
-  }
+  // One manual fee per appointment, across BOTH types (lib/billing/manual-fee-one-per-appointment.ts).
+  // Only a failed or cancelled attempt frees the appointment.
+  const oneFee = feePrepareBlock(existingAttempts, serverChargeType, new Date());
+  if (oneFee) reasons.push(oneFee);
 
   if (
     reasons.length === 0 &&

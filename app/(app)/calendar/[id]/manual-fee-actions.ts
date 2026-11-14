@@ -16,6 +16,8 @@ import {
   autoSendReceiptAfterCharge,
   type AutoReceiptOutcome,
 } from "@/lib/billing/auto-payment-receipt";
+import { ONE_FEE_PER_APPOINTMENT_MESSAGE } from "@/lib/billing/manual-fee-one-per-appointment";
+import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
@@ -221,7 +223,14 @@ export async function prepareManualFeeChargeAction(
     // eligibility check. The user-facing error matches what we
     // would have shown if the pre-INSERT check had caught it.
     if (insertErr.code === "23505") {
-      return { ok: false, error: DUPLICATE_ATTEMPT_ERROR };
+      // 0338: the cross-type index (one manual fee per appointment, either type) gets the one-fee message;
+      // the same-type indexes keep the existing duplicate message.
+      return {
+        ok: false,
+        error: String(insertErr.message ?? "").includes("payment_charge_attempts_one_fee_per_appointment_uniq")
+          ? ONE_FEE_PER_APPOINTMENT_MESSAGE
+          : DUPLICATE_ATTEMPT_ERROR,
+      };
     }
     logInternal("manual_fee_prepare_insert_failed", {
       code: dbErrorCode(insertErr),
@@ -346,7 +355,7 @@ export async function chargeManualFeeAttemptAction(
   const admin = createAdminClient();
   const { data: attemptRow, error: attemptRowError } = await admin
     .from("payment_charge_attempts")
-    .select("charge_reason, currency")
+    .select("charge_reason, currency, appointment_id, created_at")
     .eq("id", attemptId)
     .eq("studio_id", studioId)
     .maybeSingle();
@@ -387,9 +396,29 @@ export async function chargeManualFeeAttemptAction(
   const hold = liveChargeReasonBlockMessage(
     attemptRow.charge_reason,
     inferStripeLivemode(),
+    studioId,
   );
   if (hold) {
     return { ok: false, outcome: "blocked", error: hold };
+  }
+
+  // One manual fee per appointment, across both types: the earlier, friendlier refusal. The shared
+  // runner re-checks the same rule immediately before the claim, so this is not the only guard.
+  {
+    const oneFee = await oneFeeExecuteVerdict(
+      admin,
+      {
+        id: attemptId,
+        studio_id: studioId,
+        appointment_id: (attemptRow as { appointment_id?: string | null }).appointment_id ?? null,
+        created_at: (attemptRow as { created_at?: string | null }).created_at ?? null,
+      },
+      inferStripeLivemode(),
+      new Date(),
+    );
+    if (oneFee) {
+      return { ok: false, outcome: "blocked", error: oneFee };
+    }
   }
 
   // PR #196: fee attempts execute through the unified canonical
