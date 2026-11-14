@@ -965,7 +965,7 @@ export default async function WaitlistSettingsPage({
                 capped={followUps.capped === true}
               />
             ) : (
-              <p id="follow-up" className="text-sm text-neutral-600 dark:text-neutral-400" role="status">
+              <p id="follow-up" className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] text-sm text-neutral-600 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:text-neutral-400" role="status">
                 We couldn&rsquo;t load the waitlist responses. Reload to try again.
               </p>
             ))}
