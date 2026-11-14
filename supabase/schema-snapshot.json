@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 268,
+    "count": 269,
     "last": "0338_one_manual_fee_per_appointment.sql",
-    "sha256": "66610dddfd9fb8c15ce22eca0b6301ee98c225ad1a6512f3ebb7f0b43a5d9b74"
+    "sha256": "4b422c0254e91f48c34e8c27bf3645d677fe8b1fc9cbef48b9a2189705333ef0"
   },
   "public": {
     "tables": [
@@ -244,6 +244,7 @@
       "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
+      "clin_key_studios",
       "close_delivery_concern",
       "close_new_client_waitlist_admission_round",
       "close_unbooked_new_client_waitlist_invitation",

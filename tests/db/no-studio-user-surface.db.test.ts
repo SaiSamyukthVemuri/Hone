@@ -75,7 +75,7 @@ import {
 export function uidOnlyPolicy(expr: string): boolean {
   const e = expr.toLowerCase().replace(/\s+/g, " ");
   if (!/auth\.uid\(\)/.test(e)) return false;
-  if (/(is_studio_member|is_studio_owner|can_[a-z_]+|is_platform_admin)/.test(e)) return false;
+  if (/(is_studio_member|is_studio_owner|can_[a-z_]+|clin_key_studios|is_platform_admin)/.test(e)) return false;
   const rest = e.replace(/\(?\s*(?:select\s+)?auth\.uid\(\)(?:\s+as\s+uid)?\s*\)?\s+is\s+not\s+null/g, "");
   return !/auth\.uid\(\)/.test(rest);
 }
@@ -604,7 +604,7 @@ describe("no-studio authenticated user: what can be reached", () => {
         `select schemaname||'.'||tablename||' '||policyname||' ['||cmd||']' p from pg_policies
           where schemaname in ('public','storage')
             and (roles::text like '%authenticated%' or roles::text like '%public%')
-            and coalesce(qual,'')||' '||coalesce(with_check,'') !~ '(is_studio_member|is_studio_owner|can_[a-z_]+|auth[.]uid[(][)]|is_platform_admin)'
+            and coalesce(qual,'')||' '||coalesce(with_check,'') !~ '(is_studio_member|is_studio_owner|can_[a-z_]+|clin_key_studios|auth[.]uid[(][)]|is_platform_admin)'
           order by 1`,
       )
     ).rows.map((r: J) => r.p as string);
@@ -819,6 +819,9 @@ const PINNED: string[] = [
   "fn public.can_read_client_legal_identity(target_studio_id uuid)",
   "fn public.can_use_client_legal_identity(target_studio_id uuid)",
   "fn public.change_staff_role(p_studio uuid, p_membership uuid, p_new_role text, p_expected_current_role text, p_reason text)",
+  // 0333 (I1): the key-aware studio set used by the clinical SELECT policies. Reachable by design (a policy runs as the caller), but it returns the EMPTY set
+  // for a caller with no active practitioner row (proved in tests/db/clin-read-enforcement-records.db.test.ts, "an unknown key or no session returns no studios").
+  "fn public.clin_key_studios(p_key text)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
   "fn public.effective_access(p_studio uuid, p_membership uuid)",
@@ -889,15 +892,21 @@ const PINNED: string[] = [
   "nohelper public.laser_entries laser_entries: members update [UPDATE]",
   "nohelper public.machine_profile_field_contract machine_profile_field_contract_read [SELECT]",
   "nohelper public.machine_profile_mode_contract machine_profile_mode_contract_read [SELECT]",
+  // 0333: session_audit follows sessions' own (key-gated) policy through a subselect, like the entry tables above; it names no membership helper itself.
+  "nohelper public.session_audit session_audit_studio_member_read [SELECT]",
   "nohelper public.studio_timed_blocks studio_timed_blocks_member_delete_own [DELETE]",
   "nohelper public.studio_timed_blocks studio_timed_blocks_member_insert [INSERT]",
   "nohelper public.studio_timed_blocks studio_timed_blocks_member_update_own [UPDATE]",
   "nohelper public.waitlist waitlist_anonymous_insert [INSERT]",
   "nonmember public.demo_requests demo_requests_anonymous_insert [INSERT] qual=null",
-  "nonmember public.electrolysis_entries electrolysis_entries: members select [SELECT] qual=session_is_visible(session_id)",
+  // 0333: follows sessions' own (key-gated) policy through a subselect
+  "nonmember public.electrolysis_entries electrolysis_entries: members select [SELECT] qual=(session_id IN ( SELECT s.id\n   FROM sessions s))",
   "nonmember public.electrolysis_entries electrolysis_entries: members insert [INSERT] qual=null",
   "nonmember public.electrolysis_entries electrolysis_entries: members update [UPDATE] qual=session_is_visible(session_id)",
-  "nonmember public.laser_entries laser_entries: members select [SELECT] qual=session_is_visible(session_id)",
+  // 0333: session_audit likewise
+  "nonmember public.session_audit session_audit_studio_member_read [SELECT] qual=(session_id IN ( SELECT s.id\n   FROM sessions s))",
+  // 0333: follows sessions' own (key-gated) policy through a subselect
+  "nonmember public.laser_entries laser_entries: members select [SELECT] qual=(session_id IN ( SELECT s.id\n   FROM sessions s))",
   "nonmember public.laser_entries laser_entries: members insert [INSERT] qual=null",
   "nonmember public.laser_entries laser_entries: members update [UPDATE] qual=session_is_visible(session_id)",
   "nonmember public.machine_profile_field_contract machine_profile_field_contract_read [SELECT] qual=true",
