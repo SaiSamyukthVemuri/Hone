@@ -99,6 +99,18 @@ describe.each(["submitted", "reviewed"] as const)("0340: a %s intake keeps its c
     const r = await asRole("service_role", (q) => q(`update public.client_intake_forms set deleted_at = now() where id = $1`, [id]));
     expect(r.rowCount).toBe(1);
     expect(await code(asRole("service_role", (q) => q(`update public.client_intake_forms set client_id = $2 where id = $1`, [id, otherClient])))).toBe(CHECK);
+    expect(
+      await code(asRole("service_role", (q) => q(`update public.client_intake_forms set studio_id = $2, client_id = $3 where id = $1`, [id, B.studioId, B.clientId]))),
+    ).toBe(CHECK);
+    const after = await stored(id);
+    expect([after.studio_id, after.client_id]).toEqual([A.studioId, A.clientId]);
+  });
+
+  it("the studio owner's own session cannot hide it either (the rule binds every signed-in caller)", async () => {
+    const id = await seedIntake(state);
+    const before = await stored(id);
+    expect(await code(userQuery(A.userId, `update public.client_intake_forms set deleted_at = now() where id = $1`, [id]))).toBe(CHECK);
+    expect(await stored(id)).toEqual(before);
   });
 });
 
@@ -156,6 +168,10 @@ describe("0340: what the guard does not change", () => {
     expect((await stored(id)).client_id).toBe(A.clientId);
     // deleted_at on a row the client has not submitted is outside this change
     expect((await userQuery(member.userId, `update public.client_intake_forms set deleted_at = now() where id = $1`, [id])).rowCount).toBe(1);
+    expect((await stored(id)).deleted_at).not.toBeNull();
+    // and can clear it again, as before 0340
+    expect((await userQuery(member.userId, `update public.client_intake_forms set deleted_at = null where id = $1`, [id])).rowCount).toBe(1);
+    expect((await stored(id)).deleted_at).toBeNull();
   });
 
   it("positive control: a member still reviews a submitted intake", async () => {
