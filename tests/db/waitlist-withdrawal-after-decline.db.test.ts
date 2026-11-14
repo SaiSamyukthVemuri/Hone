@@ -6,8 +6,8 @@ afterAll(async () => {
   await closePool();
 });
 
-// B14 (Photos, VERIFY-ACCEPTANCE-B): "a withdrawal from a person who already has decline answers" was reported unreachable because the same offer cannot be re-issued
-// after a decline (already_declined_offer, 0192). That rule is per SCOPE: a different scope after a decline is allowed, so the state IS reachable.
+// A withdrawal after an earlier decline with a different scope is reachable: the already-declined rule (already_declined_offer, 0192)
+// is per scope, so the same offer cannot be re-issued after a decline, but a different scope can.
 // Synthetic data only.
 
 const WHY = "WhyMarkB14 the times clash";
@@ -49,7 +49,7 @@ describe("withdrawal after an earlier decline (different scope)", () => {
     const h = await q(`select * from public.mark_waitlist_decline_handled($1,$2,$3)`, [s.studioId, s.userId, fu[0].id]);
     expect(h[0].result).toBe("handled");
 
-    // The SAME scope is refused (the rule Photos hit) ...
+    // The SAME scope is refused (the already-declined rule) ...
     const same = await issue(1, 30);
     expect(same.result).toBe("already_declined_offer");
     // ... a DIFFERENT scope is allowed.
@@ -70,7 +70,7 @@ describe("withdrawal after an earlier decline (different scope)", () => {
     await q(`delete from public.studios where id = $1`, [s.studioId]);
   });
 
-  it("G-B4: a random well-formed token with any capability gets the neutral 'recorded'", async () => {
+  it("a random well-formed token with any capability gets the neutral 'recorded'", async () => {
     const r = await q(`select * from public.request_waitlist_withdrawal($1,$2)`, ["c".repeat(64), "d".repeat(64)]);
     expect(r[0].result).toBe("recorded");
   });
