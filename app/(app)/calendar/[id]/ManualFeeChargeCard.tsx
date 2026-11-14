@@ -15,6 +15,7 @@ import {
   cancelManualFeeChargeAttemptAction,
   sendFeeReceiptAction,
   refundFeeAttemptAction,
+  closeDeclinedFeeAttemptAction,
 } from "./manual-fee-actions";
 
 // ---------------------------------------------------------------------------
@@ -90,18 +91,17 @@ export function ManualFeeChargeCard({
     return merged;
   }, [lateCancel, noShow]);
 
-  // The "active" attempt for the selected type, if any. We surface
-  // the most recent non-cancelled-non-failed row first; if no such
-  // row exists we fall back to the most recent failed/cancelled row
-  // so the practitioner sees the terminal-state copy before the
-  // prepare form re-appears.
-  const attemptForType = useMemo(() => {
+  // The attempt that HOLDS the selected type: the newest one whose state blocks a new charge (ready, pending,
+  // unclear, charged). A failed, needs-action or cancelled row that the stored provider facts prove can never
+  // collect does not hold anything: it stays in the history and keeps its terminal-state copy below, but the
+  // card goes on to offer Prepare (or the blocking reasons) so the replacement fee the owner was promised can
+  // actually be prepared.
+  const { holding, terminal } = useMemo(() => {
     const sameType = allAttempts.filter((r) => r.charge_type === chargeType);
-    const active = sameType.find((r) =>
-      ["ready", "pending", "unclear", "succeeded"].includes(r.state.kind),
-    );
-    if (active) return active;
-    return sameType[0] ?? null;
+    return {
+      holding: sameType.find((r) => r.state.blocksNewCharge) ?? null,
+      terminal: sameType[0] ?? null,
+    };
   }, [allAttempts, chargeType]);
 
   return (
@@ -184,20 +184,31 @@ export function ManualFeeChargeCard({
       )}
 
       {/* Branch the form by attempt state for the selected type. */}
-      {attemptForType ? (
+      {holding ? (
         <AttemptStatusPanel
-          attempt={attemptForType}
+          attempt={holding}
           appointmentId={appointmentId}
           card={selected.card}
         />
-      ) : !selected.eligible ? (
-        <BlockedPanel reasons={selected.blockingReasons} />
       ) : (
-        <PreparePanel
-          appointmentId={appointmentId}
-          chargeType={chargeType}
-          eligibility={selected}
-        />
+        <>
+          {terminal && (
+            <AttemptStatusPanel
+              attempt={terminal}
+              appointmentId={appointmentId}
+              card={selected.card}
+            />
+          )}
+          {!selected.eligible ? (
+            <BlockedPanel reasons={selected.blockingReasons} />
+          ) : (
+            <PreparePanel
+              appointmentId={appointmentId}
+              chargeType={chargeType}
+              eligibility={selected}
+            />
+          )}
+        </>
       )}
     </section>
   );
@@ -392,7 +403,7 @@ function AttemptStatusPanel({
       return <CancelledPanel attempt={attempt} />;
     default:
       // unclear: no charge, refresh or retry control of any kind.
-      return <UnclearPanel />;
+      return <UnclearPanel attempt={attempt} />;
   }
 }
 
@@ -546,7 +557,20 @@ function ReadyPanel({
   );
 }
 
-function UnclearPanel() {
+function UnclearPanel({ attempt }: { attempt: FeeCardAttempt }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  function closeDeclined() {
+    setError(null);
+    const fd = new FormData();
+    fd.set("attempt_id", attempt.id);
+    startTransition(async () => {
+      const r = await closeDeclinedFeeAttemptAction(fd);
+      if (!r.ok) setError(r.error);
+      else router.refresh();
+    });
+  }
   return (
     <div
       role="status"
@@ -557,6 +581,28 @@ function UnclearPanel() {
       <p className="text-xs">
         Hone cannot tell whether the card was charged. No new charge is offered while this is open.
       </p>
+      {attempt.state.mayCloseDeclined && (
+        <>
+          <p className="text-xs">
+            If the client&apos;s bank declined this charge, you can close this attempt. Hone asks the payment
+            provider to cancel this same payment and only then lets you prepare a new fee. Nothing is charged.
+          </p>
+          <button
+            type="button"
+            data-testid="fee-close-declined"
+            onClick={closeDeclined}
+            disabled={pending}
+            className="self-start rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-50 dark:bg-amber-950"
+          >
+            {pending ? "Closing…" : "Close declined attempt"}
+          </button>
+        </>
+      )}
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )}
     </div>
   );
 }
