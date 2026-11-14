@@ -267,6 +267,11 @@ export function reservedFromDirectory(names) {
 export function mergeReservedDeclarations(arrayDeclared, dirDeclared) {
   if (arrayDeclared === undefined) return { declared: dirDeclared.length ? dirDeclared : undefined, invalid: [] };
   if (!Array.isArray(arrayDeclared)) return { declared: arrayDeclared, invalid: [] };
+  // The canonical array is validated AS WRITTEN (strictly ascending, four-digit, no duplicates) by evaluateReserved.
+  // Merging would sort and de-duplicate it and so hide exactly those errors, so a malformed array, or one with no
+  // markers beside it, is passed through untouched.
+  const strictlyAscending = arrayDeclared.every((v, i) => typeof v === "string" && /^\d{4}$/.test(v) && (i === 0 || arrayDeclared[i - 1] < v));
+  if (!strictlyAscending || dirDeclared.length === 0) return { declared: arrayDeclared, invalid: [] };
   const invalid = [];
   const inArray = new Set(arrayDeclared);
   for (const v of dirDeclared) if (inArray.has(v)) invalid.push(`${v} is declared reserved both in the canonical record array and as a marker file`);

@@ -80,3 +80,20 @@ describe("getMigrationState reads marker files through the same validation", () 
     expect(s.reserved_unallocated_above_hosted).toEqual([]);
   });
 });
+
+describe("the canonical array is validated as written, markers or not (Codex P2 on the first head)", () => {
+  const bad = (array: unknown, markers: string[]) => getMigrationState(tree({ files: ["0300", "0305"], markers, array })).invalid_reserved_declarations.join(" ");
+  it("NEGATIVE CONTROL: a duplicate in the array is still rejected with no markers", () => {
+    expect(bad(["0301", "0301", "0302"], [])).not.toBe("");
+  });
+  it("NEGATIVE CONTROL: an out-of-order array is still rejected with no markers", () => {
+    expect(bad(["0302", "0301"], [])).not.toBe("");
+  });
+  it("NEGATIVE CONTROL: a duplicate or out-of-order array is still rejected when markers exist beside it", () => {
+    expect(bad(["0301", "0301"], ["0303"])).not.toBe("");
+    expect(bad(["0302", "0301"], ["0303"])).not.toBe("");
+  });
+  it("a well-formed array merges with markers as before", () => {
+    expect(mergeReservedDeclarations(["0301", "0302"], ["0303"])).toEqual({ declared: ["0301", "0302", "0303"], invalid: [] });
+  });
+});
