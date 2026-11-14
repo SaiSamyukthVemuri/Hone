@@ -6,6 +6,8 @@ import {
   coreActivate,
   coreAdopt,
   coreChangeRole,
+  coreDeactivateStaff,
+  coreReactivateStaff,
   coreHistory,
   corePreviewActivation,
   corePreviewAdopt,
@@ -16,7 +18,7 @@ import {
 } from "@/lib/settings/roles/core";
 import { enforcementRefusal } from "@/lib/settings/roles/model";
 import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
-import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type ChangeRoleResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
+import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type ChangeRoleResult, type CommandResult, type StaffActiveResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
 // Server actions of the Roles page (R2). Each one re-checks on the server that the caller is the owner, then hands the request to the
 // permission core, which decides everything again from the CURRENT membership row and answers with a code. The page never computes a
@@ -203,4 +205,33 @@ export async function changeStaffRoleAction(membershipId: unknown, newRole: unkn
   const widens = expectedCurrentRole === "receptionist" && newRole === "practitioner";
   if (widens ? !reasonAcceptable("adopt", false, text) : !reasonAcceptable("save", false, text)) return refuse({ code: widens && text.trim() === "" ? "reason_required" : "reason_invalid" });
   return coreChangeRole(owner.studioId, membershipId, newRole, expectedCurrentRole, text.trim());
+}
+
+const isStaffKind = (v: unknown): v is "practitioner" | "receptionist" => v === "practitioner" || v === "receptionist";
+
+/**
+ * Take a person's access away (0342). Owner-only here and again in the core, which refuses self, an owner, someone already inactive and
+ * (while the studio's rule is "block") a practitioner with upcoming appointments. A reason is always required. Nothing is deleted.
+ */
+export async function deactivateStaffAction(membershipId: unknown, kind: unknown, reason: unknown): Promise<StaffActiveResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  if (typeof membershipId !== "string" || !UUID.test(membershipId)) return refuse({ code: "not_found" });
+  if (!isStaffKind(kind)) return refuse({ code: "unknown_role" });
+  const text = reasonText(reason);
+  if (text.trim() === "") return refuse({ code: "reason_required" });
+  if (!reasonAcceptable("adopt", false, text)) return refuse({ code: "reason_invalid" });
+  return coreDeactivateStaff(owner.studioId, membershipId, kind, text.trim());
+}
+
+/** Give a deactivated person their access back (0342). Owner-only; the core refuses it while the operator gate is off. A reason is required. */
+export async function reactivateStaffAction(membershipId: unknown, kind: unknown, reason: unknown): Promise<StaffActiveResult> {
+  const owner = await assertOwner();
+  if (!owner) return refuse({ code: "refused" });
+  if (typeof membershipId !== "string" || !UUID.test(membershipId)) return refuse({ code: "not_found" });
+  if (!isStaffKind(kind)) return refuse({ code: "unknown_role" });
+  const text = reasonText(reason);
+  if (text.trim() === "") return refuse({ code: "reason_required" });
+  if (!reasonAcceptable("adopt", false, text)) return refuse({ code: "reason_invalid" });
+  return coreReactivateStaff(owner.studioId, membershipId, kind, text.trim());
 }

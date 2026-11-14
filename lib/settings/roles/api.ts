@@ -33,6 +33,9 @@ export const ROLE_ERROR_CODES = [
   "self_change",
   "not_active",
   "has_upcoming_appointments",
+  "reassign_required",
+  "already_active",
+  "other_membership_active",
   "email_required",
   "unexpected",
   "unavailable",
@@ -56,13 +59,14 @@ export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; 
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
 
 /** change_staff_role: the membership the person now holds and the role they now have. */
+export type StaffActiveResult = { ok: true; membershipId: string; active: boolean } | { ok: false; error: RoleError };
 export type ChangeRoleResult = { ok: true; membershipId: string; role: Role } | { ok: false; error: RoleError };
 
 /** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 Insurance AA-1). */
 export type ActivationPreview = ServerPreview & { keys: string[]; digest: string; sensitiveKeys: string[]; confirmationRequired: boolean };
 export type ActivationPreviewResult = { ok: true; preview: ActivationPreview } | { ok: false; error: RoleError };
 
-export type AuditKind = "role_permissions_saved" | "defaults_adopted" | "role_reset" | "staff_role_changed" | "permissions_activated";
+export type AuditKind = "role_permissions_saved" | "defaults_adopted" | "role_reset" | "staff_role_changed" | "permissions_activated" | "staff_deactivated" | "staff_reactivated";
 
 /** One audit row as list_permission_audit returns it: names resolved at read time, no emails. A removed member reads as "former member". */
 export type AuditRow = {
@@ -101,6 +105,8 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   role_reset: "Role reset to defaults",
   staff_role_changed: "Staff role changed",
   permissions_activated: "Released settings activated",
+  staff_deactivated: "Access removed",
+  staff_reactivated: "Access restored",
 };
 
 export type Operation = "save" | "reset" | "adopt";
@@ -161,13 +167,16 @@ const MESSAGES: Record<RoleErrorCode, string> = {
   self_change: "You cannot change your own role.",
   not_active: "That person is not active. Their role may have just changed. Reload the page to see the current state. Nothing was changed.",
   has_upcoming_appointments: "That practitioner still has upcoming appointments. Move them first.",
+  reassign_required: "That practitioner still has upcoming appointments that must be reassigned first. Nothing was changed.",
+  already_active: "That person already has access. Reload the page to see the current state. Nothing was changed.",
+  other_membership_active: "That person already has access under another role in this studio. Nothing was changed.",
   email_required: "That person needs an email address on file first.",
   unexpected: "Something went wrong and we could not confirm the result. Reload the page to see what is saved.",
   unavailable: "Saving role changes turns on with the permission core. Nothing was changed.",
 };
 
 export const roleErrorMessage = (e: RoleError): string =>
-  e.code === "has_upcoming_appointments" && typeof e.count === "number" && e.count > 0
+  (e.code === "has_upcoming_appointments" || e.code === "reassign_required") && typeof e.count === "number" && e.count > 0
     ? `That practitioner still has ${e.count} upcoming appointment${e.count === 1 ? "" : "s"}. Move or cancel ${e.count === 1 ? "it" : "them"} first. Nothing was changed.`
     : MESSAGES[e.code];
 
