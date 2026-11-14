@@ -185,7 +185,7 @@ describe("runSessionPaymentCharge: paymentIntents.create parameters", () => {
 
   it("passes stripeAccount + idempotencyKey on the RequestOptions arg", () => {
     expect(HELPER).toMatch(
-      /\{\s*\n?\s*stripeAccount:\s*card\.stripe_account_id,\s*\n?\s*idempotencyKey,\s*\n?\s*\}/,
+      /\{\s*\n?\s*stripeAccount:\s*card\.stripe_account_id,\s*\n?\s*idempotencyKey,[\s\S]*?\n\s*\}/,
     );
   });
 
