@@ -6,47 +6,49 @@ import { adminQuery, asRole, closePool, seedSession, seedStudio, userQuery, type
 
 let A: SeededStudio;
 let B: SeededStudio;
-let A2: string; // a second client of studio A
 let sessionA: string;
 let dualUser: string; // an active practitioner of BOTH studios
 
 const REFUSED = /cannot be re-assigned/i;
 
-type Spec = { table: string; seed: (id: string) => Promise<void> };
+type Spec = { table: string; seed: (id: string, clientId: string) => Promise<void> };
 const specs: Spec[] = [
   {
     table: "client_personal_notes",
-    seed: async (id) => {
-      await adminQuery(`insert into public.client_personal_notes (id, client_id, studio_id, personal_notes) values ($1,$2,$3,'synthetic')`, [id, A.clientId, A.studioId]);
+    seed: async (id, clientId) => {
+      await adminQuery(`insert into public.client_personal_notes (id, client_id, studio_id, personal_notes) values ($1,$2,$3,'synthetic')`, [id, clientId, A.studioId]);
     },
   },
   {
     table: "treatment_goals",
-    seed: async (id) => {
-      await adminQuery(`insert into public.treatment_goals (id, client_id, studio_id, estimated_total_minutes) values ($1,$2,$3,60)`, [id, A.clientId, A.studioId]);
+    seed: async (id, clientId) => {
+      await adminQuery(`insert into public.treatment_goals (id, client_id, studio_id, estimated_total_minutes) values ($1,$2,$3,60)`, [id, clientId, A.studioId]);
     },
   },
   {
     table: "client_tags",
-    seed: async (id) => {
-      await adminQuery(`insert into public.client_tags (id, studio_id, client_id, label) values ($1,$2,$3,'synthetic')`, [id, A.studioId, A.clientId]);
+    seed: async (id, clientId) => {
+      await adminQuery(`insert into public.client_tags (id, studio_id, client_id, label) values ($1,$2,$3,'synthetic')`, [id, A.studioId, clientId]);
     },
   },
   {
     table: "photos",
-    seed: async (id) => {
-      await adminQuery(`insert into public.photos (id, studio_id, client_id, session_id, storage_path) values ($1,$2,$3,$4,'synthetic/path')`, [id, A.studioId, A.clientId, sessionA]);
+    seed: async (id, clientId) => {
+      await adminQuery(`insert into public.photos (id, studio_id, client_id, session_id, storage_path) values ($1,$2,$3,$4,'synthetic/path')`, [id, A.studioId, clientId, sessionA]);
     },
   },
 ];
 
+const newClient = async (studioId = A.studioId): Promise<string> => {
+  const id = randomUUID();
+  await adminQuery(`insert into public.clients (id, studio_id, name) values ($1,$2,'Synthetic client')`, [id, studioId]);
+  return id;
+};
 const row = async (table: string, id: string) => (await adminQuery(`select * from public.${table} where id = $1`, [id])).rows[0];
 
 beforeAll(async () => {
   A = await seedStudio("l0347-a");
   B = await seedStudio("l0347-b");
-  A2 = randomUUID();
-  await adminQuery(`insert into public.clients (id, studio_id, name) values ($1,$2,'Second client')`, [A2, A.studioId]);
   sessionA = (await seedSession(A)).sessionId;
   dualUser = randomUUID();
   const email = `dual-${dualUser.slice(0, 8)}@harness.local`;
@@ -66,36 +68,38 @@ for (const spec of specs) {
   describe(`0347 ${spec.table}: the client and studio are fixed once the row exists`, () => {
     it("a member cannot re-point the row to another client of the same studio; the row is unchanged", async () => {
       const id = randomUUID();
-      await spec.seed(id);
+      await spec.seed(id, await newClient());
       const before = await row(spec.table, id);
-      await expect(userQuery(A.userId, `update public.${spec.table} set client_id = $2 where id = $1`, [id, A2])).rejects.toThrow(REFUSED);
+      await expect(userQuery(A.userId, `update public.${spec.table} set client_id = $2 where id = $1`, [id, await newClient()])).rejects.toThrow(REFUSED);
       expect(await row(spec.table, id)).toEqual(before);
     });
 
     it("a member of two studios cannot move the row to the other studio", async () => {
       const id = randomUUID();
-      await spec.seed(id);
+      await spec.seed(id, await newClient());
       await expect(userQuery(dualUser, `update public.${spec.table} set studio_id = $2 where id = $1`, [id, B.studioId])).rejects.toThrow(REFUSED);
       expect((await row(spec.table, id)).studio_id).toBe(A.studioId);
     });
 
     it("service_role is refused as well (row-level security is not what stops it)", async () => {
       const id = randomUUID();
-      await spec.seed(id);
+      const owned = await newClient();
+      await spec.seed(id, owned);
+      const target = await newClient();
       await expect(
-        asRole("service_role", (q) => q(`update public.${spec.table} set client_id = $2 where id = $1`, [id, A2])),
+        asRole("service_role", (q) => q(`update public.${spec.table} set client_id = $2 where id = $1`, [id, target])),
       ).rejects.toThrow(REFUSED);
       await expect(
         asRole("service_role", (q) => q(`update public.${spec.table} set studio_id = $2 where id = $1`, [id, B.studioId])),
       ).rejects.toThrow(REFUSED);
       const r = await row(spec.table, id);
-      expect(r.client_id).toBe(A.clientId);
+      expect(r.client_id).toBe(owned);
       expect(r.studio_id).toBe(A.studioId);
     });
 
     it("an update that re-writes the same client and studio is allowed (the upsert shape)", async () => {
       const id = randomUUID();
-      await spec.seed(id);
+      await spec.seed(id, await newClient());
       const r = await userQuery(A.userId, `update public.${spec.table} set client_id = client_id, studio_id = studio_id where id = $1 returning id`, [id]);
       expect(r.rowCount).toBe(1);
     });
@@ -158,14 +162,14 @@ describe("0347: the real writers still work", () => {
 describe("0347 photos: the session link may be cleared, never re-pointed", () => {
   it("clearing session_id by UPDATE is allowed", async () => {
     const id = randomUUID();
-    await specs[3].seed(id);
+    await specs[3].seed(id, await newClient());
     await userQuery(A.userId, `update public.photos set session_id = null where id = $1`, [id]);
     expect((await row("photos", id)).session_id).toBeNull();
   });
 
   it("re-pointing session_id to another session is refused, for a member and for service_role", async () => {
     const id = randomUUID();
-    await specs[3].seed(id);
+    await specs[3].seed(id, await newClient());
     const other = (await seedSession(A)).sessionId;
     await expect(userQuery(A.userId, `update public.photos set session_id = $2 where id = $1`, [id, other])).rejects.toThrow(REFUSED);
     await expect(asRole("service_role", (q) => q(`update public.photos set session_id = $2 where id = $1`, [id, other]))).rejects.toThrow(REFUSED);
