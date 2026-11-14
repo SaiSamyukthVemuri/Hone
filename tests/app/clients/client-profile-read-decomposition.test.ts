@@ -175,7 +175,7 @@ describe("independent reads run in one parallel wave", () => {
     for (const helper of [
       "getAppointmentsForClientProfile",
       "getActiveServices",
-      "getLatestIntakeForClient",
+      "loadIntakeForViewer",
       "getPortalAccessSummary",
       "getLatestSubmittedOrReviewedIntakeForClient",
       "getPinnedNotesForClient",

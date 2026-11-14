@@ -822,6 +822,9 @@ const PINNED: string[] = [
   // 0333 (I1): the key-aware studio set used by the clinical SELECT policies. Reachable by design (a policy runs as the caller), but it returns the EMPTY set
   // for a caller with no active practitioner row (proved in tests/db/clin-read-enforcement-records.db.test.ts, "an unknown key or no session returns no studios").
   "fn public.clin_key_studios(p_key text)",
+  // 0334 (I2): the status-only intake projection. Reachable by design; it returns ZERO rows unless the caller is an active practitioner holding clin.view_intake_status or
+  // clin.view_intake in that studio (tests/db/clin-read-enforcement-intake-consent.db.test.ts). The pin text is the expected form; the first DB run confirms it.
+  "fn public.intake_status_for_clients(p_studio_id uuid, p_client_ids uuid[])",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
   "fn public.effective_access(p_studio uuid, p_membership uuid)",

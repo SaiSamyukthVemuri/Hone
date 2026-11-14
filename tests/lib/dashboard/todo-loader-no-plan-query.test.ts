@@ -26,6 +26,8 @@ const rows: Record<string, unknown[]> = {
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    // the 0334 intake status projection (no rows needed here)
+    rpc: () => ({ range: async () => ({ data: [], error: null }) }),
     from: (table: string) => {
       const rec: Recorded = { table, columns: "", filters: [] };
       queries.push(rec);

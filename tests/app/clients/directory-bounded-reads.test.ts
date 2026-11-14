@@ -15,6 +15,11 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    // the 0334 intake status projection, counted as the "client_intake_forms" read it replaced; scoped = it was given a client list
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.push({ table: fn === "intake_status_for_clients" ? "client_intake_forms" : fn, scoped: args.p_client_ids != null });
+      return { range: async () => ({ data: [], error: null }) };
+    },
     from: (table: string) => {
       const call: Call = { table, scoped: false };
       calls.push(call);

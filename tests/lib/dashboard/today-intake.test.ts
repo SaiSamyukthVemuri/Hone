@@ -240,25 +240,23 @@ describe("Today intake projection (source pins)", () => {
 
   it("the loader exists and is the only intake read on the Today path", () => {
     expect(LOADER.length).toBeGreaterThan(0);
-    // Exactly ONE `client_intake_forms` read in the page: the per-client status
-    // projection. WS-DB (R3) moved the studio-wide awaiting-review read into
-    // lib/dashboard/intakes-awaiting-review.ts, so the page no longer carries a
-    // second one. Not per-appointment.
-    const reads = PAGE.match(/\.from\("client_intake_forms"\)/g) ?? [];
-    expect(reads).toHaveLength(1);
+    // The page reads NO intake table directly (0334): the per-client status comes from the status projection, once. WS-DB (R3) moved the
+    // studio-wide awaiting-review read into lib/dashboard/intakes-awaiting-review.ts. Not per-appointment.
+    expect(PAGE.match(/\.from\("client_intake_forms"\)/g) ?? []).toHaveLength(0);
+    expect(PAGE.match(/readIntakeStatusProjection\(/g) ?? []).toHaveLength(1); // the one call, in the loader
+    expect(LOADER).toMatch(/readIntakeStatusProjection\(supabase, studioId, clientIds\)/);
   });
 
   it("8. the read is studio-scoped and restricted to today's clients", () => {
-    expect(LOADER).toMatch(/\.eq\("studio_id", studioId\)/);
-    expect(LOADER).toMatch(/\.in\("client_id", clientIds as string\[\]\)/);
-    expect(LOADER).toMatch(/\.is\("deleted_at", null\)/);
+    // the projection takes the studio and the day's client ids; deleted rows are excluded inside it (proved by the 0334 DB test)
+    expect(LOADER).toMatch(/readIntakeStatusProjection\(supabase, studioId, clientIds\)/);
     // The authenticated (RLS-scoped) server client, never the admin client.
     expect(PAGE).toMatch(/from "@\/lib\/supabase\/server"/);
     expect(PAGE).not.toMatch(/createAdminClient/);
   });
 
   it("9. the projection is narrow — no responses / medical answers", () => {
-    expect(LOADER_CODE).toMatch(/\.select\("client_id, status, created_at"\)/);
+    expect(LOADER_CODE).not.toMatch(/\.select\(/); // no table select at all: only the status projection
     expect(LOADER_CODE).not.toMatch(/responses/);
     expect(LOADER_CODE).not.toMatch(/\.select\("\*"\)/);
     // Nothing on the dashboard pulls the intake answers, acknowledgement or
@@ -274,7 +272,7 @@ describe("Today intake projection (source pins)", () => {
     // inside the appointment map.
     expect(PAGE.match(/loadIntakeStatusByClient\(/g) ?? []).toHaveLength(2); // decl + 1 call
     expect(PAGE).toMatch(
-      /Promise\.all\(\[[\s\S]{0,400}?loadIntakeStatusByClient\(supabase, studio\.id, selectedDayClientIds\)/,
+      /Promise\.all\(\[[\s\S]{0,400}?loadIntakeStatusByClient\(supabase, studio\.id, selectedDayClientIds, isOwner\)/,
     );
     // The row renderer reads the prepared map; it never queries.
     expect(PAGE).toMatch(/intakeStatus=\{intakeByClient\.get\(appt\.client_id\) \?\? null\}/);
@@ -293,7 +291,7 @@ describe("Today intake projection (source pins)", () => {
 
   it("the row resolves the action from already-loaded status", () => {
     expect(PAGE).toMatch(
-      /resolveTodayIntakeAction\(\{\s*status: intakeStatus,\s*clientId: appt\.client_id,\s*\}\)/,
+      /resolveTodayIntakeAction\(\{\s*status: intakeRestricted \? null : intakeStatus,\s*clientId: appt\.client_id,\s*\}\)/,
     );
   });
 
@@ -335,7 +333,7 @@ describe("appointment prep surface", () => {
   it("PR #517 appointment-preparation memory is untouched by this change", () => {
     // The intake affordance is a separate line in the client briefing; it must
     // not have absorbed or reshaped the previous-treatment memory.
-    expect(APPOINTMENT).toMatch(/<IntakeStatusLine intake=\{intake\} clientId=\{client\.id\} \/>/);
-    expect(APPOINTMENT).toMatch(/getLatestIntakeForClient\(studio\.id, clientId\)/);
+    expect(APPOINTMENT).toMatch(/<IntakeStatusLine intake=\{intake\} clientId=\{client\.id\} restricted=\{intakeRestricted\} statusMode=\{intakeStatusMode\} summary=\{intakeSummary\} \/>/);
+    expect(APPOINTMENT).toMatch(/loadIntakeForViewer\(supabase, studio\.id, clientId, \{ canViewIntake, canViewStatus: canViewIntakeStatus \}\)/);
   });
 });
