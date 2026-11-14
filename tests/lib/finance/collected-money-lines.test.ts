@@ -7,7 +7,7 @@ import { collectedMoneyLines, type CollectedMoneyRow } from "@/lib/finance/colle
 const ROOT = path.resolve(__dirname, "../../..");
 const row = (over: Partial<CollectedMoneyRow> = {}): CollectedMoneyRow => ({
   chargeReason: "no_show_fee", status: "succeeded", amountCents: 5000, currency: "cad",
-  refundStatus: null, refundAmountCents: null, providerRefundStatus: null, stripeRefundId: null, stripeLivemode: true, ...over,
+  refundStatus: null, refundAmountCents: null, providerRefundStatus: null, stripeRefundId: null, cumulativeFullRefundVerified: false, stripeLivemode: true, ...over,
 });
 const fee = (rows: CollectedMoneyRow[]) => collectedMoneyLines(rows, "cad").cancellationNoShowFees;
 const session = (rows: CollectedMoneyRow[]) => collectedMoneyLines(rows, "cad").sessionPayments;
@@ -55,6 +55,19 @@ describe("refunds reduce the total accurately; unprovable refunds are not guesse
     expect(l.collectedCents).toBe(0);
     expect(l.unresolved.count).toBe(1);
     expect(collectedMoneyLines([], "cad").partialRefundsSupported).toBe(false);
+  });
+});
+
+describe("a verified cumulative full refund (0240) leaves collected money", () => {
+  it("a prior single refund failed, then the verified full receipt: the fee is refunded in full, not collected", () => {
+    const l = fee([row({ refundStatus: "succeeded", refundAmountCents: 5000, providerRefundStatus: "failed", stripeRefundId: "re_prior", cumulativeFullRefundVerified: true })]);
+    expect(l).toMatchObject({ collectedCents: 0, refundedCents: 5000 });
+  });
+  it("without the verified flag the same columns are unprovable, not guessed", () => {
+    const l = fee([row({ refundStatus: "succeeded", refundAmountCents: 5000, providerRefundStatus: "failed", stripeRefundId: "re_prior" })]);
+    expect(l.collectedCents).toBe(0);
+    expect(l.refundedCents).toBe(0);
+    expect(l.unresolved.count).toBe(1);
   });
 });
 

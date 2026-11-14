@@ -125,3 +125,20 @@ describe("wiring: the rule is used at prepare and re-checked before the claim", 
     expect(g).toMatch(/if \(res\.error \|\| !res\.data\) return ONE_FEE_UNREADABLE_MESSAGE;/);
   });
 });
+
+// R1 refresh (#1427 on production): the fee attempt read derives the cumulative-refund flag ON THE SERVER from
+// stripe_charge_refund_event_id, and the event id is never put on the attempt that reaches the card or the client.
+import { readFileSync as __rf } from "node:fs";
+import { join as __join } from "node:path";
+describe("fee attempt carries only the derived cumulative-refund boolean", () => {
+  const elig = __rf(__join(__dirname, "../../../lib/billing/manual-fee-eligibility.ts"), "utf8");
+  const types = __rf(__join(__dirname, "../../../lib/billing/manual-fee-types.ts"), "utf8");
+  it("selects the receipt column and derives the boolean from it", () => {
+    expect(elig).toMatch(/stripe_refund_id, stripe_charge_refund_event_id, refunded_at/);
+    expect(elig).toMatch(/cumulative_full_refund_verified:\s*typeof row\.stripe_charge_refund_event_id === "string" && row\.stripe_charge_refund_event_id\.length > 0/);
+  });
+  it("the event id itself is never a field of the attempt type or of the mapped row", () => {
+    expect(types).not.toMatch(/^\s*stripe_charge_refund_event_id\??:/m);
+    expect(elig).not.toMatch(/^\s*stripe_charge_refund_event_id:/m);
+  });
+});
