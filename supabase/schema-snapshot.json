@@ -3,7 +3,7 @@
   "migrations": {
     "count": 268,
     "last": "0342_roles_staff_deactivate_core.sql",
-    "sha256": "c657095915cde068138b6232629ecb629e1fd78998547de480a2786eb8632f0d"
+    "sha256": "97099ae3c39f7a7b98c1e218ee88de86c764cc8dc6f5cd577fd32f0eeb421a10"
   },
   "public": {
     "tables": [
