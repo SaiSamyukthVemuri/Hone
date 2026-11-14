@@ -1777,7 +1777,7 @@ export async function runSessionPaymentCharge(args: {
       }
       // E2: record "no PaymentIntent was created" only when Stripe definitively refused AND the error
       // carries no intent AND it is not a card error (a card error without an intent is ambiguous).
-      // 01M78ZR0: only the FIRST send can prove it. A replay (claim "already_pending", same idempotency key) follows a
+      // Only the FIRST send can prove it. A replay (claim "already_pending", same idempotency key) follows a
       // request that may have created and charged a PaymentIntent whose response was lost, and Stripe authenticates and
       // authorises before it looks the key up, so a 401/403/400 on a replay says nothing about the first request.
       const noIntentProven =

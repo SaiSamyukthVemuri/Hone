@@ -308,12 +308,12 @@ describe("runner: the cross-type one-fee check runs before the claim and before 
   });
 });
 
-// Vercel Security Review 01M78ZR0TYDQFXSDS6C5NWFJDH: an ambiguous first request (it may have succeeded, the response was
+// An ambiguous first request (it may have succeeded, the response was
 // lost) followed by a refused REPLAY must never free the appointment. The replay reuses the same idempotency key. Stripe
 // authenticates and authorises before it looks the key up, so a replay can be refused (401/403/400/429) even though the
 // FIRST request created and charged a PaymentIntent. "No PaymentIntent exists" may therefore only be recorded for the
 // first send (claim result "claimed"), never for a replay (already_pending).
-describe("a refused REPLAY of an ambiguous first request never frees the appointment (01M78ZR0)", () => {
+describe("a refused REPLAY of an ambiguous first request never frees the appointment", () => {
   const raw = (over: Record<string, unknown> = {}) => ({ message: "synthetic", ...over });
   const NOW = new Date();
   // The stored row as the runner left it, fed back into the REAL gates used by prepare and execute.
