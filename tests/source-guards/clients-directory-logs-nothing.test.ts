@@ -36,6 +36,10 @@ import { describe, expect, it } from "vitest";
 // Computed access to a global holder (window, globalThis, self, global, navigator, process, or any alias) is a violation
 // unless the key is a string literal that is not a forbidden name: fail closed.
 //
+// NARROWER CLAIM (round 6): every reference to window, globalThis, self, global, navigator or document is a violation on
+// its own, so the guard no longer tries to follow aliases; the cost is that harmless reads (`window.location`,
+// `navigator.userAgent`) are refused too. One reasoned exception exists (DOCUMENT_FOCUS_EXCEPTION_FILE, exact shape).
+//
 // ALLOWED, deliberately: `@/lib/observability/perf-timing` (page.tsx's measurement spans). Its own
 // guard (tests/source-guards/perf-timing-privacy-guards.test.ts) proves it carries no path, term or id.
 //
@@ -66,6 +70,23 @@ export const DIRECTORY_SCOPE = [
 const FORBIDDEN_GLOBALS = new Set(["console", "fetch", "XMLHttpRequest", "WebSocket", "EventSource"]);
 const PROCESS_STREAMS = new Set(["stdout", "stderr"]);
 const GLOBAL_HOLDERS = new Set(["globalThis", "window", "self", "global"]);
+// The ONE named exception to the holder-reference rule (OPS, 14 Nov): returning focus to the row that opened the
+// overview. It is matched by file AND exact shape, never by name alone: a call of `document.getElementById` whose single
+// argument is a call of `overviewRowLinkId(...)` and whose result is used only as `<result>?.focus(...)`. Any other
+// `document` reference in that file, in any other shape, or anywhere else, stays a violation.
+export const DOCUMENT_FOCUS_EXCEPTION_FILE = "app/(app)/clients/OverviewFrame.tsx";
+function isRowFocusRestore(node: ts.Identifier): boolean {
+  const member = node.parent;
+  if (!ts.isPropertyAccessExpression(member) || member.expression !== node || member.name.text !== "getElementById") return false;
+  const call = member.parent;
+  if (!ts.isCallExpression(call) || call.expression !== member || call.arguments.length !== 1) return false;
+  const arg = call.arguments[0];
+  if (!ts.isCallExpression(arg) || !ts.isIdentifier(arg.expression) || arg.expression.text !== "overviewRowLinkId") return false;
+  const focus = call.parent;
+  if (!ts.isPropertyAccessExpression(focus) || focus.expression !== call || focus.name.text !== "focus") return false;
+  return ts.isCallExpression(focus.parent) && focus.parent.expression === focus;
+}
+const HOLDER_REFS = new Set([...GLOBAL_HOLDERS, "navigator", "document"]);
 const SINK_MODULE_RE =
   /^(@\/lib\/logging(\/|$)|@sentry\/|@\/lib\/analytics(\/|$)|@\/lib\/posthog-server$|posthog-(js|node)$|@vercel\/(analytics|speed-insights)(\/|$))/;
 
@@ -190,16 +211,28 @@ function isLiteralText(expr: ts.Expression, sf: ts.SourceFile, depth = 0): boole
 
 const ERROR_NAME_RE = /^(Error|[A-Z]\w*Error|DOMException)$/;
 
-/** True when `expr` names an Error constructor: by name, through a same-file `const` alias, a holder property (`globalThis.Error`), or an in-file class extending one. */
+/**
+ * True when `expr` names an Error constructor. STRUCTURAL (round 6): the callee is judged by its FINAL name, whatever
+ * object it hangs off: `Error`, `x.TypeError`, `w.Error`, `a.b["DOMException"]`, `(0, Error)`. A bare identifier is
+ * also followed through a same-file `const` alias, a destructured `{ Error: E }`, a parameter default `(E = Error)`,
+ * and an in-file class extending one.
+ */
 function isErrorCtor(expr: ts.Expression, depth = 0): boolean {
   if (depth > 6) return false;
-  if (ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr) || ts.isAsExpression(expr)) return isErrorCtor(expr.expression, depth + 1);
-  if (ts.isPropertyAccessExpression(expr)) return ERROR_NAME_RE.test(expr.name.text) && ts.isIdentifier(expr.expression) && GLOBAL_HOLDERS.has(expr.expression.text);
-  if (ts.isElementAccessExpression(expr)) return ts.isStringLiteralLike(expr.argumentExpression) && ERROR_NAME_RE.test(expr.argumentExpression.text) && ts.isIdentifier(expr.expression) && GLOBAL_HOLDERS.has(expr.expression.text);
+  if (ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr) || ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr)) return isErrorCtor(expr.expression, depth + 1);
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) return isErrorCtor(expr.right, depth + 1);
+  if (ts.isPropertyAccessExpression(expr)) return ERROR_NAME_RE.test(expr.name.text);
+  if (ts.isElementAccessExpression(expr)) return ts.isStringLiteralLike(expr.argumentExpression) && ERROR_NAME_RE.test(expr.argumentExpression.text);
   if (!ts.isIdentifier(expr)) return false;
   const b = resolveBinding(expr);
   if (b === undefined) return ERROR_NAME_RE.test(expr.text); // a global, or an unresolved name: judged by its name
   if (ts.isVariableDeclaration(b) && b.initializer) return isErrorCtor(b.initializer, depth + 1);
+  if (ts.isParameter(b) && b.initializer && ts.isIdentifier(b.name)) return isErrorCtor(b.initializer, depth + 1);
+  if (ts.isBindingElement(b)) {
+    const key = b.propertyName && (ts.isIdentifier(b.propertyName) || ts.isStringLiteralLike(b.propertyName)) ? b.propertyName.text : ts.isIdentifier(b.name) ? b.name.text : "";
+    if (ERROR_NAME_RE.test(key)) return true;
+    return b.initializer !== undefined && isErrorCtor(b.initializer, depth + 1);
+  }
   if (ts.isClassDeclaration(b)) {
     const ext = b.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
     return ext !== undefined && isErrorCtor(ext, depth + 1);
@@ -272,6 +305,34 @@ export function logsNothingViolations(file: string, source: string): string[] {
           out.push(`${file}:${at(node)} loads a module by a computed specifier`);
         }
       }
+    }
+    // 0. STRUCTURAL (round 6): a global holder is never referenced in directory code, wherever it appears. Not its
+    // alias, not its destructuring, not a parameter default: the REFERENCE ITSELF is the violation, so no alias can
+    // exist to be missed. A name that resolves to a local binding is not the global. Names: HOLDER_REFS.
+    if (ts.isIdentifier(node) && HOLDER_REFS.has(node.text)) {
+      const p = node.parent;
+      const isPropertyName = ts.isPropertyAccessExpression(p) && p.name === node;
+      const isKey = ts.isPropertyAssignment(p) && p.name === node;
+      const isMemberName = (ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p)) && p.name === node;
+      const isTypePosition = ts.isTypeReferenceNode(p) || ts.isQualifiedName(p) || ts.isTypeQueryNode(p);
+      const isDeclName = (ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p) || ts.isFunctionDeclaration(p) || ts.isClassDeclaration(p)) && p.name === node;
+      const isImportName = ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p);
+      if (!isPropertyName && !isKey && !isMemberName && !isTypePosition && !isDeclName && !isImportName && resolveBinding(node) === undefined && !(file === DOCUMENT_FOCUS_EXCEPTION_FILE && node.text === "document" && isRowFocusRestore(node))) {
+        out.push(`${file}:${at(node)} references the global ${node.text}`);
+      }
+    }
+    // ... and no property, bracket key or destructured key may NAME a holder either (`x.window`, `x["globalThis"]`, `{ window: w } = x`)
+    if (ts.isPropertyAccessExpression(node) && HOLDER_REFS.has(node.name.text)) {
+      out.push(`${file}:${at(node)} reads a property named ${node.name.text}`);
+    }
+    if (ts.isStringLiteralLike(node) && HOLDER_REFS.has(node.text)) {
+      const p = node.parent;
+      if ((ts.isElementAccessExpression(p) && p.argumentExpression === node) || (ts.isBindingElement(p) && p.propertyName === node) || ts.isComputedPropertyName(p)) {
+        out.push(`${file}:${at(node)} names ${node.text} by a key`);
+      }
+    }
+    if (ts.isBindingElement(node) && node.propertyName && ts.isIdentifier(node.propertyName) && HOLDER_REFS.has(node.propertyName.text)) {
+      out.push(`${file}:${at(node)} destructures ${node.propertyName.text}`);
     }
     // 3. sendBeacon by ANY route (Codex P2 on #1431): the name `sendBeacon` as a property, bracket key, destructured
     // key, or bare identifier; and `navigator` (or `<holder>.navigator`) used for anything but a plain
@@ -541,12 +602,43 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "window.navigator alias": 'const n = window.navigator; export const f = (q: string) => n.sendBeacon("/x", q);',
     "navigator via a holder bracket": 'export const f = (q: string) => window["navigator"].sendBeacon("/x", q);',
     "navigator destructured from a holder": 'const { navigator: n } = window; export const f = (q: string) => n.sendBeacon("/x", q);',
+    // Round 6 (structural): ANY reference to a global holder is a violation on its own. These were "clean" spellings before.
+    "Codex fixture: a holder alias through a parameter default (line 232 family)": 'export const f = (q: string, w = window) => w.fetch("/x?" + q);',
+    "Codex fixture: an Error constructor through a holder alias (line 198 family)": 'const w = globalThis; export const f = (q: string) => { throw new w.Error(q); };',
+    "a parameter default that is a holder, never used": 'export const f = (w = globalThis) => 1;',
+    "a holder in a destructured parameter default": 'export const f = ({ w = self } = {}) => 1;',
+    "a holder reached as a property of something else": 'export const f = (o: { window: unknown }) => o.window;',
+    "a holder named by a bracket key": 'export const f = (o: Record<string, unknown>) => o["globalThis"];',
+    "a harmless read through window": 'export const h = () => window.location.hash;',
+    "an alias used only for a harmless read": 'const w = window; export const h = () => w.location.hash;',
+    "destructuring a harmless member of window": 'const { location } = window; export const h = () => location.pathname;',
+    "a plain navigator property read": 'export const ua = () => navigator.userAgent;',
+    "document used for anything": 'export const f = () => document.title;',
+    "an Error through a member of any object": 'export const f = (o: { TypeError: ErrorConstructor }, q: string) => new o.TypeError(q);',
+    "an Error called without new through a member": 'export const f = (o: { Error: ErrorConstructor }, q: string) => { throw o.Error(q); };',
+    "an Error from a destructured binding": 'export const f = (x: { Error: ErrorConstructor }, q: string) => { const { Error: E } = x; throw new E(q); };',
+    "an Error through a parameter default": 'export const f = (q: string, E = Error) => { throw new E(q); };',
+    "an Error through a comma expression": 'export const f = (q: string) => { throw new (0, Error)(q); };',
+    "OverviewFrame: document.getElementById result used for something other than focus": 'export const f = (q: string) => { (document.getElementById(overviewRowLinkId(q)) as HTMLImageElement).src = q; };',
+    "OverviewFrame: document.getElementById with a non-overviewRowLinkId argument": 'export const f = (q: string) => { document.getElementById(q)?.focus({ preventScroll: true }); };',
+    "OverviewFrame: a second document reference": 'export const f = (q: string) => { document.getElementById(overviewRowLinkId(q))?.focus(); return document.title; };',
+    "OverviewFrame: result stored then used": 'export const f = (q: string) => { const el = document.getElementById(overviewRowLinkId(q)); if (el) (el as HTMLImageElement).src = q; };',
+    "OverviewFrame: focus result not called": 'export const f = (q: string) => document.getElementById(overviewRowLinkId(q))?.focus;',
     "navigator passed along": 'const use = (n: unknown) => n; export const f = () => use(navigator);',
     "let reassigned message": 'let m = "a"; m = "b"; export const f = () => { throw new Error(m); };',
   };
   for (const [name, code] of Object.entries(planted)) {
-    it(`flags ${name}`, () => expect(logsNothingViolations("lib/clients/planted.ts", code).length).toBeGreaterThan(0));
+    const f = name.startsWith("OverviewFrame:") ? DOCUMENT_FOCUS_EXCEPTION_FILE : "lib/clients/planted.ts";
+    it(`flags ${name}`, () => expect(logsNothingViolations(f, code).length).toBeGreaterThan(0));
   }
+  const focusRestore = 'export const f = (id: string) => { document.getElementById(overviewRowLinkId(id))?.focus({ preventScroll: true }); };';
+  it("accepts the exact focus-restore shape in the one named file", () => {
+    expect(logsNothingViolations(DOCUMENT_FOCUS_EXCEPTION_FILE, focusRestore)).toEqual([]);
+  });
+  it("flags that same shape in any other file", () => {
+    expect(logsNothingViolations("app/(app)/clients/ClientsDirectory.tsx", focusRestore).length).toBeGreaterThan(0);
+    expect(logsNothingViolations("lib/clients/x.ts", focusRestore).length).toBeGreaterThan(0);
+  });
   it("flags a console call in a TSX file too", () => {
     expect(logsNothingViolations("app/(app)/clients/x.tsx", 'export const C = ({ q }: { q: string }) => { console.log(q); return <p>{q}</p>; };').length).toBeGreaterThan(0);
   });
@@ -558,14 +650,11 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "the perf-timing measurement import (allowed)": 'import { startPerfSpan } from "@/lib/observability/perf-timing"; export const s = startPerfSpan("clients.domain");',
     "ordinary shared imports": 'import Link from "next/link"; import { createClient } from "@/lib/supabase/server"; export const L = Link; export const c = createClient;',
     "a type named after a global": 'export type T = typeof globalThis; export interface I { fetch: () => void }',
-    "an alias used only for a harmless read": 'const w = window; export const h = () => w.location.hash;',
-    "destructuring a harmless member": 'const { location } = window; export const h = () => location.pathname;',
     "process.env read": 'export const e = process.env.NODE_ENV;',
     "a literal error": 'export const f = () => { throw new Error("Failed to load clients"); };',
     "a const, conditional and concatenation of literals": 'const a = "Failed to load"; const m = true ? a + " clients" : "Failed to load archived clients"; export const f = () => { throw new Error(m); };',
     "a literal const read from an inner scope that does not shadow it": 'const msg = "Failed to load"; export const f = (q: string) => { if (q) { throw new Error(msg); } return q; };',
     "an unrelated parameter beside a literal const": 'const msg = "Failed"; export const f = (q: string) => { if (q) return q; throw new Error(msg); };',
-    "a plain navigator property read": 'export const ua = () => navigator.userAgent; export const l = () => window.navigator.language;',
     "a relative import of a sibling clients module": 'import { matchesDirectoryQuery } from "./directory-search"; export const m = matchesDirectoryQuery;',
     "a parent-relative import of a harmless shared module": 'import { createClient } from "../supabase/server"; export const c = createClient;',
     "an import-equals of a harmless package": 'import path = require("node:path"); export const j = path.join;',
@@ -573,8 +662,6 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "a literal Error alias": 'const E = TypeError; export const f = () => new E("Failed to load");',
     "a class extending Error with a literal": 'class MyFailure extends Error {} export const f = () => { throw new MyFailure("Failed to load clients"); };',
     "a function merely named like an error check": 'const isError = (x: unknown) => x instanceof Error; export const f = (q: unknown) => isError(q);',
-    "a literal computed destructuring key that is not forbidden": 'const { ["location"]: loc } = window; export const f = () => loc.hash;',
-    "a literal element key on a holder": 'export const f = () => window["location"].hash;',
     "a template without substitutions": 'export const f = () => { throw new Error(`Failed to load clients`); };',
   };
   for (const [name, code] of Object.entries(clean)) {
