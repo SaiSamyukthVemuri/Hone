@@ -62,6 +62,60 @@ function kind(file: string): ts.ScriptKind {
   return file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
+function bindingNames(name: ts.BindingName, into: Map<string, ts.Node>, owner: ts.Node): void {
+  if (ts.isIdentifier(name)) { if (!into.has(name.text)) into.set(name.text, owner); return; }
+  for (const el of name.elements) if (ts.isBindingElement(el)) bindingNames(el.name, into, el);
+}
+
+/** Names declared directly in one scope node (not in nested scopes), mapped to their declaring node. */
+function declaredIn(scope: ts.Node): Map<string, ts.Node> {
+  const m = new Map<string, ts.Node>();
+  const fromVarList = (l: ts.VariableDeclarationList) => {
+    for (const d of l.declarations) {
+      if (ts.isIdentifier(d.name)) m.set(d.name.text, d);
+      else bindingNames(d.name, m, d); // a destructured name is never a literal const
+    }
+  };
+  const fromStatements = (stmts: readonly ts.Statement[]) => {
+    for (const st of stmts) {
+      if (ts.isVariableStatement(st)) fromVarList(st.declarationList);
+      else if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name) m.set(st.name.text, st);
+      else if (ts.isImportDeclaration(st) && st.importClause) {
+        const c = st.importClause;
+        if (c.name) m.set(c.name.text, c);
+        if (c.namedBindings) { if (ts.isNamespaceImport(c.namedBindings)) m.set(c.namedBindings.name.text, c); else for (const e of c.namedBindings.elements) m.set(e.name.text, e); }
+      }
+    }
+  };
+  // `var` hoists to the function (or file): collect it from nested blocks, not across a function boundary.
+  const hoistedVars = (n: ts.Node): void => {
+    ts.forEachChild(n, (c) => {
+      if (ts.isFunctionLike(c) || ts.isClassLike(c)) return;
+      if (ts.isVariableDeclarationList(c) && (c.flags & ts.NodeFlags.BlockScoped) === 0) fromVarList(c);
+      hoistedVars(c);
+    });
+  };
+  if (ts.isFunctionLike(scope)) {
+    for (const p of scope.parameters) bindingNames(p.name, m, p);
+    if ((ts.isFunctionExpression(scope)) && scope.name) m.set(scope.name.text, scope);
+    if (scope.body) hoistedVars(scope.body);
+  }
+  if (ts.isSourceFile(scope)) { fromStatements(scope.statements); hoistedVars(scope); }
+  if (ts.isBlock(scope) || ts.isModuleBlock(scope)) fromStatements(scope.statements);
+  if (ts.isCaseBlock(scope)) for (const c of scope.clauses) fromStatements(c.statements);
+  if (ts.isCatchClause(scope) && scope.variableDeclaration) bindingNames(scope.variableDeclaration.name, m, scope.variableDeclaration);
+  if ((ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) && scope.initializer && ts.isVariableDeclarationList(scope.initializer)) fromVarList(scope.initializer);
+  return m;
+}
+
+function resolveBinding(id: ts.Identifier): ts.Node | undefined {
+  for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
+    const hit = declaredIn(n).get(id.text);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /** True when `expr` can only ever be literal text: a literal, a literal-only conditional or `+`, or a same-file `const` that is one. */
 function isLiteralText(expr: ts.Expression, sf: ts.SourceFile, depth = 0): boolean {
   if (depth > 6) return false;
@@ -72,20 +126,15 @@ function isLiteralText(expr: ts.Expression, sf: ts.SourceFile, depth = 0): boole
     return isLiteralText(expr.left, sf, depth + 1) && isLiteralText(expr.right, sf, depth + 1);
   }
   if (ts.isIdentifier(expr)) {
-    let found: ts.Expression | null = null;
-    let count = 0;
-    const find = (n: ts.Node): void => {
-      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === expr.text) {
-        count += 1;
-        const list = n.parent;
-        const isConst = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
-        if (isConst && n.initializer) found = n.initializer;
-      }
-      ts.forEachChild(n, find);
-    };
-    find(sf);
-    // Exactly one declaration, a const, with literal-only text. A parameter or a reassigned name never qualifies.
-    return count === 1 && found !== null && isLiteralText(found, sf, depth + 1);
+    // Resolve the identifier to the binding it actually names at this use site (Codex P2 on #1431): the NEAREST
+    // enclosing scope that declares the name wins, so a parameter or inner declaration shadowing a literal
+    // same-file const is that parameter, not the const. Literal only when that binding is a `const` with a
+    // literal-only initializer.
+    const binding = resolveBinding(expr);
+    if (!binding || !ts.isVariableDeclaration(binding) || !ts.isIdentifier(binding.name) || !binding.initializer) return false;
+    const list = binding.parent;
+    const isConst = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
+    return isConst && isLiteralText(binding.initializer, sf, depth + 1);
   }
   return false;
 }
@@ -144,9 +193,29 @@ export function logsNothingViolations(file: string, source: string): string[] {
       if ((isRequire || isDynamicImport) && arg && ts.isStringLiteralLike(arg) && sink(arg.text)) {
         out.push(`${file}:${at(node)} loads ${arg.text}`);
       }
-      // 3. any `.sendBeacon(` call
-      if (ts.isPropertyAccessExpression(callee) && callee.name.text === "sendBeacon") {
-        out.push(`${file}:${at(node)} calls sendBeacon`);
+    }
+    // 3. sendBeacon by ANY route (Codex P2 on #1431): the name `sendBeacon` as a property, bracket key, destructured
+    // key, or bare identifier; and `navigator` (or `<holder>.navigator`) used for anything but a plain
+    // `.<other>` property read, so an alias, a computed key, a destructure or a pass-along cannot reach it.
+    if (ts.isIdentifier(node) && node.text === "sendBeacon" && !ts.isTypeReferenceNode(node.parent)) {
+      out.push(`${file}:${at(node)} references sendBeacon`);
+    }
+    if (ts.isStringLiteralLike(node) && (node.text === "sendBeacon" || node.text === "navigator")) {
+      const p = node.parent;
+      if ((ts.isElementAccessExpression(p) && p.argumentExpression === node) || (ts.isBindingElement(p) && p.propertyName === node)) {
+        out.push(`${file}:${at(node)} names ${node.text} by a computed key`);
+      }
+    }
+    if (ts.isIdentifier(node) && node.text === "navigator") {
+      const p = node.parent;
+      const isKey = ts.isPropertyAssignment(p) && p.name === node;
+      const isMemberName = (ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p)) && p.name === node;
+      const isTypePosition = ts.isTypeReferenceNode(p) || ts.isQualifiedName(p) || ts.isTypeQueryNode(p);
+      if (!isKey && !isMemberName && !isTypePosition) {
+        const ref: ts.Node = ts.isPropertyAccessExpression(p) && p.name === node ? p : node;
+        const rp = ref.parent;
+        const plainRead = ts.isPropertyAccessExpression(rp) && rp.expression === ref && rp.name.text !== "sendBeacon";
+        if (!plainRead) out.push(`${file}:${at(node)} uses navigator other than a plain property read`);
       }
     }
     // 4. process.stdout / process.stderr, and any use of `process` that cannot be resolved to a plain property read
@@ -313,6 +382,21 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "const that is not literal": 'const m = "x " + Math.random(); export const f = () => { throw new Error(m); };',
     "rethrow of a caught value": 'export const f = () => { try { return 1; } catch (e) { throw e; } };',
     "throw of a computed value": 'export const f = (q: string) => { throw q; };',
+    "parameter shadowing a literal const": 'const msg = "Failed to load"; export const f = (msg: string) => { throw new Error(msg); };',
+    "inner const shadowing a literal const": 'const msg = "Failed"; export const f = (q: string) => { { const msg = q; throw new Error(msg); } };',
+    "catch variable shadowing a literal const": 'const e = "Failed"; export const f = () => { try { return 1; } catch (e) { throw new Error(e as string); } };',
+    "destructured parameter shadowing a literal const": 'const msg = "Failed"; export const f = ({ msg }: { msg: string }) => { throw new Error(msg); };',
+    "sendBeacon bracket key": 'export const f = (q: string) => navigator["sendBeacon"]("/x", q);',
+    "sendBeacon computed key": 'export const f = (q: string) => navigator["send" + "Beacon"]("/x", q);',
+    "navigator alias": 'const n = navigator; export const f = (q: string) => n.sendBeacon("/x", q);',
+    "navigator alias with computed key": 'const n = navigator; export const f = (k: string, q: string) => n[k]("/x", q);',
+    "sendBeacon taken as a value": 'const b = navigator.sendBeacon; export const f = (q: string) => b("/x", q);',
+    "sendBeacon destructured": 'const { sendBeacon } = navigator; export const f = (q: string) => sendBeacon("/x", q);',
+    "sendBeacon destructured and renamed": 'const { sendBeacon: s } = navigator; export const f = (q: string) => s("/x", q);',
+    "window.navigator alias": 'const n = window.navigator; export const f = (q: string) => n.sendBeacon("/x", q);',
+    "navigator via a holder bracket": 'export const f = (q: string) => window["navigator"].sendBeacon("/x", q);',
+    "navigator destructured from a holder": 'const { navigator: n } = window; export const f = (q: string) => n.sendBeacon("/x", q);',
+    "navigator passed along": 'const use = (n: unknown) => n; export const f = () => use(navigator);',
     "let reassigned message": 'let m = "a"; m = "b"; export const f = () => { throw new Error(m); };',
   };
   for (const [name, code] of Object.entries(planted)) {
@@ -334,6 +418,9 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "process.env read": 'export const e = process.env.NODE_ENV;',
     "a literal error": 'export const f = () => { throw new Error("Failed to load clients"); };',
     "a const, conditional and concatenation of literals": 'const a = "Failed to load"; const m = true ? a + " clients" : "Failed to load archived clients"; export const f = () => { throw new Error(m); };',
+    "a literal const read from an inner scope that does not shadow it": 'const msg = "Failed to load"; export const f = (q: string) => { if (q) { throw new Error(msg); } return q; };',
+    "an unrelated parameter beside a literal const": 'const msg = "Failed"; export const f = (q: string) => { if (q) return q; throw new Error(msg); };',
+    "a plain navigator property read": 'export const ua = () => navigator.userAgent; export const l = () => window.navigator.language;',
     "a template without substitutions": 'export const f = () => { throw new Error(`Failed to load clients`); };',
   };
   for (const [name, code] of Object.entries(clean)) {
