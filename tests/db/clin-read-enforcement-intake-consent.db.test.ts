@@ -133,13 +133,14 @@ describe("0334, ACTIVATED keys: membership AND clin.view_intake on the three con
     await adminQuery("insert into auth.users (id, email) values ($1,$2)", [strangerId, `i334-${strangerId.slice(0, 8)}@harness.local`]);
     expect(await tableCounts(strangerId, f)).toEqual(allTables(0));
     // anon either matches no policy (zero rows) or has no table privilege at all (I4, 0336, revokes the grants); both mean it reads nothing
-    const anon = await asRole("anon", async (q) => {
-      const o: Record<string, number> = {};
-      for (const [t, id] of TABLES) {
-        try { o[t] = (await q(`select count(*)::int n from public.${t} where id=$1`, [id(f)])).rows[0].n; } catch (e) { if (!/permission denied/i.test(String(e))) throw e; o[t] = 0; }
-      }
-      return o;
-    });
+    // One asRole call (own transaction) per table: a 42501 aborts the transaction it happens in, so probing every table in one transaction
+    // would turn the first refusal into "current transaction is aborted" for the rest.
+    const anon: Record<string, number> = {};
+    for (const [t, id] of TABLES) {
+      anon[t] = await asRole("anon", async (q) => {
+        try { return (await q(`select count(*)::int n from public.${t} where id=$1`, [id(f)])).rows[0].n as number; } catch (e) { if (!/permission denied/i.test(String(e))) throw e; return 0; }
+      });
+    }
     expect(anon).toEqual(allTables(0));
     const svc = await asRole("service_role", async (q) => {
       const o: Record<string, number> = {};
