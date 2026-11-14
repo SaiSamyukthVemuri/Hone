@@ -1,0 +1,8 @@
+{
+  "pr": 1452,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0344_revert_guard_fee_settlement.sql"
+  ],
+  "release_receipt": "01-ops/1452-release-receipt.json"
+}
