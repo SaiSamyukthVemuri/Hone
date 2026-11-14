@@ -545,8 +545,9 @@ describe("the Stripe client is obtained BEFORE the claim: a client failure claim
       h.createReply = OK_PI;
       const r = await run();
       expect(r).toMatchObject({ ok: false, outcome: "blocked" });
-      expect((r as { message: string }).message).toMatch(/temporarily unavailable.*Nothing was charged and nothing was changed/);
+      expect((r as { message: string }).message).toMatch(/temporarily unavailable\. This press sent nothing\. Refresh the page to see the attempt's current status/);
       expect((r as { message: string }).message, "no provider or key detail in the message").not.toMatch(/STRIPE_SECRET_KEY|sk_/);
+      expect((r as { message: string }).message, "it must not read as 'this attempt is unpaid' or 'unchanged'").not.toMatch(/Nothing was charged|nothing was changed|unpaid/i);
       expect(h.claimCalls, "the attempt is never claimed").toBe(0);
       expect(h.updates, "no row is written").toEqual([]);
       expect(h.createKeys, "no PaymentIntent create").toHaveLength(0);

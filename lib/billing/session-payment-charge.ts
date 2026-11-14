@@ -80,7 +80,7 @@ const FAILURE_CODE_MAX = 100;
 const LIVE_MODE_BLOCKED_MESSAGE =
   "This payment's mode does not match the current deployment mode.";
 const STRIPE_UNAVAILABLE_MESSAGE =
-  "Payments are temporarily unavailable. Nothing was charged and nothing was changed. Try again, or contact Hone support.";
+  "Payments are temporarily unavailable. This press sent nothing. Refresh the page to see the attempt's current status, or contact Hone support.";
 const NEEDS_MANUAL_REVIEW_MESSAGE =
   "This charge is pending and needs manual review before retrying.";
 // PR #281: Stripe reported success but Hone could not confirm the local
