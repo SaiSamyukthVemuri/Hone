@@ -7,6 +7,7 @@ import {
   technicalRowsForAttempt,
   formatCadFromCents,
 } from "@/lib/payments/payment-summary-presenter";
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import type { SessionPaymentExistingAttemptSummary } from "@/lib/billing/session-payment-types";
 
 // Pure presenter for the compact practitioner payment card. No PHI in fixtures
@@ -38,6 +39,7 @@ function attempt(
     refundAmountCents: null,
     refundedAt: null,
     stripeRefundId: null,
+    cumulativeFullRefundVerified: false,
     refundFailureCode: null,
     refundFailureMessageSafe: null,
     ...over,
@@ -118,6 +120,23 @@ describe("derivePaymentSummary — one current headline per state", () => {
     expect(
       derivePaymentSummary(attempt({ receiptStatus: "failed" })),
     ).toMatchObject({ kind: "paid_receipt_failed", headline: "Paid" });
+  });
+  // Photos e1 (#1427 @ c543c48ab): a PARTIAL refund the provider reports succeeded (5000 of 15000) read "Refunded · $150.00" in the
+  // header while the panel said "Amount refunded: $50.00". Headline and amount now state the partial; money controls unchanged.
+  it("e1: a partial succeeded refund (ours + provider succeeded, 5000 of 15000) says 'Partly refunded' with the refunded amount, never 'Refunded' with the charge", () => {
+    const row = attempt({ amountCents: 15000, refundStatus: "succeeded", stripeRefundStatus: "succeeded", refundAmountCents: 5000, refundedAt: "2026-07-13T10:00:00Z" });
+    expect(derivePaymentSummary(row)).toMatchObject({ kind: "refunded", headline: "Partly refunded", amountCents: 5000, currency: "cad" });
+    // provider silent behaves the same
+    expect(derivePaymentSummary({ ...row, stripeRefundStatus: null })).toMatchObject({ headline: "Partly refunded", amountCents: 5000 });
+  });
+  it("e1: a FULL refund still reads 'Refunded' with the charge amount; the cumulative-receipt case too", () => {
+    const full = attempt({ amountCents: 15000, refundStatus: "succeeded", stripeRefundStatus: "succeeded", refundAmountCents: 15000 });
+    expect(derivePaymentSummary(full)).toMatchObject({ kind: "refunded", headline: "Refunded", amountCents: 15000 });
+    expect(derivePaymentSummary({ ...full, stripeRefundStatus: "failed", cumulativeFullRefundVerified: true })).toMatchObject({ headline: "Refunded", amountCents: 15000 });
+  });
+  it("e1: the partial headline does not change what the refund reading allows (no new refund, remaining server-computed)", () => {
+    expect(refundDisplayState({ chargeStatus: "succeeded", amountCents: 15000, refundStatus: "succeeded", refundAmountCents: 5000, providerRefundStatus: "succeeded", stripeRefundId: "re_x", cumulativeFullRefundVerified: false }))
+      .toEqual({ kind: "refunded", remainingRefundableCents: 10000, mayStartRefund: false });
   });
   it("refunded / refund pending promote the headline", () => {
     expect(

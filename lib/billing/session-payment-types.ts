@@ -130,6 +130,9 @@ export type SessionPaymentExistingAttemptSummary = {
   refundAmountCents: number | null;
   refundedAt: string | null;
   stripeRefundId: string | null;
+  // TRUE when the signed cumulative full-refund receipt (0240 stripe_charge_refund_event_id) exists. Derived on the
+  // server; the event id itself is never sent to the client.
+  cumulativeFullRefundVerified: boolean;
   refundFailureCode: string | null;
   refundFailureMessageSafe: string | null;
 };

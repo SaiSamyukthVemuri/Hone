@@ -329,6 +329,7 @@ export function SessionPaymentPrepareCard({
           refundAmountCents: activeAttempt.refundAmountCents,
           providerRefundStatus: activeAttempt.stripeRefundStatus,
           stripeRefundId: activeAttempt.stripeRefundId,
+          cumulativeFullRefundVerified: activeAttempt.cumulativeFullRefundVerified,
         })
       : null;
   const fullyRefunded =
@@ -1223,6 +1224,7 @@ function RefundSubPanel({
     refundAmountCents: attempt.refundAmountCents,
     providerRefundStatus: attempt.stripeRefundStatus,
     stripeRefundId: attempt.stripeRefundId,
+    cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
   });
   const persistedNeedsReview = display.kind === "needs_review";
   const persistedSucceeded = display.kind === "refunded";
