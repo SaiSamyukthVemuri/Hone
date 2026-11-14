@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asRole, closePool, seedMember, seedStudio, userQuery, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, closePool, seedMember, seedStudio, userQuery, type SeededStudio } from "./helpers/harness";
 
 // 0340 (HON-78): an intake cannot be moved to another client or studio (any state, any caller), and a submitted
 // or reviewed one cannot be hidden or restored by a signed-in member using their own session against the table (the Data API path). Real migrated chain,
@@ -102,6 +102,53 @@ describe.each(["submitted", "reviewed"] as const)("0340: a %s intake keeps its c
   });
 });
 
+describe("0340: the legitimate intake writers still work", () => {
+  // The governed revision command, called by the service role exactly as the token page and the assisted flow do.
+  const revise = (id: string, expected: number, step: number, op: "save" | "submit", answers: object) =>
+    adminTx(async (q) => {
+      await q("set local role service_role");
+      return (await q(`select * from public.write_intake_revision($1,$2,$3,$4,$5::jsonb,$6,$7,'{}'::jsonb)`, [
+        id, A.studioId, A.clientId, expected, JSON.stringify(answers), step, op,
+      ])).rows[0];
+    });
+
+  it("token save, token submit, then the owner's review, on one form; client and studio never move", async () => {
+    const id = await seedIntake("in_progress");
+    expect(await revise(id, 0, 2, "save", { q: "draft2" })).toEqual({ outcome: "saved", new_revision: "1" });
+    expect((await revise(id, 1, 5, "submit", { q: "final" })).outcome).not.toBe("conflict");
+    expect(await stored(id)).toMatchObject({ status: "submitted", responses: { q: "final" }, client_id: A.clientId, studio_id: A.studioId, deleted_at: null });
+    const r = await userQuery(
+      A.userId,
+      `update public.client_intake_forms set status = 'reviewed', reviewed_at = now(), reviewed_by = $2 where id = $1`,
+      [id, A.practitionerId],
+    );
+    expect(r.rowCount).toBe(1);
+    expect(await stored(id)).toMatchObject({ status: "reviewed", client_id: A.clientId, studio_id: A.studioId, deleted_at: null });
+  });
+
+  it("creation and link stamping by the service role (new request, reissue, resend, reminder) are unaffected", async () => {
+    const created = await adminTx(async (q) => {
+      await q("set local role service_role");
+      const { rows } = await q(
+        `insert into public.client_intake_forms (studio_id, client_id, questionnaire_snapshot) values ($1, $2, null) returning id`,
+        [A.studioId, A.clientId],
+      );
+      return rows[0].id as string;
+    });
+    for (const id of [created, await seedIntake("submitted"), await seedIntake("reviewed")]) {
+      const r = await adminTx(async (q) => {
+        await q("set local role service_role");
+        return q(
+          `update public.client_intake_forms set intake_link_expires_at = now() + interval '14 days',
+                  intake_link_send_count = intake_link_send_count + 1, intake_link_last_sent_at = now() where id = $1`,
+          [id],
+        );
+      });
+      expect(r.rowCount).toBe(1);
+    }
+  });
+});
+
 describe("0340: what the guard does not change", () => {
   it("an in-progress intake cannot be re-pointed either (the 0160 lineage rule), but a member can still withdraw it", async () => {
     const id = await seedIntake("in_progress");
@@ -125,10 +172,10 @@ describe("0340: what the guard does not change", () => {
   it("both triggers sit beside the 0118/0162 guard and the new function is not executable by any API role", async () => {
     const t = await adminQuery(
       `select tgname from pg_trigger where tgrelid = 'public.client_intake_forms'::regclass and not tgisinternal
-        and tgname in ('client_intake_forms_immutable_lineage', 'client_intake_forms_terminal_visibility', 'client_intake_forms_terminal_immutability') order by 1`,
+        and tgname in ('client_intake_forms_lineage_fixed', 'client_intake_forms_terminal_visibility', 'client_intake_forms_terminal_immutability') order by 1`,
     );
     expect(t.rows.map((r) => r.tgname)).toEqual([
-      "client_intake_forms_immutable_lineage",
+      "client_intake_forms_lineage_fixed",
       "client_intake_forms_terminal_immutability",
       "client_intake_forms_terminal_visibility",
     ]);

@@ -4,7 +4,7 @@ begin;
 
 set local lock_timeout = '5s';
 
-drop trigger if exists client_intake_forms_immutable_lineage on public.client_intake_forms;
+drop trigger if exists client_intake_forms_lineage_fixed on public.client_intake_forms;
 drop trigger if exists client_intake_forms_terminal_visibility on public.client_intake_forms;
 drop function if exists public.enforce_intake_terminal_visibility();
 

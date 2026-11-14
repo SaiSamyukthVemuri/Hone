@@ -31,7 +31,7 @@ describe("0340: shape", () => {
 
   it("pins client_id and studio_id with the established 0160 guard, and deleted_at on terminal rows for JWT callers", () => {
     expect(E).toMatch(
-      /create trigger client_intake_forms_immutable_lineage\s+before update of client_id, studio_id on public\.client_intake_forms\s+for each row execute function public\.guard_immutable_clinical_lineage\('client_id', 'studio_id'\);/,
+      /create trigger client_intake_forms_lineage_fixed\s+before update of client_id, studio_id on public\.client_intake_forms\s+for each row execute function public\.guard_immutable_clinical_lineage\('client_id', 'studio_id'\);/,
     );
     expect(E).toContain("when (new.deleted_at is distinct from old.deleted_at)");
     expect(E).toContain("if auth.uid() is not null and old.status in ('submitted', 'reviewed') then");
@@ -42,7 +42,7 @@ describe("0340: shape", () => {
   });
 
   it("the down removes exactly the two triggers and the new function", () => {
-    expect(DOWN).toContain("drop trigger if exists client_intake_forms_immutable_lineage on public.client_intake_forms;");
+    expect(DOWN).toContain("drop trigger if exists client_intake_forms_lineage_fixed on public.client_intake_forms;");
     expect(DOWN).toContain("drop trigger if exists client_intake_forms_terminal_visibility on public.client_intake_forms;");
     expect(DOWN).toContain("drop function if exists public.enforce_intake_terminal_visibility();");
     expect(DOWN).not.toContain("guard_immutable_clinical_lineage");
