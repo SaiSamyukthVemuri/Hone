@@ -314,7 +314,7 @@ export async function refundPaymentChargeAttempt(args: {
     };
   }
   if (!attempt.stripe_customer_id) {
-    return { ok: false, outcome: "needs_manual_review", message: "The original payment customer is not recorded. The studio operator must reconcile this payment before refunding it." };
+    return { ok: false, outcome: "needs_manual_review", message: "The original payment customer is not recorded. The studio owner must reconcile this payment before refunding it." };
   }
   if (!attempt.stripe_payment_intent_id) {
     return {
@@ -357,7 +357,7 @@ export async function refundPaymentChargeAttempt(args: {
   // failure without any provider object/evidence retains its existing retry.
   if (attempt.stripe_refund_id !== null || attempt.stripe_refund_status !== null
       || attempt.stripe_refund_event_created !== null || attempt.stripe_refund_event_id !== null) {
-    return { ok: false, outcome: "needs_manual_review", message: "A refund outcome is already recorded for this payment. The studio operator must review it before starting another refund." };
+    return { ok: false, outcome: "needs_manual_review", message: "A refund outcome is already recorded for this payment. The studio owner must review it before starting another refund." };
   }
   if (!attempt.stripe_account_id) {
     return {
@@ -550,7 +550,7 @@ export async function refundPaymentChargeAttempt(args: {
             zero_rows: failedWriteZeroRows,
           },
         });
-        return { ok: false, outcome: "needs_manual_review", message: "The refund outcome changed or could not be saved. The studio operator will reconcile it." };
+        return { ok: false, outcome: "needs_manual_review", message: "The refund outcome changed or could not be saved. The studio owner will reconcile it." };
       }
       await recordOpsAlert({
         severity: "warning",
@@ -678,7 +678,7 @@ export async function refundPaymentChargeAttempt(args: {
         ok: false,
         outcome: "needs_manual_review",
         message:
-          "Stripe's refund does not match this payment, so Hone did not record it. The studio operator will reconcile this.",
+          "Stripe's refund does not match this payment, so Hone did not record it. The studio owner will reconcile this.",
       };
     }
   }
@@ -703,7 +703,7 @@ export async function refundPaymentChargeAttempt(args: {
     } catch {
       // Preserve deployed identity refusal when its diagnostic sink fails.
     }
-    return { ok: false, outcome: "needs_manual_review", message: "The refund response could not be matched to this payment. The studio operator will reconcile it." };
+    return { ok: false, outcome: "needs_manual_review", message: "The refund response could not be matched to this payment. The studio owner will reconcile it." };
   }
   // Owner998 union: preserve the locked observation/status/provenance path,
   // but recognize only the SAME complete durable refund when a signed callback
@@ -781,19 +781,19 @@ export async function refundPaymentChargeAttempt(args: {
       // A diagnostic failure cannot complete or rearm an unresolved refund.
       // Preserve the pending claim and the same truthful manual-review result.
     }
-    return { ok: false, outcome: "needs_manual_review", message: "The refund outcome could not be saved. The studio operator will reconcile it." };
+    return { ok: false, outcome: "needs_manual_review", message: "The refund outcome could not be saved. The studio owner will reconcile it." };
   }
   if (observation?.result === "refund_pending") {
-    return { ok: false, outcome: "needs_manual_review", message: "Stripe has not completed the refund. Refresh later; the studio operator may need to review it." };
+    return { ok: false, outcome: "needs_manual_review", message: "Stripe has not completed the refund. Refresh later; the studio owner may need to review it." };
   }
   if (observation?.result === "refund_failed") {
-    return { ok: false, outcome: "failed", failureCode: `provider_refund_${refund.status}`, message: "Stripe did not complete the refund. The studio operator can review the payment before retrying." };
+    return { ok: false, outcome: "failed", failureCode: `provider_refund_${refund.status}`, message: "Stripe did not complete the refund. The studio owner can review the payment before retrying." };
   }
   // Read the timestamp actually committed by the command; never invent a local
   // completion time after a refused/missing write or a concurrent event.
   const refundedAtIso = await verifiedSavedRefundTimestamp(attempt, refund.id);
   if (!refundedAtIso) {
-    return { ok: false, outcome: "needs_manual_review", message: "The saved refund could not be confirmed. The studio operator will reconcile it." };
+    return { ok: false, outcome: "needs_manual_review", message: "The saved refund could not be confirmed. The studio owner will reconcile it." };
   }
 
   return {

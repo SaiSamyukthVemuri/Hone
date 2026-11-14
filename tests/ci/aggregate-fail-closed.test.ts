@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { aggregatorSteps, runAggregatorSteps } from "./helpers/aggregator-steps";
 
 // THE FAIL-CLOSED CONTRACT of the stable required browser check.
 //
@@ -42,52 +42,18 @@ const ROOT = path.resolve(__dirname, "../..");
 const CI_PATH = path.join(ROOT, ".github/workflows/ci.yml");
 const CI = readFileSync(CI_PATH, "utf8");
 
-// Mechanically lift the `run:` body of the FIRST step of the `browser-e2e` job.
-// Deliberately strict: every failure mode throws rather than returning a partial
-// script that would make the assertions below vacuous.
+// SHEP-LATEST-01 PR1: the aggregator is three steps of one job. SCRIPT is every
+// step's script, in order, for the string-shape assertions; runAggregate() below
+// EXECUTES the steps one process each, in order, as GitHub does.
+const STEPS = aggregatorSteps(CI);
 function extractAggregateScript(): string {
-  const lines = CI.split("\n");
-  const jobIdx = lines.findIndex((l) => l === "  browser-e2e:");
-  if (jobIdx < 0) throw new Error("browser-e2e job not found in ci.yml");
-
-  // Stop at the next top-level job key so we can never wander into another job.
-  let jobEnd = lines.length;
-  for (let i = jobIdx + 1; i < lines.length; i += 1) {
-    if (/^ {2}[A-Za-z][\w-]*:/.test(lines[i])) {
-      jobEnd = i;
-      break;
-    }
-  }
-
-  const runIdx = lines.findIndex(
-    (l, i) => i > jobIdx && i < jobEnd && l === "        run: |",
-  );
-  if (runIdx < 0) throw new Error("browser-e2e `run: |` block not found");
-
-  const body: string[] = [];
-  for (let i = runIdx + 1; i < jobEnd; i += 1) {
-    const line = lines[i];
-    if (line.trim() === "") {
-      body.push("");
-      continue;
-    }
-    const indent = line.length - line.trimStart().length;
-    if (indent < 10) break;
-    body.push(line.slice(10));
-  }
-  const script = body.join("\n");
-
-  // SELF-VERIFICATION. If the extractor ever grabs the wrong block — or an empty
-  // one — these throw instead of letting the decision table pass against
-  // nothing. This is what stops the whole file from going vacuous.
+  const script = STEPS.map((s) => s.script).join("\n# ---- next step ----\n");
+  // SELF-VERIFICATION. If the extractor ever grabs the wrong block, or an empty
+  // one, these throw instead of letting the decision table pass against nothing.
   if (script.length < 500) {
     throw new Error(`extracted aggregate script implausibly short (${script.length} chars)`);
   }
-  for (const marker of [
-    "REQUIRED=",
-    "SHARD_RESULT",
-    "browser shard(s) passed",
-  ]) {
+  for (const marker of ["REQUIRED=", "SHARD_RESULT", "browser shard(s) passed"]) {
     if (!script.includes(marker)) {
       throw new Error(`extracted script missing expected marker: ${marker}`);
     }
@@ -120,20 +86,8 @@ function runAggregate(over: Partial<GateEnv>): { code: number; out: string } {
     SHARDS: "",
     ...over,
   };
-  try {
-    const out = execFileSync("bash", ["-c", SCRIPT], {
-      env: { ...process.env, ...env },
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { code: 0, out };
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string };
-    return {
-      code: typeof err.status === "number" ? err.status : 1,
-      out: `${err.stdout ?? ""}${err.stderr ?? ""}`,
-    };
-  }
+  const r = runAggregatorSteps(STEPS, env as unknown as Record<string, string>);
+  return { code: r.code, out: r.out };
 }
 
 // A healthy extended run, as observed on run 31123533948 attempt 2.
