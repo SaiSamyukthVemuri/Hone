@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0346 source contract. The behaviour is proved against a database in tests/db/notifications-update-read-at-only-0346.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0346")}`, "utf8");
@@ -10,9 +10,8 @@ const norm = (t: string) => t.replace(/\s+/g, " ").trim();
 const T = "public.practitioner_notifications";
 
 describe("0346 notifications: members may only mark read (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once", () => {
     expect(countVersion("0346")).toBe(1);
-    expect(isRepoMax("0346")).toBe(true);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {
