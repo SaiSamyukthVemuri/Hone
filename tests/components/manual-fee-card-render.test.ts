@@ -14,6 +14,7 @@ vi.mock("@/app/(app)/calendar/[id]/manual-fee-actions", () => {
     cancelManualFeeChargeAttemptAction: f("cancel"),
     sendFeeReceiptAction: f("receipt"),
     refundFeeAttemptAction: f("refund"),
+    closeDeclinedFeeAttemptAction: f("close"),
   };
 });
 // SSR renders the real timestamp component empty (it fills in on the client), so print the ISO value to pin WHICH time is shown.
@@ -118,6 +119,81 @@ describe("states that must NOT offer a charge or a retry", () => {
   it("failed is failed, with the reason", () => {
     const html = render([attempt({ ...LC, status: "failed", failure_code: "card_declined", failure_message: "Declined", stripe_status: "canceled", stripe_payment_intent_id: "pi_x" })]);
     expect(html).toContain("Charge failed.");
+  });
+});
+
+describe("E1: Close declined attempt is offered only where it can apply", () => {
+  const declined = { ...LC, status: "failed", failure_code: "card_declined", stripe_payment_intent_id: "pi_x" };
+  it("a failed attempt holding a PaymentIntent that is not yet proven canceled: unclear panel WITH the close control, and still no charge control", () => {
+    const html = render([attempt({ ...declined, stripe_status: "requires_payment_method" })]);
+    expect(html).toContain("fee-unclear-panel");
+    expect(html).toContain("fee-close-declined");
+    expect(html).toContain("Close declined attempt");
+    expect(html).not.toContain("Charge late cancellation fee");
+  });
+  it("no PaymentIntent, a capture, or an already-proven cancel: no close control", () => {
+    for (const over of [{ stripe_payment_intent_id: null, stripe_status: null }, { stripe_status: "requires_action", charged_at: "2026-11-01T10:05:00.000Z" }, { stripe_status: "canceled" }]) {
+      expect(render([attempt({ ...declined, ...over })]), JSON.stringify(over)).not.toContain("fee-close-declined");
+    }
+  });
+  it("Privacy defence in depth: the projection carries mayCloseDeclined only for the OWNER", () => {
+    const row = attempt({ ...declined, stripe_status: "requires_payment_method" });
+    const e = { ...eligible([row]), existingAttempts: [row] } as never;
+    expect(projectFeeEligibility(e, new Date(), true).attempts[0].state.mayCloseDeclined).toBe(true);
+    expect(projectFeeEligibility(e, new Date(), false).attempts[0].state.mayCloseDeclined).toBe(false);
+  });
+  it("the plain unclear states (old pending, odd status) never offer it", () => {
+    expect(render([attempt({ ...LC, status: "pending_stripe", updated_at: "2026-11-01T00:00:00.000Z", stripe_payment_intent_id: "pi_x" })])).not.toContain("fee-close-declined");
+    expect(render([attempt({ ...LC, status: "weird", stripe_payment_intent_id: "pi_x" })])).not.toContain("fee-close-declined");
+  });
+});
+
+describe("E1: after Close declined attempt and a refresh, the replacement fee can be prepared", () => {
+  const PREPARE = "Prepare manual fee charge";
+  // The late-cancel tab (the one the card opens on) with eligibility as the server computes it AFTER the refresh.
+  const renderLate = (attempts: unknown[], mode: "eligible" | "blocked", isOwner = true) => {
+    const late = attempts.filter((a) => (a as { charge_type: string }).charge_type === "late_cancel");
+    const base = mode === "eligible" ? { ...eligible(late), appointment: { ...eligible(late).appointment, status: "cancelled" } } : blocked(late);
+    const props = {
+      appointmentId: "appt-1",
+      lateCancel: projectFeeEligibility(base as never, new Date(), isOwner),
+      noShow: projectFeeEligibility(blocked([]) as never, new Date(), isOwner),
+    };
+    return renderToStaticMarkup(createElement(ManualFeeChargeCard as never, props as never));
+  };
+  const declined = { ...LC, status: "failed", failure_code: "card_declined", stripe_payment_intent_id: "pi_x" };
+  it("BEFORE the close the declined attempt holds the appointment: unclear panel with the close control, NO prepare", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "requires_payment_method" })], "blocked");
+    expect(html).toContain("fee-close-declined");
+    expect(html).not.toContain(PREPARE);
+  });
+  it("even if eligibility were (wrongly) eligible, a still-blocking failed row keeps its panel and never shows prepare", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "requires_payment_method" })], "eligible");
+    expect(html).toContain("fee-unclear-panel");
+    expect(html).not.toContain(PREPARE);
+  });
+  it("AFTER the close (row failed, provider-proven canceled and uncaptured) and eligibility allows a fee: the history keeps the row, 'Charge failed.' stays, and Prepare is offered", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "canceled" })], "eligible");
+    expect(html).toContain("fee-charge-history");
+    expect(html).toContain("fee-history-row");
+    expect(html).toContain("Charge failed.");
+    expect(html).toContain(PREPARE);
+    expect(html).not.toContain("fee-close-declined");
+  });
+  it("after the close but eligibility still refuses (for example the other fee type holds the appointment): the reasons show, Prepare does not", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "canceled" })], "blocked");
+    expect(html).toContain("Cannot prepare fee charge:");
+    expect(html).not.toContain(PREPARE);
+  });
+  it("a cancelled-before-charging row and a needs-action row also release the card to Prepare", () => {
+    expect(renderLate([attempt({ ...LC, status: "cancelled", cancelled_at: "2026-11-01T10:01:00.000Z" })], "eligible")).toContain(PREPARE);
+    const needs = attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x", stripe_status: "canceled" });
+    const html = renderLate([needs], "eligible");
+    expect(html).toContain("fee-needs-action-panel");
+    expect(html).toContain(PREPARE);
+  });
+  it("a charged fee never offers Prepare, whatever eligibility says", () => {
+    expect(renderLate([attempt({ ...LC, status: "succeeded", charged_at: "2026-11-01T10:05:00.000Z" })], "eligible")).not.toContain(PREPARE);
   });
 });
 
