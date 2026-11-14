@@ -174,7 +174,8 @@ describe("source pins", () => {
     const t = readFileSync("app/(app)/settings/team/actions.ts", "utf8");
     const i = t.indexOf("export async function removePractitionerAction");
     const body = t.slice(i, t.indexOf("\n}\n", i));
-    expect(body).toContain("coreDeactivateStaff(studioId, id,");
+    expect(body).toContain('coreDeactivateStaff(studioId, id, "practitioner", reason)');
+    expect(body).toMatch(/if \(!reason \|\| !reasonAcceptable\("adopt", false, reason\)\)/);
     expect(body).toContain('formData.get("reason")');
     expect(body).not.toMatch(/createAdminClient|admin\.rpc|set_practitioner_active_locked/);
     const page = readFileSync("app/(app)/settings/team/page.tsx", "utf8");
