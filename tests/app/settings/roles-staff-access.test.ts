@@ -166,6 +166,8 @@ describe("source pins", () => {
     expect(ui).toContain("disabled={busy || !reasonOk}");
     expect(ui).toContain("act(person.id, person.role, reason.trim())");
     expect(ui).toContain("roleErrorMessage(r.error)");
+    // the count the core reports reaches the notice the owner reads
+    expect(ui).toContain("copy.doneLine(person.name, r.upcoming)");
   });
   it("the action layer calls only the two core functions and never writes a membership table", () => {
     expect(a).toContain("coreDeactivateStaff(");
