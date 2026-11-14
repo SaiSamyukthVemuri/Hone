@@ -177,12 +177,15 @@ describe("0335, ACTIVATED keys: membership AND the key", () => {
       });
     }
     expect(anon).toEqual(only(ALL_TABLES, 0));
-    const svc = await asRole("service_role", async (q) => {
-      const o: Record<string, number> = {};
-      for (const t of ALL_TABLES) o[t] = (await q(`select count(*)::int n from public.${t} where ${keyCol(t)}=$1`, [f.ids[t]])).rows[0].n;
-      return o;
-    });
-    expect(svc).toEqual(only(ALL_TABLES, 1));
+    // service_role (background workflows) still reads every table EXCEPT client_budget_context, which 0183 revokes from it on purpose ("no server path
+    // uses an admin client for this table"): expect the refusal there (T-3b), one transaction per table because a 42501 aborts its own.
+    const svc: Record<string, number> = {};
+    for (const t of ALL_TABLES) {
+      svc[t] = await asRole("service_role", async (q) => {
+        try { return (await q(`select count(*)::int n from public.${t} where ${keyCol(t)}=$1`, [f.ids[t]])).rows[0].n as number; } catch (e) { if (t !== "client_budget_context" || !/permission denied/i.test(String(e))) throw e; return -1; }
+      });
+    }
+    expect(svc).toEqual({ ...only(ALL_TABLES, 1), client_budget_context: -1 });
     await adminQuery("update public.practitioners set active=false where id=$1", [f.member.practitionerId]);
     expect(await counts(f.member.userId, f)).toEqual(only(ALL_TABLES, 0));
   });
