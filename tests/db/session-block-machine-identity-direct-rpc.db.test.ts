@@ -7,11 +7,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, resolveLocalDbUrl, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // ===========================================================================
-// DIRECT-RPC REGRESSION for the mode contract (Vercel Security Review, Low): with 0310 removed, a signed-in practitioner can call
-// the wrappers GRANTED TO authenticated straight through PostgREST and save a machine identity or mode the product never offers.
-// The application check is not enough; the database function is the authority.
+// THE RULE: the database refuses unsupported machine identities and modes for every wrapper granted to signed-in members.
+// The database function is the authority, not the application.
 //
-// Every wrapper granted to authenticated is called here as a real authenticated member (role + JWT claims), with unsupported
+// Every wrapper granted to authenticated is called here as a signed-in member (role + JWT claims), with unsupported
 // identities and modes, and must refuse and store nothing. A NEGATIVE CONTROL installs the 0301 (pre-0310) body of the one
 // shared core function inside a rolled-back transaction and shows the same calls are ACCEPTED, so the refusals above are
 // 0310's and not an accident of the fixture. A RECEIPT-REPLAY section proves a replay can never write: it only returns what a
@@ -140,7 +139,7 @@ const argsFor = (c: Case, s: SeededStudio, bare: string, fitted: string, session
 });
 const applicable = (w: { name: string }, c: Case) => !c.onlyWrappers || c.onlyWrappers.includes(w.name);
 
-describe("every wrapper granted to authenticated refuses unsupported identities and modes (real JWT, direct RPC)", () => {
+describe("every wrapper granted to authenticated refuses unsupported identities and modes (called as a signed-in member)", () => {
   it("the wrappers under test are exactly the ones granted EXECUTE to authenticated that reach the core function", async () => {
     const r = await adminQuery(
       `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -213,7 +212,7 @@ const asMember = async (c: PoolClient, userId: string) => {
   await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
 };
 
-describe("NEGATIVE CONTROL: the same direct calls are ACCEPTED on the pre-0310 (0301) core function", () => {
+describe("NEGATIVE CONTROL: the same calls, made as a signed-in member, are ACCEPTED on the pre-0310 (0301) core function", () => {
   for (const w of WRAPPERS.filter((x) => x.takesProfile)) {
     for (const c of CASES.filter((x) => applicable(w, x) && ACCEPTED_BEFORE_0310.has(x.name))) {
       it(`${w.name}: ${c.name} is stored when the 0301 body is installed (rolled back afterwards)`, async () => {
@@ -229,7 +228,7 @@ describe("NEGATIVE CONTROL: the same direct calls are ACCEPTED on the pre-0310 (
           );
           return row.rows[0] as { machine_profile_id: string | null; machine_mode_key: string | null };
         });
-        // The 0301 body stored the unsupported identity or mode (this is the live-in-production gap).
+        // The earlier function body stores the unsupported identity or mode, so the refusals above come from 0310.
         expect(accepted.machine_mode_key !== null || accepted.machine_profile_id === OTHER).toBe(true);
         // and the real (0310) function refuses the same call afterwards, outside the rolled-back transaction
         const e = await refused(asUser(s.userId, (q) => w.call(q, argsFor(c, s, bare, fitted, sessionId, blockId))));
@@ -262,12 +261,12 @@ describe("receipt replay: a replay never writes, and a new payload always meets 
     expect(two.rows[0].r.machine_mode_key).toBe("galvanic");
   });
 
-  it("an off-contract save committed BEFORE 0310 (key K): after 0310 a replay of K returns the stored answer and writes NOTHING; a NEW key with the same payload is refused; K with a changed payload is refused", async () => {
+  it("a receipt stored by the earlier function body (key K): after 0310 a replay of K returns the stored answer and writes NOTHING; a NEW key with the same payload is refused; K with a changed payload is refused", async () => {
     const { s, bare } = await arrange("rp-old");
     const { sessionId, blockId } = await seedSession(s);
     const key = `rp-old-${randomUUID()}`;
     await rolledBackAs(s.userId, BODY_0301, async (c) => {
-      // 1. before 0310: the off-contract mode is accepted and a receipt is written
+      // 1. the earlier function body accepts the off-contract mode and writes a receipt
       const first = await stamp(c, s, sessionId, blockId, { machine: bare, profile: null, mode: "totally-bogus-mode", key });
       expect(first.rows[0].r.reused).toBe(false);
       await c.query("reset role");
