@@ -98,7 +98,7 @@ function declaredIn(scope: ts.Node): Map<string, ts.Node> {
   if (ts.isFunctionLike(scope)) {
     for (const p of scope.parameters) bindingNames(p.name, m, p);
     if ((ts.isFunctionExpression(scope)) && scope.name) m.set(scope.name.text, scope);
-    if (scope.body) hoistedVars(scope.body);
+    if ("body" in scope && scope.body) hoistedVars(scope.body);
   }
   if (ts.isSourceFile(scope)) { fromStatements(scope.statements); hoistedVars(scope); }
   if (ts.isBlock(scope) || ts.isModuleBlock(scope)) fromStatements(scope.statements);
