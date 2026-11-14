@@ -21,11 +21,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0301**, as declared in `docs/production/migration-state.json` on this tree (the 0301 apply of 2026-11-06 is recorded in "The 0301 apply" below, from `01-ops/RECORD-0301-APPLIED-20261106.md`). This tree's record still lags later hosted applies it does not restate. |
-| **Repo migration max** | **0327** (`0327_waitlist_followup_read_bound.sql`, a DRAFT, unapplied), derived from the source files on this tree. |
+| **Hosted (production) migration max** | **0338**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only update of 2026-11-14, which declares the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327` and `0338` from their operator records; no apply is performed or re-verified by it. `0328` to `0337` are not hosted **by the row count** (the 0338 read-back was one row above the pre-push read). |
+| **Repo migration max** | **0338** (`0338_one_manual_fee_per_appointment.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
-| **Pending migrations** | **`0298`, `0313`, `0319`, `0323`, `0324`, `0325`, `0326` and `0327`.** `0327` (`0327_waitlist_followup_read_bound.sql`) is a DRAFT, unapplied, ordered after `0326`: it replaces the owner follow-up read so a withdrawal row shows the decline answer its retention clock binds to. `0326` (`0326_waitlist_retention_cleanup.sql`) is the waitlist retention cleanup, ordered after `0325`. `0325` (`0325_waitlist_decline_followups.sql`) is a DRAFT, unapplied, ordered after `0324`: it adds the waitlist decline answers, withdrawal requests and the owner follow-up. `0324` (`0324_waitlist_atomic_send_allowance.sql`) is a DRAFT, unapplied, ordered after `0323`: it replaces the waitlist send command with a version that enforces a send-time capacity limit and rotates a full admission round itself. `0323` (`0323_waitlist_launch_controls.sql`) is a DRAFT, unapplied, ordered after `0313`: it lets an invited booking pass while a studio is Closed (one changed cell of `assert_new_client_admission`, plus a marker function created with it), and adds an owner-gated read-only counting function. The app detects both by function presence and tolerates their absence. `0313` and `0319` are MIGRATION-FIRST PENDING: sealed (sha256 `cfd89261…` and `3aa52473…`), NOT applied, flags OFF; `0319` is ordered after `0313`. `0298` is in this tree and is still listed unhosted by the structured lists here although this tree's record of hosted lags that fact (see the earlier states below). The numbers `0301`-`0312` and `0314`-`0318` and `0320`-`0322` have no file on this tree and are declared in `reserved_unallocated_above_hosted`: a repository-structure declaration that they are carried by other held work, not a statement about hosted. |
-| **Next free number** | Next free number is **0328** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327` and `0338` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
+| **Next free number** | Next free number is **0339** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### What the two pending migrations are (no hosted claim)
@@ -83,37 +83,24 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Release.** #1419 (the file of 0327) was held for Sam's review of the read-back, then merged on Sam's own words ("I approve merging #1419 at 04cb38a2e"); no application change was needed for it. The scheduled cleanup at 10:00 UTC on 2026-11-10 is to record a success heartbeat.
 - **Not captured.** Any server-side apply instant.
 
+### The 0338 apply (facts as recorded by OPS, 2026-11-14; apply receipt `01-ops/0338-apply-receipt-20261114.json`)
+
+- **What it is.** `0338_one_manual_fee_per_appointment.sql`: a unique partial index that enforces one manual late-cancel or no-show fee per appointment. The file arrived with #1433, merged as `8a1dfaba1` on 2026-11-14 at 15:02:10Z, after the apply was read back; the apply was therefore migration-first.
+- **Approval.** Sam's own words on 2026-11-14 for this exact package: apply 0338 only, with a plain push and without `--include-all`, provided the seal is unchanged and the immediate pre-apply checks pass. It does not authorize live charging, fee activation or any other migration.
+- **Package.** One plain push, exactly one migration; migration sha256 `1285a2e7…`; sealed package SEAL-SHA256SUMS `22c48e08…`; rehearsed on CLI 2.102.0; applied with the operator's pinned supabase-go build.
+- **Pre-push reads (Part A, 2026-11-14T02:35Z).** PASS: 267 history rows, max `0327`, `0338` absent; no open transactions.
+- **Read-back.** **OVERALL PASS**: 268 history rows, max `0338`, present once; the unique partial index is valid and ready; the public catalog equals the sealed post-0338 fingerprint.
+- **Hosted at that read-back:** 268 rows, max `0338`. By the row count (267 through `0327`, plus `0338` once, equals 268), `0328` to `0337` are not hosted.
+- **Reconcile.** Reconcile ran automatically inside the runner after the apply was verified; it makes no connection.
+- **Release.** #1433 merged afterwards, and #1436 after it. The live manual-fee gate is OFF for every studio as read at merge on 2026-11-14; this apply does not activate fees.
+- **Declared hosted maximum.** **Not advanced by this record.** `migration-state.json` still declares `0300`. Advancing it is a separate record change that must also declare the `0301`-`0303` and `0328`-`0337` positions; until then the "Hosted (production) migration max" cell below is the declared value, not the real hosted state.
+- **Not captured.** Any server-side apply instant.
+
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
 
 - **What changed.** Sam approved, in Sam's own words, activating HON-7 V1 in production with the corrected notice from #1414 and #1415. The activation instant is **2026-11-09T15:19:06Z**: the answers flag (`WAITLIST_DECLINE_ANSWERS`) and owner email (`HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED`, with `HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE` set to that instant) were created as Production-only environment variables, then production was redeployed on `c671beb22` (READY 15:21:44Z). Variables created 15:19:06Z; redeploy READY 15:21:44Z; the deadline is counted from the earlier instant (conservative).
 - **Unchanged.** Admission stays Closed, public joining stays blocked and SMS stays off. No migration was applied for this.
 - **Retention.** The 30-day hard deadline for automatic cleanup (2026-12-09T15:19:06Z) is to be met by the 0326 cleanup, applied and deployed before the activation; the first scheduled run (10:00 UTC, 2026-11-10) is read separately and is not recorded here.
-
-### The 0301 apply (facts as recorded by OPS, 2026-11-06; `01-ops/RECORD-0301-APPLIED-20261106.md`)
-
-- **What it is.** HON-8 machine identity on charting: three nullable columns on `session_blocks` (`machine_profile_id`, `studio_machine_id`, `machine_mode_key`) with the CHECK `session_blocks_machine_identity_shape`, the table `block_write_receipts` (RLS on, no policy, every API privilege revoked) and four new functions (`apply_block_machine_identity`, `record_block_machine_identity`, `create_block_with_initial_setup_and_identity`, `record_setup_submission_with_identity`). The 0223 functions are untouched.
-- **Order.** One plain `db push` of one file, no `--include-all`; the dry run listed exactly `0301_session_block_machine_identity.sql`. `0301` is above the previous hosted max `0300`, so it was not applied out of order.
-- **Package and tool.** Stage `stage-0301-b12-mac`; apply script `c4831a1c…`, bundle `60a02f41…` (full values in the OPS record); pinned CLI v2.102.0.
-- **Pre-apply.** The run's own fresh reads (marker absent, 257 history rows, max 0300, version-set md5 `b8caa57a45f535e5fc31fb51348c6415`, `0301` absent, G12 with the catalog fingerprint `2d79ad035f87f90f6dacb6d84c7af87c`, 4156 entries, no old transactions, sizes within limits) were required by the runner's gates and matched the pre-checks confirmed in writing by Privacy (`01-ops/PRECHECK-0301-b12-RESULT-20261106.md`).
-- **Read-back.** 2026-11-06T22:58:42Z-22:58:47Z: OVERALL PASS, all eleven checks. 258 rows, max 0301, `0301` exactly once, md5 `6f50410d5b0553918a13bb0d24d4939a`, catalog fingerprint `62ede139d92243ca92ce70ebdb0f98cb` (4187 entries), no identity backfill (zero rows carry an identity) and an empty receipts table. Both values are gated by the read-back and now MEASURED on hosted. Reconcile ran automatically: ALL.
-- **Written closeout.** Insurance CONFIRMED; Privacy CONFIRMED_WITH_LIMITS (the run is Sam's relay; the files are internally consistent and equal the sealed expectations).
-- **Not captured.** Any server-side apply instant and statement-level timing. Migration history is not table-content evidence.
-- **Rollback.** The held down file refuses once any saved machine identity or receipt exists; none is approved. The migration-history row is not rewound.
-- **Release.** #1369 was NOT merged at apply time and no application code was deployed. Charting identity is recorded only once its code is live; until then the app degrades to the 0223 commands (`tests/lib/machines/degrade-without-0301.test.ts`). The merge is a release; this record change is in the same PR.
-- **New base for every later stage.** 258 rows, max 0301, version-set md5 `6f50410d…`, catalog `62ede139…`.
-
-### The 0298 apply (facts as recorded by OPS, 2026-11-06; `01-ops/RECORD-0298-APPLIED-20261106.md`)
-
-Recorded here in prose, ahead of its carrier. **This tree's structured lists lag hosted for `0298`**: it stays in `unhosted_below` because this branch has no `0298` file and the evaluator requires one for a hosted declaration. #1357, which carries the file, adds the `hosted_out_of_order` entry, removes `0298` from the unhosted lists and trims this prose.
-
-- **What it is.** `0298_dashboard_attention_dismissals.sql` (sha256 `bf45f3053eb64fcd450e6d0b5a949e1422ad9d1603dd60b590c81f56245c9ae0`): a new empty table with no API-role privilege, RLS on and zero policies, five functions and an append-only trigger. Carrier PR #1357 head `8a81b287e1d795a69814bc1862cf688f34a8b758` at the apply; NOT merged.
-- **Order.** One `db push --include-all` of one file, inside the sealed stage `stage-0298-b00-mac` (`SHA256SUMS.txt` sha256 `4b7244b72411f549dbddcb33a72007b69c9fe34ad7f6c7220fb4292932aa3ee4`); the dry run listed exactly `0298`. `0298` is BELOW the then hosted max `0300`, so this was an out-of-order apply; its `hosted_out_of_order` entry lands with #1357 (see above).
-- **Authorization.** Sam's own words: `01-ops/SAM-AUTHORIZATION-0298-b00-20261106T173042Z.txt` (0298 only) and `01-ops/SAM-AUTHORIZATION-0298-RECONCILE-FIX-20261106T183741Z.txt` (the substitute reconcile script below, local only). Neither approves a retry, rerun, rollback, other migration, the #1357 merge or activation.
-- **Run and read-back.** ONE push at 17:35:59Z (client side), exit 0. Read-back 17:36:00Z-17:36:06Z: OVERALL PASS, all ten checks: 257 rows, max 0300, version-set md5 `b8caa57a45f535e5fc31fb51348c6415`, `0298` exactly once; privileges, RLS, function facts and body md5s, the trigger, columns, constraints and index passed; the catalog fingerprint `2d79ad035f87f90f6dacb6d84c7af87c` (4156 entries) passed and is MEASURED on hosted.
-- **Shell-tail quoting defect.** The sealed apply, read-back and reconcile scripts each fail `bash -n`: an OVERALL PASS literal contains an apostrophe inside single quotes. The checker's verdict was written before the shell broke, so the runner reported UNKNOWN -> reconcile and left the marker at APPLIED-UNVERIFIED. The sealed scripts were not edited and not rerun.
-- **Reconcile.** 2026-11-06T18:39:04Z with the approved substitute quoting-fixed script, sha256 `45c83d4a2b7f7f567c340a32bd2fa597086c30be6912402cdc41c1322e237f87` (it passed its sha and `bash -n` checks): RECONCILED ALL, marker cleared. Evidence verified by OPS and confirmed in writing: Insurance CONFIRMED and Privacy CONFIRMED_WITH_LIMITS.
-- **Effect.** None user-visible: the table is empty, the deployed app does not call the new commands, `HONE_DASHBOARD_DISMISSALS_ENABLED` stays OFF. The down file stays clean only while the table is empty; none is approved.
-- **Not done.** Any rollback, any other migration, the #1357 merge, dashboard activation.
 
 ## Previous state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
@@ -122,10 +109,10 @@ Recorded here in prose, ahead of its carrier. **This tree's structured lists lag
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0300**, declared in `docs/production/migration-state.json`; unchanged by this apply because `0281` is below it. Read back 2026-11-05T02:08:04Z-02:08:08Z: APPLIED+VERIFIED as recorded by OPS: 256 history rows, max 0300, `0281` exactly once; reconcile ALL, apply-state marker archived. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
-| **Repo migration max** | **0301** (`0301_session_block_machine_identity.sql`), derived from the source files on this tree; source-only and pending (HON-8, PR #1369, held). `0300` is present at the applied bytes and `0281` is present at the applied bytes. |
+| **Repo migration max** | **0300** (`0300_card_setup_legacy_event_order_bound.sql`), derived from the source files on this tree; `0281` is present at the applied bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | PENDING, NOT APPLIED: **0301** (`0301_session_block_machine_identity.sql`, additive, held; needs Sam's per-change authorization before any hosted apply). The staged package for `0301` is VOID until it is rebuilt on this post-`0281` base. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0280`, `0282`-`0296`, `0298` and `0299` are declared unhosted gaps, not a pending suffix. |
-| **Next free number** | Next free number is **0302** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **None** above or below the hosted head that this tree carries. `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0280`, `0282`-`0296`, `0298` and `0299` are declared unhosted gaps, not a pending suffix. Every held number below `0300` (including `0287` and `0289`) is OUT OF ORDER by construction, and the staged packages for `0301`, `0287` and `0289` are VOID and are rebuilt on the 256-row base. |
+| **Next free number** | Next free number is **0301** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The 0281 apply (facts as recorded by OPS, 2026-11-05; `01-ops/RECORD-0281-APPLIED-20261105.md`)
