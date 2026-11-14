@@ -223,6 +223,10 @@ function isErrorCtor(expr: ts.Expression, depth = 0): boolean {
   if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) return isErrorCtor(expr.right, depth + 1);
   if (ts.isPropertyAccessExpression(expr)) return ERROR_NAME_RE.test(expr.name.text);
   if (ts.isElementAccessExpression(expr)) return ts.isStringLiteralLike(expr.argumentExpression) && ERROR_NAME_RE.test(expr.argumentExpression.text);
+  if (ts.isClassExpression(expr)) {
+    const ext = expr.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
+    return ext !== undefined && isErrorCtor(ext, depth + 1);
+  }
   if (!ts.isIdentifier(expr)) return false;
   const b = resolveBinding(expr);
   if (b === undefined) return ERROR_NAME_RE.test(expr.text); // a global, or an unresolved name: judged by its name
@@ -376,6 +380,17 @@ export function logsNothingViolations(file: string, source: string): string[] {
     if ((ts.isNewExpression(node) || ts.isCallExpression(node)) && isErrorCtor(node.expression)) {
       for (const a of node.arguments ?? []) {
         if (!ts.isExpression(a) || !isLiteralText(a, sf)) out.push(`${file}:${at(node)} builds ${node.expression.getText(sf)} text from a non-literal`);
+      }
+    }
+    // 5b. `super(...)` in a class whose superclass is an Error constructor (directly, by alias, or through an in-file
+    // subclass chain) IS error construction: judged exactly like `new Error(...)`. (Codex P2, round 7.)
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword) {
+      const cls = ts.findAncestor(node, ts.isClassLike);
+      const ext = cls?.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
+      if (ext !== undefined && isErrorCtor(ext)) {
+        for (const a of node.arguments) {
+          if (!ts.isExpression(a) || !isLiteralText(a, sf)) out.push(`${file}:${at(node)} builds super(...) of an Error subclass from a non-literal`);
+        }
       }
     }
     if (ts.isThrowStatement(node)) {
@@ -624,6 +639,12 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "OverviewFrame: a second document reference": 'export const f = (q: string) => { document.getElementById(overviewRowLinkId(q))?.focus(); return document.title; };',
     "OverviewFrame: result stored then used": 'export const f = (q: string) => { const el = document.getElementById(overviewRowLinkId(q)); if (el) (el as HTMLImageElement).src = q; };',
     "OverviewFrame: focus result not called": 'export const f = (q: string) => document.getElementById(overviewRowLinkId(q))?.focus;',
+    "Codex fixture: an Error subclass whose constructor calls super with a non-literal": 'class Failure extends Error { constructor(q: string) { super(q); } } export const f = (q: string) => { throw new Failure(q); };',
+    "a two-level Error subclass chain with a non-literal super": 'class A extends Error {} class B extends A { constructor(q: string) { super(q); } } class C extends B { constructor(q: string) { super(q); } } export const f = (q: string) => { throw new C(q); };',
+    "super with a template literal substitution": 'class Failure extends TypeError { constructor(q: string) { super(`bad ${q}`); } } export const f = (q: string) => { throw new Failure(q); };',
+    "super through an Error alias": 'const E = Error; class Failure extends E { constructor(q: string) { super(q); } } export const f = (q: string) => { throw new Failure("x"); };',
+    "super in a class expression extending Error": 'const Failure = class extends Error { constructor(q: string) { super(q); } }; export const f = (q: string) => { throw new Failure("x"); };',
+    "super with a spread": 'class Failure extends Error { constructor(...a: string[]) { super(...a); } } export const f = (q: string) => { throw new Failure(q); };',
     "navigator passed along": 'const use = (n: unknown) => n; export const f = () => use(navigator);',
     "let reassigned message": 'let m = "a"; m = "b"; export const f = () => { throw new Error(m); };',
   };
@@ -662,6 +683,8 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "a literal Error alias": 'const E = TypeError; export const f = () => new E("Failed to load");',
     "a class extending Error with a literal": 'class MyFailure extends Error {} export const f = () => { throw new MyFailure("Failed to load clients"); };',
     "a function merely named like an error check": 'const isError = (x: unknown) => x instanceof Error; export const f = (q: unknown) => isError(q);',
+    "a subclass chain whose super calls are literal": 'class A extends Error { constructor() { super("Failed to load"); } } class B extends A { constructor() { super(); } } export const f = () => { throw new B(); };',
+    "super in a class that does not extend Error": 'class Base { constructor(public q: string) {} } class D extends Base { constructor(q: string) { super(q); } } export const f = (q: string) => new D(q);',
     "a template without substitutions": 'export const f = () => { throw new Error(`Failed to load clients`); };',
   };
   for (const [name, code] of Object.entries(clean)) {
