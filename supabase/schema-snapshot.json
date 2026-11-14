@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 269,
-    "last": "0334_clinical_read_enforcement_intake_consent.sql",
-    "sha256": "04f6e1823493a2be91f149dd041c19760d5806a1db20fb2079887abe6ab75d79"
+    "count": 270,
+    "last": "0335_clinical_read_enforcement_plans_notes.sql",
+    "sha256": "ba19b94d5558be4a3b9b04a06a1e9096ffd0ad41ded9127569f81e31516976a9"
   },
   "public": {
     "tables": [

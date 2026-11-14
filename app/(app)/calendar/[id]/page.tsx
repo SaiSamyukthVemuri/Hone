@@ -331,7 +331,8 @@ export default async function AppointmentDetailPage({
       linkedSessionRes,
       clinicalNotesRes,
     ] = await Promise.all([
-      getPinnedNotesForClient(studio.id, clientId),
+      // 0335: pinned notes are treatment records (clin.view_records); without the key the read is not issued and the briefing says so.
+      canViewRecords ? getPinnedNotesForClient(studio.id, clientId) : Promise.resolve([] as Awaited<ReturnType<typeof getPinnedNotesForClient>>),
       getClientTags(studio.id, clientId),
       loadIntakeForViewer(supabase, studio.id, clientId, { canViewIntake, canViewStatus: canViewIntakeStatus }),
       // Plans carry progress counted from treatment sessions and minutes: clin.view_records (Codex).
@@ -448,7 +449,7 @@ export default async function AppointmentDetailPage({
         displayStatus={displayStatus}
       />
 
-      <PinnedNotesReadonly notes={pinnedNotes} />
+      {canViewRecords ? <PinnedNotesReadonly notes={pinnedNotes} /> : <RestrictedNote testId="pinned-notes-not-available" />}
 
       {data.client?.allergies && (
         <section
