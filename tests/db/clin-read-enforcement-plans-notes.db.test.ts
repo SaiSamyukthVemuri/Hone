@@ -62,9 +62,9 @@ async function seedPlans(label: string): Promise<Fix> {
   ids.client_personal_notes = id();
   await adminQuery("insert into public.client_personal_notes (id, studio_id, client_id) values ($1,$2,$3)", [ids.client_personal_notes, s.studioId, s.clientId]);
   ids.client_budget_context = (await adminQuery(
-    "insert into public.client_budget_context (client_id, studio_id, budget_level, budget_notes, updated_by_practitioner_id) values ($1,$2,'somewhat_limited','synthetic',$3) returning id",
+    "insert into public.client_budget_context (client_id, studio_id, budget_level, budget_notes, updated_by_practitioner_id) values ($1,$2,'somewhat_limited','synthetic',$3) returning client_id",
     [s.clientId, s.studioId, s.practitionerId],
-  )).rows[0].id;
+  )).rows[0].client_id; // client_budget_context is keyed by client_id and has no id column (T-1)
   // the retired ledgers: rows can only be created with the retirement INSERT guard briefly disabled (as the owner), exactly like the production legacy row
   await withRetiredInsertOpen("clinical_record_snapshots", async () => {
     ids.clinical_record_snapshots = (await adminQuery(
@@ -90,10 +90,12 @@ async function seedPlans(label: string): Promise<Fix> {
 async function counts(userId: string, f: Fix, tables: readonly string[] = ALL_TABLES): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   await asUser(userId, async (q) => {
-    for (const t of tables) out[t] = (await q(`select count(*)::int n from public.${t} where id=$1`, [f.ids[t]])).rows[0].n;
+    for (const t of tables) out[t] = (await q(`select count(*)::int n from public.${t} where ${keyCol(t)}=$1`, [f.ids[t]])).rows[0].n;
   });
   return out;
 }
+// the row key column: client_budget_context has no id column, its primary key is client_id (T-1)
+const keyCol = (t: string) => (t === "client_budget_context" ? "client_id" : "id");
 const only = (tables: readonly string[], n: number) => Object.fromEntries(tables.map((t) => [t, n]));
 const expectedFor = (readable: readonly string[]) => Object.fromEntries(ALL_TABLES.map((t) => [t, readable.includes(t) ? 1 : 0]));
 
@@ -167,17 +169,17 @@ describe("0335, ACTIVATED keys: membership AND the key", () => {
     const strangerId = randomUUID();
     await adminQuery("insert into auth.users (id, email) values ($1,$2)", [strangerId, `i335-${strangerId.slice(0, 8)}@harness.local`]);
     expect(await counts(strangerId, f)).toEqual(only(ALL_TABLES, 0));
-    const anon = await asRole("anon", async (q) => {
-      const o: Record<string, number> = {};
-      for (const t of ALL_TABLES) {
-        try { o[t] = (await q(`select count(*)::int n from public.${t} where id=$1`, [f.ids[t]])).rows[0].n; } catch (e) { if (!/permission denied/i.test(String(e))) throw e; o[t] = 0; }
-      }
-      return o;
-    });
+    // One transaction per table (T-2): a 42501 aborts the transaction it happens in.
+    const anon: Record<string, number> = {};
+    for (const t of ALL_TABLES) {
+      anon[t] = await asRole("anon", async (q) => {
+        try { return (await q(`select count(*)::int n from public.${t} where ${keyCol(t)}=$1`, [f.ids[t]])).rows[0].n as number; } catch (e) { if (!/permission denied/i.test(String(e))) throw e; return 0; }
+      });
+    }
     expect(anon).toEqual(only(ALL_TABLES, 0));
     const svc = await asRole("service_role", async (q) => {
       const o: Record<string, number> = {};
-      for (const t of ALL_TABLES) o[t] = (await q(`select count(*)::int n from public.${t} where id=$1`, [f.ids[t]])).rows[0].n;
+      for (const t of ALL_TABLES) o[t] = (await q(`select count(*)::int n from public.${t} where ${keyCol(t)}=$1`, [f.ids[t]])).rows[0].n;
       return o;
     });
     expect(svc).toEqual(only(ALL_TABLES, 1));
