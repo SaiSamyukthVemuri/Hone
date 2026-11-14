@@ -127,16 +127,25 @@ const ALL_TABS: string[] = (() => {
 // The exact tables each tab reads, and how many times. Counts, not a set: the
 // two session_blocks reads on Overview are separately gated, and so are the two
 // client_intake_forms reads.
+// THE RULE for has_studio_permission: every gated tab adds exactly the gate's reads. The page asks each of these keys ONCE per load, whatever the
+// tab, and only AFTER the client has resolved for the studio (the unknown-client pin below and the tab-behaviour refusal pin both prove no gate
+// runs before that). A tab's total is PAGE_GATES.length plus the loader-level asks that tab makes. Adding a page gate means adding its key HERE
+// (which moves every tab by one); an ask that is not named here is an unexplained read and fails the exact tally below.
+const PAGE_GATES = [
+  "clin.view_records",
+  "clin.view_intake",
+  "clin.view_intake_status", // the status-only intake key (0334)
+  "clin.view_aftercare",
+] as const;
+
 const ALWAYS = {
   practitioners: 2, // identity, then the studio's practitioner list
   clients: 1,
   client_pricing: 1,
   sessions: 1,
   services: 1,
-  // Roles engine (#1341): one has_studio_permission call per page gate. clin.view_records, clin.view_intake and clin.view_aftercare are each
-  // asked ONCE by the page, and only AFTER the client has resolved for the studio (the unknown-client pin below and the tab-behaviour refusal pin
-  // both prove no gate runs before that). The page fans the answers out itself.
-  "rpc/has_studio_permission": 3,
+  // Roles engine (#1341): one has_studio_permission call per page gate (see PAGE_GATES). The page fans the answers out itself.
+  "rpc/has_studio_permission": PAGE_GATES.length,
 };
 
 const EXPECTED: Record<string, Record<string, number>> = {
@@ -146,8 +155,8 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // the practitioner who wrote them. With no notes on file that loader
     // returns before its lookup, which is why this used to read 2.
     practitioners: 4,
-    // 3 page gates + 1 loader-level clin.view_records ask (imported treatment memory guards itself so it is safe when called alone).
-    "rpc/has_studio_permission": 4,
+    // page gates + 1 loader-level clin.view_records ask (imported treatment memory guards itself so it is safe when called alone).
+    "rpc/has_studio_permission": PAGE_GATES.length + 1,
     client_intake_forms: 2, // latest, and latest submitted-or-reviewed
     // Last visit / Next appointment: two bounded .limit(1) reads (newest completed past appointment,
     // next upcoming). Read-only; the Sessions tab keeps its own full list read.
@@ -171,8 +180,8 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // before that request when the client has no appointments, which is why
     // this used to read 3.
     sessions: 4,
-    // 3 page gates + 2 loader-level clin.view_records asks (the two treatment-time loaders each guard themselves).
-    "rpc/has_studio_permission": 5,
+    // page gates + 2 loader-level clin.view_records asks (the two treatment-time loaders each guard themselves).
+    "rpc/has_studio_permission": PAGE_GATES.length + 2,
     appointments: 1,
     treatment_goals: 1,
     session_blocks: 1, // last treatment only
@@ -183,8 +192,8 @@ const EXPECTED: Record<string, Record<string, number>> = {
     ...ALWAYS,
     // 2 base + 2 for the note loaders attributing the seeded notes.
     practitioners: 4,
-    // 3 page gates + 1 loader-level clin.view_records ask (a clinical-notes/treatment loader guards itself).
-    "rpc/has_studio_permission": 4,
+    // page gates + 1 loader-level clin.view_records ask (a clinical-notes/treatment loader guards itself).
+    "rpc/has_studio_permission": PAGE_GATES.length + 1,
     treatment_plans: 1,
     client_clinical_notes: 4,
     client_budget_context: 1,
@@ -363,6 +372,13 @@ describe("Client Profile — real per-tab query behaviour", () => {
 
   it("has an expectation for every tab in the product contract", () => {
     expect(Object.keys(EXPECTED).sort()).toEqual([...ALL_TABS].sort());
+  });
+
+  it("PAGE_GATES is exactly the set of keys the client profile page asks, once each", () => {
+    const page = readFileSync(path.resolve(__dirname, "../../app/(app)/clients/[id]/page.tsx"), "utf8");
+    const asked = [...page.matchAll(/requirePermission\(\s*\w+,\s*studio\.id,\s*"([a-z_.]+)"/g)].map((m) => m[1]);
+    // A key asked twice, or a page gate this list does not name, would move every tab's tally without the rule noticing.
+    expect([...asked].sort()).toEqual([...PAGE_GATES].sort());
   });
 
   for (const tab of Object.keys(EXPECTED)) {
