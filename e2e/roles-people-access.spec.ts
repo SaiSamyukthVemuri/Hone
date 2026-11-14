@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import {
   getOwnerPractitionerId, seedE2eMember, seedE2eStudio, seedPractitionerDefault, setStudioCapacityBookingEnabled,
@@ -150,7 +151,13 @@ test("4: calendar: the removed practitioner is gone from the team calendar; the 
 
 test("5: B has an upcoming appointment: removal still works, the notice reports the count, the appointment stays with B", async ({ page }) => {
   const t = await getTeam();
-  const clientId = (await sql<{ id: string }>("select id from public.clients where studio_id=$1 limit 1", [t.seed.studioId]))[0].id;
+  const clientId = randomUUID();
+  await sql(`insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`, [
+    clientId,
+    t.seed.studioId,
+    "Synthetic Upcoming Client",
+    `upcoming-${clientId.slice(0, 8)}@example.test`,
+  ]);
   await sql(
     `insert into public.appointments (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status)
      values ($1,$2,$3, now() + interval '3 days', now() + interval '3 days 30 minutes', 30, 'confirmed')`,
