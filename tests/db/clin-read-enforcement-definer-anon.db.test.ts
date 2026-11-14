@@ -46,7 +46,8 @@ describe("0336 (b): anon holds no privilege on any clinical table", () => {
       for (const role of ["authenticated", "service_role"]) {
         // 0244 deliberately revoked service_role from treatment_reading_change_events (only authenticated SELECT, through its RLS policy), and 0336
         // must not change that: assert the 0244 state instead of skipping the table (T-3).
-        const expected = !(role === "service_role" && t === "treatment_reading_change_events");
+        // 0183 likewise revokes service_role from client_budget_context (T-3b).
+        const expected = !(role === "service_role" && (t === "treatment_reading_change_events" || t === "client_budget_context"));
         expect((await adminQuery("select has_table_privilege($1, $2, 'select') p", [role, rel])).rows[0].p, `${role} select ${t}`).toBe(expected);
       }
     }
