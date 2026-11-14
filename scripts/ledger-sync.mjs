@@ -16,7 +16,7 @@ export function renderDerivedRows(state) {
   const file = state.files[state.files.length - 1];
   return {
     repo: `| **Repo migration max** | **${state.repo_migration_max}** (\`${file}\`), derived from the source files on this tree. ${MARKER} |`,
-    next: `| **Next free number** | Next free number is **${String(state.next_free_migration_number).padStart(4, "0")}** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. ${MARKER} |`,
+    next: `| **Next free number** | Next free number is **${String(state.next_free_migration_number).padStart(4, "0")}** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. ${MARKER} |`,
   };
 }
 

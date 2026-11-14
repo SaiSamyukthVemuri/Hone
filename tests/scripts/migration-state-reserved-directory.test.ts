@@ -81,7 +81,7 @@ describe("getMigrationState reads marker files through the same validation", () 
   });
 });
 
-describe("the canonical array is validated as written, markers or not (Codex P2 on the first head)", () => {
+describe("the canonical array is validated as written, with or without markers", () => {
   const bad = (array: unknown, markers: string[]) => getMigrationState(tree({ files: ["0300", "0305"], markers, array })).invalid_reserved_declarations.join(" ");
   it("NEGATIVE CONTROL: a duplicate in the array is still rejected with no markers", () => {
     expect(bad(["0301", "0301", "0302"], [])).not.toBe("");
