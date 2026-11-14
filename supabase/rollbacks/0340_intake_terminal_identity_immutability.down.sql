@@ -1,5 +1,5 @@
--- Down for 0340: remove both intake identity triggers (the shared 0160 function stays). Touches no data. It REOPENS the gap (a member can re-point or hide a
--- submitted/reviewed intake through the Data API); run it only if the guard blocks a legitimate write.
+-- Down for 0340: remove the two intake identity triggers and the visibility function (the shared 0160 lineage
+-- function stays). Touches no data. Run it only if the guard blocks a legitimate write.
 begin;
 
 set local lock_timeout = '5s';

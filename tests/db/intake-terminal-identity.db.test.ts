@@ -104,6 +104,11 @@ describe.each(["submitted", "reviewed"] as const)("0340: a %s intake keeps its c
     ).toBe(CHECK);
     const after = await stored(id);
     expect([after.studio_id, after.client_id]).toEqual([A.studioId, A.clientId]);
+    // a service-role write that names the guarded columns without changing them still passes
+    const same = await asRole("service_role", (q) =>
+      q(`update public.client_intake_forms set client_id = client_id, studio_id = studio_id where id = $1`, [id]),
+    );
+    expect(same.rowCount).toBe(1);
   });
 
   it("the studio owner's own session cannot hide it either (the rule binds every signed-in caller)", async () => {

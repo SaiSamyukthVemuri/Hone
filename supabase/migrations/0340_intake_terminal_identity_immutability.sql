@@ -1,13 +1,11 @@
--- 0340: an intake cannot be moved to another client or studio, and a submitted or reviewed one cannot be hidden
--- or restored by a signed-in member (HON-78, audit fingerprint rls/intake-terminal-immutability-unpinned-columns).
+-- 0340: an intake stays attached to the client and studio it was created for, and a submitted or reviewed intake
+-- stays visible (HON-78).
 -- NOT APPLIED. Number 0340 reserved by OPS. Hosted apply needs the owner's per-change approval.
 --
--- THE GAP. enforce_intake_terminal_immutability (0118, latest body 0162) pins answers, submitted_at, status and
--- review attribution on a submitted/reviewed row. advance_intake_revision (0243/0248) governs responses, step,
--- submitted_at and status. Neither looks at client_id, studio_id or deleted_at, and the member UPDATE policy has no
--- column predicate. A member calling the Data API with their own session can therefore re-point client A's
--- submitted (and colleague-reviewed) intake at client B of the same studio, or set deleted_at to hide it.
--- 0160 closed the same re-pointing defect for sessions and entries; this table was not in that set.
+-- WHY. The application treats an intake as fixed to its client and studio, and a submitted or reviewed intake as
+-- part of the clinical record that is not withdrawn. The existing guards (0118/0162 terminal immutability,
+-- 0243/0248 revision) cover answers, status, step and review attribution; this file makes the database enforce
+-- the same rule for client_id, studio_id and deleted_at, as 0160 already does for sessions and entries.
 --
 -- SCOPE: public.client_intake_forms only. Two triggers and one small function:
 --   1. client_id and studio_id are fixed once the row exists: the established 0160 function
