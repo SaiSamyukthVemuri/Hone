@@ -11,7 +11,9 @@ import {
 } from "./helpers/harness";
 
 // Migration 0117: the session_audit INSERT policy must reject a cross-tenant
-// write. Proven on the REAL migrated local DB: a Studio A member cannot insert
+// write. (0345 later closed member INSERT altogether: case 2 below now asserts
+// the refusal; the cross-tenant, actor, read and immutability cases still hold,
+// and tests/db/session-audit-member-insert-closed-0345.db.test.ts proves 0345.) Proven on the REAL migrated local DB: a Studio A member cannot insert
 // an audit row for a Studio B session, while same-studio audit recording still
 // works, actor/session are bound to the caller, and read/immutability posture
 // is unchanged. Uses only non-clinical placeholder values.
@@ -57,17 +59,17 @@ describe("0117: session_audit INSERT is studio-bound (no cross-tenant write)", (
     expect(check.rows[0].n).toBe(0);
   });
 
-  it("2. Studio A member CAN insert an audit row for a Studio A session (approved path)", async () => {
+  it("2. Studio A member can NO LONGER insert an audit row for a Studio A session (closed by 0345; history is written only by the governed commands)", async () => {
     const before = await adminQuery(
       `select count(*)::int as n from public.session_audit where session_id = $1`,
       [sessionA],
     );
-    await insertAudit(A.userId, sessionA, A.practitionerId); // must succeed
+    await expect(insertAudit(A.userId, sessionA, A.practitionerId)).rejects.toThrow(/permission denied for table session_audit/i);
     const after = await adminQuery(
       `select count(*)::int as n from public.session_audit where session_id = $1`,
       [sessionA],
     );
-    expect(after.rows[0].n).toBe(before.rows[0].n + 1);
+    expect(after.rows[0].n).toBe(before.rows[0].n);
   });
 
   it("3. a non-member (no practitioner row) CANNOT insert", async () => {
