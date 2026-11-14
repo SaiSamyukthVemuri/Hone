@@ -97,6 +97,7 @@ export async function loadUnpaidAttention(opts: {
     refundStatus: string | null;
     refundAmountCents: number | null;
     providerRefundStatus: string | null;
+    cumulativeFullRefundVerified: boolean;
     currency: string | null;
   };
   const cardsByAppt = new Map<string, Card[]>();
@@ -110,11 +111,12 @@ export async function loadUnpaidAttention(opts: {
       refund_status: string | null;
       refund_amount_cents: number | null;
       stripe_refund_status: string | null;
+      stripe_charge_refund_event_id: string | null;
       currency: string | null;
     }>([...sessionToAppt.keys()], (chunk) =>
       supabase
         .from("payment_charge_attempts")
-        .select("id, created_at, session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, currency")
+        .select("id, created_at, session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, stripe_charge_refund_event_id, currency")
         .eq("studio_id", studioId)
         .eq("charge_reason", "session_payment")
         .eq("stripe_livemode", livemode)
@@ -138,6 +140,7 @@ export async function loadUnpaidAttention(opts: {
         refundStatus: a.refund_status,
         refundAmountCents: a.refund_amount_cents,
         providerRefundStatus: a.stripe_refund_status,
+        cumulativeFullRefundVerified: typeof a.stripe_charge_refund_event_id === "string" && a.stripe_charge_refund_event_id.length > 0,
         currency: a.currency,
       });
       cardsByAppt.set(owner.appt, bucket);

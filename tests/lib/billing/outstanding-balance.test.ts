@@ -101,6 +101,32 @@ describe("outstandingForAppointment", () => {
       expect(outstandingForAppointment({ ...base, cards: [refunded(provider)] }), String(provider)).toMatchObject({ kind: "owed", outstandingCents: 2500 });
     }
   });
+  // Same shape as lib/billing/refund-display-state.ts (#1427 Codex P2): 0240 sets refund_status='succeeded' with the FULL amount from the signed
+  // cumulative receipt and leaves stripe_refund_status alone, so a failed single refund followed by a verified full refund reads ours
+  // succeeded / provider failed. That is a completed refund: nothing is kept, the whole quote is owed.
+  describe("verified cumulative full refund beside a prior single refund (0240)", () => {
+    const full = (o: Partial<ReturnType<typeof card>> & { cumulativeFullRefundVerified?: boolean }) =>
+      card({ amountCents: 4000, refundStatus: "succeeded", refundAmountCents: 4000, cumulativeFullRefundVerified: true, ...o });
+    it.each(["failed", "canceled"])("a prior single refund %s, then the verified full receipt: the card keeps nothing, the whole quote is owed", (provider) => {
+      expect(outstandingForAppointment({ ...base, cards: [full({ providerRefundStatus: provider })] })).toMatchObject({ kind: "owed", outstandingCents: 10000 });
+    });
+    it.each(["pending", "requires_action"])("DEFENSIVE: a single refund %s beside the receipt is still completed (the receipt is monotonic)", (provider) => {
+      expect(outstandingForAppointment({ ...base, cards: [full({ providerRefundStatus: provider })] })).toMatchObject({ kind: "owed", outstandingCents: 10000 });
+    });
+    it("WITHOUT the receipt the same columns stay 'amount unavailable' (the agreement rule is unchanged)", () => {
+      expect(outstandingForAppointment({ ...base, cards: [full({ cumulativeFullRefundVerified: false, providerRefundStatus: "failed" })] })).toEqual({ kind: "amount_unavailable" });
+    });
+    it("the receipt never completes a refund whose recorded amount is not the whole charge, or an unreadable one", () => {
+      for (const refundAmountCents of [3999, 4001, null]) {
+        expect(outstandingForAppointment({ ...base, cards: [full({ refundAmountCents, providerRefundStatus: "failed" })] }), String(refundAmountCents)).toEqual({ kind: "amount_unavailable" });
+      }
+    });
+    it("the receipt never turns a failed/none/pending claim of ours into a refund", () => {
+      for (const ours of [null, "failed", "pending_stripe"]) {
+        expect(outstandingForAppointment({ ...base, cards: [full({ refundStatus: ours, providerRefundStatus: "failed" })] }), String(ours)).not.toMatchObject({ outstandingCents: 10000 });
+      }
+    });
+  });
   it("a refund that FAILED or was cancelled left the money in place; a readable partial refund is subtracted", () => {
     expect(outstandingForAppointment({ ...base, cards: [card({ refundStatus: "failed" })] }))
       .toMatchObject({ kind: "owed", outstandingCents: 6000 });
@@ -191,5 +217,16 @@ describe("quoteIsCurrentPrice (OPS ruling, #1356)", () => {
     expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [], settlements: [cash], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "amount_unavailable" });
     expect(outstandingForAppointment({ ...base, quoteCents: 12000, cards: [], settlements: [cash], quoteIsCurrentPrice: false } as never)).toMatchObject({ kind: "owed", outstandingCents: 2000 });
     expect(outstandingForAppointment({ ...base, quoteCents: 10000, cards: [], settlements: [cash], quoteIsCurrentPrice: true } as never)).toEqual({ kind: "paid" });
+  });
+});
+
+// Wiring tripwire: the dashboard's card read selects the receipt column and passes only a boolean (never the event id).
+import { readFileSync } from "node:fs";
+describe("cumulative receipt wiring (dashboard card read)", () => {
+  const src = readFileSync("lib/dashboard/unpaid-attention.ts", "utf8");
+  it("selects stripe_charge_refund_event_id and derives cumulativeFullRefundVerified from it", () => {
+    expect(src).toMatch(/\.select\("id, created_at, session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, stripe_charge_refund_event_id,/);
+    expect(src).toMatch(/cumulativeFullRefundVerified:\s*typeof a\.stripe_charge_refund_event_id === "string"/);
+    expect(src).not.toMatch(/cumulativeFullRefundVerified:\s*a\.stripe_charge_refund_event_id/);
   });
 });
