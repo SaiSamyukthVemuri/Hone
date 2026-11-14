@@ -17,15 +17,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` and `0319` are MIGRATION-FIRST PENDING and NOT applied; this tree's record of hosted lags the real hosted state)
 
-> **CURRENT RELATIONSHIP (corrected 2026-11-12, record only): repo > hosted by the pending `0319` only.** This tree's declared hosted max is `0327` in `docs/production/migration-state.json`, advanced from `0300` by a record-only correction that declares the eleven applies listed in that file's `hosted_note` (each from its apply record; the narrative apply entries below are unchanged and not rewritten). `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`) is sealed and NOT applied; its flag (`WAITLIST_TIMES_FEEDBACK`) is OFF. Applying it is a separate approval of the exact bytes; this record applies nothing.
+> **CURRENT RELATIONSHIP: repo > hosted by the pending `0313` and `0319`, as this tree records hosted.** This tree's declared hosted max is `0300` (below, unchanged here), and it deliberately does NOT restate any later hosted fact: this tree's record of hosted lags the real hosted state for the versions carried by other held pull requests, so the structured lists are not a statement about them. The two pending files are sealed and unapplied: `0313_waitlist_booking_command.sql` (sha256 `cfd892618b95965403c9515a528f02cd039a139ce893004876a8299508010fb1`) and `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). Both flags (`WAITLIST_BOOKING_COMMAND`, `WAITLIST_TIMES_FEEDBACK`) are OFF. Applying either file is a separate approval of the exact bytes; this record applies nothing.
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0327**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the 2026-11-12 record-only correction; no apply is performed or re-verified by it. |
-| **Repo migration max** | **0327** (`0327_waitlist_followup_read_bound.sql`, a DRAFT, unapplied), derived from the source files on this tree. |
+| **Hosted (production) migration max** | **0338**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only update of 2026-11-14, which declares the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327` and `0338` from their operator records; no apply is performed or re-verified by it. `0328` to `0337` are not hosted **by the row count** (the 0338 read-back was one row above the pre-push read). |
+| **Repo migration max** | **0338** (`0338_one_manual_fee_per_appointment.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
-| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326` and `0327` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
-| **Next free number** | Next free number is **0328** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327` and `0338` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
+| **Next free number** | Next free number is **0339** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### What the two pending migrations are (no hosted claim)
@@ -81,6 +81,19 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Read-back.** 00:19:13Z-00:19:15Z: **OVERALL PASS**. History 267 rows, max `0327`, `0327` once. The owner follow-up read, the export read and the erase-by helper are `postgres`-owned security-definer functions with `search_path` set to `pg_catalog, pg_temp`; EXECUTE is `service_role` only on the two reads and nobody on the helper; no PUBLIC EXECUTE. The follow-up read has the 0327 body (md5 `a1943da8…`); exactly one overload each.
 - **Hosted at that read-back:** 267 rows, max `0327`.
 - **Release.** #1419 (the file of 0327) was held for Sam's review of the read-back, then merged on Sam's own words ("I approve merging #1419 at 04cb38a2e"); no application change was needed for it. The scheduled cleanup at 10:00 UTC on 2026-11-10 is to record a success heartbeat.
+- **Not captured.** Any server-side apply instant.
+
+### The 0338 apply (facts as recorded by OPS, 2026-11-14; apply receipt `01-ops/0338-apply-receipt-20261114.json`)
+
+- **What it is.** `0338_one_manual_fee_per_appointment.sql`: a unique partial index that enforces one manual late-cancel or no-show fee per appointment. The file arrived with #1433, merged as `8a1dfaba1` on 2026-11-14 at 15:02:10Z, after the apply was read back; the apply was therefore migration-first.
+- **Approval.** Sam's own words on 2026-11-14 for this exact package: apply 0338 only, with a plain push and without `--include-all`, provided the seal is unchanged and the immediate pre-apply checks pass. It does not authorize live charging, fee activation or any other migration.
+- **Package.** One plain push, exactly one migration; migration sha256 `1285a2e7…`; sealed package SEAL-SHA256SUMS `22c48e08…`; rehearsed on CLI 2.102.0; applied with the operator's pinned supabase-go build.
+- **Pre-push reads (Part A, 2026-11-14T02:35Z).** PASS: 267 history rows, max `0327`, `0338` absent; no open transactions.
+- **Read-back.** **OVERALL PASS**: 268 history rows, max `0338`, present once; the unique partial index is valid and ready; the public catalog equals the sealed post-0338 fingerprint.
+- **Hosted at that read-back:** 268 rows, max `0338`. By the row count (267 through `0327`, plus `0338` once, equals 268), `0328` to `0337` are not hosted.
+- **Reconcile.** Reconcile ran automatically inside the runner after the apply was verified; it makes no connection.
+- **Release.** #1433 merged afterwards, and #1436 after it. The live manual-fee gate is OFF for every studio as read at merge on 2026-11-14; this apply does not activate fees.
+- **Declared hosted maximum.** **Not advanced by this record.** `migration-state.json` still declares `0300`. Advancing it is a separate record change that must also declare the `0301`-`0303` and `0328`-`0337` positions; until then the "Hosted (production) migration max" cell below is the declared value, not the real hosted state.
 - **Not captured.** Any server-side apply instant.
 
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
