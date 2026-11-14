@@ -101,6 +101,26 @@ describe("deactivate_staff_member", () => {
     expect(await feed()).toMatchObject({ h: null });
   });
 
+  it("S2-4: a practitioner row that was ALREADY inactive with an old feed link (legacy, set by hand) comes back with that link dead", async () => {
+    const s = await seedStudio("d342h");
+    await openGate(s.studioId);
+    const m = await seedMember(s, "h1");
+    const hash = "d".repeat(64);
+    // Legacy state: inactive before 0342's revoke ever ran, hash still stored.
+    await adminQuery("update public.practitioners set active=false, calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, hash]);
+    const row = async () => (await adminQuery("select calendar_feed_token_hash h, active from public.practitioners where id=$1", [m.practitionerId])).rows[0];
+    expect(await row()).toMatchObject({ h: hash, active: false });
+    // A refused restore (non-owner) changes nothing.
+    expect(await react(m.userId, s.studioId, m.practitionerId, "practitioner")).toEqual({ ok: false, code: "refused" });
+    expect(await row()).toMatchObject({ h: hash, active: false });
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, active: true });
+    expect(await row()).toMatchObject({ h: null, active: true });
+    // Idempotent: restoring again is refused as already active and the hash stays null; a link generated afterwards is theirs to keep.
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ code: "already_active" });
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, "e".repeat(64)]);
+    expect((await row()).h).toBe("e".repeat(64));
+  });
+
   it("deactivates a receptionist (a path that did not exist), stamping deactivated_at", async () => {
     const s = await seedStudio("d342r");
     const d = await seedDesk(s, "d2");

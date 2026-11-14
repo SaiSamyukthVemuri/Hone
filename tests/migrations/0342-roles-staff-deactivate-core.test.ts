@@ -34,9 +34,18 @@ describe("0342 staff deactivate through the core (source)", () => {
   it("widens the audit kinds by exactly two and keeps the five existing ones", () => {
     expect(code()).toMatch(/add constraint permission_audit_kind_check\s+check \(kind in \('role_permissions_saved', 'defaults_adopted', 'role_reset', 'staff_role_changed', 'permissions_activated', 'staff_deactivated', 'staff_reactivated'\)\)/);
   });
-  it("S2-4: deactivating a practitioner revokes the private calendar feed hash in the same statement; reactivation never writes it", () => {
+  // Reversed from "reactivation never writes it" (OPS go, Team's delta read): a practitioner row that was already inactive BEFORE this migration
+  // keeps its old hash, and a restore would reopen that old private link. Clearing it on every restore is idempotent, covers legacy rows and any
+  // future deactivation path (manual SQL included), and needs no data write at apply time.
+  it("S2-4: deactivation AND every restore of a practitioner row clear the private calendar feed hash in the same statement", () => {
     expect(fn("deactivate_staff_member")).toMatch(/update public\.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership;/);
-    expect(fn("reactivate_staff_member")).not.toMatch(/calendar_feed/);
+    expect(fn("reactivate_staff_member")).toMatch(/update public\.practitioners set active = true, calendar_feed_token_hash = null where id = p_membership;/);
+    // The role-change path that restores an older inactive practitioner row does the same.
+    expect(fn("change_staff_role")).toMatch(/update public\.practitioners set active = true, calendar_feed_token_hash = null where id = v_new_id;/);
+    // No practitioner row is ever switched on without it.
+    for (const n of ["deactivate_staff_member", "reactivate_staff_member", "change_staff_role"]) {
+      expect(fn(n), n).not.toMatch(/update public\.practitioners set active = true (where|,(?! calendar_feed_token_hash))/);
+    }
   });
   it("every command is SECURITY DEFINER with an empty search_path, and checks the owner FIRST", () => {
     for (const n of ["deactivate_staff_member", "reactivate_staff_member"]) {
@@ -90,12 +99,12 @@ describe("0342 staff deactivate through the core (source)", () => {
   // Two deliberate differences from 0287's body, and no others: (1) the capacity lock for a practitioner before the membership select (RF-1),
   // (2) the old practitioner row's private calendar-feed hash is revoked in the statement that deactivates it (S2-4: a later reactivate must not
   // reopen the old link). The rollback restores 0287 byte for byte.
-  it("change_staff_role is 0287's body plus the lock and the feed revoke, and nothing else changed", () => {
-    expect((fn("change_staff_role").match(/set active = false, calendar_feed_token_hash = null where id = p_membership;/g) ?? []).length).toBe(1);
+  it("change_staff_role is 0287's body plus the lock and the two feed revokes, and nothing else changed", () => {
+    expect((fn("change_staff_role").match(/calendar_feed_token_hash = null/g) ?? []).length).toBe(2); // the old row deactivated, an older row restored
     const old = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
     const oi = old.indexOf("create or replace function public.change_staff_role(");
     const oldBody = old.slice(oi, old.indexOf("\n$$;", oi) + 4).replace(/--.*$/gm, "");
-    const strip = (t: string) => t.replace(/, calendar_feed_token_hash = null/, "").replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
+    const strip = (t: string) => t.replace(/, calendar_feed_token_hash = null/g, "").replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
     expect(strip(fn("change_staff_role"))).toBe(strip(oldBody));
   });
   it("one audit row per command, with the reason, and deactivation flips only the active flag (plus the feed revoke, pinned below)", () => {
