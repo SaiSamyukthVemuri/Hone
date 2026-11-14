@@ -188,7 +188,9 @@ describe("pinned notes: Overview AND the notes tab, one source, no second write 
   });
   it("one read serves both, and the deferred-read contract covers the notes tab", () => {
     expect((PAGE.match(/getPinnedNotesForClient\(/g) ?? []).length).toBe(1);
-    expect(PAGE).toMatch(/const needsPinnedNotes = isOverview \|\| activeTab === "notes";/);
+    // The rule: wanted on Overview AND the notes tab, and read only for a viewer who holds clin.view_records (0335 gates the table the same way).
+    expect(PAGE).toMatch(/const wantsPinnedNotes = isOverview \|\| activeTab === "notes";/);
+    expect(PAGE).toMatch(/const needsPinnedNotes = wantsPinnedNotes && canViewRecords;/);
     expect(PAGE).toMatch(/notes: \{ personalNotes: needsPersonalNotes, pinnedNotes: needsPinnedNotes \}/);
   });
 });

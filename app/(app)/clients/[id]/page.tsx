@@ -431,6 +431,10 @@ export default async function ClientCheatSheetPage({
     canViewAftercare,
     // The intake gate's verdict. A viewer without clin.view_intake is RESTRICTED: "not read" must never render as "Not completed".
     intakeAllowed,
+    // client.view_personal_notes and client.view_budget: the answers were started above, so awaiting them here costs no serial stage (they were
+    // two stranded awaits further down, which pushed the page from 9 serial waves to 11).
+    canViewPersonalNotes,
+    canViewBudgetAnswer,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -523,6 +527,8 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
     canViewAftercarePromise,
     canViewIntakePromise,
+    canViewPersonalNotesPromise,
+    canViewBudgetPromise,
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -562,7 +568,7 @@ export default async function ClientCheatSheetPage({
   // the same tab so other tabs pay no cost. Fails soft to the empty state
   // (no row yet, or 0183 not yet applied), so the tab never 500s.
   // 0335: budget is its own key (client.view_budget), asked on the treatment tab and independent of clin.view_records.
-  const canViewBudget = activeTab === "treatment" ? await canViewBudgetPromise : true;
+  const canViewBudget = activeTab === "treatment" ? canViewBudgetAnswer : true;
   const budgetContext =
     activeTab === "treatment" && canViewBudget
       ? await getClientBudgetContext(client.id)
@@ -996,7 +1002,6 @@ export default async function ClientCheatSheetPage({
 
   // ONE card element, rendered on Overview and on the notes tab: the same source, the same
   // visibility and the same three actions, so there is no second write path.
-  const canViewPersonalNotes = await canViewPersonalNotesPromise;
   const pinnedNotesCard = !canViewRecords ? (
     <RestrictedNote testId="pinned-notes-not-available" />
   ) : (
