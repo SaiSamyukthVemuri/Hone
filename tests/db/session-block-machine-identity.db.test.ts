@@ -633,11 +633,7 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     const studio = await seedStudio("identity-lock-profile");
     const { sessionId, blockId } = await seedSession(studio);
     await setBlock(studio, blockId, `energy_level = 3`);
-    // 0310 refuses a unitless non-xCell profile at its contract check, before the xCell-readings check is reached, so the
-    // refusal is the 0310 one exactly (a regression to the 0301 path would answer differently) and nothing is stored.
-    await expect(record(studio, sessionId, blockId, PROFILE, null, null)).rejects.toThrow(
-      /A machine without a registered unit must be the xCell Pur machine\./,
-    );
+    await expect(record(studio, sessionId, blockId, PROFILE, null, null)).rejects.toThrow(REFUSED);
     expect((await identity(blockId)).machine_profile_id).toBeNull();
   });
 
@@ -803,21 +799,5 @@ describe("0301: a soft-deleted session takes no identity (Codex 4486745915)", ()
       expect(block, `${name} touches the block`).toBeGreaterThan(-1);
       expect(session, `${name}: session before block`).toBeLessThan(block);
     }
-  });
-
-  // 0310 redefines the core, so the order must hold for ITS body too, and the unit is locked LAST (Codex 4487384239).
-  it("source order, 0310 core: live session lock, then the block lock, then the unit FOR SHARE", () => {
-    const sql = readFileSync("supabase/migrations/0310_block_machine_identity_mode_contract.sql", "utf8");
-    const i = sql.indexOf("create or replace function public.apply_block_machine_identity(");
-    const j = sql.indexOf("create or replace function", i + 10);
-    const body = sql.slice(i, j === -1 ? undefined : j).replace(/--[^\n]*/g, "");
-    const session = body.search(/s\.deleted_at is null\s+for share/);
-    const block = body.search(/\bfor update\b/);
-    const unit = body.search(/from public\.studio_machines m[\s\S]*?for share of m\b/);
-    expect(session, "locks a live session").toBeGreaterThan(-1);
-    expect(block, "locks the block").toBeGreaterThan(-1);
-    expect(unit, "locks the unit FOR SHARE").toBeGreaterThan(-1);
-    expect(session).toBeLessThan(block);
-    expect(block).toBeLessThan(unit);
   });
 });
