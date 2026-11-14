@@ -1,4 +1,5 @@
 import { requirePermission } from "@/lib/permissions/require-permission";
+import { gatedOk, GATED_RESTRICTED, type Gated } from "@/lib/permissions/gated";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -75,23 +76,37 @@ export default async function ClientImagesPage({
     );
   }
 
+  // The session context (photo date, treated area, the upload-context picker) is treatment RECORD: it needs clin.view_records, not just photos.
+  // Without it nothing derived from a session is read or shown, and the picker is not offered (a photo can still be uploaded to the client;
+  // upload permission is unchanged).
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records", { client: id })).allowed;
+
   // PR #274: also select the existing context links (session_id /
   // session_block_id) and embed the attached session block's structured area
   // fields (primary_area / side / custom_area_detail) so each card can show
   // treatment-context tags. Display-only, no schema change; raw IDs are turned
   // into labels server-side and never sent to the client.
-  const { data: images, error: imgErr } = await supabase
-    .from("treatment_images")
-    .select(
-      // sessions ( started_at ) is a read-only embed (via the session_id FK)
-      // so the gallery can title a photo with its SESSION date instead of the
-      // raw filename. Display-only; no schema/security change.
-      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, practitioner_note, sessions ( started_at ), session_blocks ( primary_area, side, custom_area_detail )",
-    )
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
+  // sessions ( started_at ) is a read-only embed (via the session_id FK) so the gallery can title a photo with its SESSION date. It is session
+  // record, so it is selected ONLY with clin.view_records; a photos-only viewer gets the photo rows with no session date or treated area.
+  const imageRowsQuery = canViewRecords
+    ? await supabase
+        .from("treatment_images")
+        .select(
+          "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, practitioner_note, sessions ( started_at ), session_blocks ( primary_area, side, custom_area_detail )",
+        )
+        .eq("studio_id", studio.id)
+        .eq("client_id", id)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+    : await supabase
+        .from("treatment_images")
+        .select("id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, practitioner_note")
+        .eq("studio_id", studio.id)
+        .eq("client_id", id)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false });
+  const images = imageRowsQuery.data as unknown;
+  const imgErr = imageRowsQuery.error;
   if (imgErr) throw new Error(`db_error:${dbErrorCode(imgErr)}`);
 
   // PR #273: server-side preview signing. Ownership is already verified (the
@@ -100,7 +115,7 @@ export default async function ClientImagesPage({
   // public. storage_path stays server-side; only the signed URL reaches the
   // client. A failed sign yields previewUrl=null → the card shows
   // "Image not available" but keeps the date label + context tags + Archive.
-  const meta = (images ?? []) as Array<{
+  const meta = ((images ?? []) as unknown) as Array<{
     id: string;
     original_filename: string | null;
     created_at: string;
@@ -114,12 +129,15 @@ export default async function ClientImagesPage({
   }>;
   // Migration 0128: batch-load the structured areas for every attached block so
   // each photo's area tag shows the full multi-area set + laterality.
-  const photoAreasByBlock = await getSessionBlockAreasByBlockIds(
-    meta
-      .map((m) => m.session_block_id)
-      .filter((x): x is string => Boolean(x)),
-    studio.id,
-  );
+  // Session-block areas are treatment record: not read at all without clin.view_records.
+  const photoAreasByBlock = canViewRecords
+    ? await getSessionBlockAreasByBlockIds(
+        meta
+          .map((m) => m.session_block_id)
+          .filter((x): x is string => Boolean(x)),
+        studio.id,
+      )
+    : new Map<string, Awaited<ReturnType<typeof getSessionBlockAreasByBlockIds>> extends Map<string, infer V> ? V : never>();
   const admin = createAdminClient();
   const rows = await Promise.all(
     meta.map(async (m) => {
@@ -203,7 +221,7 @@ export default async function ClientImagesPage({
         clientScope: m.session_id == null && m.session_block_id == null,
         // Session date of the attached session (null for client-scope photos),
         // used as the human card title in place of the raw filename.
-        sessionDate: session?.started_at ?? null,
+        sessionDate: canViewRecords ? (session?.started_at ?? null) : null,
         // PR #307: practitioner note/caption shown under the photo (null = none).
         note: m.practitioner_note ?? null,
         createdAt: m.created_at,
@@ -211,11 +229,15 @@ export default async function ClientImagesPage({
         // Null whenever no derivative could be signed; the grid then renders
         // previewUrl (the original) exactly as it did before this change.
         thumbUrl,
-        scopeLabel: treatmentPhotoScopeLabel({
-          sessionId: m.session_id,
-          sessionBlockId: m.session_block_id,
-        }),
-        areaLabel: treatmentPhotoAreaLabel(m.session_block_id, block),
+        // Without clin.view_records the photo is shown as a photo only: whether it is tied to a session or an area is session record, and
+        // "Client photo" / "Area not recorded" would be false statements about what was not read.
+        scopeLabel: canViewRecords
+          ? treatmentPhotoScopeLabel({
+              sessionId: m.session_id,
+              sessionBlockId: m.session_block_id,
+            })
+          : "Photo",
+        areaLabel: canViewRecords ? treatmentPhotoAreaLabel(m.session_block_id, block) : null,
       };
     }),
   );
@@ -225,15 +247,17 @@ export default async function ClientImagesPage({
   // practitioner only ever sees their own studio's sessions for this client.
   // Only ids + display labels reach the client; the upload action re-validates
   // every submitted id server-side. Bounded to keep the dropdown small.
-  const { data: sessionRows, error: sessErr } = await supabase
-    .from("sessions")
-    .select(
-      "id, started_at, session_blocks ( id, primary_area, side, custom_area_detail )",
-    )
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .order("started_at", { ascending: false })
-    .limit(12);
+  const { data: sessionRows, error: sessErr } = canViewRecords
+    ? await supabase
+        .from("sessions")
+        .select(
+          "id, started_at, session_blocks ( id, primary_area, side, custom_area_detail )",
+        )
+        .eq("studio_id", studio.id)
+        .eq("client_id", id)
+        .order("started_at", { ascending: false })
+        .limit(12)
+    : { data: null, error: null };
   if (sessErr) throw new Error(`db_error:${dbErrorCode(sessErr)}`);
   type EmbeddedBlock = { id: string } & NonNullable<SessionBlockAreaInput>;
   // Migration 0128: batch-load structured areas for every block in the selector
@@ -248,7 +272,8 @@ export default async function ClientImagesPage({
     }),
     studio.id,
   );
-  const sessionOptions: SessionAttachOption[] = (sessionRows ?? []).map((s) => {
+  // Gated (clin.view_records): restricted => no session was read and the picker is HIDDEN (empty options hide it; the upload itself is unchanged).
+  const sessionPicker: Gated<SessionAttachOption[]> = !canViewRecords ? GATED_RESTRICTED : gatedOk((sessionRows ?? []).map((s) => {
     const raw = s.session_blocks;
     const blocks = (
       Array.isArray(raw) ? raw : raw ? [raw] : []
@@ -264,7 +289,8 @@ export default async function ClientImagesPage({
         }),
       })),
     };
-  });
+  }));
+  const sessionOptions: SessionAttachOption[] = sessionPicker.kind === "ok" ? sessionPicker.value : [];
 
   // P1-A: at-a-glance photo-consent status, right where photos are handled.
   // null = the studio has no active photo-consent template (no banner).
