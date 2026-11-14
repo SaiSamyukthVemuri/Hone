@@ -144,7 +144,7 @@ describe("every wrapper granted to authenticated refuses unsupported identities 
   it("the wrappers under test are exactly the ones granted EXECUTE to authenticated that reach the core function", async () => {
     const r = await adminQuery(
       `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and has_function_privilege('authenticated', p.oid, 'execute')
+        where n.nspname = 'public' and p.prokind = 'f' and has_function_privilege('authenticated', p.oid, 'execute')
           and pg_get_functiondef(p.oid) ilike '%apply_block_machine_identity(%'
         order by 1`,
     );
