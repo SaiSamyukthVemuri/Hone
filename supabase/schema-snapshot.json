@@ -3,7 +3,7 @@
   "migrations": {
     "count": 265,
     "last": "0347_record_lineage_fixed.sql",
-    "sha256": "407c78f8a1468a19e3927910ac9db798603028c05d4fc297ded6fd60cfc4c55e"
+    "sha256": "ec810ed77553c6f61e417bfa259e5851e9255108de6cdc0fde5a91a61112add3"
   },
   "public": {
     "tables": [
