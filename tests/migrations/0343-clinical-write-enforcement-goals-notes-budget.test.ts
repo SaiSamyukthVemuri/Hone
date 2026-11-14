@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion } from "./helpers/migration-state";
+import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
 
 // 0343 (W1 remainder) source contract. The behaviour is proved against a database in tests/db/clinical-write-enforcement-0343.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0343")}`, "utf8");
@@ -33,8 +33,9 @@ function parse(text: string) {
 }
 
 describe("0343 clinical write enforcement, goals / pinned / personal / budget (source)", () => {
-  it("exists exactly once", () => {
+  it("exists exactly once and is the current repo maximum", () => {
     expect(countVersion("0343")).toBe(1);
+    expect(isRepoMax("0343")).toBe(true);
   });
   it("opens its own transaction and arms lock_timeout inside it", () => {
     const c = code(sql());

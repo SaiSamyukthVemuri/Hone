@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0336 (I4) source contract. The behaviour is proved against a database in tests/db/clin-read-enforcement-definer-anon.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0336")}`, "utf8");
@@ -8,9 +8,8 @@ const code = () => sql().replace(/--[^\n]*/g, "");
 const TABLES = ["sessions", "session_blocks", "session_block_areas", "session_copy_operations", "treatment_area_create_claims", "treatment_setup_captures", "treatment_setup_readings", "treatment_setup_submissions", "imported_treatment_memories", "imported_treatment_memory_audit_events", "treatment_reading_change_events", "treatment_images", "photos", "electrolysis_entries", "laser_entries", "session_audit", "client_intake_forms", "client_consent_signatures", "appointment_policy_acknowledgements", "treatment_plans", "treatment_plan_stages", "treatment_goals", "client_clinical_notes", "client_pinned_notes", "client_personal_notes", "client_budget_context", "clinical_audit_events", "clinical_record_snapshots", "clinical_record_amendments"];
 
 describe("0336 clinical-read enforcement, definer gate and anon grants (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once (0343 is the repo maximum now; only the maximum asserts isRepoMax)", () => {
     expect(countVersion("0336")).toBe(1);
-    expect(isRepoMax("0336")).toBe(true);
   });
   it("opens its own transaction and arms lock_timeout inside it", () => {
     const c = code();
