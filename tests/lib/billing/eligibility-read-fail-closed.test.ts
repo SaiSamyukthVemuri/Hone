@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // PAY-READ-01 PR D. Eligibility reads must fail CLOSED, and must not lie.
 //
@@ -528,6 +530,47 @@ describe("MANUAL FEE: BOTH history sources are load-bearing", () => {
     const { eligible, reasons } = await feeReasons();
     expect(eligible).toBe(false);
     expect(reasons.join(" | ")).toMatch(/active fee charge attempt already exists/i);
+  });
+});
+
+describe("LEGACY failed rows: the provider facts decide whether the appointment is freed", () => {
+  const legacy = (over: Record<string, unknown>) => ({
+    id: "leg-1", charge_type: "no_show", status: "failed", amount_cents: 5000, currency: "cad",
+    created_at: "2026-08-01T00:00:00.000Z", stripe_payment_intent_id: "pi_leg", stripe_charge_id: null,
+    stripe_status: null, charged_at: null, failed_at: "2026-08-01T00:01:00.000Z", failure_code: "card_declined",
+    failure_message: null, cancelled_at: null, cancelled_reason: null, ...over,
+  });
+  const run = async (row: Record<string, unknown>) => {
+    healthyManualFee();
+    empty("payment_charge_attempts");
+    rows("manual_fee_charge_attempts", [row]);
+    return feeReasons();
+  };
+  it("failed + stripe_status canceled + a PaymentIntent + nothing captured: FREES the appointment", async () => {
+    const { eligible, reasons } = await run(legacy({ stripe_status: "canceled" }));
+    expect(reasons.join(" | ")).not.toMatch(/only one manual fee|already exists|unclear/i);
+    expect(eligible).toBe(true);
+  });
+  for (const [name, over] of [
+    ["stripe_status null (today's behaviour: blocks)", { stripe_status: null }],
+    ["stripe_status missing from the row", { stripe_status: undefined }],
+    ["an unknown stripe_status", { stripe_status: "something_new" }],
+    ["requires_payment_method (the intent can still collect)", { stripe_status: "requires_payment_method" }],
+    ["canceled but a charge id is stored (captured)", { stripe_status: "canceled", stripe_charge_id: "ch_x" }],
+    ["canceled but charged_at is set (captured)", { stripe_status: "canceled", charged_at: "2026-08-01T00:00:30.000Z" }],
+    ["canceled but no PaymentIntent id", { stripe_status: "canceled", stripe_payment_intent_id: null }],
+  ] as const) {
+    it(`${name}: still BLOCKS both fee types' preparation`, async () => {
+      const { eligible, reasons } = await run(legacy(over));
+      expect(eligible).toBe(false);
+      expect(reasons.join(" | ")).toMatch(/only one manual fee|already exists/i);
+    });
+  }
+  it("the legacy select asks for stripe_status (the fake ignores columns, so the source is pinned)", () => {
+    const src = readFileSync(join(__dirname, "../../../lib/billing/manual-fee-eligibility.ts"), "utf8");
+    const m = src.match(/\.from\("manual_fee_charge_attempts"\)\s*\.select\(\s*"([^"]+)"/);
+    expect(m).not.toBeNull();
+    expect(m![1].split(/,\s*/)).toContain("stripe_status");
   });
 });
 
