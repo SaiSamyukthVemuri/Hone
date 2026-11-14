@@ -926,6 +926,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
   },
   {
+    route: "/records/print/day",
+    reason:
+      "Per-client clinical print; needs clientId and day; owner-only. Will be reached from a client's profile (entry link pending), never a destination to search for.",
+  },
+  {
     route: "/settings",
     reason:
       "Index route with no content of its own: it only redirects to /settings/profile. Each settings page is registered individually.",
