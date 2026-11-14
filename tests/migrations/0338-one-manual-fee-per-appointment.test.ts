@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { isRepoMax } from "./helpers/migration-state";
 
 // Source contract for 0338 (one manual fee per appointment, enforced by the database). The behavioural proof is
 // tests/db/one-fee-per-appointment.db.test.ts, run on a fresh database.
@@ -12,9 +11,6 @@ const code = (s: string) => s.replace(/--.*$/gm, "");
 
 describe("0338 source contract", () => {
   const body = code(SQL);
-  it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0338")).toBe(true);
-  });
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     const i = {
       begin: body.search(/^\s*begin;/m),
