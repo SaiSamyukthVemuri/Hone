@@ -1,5 +1,6 @@
 "use client";
 
+import { ONE_FEE_PER_APPOINTMENT_MESSAGE } from "@/lib/billing/manual-fee-one-per-appointment";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -96,11 +97,15 @@ export function ManualFeeChargeCard({
   // collect does not hold anything: it stays in the history and keeps its terminal-state copy below, but the
   // card goes on to offer Prepare (or the blocking reasons) so the replacement fee the owner was promised can
   // actually be prepared.
-  const { holding, terminal } = useMemo(() => {
+  const { holding, terminal, otherTypeHolds } = useMemo(() => {
     const sameType = allAttempts.filter((r) => r.charge_type === chargeType);
+    const otherType = allAttempts.filter((r) => r.charge_type !== chargeType);
     return {
       holding: sameType.find((r) => r.state.blocksNewCharge) ?? null,
       terminal: sameType[0] ?? null,
+      // One manual fee per appointment, across BOTH types: a fee of the other type that is ready, pending, unclear
+      // or charged holds the appointment, so Prepare is never offered here whatever eligibility says.
+      otherTypeHolds: otherType.some((r) => r.state.blocksNewCharge),
     };
   }, [allAttempts, chargeType]);
 
@@ -199,7 +204,9 @@ export function ManualFeeChargeCard({
               card={selected.card}
             />
           )}
-          {!selected.eligible ? (
+          {otherTypeHolds ? (
+            <BlockedPanel reasons={[ONE_FEE_PER_APPOINTMENT_MESSAGE]} />
+          ) : !selected.eligible ? (
             <BlockedPanel reasons={selected.blockingReasons} />
           ) : (
             <PreparePanel

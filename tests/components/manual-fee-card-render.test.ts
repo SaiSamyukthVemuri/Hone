@@ -197,6 +197,50 @@ describe("E1: after Close declined attempt and a refresh, the replacement fee ca
   });
 });
 
+describe("C1: a fee of the OTHER type that holds the appointment means the card never offers Prepare", () => {
+  const PREPARE = "Prepare manual fee charge";
+  const ONE_FEE = "Only one manual fee can be taken per appointment";
+  // The card opens on late_cancel. Eligibility for that tab is (wrongly) YES with no late_cancel attempts; the other type's
+  // attempts reach the card only through the no_show projection. The card must not trust the eligibility flag alone.
+  const renderWithOther = (other: Record<string, unknown>, lateEligible = true) => {
+    const noShowRow = attempt({ charge_type: "no_show", ...other });
+    const late = lateEligible ? { ...eligible([]), appointment: { ...eligible([]).appointment, status: "cancelled" } } : blocked([]);
+    return renderToStaticMarkup(
+      createElement(ManualFeeChargeCard as never, {
+        appointmentId: "appt-1",
+        lateCancel: projectFeeEligibility(late as never, new Date(), true),
+        noShow: projectFeeEligibility({ ...blocked([noShowRow]), existingAttempts: [noShowRow] } as never, new Date(), true),
+      } as never),
+    );
+  };
+  it("CONTROL: with no other-type attempt and eligibility yes, Prepare IS offered", () => {
+    const html = renderToStaticMarkup(
+      createElement(ManualFeeChargeCard as never, {
+        appointmentId: "appt-1",
+        lateCancel: projectFeeEligibility({ ...eligible([]), appointment: { ...eligible([]).appointment, status: "cancelled" } } as never, new Date(), true),
+        noShow: projectFeeEligibility(blocked([]) as never, new Date(), true),
+      } as never),
+    );
+    expect(html).toContain(PREPARE);
+  });
+  for (const [name, over] of [
+    ["ready", { status: "ready" }],
+    ["pending (recent)", { status: "pending_stripe", updated_at: new Date().toISOString(), stripe_payment_intent_id: "pi_o" }],
+    ["unclear (old pending)", { status: "pending_stripe", updated_at: "2026-11-01T00:00:00.000Z", stripe_payment_intent_id: "pi_o" }],
+    ["charged", { status: "succeeded", charged_at: "2026-11-01T10:05:00.000Z", stripe_payment_intent_id: "pi_o", stripe_charge_id: "ch_o" }],
+  ] as const) {
+    it(`the other type is ${name} and eligibility says yes: the one-fee reason shows, Prepare does not`, () => {
+      const html = renderWithOther(over);
+      expect(html).not.toContain(PREPARE);
+      expect(html).toContain(ONE_FEE);
+      expect(html).toContain("fee-history-row");
+    });
+  }
+  it("an other-type attempt that is provably freed (cancelled before charging) does not hold: Prepare is offered", () => {
+    expect(renderWithOther({ status: "cancelled", cancelled_at: "2026-11-01T10:01:00.000Z" })).toContain(PREPARE);
+  });
+});
+
 describe("charge history lists every attempt: amount, type, status, time, refund", () => {
   const rows = [
     attempt({ id: "a", ...LC, status: "succeeded", amount_cents: 5000, charged_at: "2026-11-02T10:00:00.000Z", refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded", refunded_at: "2026-11-03T09:00:00.000Z" }),
