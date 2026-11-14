@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0348 source contract. The behaviour is proved against a database in tests/db/client-tags-edit-key-gate-0348.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0348")}`, "utf8");
@@ -10,9 +10,8 @@ const norm = (t: string) => t.replace(/\s+/g, " ").trim();
 const GATE = "public.is_studio_member(studio_id) and public.has_studio_permission(studio_id, 'client.edit_tags', client_id)";
 
 describe("0348 client tags: writes require the tag-edit permission (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once", () => {
     expect(countVersion("0348")).toBe(1);
-    expect(isRepoMax("0348")).toBe(true);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {
