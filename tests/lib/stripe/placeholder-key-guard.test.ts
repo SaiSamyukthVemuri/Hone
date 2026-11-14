@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const KEYS = ["STRIPE_SECRET_KEY", "HONE_E2E_FAKE_STRIPE", "HONE_E2E_RUN_ID", "VERCEL", "VERCEL_ENV", "STRIPE_ALLOW_LIVE_MODE"] as const;
+const KEYS = ["AWS_REGION", "AWS_EXECUTION_ENV", "KUBERNETES_SERVICE_HOST", "STRIPE_SECRET_KEY", "HONE_E2E_FAKE_STRIPE", "HONE_E2E_RUN_ID", "VERCEL", "VERCEL_ENV", "STRIPE_ALLOW_LIVE_MODE"] as const;
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
   for (const k of KEYS) saved[k] = process.env[k];
@@ -58,6 +58,25 @@ describe("getStripe with a placeholder key", () => {
   });
   it("a real-shaped test key with the fake off: unchanged (a deliberate test-mode run still works)", async () => {
     process.env.STRIPE_SECRET_KEY = REAL_SHAPED;
+    const { getStripe } = await import("@/lib/stripe/server");
+    expect(() => getStripe()).not.toThrow();
+  });
+  it("a deployed runtime is never refused: a placeholder-looking key does not throw with VERCEL_ENV=production, VERCEL=1, preview or AWS", async () => {
+    for (const env of [{ VERCEL_ENV: "production" }, { VERCEL: "1" }, { VERCEL_ENV: "preview" }, { AWS_REGION: "ca-central-1" }]) {
+      for (const k of ["VERCEL", "VERCEL_ENV", "AWS_REGION"]) delete process.env[k];
+      Object.assign(process.env, env);
+      process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
+      vi.resetModules();
+      const { getStripe } = await import("@/lib/stripe/server");
+      expect(() => getStripe(), JSON.stringify(env)).not.toThrow();
+    }
+    for (const k of ["VERCEL", "VERCEL_ENV", "AWS_REGION"]) delete process.env[k];
+  });
+  it("a production key whose random body starts with a placeholder word does not throw on Vercel production", async () => {
+    process.env.VERCEL_ENV = "production";
+    // Built at run time so no key-shaped literal sits in the source (secret scanning); the body starts with a placeholder word.
+    process.env.STRIPE_SECRET_KEY = ["sk", "live", "dummyQ7rT2xL9aB4cD6eF8gH0jK1mN3pR5sU7vW9yZ"].join("_");
+    process.env.STRIPE_ALLOW_LIVE_MODE = "true";
     const { getStripe } = await import("@/lib/stripe/server");
     expect(() => getStripe()).not.toThrow();
   });

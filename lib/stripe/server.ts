@@ -29,7 +29,7 @@
 
 import Stripe from "stripe";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { isE2eFakeStripeEnabled } from "@/lib/stripe/e2e-fake-guard";
+import { isDeployedRuntime, isE2eFakeStripeEnabled } from "@/lib/stripe/e2e-fake-guard";
 
 const STRIPE_API_VERSION = "2026-04-22.dahlia" as const;
 
@@ -89,7 +89,9 @@ function readSecretOrThrow(): string {
   assertStripeKeyAllowed(raw);
   // A placeholder key with the fake processor OFF would only produce real, always-refused requests to api.stripe.com
   // (a local run that forgot to export the fake flag did exactly that). Refuse to build a network client for it.
-  if (isPlaceholderStripeKey(raw) && !isE2eFakeStripeEnabled(process.env)) {
+  // Local and CI runs only: never on a deployed runtime (Vercel and the other hosted markers the fake guard refuses on), so a
+  // real key whose random body happens to read like a placeholder can never take a production Stripe call down.
+  if (!isDeployedRuntime(process.env) && isPlaceholderStripeKey(raw) && !isE2eFakeStripeEnabled(process.env)) {
     throw new Error(
       "STRIPE_SECRET_KEY is a placeholder and the fake Stripe processor is off, so no request to Stripe is made. " +
         "Export HONE_E2E_FAKE_STRIPE=1 and HONE_E2E_RUN_ID for a local run, or use a real sk_test_ key on purpose.",
