@@ -90,7 +90,7 @@ describe("the offer screen", () => {
   const html = render({ kind: "offer", presentation: PRESENTATION, days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const }], windowDescription: WINDOW_DESCRIPTION });
 
   it("states the offered horizon in words, as the state layer resolved it", () => {
-    expect(html).toContain("Times held for you");
+    expect(html).toContain("Available consultation times");
     // Rendered verbatim: the screen holds no weekday semantics of its own.
     expect(html).toContain("Mondays, Wednesdays, Sep 7, 2026");
   });
@@ -162,6 +162,8 @@ describe("terminal states offer nothing to press", () => {
     "consumed_without_booking",
     "booking_outcome_unknown",
     "unsupported_offer",
+    "admission_closed",
+    "admission_unreadable",
     "declined",
   ] as const) {
     it(`${reason} renders NO booking or decline control at all`, () => {
@@ -181,6 +183,31 @@ describe("terminal states offer nothing to press", () => {
   it("revoked does not blame the recipient", () => {
     const html = render({ kind: "closed", reason: "revoked", presentation: PRESENTATION });
     expect(html).toContain("no longer available");
+  });
+
+  describe("admission_closed", () => {
+    const html = render({ kind: "closed", reason: "admission_closed", presentation: PRESENTATION });
+    it("says plainly the studio is not taking new-client bookings and to contact it", () => {
+      expect(html).toContain("isn’t taking new-client bookings right now");
+      expect(html).toContain("contact the studio");
+    });
+    it("shows no times and does not say 'try again'", () => {
+      expect(html.toLowerCase()).not.toContain("try again");
+      expect(html).not.toContain("Available consultation times");
+    });
+    it("says the invitation has not been used", () => {
+      expect(html).toContain("hasn’t been used");
+    });
+  });
+
+  describe("admission_unreadable", () => {
+    const html = render({ kind: "closed", reason: "admission_unreadable", presentation: PRESENTATION });
+    it("uses the exact wording and asserts nothing about the studio being closed", () => {
+      expect(html).toContain("This link can’t be used to book right now. Your invitation hasn’t been used. Please contact the studio.");
+      expect(html.toLowerCase()).not.toContain("isn’t taking");
+      expect(html.toLowerCase()).not.toContain("closed");
+      expect(html.toLowerCase()).not.toContain("try again");
+    });
   });
 
   // P2-A. An offer naming a service the booking path cannot accept.
@@ -235,7 +262,7 @@ describe("loading, error and declined", () => {
 
   it("declining says what happened, with no queue detail", () => {
     const html = render({ kind: "declined" });
-    expect(html).toContain("declined this appointment");
+    expect(html).toContain("declined these times");
     expect(html.toLowerCase()).not.toContain("position");
   });
 });
@@ -250,7 +277,7 @@ describe("possession shows the offer and no times", () => {
 
   it("shows WHAT was offered", () => {
     expect(html).toContain("Consultation");
-    expect(html).toContain("Times held for you");
+    expect(html).toContain("Available consultation times");
     expect(html).toContain("Mondays, Wednesdays");
   });
 
@@ -374,7 +401,9 @@ describe("declining promises only what decline does", () => {
     // it back. Promising automatic follow-up would be untrue.
     expect(html.toLowerCase()).not.toContain("still on the studio");
     expect(html.toLowerCase()).not.toContain("be in touch");
-    expect(html).toContain("contact them directly");
+    expect(html).toContain("Nothing is booked.");
+    expect(html).toContain("please contact the studio; they can put you back on the waiting list in your original place.");
+    expect(html.toLowerCase()).not.toMatch(/been (told|notified|informed)|let (them|the studio) know/);
   });
 });
 
@@ -418,7 +447,7 @@ describe("verifying is busy and non-interactive", () => {
   });
 
   it("still shows what was offered", () => {
-    expect(html).toContain("Times held for you");
+    expect(html).toContain("Available consultation times");
     expect(html).toContain("Consultation");
   });
 });
@@ -559,5 +588,59 @@ describe("the UNKNOWN-outcome terminal state claims neither outcome", () => {
       presentation: PRESENTATION,
     });
     expect(html()).not.toBe(consumed);
+  });
+});
+
+describe("HON-7 offer: the whole window and the invitation's own close", () => {
+  const base = {
+    kind: "offer" as const,
+    presentation: PRESENTATION,
+    days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const }],
+    windowDescription: WINDOW_DESCRIPTION,
+  };
+
+  it("names the days in the window with nothing open", () => {
+    const html = render({ ...base, noTimeDays: ["Tue, Sep 8", "Wed, Sep 9"] });
+    expect(html).toContain("Nothing is open on: Tue, Sep 8, Wed, Sep 9.");
+  });
+
+  it("says nothing about empty days when there are none", () => {
+    expect(render(base)).not.toContain("Nothing is open on:");
+  });
+
+  it("states when the invitation closes, apart from the days that may be chosen", () => {
+    const html = render({ ...base, inviteOpenUntil: "Thu, Sep 10 at 3:00 PM" });
+    expect(html).toContain("Book by Thu, Sep 10 at 3:00 PM");
+    expect(html).toContain("this invitation closes");
+    expect(html).toContain("The days below are the days you can choose from.");
+  });
+
+  it("the close time the server builds is stated in studio time, and the screen shows it verbatim", async () => {
+    const { openUntil } = await import("@/lib/waitlist/invitation-offer");
+    const built = openUntil("2026-09-10T19:00:00.000Z", "America/Toronto");
+    expect(built.inviteOpenUntil).toBe("Thu, Sep 10 at 3:00 PM (studio time)");
+    expect(openUntil("not a date", "America/Toronto")).toEqual({});
+    const html = render({ ...base, ...built });
+    expect(html).toContain("Book by Thu, Sep 10 at 3:00 PM (studio time)");
+  });
+
+  it.each([
+    ["already_used", "This invitation has already been used. Check your confirmation email or contact the studio."],
+    ["used_contact_studio", "This invitation has already been used. Please contact the studio about this invitation."],
+  ])("the %s closure says the invitation was used and nothing about an appointment", (reason, sentence) => {
+    const html = render({ kind: "closed", reason, presentation: null } as never);
+    expect(html).toContain(sentence);
+    expect(html).not.toMatch(/You’re booked|appointment|rebook|book again/i);
+  });
+
+  it("a lost race says the time was just taken and names nobody", () => {
+    const html = render({ ...base, refusal: "slot_taken" } as never);
+    expect(html).toContain("That time was just taken. Please pick another time.");
+  });
+
+  it("shows a cancellation notice only when the server supplied one", () => {
+    expect(render(base)).not.toContain('data-testid="booking-notice"');
+    const html = render({ ...base, bookingNotice: "NOTICE-TEXT" });
+    expect(html).toContain("NOTICE-TEXT");
   });
 });

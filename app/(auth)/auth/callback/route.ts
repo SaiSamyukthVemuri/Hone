@@ -5,11 +5,16 @@ import {
   identifyServerUser,
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
+import { RETURN_TO_COOKIE, returnToDestination, returnToKeyFromCookieHeader } from "@/lib/auth/return-to";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  // HON-7. An explicit `next` keeps its existing meaning. Without one, a signed-out visit to an allowlisted internal page left a KEY in a cookie; it is
+  // looked up in a fixed table, never used as a path. The reconciliation outcomes below still override either.
+  const explicitNext = searchParams.get("next");
+  const returnKey = explicitNext === null ? returnToKeyFromCookieHeader(request.headers.get("cookie")) : null;
+  const next = explicitNext ?? returnToDestination(returnKey) ?? "/dashboard";
 
   if (code) {
     const supabase = await createClient();
@@ -80,9 +85,16 @@ export async function GET(request: Request) {
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }
-      return response;
+      return clearReturnKey(request, response);
     }
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth`);
+  // A failed exchange or a missing code clears the key too, so an unrelated sign-in later in the same browser cannot inherit it.
+  return clearReturnKey(request, NextResponse.redirect(`${origin}/login?error=auth`));
+}
+
+// The key is single-use on EVERY exit of this route.
+function clearReturnKey(request: Request, response: NextResponse): NextResponse {
+  if (request.headers.get("cookie")?.includes(RETURN_TO_COOKIE)) response.cookies.delete(RETURN_TO_COOKIE);
+  return response;
 }

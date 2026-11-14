@@ -4,6 +4,7 @@ import {
   MOVE_REASON,
   isDifferentInstant,
   moveConfirmState,
+  parseCustomMoveTime,
   type MoveConfirmInput,
 } from "@/app/(app)/calendar/move-confirm-state";
 
@@ -63,6 +64,27 @@ describe("A — time-only custom move with a healthy practitioner", () => {
     expect(s.canConfirm).toBe(true);
     expect(s.reassignmentNotice).toBeNull();
   });
+});
+
+describe("custom time entry", () => {
+  it.each([
+    ["03:30 PM", "15:30"],
+    ["15:30", "15:30"],
+    ["15:30:00", "15:30"],
+    ["15:30:00.000", "15:30"],
+    ["12:00 AM", "00:00"],
+    ["12:00 PM", "12:00"],
+    ["3:37 pm", "15:37"],
+  ])("converts %s to %s without changing the selected minute", (input, expected) => {
+    expect(parseCustomMoveTime(input)).toBe(expected);
+  });
+
+  it.each(["3:3", "3:30", "3:30 P", "13:30 PM", "24:00", "15:60", "15:30:01"])(
+    "rejects the incomplete or invalid time %s",
+    (input) => {
+      expect(parseCustomMoveTime(input)).toBe("");
+    },
+  );
 });
 
 describe("the reported case — the current practitioner can no longer hold it", () => {

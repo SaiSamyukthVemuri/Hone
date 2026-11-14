@@ -976,6 +976,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "WAIT-02 operator queue for the new-client waitlist. Its Settings tab appears only for a studio whose durable waitlist is switched on, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
   },
   {
+    route: "/settings/waitlist/replies",
+    reason:
+      "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
     route: "/settings/payments/refresh",
     reason:
       "Payment-provider onboarding callback landing page, not a navigable setting.",
