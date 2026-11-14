@@ -249,13 +249,18 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // run (gate OFF; the two dismissal cases skip), each a seeded studio, a magic-link login and a page load: about 45 seconds.
     // Now 52 after merging production into HON-8 (#1350): production's 51 (which counts dashboard-attention-dismissal.spec.ts) plus HON-8's
     // machine-real-3g.spec.ts, which is not in production. The number is the measured count of the merged tree; no group was re-decided.
-    // Now 53: HON-65's dashboard-last-treatment-closed.spec.ts (Last treatment visible on the CLOSED row, owner and practitioner at 1280 and
+    // Production, 53: HON-65's dashboard-last-treatment-closed.spec.ts (Last treatment visible on the CLOSED row, owner and practitioner at 1280 and
     // 390) joined `sessions` with the other Today-roster specs. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two
     // roles x two widths), each a seeded studio, a magic-link login and one page load: about 90 seconds.
     // Now 54: #1424's calendar-own-first.spec.ts joined `calendar`. RECORDED AS A DECISION per the note above. It is OPT-IN
     // (CAL_OWN_FIRST_E2E=1) and self-skips in every CI lane, so the cost is listing one skipped file: no added run time. The 12-case
     // 1280/390 matrix (about 9 minutes with a cold build) is run on demand, not in the targeted lane.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(54);
+    // After merging production (which took the count to 54 with calendar-own-first.spec.ts, above): HON-8 adds machine-one-selector.spec.ts (HON-8, one selector for xCell/Junior/Senior, save/reopen, leave guard) joined `sessions`
+    // beside machine-switch-discards-draft.spec.ts. RECORDED AS A DECISION per the note above: it is the only lane its subject can regress in.
+    // Now 56: machine-mode-then-save.spec.ts (HON-8, Photos R2: a mode click then a block save must not conflict with the user's own write; a genuine
+    // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
+    // seeded studio, a magic-link login and a few page loads: about 2 minutes.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(56);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

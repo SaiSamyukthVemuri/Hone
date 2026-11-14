@@ -20,8 +20,14 @@
 // actions already accept every field used here, no action behavior
 // change.
 
-import { useEffect, useId, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { SaveStatus } from "@/components/sessions/save-status";
+import type { SaveState } from "@/lib/sessions/save-state";
+import { useHeldBlockVersion } from "@/lib/sessions/use-held-block-version";
+import { leaveDialogCopy } from "@/lib/sessions/leave-dialog-copy";
+import { useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
@@ -94,6 +100,7 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
@@ -109,6 +116,9 @@ import {
   RESUME_CHOICE_RESUME,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
+  copyPatchForMachine,
+  copySourceMatchesMachine,
+  autoSelectHeld,
   type PendingSetupIdentity,
 } from "@/lib/machines/pending-setup";
 import {
@@ -122,9 +132,19 @@ import {
 } from "./block-actions";
 import { SectionLabel } from "@/components/ui/section-label";
 
+/** Whether the leave guard is armed: anything unsaved arms it, whether or not a request is in flight; only a CONFIRMED save releases it. */
+export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean {
+  return dirty && !saveConfirmed;
+}
+
+const EDIT_SAVE_UNCONFIRMED =
+  "The connection failed, so whether your changes were saved is not known. Your edits are still here: press Save to try again, or reload the page to see what is saved.";
+
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
 const MINUTES_MAX = 1440;
+const CREATE_REFUSED_AFTER_LOST_ANSWER =
+  "This area may already be saved. Reload the page to see it before saving again.";
 
 // Parses an optional numeric reading with range checks. Empty → null.
 // Mirrors the server-side validation; the action re-validates regardless.
@@ -427,6 +447,93 @@ export function BlockSetupForm({
   const [draft, setDraftRaw] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
+  // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
+  // Opened from the area's SAVED identity (migration 0301), never inferred:
+  // an area with no saved identity is "none", and "none" keeps the existing
+  // charting fields exactly as they were.
+  const [machineKind, setMachineKind] = useState<"none" | "legacy" | "native">(
+    block?.studio_machine_id ? "native" : block?.machine_profile_id ? "legacy" : "none",
+  );
+  // A NEW area carries the chosen machine into its Save (one transaction).
+  const identityDraftRef = useRef<{
+    deviceId: string | null;
+    modeKey: string | null;
+    profileId: string | null;
+  } | null>(null);
+  const draftRegistry = useDraftRegistryState();
+  const [identityDirty, setIdentityDirty] = useState(false);
+  useReportDraft({ draft: identityDirty, unresolved: false }, draftRegistry.api);
+  // An EXISTING area that already holds legacy readings is never switched to a
+  // native machine: that would leave two machines' settings on one area, or
+  // overwrite the first. The choice is refused and a new area is the way.
+  const legacyDataLocked = Boolean(
+    block &&
+      (block.mode ||
+        block.apilus_modality ||
+        block.energy_level != null ||
+        block.machine_frequency ||
+        firstEntry?.thermolysis_intensity_percent != null ||
+        firstEntry?.thermolysis_duration_seconds != null ||
+        firstEntry?.galvanic_ma != null ||
+        firstEntry?.galvanic_duration_seconds != null ||
+        firstEntry?.units_of_lye != null),
+  );
+  // The dirty baseline (set on first render, below). Declared here so the native switch can rebase it.
+  const initialDraftJson = useRef<string | null>(null);
+  // The FROZEN setter, reached through a ref because it is declared further
+  // down and this callback has to keep one identity.
+  const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
+  const onKindChange = useCallback(
+    (kind: "none" | "legacy" | "native") => {
+      if (kind === "native" && legacyDataLocked) return;
+      setMachineKind(kind);
+      if (kind === "native") {
+        // Switching never mixes settings: the overlapping legacy fields are
+        // cleared with the switch, and the area saves them as NOT RECORDED.
+        const cleared = (d: Draft): Draft => ({
+          ...d,
+          mode: "",
+          apilusModality: "",
+          energyLevel: "",
+          machineFrequency: "",
+          thermolysisIntensityPercent: "",
+          thermolysisDurationSeconds: "",
+          galvanicMa: "",
+          galvanicDurationSeconds: "",
+          unitsOfLye: "",
+          pulseCount: String(PULSE_COUNT_DEFAULT),
+          pulseDelay: String(PULSE_DELAY_DEFAULT),
+        });
+        setDraftRef.current(cleared);
+        // REBASE THE DIRTY BASELINE (Codex 4482278089): the switch is not the practitioner's edit. An automatically resolved
+        // machine clears a prefilled studio-default frequency, and comparing against the pre-switch draft showed "Unsaved"
+        // (and a leave prompt) on an untouched form.
+        if (initialDraftJson.current !== null) {
+          initialDraftJson.current = JSON.stringify(cleared(JSON.parse(initialDraftJson.current) as Draft));
+        }
+      }
+    },
+    [legacyDataLocked],
+  );
+  const onIdentityDraft = useCallback(
+    (
+      choice: {
+        deviceId: string | null;
+        modeKey: string | null;
+        profileId: string | null;
+      } | null,
+      explicit: boolean,
+    ) => {
+      // NOT WHILE A CREATE IS UNRESOLVED (Codex 4488516837): the attempt's identity is snapshotted, and a remembered machine
+      // auto-resolving in a panel opened afterwards must not become the live draft the retry could read.
+      if (createAttemptRef.current !== null) return;
+      identityDraftRef.current = choice;
+      // Only a pick the practitioner made counts as an unsaved edit.
+      if (explicit) setIdentityDirty(choice !== null);
+    },
+    [],
+  );
+  const showLegacyFields = machineKind !== "native";
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
   // rather than as a global "has she edited it?" boolean.
   //
@@ -643,7 +750,12 @@ export function BlockSetupForm({
    * alone; merging them would make clearing one clear the other. They are
    * combined only where a control has to be frozen.
    */
-  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+  // ONE REGISTRY for every unsaved machine owner on this form (draft-registry.tsx): the reading entry and the create form's settings draft
+  // write their LEVELS into it and remove themselves on unmount; "unsaved" and "a save is unresolved" are derived from it, so nothing here
+  // sets them by hand. The picked-but-unwritten machine (`identityDirty`) is reported into the same registry below.
+  const revisionUnresolved = draftRegistry.view.anyUnresolved;
+  // A saved area's machine choice is being written; the block save waits (Codex, #1369 4477716784).
+  const [identityWritePending, setIdentityWritePending] = useState(false);
 
   /**
    * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
@@ -847,6 +959,7 @@ export function BlockSetupForm({
     if (draftFrozen) return;
     setDraftRaw(...args);
   };
+  setDraftRef.current = setDraft as (u: (d: Draft) => Draft) => void;
   /**
    * The retry key of the save in progress, or null when none is open.
    *
@@ -882,6 +995,22 @@ export function BlockSetupForm({
    */
   const [pendingSaveKey, setPendingSaveKeyRaw] = useState<string | null>(null);
   /**
+   * THE RETRY KEY OF A SETTINGS-FREE CREATE, held for this form's life and NOT mirrored to the URL (a bare save has no
+   * settings to resume). Minted at the first attempt; kept while the answer is unknown so Save again is absorbed by the
+   * create claim instead of making a second area; dropped on success and on a definitive refusal (nothing committed).
+   */
+  const bareCreateKeyRef = useRef<string | null>(null);
+  /**
+   * THE IDENTITY THE FIRST CREATE ATTEMPT WAS MADE WITH, held with its key until the attempt is resolved (Codex 4488516837).
+   * A retry sends this, never the live draft: a lost answer plus a machine panel opened afterwards used to send a different
+   * identity under the original key, which 0223 refuses as a payload mismatch. `unresolved` records that an answer was lost,
+   * so a later refusal is read as "already saved", not as "nothing committed".
+   */
+  const createAttemptRef = useRef<{
+    identity: { deviceId: string | null; modeKey: string | null; profileId: string | null } | null;
+    unresolved: boolean;
+  } | null>(null);
+  /**
    * MIRRORED AT THE SETTER, not at the call sites.
    *
    * The key is dropped in two places and minted in a third, and the whole
@@ -900,6 +1029,39 @@ export function BlockSetupForm({
     blocking: string | null;
     identity: PendingSetupIdentity;
   } | null>(null);
+
+  // THE SAVE STATE, derived from what the form already knows rather than kept
+  // as a second account of it: Saving while the save runs, Couldn't save after
+  // a refusal (the same Save button retries), Unsaved while anything entered
+  // has not been saved, and Saved only for an existing area with nothing
+  // pending. A new area with nothing entered shows no status, because there is
+  // nothing to lose.
+  if (initialDraftJson.current === null) {
+    initialDraftJson.current = JSON.stringify(draft);
+  }
+  // THE CREATE ATTEMPT IS AN OWNER (Codex #1369 4506141998). A NEW area saved with prefilled values and an auto-resolved machine has a draft
+  // EQUAL to its baseline, and auto-resolution is not an edit, so nothing marked it unsaved: leaving mid-save dropped `bareCreateKeyRef`
+  // (not in the URL) and recreating could duplicate a committed save. From submit until a CONFIRMED outcome the attempt is both an unsaved
+  // draft and unresolved: in flight (`pending`) or held after a lost answer or a refusal that follows one (`saveUnresolved`). A definitive
+  // refusal with no lost answer is a confirmed outcome (nothing committed, key dropped), and a confirmed success closes the form, whose
+  // unmount removes this key. Registered like every other owner, so the guard derives from it.
+  // `unresolved` IS DELIBERATELY FALSE (Insurance final437 F1): `anyUnresolved` is `revisionUnresolved`, which disables Save and Cancel, and in
+  // CREATE mode pressing Save again unchanged IS the recovery (INITIAL_SAVE_UNRESOLVED; the retry key makes it safe). `saveUnresolved`
+  // already freezes the draft. The guard needs only the draft flag.
+  const createAttemptOpen = !block && (pending || saveUnresolved);
+  useReportDraft({ draft: createAttemptOpen, unresolved: false }, draftRegistry.api);
+  const dirty =
+    JSON.stringify(draft) !== initialDraftJson.current ||
+    draftRegistry.view.anyDraft;
+  // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
+  const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);
+  // ARMED UNTIL A SAVE IS CONFIRMED (Codex #1369 4493497730). It used to be disarmed while "Saving…" was pending, so closing, reloading or
+  // following a link mid-save could lose the unconfirmed draft and, for a create, the retry key that keeps a lost answer from becoming a
+  // second area. The request is in flight, its outcome is not known, and the draft is not saved: the guard stays armed through the request,
+  // through an unknown or lost reply, and through a definitive refusal (the draft is still unsaved). It is bypassed only here, after a
+  // CONFIRMED success (`saveConfirmed`, set just before the form closes).
+  const [saveConfirmed, setSaveConfirmed] = useState(false);
+  useUnsavedGuard(leaveGuardArmed(dirty, saveConfirmed), (proceed, dirtyCount) => setLeaveAttempt({ proceed, dirtyCount }));
 
   /**
    * The collector's report, plus the key's lifetime rule.
@@ -1136,13 +1298,21 @@ export function BlockSetupForm({
       setCopyMessage("No previous treatment area to copy from.");
       return;
     }
+    // An older area of the SAME kind of machine is used before refusing (never across kinds).
+    const matching = candidates.filter((b) => copySourceMatchesMachine(machineKind, b));
+    if (matching.length === 0) {
+      setCopyMessage(
+        "Those settings are from a different machine, so they were not copied. Enter this area's settings directly.",
+      );
+      return;
+    }
     const wantedArea = draft.primaryArea.trim().toLowerCase();
     const areaMatch = wantedArea
-      ? [...candidates]
+      ? [...matching]
           .reverse()
           .find((b) => (b.primary_area ?? "").trim().toLowerCase() === wantedArea)
       : undefined;
-    const source = areaMatch ?? candidates[candidates.length - 1];
+    const source = areaMatch ?? matching[matching.length - 1];
     // Full reusable setup via the shared snapshot contract: block machine
     // settings PLUS the primary (earliest live) entry's mode-gated machine
     // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas,
@@ -1171,7 +1341,9 @@ export function BlockSetupForm({
       ).map((o) => o.id),
     );
     const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable);
-    setDraft((d) => ({ ...d, ...patch }));
+    // With a native machine in force only the SHARED fields (probe and lot) are copied; the hidden legacy fields stay
+    // cleared, so nothing legacy is ever submitted.
+    setDraft((d) => ({ ...d, ...copyPatchForMachine(machineKind, patch) }));
     // Bind the copied lot to the copied probe, so the probe-change effect does
     // NOT then overwrite it with an unrelated historical suggestion. Selecting a
     // different probe afterwards still runs the normal resolver for that probe.
@@ -1195,7 +1367,45 @@ export function BlockSetupForm({
     }
   }
 
+  /**
+   * EVERY GATE THAT HOLDS THE SAVE, NAMED ONCE (Codex, #1369 4475351367, P1).
+   * The Save button was disabled by these but `submit()` was not, and other
+   * callers reach it directly - the save-status "Try again" button is enabled
+   * whenever `error` is set. A FAILED CLAIM LOOKUP sets `error` while
+   * `resumeChoicePending` holds Save, so "Try again" ran the create past every
+   * recovery gate; with the machine settings not yet rebuilt
+   * `machineSetupForSave()` returns null, the create carried NO idempotency key,
+   * and a retry after a save that HAD committed made a duplicate treatment area.
+   * So the gates live here and `submit()` enforces them for every caller. The
+   * Save button keeps its own literal list (source pins read it); a test asserts
+   * the two lists name the same flags.
+   */
+  // The version this editor saves against: fixed at open, moved only by its own identity write (see the hook).
+  const [heldVersion, setHeldVersion] = useHeldBlockVersion(block?.updated_at ?? null);
+  const blockVersion = block ? heldVersion : null;
+  const saveBlocked =
+    pending ||
+    resume.state === "checking" ||
+    resume.state === "saved" ||
+    resumeChoicePending ||
+    resumedNeedsSettings ||
+    resumedUnconfirmed ||
+    // HELD WHILE A MACHINE REVISION IS UNRESOLVED (Codex, #1205
+    // 4401466832). On an existing block this button saves the AREA and
+    // closes the form, which unmounts the entry and discards the
+    // retained retry key of a machine save whose answer was lost; if
+    // that save had committed, re-entering the settings appends a
+    // duplicate immutable capture. It is NOT the recovery for that
+    // save - the entry's own "Try saving again" is - so freezing it
+    // does not strand her. The create-mode flag is deliberately NOT
+    // here: there, pressing Save again unchanged IS the recovery.
+    revisionUnresolved ||
+    // HELD WHILE A SAVED AREA'S MACHINE CHOICE IS BEING WRITTEN (Codex, #1369 4477716784): the block save would
+    // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
+    identityWritePending;
+
   function submit() {
+    if (saveBlocked) return;
     setError(null);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
@@ -1355,7 +1565,7 @@ export function BlockSetupForm({
           blockId: block.id,
           firstEntryId: firstEntry?.id ?? null,
           // Optimistic concurrency: the version this form loaded (0129).
-          expectedUpdatedAt: block.updated_at,
+          expectedUpdatedAt: blockVersion,
           mode: (draft.mode || null) as SessionMode | null,
           apilusModality: (draft.apilusModality || null) as
             | ApilusModality
@@ -1378,20 +1588,30 @@ export function BlockSetupForm({
           areas: draft.areas,
           readings,
           ...clinicalResponse,
-        });
+        }).catch(() => ({
+          // A LOST ANSWER IS NOT A REFUSAL and must not throw out of the transition (that tears the form down with the draft in it). The
+          // draft stays, the leave guard stays armed, and she is told the result is unknown.
+          ok: false as const,
+          error: EDIT_SAVE_UNCONFIRMED,
+        }));
         if (!res.ok) {
           setError(res.error);
           return;
         }
+        setSaveConfirmed(true);
         closeForm();
         return;
       }
       // Create: one save → treatment area + first entry. block_name omitted
       // (null), the section title falls back to the area, then a muted
       // placeholder.
+      const bareKey = attachedSetup ? null : (bareCreateKeyRef.current ??= crypto.randomUUID());
+      createAttemptRef.current ??= { identity: identityDraftRef.current, unresolved: false };
+      const attemptIdentity = createAttemptRef.current.identity;
       const res = await createTreatmentAreaWithEntryAction({
         clientId,
         sessionId,
+        createKey: bareKey,
         mode: (draft.mode || null) as ElectrolysisMode | null,
         apilusModality: (draft.apilusModality || null) as ApilusModality | null,
         energyLevel: elNum,
@@ -1417,6 +1637,15 @@ export function BlockSetupForm({
         // same save. Null when nothing was entered, which is an ordinary save
         // of an area with no machine settings.
         initialSetup: attachedSetup,
+        // THE CHOSEN MACHINE, saved with the area in the same transaction. Null
+        // when none was chosen, which saves exactly as before.
+        machineIdentity: attemptIdentity
+          ? {
+              machineId: attemptIdentity.deviceId,
+              modeKey: attemptIdentity.modeKey,
+              profileId: attemptIdentity.profileId,
+            }
+          : null,
       }).catch(() => {
         // THE TRANSPORT FAILED, so the server's answer is UNKNOWN - not
         // negative. The area may well have been created.
@@ -1433,20 +1662,36 @@ export function BlockSetupForm({
         // being offered a retry that duplicates her treatment.
         return {
           ok: false as const,
-          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : "That did not save. Try again.",
-          unresolved: Boolean(attachedSetup),
+          // EVERY create is keyed now, so a lost answer is retryable for a bare save too.
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true,
         };
       });
       if (!res.ok) {
-        setError(res.error);
-        if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
+        if ("unresolved" in res && res.unresolved) {
+          createAttemptRef.current.unresolved = true;
+          setError(res.error);
+          setSaveUnresolved(true);
+        } else if (createAttemptRef.current.unresolved) {
+          // A REFUSAL AFTER A LOST ANSWER IS NOT "NOTHING COMMITTED". The first attempt may have saved; the key stays so the
+          // next retry cannot mint a second area, and the practitioner is told to reload and look.
+          setError(CREATE_REFUSED_AFTER_LOST_ANSWER);
+          setSaveUnresolved(true);
+        } else {
+          setError(res.error);
+          bareCreateKeyRef.current = null;
+          createAttemptRef.current = null;
+        }
         return;
       }
+      bareCreateKeyRef.current = null;
+      createAttemptRef.current = null;
       // THE SAVE IS CLOSED. The next one is a different save and mints its own
       // key; keeping this one would make a deliberate second area look like a
       // retry of the first and be answered with it.
       setPendingSaveKey(null);
       setSaveUnresolved(false);
+      setSaveConfirmed(true);
       closeForm();
     });
   }
@@ -1481,7 +1726,7 @@ export function BlockSetupForm({
   const isOmniblend = draft.apilusModality === "Omniblend";
 
   const thermoSection =
-    modeSections.showThermo ? (
+    showLegacyFields && modeSections.showThermo ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
           <SectionLabel>
@@ -1586,7 +1831,7 @@ export function BlockSetupForm({
     ) : null;
 
   const galvSection =
-    modeSections.showGalv ? (
+    showLegacyFields && modeSections.showGalv ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
           <SectionLabel>
@@ -1646,6 +1891,36 @@ export function BlockSetupForm({
 
   return (
     <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+      <ConfirmDialog
+        open={leaveAttempt !== null}
+        title={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).title}
+        description={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).description}
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        onConfirm={() => {
+          const go = leaveAttempt?.proceed;
+          setLeaveAttempt(null);
+          go?.();
+        }}
+        onCancel={() => setLeaveAttempt(null)}
+      />
+      {(() => {
+        const state: SaveState | null = pending
+          ? { status: "saving" }
+          : error
+            ? { status: "failed", message: error }
+            : dirty
+              ? { status: "unsaved" }
+              : isEdit
+                ? { status: "saved" }
+                : null;
+        return state ? (
+          <SaveStatus
+            state={state}
+            onRetry={saveBlocked ? undefined : () => submit()}
+          />
+        ) : null;
+      })()}
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-medium">
           {isEdit ? "Edit settings block" : "Add settings block"}
@@ -1678,6 +1953,7 @@ export function BlockSetupForm({
           no row yet, so there is nothing to record readings against and the
           panel shows the field contract read-only instead of inviting a value
           it would have to discard. */}
+      <DraftRegistryProvider api={draftRegistry.api} view={draftRegistry.view}>
       <MachineFirstSetupConnected
         blockId={block?.id ?? null}
         clientId={clientId}
@@ -1693,10 +1969,31 @@ export function BlockSetupForm({
         // covers it too and it has to freeze with everything else - the same
         // flag, not a second rule that could disagree.
         settingDraftFrozen={draftFrozen}
-        // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
+        // THE PANEL'S REVISION SAVE REACHES THIS FORM through the registry above, so the Cancel button
         // below can be frozen by it (Codex, #860 4302176844).
-        onRevisionUnresolved={setRevisionUnresolved}
+        onIdentityWritePending={setIdentityWritePending}
+        // A studio-default frequency is prefilled, not typed: it does not count as entered work.
+        // A persisted frequency counts even when it equals the default (autoSelectHeld).
+        holdAutoSelect={autoSelectHeld(draft, defaultMachineFrequency, block?.machine_frequency)}
+        // THE SAVED CHOICE of this area (the record), not a preference.
+        savedIdentity={
+          block
+            ? {
+                profileId: block.machine_profile_id ?? null,
+                deviceId: block.studio_machine_id ?? null,
+                modeKey: block.machine_mode_key ?? null,
+              }
+            : null
+        }
+        onKindChange={onKindChange}
+        onIdentityDraft={block ? undefined : onIdentityDraft}
+        blockVersion={blockVersion}
+        legacyReadingsLocked={legacyDataLocked}
+        onBlockVersion={(token) => {
+          if (block) setHeldVersion(token);
+        }}
       />
+      </DraftRegistryProvider>
 
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
@@ -1717,6 +2014,7 @@ export function BlockSetupForm({
           order (PR #204): frequency (a property of the machine),
           then probe, then mode and the mode-specific modality.
           Minutes performed moved to the end, after the readings. */}
+      {showLegacyFields && (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Machine frequency</span>
         <div className="flex flex-wrap gap-2">
@@ -1741,6 +2039,7 @@ export function BlockSetupForm({
           })}
         </div>
       </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Probe</span>
@@ -1849,6 +2148,7 @@ export function BlockSetupForm({
         )}
       </div>
 
+      {showLegacyFields && (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
@@ -1871,8 +2171,9 @@ export function BlockSetupForm({
           })}
         </div>
       </div>
+      )}
 
-      {showModality && (
+      {showLegacyFields && showModality && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Modality</span>
           <select
@@ -1915,6 +2216,7 @@ export function BlockSetupForm({
 
         {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
             used to sit near modality). Same energy_level column; UI move only. */}
+        {showLegacyFields && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Energy level (EL)</span>
           <input
@@ -1927,6 +2229,7 @@ export function BlockSetupForm({
             className="max-w-[16rem] rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         </label>
+        )}
 
         {/* MACHINE ORDER (Chloe): the COMPLETE galvanic group precedes
             thermolysis for every blend modality: PicoBlend, OmniBlend,
@@ -2270,7 +2573,9 @@ export function BlockSetupForm({
             // save - the entry's own "Try saving again" is - so freezing it
             // does not strand her. The create-mode flag is deliberately NOT
             // here: there, pressing Save again unchanged IS the recovery.
-            revisionUnresolved
+            revisionUnresolved ||
+            // And while a saved area's machine choice is being written (Codex, #1369 4477716784).
+            identityWritePending
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"

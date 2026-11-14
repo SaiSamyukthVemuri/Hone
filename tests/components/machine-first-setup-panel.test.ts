@@ -293,8 +293,12 @@ describe("once chosen, the panel shows that model's native fields", () => {
     // control would be a second way to do what this one already does
     // (Sam, 19:16; #860 6156583955).
     expect(html).toContain('data-testid="machine-select"');
-    expect(html, "the link it replaced must not linger").not.toContain(
-      "Change machine",
+    // HON-8 (Sam, 4 Nov preview feedback): an EXPLICIT "Change machine" control
+    // is wanted again. It is deliberately NOT a second picker: it only moves
+    // focus to this one selector, so there is still one control for one decision.
+    expect(html).toContain('data-testid="machine-change"');
+    expect(html, "no second picker beside the selector").not.toContain(
+      'data-testid="machine-pills"',
     );
     // The empty option is how a selection is cleared, so clearing stays
     // reachable after a choice.
@@ -416,9 +420,20 @@ describe("the connected wrapper makes NO request until asked", () => {
       .split("\n")
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .join("\n");
-    // An effect is how the regression got in. Its absence is the guard.
-    expect(code).not.toContain("useEffect");
+    // An effect is how the regression got in. HON-8 allows exactly ONE, and
+    // only for an area that already carries a SAVED machine (migration 0301):
+    // a reopened area opens on its machine instead of an empty "Choose
+    // machine". Every other charting path still makes no request on mount.
+    expect((code.match(/useEffect\(/g) ?? []).length).toBe(1);
+    expect(code).toMatch(/if \(hasSavedIdentity && state === "idle" && ctx === null\) void open\(\)/);
     expect(code).toContain("useCallback");
+    // ...and that one effect has NO CLEANUP and reports nothing to the host (Codex #1369 4505408578): a cleanup keyed on
+    // [hasSavedIdentity] runs when the identity is WRITTEN, while the reading entry is still mounted, and used to clear the host's
+    // draft and hold. Unsaved state is the owners' registry entries (components/machines/draft-registry.tsx), never this wrapper's.
+    const effect = code.slice(code.indexOf("useEffect("), code.indexOf("}, [hasSavedIdentity]);"));
+    expect(effect, "the open-on-identity effect was not found").toContain("void open()");
+    expect(effect, "the open-on-identity effect returns a cleanup").not.toMatch(/return\s*(\(\)|\w+)?\s*(=>|;|\()/);
+    expect(code, "the wrapper reports a draft or hold to the host").not.toMatch(/onRevision(Draft|Unresolved)/);
   });
 
   it("sends no ownership of its own", () => {
@@ -530,11 +545,15 @@ describe("historical values are untouched by anything here", () => {
     }
   });
 
-  it("performs no raw DML and no cache invalidation of its own", () => {
+  it("performs no raw DML, and invalidates the cache only after a stored identity write or settings submission", () => {
     // It legitimately builds a Supabase client now that the storage exists, so
     // the claim is about what it DOES with one: named commands only.
     expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    expect(code).not.toContain("revalidatePath");
+    const owners = [...code.matchAll(/revalidatePath\(/g)].map((m) => {
+      const fn = code.lastIndexOf("export async function ", m.index);
+      return code.slice(fn, fn + 80).match(/function (\w+)/)![1];
+    });
+    expect(owners.sort()).toEqual(["recordBlockMachineIdentityAction", "recordSetupSubmissionAction"]);
   });
 
   it("renders NO entry control until there is a block to record against", () => {
@@ -1122,10 +1141,8 @@ describe("choosing the mode on a multi-mode machine", () => {
     expect(html).toContain('aria-pressed="true"');
   });
 
-  it("falls back to the first mode when the remembered one is not this machine's", () => {
-    // A remembered mode can outlive the machine it was chosen on, and a key
-    // means nothing outside the profile that declares it. Falling back beats
-    // blanking the panel.
+  it("does NOT fall back to the first mode when the recorded one is not this machine's (#1369)", () => {
+    // Superseded contract: this used to fall back to the first mode, which showed a mode the record does not hold.
     const html = render({
       scope: SCOPE,
       devices: [DEV],
@@ -1135,13 +1152,9 @@ describe("choosing the mode on a multi-mode machine", () => {
       blockId: "block-1",
     });
     expect(html).toContain('data-testid="machine-chosen"');
-    // GALVANIC's field contract, not Blend's - the first active mode. Asserted
-    // on the read-only field list, because the entry surface renders only when
-    // `onRecord` is wired and this render does not wire it.
-    expect(html).toContain("Current");
-    expect(html, "Blend's contract must not be rendered here").not.toContain(
-      "Blend current",
-    );
+    expect(html).toContain('data-testid="machine-mode-unresolved"');
+    expect(html, "no mode's fields may be shown for a key the unit lacks").not.toContain("Blend current");
+    expect(html).not.toContain("Current");
   });
 });
 
@@ -1895,5 +1908,26 @@ describe("the owner hint says what to send for an unlisted model", () => {
 
   it("is shown to the owner only", () => {
     expect(staff).not.toContain("machine-owner-hint");
+  });
+});
+
+describe("a recorded mode the unit does not offer is never shown as another mode (#1369, Vercel 01M6VEJJ83G4GZ10DFCKMJAEVP)", () => {
+  const base = { scope: SCOPE, devices: [DEVICE], catalogue: CAT, persistence: DATABASE_PERSISTENCE };
+
+  it("shows the unresolved state and no mode's fields", () => {
+    const html = render({ ...base, initialDeviceId: "room-9", restoredSelection: { deviceId: "room-9", modeKey: "not-a-mode" } });
+    expect(html).toContain('data-testid="machine-mode-unresolved"');
+    expect(html).toContain("Recorded mode not available on this machine");
+    expect(html, "F3: the copy claims nothing about the record").not.toContain("nothing has been changed");
+    // The offered mode is listed as a CHOICE (the picker renders while unresolved, Insurance F1) but is never pressed, and no entry form is mounted.
+    expect(html).toContain('data-testid="machine-mode-picker"');
+    expect(html).toMatch(/aria-pressed="false"[^>]*data-testid="machine-mode-galvanic"|data-testid="machine-mode-galvanic"[^>]*aria-pressed="false"/);
+    expect(html).not.toContain("machine-reading-entry");
+  });
+
+  it("CONTROL: an offered key resolves normally, with no unresolved notice", () => {
+    const html = render({ ...base, initialDeviceId: "room-9", restoredSelection: { deviceId: "room-9", modeKey: "galvanic" } });
+    expect(html).not.toContain("machine-mode-unresolved");
+    expect(html).toContain("Galvanic");
   });
 });

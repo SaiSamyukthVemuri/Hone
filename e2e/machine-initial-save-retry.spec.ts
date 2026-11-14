@@ -110,9 +110,16 @@ async function totals(sessionId: string) {
 }
 
 async function openMachinePanel(page: Page): Promise<boolean> {
-  await expect(page.getByTestId("machine-first-trigger")).toBeVisible({ timeout: T });
-  await page.getByTestId("machine-first-open").click();
-  await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+  // A SAVED CHOICE OPENS THE PANEL AT ONCE (machine-first-setup-connected.tsx: the wrapper's open-on-identity effect). On such an area the
+  // trigger shows only while that load runs, disabled, and is then REPLACED by the panel, so a click on it can wait forever on a button that
+  // no longer exists. Wait until the panel is open or the trigger is clickable, and click only in the second case.
+  const panel = page.getByTestId("machine-first-panel");
+  const opener = page.getByTestId("machine-first-open");
+  await expect
+    .poll(async () => ((await panel.count()) > 0 ? "panel" : (await opener.isEnabled().catch(() => false)) ? "opener" : "wait"), { timeout: T })
+    .not.toBe("wait");
+  if ((await panel.count()) === 0) await opener.click();
+  await expect(panel).toBeVisible({ timeout: T });
   const select = page.getByTestId("machine-select");
   const chosen = page.getByTestId("machine-chosen");
   if ((await select.count()) === 0) return (await chosen.count()) > 0;
@@ -408,6 +415,9 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
     // journey went stale.
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
     await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+    // HON-8: A SAVED CHOICE OPENS THE PANEL BY ITSELF, asserted with no click (the helper below accepts either state; Insurance, #1369 9febb15ca).
+    await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-first-open")).toHaveCount(0);
     expect(await openMachinePanel(page)).toBe(true);
     await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
       timeout: T,

@@ -1,17 +1,33 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
+import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
 import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
 import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getCurrentPractitionerWithStudio,
+  studioHasLegacyMachineHistory,
+} from "@/lib/supabase/queries";
 import {
   activeModes,
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
+import { checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import {
+  isMissingCommand,
+  MACHINE_CHOICE_NOT_STORABLE_YET,
+} from "@/lib/machines/save-attempt";
+import {
+  LEGACY_MACHINE_PROFILE_ID,
+  legacyMachineOffer,
+  type LegacyMachineOffer,
+} from "@/lib/machines/legacy-machine";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -56,7 +72,7 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
-import { machinesByIds } from "@/lib/machines/machine-queries";
+import { machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -192,12 +208,27 @@ export type MachineSetupContext = {
    */
   suggestedMachine: SuggestedMachine | null;
   /**
+   * THIS CLIENT's most recent machine (their last treatment area's saved identity),
+   * validated against the inventory: a unit the picker would refuse, or a model that
+   * is not the existing workflow, is dropped. It outranks the practitioner's
+   * remembered preference for a NEW area (Photos R2, #1369): the previous machine
+   * means this client's last machine, not the practitioner's last pick anywhere.
+   */
+  clientLastMachine: { deviceId: string | null; modeKey: string | null; legacy: boolean } | null;
+  /**
    * The unit and mode the block's LAST SAVED capture used, so a reopened visit
    * comes back as it was saved. Selection only: it is never written to the
    * remembered default. Null when there is no block or the rule in
    * restore-recorded-selection restores nothing.
    */
   restoredSelection: RestoredSelection | null;
+  /**
+   * The existing charting workflow as a choice in the one selector, offered
+   * ONLY where this studio has that workflow's history (a treatment area with
+   * a legacy mode, or one already saved as that model). Null for a studio
+   * that has never charted that way; nothing tenant-specific lives in code.
+   */
+  legacyMachine: LegacyMachineOffer | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -215,7 +246,9 @@ const ANONYMOUS: MachineSetupContext = {
   recordedSetupUnavailable: false,
   unitNames: {},
   suggestedMachine: null,
+  clientLastMachine: null,
   restoredSelection: null,
+  legacyMachine: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -410,6 +443,31 @@ export async function loadMachineSetupContext(input: {
     catalogue,
   });
 
+  // OFFERED FROM THE STUDIO'S OWN HISTORY (read in lib/supabase/queries, as
+  // this module reads no clinical table itself). A failed read offers nothing.
+  let legacyMachine: LegacyMachineOffer | null = null;
+  try {
+    if (await studioHasLegacyMachineHistory(scope.studioId, LEGACY_MACHINE_PROFILE_ID)) {
+      legacyMachine = legacyMachineOffer(catalogue);
+    }
+  } catch {
+    legacyMachine = null;
+  }
+
+  // THE CLIENT'S OWN LAST MACHINE (Photos R2, #1369), validated like any other choice.
+  let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
+  try {
+    clientLastMachine = validateClientLastMachine({
+      last: await readClientLastMachine(input.clientId),
+      scope,
+      devices: inventory.devices,
+      catalogue,
+      legacyProfileId: legacyMachine?.profileId ?? null,
+    });
+  } catch {
+    clientLastMachine = null;
+  }
+
   const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
@@ -454,8 +512,13 @@ export async function loadMachineSetupContext(input: {
     unitNames,
     suggestedMachine,
     restoredSelection,
+    legacyMachine,
+    clientLastMachine,
   };
 }
+
+const BLOCK_CHANGED_ELSEWHERE =
+  "This settings block was changed elsewhere. Reload the session and re-apply your edit.";
 
 export type ActionResult =
   | { ok: true }
@@ -525,6 +588,102 @@ export async function clearMachineSelectionAction(): Promise<ActionResult> {
     return { ok: true };
   } catch {
     return { ok: false, code: "not_persisted", error: "Could not clear it." };
+  }
+}
+
+/**
+ * SAVE THE MACHINE CHOSEN FOR AN EXISTING TREATMENT AREA (migration 0301).
+ *
+ * This is the saved TREATMENT RECORD, kept apart from the remembered
+ * preference `rememberMachineSelectionAction` writes: one is the truth about
+ * this area, the other only a suggestion for the next one. Studio and actor are
+ * derived in the database; the route's own client and session bind the block.
+ * Either a registered unit (with its mode) or, for the existing xCell
+ * workflow, a model with no unit and no mode.
+ */
+export async function recordBlockMachineIdentityAction(input: {
+  clientId: string;
+  sessionId: string;
+  blockId: string;
+  deviceId: string | null;
+  modeKey: string | null;
+  profileId: string | null;
+  /** The block version the host form is holding (its optimistic-concurrency token). */
+  expectedUpdatedAt?: string | null;
+  /** One key per pick, reused by every retry of it: a write whose answer was lost is answered again from its receipt (0301). */
+  idempotencyKey: string;
+}): Promise<
+  ActionResult & {
+    updatedAt?: string;
+    /** The key matched an earlier write: the version and identity are the ones THAT write produced. */
+    reused?: boolean;
+    identity?: { profileId: string | null; deviceId: string | null; modeKey: string | null };
+  }
+> {
+  const scope = await identity();
+  if (!scope) {
+    return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
+  }
+  const db = await machineDb();
+  // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces (Codex, #1369 4498767101).
+  const choice = { deviceId: input.deviceId, modeKey: input.modeKey, profileId: input.profileId };
+  const allowed = await checkIdentityChoice(db, scope, choice);
+  // A REFUSAL MUST NOT STOP THE RETRY OF A WRITE THAT ALREADY COMMITTED (Codex, #1369 4499083273). The command answers a repeated
+  // key from its receipt BEFORE it looks at the unit, but this preflight runs first: a unit retired since, or an inventory read that
+  // fails, would otherwise refuse the retry and the caller would drop the key. So the receipt-aware command decides when
+  //   * the unit is merely not available now (retired/unknown/foreign): the command itself refuses those for a NEW write; or
+  //   * the block already stores exactly this choice (the receipt table is readable by no API role; the block is the proof).
+  // An impossible pair for a NEW write is still refused here, and an unreadable inventory is "unknown": the key is kept.
+  let deferredRefusal: string | null = null;
+  if (!allowed.ok) {
+    const alreadyStored = await storedIdentityMatches(db, { blockId: input.blockId, sessionId: input.sessionId }, choice);
+    if (alreadyStored || allowed.reason === "availability") deferredRefusal = allowed.error;
+    else if (allowed.reason === "unreadable") return { ok: false, code: "unknown", error: allowed.error };
+    else return { ok: false, code: "rejected", error: allowed.error };
+  }
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+    const out = await recordBlockMachineIdentity(db, {
+      blockId: input.blockId,
+      sessionId: input.sessionId,
+      clientId: input.clientId,
+      deviceId: input.deviceId,
+      modeKey: input.modeKey,
+      profileId: input.profileId,
+      // CHECKED INSIDE THE COMMAND'S TRANSACTION, and the new version comes back from
+      // the same UPDATE ... RETURNING (Codex 4476240827): no separate read can race it.
+      expectedUpdatedAt: input.expectedUpdatedAt ?? null,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!out.ok) {
+      if (out.stale) {
+        return { ok: false, code: "rejected", error: BLOCK_CHANGED_ELSEWHERE };
+      }
+      // 0301 not applied yet: say so, never "saved".
+      if (isMissingCommand(out.error)) {
+        return { ok: false, code: "rejected", error: MACHINE_CHOICE_NOT_STORABLE_YET };
+      }
+      // The command refused a NEW write the preflight had deferred to it: say why, in the preflight's own words.
+      if (deferredRefusal !== null && !out.unresolved) {
+        return { ok: false, code: "rejected", error: deferredRefusal };
+      }
+      // UNKNOWN IS NOT REJECTED (Codex 4488743493). With no database answer the write may have committed; "unknown" keeps the
+      // key so the caller can ask again and be answered from the receipt, instead of treating the pick as reverted.
+      return out.unresolved
+        ? { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." }
+        : { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." };
+    }
+    // Like Save: a stored pick must reach the session page data, or a reopened editor shows the pre-pick identity.
+    revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
+    return {
+      ok: true,
+      reused: out.reused,
+      ...(out.updatedAt ? { updatedAt: out.updatedAt } : {}),
+      ...(out.identity ? { identity: out.identity } : {}),
+    };
+  } catch {
+    // A THROW AFTER THE WRITE WAS SENT SAYS NOTHING ABOUT IT: unknown, not "not saved".
+    return { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." };
   }
 }
 
@@ -829,12 +988,15 @@ export async function recordSetupSubmissionAction(input: {
    */
   clientId: string;
   sessionId: string;
+  /** The block version the host form holds; see recordBlockMachineIdentityAction. */
+  expectedUpdatedAt?: string | null;
 }): Promise<
   ActionResult & {
     submissionId?: string;
     captures?: number;
     written?: number;
     reused?: boolean;
+    updatedAt?: string;
   }
 > {
   // AN IDENTITY REFUSAL IS DEFINITIVE, NOT UNKNOWN (Codex, #860 4308620487).
@@ -1022,7 +1184,11 @@ export async function recordSetupSubmissionAction(input: {
     sessionId: input.sessionId,
     clientId: input.clientId,
     groups,
+    expectedUpdatedAt: input.expectedUpdatedAt ?? null,
   });
+  if (!out.ok && /stale_block_version/.test(out.error)) {
+    return { ok: false, code: "rejected", error: BLOCK_CHANGED_ELSEWHERE };
+  }
   if (!out.ok) {
     // UNKNOWN IS NOT REJECTED. Collapsing the two here would discard the
     // distinction the query just preserved, one layer above it.
@@ -1032,12 +1198,16 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
+  // Like the identity write and Save (Codex 4481814168): the submission bumped the block, and a reopened editor must not hold the old version.
+  revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   return {
     ok: true,
     submissionId: out.value.submissionId,
     captures: out.value.groups,
     written: out.value.readings,
     reused: out.value.reused,
+    // From the command's own UPDATE ... RETURNING; none on a replay (Insurance N-8).
+    ...(out.value.blockUpdatedAt ? { updatedAt: out.value.blockUpdatedAt } : {}),
   };
 }
 
@@ -1050,7 +1220,7 @@ export async function readingsForBlockAction(input: {
   const scope = await identity();
   // NOT SIGNED IN is a FAILURE, not an empty treatment. It reaches the same
   // surface as a failed query and must not read as "nothing recorded".
-  if (!scope) return { ok: false };
+  if (!scope) return { ok: false, refused: "access" };
   // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
   // path (#860 4297032712), but this read took a bare block id with no
   // lineage check either: the member-scoped SELECT policy admits any block
@@ -1063,7 +1233,14 @@ export async function readingsForBlockAction(input: {
   // nothing about the block, which is exactly the mistake round 8 made here -
   // the check was added, the hole was reported closed, and the read still
   // filtered on an unbound block id (Codex, #860 4298457378).
-  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  // A refused route is a DEFINITIVE refusal (#1369 R3-2): the caller must not keep showing the old readings. A database error inside
+  // the lineage lookup throws the same error, so this fails closed for access in that rare case too.
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) return { ok: false, refused: "unavailable" };
+    throw e;
+  }
   const db = await machineDb();
   // ...and this one binds the BLOCK to that session, in the query.
   const got = await readingsForBlock(db, input.blockId, input.sessionId);
@@ -1083,7 +1260,7 @@ export async function readingsForBlockAction(input: {
   //
   // The caller decides what to do with a failure; this one's job is to stop
   // pretending there was none.
-  if (!got.ok) return { ok: false };
+  if (!got.ok) return got.refused ? { ok: false, refused: got.refused } : { ok: false };
 
   // AND THE UNIT NAMES FOR WHAT CAME BACK (Codex, #860 4301669061).
   //
@@ -1134,7 +1311,12 @@ export type ReadingsRead =
        */
       unitNames: Record<string, string>;
     }
-  | { ok: false };
+  /**
+   * `refused`: the record must not be shown. "access" is a REAL access refusal (not signed in, insufficient privilege). "unavailable"
+   * is a record that cannot be loaded for this route (a transient lineage error, or a block deleted in another tab): neutral wording.
+   * Absent: a failed read that may be transient (the previous readings stay, with a note).
+   */
+  | { ok: false; refused?: "access" | "unavailable" };
 
 /** The profiles a practitioner may pick in this studio right now. */
 export async function listSelectableForCaller(): Promise<

@@ -25,7 +25,7 @@ const SESSION = vi.hoisted(() => ({
 const DB = vi.hoisted(() => ({
   rows: [] as unknown[],
   rpcResult: null as unknown,
-  rpcError: null as null | { message: string },
+  rpcError: null as null | { message: string; code?: string },
   selectError: null as null | { message: string },
   /**
    * PER-TABLE overrides, because some behaviour only exists when one read
@@ -40,6 +40,7 @@ const DB = vi.hoisted(() => ({
    */
   rowsFor: {} as Record<string, unknown[]>,
   errorFor: {} as Record<string, { message: string }>,
+  readSequence: [] as Array<{ message: string; code?: string } | null>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 
@@ -58,6 +59,7 @@ const LINEAGE = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/sessions/session-lineage", () => ({
+  SessionLineageError: class SessionLineageError extends Error {},
   assertSessionForClient: async (
     studioId: string,
     clientId: string,
@@ -71,6 +73,9 @@ vi.mock("@/lib/sessions/session-lineage", () => ({
 /** The route values every loader call needs. */
 const ROUTE = { clientId: "client-ana", sessionId: "session-1" };
 
+vi.mock("server-only", () => ({}));
+const revalidatePathMock = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
@@ -85,6 +90,12 @@ vi.mock("@/lib/supabase/server", () => ({
       // every case to a differently-named fixture would have changed what
       // those cases say while claiming only to move a fake.
       if (fn === "setup_readings_for_block") {
+        // A SEQUENCE OF OUTCOMES for the retry cases: each call takes the next entry (an error, or null for success).
+        if (DB.readSequence.length > 0) {
+          const next = DB.readSequence.shift()!;
+          if (next) return { data: null, error: next };
+          return { data: DB.rowsFor.treatment_setup_readings ?? [], error: null };
+        }
         const err = DB.errorFor.treatment_setup_readings ?? null;
         if (err) return { data: null, error: err };
         return {
@@ -132,7 +143,7 @@ vi.mock("@/lib/supabase/server", () => ({
             // session instead, so the binding is a predicate on the read
             // itself. This branch stays for the other tables that use it.
             eq: () => ({
-              limit: async () => ({ data: [{ id: "block-1" }], error: null }),
+              limit: async () => ({ data: (table === "session_blocks" ? DB.rowsFor.session_blocks : undefined) ?? [{ id: "block-1" }], error: null }),
             }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
@@ -177,6 +188,7 @@ beforeEach(() => {
   DB.selectError = null;
   DB.rowsFor = {};
   DB.errorFor = {};
+  DB.readSequence = [];
   DB.calls = [];
 });
 
@@ -504,7 +516,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
 
     const calls = DB.calls.filter(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     );
     // ONE CALL. Two would mean the atomicity this exists for was never
     // obtained, whatever the command does.
@@ -542,7 +554,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
     });
     const args = DB.calls.find(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     )!.args as Record<string, unknown>;
     const readings = (args.p_groups as Array<Record<string, unknown>>)[0]!
       .readings as Array<Record<string, unknown>>;
@@ -588,7 +600,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     // NOTHING WAS SENT. A refusal that had already issued the call would have
     // recorded the first group.
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(0);
   });
 
@@ -837,7 +849,7 @@ describe("the connected wrapper forwards the whole SAVE", () => {
     // enumerates nothing from the form — so the rule this test exists for is
     // unchanged and only its spelling moved.
     expect(CONNECTED).toMatch(
-      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/,
+      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,(\s*expectedUpdatedAt: blockVersion \?\? null,)?\s*\}\)/,
     );
     // AND IT STILL DOES NOT REBUILD: naming any of the form's own fields here
     // is how one of them gets dropped on the next change.
@@ -1323,9 +1335,13 @@ describe("the module stays out of the clinical record", () => {
     }
   });
 
-  it("performs no raw DML and no cache invalidation of its own", () => {
+  it("performs no raw DML, and invalidates the cache only after a stored identity write or settings submission", () => {
     expect(CODE).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    expect(CODE).not.toContain("revalidatePath");
+    const owners = [...CODE.matchAll(/revalidatePath\(/g)].map((m) => {
+      const fn = CODE.lastIndexOf("export async function ", m.index);
+      return CODE.slice(fn, fn + 80).match(/function (\w+)/)![1];
+    });
+    expect(owners).toEqual(["recordSetupSubmissionAction", "recordBlockMachineIdentityAction"].sort((a, b) => CODE.indexOf(a) - CODE.indexOf(b)));
   });
 
   it("reaches the database only through 0223's named commands", () => {
@@ -1594,6 +1610,71 @@ describe("previous-treatment guidance excludes the session being charted", () =>
   });
 });
 
+describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a transient failure (#1369 R3-2)", () => {
+  const input = { ...ROUTE, blockId: "block-1" };
+
+  it("not signed in is an ACCESS refusal", async () => {
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+  });
+
+  it("a refused route (the session is not this client's, or a lineage lookup error) is UNAVAILABLE, not an accusation of access", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    const { SessionLineageError } = await import("@/lib/sessions/session-lineage");
+    LINEAGE.throws = new SessionLineageError("Treatment session not found.");
+    try {
+      expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
+    } finally {
+      LINEAGE.throws = null;
+    }
+  });
+
+  it("the database's not-found for the block (deleted in another tab) is UNAVAILABLE", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "Unknown treatment block for this session.", code: "P0002" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
+  });
+
+  it("an insufficient-privilege error from the database is an ACCESS refusal", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "permission denied", code: "42501" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+  });
+
+  // OPS decision after #1369 shard 1 at d298c8b92: ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
+  const readCalls = () => DB.calls.filter((c) => c.fn === "setup_readings_for_block").length;
+  it("RETRY: a code-less error then success returns the readings (no failure for the caller), after exactly two reads", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.readSequence = [{ message: "FetchError: socket hang up" }, null];
+    const out = await actions.readingsForBlockAction(input);
+    expect(out.ok).toBe(true);
+    expect(readCalls()).toBe(2);
+  });
+
+  it("RETRY: two code-less failures are reported as a failure (not a refusal), after exactly two reads", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.readSequence = [{ message: "Unexpected token < in JSON" }, { message: "Unexpected token < in JSON" }];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+    expect(readCalls()).toBe(2);
+  });
+
+  it("RETRY NEGATIVE CONTROL: a CODED error is a definite database answer and is never retried", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.readSequence = [{ message: "boom", code: "XX000" }, null];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+    expect(readCalls(), "one read only").toBe(1);
+    DB.calls = [];
+    DB.readSequence = [{ message: "denied", code: "42501" }, null];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+    expect(readCalls()).toBe(1);
+  });
+
+  it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "connection reset", code: "08006" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+  });
+});
+
 describe("loadMachineSetupContext reads the block's recorded captures", () => {
   const READING_ROW = {
     // THE KEYSET CURSOR. The complete read pages by `id`, so a row without one
@@ -1817,7 +1898,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     const calls = DB.calls.filter(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     );
     expect(calls, "the save was refused, or never reached the command").toHaveLength(1);
     // AND IT ASKED FOR AN IDENTITY rather than naming one. The placeholder
@@ -1869,7 +1950,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     // REFUSED BEFORE THE WRITE. A refusal that still called the command would
     // be a message, not a guard.
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
       "the command ran anyway",
     ).toHaveLength(0);
   });
@@ -1905,7 +1986,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     if (!out.ok) return;
     expect(out.reused).toBe(true);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
       "the retry never reached the command that recognises the key",
     ).toHaveLength(1);
   });
@@ -1926,7 +2007,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     if (out.ok) return;
     expect(out.error).toBe(SETUP_GROUPS_MOVED);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(0);
   });
 
@@ -1976,7 +2057,447 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(1);
+  });
+});
+
+// THE UNIT THE IDENTITY WRITES BELOW ARE MADE AGAINST. The action now checks the pick against the studio's own inventory and
+// the catalogue (Codex, #1369 4498767101), so every case that expects a write needs a registered, supported unit and mode.
+const UNIT_ID = "11111111-1111-4111-8111-111111111111";
+const UNIT_MODE = "galvanic";
+const unitRow = (over: Record<string, unknown> = {}) => ({
+  id: UNIT_ID,
+  studio_id: "studio-1",
+  machine_profile_id: synthetic.SYNTHETIC_DEMO_PROFILE.profileId,
+  machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version,
+  display_name: "Room 9",
+  installed_options: [],
+  retired_at: null,
+  ...over,
+});
+function arrangeUnit(over: Record<string, unknown> = {}) {
+  vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+  DB.rowsFor.studio_machines = [unitRow(over)];
+}
+afterEach(() => vi.unstubAllEnvs());
+
+const RECEIPT = (updatedAt: string) => ({
+  updated_at: updatedAt,
+  reused: false,
+  machine_profile_id: "fixture:p",
+  studio_machine_id: "11111111-1111-4111-8111-111111111111",
+  machine_mode_key: "flash",
+});
+
+// ===========================================================================
+// 0301 NOT APPLIED YET (Privacy EH-1/EH-2): saving the machine choice on an
+// existing area says it cannot be saved yet. It never says saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction without 0301", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+  };
+  beforeEach(() => arrangeUnit());
+
+  it("a missing command (PGRST202) is a visible, definitive 'can't save the machine choice yet'", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "PGRST202", message: "Could not find the function" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect(out.error).toMatch(/can't save the machine choice yet/i);
+  });
+
+  it("NEGATIVE CONTROL: another refusal keeps its own message, not the 0301 one", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).not.toMatch(/yet/i);
+  });
+
+  it("with the command present the choice is saved", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(true);
+  });
+});
+
+
+// ===========================================================================
+// AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN (Codex, #1369 4498767101)
+// The identity command only checks that the unit is the studio's and not retired. The action applies the contract
+// `rememberMachineSelectionAction` uses, first, so a stale panel or a crafted request cannot store a mode the unit's model does
+// not offer. Every refusal here must leave the command uncalled: "nothing written" is the point.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction checks the choice against the unit's contract first", () => {
+  const base = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null as string | null,
+    idempotencyKey: "pick-key-0001",
+  };
+  const wrote = () => DB.calls.some((c) => c.fn === "record_block_machine_identity");
+  beforeEach(() => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+  });
+
+  it("CONTROL: a supported mode on a registered unit is saved, and the command is called once with it", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out.ok).toBe(true);
+    expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_mode_key: UNIT_MODE });
+  });
+
+  it("a mode the unit's model does not offer is refused with clear copy and NOTHING is written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, modeKey: "blend" });
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    if (!out.ok) {
+      expect(out.error).toMatch(/does not offer that mode/i);
+      expect(out.error).toMatch(/nothing was saved/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+
+  it("an invented mode key is refused, nothing written", async () => {
+    arrangeUnit();
+    expect((await actions.recordBlockMachineIdentityAction({ ...base, modeKey: "not-a-mode" })).ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  // AVAILABILITY IS LEFT TO THE RECEIPT-AWARE COMMAND (Codex, #1369 4499083273). The command answers a repeated key from its receipt
+  // before it looks at the unit, and refuses a NEW write to a retired or foreign unit itself, so the action calls it and, when it
+  // refuses, reports the preflight's own clear words.
+  it("a unit that is not this studio's: the command is asked and refuses the NEW write; the clear words come back", async () => {
+    arrangeUnit({ studio_id: "studio-other" });
+    DB.rpcResult = null;
+    DB.rpcError = { code: "23514", message: "That machine is not available in this studio." };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(true);
+  });
+
+  it("a retired unit: a NEW write is refused by the command and the words are 'out of service'", async () => {
+    arrangeUnit({ retired_at: "2026-10-01T00:00:00Z" });
+    DB.rpcResult = null;
+    DB.rpcError = { code: "23514", message: "That machine is not available in this studio." };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    if (!out.ok) expect(out.error).toMatch(/out of service/i);
+    expect(wrote()).toBe(true);
+  });
+
+  it("a unit registered against a superseded profile version is refused, nothing written", async () => {
+    arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+    expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a profile id that is not the unit's own is refused, nothing written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, profileId: "some-other-profile" });
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(false);
+  });
+
+  it("the unit's own profile id is accepted (NEGATIVE CONTROL for the mismatch case)", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, profileId: synthetic.SYNTHETIC_DEMO_PROFILE.profileId });
+    expect(out.ok).toBe(true);
+    expect(wrote()).toBe(true);
+  });
+
+  it("the legacy model (no unit) carries no mode: a mode with it is refused, nothing written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({
+      ...base,
+      deviceId: null,
+      modeKey: "thermo",
+      profileId: "dectro-apilus:xcell",
+    });
+    expect(out.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory is UNKNOWN (the retry key is kept), nothing written and never 'saved'", async () => {
+    arrangeUnit();
+    DB.errorFor.studio_machines = { message: "boom" };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "unknown" });
+    expect(wrote()).toBe(false);
+  });
+
+  // ---- THE LOST-ANSWER RETRY (Codex, #1369 4499083273): commit, lose the reply, the unit is retired, retry the SAME key, recover.
+  describe("a same-key retry of a committed write recovers whatever has changed since", () => {
+    const STORED_ROW = [{ id: "block-1", machine_profile_id: null, studio_machine_id: UNIT_ID, machine_mode_key: UNIT_MODE }];
+    const REPLAY = { ...RECEIPT("v2"), reused: true, machine_mode_key: UNIT_MODE };
+
+    it("the full story: the write commits and its reply is lost, the unit is then retired, the same key recovers the stored result", async () => {
+      // 1. the original write: the reply is lost (transport failure): unknown, so the caller keeps its key.
+      arrangeUnit();
+      DB.rpcError = { message: "fetch failed" };
+      const first = await actions.recordBlockMachineIdentityAction(base);
+      expect(first).toMatchObject({ ok: false, code: "unknown" });
+      // 2. it had committed; the unit is retired afterwards.
+      DB.calls = [];
+      DB.rpcError = null;
+      DB.rpcResult = REPLAY;
+      arrangeUnit({ retired_at: "2026-11-07T00:00:00Z" });
+      // 3. the SAME key: the command answers from its receipt.
+      const retry = await actions.recordBlockMachineIdentityAction(base);
+      expect(retry).toMatchObject({ ok: true, reused: true, updatedAt: "v2" });
+      expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+      expect(DB.calls.at(-1)?.args).toMatchObject({ p_idempotency_key: "pick-key-0001" });
+    });
+
+    it("the inventory read fails at retry time and the block already stores this choice: the key still recovers", async () => {
+      arrangeUnit();
+      DB.errorFor.studio_machines = { message: "boom" };
+      DB.rowsFor.session_blocks = STORED_ROW;
+      DB.rpcResult = REPLAY;
+      const out = await actions.recordBlockMachineIdentityAction(base);
+      expect(out).toMatchObject({ ok: true, reused: true });
+    });
+
+    it("the mode is no longer offered but the block already stores this choice: the replay is still answered", async () => {
+      arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+      DB.rowsFor.session_blocks = STORED_ROW;
+      DB.rpcResult = REPLAY;
+      expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(true);
+    });
+
+    it("NEGATIVE CONTROL: the same impossible choice with NOTHING stored is still refused before the command", async () => {
+      arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+      DB.rowsFor.session_blocks = [{ id: "block-1", machine_profile_id: null, studio_machine_id: null, machine_mode_key: null }];
+      expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(false);
+      expect(wrote()).toBe(false);
+    });
+
+    it("NEGATIVE CONTROL: an inventory failure with nothing stored is unknown and writes nothing", async () => {
+      arrangeUnit();
+      DB.errorFor.studio_machines = { message: "boom" };
+      const out = await actions.recordBlockMachineIdentityAction(base);
+      expect(out).toMatchObject({ ok: false, code: "unknown" });
+      expect(wrote()).toBe(false);
+    });
+  });
+});
+
+// ===========================================================================
+// THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE" (Photos R2, #1369 c0d7b3ddc)
+// The held version is checked INSIDE the command's transaction and the new one comes back from
+// the same UPDATE ... RETURNING (Codex 4476240827), so the action reads nothing itself.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction hands back the new block version", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+  };
+  beforeEach(() => arrangeUnit());
+  it("passes the held version to the command and returns the version the command returned", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out).toMatchObject({ ok: true, updatedAt: "v2", reused: false });
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1", p_idempotency_key: "pick-key-0001" });
+  });
+  it("without a held version it sends null; a reply that is not the receipt object is UNKNOWN, never 'saved'", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+    expect((await actions.recordBlockMachineIdentityAction(args)).ok).toBe(true);
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: null });
+    DB.rpcResult = null;
+    const odd = await actions.recordBlockMachineIdentityAction(args);
+    expect(odd).toMatchObject({ ok: false, code: "unknown" });
+  });
+  it("NEGATIVE CONTROL: a stale_block_version refusal from the command is the changed-elsewhere conflict, with no token", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out.ok).toBe(false);
+    expect((out as { error?: string }).error).toMatch(/changed elsewhere/);
+    expect("updatedAt" in out).toBe(false);
+  });
+  it("a refused write returns no token", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out.ok).toBe(false);
+    expect("updatedAt" in out).toBe(false);
+  });
+  // OPS decision (K-2 CI red): a stored pick must reach the session page data, like Save, so a reopened editor is never stale.
+  it("a stored identity write revalidates the session page, and a refused or failed one does not", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    revalidatePathMock.mockClear();
+    DB.rpcResult = RECEIPT("v2");
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
+
+    revalidatePathMock.mockClear();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(false);
+    DB.rpcError = { code: "23514", message: "check violation" };
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(false);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+  it("the action reads session_blocks itself no more (no before/after race)", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts", "utf8");
+    expect(src).not.toMatch(/readBlockVersion|block-version/);
+  });
+});
+
+// ===========================================================================
+// A LOST ANSWER IS UNKNOWN, AND A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT (Codex 4488743493)
+// ===========================================================================
+describe("recordBlockMachineIdentityAction: a lost answer is unknown, a replay returns the stored version and identity", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+    expectedUpdatedAt: "v1",
+  };
+  beforeEach(() => arrangeUnit());
+  it("a transport failure (no database code) is code 'unknown', not 'not_persisted' or a refusal, so the caller keeps the key", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { message: "fetch failed" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out).toMatchObject({ ok: false, code: "unknown" });
+  });
+  it("a definitive refusal stays 'rejected' (nothing was written, the key is released)", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    expect(await actions.recordBlockMachineIdentityAction(args)).toMatchObject({ ok: false, code: "rejected" });
+  });
+  it("a replay returns the STORED version and identity with reused: true", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v2"), reused: true };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out).toEqual({
+      ok: true,
+      reused: true,
+      updatedAt: "v2",
+      identity: { profileId: "fixture:p", deviceId: "11111111-1111-4111-8111-111111111111", modeKey: "flash" },
+    });
+  });
+});
+
+
+// Insurance F-1 / Codex 4475784164: a non-replayed submission stamps the block identity (bumps updated_at) too.
+describe("recordSetupSubmissionAction hands back the new block version", () => {
+  const call = (expectedUpdatedAt?: string) =>
+    actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
+      ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    });
+  const ok = (extra: Record<string, unknown> = {}) => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false, ...extra };
+  };
+  it("sends the held version and returns the version the command returned", async () => {
+    ok({ block_updated_at: "v2" });
+    const out = await call("v1");
+    expect(out.ok).toBe(true);
+    expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
+  });
+  // Codex 4481814168: Cancel then reopen after "Save these settings" must not hold the pre-submission version.
+  it("a successful submission revalidates the session page (replay included); a refused one does not", async () => {
+    revalidatePathMock.mockClear();
+    ok({ block_updated_at: "v2" });
+    expect((await call("v1")).ok).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
+    revalidatePathMock.mockClear();
+    synthDevice();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    expect((await call("v1")).ok).toBe(false);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+  it("without a held version no token is expected back", async () => {
+    ok();
+    const out = await call();
+    expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
+  });
+  it("NEGATIVE CONTROL: a stale_block_version refusal rolls the save back and reads as changed-elsewhere", async () => {
+    synthDevice();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    const out = await call("v1");
+    expect(out.ok).toBe(false);
+    expect((out as { code?: string }).code).toBe("rejected");
+    expect((out as { error?: string }).error).toMatch(/changed elsewhere/);
+  });
+});
+
+// Insurance N-8: a same-key replay hands back NO token (the command returns none when reused).
+describe("a replayed submission hands back no token", () => {
+  it("NEGATIVE CONTROL: reused=true carries no block_updated_at, so no token and the next block save still conflicts", async () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: true };
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
+      expectedUpdatedAt: "v1",
+    });
+    expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
+  });
+});
+
+// RC-3 (Insurance, 0301 receipts): every caller of the identity write outside the tests. The write needs a per-pick retry key and
+// a caller that settles an unconfirmed answer by it, so only the panel's wrapper may call the action, and only the action the query.
+describe("callers of the area identity write", () => {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.name === "node_modules" || e.name === ".next" ? [] : e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.(ts|tsx)$/.test(e.name) ? [`${dir}/${e.name}`] : [],
+    );
+  const files = ["app", "components", "lib"].flatMap(walk);
+  const callers = (needle: RegExp) => files.filter((f) => needle.test(readFileSync(f, "utf8"))).sort();
+  it("recordBlockMachineIdentityAction is referenced by the action module and the panel's wrapper only", () => {
+    expect(callers(/recordBlockMachineIdentityAction/)).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      "components/machines/machine-first-setup-connected.tsx",
+    ]);
+  });
+  it("the query function and the RPC are referenced by the action module and the query module only", () => {
+    expect(callers(/\brecordBlockMachineIdentity\b|record_block_machine_identity/)).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      "lib/machines/machine-queries.ts",
+    ]);
   });
 });

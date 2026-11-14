@@ -216,9 +216,17 @@ async function openMachinePanel(page: Page): Promise<boolean> {
   // ON DEMAND, which is load-bearing: an on-mount request once broke
   // repeat-client-fast-charting, which classifies any server-action POST
   // without an idempotencyKey as a source re-read.
-  await expect(page.getByTestId("machine-first-trigger")).toBeVisible({ timeout: T });
-  await page.getByTestId("machine-first-open").click();
-  await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+  //
+  // The exception is an area that already carries a saved machine identity: it
+  // opens the panel itself (the saved choice must be restored on reopen), so
+  // the trigger is only briefly visible, disabled on "Loading", and then gone.
+  // The panel appearing is the real assertion; the click is best effort.
+  const panel = page.getByTestId("machine-first-panel");
+  await expect(page.getByTestId("machine-first-trigger").or(panel)).toBeVisible({ timeout: T });
+  if (!(await panel.isVisible())) {
+    await page.getByTestId("machine-first-open").click({ timeout: 3000 }).catch(() => undefined);
+  }
+  await expect(panel).toBeVisible({ timeout: T });
 
   // COUNTING OPTIONS, not the control's presence. The dropdown also renders
   // DISABLED with only the empty option when the studio has nothing usable,
@@ -1047,7 +1055,7 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await noOverflow(page);
   });
 
-  await test.step("11: SAVE TWO GROUPS, SWITCH AWAY, SWITCH BACK — g2 survives", async () => {
+  await test.step("11: a THIRD area, SAVE TWO GROUPS, RELOAD AND REOPEN — both groups survive (server-fresh snapshot; the in-session half is a component test)", async () => {
     // THE ROUND-11 P1 (Codex, #860 4300386011), and the fifth way into one
     // invariant: a group identity must survive every remount.
     //
@@ -1064,6 +1072,14 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // and so happens to be current. Only switching away and back remounts
     // the form while the panel keeps its original snapshot — the one path
     // where the seed source is stale rather than absent.
+    //
+    // WHAT THIS STEP COVERS NOW, stated plainly (Insurance T1, #1369 9febb15ca). Since HON-8 a saved native area refuses a clear and its saved
+    // view has no `machine-reading-entry`, so the "switch away and back" below can no longer remount the form through the UI on the panel's
+    // OWN in-memory snapshot. This step therefore reloads and reopens the area, which re-reads the context from the server: the same path as
+    // step 10, on a fresh area with two groups. It does NOT cover the in-session remount. THAT half is pinned in a component test:
+    // tests/components/machine-saved-identity-mounted.test.ts, "an in-session remount of the entry is seeded from the snapshot the post-save
+    // refresh installed" (a mode change and back remounts the entry without a reload; and a save followed by "Record a setting change" shows
+    // both groups, which is step 9's half).
     //
     // A FRESH AREA, so no count in steps 5 to 10 moves.
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
@@ -1116,11 +1132,15 @@ test("create mode: choose the machine, save the block, record one save, retrieve
 
     // SWITCH AWAY AND BACK. Clearing the machine unmounts the entry form;
     // choosing it again mounts a new one, which is where the seed is read.
-    await page.getByTestId("machine-select").selectOption("");
-    await expect(page.getByTestId("machine-reading-entry")).toHaveCount(0, {
-      timeout: T,
-    });
-    await page.getByTestId("machine-select").selectOption(machineId);
+    // HON-8: a saved native area refuses a clear, and the saved view has no `machine-reading-entry` at all, so a clear/re-pick neither
+    // remounts the form nor proves anything (its "count 0" held vacuously). A RELOAD AND REOPEN is the remount that reads the seed, as step 6 does.
+    await page.reload();
+    await page.getByTestId(`edit-area-${thirdBlock}`).click({ timeout: T });
+    // HON-8: A SAVED CHOICE OPENS THE PANEL BY ITSELF. Asserted with NO click, because `openMachinePanel` below accepts either an open panel
+    // or a clickable trigger and would pass whether or not this happens (Insurance, #1369 9febb15ca).
+    await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-first-open")).toHaveCount(0);
+    expect(await openMachinePanel(page)).toBe(true);
     await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
       timeout: T,
     });
@@ -1188,6 +1208,37 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     ).not.toContainText("250");
     await noOverflow(page);
   });
+});
+
+// RECURRENCE WATCH for the native 3G cases (Insurance R3-1 closure, #1369). The shard-1 red at 6dc30fdd3 came from a post-save refresh
+// read that failed. A save whose refresh fails now keeps "Saved" and shows `machine-saved-refresh-note`, so a case could go green
+// through that path and hide the cause. Each native 3G run therefore asserts the note NEVER appeared, at any point, even if a later
+// save cleared it: a run where it appeared counts as a RECURRENCE although every other assertion passed. The flag is held in
+// sessionStorage so a page reload inside the case does not lose it. The access notice is watched the same way.
+const REFRESH_WATCH_KEY = "honeRefreshNoteSeen";
+const isNative3gCase = (titlePath: string[]) => titlePath.some((part) => part.startsWith("native 3G"));
+test.beforeEach(async ({ page }, info) => {
+  if (!isNative3gCase(info.titlePath)) return;
+  await page.addInitScript((key) => {
+    const ids = ["machine-saved-refresh-note", "machine-access-refused", "machine-record-unavailable"];
+    const check = () => {
+      for (const id of ids) {
+        if (document.querySelector(`[data-testid="${id}"]`)) {
+          try { sessionStorage.setItem(key, id); } catch { /* storage unavailable: the in-memory flag below still holds */ }
+          (window as unknown as Record<string, string>)[key] = id;
+        }
+      }
+    };
+    new MutationObserver(check).observe(document, { childList: true, subtree: true });
+    check();
+  }, REFRESH_WATCH_KEY);
+});
+test.afterEach(async ({ page }, info) => {
+  if (!isNative3gCase(info.titlePath) || page.isClosed()) return;
+  const seen = await page
+    .evaluate((key) => (window as unknown as Record<string, string | undefined>)[key] ?? sessionStorage.getItem(key), REFRESH_WATCH_KEY)
+    .catch(() => null);
+  expect(seen, `RECURRENCE: the post-save refresh failed in this run (${seen}); a green run that showed this notice does not count`).toBeNull();
 });
 
 // Prepared source, NOT executed proof. Reuses this spec's existing seed, login,
