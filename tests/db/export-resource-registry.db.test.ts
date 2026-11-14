@@ -916,8 +916,11 @@ describe("what is excluded, and on what grounds", () => {
       // LEAD-ALERT-01, no studio_id) and delivery_sweep_heartbeat (0215,
       // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
       // derived from the two ledgers.
-      // 7 -> 8 platform: waitlist_retention_runs (0326, HON-7), the cleanup job's run log: counts and times, no studio column.
-      platform: 8,
+      // 7 -> 10 platform: permission_catalog, permission_narrowings and permission_ship_gates (0287, ROLES R1). Hone's own reference
+      // data and operator release flags, with no studio content; the studio-scoped permission tables are PENDING under TRUTH-01B.
+      // 10 -> 11 platform: permission_key_release (0287, activation rule): when each key's enforcement became real, written only by a migration.
+      // 11 -> 12 platform: waitlist_retention_runs (0326, HON-7), the cleanup job's run log: counts and times, no studio column.
+      platform: 12,
       // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
       // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its
