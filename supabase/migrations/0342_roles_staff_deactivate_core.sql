@@ -6,8 +6,8 @@
 --
 -- Forward migration: 0287, 0331 and 0332 are frozen; nothing here edits them. Objects touched:
 --   * permission_audit.kind CHECK widened by two kinds (staff_deactivated, staff_reactivated). The existing rows and the append-only trigger are untouched.
---   * new perm_upcoming_policy(): THE SWITCH for what an upcoming appointment means for a deactivation. 'block' (shipped) refuses; 'keep' allows it and leaves the
---     appointments assigned (today's behaviour); 'reassign' refuses with reassign_required until a reassign command exists. A change of Sam's decision is a
+--   * new perm_upcoming_policy(): THE SWITCH for what an upcoming appointment means for a deactivation. 'keep' (shipped, today's behaviour: removal always works) allows it and leaves the
+--     appointments assigned, reporting how many; 'block' refuses with has_upcoming_appointments; 'reassign' refuses with reassign_required until a reassign command exists. A change of Sam's decision is a
 --     create or replace of this one function.
 --   * new deactivate_staff_member / reactivate_staff_member (owner-only, authenticated only).
 --   * change_staff_role replaced by create or replace: identical to 0287 except that it now takes the studio capacity lock before it counts upcoming
@@ -42,7 +42,7 @@ alter table public.permission_audit add constraint permission_audit_kind_check
 -- 2) the switch
 create or replace function public.perm_upcoming_policy()
 returns text language sql immutable set search_path = ''
-as $$ select 'block'::text $$;
+as $$ select 'keep'::text $$;
 
 -- 3) deactivate
 create or replace function public.deactivate_staff_member(p_studio uuid, p_membership uuid, p_kind text, p_reason text default null)
@@ -89,17 +89,16 @@ begin
 
   if p_kind = 'practitioner' then
     v_policy := public.perm_upcoming_policy();
-    if v_policy <> 'keep' then
-      -- Lock the future appointments, then count every one that is not cancelled (same rule as change_staff_role, Insurance RB-5).
-      select count(*) into v_upcoming from (
-        select ap.id from public.appointments ap
-         where ap.studio_id = p_studio and ap.practitioner_id = p_membership and ap.status <> 'cancelled' and ap.starts_at > now()
-         for update
-      ) locked_upcoming;
-      if v_upcoming > 0 then
-        return public.perm_fail(case when v_policy = 'reassign' then 'reassign_required' else 'has_upcoming_appointments' end,
-                                null, null, null, jsonb_build_object('count', v_upcoming));
-      end if;
+    -- Lock the future appointments and count every one that is not cancelled (same rule as change_staff_role, Insurance RB-5). The count is taken
+    -- under every policy: 'keep' reports it, the others refuse on it.
+    select count(*) into v_upcoming from (
+      select ap.id from public.appointments ap
+       where ap.studio_id = p_studio and ap.practitioner_id = p_membership and ap.status <> 'cancelled' and ap.starts_at > now()
+       for update
+    ) locked_upcoming;
+    if v_upcoming > 0 and v_policy <> 'keep' then
+      return public.perm_fail(case when v_policy = 'reassign' then 'reassign_required' else 'has_upcoming_appointments' end,
+                              null, null, null, jsonb_build_object('count', v_upcoming));
     end if;
     update public.practitioners set active = false where id = p_membership;
   else
@@ -109,7 +108,7 @@ begin
   insert into public.permission_audit (studio_id, actor_user_id, actor_membership_id, kind, role, membership_id, membership_kind, before, after, reason)
   values (p_studio, auth.uid(), a.membership_id, 'staff_deactivated', p_kind, p_membership, p_kind,
           jsonb_build_object('active', true), jsonb_build_object('active', false, 'upcoming_kept', v_upcoming), v_reason);
-  return jsonb_build_object('ok', true, 'membership_id', p_membership, 'kind', p_kind, 'active', false);
+  return jsonb_build_object('ok', true, 'membership_id', p_membership, 'kind', p_kind, 'active', false, 'upcoming', v_upcoming);
 end;
 $$;
 
