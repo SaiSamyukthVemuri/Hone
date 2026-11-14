@@ -160,6 +160,10 @@ export const BROWSER_GROUPS = {
       // condition is reported, required once it is, hidden again on retraction,
       // and read back truthfully on the practitioner review grid.
       "intake-diabetes-thyroid-subtypes.spec.ts",
+      // 0340: one intake through every legitimate browser writer in order
+      // (token save, token submit, owner review, notes); client and studio
+      // never move and the form is never hidden.
+      "intake-identity-journey.spec.ts",
     ],
   },
   portal: {

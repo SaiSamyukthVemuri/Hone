@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 264,
-    "last": "0327_waitlist_followup_read_bound.sql",
-    "sha256": "ad65c2a88fd054f9291e1532128682eb8444fba591e86a18a16029afd6c3b5c2"
+    "count": 265,
+    "last": "0340_intake_terminal_identity_immutability.sql",
+    "sha256": "25701f9b4a668dc86dec35f2d045554e4f57b8cd335b9fc529fcc2b0eec69e11"
   },
   "public": {
     "tables": [
@@ -290,6 +290,7 @@
       "enforce_appointment_buffer",
       "enforce_appointment_transition",
       "enforce_intake_terminal_immutability",
+      "enforce_intake_terminal_visibility",
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
