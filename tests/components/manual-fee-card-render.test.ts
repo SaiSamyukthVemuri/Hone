@@ -148,6 +148,55 @@ describe("E1: Close declined attempt is offered only where it can apply", () => 
   });
 });
 
+describe("E1: after Close declined attempt and a refresh, the replacement fee can be prepared", () => {
+  const PREPARE = "Prepare manual fee charge";
+  // The late-cancel tab (the one the card opens on) with eligibility as the server computes it AFTER the refresh.
+  const renderLate = (attempts: unknown[], mode: "eligible" | "blocked", isOwner = true) => {
+    const late = attempts.filter((a) => (a as { charge_type: string }).charge_type === "late_cancel");
+    const base = mode === "eligible" ? { ...eligible(late), appointment: { ...eligible(late).appointment, status: "cancelled" } } : blocked(late);
+    const props = {
+      appointmentId: "appt-1",
+      lateCancel: projectFeeEligibility(base as never, new Date(), isOwner),
+      noShow: projectFeeEligibility(blocked([]) as never, new Date(), isOwner),
+    };
+    return renderToStaticMarkup(createElement(ManualFeeChargeCard as never, props as never));
+  };
+  const declined = { ...LC, status: "failed", failure_code: "card_declined", stripe_payment_intent_id: "pi_x" };
+  it("BEFORE the close the declined attempt holds the appointment: unclear panel with the close control, NO prepare", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "requires_payment_method" })], "blocked");
+    expect(html).toContain("fee-close-declined");
+    expect(html).not.toContain(PREPARE);
+  });
+  it("even if eligibility were (wrongly) eligible, a still-blocking failed row keeps its panel and never shows prepare", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "requires_payment_method" })], "eligible");
+    expect(html).toContain("fee-unclear-panel");
+    expect(html).not.toContain(PREPARE);
+  });
+  it("AFTER the close (row failed, provider-proven canceled and uncaptured) and eligibility allows a fee: the history keeps the row, 'Charge failed.' stays, and Prepare is offered", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "canceled" })], "eligible");
+    expect(html).toContain("fee-charge-history");
+    expect(html).toContain("fee-history-row");
+    expect(html).toContain("Charge failed.");
+    expect(html).toContain(PREPARE);
+    expect(html).not.toContain("fee-close-declined");
+  });
+  it("after the close but eligibility still refuses (for example the other fee type holds the appointment): the reasons show, Prepare does not", () => {
+    const html = renderLate([attempt({ ...declined, stripe_status: "canceled" })], "blocked");
+    expect(html).toContain("Cannot prepare fee charge:");
+    expect(html).not.toContain(PREPARE);
+  });
+  it("a cancelled-before-charging row and a needs-action row also release the card to Prepare", () => {
+    expect(renderLate([attempt({ ...LC, status: "cancelled", cancelled_at: "2026-11-01T10:01:00.000Z" })], "eligible")).toContain(PREPARE);
+    const needs = attempt({ ...LC, status: "failed", failure_code: "requires_action_canceled", stripe_payment_intent_id: "pi_x", stripe_status: "canceled" });
+    const html = renderLate([needs], "eligible");
+    expect(html).toContain("fee-needs-action-panel");
+    expect(html).toContain(PREPARE);
+  });
+  it("a charged fee never offers Prepare, whatever eligibility says", () => {
+    expect(renderLate([attempt({ ...LC, status: "succeeded", charged_at: "2026-11-01T10:05:00.000Z" })], "eligible")).not.toContain(PREPARE);
+  });
+});
+
 describe("charge history lists every attempt: amount, type, status, time, refund", () => {
   const rows = [
     attempt({ id: "a", ...LC, status: "succeeded", amount_cents: 5000, charged_at: "2026-11-02T10:00:00.000Z", refund_status: "succeeded", refund_amount_cents: 5000, stripe_refund_status: "succeeded", refunded_at: "2026-11-03T09:00:00.000Z" }),

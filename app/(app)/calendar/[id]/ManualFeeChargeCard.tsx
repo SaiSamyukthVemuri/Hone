@@ -91,18 +91,17 @@ export function ManualFeeChargeCard({
     return merged;
   }, [lateCancel, noShow]);
 
-  // The "active" attempt for the selected type, if any. We surface
-  // the most recent non-cancelled-non-failed row first; if no such
-  // row exists we fall back to the most recent failed/cancelled row
-  // so the practitioner sees the terminal-state copy before the
-  // prepare form re-appears.
-  const attemptForType = useMemo(() => {
+  // The attempt that HOLDS the selected type: the newest one whose state blocks a new charge (ready, pending,
+  // unclear, charged). A failed, needs-action or cancelled row that the stored provider facts prove can never
+  // collect does not hold anything: it stays in the history and keeps its terminal-state copy below, but the
+  // card goes on to offer Prepare (or the blocking reasons) so the replacement fee the owner was promised can
+  // actually be prepared.
+  const { holding, terminal } = useMemo(() => {
     const sameType = allAttempts.filter((r) => r.charge_type === chargeType);
-    const active = sameType.find((r) =>
-      ["ready", "pending", "unclear", "succeeded"].includes(r.state.kind),
-    );
-    if (active) return active;
-    return sameType[0] ?? null;
+    return {
+      holding: sameType.find((r) => r.state.blocksNewCharge) ?? null,
+      terminal: sameType[0] ?? null,
+    };
   }, [allAttempts, chargeType]);
 
   return (
@@ -185,20 +184,31 @@ export function ManualFeeChargeCard({
       )}
 
       {/* Branch the form by attempt state for the selected type. */}
-      {attemptForType ? (
+      {holding ? (
         <AttemptStatusPanel
-          attempt={attemptForType}
+          attempt={holding}
           appointmentId={appointmentId}
           card={selected.card}
         />
-      ) : !selected.eligible ? (
-        <BlockedPanel reasons={selected.blockingReasons} />
       ) : (
-        <PreparePanel
-          appointmentId={appointmentId}
-          chargeType={chargeType}
-          eligibility={selected}
-        />
+        <>
+          {terminal && (
+            <AttemptStatusPanel
+              attempt={terminal}
+              appointmentId={appointmentId}
+              card={selected.card}
+            />
+          )}
+          {!selected.eligible ? (
+            <BlockedPanel reasons={selected.blockingReasons} />
+          ) : (
+            <PreparePanel
+              appointmentId={appointmentId}
+              chargeType={chargeType}
+              eligibility={selected}
+            />
+          )}
+        </>
       )}
     </section>
   );
