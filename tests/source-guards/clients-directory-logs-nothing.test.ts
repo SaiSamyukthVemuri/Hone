@@ -645,6 +645,7 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "super through an Error alias": 'const E = Error; class Failure extends E { constructor(q: string) { super(q); } } export const f = (q: string) => { throw new Failure("x"); };',
     "super in a class expression extending Error": 'const Failure = class extends Error { constructor(q: string) { super(q); } }; export const f = (q: string) => { throw new Failure("x"); };',
     "super with a spread": 'class Failure extends Error { constructor(...a: string[]) { super(...a); } } export const f = (q: string) => { throw new Failure(q); };',
+    "super in a class extending a class expression that extends Error (only the class-expression branch sees this)": 'const Base = class extends Error {}; class Failure extends Base { constructor(q: string) { super(q); } } export const f = () => { throw new Failure("x"); };',
     "navigator passed along": 'const use = (n: unknown) => n; export const f = () => use(navigator);',
     "let reassigned message": 'let m = "a"; m = "b"; export const f = () => { throw new Error(m); };',
   };
