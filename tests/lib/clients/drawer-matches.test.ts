@@ -49,4 +49,17 @@ describe("drawer client list ranks before it caps", () => {
     const clients = [mk("1", "Zedekiah Long"), mk("2", "Legal Name", { preferred_name: "Zed" })];
     expect(rankDrawerClients(clients, "zed", MAX).matches[0].id).toBe("2");
   });
+
+  it("a just-added client appears once after the server list includes it, and is counted once", () => {
+    const justAdded = mk("new1", "Zed Fresh");
+    const serverList = [mk("s1", "Zed Other"), mk("new1", "Zed Fresh"), mk("s2", "Zedd Third")];
+    const { matches, total } = rankDrawerClients([justAdded, ...serverList], "zed", MAX);
+    expect(matches.filter((c) => c.id === "new1")).toHaveLength(1);
+    expect(total).toBe(3);
+  });
+
+  it("with an empty query the just-added copy stays first and is not repeated", () => {
+    const { matches } = rankDrawerClients([mk("new1", "Fresh"), mk("s1", "Alpha"), mk("new1", "Fresh")], "", MAX);
+    expect(matches.map((c) => c.id)).toEqual(["new1", "s1"]);
+  });
 });
