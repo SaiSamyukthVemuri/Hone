@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 264,
-    "last": "0327_waitlist_followup_read_bound.sql",
-    "sha256": "ad65c2a88fd054f9291e1532128682eb8444fba591e86a18a16029afd6c3b5c2"
+    "count": 265,
+    "last": "0344_revert_guard_fee_settlement.sql",
+    "sha256": "785b29c5fbb511bb0944187ec84f93cffd6f97e538dd0900ac4b7fd1a06c3236"
   },
   "public": {
     "tables": [

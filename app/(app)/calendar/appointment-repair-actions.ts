@@ -80,6 +80,12 @@ const REVERT_MESSAGES: Record<string, string> = {
   // the five-minute window are internal and are never surfaced.
   blocked_postcare_in_flight:
     "Postcare is currently being sent or its send status is unresolved. Refresh before correcting this appointment outcome.",
+  // 0344. A no-show or late-cancellation fee is active or collected, or a
+  // settlement is recorded. Describes the situation only.
+  blocked_fee_charge:
+    "A cancellation or no-show fee is on file for this appointment, so its outcome cannot be changed.",
+  blocked_settlement:
+    "A payment settlement is recorded for this appointment, so its outcome cannot be changed.",
   slot_conflict:
     "That time is now booked by another appointment, so this one cannot be restored.",
 };
