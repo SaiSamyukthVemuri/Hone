@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0345 source contract. The behaviour is proved against a database in tests/db/session-audit-member-insert-closed-0345.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0345")}`, "utf8");
@@ -15,9 +15,8 @@ const policy = (t: string) => {
 };
 
 describe("0345 session_audit member INSERT closed (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once", () => {
     expect(countVersion("0345")).toBe(1);
-    expect(isRepoMax("0345")).toBe(true);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {

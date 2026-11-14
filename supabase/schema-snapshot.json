@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 265,
+    "count": 266,
     "last": "0345_session_audit_member_insert_closed.sql",
-    "sha256": "cdc9cad3698f8d10230504462bc0d13f56ab09f97b0e3f07048170f6b1ea2d80"
+    "sha256": "479dc84a8ac91181ff7e61b309d765e59d372e3548b00dddcf53ef5802ad6b3a"
   },
   "public": {
     "tables": [
