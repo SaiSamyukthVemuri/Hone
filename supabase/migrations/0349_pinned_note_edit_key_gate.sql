@@ -1,10 +1,10 @@
--- 0349: editing a pinned caution requires the clinical-record permission.
+-- 0349: editing a pinned caution requires the allergies-and-cautions edit permission.
 -- FUNCTION ONLY: edit_client_pinned_note (0254) is replaced with the same signature, security attributes, author-or-owner rule and audit row, plus
 -- one added check. No table, policy, trigger, grant or data is created, changed or read.
 -- NOT APPLIED. Number 0349 claimed by OPS. Hosted apply needs the owner's per-change approval.
 --
--- THE RULE. A member may edit a pinned caution only while the permission engine allows clin.view_records for them (the key the draft write gate
--- for adding a pinned caution uses). The owner always may. Everything else is as before: the caller comes from the session, the note must belong
+-- THE RULE. A member may edit a pinned caution only while the permission engine allows client.edit_allergies_cautions for them (the safety group's edit key, separate from the
+-- clinical record). The owner always may. Everything else is as before: the caller comes from the session, the note must belong
 -- to the named studio and client, and a non-owner may edit only their own notes. A refused call answers false, the same answer a missing or
 -- stale note gets, so nothing about the note is disclosed. While no studio has turned the key off, every member keeps what they have today.
 --
@@ -18,8 +18,8 @@ set local lock_timeout = '5s';
 
 do $$
 begin
-  if not exists (select 1 from public.permission_catalog where key = 'clin.view_records') then
-    raise exception '0349: permission_catalog has no clin.view_records row; gating on it would deny every member';
+  if not exists (select 1 from public.permission_catalog where key = 'client.edit_allergies_cautions') then
+    raise exception '0349: permission_catalog has no client.edit_allergies_cautions row; gating on it would deny every member';
   end if;
   if not pg_catalog.has_function_privilege('authenticated', 'public.has_studio_permission(uuid,text,uuid,uuid,uuid)', 'EXECUTE') then
     raise exception '0349: authenticated cannot execute has_studio_permission';
@@ -60,7 +60,7 @@ begin
     return false;
   end if;
 
-  if not public.has_studio_permission(p_studio_id, 'clin.view_records', p_client_id) then
+  if not public.has_studio_permission(p_studio_id, 'client.edit_allergies_cautions', p_client_id) then
     return false;
   end if;
 
@@ -93,8 +93,8 @@ begin
   if not f.prosecdef or f.proconfig is null or not (f.proconfig @> array['search_path=""']) then
     raise exception '0349: edit_client_pinned_note is not SECURITY DEFINER with a fixed search_path';
   end if;
-  if f.prosrc !~ 'has_studio_permission\(p_studio_id, ''clin\.view_records''' then
-    raise exception '0349: edit_client_pinned_note does not check clin.view_records';
+  if f.prosrc !~ 'has_studio_permission\(p_studio_id, ''client\.edit_allergies_cautions''' then
+    raise exception '0349: edit_client_pinned_note does not check client.edit_allergies_cautions';
   end if;
   if not pg_catalog.has_function_privilege('authenticated', 'public.edit_client_pinned_note(uuid,uuid,uuid,text,text)', 'EXECUTE')
      or pg_catalog.has_function_privilege('anon', 'public.edit_client_pinned_note(uuid,uuid,uuid,text,text)', 'EXECUTE')

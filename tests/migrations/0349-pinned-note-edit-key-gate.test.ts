@@ -14,7 +14,7 @@ const fnBody = (t: string, head: RegExp) => {
   return m![0];
 };
 
-describe("0349 pinned-note edit: requires the clinical-record permission (source)", () => {
+describe("0349 pinned-note edit: requires the allergies-and-cautions edit permission (source)", () => {
   it("exists exactly once and is the current repo maximum", () => {
     expect(countVersion("0349")).toBe(1);
     expect(isRepoMax("0349")).toBe(true);
@@ -37,7 +37,7 @@ describe("0349 pinned-note edit: requires the clinical-record permission (source
   it("is the 0254 function with exactly one added check and nothing else different", () => {
     const old = fnBody(code(m0254()), /create function public\.edit_client_pinned_note\([\s\S]*?\n\$\$;/);
     const neu = fnBody(code(sql()), /create or replace function public\.edit_client_pinned_note\([\s\S]*?\n\$\$;/);
-    const check = /\n  if not public\.has_studio_permission\(p_studio_id, 'clin\.view_records', p_client_id\) then\n    return false;\n  end if;\n/;
+    const check = /\n  if not public\.has_studio_permission\(p_studio_id, 'client\.edit_allergies_cautions', p_client_id\) then\n    return false;\n  end if;\n/;
     expect(neu).toMatch(check);
     expect(norm(neu.replace(check, "\n").replace("create or replace function", "create function"))).toBe(norm(old));
   });
@@ -51,7 +51,7 @@ describe("0349 pinned-note edit: requires the clinical-record permission (source
 
   it("refuses to apply when the key row is missing, authenticated cannot run the engine, or the function posture drifted", () => {
     const c = norm(code(sql()));
-    expect(c).toContain("from public.permission_catalog where key = 'clin.view_records'");
+    expect(c).toContain("from public.permission_catalog where key = 'client.edit_allergies_cautions'");
     expect(c).toContain("has_function_privilege('authenticated', 'public.has_studio_permission(uuid,text,uuid,uuid,uuid)', 'EXECUTE')");
     expect(c).toContain("is not SECURITY DEFINER with a fixed search_path");
     expect(c).toContain("must be executable by authenticated only");

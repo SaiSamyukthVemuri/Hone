@@ -2,16 +2,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// 0349: editing a pinned caution through edit_client_pinned_note requires the clinical-record permission. Synthetic data only.
-const KEY = "clin.view_records";
+// 0349: editing a pinned caution through edit_client_pinned_note requires client.edit_allergies_cautions. Synthetic data only.
+const KEY = "client.edit_allergies_cautions";
+const PREREQ = "client.view_allergies_cautions";
 let saved: Array<{ key: string; released_at: string | null; release_tag: string; release_kind: string }> = [];
 beforeAll(async () => {
-  saved = (await adminQuery("select key, released_at::text released_at, release_tag, release_kind from public.permission_key_release where key=$1", [KEY])).rows;
-  await adminQuery("delete from public.permission_key_release where key=$1", [KEY]);
-  await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,'2000-01-01T00:00:00Z','T0349','full')", [KEY]);
+  saved = (await adminQuery("select key, released_at::text released_at, release_tag, release_kind from public.permission_key_release where key = any($1)", [[KEY, PREREQ]])).rows;
+  for (const k of [KEY, PREREQ]) {
+    await adminQuery("delete from public.permission_key_release where key=$1", [k]);
+    await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,'2000-01-01T00:00:00Z','T0349','full')", [k]);
+  }
 });
 afterAll(async () => {
-  await adminQuery("delete from public.permission_key_release where key=$1", [KEY]);
+  await adminQuery("delete from public.permission_key_release where key = any($1)", [[KEY, PREREQ]]);
   for (const r of saved) await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ($1,$2,$3,$4)", [r.key, r.released_at, r.release_tag, r.release_kind]);
   await closePool();
 });
@@ -56,7 +59,7 @@ describe("0349 default: nothing narrowed, nothing changes", () => {
   });
 });
 
-describe("0349 restricted: the clinical-record key is Off for practitioners", () => {
+describe("0349 restricted: the allergies-and-cautions edit key is Off for practitioners", () => {
   it("the author is refused: false, the note is unchanged, no audit row", async () => {
     const f = await seed("t49-r1", true);
     expect(await edit(f.member.userId, f)).toBe(false);
@@ -83,6 +86,16 @@ describe("0349 restricted: the clinical-record key is Off for practitioners", ()
     expect(await edit(f.member.userId, f)).toBe(false);
     await setStored(f.s.studioId, "studio");
     expect(await edit(f.member.userId, f)).toBe(true);
+  });
+});
+
+describe("0349 the key is its own: the clinical-record key does not decide this edit", () => {
+  it("clinical-record Off does not block a pinned-caution edit while the safety edit key is on", async () => {
+    const f = await seed("t49-indep");
+    await adminQuery("insert into public.permission_key_release(key,released_at,release_tag,release_kind) values ('clin.view_records','2000-01-01T00:00:00Z','T0349','full') on conflict (key) do update set released_at='2000-01-01T00:00:00Z'");
+    await adminQuery("insert into public.studio_role_permissions(studio_id,role,key,scope,set_at) values ($1,'practitioner','clin.view_records','off', now()) on conflict (studio_id,role,key) do update set scope='off', set_at=now()", [f.s.studioId]);
+    expect(await edit(f.member.userId, f)).toBe(true);
+    await adminQuery("delete from public.permission_key_release where key='clin.view_records'");
   });
 });
 

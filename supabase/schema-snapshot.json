@@ -3,7 +3,7 @@
   "migrations": {
     "count": 268,
     "last": "0349_pinned_note_edit_key_gate.sql",
-    "sha256": "7423b07221f5b85fcd8fd12aee086295031d35d9319b0d31c2257cc32d980fd0"
+    "sha256": "8f1620b48314f75d12c248fa189f6eb089023eddca54b1b8853c2f8abf33329a"
   },
   "public": {
     "tables": [
