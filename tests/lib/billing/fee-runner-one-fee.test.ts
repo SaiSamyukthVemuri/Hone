@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   siblings: [] as unknown[] | null,
   siblingsError: null as unknown,
   claimCalls: 0,
+  holdNext: null as Promise<void> | null,
+  heldSignal: (() => {}) as () => void,
 }));
 
 const fakeStripe = {
@@ -119,7 +121,16 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         siblingQuery = true;
         return q;
       };
-      q.maybeSingle = async () => read();
+      q.maybeSingle = async () => {
+        // Test hook: park the FIRST post-claim read of the account settings (canCreateInCurrentPaymentCountry).
+        if (table === "studio_payment_settings" && h.holdNext && h.claimCalls >= 1) {
+          const p = h.holdNext;
+          h.holdNext = null;
+          h.heldSignal();
+          await p;
+        }
+        return read();
+      };
       q.single = async () => read();
       q.then = (resolve: (v: unknown) => unknown) => {
         if (isUpdate) h.updates.push(payload ?? {});
@@ -210,6 +221,8 @@ beforeEach(() => {
   h.siblings = [];
   h.siblingsError = null;
   h.claimCalls = 0;
+  h.holdNext = null;
+  h.heldSignal = () => {};
   h.rows = {
     payment_charge_attempts: ATTEMPT_ROW,
     client_payment_methods: {
@@ -293,15 +306,15 @@ describe("runner: the cross-type one-fee check runs before the claim and before 
     expect(h.claimCalls).toBe(0);
     expect(h.createKeys).toHaveLength(0);
   });
-  it("a retry of an ALREADY-PENDING attempt is not blocked by the check: same key, no second PaymentIntent", async () => {
+  it("a repeat of an ALREADY-PENDING fee never sends: no second create, the attempt stays pending and blocking", async () => {
     h.createError = new Stripe.errors.StripeConnectionError({ message: "synthetic" } as never);
     await run(); // uncertain outcome: pending_stripe, one create with the deterministic key
-    h.siblings = [sib({ status: "ready", stripe_payment_intent_id: null, charged_at: null, created_at: "2026-11-12T11:00:00.000Z" })];
+    h.siblings = [];
     h.claimResult = "already_pending";
     h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), status: "pending_stripe" } };
-    await run();
-    expect(h.createKeys).toHaveLength(2);
-    expect(new Set(h.createKeys).size, "one idempotency key: Stripe cannot make a second charge").toBe(1);
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.createKeys, "exactly one create ever: the claim winner is the only sender").toHaveLength(1);
     expect(h.createKeys[0]).toBe(`hone:no_show_fee:${ATTEMPT}:v1`);
   });
   it("session_payment is outside the check (no sibling read changes its result)", async () => {
@@ -356,13 +369,15 @@ describe("a refused REPLAY of an ambiguous first request never frees the appoint
     ["StripeConnectionError again", () => new Stripe.errors.StripeConnectionError(raw())],
   ];
   for (const [name, make] of REPLAY_REFUSALS) {
-    it(`(a)(b)(c)(d) ${name}: no 'no_intent_created' fact, the original attempt stays unresolved, prepare and execute stay blocked`, async () => {
+    it(`(a)(b)(c)(d) ${name}: the replay is never sent, no 'no_intent_created' fact, the attempt stays unresolved, prepare and execute stay blocked`, async () => {
       await lostFirst();
-      h.createError = make(); // (b) the replay is refused
-      await run();
-      expect(h.updates.some((u) => u.stripe_status === "no_intent_created"), "no 'no PaymentIntent exists' fact on a replay").toBe(false); // (c)
-      expect(h.createKeys, "both requests used the same key").toHaveLength(2);
-      expect(new Set(h.createKeys).size).toBe(1);
+      h.createError = make(); // (b) whatever Stripe would answer a replay with: it is never asked
+      const before = h.updates.length;
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(h.createKeys, "the replay made no create").toHaveLength(1);
+      expect(h.updates.length, "and wrote nothing").toBe(before);
+      expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(false); // (c)
       expectGateBlocked(); // (d)
     });
   }
@@ -381,7 +396,7 @@ describe("a refused REPLAY of an ambiguous first request never frees the appoint
     await Promise.all([run(), run()]);
     Object.defineProperty(fake, "createError", { configurable: true, writable: true, value: null });
     expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(false);
-    expect(new Set(h.createKeys).size).toBe(1);
+    expect(h.createKeys, "neither racing replay sent").toHaveLength(1);
     expectGateBlocked();
   });
   it("control: the FIRST send refused by Stripe (401) still records the fact and frees the appointment (provable: nothing was sent before)", async () => {
@@ -429,5 +444,83 @@ describe("a fee is sent once per call: no SDK-level resend with the same key", (
     const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
     expect(src).toMatch(/maxNetworkRetries: 0/);
     expect(src.match(/maxNetworkRetries/g)).toHaveLength(1);
+  });
+});
+
+describe("one sender per fee attempt: the claim winner (P1 interleaving and a crashed winner)", () => {
+  it("the winner is parked after its claim while a second invocation reaches already_pending: the second makes NO create; the winner is the only sender", async () => {
+    let release!: () => void;
+    h.holdNext = new Promise<void>((r) => { release = r; });
+    const held = new Promise<void>((r) => { h.heldSignal = r; });
+    h.createError = new Stripe.errors.StripeAuthenticationError({ message: "synthetic", statusCode: 401 } as never);
+    const winner = run(); // claim result "claimed"; parked in the post-claim country check
+    await held;
+    expect(h.claimCalls).toBe(1);
+    h.claimResult = "already_pending"; // the second invocation's claim sees the winner's pending row
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), status: "pending_stripe" } };
+    const second = await run();
+    expect(second).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.createKeys, "the second invocation did not call Stripe").toHaveLength(0);
+    release();
+    await winner;
+    expect(h.createKeys, "exactly one create in total: the winner's").toHaveLength(1);
+    // The winner's 401 is its own first and only send; the fact is sound ONLY because nobody else could have sent.
+    expect(h.updates.filter((u) => u.stripe_status === "no_intent_created")).toHaveLength(1);
+  });
+  it("the same interleaving with a rate-limited or connection-lost winner: the second still never sends and nothing is freed", async () => {
+    for (const make of [
+      () => new Stripe.errors.StripeRateLimitError({ message: "synthetic", statusCode: 429 } as never),
+      () => new Stripe.errors.StripeConnectionError({ message: "synthetic" } as never),
+    ]) {
+      h.updates = []; h.createKeys = []; h.claimCalls = 0; h.claimResult = "claimed";
+      let release!: () => void;
+      h.holdNext = new Promise<void>((r) => { release = r; });
+      const held = new Promise<void>((r) => { h.heldSignal = r; });
+      h.createError = make();
+      const winner = run();
+      await held;
+      h.claimResult = "already_pending";
+      await run();
+      release();
+      await winner;
+      expect(h.createKeys).toHaveLength(1);
+      expect(h.updates.some((u) => u.stripe_status === "no_intent_created" || u.status === "failed")).toBe(false);
+    }
+  });
+  it("a CRASHED winner (claimed, never wrote an outcome): every later invocation is refused for manual review, none sends, the row blocks", async () => {
+    // the winner died after the claim: the row is pending_stripe with no PaymentIntent id, and nothing was written
+    h.claimResult = "already_pending";
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), status: "pending_stripe" } };
+    for (let i = 0; i < 3; i++) {
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    }
+    expect(h.createKeys).toHaveLength(0);
+    expect(h.updates).toHaveLength(0);
+    expect(h.alerts.some((a) => a.severity === "critical" && a.event === "session_payment_needs_manual_review")).toBe(true);
+    const recent = { id: ATTEMPT, charge_type: "no_show" as const, status: "pending_stripe", created_at: "2026-11-12T10:00:00.000Z", updated_at: new Date().toISOString(), stripe_payment_intent_id: null, stripe_status: null, charged_at: null, stripe_charge_id: null };
+    const old = { ...recent, updated_at: "2026-11-01T00:00:00.000Z" };
+    const now = new Date();
+    for (const att of [recent, old]) {
+      expect(feePrepareBlock([att], "late_cancel", now)).not.toBeNull();
+      expect(feePrepareBlock([att], "no_show", now)).not.toBeNull();
+      expect(feeExecuteBlock({ id: "other", created_at: "2026-11-12T11:00:00.000Z" }, [att], now)).not.toBeNull();
+    }
+  });
+  it("session_payment still falls through to the same-key retry (unchanged)", async () => {
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), charge_reason: "session_payment" } };
+    h.claimResult = "already_pending";
+    h.createReply = OK_PI;
+    await run();
+    expect(h.createKeys).toHaveLength(1);
+    expect(h.createKeys[0]).toBe(`hone:session_payment:${ATTEMPT}:v1`);
+  });
+  it("source pin: the fee guard sits before the same-key retry and names both fee reasons", () => {
+    const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
+    const guard = src.indexOf("fee_pending_no_pi_single_sender");
+    const retry = src.indexOf("to retry-create with the same idempotency key");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(retry);
+    expect(src.slice(guard - 900, guard)).toMatch(/"late_cancellation_fee"[\s\S]*"no_show_fee"/);
   });
 });

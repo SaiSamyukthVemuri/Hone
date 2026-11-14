@@ -1663,6 +1663,35 @@ export async function runSessionPaymentCharge(args: {
         expectedCurrency: attemptRow.currency,
       });
     }
+    // A manual fee has exactly ONE sender: the invocation whose claim returned "claimed". A second invocation
+    // (a repeat press, another tab, a retry after a lost response) never sends, because it cannot know whether the
+    // winner's request reached Stripe, and a refusal on its own request would say nothing about the winner's. The
+    // attempt stays pending_stripe and blocking; a person resolves it from Stripe. session_payment is unchanged.
+    if (
+      attemptRow.charge_reason === "late_cancellation_fee" ||
+      attemptRow.charge_reason === "no_show_fee"
+    ) {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "session_payment_needs_manual_review",
+        message: "A manual fee is pending with no PaymentIntent id. Only the first sender may call Stripe, so this was not retried.",
+        studioId: attemptRow.studio_id,
+        clientId: attemptRow.client_id,
+        route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
+        safeDetails: {
+          attempt_id: attemptRow.id,
+          session_id: attemptRow.session_id,
+          appointment_id: attemptRow.appointment_id,
+          reason: "fee_pending_no_pi_single_sender",
+        },
+      });
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message: NEEDS_MANUAL_REVIEW_MESSAGE,
+        attemptId: attemptRow.id,
+      };
+    }
     // No PI id on the row. Check whether the claim is recent enough
     // to retry-create with the same idempotency key.
     const claimedAt = claim.updated_at
