@@ -388,7 +388,7 @@ export async function getSessionPaymentEligibility(
     const { data: attemptRows, error: attemptsErr } = await admin
       .from("payment_charge_attempts")
       .select(
-        "id, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, refund_failure_code, refund_failure_message_safe",
+        "id, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, stripe_refund_status, refund_amount_cents, refunded_at, stripe_refund_id, stripe_charge_refund_event_id, refund_failure_code, refund_failure_message_safe",
       )
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
@@ -428,10 +428,13 @@ export async function getSessionPaymentEligibility(
         (row.receipt_failure_message_safe as string | null) ?? null,
       // PR #178 refund fields (migration 0078).
       refundStatus: (row.refund_status as string | null) ?? null,
+      stripeRefundStatus: (row.stripe_refund_status as string | null) ?? null,
       refundAmountCents:
         (row.refund_amount_cents as number | null) ?? null,
       refundedAt: (row.refunded_at as string | null) ?? null,
       stripeRefundId: (row.stripe_refund_id as string | null) ?? null,
+      cumulativeFullRefundVerified:
+        typeof row.stripe_charge_refund_event_id === "string" && row.stripe_charge_refund_event_id.length > 0,
       refundFailureCode:
         (row.refund_failure_code as string | null) ?? null,
       refundFailureMessageSafe:

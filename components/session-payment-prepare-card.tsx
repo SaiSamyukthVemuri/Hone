@@ -1,5 +1,6 @@
 "use client";
 
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -27,6 +28,8 @@ import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   derivePaymentSummary,
+  REFUND_REVIEW_HEADING,
+  REFUND_ACTION_HEADING,
   humanChargeFailure,
   maskReceiptEmail,
   technicalRowsForAttempt,
@@ -315,11 +318,25 @@ export function SessionPaymentPrepareCard({
   // refundAmountCents < amountCents. A PARTIAL refund therefore still counts as
   // money held, exactly as the database computes it, so nobody can be recorded
   // as paying cash for money the studio is still holding on a card.
+  // R1 (Insurance F3): the same reading as the refund panel, so settlement controls open only when our column AND the
+  // provider's agree the whole charge went back. A disagreement or an unknown keeps the card money HELD.
+  const activeRefund =
+    activeAttempt !== null
+      ? refundDisplayState({
+          chargeStatus: activeAttempt.status,
+          amountCents: activeAttempt.amountCents,
+          refundStatus: activeAttempt.refundStatus,
+          refundAmountCents: activeAttempt.refundAmountCents,
+          providerRefundStatus: activeAttempt.stripeRefundStatus,
+          stripeRefundId: activeAttempt.stripeRefundId,
+          cumulativeFullRefundVerified: activeAttempt.cumulativeFullRefundVerified,
+        })
+      : null;
   const fullyRefunded =
     activeAttempt !== null &&
     activeAttempt.status === "succeeded" &&
-    activeAttempt.refundStatus === "succeeded" &&
-    (activeAttempt.refundAmountCents ?? 0) >= activeAttempt.amountCents;
+    activeRefund?.kind === "refunded" &&
+    activeRefund.remainingRefundableCents === 0;
   const cardMoneyHeld = activeAttempt !== null && !fullyRefunded;
 
   const previousTerminalAttempt =
@@ -963,20 +980,25 @@ function SucceededPanel({
   // "Paid" for a live charge, "Refunded" once the row carries
   // refund_status='succeeded', so the practitioner never sees a paid heading
   // and a refunded sub-panel fighting each other. Sub-panels handle the rest.
-  const refunded = attempt.refundStatus === "succeeded";
+  const summary = derivePaymentSummary(attempt);
+  const refunded = summary.kind === "refunded";
   return (
     <div
       className={
-        refunded
-          ? "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
-          : "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+        // Keyed on the SUMMARY KIND (Insurance N1): only a paid charge is styled as paid. Refunded, pending and
+        // unresolved states are never dressed in the emerald "paid" container.
+        summary.kind === "paid" || summary.kind === "paid_receipt_failed"
+          ? "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+          : summary.kind === "refund_review" || summary.kind === "refund_action"
+            ? "rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20"
+            : "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
       }
     >
       {/* Compact practitioner face: "Paid · $X" (or "Refunded · $X"), with the
           charge date. Processor identifiers move into the owner-only disclosure
           below, never shown in the default charting view. */}
       <PaymentSummaryCard
-        summary={derivePaymentSummary(attempt)}
+        summary={summary}
         subLine={
           refunded ? (
             attempt.refundedAt ? (
@@ -1192,9 +1214,24 @@ function RefundSubPanel({
   // Persisted state takes precedence; local in-session state is
   // for the same-render-cycle flip before the page revalidatePath
   // catches up.
-  const persistedSucceeded = attempt.refundStatus === "succeeded";
-  const persistedPending = attempt.refundStatus === "pending_stripe";
-  const persistedFailed = attempt.refundStatus === "failed";
+  // R1: ONE reading of our refund column AND the provider's (0240), so a refund the provider reports
+  // failed/canceled is never shown as "succeeded", an unknown is never shown as "failed", and a New refund is
+  // offered only when none can be in flight or done.
+  const display = refundDisplayState({
+    chargeStatus: attempt.status,
+    amountCents: attempt.amountCents,
+    refundStatus: attempt.refundStatus,
+    refundAmountCents: attempt.refundAmountCents,
+    providerRefundStatus: attempt.stripeRefundStatus,
+    stripeRefundId: attempt.stripeRefundId,
+    cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
+  });
+  const persistedNeedsReview = display.kind === "needs_review";
+  const persistedSucceeded = display.kind === "refunded";
+  const persistedPending = display.kind === "pending";
+  const persistedNeedsAction = display.kind === "needs_action";
+  const persistedUnclear = display.kind === "unclear";
+  const persistedFailed = display.kind === "failed";
 
   // v1 refunds are full-only. The amount the practitioner is
   // confirming equals the charge amount; partial refunds may
@@ -1245,6 +1282,31 @@ function RefundSubPanel({
         </div>
       )}
 
+      {persistedNeedsAction && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">{REFUND_ACTION_HEADING}.</p>
+          <p className="mt-1">Stripe has not finished this refund. Do not refund again.</p>
+        </div>
+      )}
+
+      {(persistedNeedsReview || persistedUnclear) && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          {/* ONE heading for every unresolved state (Sam, 12 Nov): the same words as the card header
+              (REFUND_REVIEW_HEADING). The explanation under it differs by cause. */}
+          <p className="font-medium">{REFUND_REVIEW_HEADING}.</p>
+          {persistedNeedsReview ? (
+            <p className="mt-1">
+              Stripe has a record of a refund here that we could not confirm. The studio owner must review it before
+              another refund is started.
+            </p>
+          ) : (
+            <p className="mt-1">
+              Our record and Stripe do not agree. Do not refund again until the studio owner has reviewed this.
+            </p>
+          )}
+        </div>
+      )}
+
       {persistedFailed && !localRefunded && (
         <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
           <p className="font-medium">Refund failed.</p>
@@ -1259,8 +1321,7 @@ function RefundSubPanel({
       )}
 
       {isOwner &&
-        !persistedSucceeded &&
-        !persistedPending &&
+        display.mayStartRefund &&
         !localRefunded && (
           <>
             <p className="text-xs text-neutral-600 dark:text-neutral-400">

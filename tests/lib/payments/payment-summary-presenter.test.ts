@@ -7,6 +7,7 @@ import {
   technicalRowsForAttempt,
   formatCadFromCents,
 } from "@/lib/payments/payment-summary-presenter";
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import type { SessionPaymentExistingAttemptSummary } from "@/lib/billing/session-payment-types";
 
 // Pure presenter for the compact practitioner payment card. No PHI in fixtures
@@ -34,9 +35,11 @@ function attempt(
     receiptFailureCode: null,
     receiptFailureMessageSafe: null,
     refundStatus: null,
+    stripeRefundStatus: null,
     refundAmountCents: null,
     refundedAt: null,
     stripeRefundId: null,
+    cumulativeFullRefundVerified: false,
     refundFailureCode: null,
     refundFailureMessageSafe: null,
     ...over,
@@ -118,13 +121,54 @@ describe("derivePaymentSummary — one current headline per state", () => {
       derivePaymentSummary(attempt({ receiptStatus: "failed" })),
     ).toMatchObject({ kind: "paid_receipt_failed", headline: "Paid" });
   });
+  // Photos e1 (#1427 @ c543c48ab): a PARTIAL refund the provider reports succeeded (5000 of 15000) read "Refunded · $150.00" in the
+  // header while the panel said "Amount refunded: $50.00". Headline and amount now state the partial; money controls unchanged.
+  it("e1: a partial succeeded refund (ours + provider succeeded, 5000 of 15000) says 'Partly refunded' with the refunded amount, never 'Refunded' with the charge", () => {
+    const row = attempt({ amountCents: 15000, refundStatus: "succeeded", stripeRefundStatus: "succeeded", refundAmountCents: 5000, refundedAt: "2026-07-13T10:00:00Z" });
+    expect(derivePaymentSummary(row)).toMatchObject({ kind: "refunded", headline: "Partly refunded", amountCents: 5000, currency: "cad" });
+    // provider silent behaves the same
+    expect(derivePaymentSummary({ ...row, stripeRefundStatus: null })).toMatchObject({ headline: "Partly refunded", amountCents: 5000 });
+  });
+  it("e1: a FULL refund still reads 'Refunded' with the charge amount; the cumulative-receipt case too", () => {
+    const full = attempt({ amountCents: 15000, refundStatus: "succeeded", stripeRefundStatus: "succeeded", refundAmountCents: 15000 });
+    expect(derivePaymentSummary(full)).toMatchObject({ kind: "refunded", headline: "Refunded", amountCents: 15000 });
+    expect(derivePaymentSummary({ ...full, stripeRefundStatus: "failed", cumulativeFullRefundVerified: true })).toMatchObject({ headline: "Refunded", amountCents: 15000 });
+  });
+  it("e1: the partial headline does not change what the refund reading allows (no new refund, remaining server-computed)", () => {
+    expect(refundDisplayState({ chargeStatus: "succeeded", amountCents: 15000, refundStatus: "succeeded", refundAmountCents: 5000, providerRefundStatus: "succeeded", stripeRefundId: "re_x", cumulativeFullRefundVerified: false }))
+      .toEqual({ kind: "refunded", remainingRefundableCents: 10000, mayStartRefund: false });
+  });
   it("refunded / refund pending promote the headline", () => {
     expect(
-      derivePaymentSummary(attempt({ refundStatus: "succeeded" })),
+      derivePaymentSummary(attempt({ refundStatus: "succeeded", refundAmountCents: 22500 })),
     ).toMatchObject({ kind: "refunded", headline: "Refunded" });
     expect(
       derivePaymentSummary(attempt({ refundStatus: "pending_stripe" })),
     ).toMatchObject({ kind: "refund_pending" });
+  });
+  it("R1 (Insurance F2): the headline reads BOTH refund columns, so it can never say Refunded beside an unclear panel", () => {
+    const ok = { refundStatus: "succeeded", refundAmountCents: 22500 };
+    expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: "succeeded" }))).toMatchObject({ kind: "refunded" });
+    for (const p of ["failed", "canceled"]) {
+      expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: p }))).toMatchObject({
+        kind: "refund_review",
+        headline: "Refund needs review",
+        tone: "issue",
+      });
+    }
+    expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: "pending" }))).toMatchObject({ kind: "refund_pending" });
+    // N2: requires_action must say action is needed, not "processing"
+    expect(derivePaymentSummary(attempt({ ...ok, stripeRefundStatus: "requires_action" }))).toMatchObject({
+      kind: "refund_action",
+      headline: "Refund needs action at Stripe",
+    });
+    // no readable refund amount, or an unknown value: not "Refunded"
+    expect(derivePaymentSummary(attempt({ refundStatus: "succeeded" }))).toMatchObject({ kind: "refund_review" });
+    expect(derivePaymentSummary(attempt({ refundStatus: "weird" }))).toMatchObject({ kind: "refund_review" });
+    // a provider trace on a refund that did not complete: needs review, not "Paid"
+    expect(derivePaymentSummary(attempt({ refundStatus: "failed", stripeRefundStatus: "failed" }))).toMatchObject({ kind: "refund_review" });
+    // our plain failed refund with no trace keeps the charge headline (money stayed, retry allowed)
+    expect(derivePaymentSummary(attempt({ refundStatus: "failed" }))).toMatchObject({ kind: "paid" });
   });
   it("failed → issue tone", () => {
     expect(
