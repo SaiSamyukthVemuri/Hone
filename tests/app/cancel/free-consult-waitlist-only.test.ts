@@ -536,7 +536,8 @@ describe("MSG-004 public cancellation owner-notification recovery", () => {
       expect(rpcCalls).toHaveLength(1);
       expect(rpcCalls[0].fn).toBe("public_cancel_appointment_with_token");
       expect(writes).toEqual([]);
-      expect(log).toHaveBeenCalledTimes(1);
+      // HON-7: this harness has no owner list, so the bell writer also logs one PII-free owner-read code; the recovery log is still exactly one.
+      expect(log.mock.calls.filter((c) => String(c[0]).includes("cancellation_notification_alert_unavailable"))).toHaveLength(1);
       expect(JSON.stringify([result, recoveryAlert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|raw-url-token|owner@example.invalid/);
     } finally { log.mockRestore(); }
   });
