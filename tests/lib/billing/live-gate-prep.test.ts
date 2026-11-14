@@ -170,7 +170,8 @@ describe("payment UI copy map: neutral, mode-safe strings (copy fast-follow)", (
   });
 
   it("fee card uses neutral labels + NO misleading live-mode copy", () => {
-    expect(FEE_CARD).toMatch(/Run charge/);
+    // The rule, not the spelling: a neutral charge button that names the fee type and shows the server amount.
+    expect(FEE_CARD).toMatch(/`Charge \$\{chargeTypeLabel\(attempt\.charge_type\)\.toLowerCase\(\)\} \(\$\{formatCents\(attempt\.amount_cents, attempt\.currency\)\}\)`/);
     expect(FEE_CARD).toMatch(/Send receipt/);
     expect(FEE_CARD).toMatch(/Refund charge/);
     expect(FEE_CARD).not.toMatch(/Test mode only\. No live card will be charged\./);

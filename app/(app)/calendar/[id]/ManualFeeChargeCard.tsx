@@ -5,16 +5,17 @@ import { useRouter } from "next/navigation";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   MANUAL_FEE_INTERNAL_NOTE_MAX_LENGTH,
-  type EligibilityExistingAttemptSummary,
-  type ManualFeeEligibility,
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-types";
+import type { FeeCardAttempt, FeeCardEligibility } from "@/lib/billing/manual-fee-card-view";
+import { FEE_UNCLEAR_MESSAGE } from "@/lib/billing/manual-fee-attempt-state";
 import {
   prepareManualFeeChargeAction,
   chargeManualFeeAttemptAction,
   cancelManualFeeChargeAttemptAction,
   sendFeeReceiptAction,
   refundFeeAttemptAction,
+  closeDeclinedFeeAttemptAction,
 } from "./manual-fee-actions";
 
 // ---------------------------------------------------------------------------
@@ -45,8 +46,9 @@ import {
 
 type Props = {
   appointmentId: string;
-  lateCancel: ManualFeeEligibility;
-  noShow: ManualFeeEligibility;
+  // Server-projected (lib/billing/manual-fee-card-view.ts): no provider ids reach the browser.
+  lateCancel: FeeCardEligibility;
+  noShow: FeeCardEligibility;
 };
 
 function formatCents(cents: number, currency: string): string {
@@ -58,9 +60,7 @@ function chargeTypeLabel(t: ManualFeeChargeType): string {
   return t === "late_cancel" ? "Late cancellation fee" : "No-show fee";
 }
 
-function describeCard(
-  card: NonNullable<ManualFeeEligibility["card"]>,
-): string {
+function describeCard(card: { brand: string; last4: string }): string {
   const brand = card.brand.charAt(0).toUpperCase() + card.brand.slice(1);
   return `${brand} ending in ${card.last4}`;
 }
@@ -79,10 +79,10 @@ export function ManualFeeChargeCard({
   // tab.
   const allAttempts = useMemo(() => {
     const seen = new Set<string>();
-    const merged: EligibilityExistingAttemptSummary[] = [];
+    const merged: FeeCardAttempt[] = [];
     for (const row of [
-      ...lateCancel.existingAttempts,
-      ...noShow.existingAttempts,
+      ...lateCancel.attempts,
+      ...noShow.attempts,
     ]) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
@@ -99,7 +99,7 @@ export function ManualFeeChargeCard({
   const attemptForType = useMemo(() => {
     const sameType = allAttempts.filter((r) => r.charge_type === chargeType);
     const active = sameType.find((r) =>
-      ["ready", "pending_stripe", "succeeded"].includes(r.status),
+      ["ready", "pending", "unclear", "succeeded"].includes(r.state.kind),
     );
     if (active) return active;
     return sameType[0] ?? null;
@@ -142,27 +142,44 @@ export function ManualFeeChargeCard({
       </div>
 
       {allAttempts.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+        <div
+          data-testid="fee-charge-history"
+          className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs dark:border-neutral-800 dark:bg-neutral-900"
+        >
           <span className="font-medium text-neutral-700 dark:text-neutral-300">
-            Existing attempts
+            Charge history
           </span>
           <ul className="flex flex-col gap-1">
-            {allAttempts.map((row) => (
-              <li
-                key={row.id}
-                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-neutral-600 dark:text-neutral-400"
-              >
-                <span className="font-medium text-neutral-800 dark:text-neutral-200">
-                  {chargeTypeLabel(row.charge_type)}
-                </span>
-                <span>·</span>
-                <span>{formatCents(row.amount_cents, row.currency)}</span>
-                <span>·</span>
-                <span className="uppercase tracking-wider">{row.status}</span>
-                <span>·</span>
-                <FormattedDateTime iso={row.created_at} />
-              </li>
-            ))}
+            {allAttempts.map((row) => {
+              const state = row.state;
+              const refund = row.refund.line;
+              return (
+                <li
+                  key={row.id}
+                  data-testid="fee-history-row"
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 text-neutral-600 dark:text-neutral-400"
+                >
+                  <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                    {chargeTypeLabel(row.charge_type)}
+                  </span>
+                  <span>·</span>
+                  <span>{formatCents(row.amount_cents, row.currency)}</span>
+                  <span>·</span>
+                  <span data-testid="fee-history-status">{state.label}</span>
+                  <span>·</span>
+                  <FormattedDateTime iso={row.created_at} />
+                  {refund && (
+                    <>
+                      <span>·</span>
+                      <span data-testid="fee-history-refund">{refund}</span>
+                      {row.refunded_at && row.refund.kind === "refunded" && (
+                        <FormattedDateTime iso={row.refunded_at} />
+                      )}
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -172,9 +189,7 @@ export function ManualFeeChargeCard({
         <AttemptStatusPanel
           attempt={attemptForType}
           appointmentId={appointmentId}
-          card={
-            selected.eligible ? selected.card : (selected.card ?? null)
-          }
+          card={selected.card}
         />
       ) : !selected.eligible ? (
         <BlockedPanel reasons={selected.blockingReasons} />
@@ -219,7 +234,7 @@ function PreparePanel({
 }: {
   appointmentId: string;
   chargeType: ManualFeeChargeType;
-  eligibility: Extract<ManualFeeEligibility, { eligible: true }>;
+  eligibility: FeeCardEligibility;
 }) {
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
@@ -237,7 +252,7 @@ function PreparePanel({
     fd.set("charge_type", chargeType);
     fd.set("internal_note", note);
     // The currency printed in the preview; the server refuses on a mismatch.
-    fd.set("expected_currency", eligibility.currency.toLowerCase());
+    fd.set("expected_currency", (eligibility.currency ?? "").toLowerCase());
     startTransition(async () => {
       const r = await prepareManualFeeChargeAction(fd);
       if (!r.ok) {
@@ -259,26 +274,37 @@ function PreparePanel({
           {chargeTypeLabel(chargeType)}
         </PreviewRow>
         <PreviewRow label="Amount">
-          {formatCents(eligibility.amountCents, eligibility.currency)}
+          {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")}
         </PreviewRow>
-        <PreviewRow label="Client">{eligibility.client.name}</PreviewRow>
+        <PreviewRow label="Client">{eligibility.clientName}</PreviewRow>
         <PreviewRow label="Appointment">
-          {eligibility.appointment.service_name ?? "Appointment"} ·{" "}
-          <FormattedDateTime iso={eligibility.appointment.starts_at} />
+          {eligibility.serviceName ?? "Appointment"}
+          {eligibility.startsAt && (
+            <>
+              {" "}·{" "}
+              <FormattedDateTime iso={eligibility.startsAt} />
+            </>
+          )}
         </PreviewRow>
         <PreviewRow label="Card">
-          {describeCard(eligibility.card)}
+          {eligibility.card ? describeCard(eligibility.card) : "No saved card"}
         </PreviewRow>
         <PreviewRow label="Card authorization signed">
-          <FormattedDateTime iso={eligibility.cardAuthorization.signed_at} />
+          {eligibility.cardAuthorizationSignedAt && (
+            <FormattedDateTime iso={eligibility.cardAuthorizationSignedAt} />
+          )}
         </PreviewRow>
         <PreviewRow label="Policy acknowledged">
-          <FormattedDateTime
-            iso={eligibility.policyAcknowledgement.acknowledged_at}
-          />
+          {eligibility.policyAcknowledgedAt && (
+            <FormattedDateTime iso={eligibility.policyAcknowledgedAt} />
+          )}
         </PreviewRow>
       </dl>
 
+      <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+        The saved fixed {chargeTypeLabel(chargeType).toLowerCase()} of{" "}
+        {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+      </p>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
         Timing classification is manual for this version. Confirm this
         appointment qualifies under the policy before preparing the
@@ -341,11 +367,12 @@ function AttemptStatusPanel({
   appointmentId,
   card,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
   appointmentId: string;
-  card: ManualFeeEligibility["card"] | null;
+  card: FeeCardEligibility["card"];
 }) {
-  switch (attempt.status) {
+  const state = attempt.state;
+  switch (state.kind) {
     case "ready":
       return (
         <ReadyPanel
@@ -354,20 +381,19 @@ function AttemptStatusPanel({
           card={card}
         />
       );
-    case "pending_stripe":
+    case "pending":
       return <PendingPanel attempt={attempt} appointmentId={appointmentId} />;
     case "succeeded":
       return <SucceededPanel attempt={attempt} />;
     case "failed":
       return <FailedPanel attempt={attempt} />;
+    case "needs_action":
+      return <NeedsActionPanel />;
     case "cancelled":
       return <CancelledPanel attempt={attempt} />;
     default:
-      return (
-        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-          Attempt status: {attempt.status}
-        </div>
-      );
+      // unclear: no charge, refresh or retry control of any kind.
+      return <UnclearPanel attempt={attempt} />;
   }
 }
 
@@ -376,9 +402,9 @@ function ReadyPanel({
   appointmentId,
   card,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
   appointmentId: string;
-  card: ManualFeeEligibility["card"] | null;
+  card: FeeCardEligibility["card"];
 }) {
   const [chargePending, startCharge] = useTransition();
   const [cancelPending, startCancel] = useTransition();
@@ -438,6 +464,10 @@ function ReadyPanel({
         <li>policy acknowledged</li>
         <li>internal note recorded</li>
       </ul>
+      <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+        The saved fixed {chargeTypeLabel(attempt.charge_type).toLowerCase()} of{" "}
+        {formatCents(attempt.amount_cents, attempt.currency)} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+      </p>
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
         The client&apos;s saved card on file will be charged this fee.
       </p>
@@ -451,7 +481,7 @@ function ReadyPanel({
         >
           {chargePending
             ? "Running…"
-            : `Run charge (${formatCents(attempt.amount_cents, attempt.currency)})`}
+            : `Charge ${chargeTypeLabel(attempt.charge_type).toLowerCase()} (${formatCents(attempt.amount_cents, attempt.currency)})`}
         </button>
         <button
           type="button"
@@ -517,11 +547,76 @@ function ReadyPanel({
   );
 }
 
+function UnclearPanel({ attempt }: { attempt: FeeCardAttempt }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  function closeDeclined() {
+    setError(null);
+    const fd = new FormData();
+    fd.set("attempt_id", attempt.id);
+    startTransition(async () => {
+      const r = await closeDeclinedFeeAttemptAction(fd);
+      if (!r.ok) setError(r.error);
+      else router.refresh();
+    });
+  }
+  return (
+    <div
+      role="status"
+      data-testid="fee-unclear-panel"
+      className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    >
+      <h4 className="font-medium">{FEE_UNCLEAR_MESSAGE}</h4>
+      <p className="text-xs">
+        Hone cannot tell whether the card was charged. No new charge is offered while this is open.
+      </p>
+      {attempt.state.mayCloseDeclined && (
+        <>
+          <p className="text-xs">
+            If the client&apos;s bank declined this charge, you can close this attempt. Hone asks the payment
+            provider to cancel this same payment and only then lets you prepare a new fee. Nothing is charged.
+          </p>
+          <button
+            type="button"
+            data-testid="fee-close-declined"
+            onClick={closeDeclined}
+            disabled={pending}
+            className="self-start rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-50 dark:bg-amber-950"
+          >
+            {pending ? "Closing…" : "Close declined attempt"}
+          </button>
+        </>
+      )}
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NeedsActionPanel() {
+  return (
+    <div
+      role="status"
+      data-testid="fee-needs-action-panel"
+      className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    >
+      <h4 className="font-medium">Cancelled: nothing was taken.</h4>
+      <p className="text-xs">
+        The client&apos;s bank asked them to confirm this charge, so the attempt was cancelled with the payment provider. It can no longer be completed and nothing was taken. You can prepare a new fee.
+      </p>
+    </div>
+  );
+}
+
 function PendingPanel({
   attempt,
   appointmentId,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
   appointmentId: string;
 }) {
   const [pending, startTransition] = useTransition();
@@ -570,7 +665,7 @@ function PendingPanel({
 function SucceededPanel({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
@@ -584,11 +679,6 @@ function SucceededPanel({
           </>
         )}
       </p>
-      {attempt.stripe_payment_intent_id && (
-        <p className="text-xs font-mono text-emerald-800 dark:text-emerald-300">
-          PaymentIntent: {attempt.stripe_payment_intent_id}
-        </p>
-      )}
       {/* PR #196: fee attempts live on the canonical ledger, so test
           receipts and test refunds work exactly like session
           payments. Minimal affordances here; outcomes re-render via
@@ -601,7 +691,7 @@ function SucceededPanel({
 function FeeReceiptRefundControls({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -618,8 +708,8 @@ function FeeReceiptRefundControls({
       router.refresh();
     });
   }
-  const refunded = attempt.refund_status === "succeeded";
-  const receiptSent = !!attempt.receipt_sent_at;
+  const refund = attempt.refund;
+  const receiptSent = attempt.receipt_sent;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       {receiptSent ? (
@@ -634,17 +724,26 @@ function FeeReceiptRefundControls({
           Send receipt
         </button>
       )}
-      {refunded ? (
-        <span className="text-xs font-medium">Payment refunded.</span>
+      {refund.kind === "refunded" ? (
+        <span data-testid="fee-refund-line" className="text-xs font-medium">{refund.line}</span>
+      ) : refund.mayStartRefund ? (
+        <>
+          {refund.line && (
+            <span data-testid="fee-refund-line" className="text-xs">{refund.line}</span>
+          )}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => run(refundFeeAttemptAction)}
+            className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:hover:bg-emerald-900"
+          >
+            Refund charge
+          </button>
+        </>
       ) : (
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => run(refundFeeAttemptAction)}
-          className="rounded-md border border-emerald-400 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 disabled:opacity-50 dark:hover:bg-emerald-900"
-        >
-          Refund charge
-        </button>
+        refund.line && (
+          <span data-testid="fee-refund-line" className="text-xs font-medium">{refund.line}</span>
+        )
       )}
       {message && <span className="text-xs">{message}</span>}
     </div>
@@ -654,7 +753,7 @@ function FeeReceiptRefundControls({
 function FailedPanel({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
@@ -677,7 +776,7 @@ function FailedPanel({
 function CancelledPanel({
   attempt,
 }: {
-  attempt: EligibilityExistingAttemptSummary;
+  attempt: FeeCardAttempt;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">

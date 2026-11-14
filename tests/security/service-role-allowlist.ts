@@ -687,6 +687,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/billing/close-declined-fee-attempt.ts",
+    purpose: "Payment ledger helper (owner-only Close declined attempt).",
+    why: "Invoked only by the owner-authenticated closeDeclinedFeeAttemptAction; uses service-role to read and update the one payment_charge_attempts row. Scoped by studio_id and attempt id; it cancels only the PaymentIntent already stored on that row (never creates one) through the single cancelPaymentIntentConfirmed call site.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
     path: "lib/billing/session-payment-eligibility.ts",
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",

@@ -12,10 +12,13 @@ import {
 import { isManualFeeChargeReason } from "@/lib/billing/manual-fee-types";
 import { checkDisplayedCurrency } from "@/lib/billing/payment-jurisdiction";
 import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
+import { closeDeclinedFeeAttempt } from "@/lib/billing/close-declined-fee-attempt";
 import {
   autoSendReceiptAfterCharge,
   type AutoReceiptOutcome,
 } from "@/lib/billing/auto-payment-receipt";
+import { ONE_FEE_PER_APPOINTMENT_MESSAGE } from "@/lib/billing/manual-fee-one-per-appointment";
+import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
@@ -221,7 +224,14 @@ export async function prepareManualFeeChargeAction(
     // eligibility check. The user-facing error matches what we
     // would have shown if the pre-INSERT check had caught it.
     if (insertErr.code === "23505") {
-      return { ok: false, error: DUPLICATE_ATTEMPT_ERROR };
+      // 0338: the cross-type index (one manual fee per appointment, either type) gets the one-fee message;
+      // the same-type indexes keep the existing duplicate message.
+      return {
+        ok: false,
+        error: String(insertErr.message ?? "").includes("payment_charge_attempts_one_fee_per_appointment_uniq")
+          ? ONE_FEE_PER_APPOINTMENT_MESSAGE
+          : DUPLICATE_ATTEMPT_ERROR,
+      };
     }
     logInternal("manual_fee_prepare_insert_failed", {
       code: dbErrorCode(insertErr),
@@ -346,7 +356,7 @@ export async function chargeManualFeeAttemptAction(
   const admin = createAdminClient();
   const { data: attemptRow, error: attemptRowError } = await admin
     .from("payment_charge_attempts")
-    .select("charge_reason, currency")
+    .select("charge_reason, currency, appointment_id, created_at")
     .eq("id", attemptId)
     .eq("studio_id", studioId)
     .maybeSingle();
@@ -387,9 +397,29 @@ export async function chargeManualFeeAttemptAction(
   const hold = liveChargeReasonBlockMessage(
     attemptRow.charge_reason,
     inferStripeLivemode(),
+    studioId,
   );
   if (hold) {
     return { ok: false, outcome: "blocked", error: hold };
+  }
+
+  // One manual fee per appointment, across both types: the earlier, friendlier refusal. The shared
+  // runner re-checks the same rule immediately before the claim, so this is not the only guard.
+  {
+    const oneFee = await oneFeeExecuteVerdict(
+      admin,
+      {
+        id: attemptId,
+        studio_id: studioId,
+        appointment_id: (attemptRow as { appointment_id?: string | null }).appointment_id ?? null,
+        created_at: (attemptRow as { created_at?: string | null }).created_at ?? null,
+      },
+      inferStripeLivemode(),
+      new Date(),
+    );
+    if (oneFee) {
+      return { ok: false, outcome: "blocked", error: oneFee };
+    }
   }
 
   // PR #196: fee attempts execute through the unified canonical
@@ -530,6 +560,31 @@ export async function cancelManualFeeChargeAttemptAction(
   }
 
   revalidatePath(`/calendar/${data.appointment_id}`);
+  return { ok: true };
+}
+
+// E1: owner-only "Close declined attempt". Cancels the attempt's OWN existing PaymentIntent through the
+// shared runner module (the single cancel call site) and frees the appointment only after Stripe confirms
+// it canceled with nothing captured. It never creates a PaymentIntent and never charges.
+export type CloseDeclinedFeeAttemptResult = { ok: true } | { ok: false; error: string };
+
+export async function closeDeclinedFeeAttemptAction(
+  formData: FormData,
+): Promise<CloseDeclinedFeeAttemptResult> {
+  let studioId: string;
+  try {
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    if (practitioner.role !== "owner") throw new Error("owner_only");
+    studioId = studio.id;
+  } catch (err) {
+    logInternal("manual_fee_close_declined_auth_failed", { errorClass: thrownErrorClass(err) });
+    return { ok: false, error: NOT_AUTHORIZED_ERROR };
+  }
+  const attemptId = strOrEmpty(formData.get("attempt_id"));
+  if (!attemptId) return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  const result = await closeDeclinedFeeAttempt({ attemptId, studioId });
+  if (!result.ok) return { ok: false, error: result.message };
+  if (result.appointmentId) revalidatePath(`/calendar/${result.appointmentId}`);
   return { ok: true };
 }
 

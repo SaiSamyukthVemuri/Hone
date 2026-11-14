@@ -61,7 +61,8 @@ describe("prepare gate — manual-fee eligibility", () => {
   const src = read("lib/billing/manual-fee-eligibility.ts");
   it("pushes the live hold into the eligibility blocking reasons", () => {
     expect(src).toMatch(/from "@\/lib\/billing\/live-charge-reason-allowlist"/);
-    expect(src).toMatch(/const liveHold = liveChargeReasonBlockMessage\(feeChargeReason, livemode\)/);
+    // The rule, not the spelling: the studio id is passed so the per-studio allowlist can apply.
+    expect(src).toMatch(/const liveHold = liveChargeReasonBlockMessage\(feeChargeReason, livemode, args\.studioId\)/);
     expect(src).toMatch(/if \(liveHold\) \{\s*\n?\s*reasons\.push\(liveHold\)/);
   });
 });
@@ -74,15 +75,18 @@ describe("execute gate — manual-fee charge action (defense-in-depth)", () => {
     expect(gate).toBeGreaterThan(-1);
     // The gate must appear BEFORE the executor call.
     expect(gate).toBeLessThan(exec);
-    expect(src).toMatch(/\.select\("charge_reason, currency"\)/);
+    expect(src).toMatch(/\.select\("charge_reason, currency[^"]*"\)/);
     expect(src).toMatch(/return \{ ok: false, outcome: "blocked", error: hold \}/);
   });
 
-  it("does NOT change the session-payment executor itself (no Stripe SDK / no charge-logic edit)", () => {
+  it("the shared executor uses the allowlist ONLY as the gate (Insurance G1), and session_payment stays open", () => {
     const charge = read("lib/billing/session-payment-charge.ts");
-    // The shared executor is untouched by this PR — it does not import the
-    // manual-fee allowlist (session payments are allowed everywhere).
-    expect(charge).not.toMatch(/live-charge-reason-allowlist/);
+    // The executor imports exactly the block-message function (the rule lives in the allowlist module) and
+    // adds no Stripe or charge-logic change for it: session payments are allowed everywhere.
+    const imports = charge.match(/import[^;]*live-charge-reason-allowlist[^;]*;/g) ?? [];
+    expect(imports).toHaveLength(1);
+    expect(imports[0]).toMatch(/\{\s*liveChargeReasonBlockMessage\s*\}/);
+    expect(isChargeReasonAllowedInLive("session_payment")).toBe(true);
   });
 });
 
