@@ -3,7 +3,7 @@
   "migrations": {
     "count": 268,
     "last": "0348_client_tags_edit_key_gate.sql",
-    "sha256": "3c5d84fb3888a916ad831dac4c63cf757cca218e11715f3f91574d1f63c89284"
+    "sha256": "041a47757c5e160857991865fd9393d623b8e26500bbe373527a97d7643455b8"
   },
   "public": {
     "tables": [

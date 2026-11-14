@@ -116,8 +116,11 @@ describe("0348 restricted: the key is Off for practitioners", () => {
 describe("0348 other paths are untouched", () => {
   it("the service role still writes tags whatever the practitioner setting", async () => {
     const f = await seed("t48-svc", true);
-    await asRole("service_role", (q) => q("insert into public.client_tags (studio_id, client_id, label) values ($1,$2,'svc')", [f.s.studioId, f.s.clientId]));
-    expect(await count(f)).toBe(1);
+    const n = await asRole("service_role", async (q) => {
+      await q("insert into public.client_tags (studio_id, client_id, label) values ($1,$2,'svc')", [f.s.studioId, f.s.clientId]);
+      return (await q("select count(*)::int n from public.client_tags where client_id=$1", [f.s.clientId])).rows[0].n as number;
+    });
+    expect(n).toBe(1);
   });
   it("a member of another studio cannot write this studio's tags (isolation still holds)", async () => {
     const a = await seed("t48-x-a");
@@ -130,11 +133,11 @@ describe("0348 other paths are untouched", () => {
     await attempt(f.member.userId, "delete from public.client_tags where id=$1", [id]);
     expect(await tagState(id)).toBeDefined();
   });
-  it("an unseeded studio (no recorded policy) cannot write through the engine: the migration's guard exists for this state", async () => {
+  it("a studio with no recorded policy row behaves as the existing-studio default (writes allowed while the key is unset)", async () => {
     const f = await seed("t48-unseeded");
     await adminQuery("delete from public.studio_permission_policy where studio_id=$1", [f.s.studioId]);
-    expect(await attempt(f.member.userId, ...insTag(f))).toMatch(DENIED);
-    expect(await count(f)).toBe(0);
+    expect(await attempt(f.member.userId, ...insTag(f))).toBeNull();
+    expect(await count(f)).toBe(1);
   });
 });
 

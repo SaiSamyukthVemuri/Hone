@@ -35,10 +35,10 @@ describe("0348 client tags: writes require the tag-edit permission (source)", ()
     expect(c).not.toMatch(/alter\s+table|create\s+(or\s+replace\s+)?function|create\s+trigger/i);
   });
 
-  it("refuses to apply when the key row is missing, a studio has no policy, or authenticated cannot execute the engine", () => {
+  it("refuses to apply when the key row is missing or authenticated cannot execute the engine", () => {
     const c = norm(code(sql()));
     expect(c).toContain("from public.permission_catalog where key = 'client.edit_tags'");
-    expect(c).toContain("not exists (select 1 from public.studio_permission_policy p where p.studio_id = s.id)");
+    expect(c).not.toContain("studio_permission_policy");
     expect(c).toContain("has_function_privilege('authenticated', 'public.has_studio_permission(uuid,text,uuid,uuid,uuid)', 'EXECUTE')");
   });
 

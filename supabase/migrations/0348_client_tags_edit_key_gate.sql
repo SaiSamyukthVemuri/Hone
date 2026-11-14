@@ -9,8 +9,9 @@
 -- Removing a tag is an UPDATE (it sets deleted_at and deleted_by), so one UPDATE policy covers add, rename and remove. DELETE stays closed (0087).
 -- SELECT is unchanged: reading tags is the separate client.view_tags permission and is not part of this change.
 --
--- FAIL-CLOSED GUARD (inside this migration). The engine answers "no" for every member when its catalogue row for the key is missing or when a
--- studio has no recorded policy. Either would lock tag writing for everyone, so the migration refuses to apply in those states.
+-- FAIL-CLOSED GUARD (inside this migration). The engine answers "no" for every member when its catalogue row for the key is missing, or when
+-- authenticated cannot execute it. Either would lock tag writing for everyone, so the migration refuses to apply in those states. (A studio
+-- with no recorded policy row is NOT such a state: the engine treats it as the existing-studio starting policy.)
 -- Rollback: supabase/rollbacks/0348_client_tags_edit_key_gate.down.sql (an operator file, never run by supabase).
 
 begin;
@@ -20,9 +21,6 @@ do $$
 begin
   if not exists (select 1 from public.permission_catalog where key = 'client.edit_tags') then
     raise exception '0348: permission_catalog has no client.edit_tags row; gating on it would deny every member';
-  end if;
-  if exists (select 1 from public.studios s where not exists (select 1 from public.studio_permission_policy p where p.studio_id = s.id)) then
-    raise exception '0348: a studio has no recorded permission policy; gating on the engine would deny its members';
   end if;
   if not pg_catalog.has_function_privilege('authenticated', 'public.has_studio_permission(uuid,text,uuid,uuid,uuid)', 'EXECUTE') then
     raise exception '0348: authenticated cannot execute has_studio_permission';
