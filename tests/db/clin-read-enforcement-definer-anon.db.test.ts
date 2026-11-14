@@ -44,7 +44,10 @@ describe("0336 (b): anon holds no privilege on any clinical table", () => {
       // PUBLIC is a pseudo-role: has_table_privilege cannot name it, so read the ACL for grantee 0
       expect((await adminQuery("select count(*)::int n from pg_class c, aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a where c.oid = $1::regclass and a.grantee = 0", [rel])).rows[0].n, `PUBLIC ${t}`).toBe(0);
       for (const role of ["authenticated", "service_role"]) {
-        expect((await adminQuery("select has_table_privilege($1, $2, 'select') p", [role, rel])).rows[0].p, `${role} select ${t}`).toBe(true);
+        // 0244 deliberately revoked service_role from treatment_reading_change_events (only authenticated SELECT, through its RLS policy), and 0336
+        // must not change that: assert the 0244 state instead of skipping the table (T-3).
+        const expected = !(role === "service_role" && t === "treatment_reading_change_events");
+        expect((await adminQuery("select has_table_privilege($1, $2, 'select') p", [role, rel])).rows[0].p, `${role} select ${t}`).toBe(expected);
       }
     }
   });
@@ -62,15 +65,17 @@ describe("0336 (c): session_is_visible", () => {
     for (const role of ["anon", "service_role"]) expect((await adminQuery("select has_function_privilege($1, $2, 'execute') p", [role, f])).rows[0].p, role).toBe(false);
     expect((await adminQuery("select not exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where p.oid = $1::regprocedure and a.grantee = 0) ok", [f])).rows[0].ok).toBe(true);
   });
-  it("regression: a keyed practitioner can still write an entry (the entry policies still call it)", async () => {
+  it("regression: a keyed practitioner still reads an entry through the SELECT policy that calls session_is_visible (authenticated has no INSERT on the entry tables, writes go through definer RPCs, so the read path is the one that matters; T-4)", async () => {
     await setRelease(true);
     const s = await seedStudio("c336e");
     const m = await seedMember(s, "c336em");
     const { sessionId } = await seedSession(s);
-    await asUser(m.userId, async (q) => {
-      const r = await q("insert into public.electrolysis_entries(session_id, area) values ($1,'lip') returning id", [sessionId]);
-      expect(r.rows).toHaveLength(1);
-    });
+    await adminQuery("insert into public.electrolysis_entries(session_id, area) values ($1,'lip')", [sessionId]);
+    const read = () => asUser(m.userId, async (q) => (await q("select count(*)::int n from public.electrolysis_entries where session_id=$1", [sessionId])).rows[0].n as number);
+    expect(await read()).toBe(1);
+    // negative control: the same read returns nothing once the key is denied, so the 1 above comes from the policy and not from a broad grant
+    await deny(s.studioId);
+    expect(await read()).toBe(0);
   });
 });
 
