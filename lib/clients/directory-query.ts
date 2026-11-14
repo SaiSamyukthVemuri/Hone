@@ -21,7 +21,7 @@
 //                     form): submitted = awaiting review, reviewed = reviewed,
 //                     in progress or no form = not submitted.
 
-import { directorySortKey, matchesDirectoryQuery, normalizeDirectoryQuery } from "@/lib/clients/directory-search";
+import { directoryMatchRank, directorySortKey, matchesDirectoryQuery, normalizeDirectoryQuery } from "@/lib/clients/directory-search";
 import type { DirectoryIdentityRow } from "@/lib/clients/directory-rules";
 
 export const DIRECTORY_PAGE_SIZE = 25;
@@ -187,6 +187,11 @@ export function queryDirectory(
       const tb = b.archivedAt ? Date.parse(b.archivedAt) : 0;
       return tb - ta || compareById(a, b);
     });
+  } else if (params.q.length > 0) {
+    // A search under the name sort lists the best match first (exact, starts-with, word-start, contains,
+    // then email and phone), ties by shown name then id. Ranks read the shown fields only (S4).
+    const rank = new Map(set.map((r) => [r.id, directoryMatchRank(r, params.q)]));
+    set.sort((a, b) => (rank.get(a.id)! - rank.get(b.id)!) || byName(a, b));
   } else {
     set.sort(byName);
   }
