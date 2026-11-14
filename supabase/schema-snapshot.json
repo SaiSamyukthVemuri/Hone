@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 265,
+    "count": 266,
     "last": "0347_record_lineage_fixed.sql",
-    "sha256": "ec810ed77553c6f61e417bfa259e5851e9255108de6cdc0fde5a91a61112add3"
+    "sha256": "450f695a922029e49ce5191e25e095093a1473729e3ec751b941393049206531"
   },
   "public": {
     "tables": [

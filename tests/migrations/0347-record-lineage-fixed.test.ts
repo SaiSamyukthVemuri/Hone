@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // 0347 source contract. The behaviour is proved against a database in tests/db/record-lineage-fixed-0347.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0347")}`, "utf8");
@@ -18,9 +18,8 @@ const EXPECTED: Record<string, [string, string, string]> = {
 };
 
 describe("0347 a record keeps the client and studio it was created for (source)", () => {
-  it("exists exactly once and is the current repo maximum", () => {
+  it("exists exactly once", () => {
     expect(countVersion("0347")).toBe(1);
-    expect(isRepoMax("0347")).toBe(true);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {

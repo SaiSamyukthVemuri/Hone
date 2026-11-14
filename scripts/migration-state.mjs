@@ -39,6 +39,13 @@ export const CANONICAL_STATE_FILE = join(
   "migration-state.json",
 );
 
+/**
+ * Reserved numbers are ALSO declared as one marker file per number in this directory (docs/production/reserved-migrations/NNNN), so two
+ * pull requests that add or remove different reservations never edit the same line. The single array in the canonical record is still
+ * honoured. A README.md is the only other name allowed.
+ */
+export const RESERVED_DIR = join(REPO_ROOT, "docs", "production", "reserved-migrations");
+
 /** Migration numbers deliberately never used. Documented, not guessed. */
 export const PERMANENTLY_SKIPPED = Object.freeze([158]);
 
@@ -238,6 +245,43 @@ export function evaluateReserved({ numbers, hostedMaxNumber, repoMaxNumber, decl
 }
 
 /**
+ * Reserved numbers declared as marker files. `names` are the directory entries. A four-digit name is a reservation; README.md is ignored;
+ * anything else is invalid (a typo must not silently reserve nothing). Pure on its inputs.
+ */
+export function reservedFromDirectory(names) {
+  const declared = [];
+  const invalid = [];
+  for (const n of names) {
+    if (n === "README.md") continue;
+    if (/^\d{4}$/.test(n)) declared.push(n);
+    else invalid.push(`reserved-migrations/${n} is not a four-digit marker file name`);
+  }
+  declared.sort();
+  return { declared, invalid };
+}
+
+/**
+ * Combine the array in the canonical record with the directory markers. A number declared in BOTH is invalid (ambiguous ownership);
+ * a non-array record value is passed through so evaluateReserved reports it. Pure on its inputs.
+ */
+export function mergeReservedDeclarations(arrayDeclared, dirDeclared) {
+  if (arrayDeclared === undefined) return { declared: dirDeclared.length ? dirDeclared : undefined, invalid: [] };
+  if (!Array.isArray(arrayDeclared)) return { declared: arrayDeclared, invalid: [] };
+  // The canonical array is validated AS WRITTEN (strictly ascending, four-digit, no duplicates) by evaluateReserved.
+  // Merging would sort and de-duplicate it and so hide exactly those errors, so a malformed array, or one with no
+  // markers beside it, is passed through untouched.
+  const strictlyAscending = arrayDeclared.every((v, i) => typeof v === "string" && /^\d{4}$/.test(v) && (i === 0 || arrayDeclared[i - 1] < v));
+  if (!strictlyAscending || dirDeclared.length === 0) return { declared: arrayDeclared, invalid: [] };
+  const invalid = [];
+  const inArray = new Set(arrayDeclared);
+  for (const v of dirDeclared) if (inArray.has(v)) invalid.push(`${v} is declared reserved both in the canonical record array and as a marker file`);
+  const merged = [...new Set([...arrayDeclared, ...dirDeclared])];
+  const ok = merged.every((v) => typeof v === "string" && /^\d{4}$/.test(v));
+  if (ok) merged.sort();
+  return { declared: merged, invalid };
+}
+
+/**
  * Repo migration files that hosted has NOT applied. Everything above the hosted
  * max, PLUS every version a declaration lists as unhosted_below that has a repo
  * file (F-OOO-1): a stage that put 0248 ahead of 0247 leaves 0247 BELOW the
@@ -261,7 +305,7 @@ export function pendingMigrationVersions({ entries, hostedMaxNumber, declared = 
 /**
  * Full state: repository facts DERIVED, hosted facts DECLARED.
  */
-export function getMigrationState({ dir, canonicalFile } = {}) {
+export function getMigrationState({ dir, canonicalFile, reservedDir } = {}) {
   const entries = scanMigrations(dir);
   const numbers = entries.map((e) => e.number);
   const repoMaxNumber = numbers[numbers.length - 1];
@@ -285,12 +329,20 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     declared: record.hosted_out_of_order ?? [],
   });
 
+  // The marker directory is read for the real record only; a caller that supplies its own canonicalFile (a test) opts in explicitly.
+  const markerDir = reservedDir ?? (canonicalFile === undefined ? RESERVED_DIR : undefined);
+  const markers = markerDir !== undefined && existsSync(markerDir)
+    ? reservedFromDirectory(readdirSync(markerDir))
+    : { declared: [], invalid: [] };
+  const mergedReserved = mergeReservedDeclarations(record.reserved_unallocated_above_hosted, markers.declared);
   const reservedEval = evaluateReserved({
     numbers,
     hostedMaxNumber,
     repoMaxNumber,
-    declared: record.reserved_unallocated_above_hosted,
+    declared: mergedReserved.declared,
   });
+  reservedEval.invalid.push(...markers.invalid, ...mergedReserved.invalid);
+  if (reservedEval.invalid.length) reservedEval.reserved = [];
 
   return {
     repo_migration_max: pad(repoMaxNumber),
