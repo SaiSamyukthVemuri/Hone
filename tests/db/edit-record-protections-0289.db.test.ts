@@ -477,7 +477,9 @@ describe("0289-A: no planted value ever enters chart_revisions (every guarded ta
       const insertClone = async (planted: boolean) => {
         await adminQuery(`drop table if exists pg_temp.chart_clone`);
         await adminQuery(`create temp table chart_clone as select * from public.${t} where id = $1`, [ids[t]]);
-        await adminQuery(`update pg_temp.chart_clone set id = $1${planted && plant ? `, ${plant.replace(/\$2/g, "$2")}` : ""}`, planted && plant ? [cloneId, sentinel] : [cloneId]);
+        // a unique key (one area per block/side) would refuse an identical copy: move the clone to the other side
+        const tweak = t === "session_block_areas" ? ", laterality = 'right', display_order = 1" : "";
+        await adminQuery(`update pg_temp.chart_clone set id = $1${tweak}${planted && plant ? `, ${plant}` : ""}`, planted && plant ? [cloneId, sentinel] : [cloneId]);
         await adminQuery(`insert into public.${t} select * from pg_temp.chart_clone`);
       };
       try { await insertClone(true); } catch { await insertClone(false); }
