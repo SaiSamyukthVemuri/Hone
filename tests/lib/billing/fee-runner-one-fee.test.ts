@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { feeExecuteBlock, feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 
 // One manual fee per appointment at the POINT OF MONEY: the real runSessionPaymentCharge, with Stripe and the admin client
@@ -14,6 +16,7 @@ const h = vi.hoisted(() => ({
   retrieveCalls: 0,
   claimPaymentIntentId: null as string | null,
   createKeys: [] as string[],
+  createOpts: [] as Array<Record<string, unknown>>,
   alerts: [] as Array<{ severity: string; event: string }>,
   alertInputs: [] as unknown[],
   updates: [] as Array<Record<string, unknown>>,
@@ -30,6 +33,7 @@ const fakeStripe = {
   paymentIntents: {
     create: async (_params: unknown, opts: { idempotencyKey: string }) => {
       h.createKeys.push(opts.idempotencyKey);
+      h.createOpts.push(opts as unknown as Record<string, unknown>);
       if (h.createReply) return h.createReply;
       throw h.createError;
     },
@@ -197,6 +201,7 @@ beforeEach(() => {
   h.retrieveCalls = 0;
   h.claimPaymentIntentId = null;
   h.createKeys = [];
+  h.createOpts = [];
   h.alerts = [];
   h.alertInputs = [];
   h.updates = [];
@@ -385,5 +390,44 @@ describe("a refused REPLAY of an ambiguous first request never frees the appoint
     expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(true);
     const att = asGateAttempt(rowAfter());
     expect(feePrepareBlock([att], "late_cancel", NOW)).toBeNull();
+  });
+});
+
+describe("a fee is sent once per call: no SDK-level resend with the same key", () => {
+  it("the fee create carries maxNetworkRetries: 0 as a per-request option", async () => {
+    h.createReply = OK_PI;
+    await run();
+    expect(h.createOpts).toHaveLength(1);
+    expect(h.createOpts[0]).toMatchObject({ maxNetworkRetries: 0 });
+  });
+  for (const reason of ["late_cancellation_fee", "no_show_fee"]) {
+    it(`${reason}: carries it too`, async () => {
+      h.createReply = OK_PI;
+      h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), charge_reason: reason } };
+      await run();
+      expect(h.createOpts[0]).toMatchObject({ maxNetworkRetries: 0 });
+    });
+  }
+  it("session_payment keeps the SDK default (the option is absent), so the change is fee-only", async () => {
+    h.createReply = OK_PI;
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), charge_reason: "session_payment" } };
+    await run();
+    expect(h.createOpts[0]).not.toHaveProperty("maxNetworkRetries");
+  });
+  it("a connection error on the FIRST send leaves the attempt unclear and blocking, never freed", async () => {
+    h.createError = new Stripe.errors.StripeConnectionError({ message: "synthetic" } as never);
+    await run();
+    expect(h.updates.some((u) => u.status === "failed")).toBe(false);
+    expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(false);
+    const att = { id: ATTEMPT, charge_type: "no_show" as const, status: "pending_stripe", created_at: "2026-11-12T10:00:00.000Z", updated_at: new Date().toISOString(), stripe_payment_intent_id: null, stripe_status: null, charged_at: null, stripe_charge_id: null };
+    const now = new Date();
+    expect(feePrepareBlock([att], "late_cancel", now)).not.toBeNull();
+    expect(feePrepareBlock([att], "no_show", now)).not.toBeNull();
+    expect(feeExecuteBlock({ id: "other", created_at: "2026-11-12T11:00:00.000Z" }, [att], now)).not.toBeNull();
+  });
+  it("negative control: remove the option and the first test fails", async () => {
+    const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
+    expect(src).toMatch(/maxNetworkRetries: 0/);
+    expect(src.match(/maxNetworkRetries/g)).toHaveLength(1);
   });
 });

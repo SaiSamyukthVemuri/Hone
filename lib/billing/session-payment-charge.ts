@@ -1744,6 +1744,12 @@ export async function runSessionPaymentCharge(args: {
       {
         stripeAccount: card.stripe_account_id,
         idempotencyKey,
+        // A manual fee is sent ONCE per call. The SDK default (2 network retries, same key) could send an accepted
+        // request again and see a refusal that says nothing about the first one; a lost response must surface as
+        // unknown instead. Per request, fee reasons only: session payments keep the SDK default.
+        ...(attemptRow.charge_reason === "late_cancellation_fee" || attemptRow.charge_reason === "no_show_fee"
+          ? { maxNetworkRetries: 0 }
+          : {}),
       },
     );
   } catch (err) {
