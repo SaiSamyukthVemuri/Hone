@@ -1,5 +1,5 @@
 -- 0310.down (PROPOSED, local, never applied): put apply_block_machine_identity back to its 0301 definition.
--- Rolling back RE-OPENS the direct Data-API path (any mode text, any unitless profile). Use only if 0310 itself causes harm.
+-- Rolling back removes the contract rule again: any mode text and any unit-less profile are accepted, as in 0301. Use only if 0310 itself causes harm.
 -- The three wrappers and every grant are untouched by 0310, so only the core function is restored; the bytes below are 0301:92-296 verbatim.
 -- Nothing is deleted or rewritten: 0310 wrote no rows, and the receipts it relied on are 0301's own.
 begin;

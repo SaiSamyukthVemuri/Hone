@@ -1,10 +1,8 @@
 -- 0310 (number decided by Sam, 7 Nov; local draft, not applied): validate the saved machine identity against the published mode contract.
 -- LOCAL DRAFT ONLY. Not applied, not authorized to apply. Forward migration: 0301 is applied and frozen.
 --
--- THE FINDING (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP, Low; confirmed on a local stack with a real JWT): every 0301 identity
--- command goes through apply_block_machine_identity, which checked the unit's studio, retirement and profile but only the SHAPE of the
--- mode key. A practitioner calling record_block_machine_identity directly could store any 1-120 character key, and an unregistered
--- profile text with no unit.
+-- THE RULE: the identity core function checked the unit's studio, retirement and profile but only the SHAPE of the mode key, so a
+-- stored mode could be any 1-120 character text and a profile could be stored with no unit.
 --
 -- THE FIX: apply_block_machine_identity (the one function all three wrappers call; their bodies and grants are untouched) now
 --   * refuses a mode that is not in machine_profile_mode_contract for the unit's profile AND version;
@@ -159,11 +157,11 @@ begin
         using errcode = 'check_violation';
     end if;
     v_profile := v_unit_profile;
-    -- THE MODE MUST BE ONE THIS UNIT'S PROFILE VERSION PUBLISHED, AND ITS OPTION MUST BE FITTED (0301 mode-key finding, Vercel
-    -- Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP). Until now the mode was only shape-checked (1-120 characters), so a direct call could
-    -- store a key no model offers. This sits AFTER the same-key receipt replay and the stale-version check above, so a committed
-    -- attempt is still answered from its receipt and never becomes an error, and the lock order is unchanged. It mirrors the 0223
-    -- submission command: the contract row must exist (fail closed), and the unit's own installed options decide an option-gated mode.
+    -- THE MODE MUST BE ONE THIS UNIT'S PROFILE VERSION PUBLISHED, AND ITS OPTION MUST BE FITTED. Only modes the published contract lists
+    -- for the unit's profile and version are accepted, and an option-gated mode only when the option is fitted. This sits AFTER the
+    -- same-key receipt replay and the stale-version check above, so a committed attempt is still answered from its receipt and never
+    -- becomes an error, and the lock order is unchanged. It mirrors the 0223 submission command: the contract row must exist (fail
+    -- closed), and the unit's own installed options decide an option-gated mode.
     if v_mode is not null then
       select c.requires_installed_option into v_requires
         from public.machine_profile_mode_contract c

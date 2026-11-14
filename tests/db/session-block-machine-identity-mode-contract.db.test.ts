@@ -6,15 +6,12 @@ import { adminQuery, asUser, closePool, resolveLocalDbUrl, seedSession, seedStud
 import { expectBlockedOn } from "./helpers/waitlist-concurrency";
 
 // ===========================================================================
-// #1369 / 0301 FOLLOW-UP: THE IDENTITY ENTRYPOINTS VALIDATE THE MODE AGAINST THE PUBLISHED CONTRACT
-// (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
+// THE IDENTITY FUNCTION ACCEPTS ONLY MODES THE PUBLISHED CONTRACT LISTS.
 //
-// `record_block_machine_identity` is granted to `authenticated`, so a direct Data-API call could store any text
-// as a block's `machine_mode_key`. The core `apply_block_machine_identity` now checks the registered unit's
-// profile AND version against `machine_profile_mode_contract`, and the unit's installed options; a unitless
-// profile is limited to the supported legacy identity. Real JWTs throughout. SYNTHETIC PROFILE IDS ONLY.
-//
-// This closes the direct Data-API path; service-role writers are unaffected.
+// The rule: the identity core function `apply_block_machine_identity` accepts only a mode that
+// `machine_profile_mode_contract` lists for the unit's profile AND version, only an option that is fitted on the unit, and a
+// unit-less identity only for the supported legacy machine. Behaviour is exercised through signed-in practitioner sessions.
+// SYNTHETIC PROFILE IDS ONLY. Service-role writers are unaffected.
 // ===========================================================================
 
 const PROFILE = `fixture:mode-contract-${randomUUID().slice(0, 8)}`;
