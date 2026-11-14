@@ -48,6 +48,7 @@ import { PostcareSendButton } from "../PostcareSendButton";
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { ManualFeeChargeCard } from "./ManualFeeChargeCard";
+import { projectFeeEligibility } from "@/lib/billing/manual-fee-card-view";
 import { getManualFeeChargeEligibility } from "@/lib/billing/manual-fee-eligibility";
 import {
   appointmentDisplayStatus,
@@ -781,8 +782,8 @@ export default async function AppointmentDetailPage({
       {showManualFeeCard && manualFeeLateCancel && manualFeeNoShow && (
         <ManualFeeChargeCard
           appointmentId={id}
-          lateCancel={manualFeeLateCancel}
-          noShow={manualFeeNoShow}
+          lateCancel={projectFeeEligibility(manualFeeLateCancel, new Date(), isOwner)}
+          noShow={projectFeeEligibility(manualFeeNoShow, new Date(), isOwner)}
         />
       )}
 
