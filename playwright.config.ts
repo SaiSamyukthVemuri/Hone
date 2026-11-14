@@ -44,12 +44,14 @@ export default defineConfig({
     // HON-62 WebKit proof. Present ONLY when HONE_E2E_WEBKIT=1, which only the
     // non-required `webkit-hon-62` CI job sets, so every other run sees exactly
     // the one chromium project. Scoped to the native time-input spec: WebKit is
-    // the engine behind iPad Safari, where the weekly-hours fields are used.
+    // the engine behind iPad Safari, where the weekly-hours fields are used,
+    // plus the HON-8 machine selector specs (Safari is the likely browser for
+    // the machine selector's save/reload and mode-then-save flows).
     ...(process.env.HONE_E2E_WEBKIT === "1"
       ? [
           {
             name: "webkit-hon-62",
-            testMatch: /(availability-hours-editor|webkit-time-input-key-probe)\.spec\.ts$/,
+            testMatch: /(availability-hours-editor|webkit-time-input-key-probe|machine-one-selector|machine-mode-then-save)\.spec\.ts$/,
             // The app CSP's upgrade-insecure-requests is applied by WebKit to
             // http://localhost (Chromium exempts localhost), so every script,
             // style and font was rewritten to https://localhost:3111 and failed

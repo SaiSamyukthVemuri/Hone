@@ -1267,6 +1267,8 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
   it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
+    expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/machine-one-selector.spec.ts')");
+    expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/machine-mode-then-save.spec.ts')");
     expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
   });
@@ -1290,7 +1292,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
   it("runs only the scoped WebKit projects, which exist only under HONE_E2E_WEBKIT=1", () => {
     const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
     expect(e2e).toHaveLength(2);
-    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006");
+    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/machine-one-selector.spec.ts e2e/machine-mode-then-save.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006");
     expect(e2e[1].run).toBe("npx playwright test --config playwright.payment.config.ts e2e-payment/quick-checkout-payment.spec.ts --project=webkit-cln-006-payment --output=test-results-payment");
     // The payment step reports whatever the first step did, and arms only the
     // WebKit marker: the fake-Stripe markers come from the payment config alone.
@@ -1303,7 +1305,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
     expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
     expect(CONFIG).toContain('use: { ...devices["Desktop Safari"], bypassCSP: true },');
-    expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\/,/);
+    expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\|machine-one-selector\|machine-mode-then-save\)\\\.spec\\\.ts\$\/,/);
     // CLN-006: scoped by file AND by title, so the rest of those specs (which
     // Chromium runs in full) is not repeated here.
     expect(CONFIG).toContain('name: "webkit-cln-006",');
@@ -1412,7 +1414,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(probe).toMatch(/test\.skip\(\(\{ browserName \}\) => browserName !== "webkit"/);
     expect(probe).not.toMatch(/toHaveValue|toBe\("0[78]:/);
     expect(probe).toContain('console.log("HON62-PROBE "');
-    expect(CONFIG).toMatch(/testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\//);
+    expect(CONFIG).toMatch(/testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\|machine-one-selector\|machine-mode-then-save\)\\\.spec\\\.ts\$\//);
   });
 
   it("no required check is weakened or renamed: the aggregator's name and needs are exactly production's, and only webkit-hon-62 is a new job", () => {
