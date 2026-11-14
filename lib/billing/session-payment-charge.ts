@@ -1534,23 +1534,28 @@ export async function runSessionPaymentCharge(args: {
   }
   const card = lineage.card;
 
-  // THE STRIPE CLIENT IS OBTAINED BEFORE THE CLAIM. Building it can fail (a missing or invalid key, a refused placeholder key,
-  // a misconfigured fake). The claim moves the attempt to pending_stripe, and a pending attempt with no PaymentIntent blocks the
-  // appointment, so a client failure AFTER the claim left a pending row that nothing had sent. Failing here leaves the attempt
-  // exactly as it was (ready), claims nothing and writes nothing.
-  let stripe: Stripe;
-  try {
-    stripe = getSessionPaymentStripe();
-  } catch (clientErr) {
-    logInternal("session_payment_stripe_client_unavailable", {
-      attemptId: attemptRow.id,
-      errorClass: thrownErrorClass(clientErr),
-    });
-    return {
-      ok: false,
-      outcome: "blocked",
-      message: STRIPE_UNAVAILABLE_MESSAGE,
-    };
+  // THE STRIPE CLIENT IS OBTAINED BEFORE THE CLAIM, FOR AN UNCLAIMED ATTEMPT ONLY. Building it can fail (a missing or invalid key, a
+  // refused placeholder key, a misconfigured fake). The claim moves the attempt to pending_stripe, and a pending attempt with no
+  // PaymentIntent blocks the appointment, so a client failure AFTER the claim left a pending row that nothing had sent. Failing here
+  // leaves a ready attempt exactly as it was, claims nothing and writes nothing.
+  // An attempt that is ALREADY claimed (pending_stripe, or any state other than ready) is different: an earlier send may have charged,
+  // so it must reach the existing manual-review / reconcile handling below, which needs no client of its own here. It keeps the
+  // original order: the client is built at the create call, after that handling.
+  let stripe: Stripe | undefined;
+  if (attemptRow.status === "ready") {
+    try {
+      stripe = getSessionPaymentStripe();
+    } catch (clientErr) {
+      logInternal("session_payment_stripe_client_unavailable", {
+        attemptId: attemptRow.id,
+        errorClass: thrownErrorClass(clientErr),
+      });
+      return {
+        ok: false,
+        outcome: "blocked",
+        message: STRIPE_UNAVAILABLE_MESSAGE,
+      };
+    }
   }
 
   // A new attempt must pass before claiming, so a country refusal leaves it
@@ -1776,9 +1781,10 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
+  const sender = stripe ?? getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
   try {
-    pi = await stripe.paymentIntents.create(
+    pi = await sender.paymentIntents.create(
       {
         amount: attemptRow.amount_cents,
         currency: attemptRow.currency,
@@ -2006,7 +2012,7 @@ export async function runSessionPaymentCharge(args: {
   // success cannot leave Hone 'failed' while Stripe succeeded.
   if (pi.status === "requires_action") {
     return finalizeRequiresActionPaymentIntent({
-      stripe,
+      stripe: sender,
       pi,
       expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
       stripeAccountId: card.stripe_account_id,

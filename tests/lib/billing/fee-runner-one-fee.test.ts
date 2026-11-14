@@ -572,3 +572,37 @@ describe("the Stripe client is obtained BEFORE the claim: a client failure claim
     expect(h.claimCalls).toBe(1);
   });
 });
+
+describe("an ALREADY-CLAIMED attempt keeps the existing manual-review handling when the client cannot be built", () => {
+  const asRow = (reason: string, status: string) => {
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), charge_reason: reason, status } };
+  };
+  for (const reason of ["no_show_fee", "late_cancellation_fee"]) {
+    it(`${reason}: pending_stripe with no PaymentIntent + client failure -> needs_manual_review, critical alert, no create, no row change`, async () => {
+      asRow(reason, "pending_stripe");
+      h.claimResult = "already_pending";
+      h.clientError = new Error("STRIPE_SECRET_KEY is not set.");
+      h.createReply = OK_PI;
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(h.alerts).toContainEqual({ severity: "critical", event: "session_payment_needs_manual_review" });
+      expect(h.createKeys, "no PaymentIntent create").toHaveLength(0);
+      expect(h.updates, "no row is written").toEqual([]);
+    });
+    it(`${reason}: ready + client failure keeps the blocked result and claims nothing`, async () => {
+      asRow(reason, "ready");
+      h.clientError = new Error("STRIPE_SECRET_KEY is not set.");
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "blocked" });
+      expect(h.claimCalls).toBe(0);
+      expect(h.updates).toEqual([]);
+      expect(h.createKeys).toHaveLength(0);
+    });
+  }
+  it("source pin: the early client build is guarded by status ready", () => {
+    const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
+    const at = src.indexOf("let stripe: Stripe | undefined;");
+    expect(at).toBeGreaterThan(0);
+    expect(src.slice(at, at + 200)).toMatch(/if \(attemptRow\.status === "ready"\)/);
+  });
+});
