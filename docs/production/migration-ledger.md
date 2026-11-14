@@ -87,12 +87,12 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 - **What it is.** `0338_one_manual_fee_per_appointment.sql`: a unique partial index that enforces one manual late-cancel or no-show fee per appointment. The file arrived with #1433, merged as `8a1dfaba1` on 2026-11-14 at 15:02:10Z, after the apply was read back; the apply was therefore migration-first.
 - **Approval.** Sam's own words on 2026-11-14 for this exact package: apply 0338 only, with a plain push and without `--include-all`, provided the seal is unchanged and the immediate pre-apply checks pass. It does not authorize live charging, fee activation or any other migration.
-- **Package.** One plain push, exactly one migration; migration sha256 `1285a2e7…`; sealed package SEAL-SHA256SUMS `22c48e08…`; pinned CLI v2.102.0.
+- **Package.** One plain push, exactly one migration; migration sha256 `1285a2e7…`; sealed package SEAL-SHA256SUMS `22c48e08…`; rehearsed on CLI 2.102.0; applied with the operator's pinned supabase-go build.
 - **Pre-push reads (Part A, 2026-11-14T02:35Z).** PASS: 267 history rows, max `0327`, `0338` absent; no open transactions.
 - **Read-back.** **OVERALL PASS**: 268 history rows, max `0338`, present once; the unique partial index is valid and ready; the public catalog equals the sealed post-0338 fingerprint.
-- **Hosted at that read-back:** 268 rows, max `0338`. `0328` to `0337` are not hosted.
+- **Hosted at that read-back:** 268 rows, max `0338`. By the row count (267 through `0327`, plus `0338` once, equals 268), `0328` to `0337` are not hosted.
 - **Reconcile.** Reconcile ran automatically inside the runner after the apply was verified; it makes no connection.
-- **Release.** #1433 merged afterwards, and #1436 after it. The live manual-fee gate is OFF for every studio; this apply does not activate fees.
+- **Release.** #1433 merged afterwards, and #1436 after it. The live manual-fee gate is OFF for every studio as read at merge on 2026-11-14; this apply does not activate fees.
 - **Declared hosted maximum.** **Not advanced by this record.** `migration-state.json` still declares `0300`. Advancing it is a separate record change that must also declare the `0301`-`0303` and `0328`-`0337` positions; until then the "Hosted (production) migration max" cell below is the declared value, not the real hosted state.
 - **Not captured.** Any server-side apply instant.
 
