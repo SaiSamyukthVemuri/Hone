@@ -37,6 +37,16 @@ describe("pinned-note edit — server action contract", () => {
     expect(editBody()).toMatch(/const \{ practitioner, studio \} = await getCurrentPractitionerWithStudio\(\)/);
   });
 
+  it("asks clin.view_records on the signed-in user's client BEFORE the service-role client is created (the admin update bypasses RLS)", () => {
+    const b = editBody();
+    const ask = b.search(/requirePermission\(await createClient\(\), studio\.id, "clin\.view_records", \{ client: clientId \}\)/);
+    const admin = b.search(/createAdminClient\(\)/);
+    expect(ask).toBeGreaterThan(-1);
+    expect(admin).toBeGreaterThan(-1);
+    expect(ask).toBeLessThan(admin);
+    expect(b).toMatch(/if \(!gate\.allowed\) throw new Error\("Not available to your role\."\)/);
+  });
+
   it("HON-44: a non-owner's update is additionally scoped to cautions they created; the owner's is not", () => {
     const b = editBody();
     expect(b).toMatch(/practitioner\.role !== "owner"[\s\S]*\.eq\("created_by_practitioner_id", practitioner\.id\)/);
