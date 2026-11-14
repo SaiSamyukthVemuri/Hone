@@ -378,7 +378,11 @@ describe("Client Profile — real per-tab query behaviour", () => {
 
   it("PAGE_GATES is exactly the set of keys the client profile page asks, once each", () => {
     const page = readFileSync(path.resolve(__dirname, "../../app/(app)/clients/[id]/page.tsx"), "utf8");
-    const asked = [...page.matchAll(/requirePermission\(\s*\w+,\s*studio\.id,\s*"([a-z_.]+)"/g)].map((m) => m[1]);
+    // The first argument may be any expression (`db`, `await gateClient()`, `await createClient()`), one level of call parentheses included.
+    const asked = [...page.matchAll(/requirePermission\((?:[^()]|\([^()]*\))*?studio\.id,\s*"([a-z_.]+)"/g)].map((m) => m[1]);
+    // Every call must be one this pin can read: a call of a shape it cannot parse would otherwise be invisible to it.
+    const calls = (page.match(/\brequirePermission\(/g) ?? []).length;
+    expect(asked.length, "a requirePermission call on the page has a shape this pin cannot read").toBe(calls);
     // A key asked twice, or a page gate this list does not name, would move every tab's tally without the rule noticing.
     expect([...asked].sort()).toEqual([...PAGE_GATES].sort());
   });
