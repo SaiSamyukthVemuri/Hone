@@ -79,6 +79,8 @@ const FAILURE_CODE_MAX = 100;
 // historical constant/outcome name is kept: renaming is an API change.
 const LIVE_MODE_BLOCKED_MESSAGE =
   "This payment's mode does not match the current deployment mode.";
+const STRIPE_UNAVAILABLE_MESSAGE =
+  "Payments are temporarily unavailable. Nothing was charged and nothing was changed. Try again, or contact Hone support.";
 const NEEDS_MANUAL_REVIEW_MESSAGE =
   "This charge is pending and needs manual review before retrying.";
 // PR #281: Stripe reported success but Hone could not confirm the local
@@ -1532,6 +1534,25 @@ export async function runSessionPaymentCharge(args: {
   }
   const card = lineage.card;
 
+  // THE STRIPE CLIENT IS OBTAINED BEFORE THE CLAIM. Building it can fail (a missing or invalid key, a refused placeholder key,
+  // a misconfigured fake). The claim moves the attempt to pending_stripe, and a pending attempt with no PaymentIntent blocks the
+  // appointment, so a client failure AFTER the claim left a pending row that nothing had sent. Failing here leaves the attempt
+  // exactly as it was (ready), claims nothing and writes nothing.
+  let stripe: Stripe;
+  try {
+    stripe = getSessionPaymentStripe();
+  } catch (clientErr) {
+    logInternal("session_payment_stripe_client_unavailable", {
+      attemptId: attemptRow.id,
+      errorClass: thrownErrorClass(clientErr),
+    });
+    return {
+      ok: false,
+      outcome: "blocked",
+      message: STRIPE_UNAVAILABLE_MESSAGE,
+    };
+  }
+
   // A new attempt must pass before claiming, so a country refusal leaves it
   // ready. An already uncertain attempt must still be reconcilable: provider
   // truth is not a new charge authorization and is handled below unchanged.
@@ -1755,7 +1776,6 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
-  const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
   try {
     pi = await stripe.paymentIntents.create(
