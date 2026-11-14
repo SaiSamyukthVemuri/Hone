@@ -1,0 +1,1 @@
+{"pr":1447,"runtime":true,"migrations":["supabase/migrations/0340_intake_terminal_identity_immutability.sql"],"release_receipt":"01-ops/1447-release-receipt.json"}
