@@ -58,7 +58,10 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
 export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
-export const ENFORCEMENT_SCOPE_LINE = "Enforced in the app once you activate them: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
+// Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet, so this page must not say a setting is
+// enforced. The app is wired for these areas; the database does not check them yet, and nothing is in force until released and activated.
+export const ENFORCEMENT_SCOPE_LINE =
+  "These settings are not in force yet. The app is wired to read them for appointments, clinical viewing, photos and availability, and they take effect only once released and you activate them. The database does not check them yet. Other areas are shown for planning.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
   const v = catalogEnforcementOf(key);

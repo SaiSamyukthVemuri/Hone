@@ -39,3 +39,18 @@ describe("S3 live vs saved", () => {
     for (const r of rows) expect(r.live.state, r.key).toBe("unknown");
   });
 });
+
+describe("Roles copy does not imply a setting is enforced (Team matrix, 14 Nov)", () => {
+  it("the page-level scope line says not in force yet and that the database does not check", async () => {
+    const { ENFORCEMENT_SCOPE_LINE } = await import("@/lib/settings/roles/model");
+    expect(ENFORCEMENT_SCOPE_LINE).toContain("not in force yet");
+    expect(ENFORCEMENT_SCOPE_LINE).toContain("database does not check");
+    expect(ENFORCEMENT_SCOPE_LINE).not.toMatch(/^Enforced/);
+  });
+  it("the deny-only note no longer promises an immediate effect", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    expect(src).not.toContain("takes effect now");
+    expect(src).toContain("It is in force only when the line above says so.");
+  });
+});
