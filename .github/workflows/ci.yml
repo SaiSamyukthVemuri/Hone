@@ -2700,7 +2700,7 @@ jobs:
           key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: WebKit E2E (HON-62 time inputs, CLN-006 dialogs)
-        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006
+        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/machine-one-selector.spec.ts e2e/machine-mode-then-save.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006
         env:
           HONE_E2E_WEBKIT: "1"
           HONE_E2E_FAKE_RESEND: "1"
