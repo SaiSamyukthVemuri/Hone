@@ -87,11 +87,15 @@ describe("0342 staff deactivate through the core (source)", () => {
     expect(b).toContain("'has_upcoming_appointments'");
     expect(b).toMatch(/ap\.status <> 'cancelled' and ap\.starts_at > now\(\)\s+for update/);
   });
-  it("change_staff_role is 0287's body with the lock added and nothing else changed", () => {
+  // Two deliberate differences from 0287's body, and no others: (1) the capacity lock for a practitioner before the membership select (RF-1),
+  // (2) the old practitioner row's private calendar-feed hash is revoked in the statement that deactivates it (S2-4: a later reactivate must not
+  // reopen the old link). The rollback restores 0287 byte for byte.
+  it("change_staff_role is 0287's body plus the lock and the feed revoke, and nothing else changed", () => {
+    expect((fn("change_staff_role").match(/set active = false, calendar_feed_token_hash = null where id = p_membership;/g) ?? []).length).toBe(1);
     const old = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
     const oi = old.indexOf("create or replace function public.change_staff_role(");
     const oldBody = old.slice(oi, old.indexOf("\n$$;", oi) + 4).replace(/--.*$/gm, "");
-    const strip = (t: string) => t.replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
+    const strip = (t: string) => t.replace(/, calendar_feed_token_hash = null/, "").replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
     expect(strip(fn("change_staff_role"))).toBe(strip(oldBody));
   });
   it("one audit row per command, with the reason, and deactivation flips only the active flag (plus the feed revoke, pinned below)", () => {

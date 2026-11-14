@@ -85,6 +85,22 @@ describe("deactivate_staff_member", () => {
     expect(await feed(m.practitionerId)).toBeNull();
   });
 
+  it("S2-4: moving a practitioner to receptionist revokes the old practitioner row's calendar feed too, so restoring that row never reopens the old link", async () => {
+    const s = await seedStudio("d342g");
+    await openGate(s.studioId);
+    const m = await seedMember(s, "g1");
+    const hash = "c".repeat(64);
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, hash]);
+    const feed = async () => (await adminQuery("select calendar_feed_token_hash h, active from public.practitioners where id=$1", [m.practitionerId])).rows[0];
+    // Refused (self, not the owner's own row) leaves it alone.
+    expect(await call(m.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ ok: false });
+    expect(await feed()).toMatchObject({ h: hash, active: true });
+    expect(await call(s.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ ok: true });
+    expect(await feed()).toMatchObject({ h: null, active: false });
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ code: "other_membership_active" });
+    expect(await feed()).toMatchObject({ h: null });
+  });
+
   it("deactivates a receptionist (a path that did not exist), stamping deactivated_at", async () => {
     const s = await seedStudio("d342r");
     const d = await seedDesk(s, "d2");

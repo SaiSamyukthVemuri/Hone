@@ -252,7 +252,9 @@ begin
     if v_upcoming > 0 then
       return public.perm_fail('has_upcoming_appointments', null, null, null, jsonb_build_object('count', v_upcoming));
     end if;
-    update public.practitioners set active = false where id = p_membership;
+    -- S2-4: same revoke as deactivate_staff_member. The old practitioner row stays inactive, but reactivate_staff_member could restore it later and
+    -- that would reopen the old private calendar-feed link. Cleared in the statement that deactivates it.
+    update public.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership;
     select r.id into v_new_id from public.studio_receptionists r where r.studio_id = p_studio and v_user is not null and r.user_id = v_user for update;
     if v_new_id is not null then
       update public.studio_receptionists set active = true, deactivated_at = null where id = v_new_id;
