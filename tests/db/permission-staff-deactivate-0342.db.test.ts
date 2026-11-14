@@ -35,11 +35,21 @@ async function seedDesk(s: SeededStudio, label: string) {
 }
 
 afterAll(async () => {
-  await setPolicy("block");
+  await setPolicy("keep"); // 0342's shipped value
   await closePool();
 });
 
 describe("deactivate_staff_member", () => {
+  it("ships with the policy 'keep' (today's behaviour): a practitioner with upcoming appointments is removed, the count is reported, the appointments stay", async () => {
+    expect((await adminQuery("select public.perm_upcoming_policy() p", [])).rows[0].p).toBe("keep"); // before any test changes it
+    const s = await seedStudio("d342z");
+    const m = await seedMember(s, "dz");
+    await seedAppt(s, m.practitionerId);
+    await seedAppt(s, m.practitionerId);
+    expect(await deact(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, upcoming: 2, active: false });
+    expect((await adminQuery("select count(*)::int n from public.appointments where studio_id=$1 and practitioner_id=$2", [s.studioId, m.practitionerId])).rows[0].n).toBe(2);
+    expect((await audit(s.studioId, "staff_deactivated"))[0].after).toMatchObject({ active: false, upcoming_kept: 2 });
+  });
   it("deactivates a practitioner, audits it with the reason, deletes nothing, and leaves another studio alone", async () => {
     await setPolicy("block");
     const s = await seedStudio("d342a");
@@ -111,9 +121,9 @@ describe("deactivate_staff_member", () => {
     await setPolicy("reassign");
     expect(await deact(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ code: "reassign_required", count: 1 });
     await setPolicy("keep");
-    expect(await deact(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true });
+    expect(await deact(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, upcoming: 1 });
     expect((await adminQuery("select count(*)::int n from public.appointments where studio_id=$1 and practitioner_id=$2", [s.studioId, m.practitionerId])).rows[0].n).toBe(1);
-    await setPolicy("block");
+    await setPolicy("keep");
   });
   it("RF-1: an appointment inserted by a concurrent session AFTER the command started is not missed", async () => {
     await setPolicy("block");

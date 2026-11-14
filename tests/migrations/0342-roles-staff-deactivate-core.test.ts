@@ -70,11 +70,15 @@ describe("0342 staff deactivate through the core (source)", () => {
     }
     expect(fn("reactivate_staff_member")).toContain("acquire_studio_capacity_lock(p_studio)");
   });
-  it("the upcoming-appointments rule is ONE switch: block ships; keep skips the count; reassign refuses with its own code", () => {
-    expect(fn("perm_upcoming_policy")).toMatch(/select 'block'::text/);
+  it("the upcoming-appointments rule is ONE switch: keep ships and reports the count; block and reassign refuse with their own codes", () => {
+    // Sam, while away: preserve current production behaviour for unanswered product decisions. Removal always works today, so 'keep' ships.
+    expect(fn("perm_upcoming_policy")).toMatch(/select 'keep'::text/);
     const b = fn("deactivate_staff_member");
     expect(b).toContain("public.perm_upcoming_policy()");
-    expect(b).toMatch(/if v_policy <> 'keep' then/);
+    expect(b).toMatch(/if v_upcoming > 0 and v_policy <> 'keep' then/);
+    // the count is taken under EVERY policy (keep reports it), and the success answer carries it
+    expect(b.indexOf("select count(*) into v_upcoming")).toBeLessThan(b.indexOf("if v_upcoming > 0 and v_policy <> 'keep' then"));
+    expect(b).toContain("'upcoming', v_upcoming");
     expect(b).toContain("'reassign_required'");
     expect(b).toContain("'has_upcoming_appointments'");
     expect(b).toMatch(/ap\.status <> 'cancelled' and ap\.starts_at > now\(\)\s+for update/);
@@ -98,5 +102,24 @@ describe("0342 staff deactivate through the core (source)", () => {
     }
     const grants = [...code().matchAll(/grant execute on function public\.(\w+)\([^)]*\) to (\w+);/g)].map((m) => `${m[1]}->${m[2]}`);
     expect(grants).toEqual(["deactivate_staff_member->authenticated", "reactivate_staff_member->authenticated", "change_staff_role->authenticated"]);
+  });
+  it("the rollback exists, restores 0287's change_staff_role and five-kind CHECK, drops the three new functions and touches no row", () => {
+    const down = readFileSync("supabase/rollbacks/0342_roles_staff_deactivate_core.down.sql", "utf8");
+    const dcode = down.replace(/--.*$/gm, "");
+    expect(dcode).toMatch(/^\s*begin;\s*set local lock_timeout = '5s';/);
+    expect(dcode.trim().endsWith("commit;")).toBe(true);
+    for (const f of ["deactivate_staff_member(uuid, uuid, text, text)", "reactivate_staff_member(uuid, uuid, text, text)", "perm_upcoming_policy()"]) {
+      expect(dcode).toContain(`drop function if exists public.${f};`);
+    }
+    expect(dcode).toMatch(/check \(kind in \('role_permissions_saved', 'defaults_adopted', 'role_reset', 'staff_role_changed', 'permissions_activated'\)\) not valid;/);
+    // outside the copied 0287 function, the rollback touches no row and drops no table
+    const outside = dcode.slice(0, dcode.indexOf("create or replace function public.change_staff_role("));
+    expect(outside).not.toMatch(/\b(delete from|truncate|update public|drop table)\b/i);
+    // change_staff_role is 0287's body, byte for byte
+    const old = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+    const oi = old.indexOf("create or replace function public.change_staff_role(");
+    const oldBody = old.slice(oi, old.indexOf("\n$$;", oi) + 4);
+    expect(down).toContain(oldBody);
+    expect(dcode).toContain("grant execute on function public.change_staff_role(uuid, uuid, text, text, text) to authenticated;");
   });
 });
