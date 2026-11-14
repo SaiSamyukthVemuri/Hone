@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 267,
-    "last": "0332_permission_activation_hash_includes_gates.sql",
-    "sha256": "3453616928b55379368379218395bb3f878c5bcce816cbfa6df15df5f948a029"
+    "count": 268,
+    "last": "0349_pinned_note_edit_key_gate.sql",
+    "sha256": "7423b07221f5b85fcd8fd12aee086295031d35d9319b0d31c2257cc32d980fd0"
   },
   "public": {
     "tables": [
