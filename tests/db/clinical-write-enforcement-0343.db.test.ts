@@ -113,7 +113,9 @@ for (const t of TABLES) {
     it("an inactive practitioner and another studio's member are refused", async () => {
       const f = await seed(`w-x-${t.table.slice(0, 7)}`);
       await adminQuery("update public.practitioners set active=false where id=$1", [f.member.practitionerId]);
-      expect(await attempt(f.member.userId, t.insert(f, "member")), "inactive").toMatch(/row-level security|permission denied/i);
+      // refused by RLS or earlier by the studio-derivation trigger (an inactive user cannot see the client); either way nothing is written
+      expect(await attempt(f.member.userId, t.insert(f, "member")), "inactive").not.toBeNull();
+      expect(await count(t, f), "inactive wrote a row").toBe(0);
       const g = await seed(`w-y-${t.table.slice(0, 7)}`);
       const foreign = await seed(`w-z-${t.table.slice(0, 7)}`);
       expect(await attempt(foreign.member.userId, t.insert(g, "member")), "foreign studio").not.toBeNull();
