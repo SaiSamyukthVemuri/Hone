@@ -1,11 +1,10 @@
--- 0345 (Untangle M1-04): session_audit rows are written only by the governed session commands. A studio member has no direct INSERT.
+-- 0345: session_audit rows are written only by the governed session commands. A studio member has no direct INSERT.
 -- PRIVILEGE ONLY: one policy dropped, INSERT revoked. No table, column, index, function, trigger or data is created, changed or read.
 -- NOT APPLIED. Number 0345 claimed by OPS. Hosted apply needs the owner's per-change approval.
 --
--- THE RULE. The change history of a session is evidence. It is written by the database commands that make the change (edit_session_started_at,
--- 0167; soft_delete_session_area, 0123; finalize_session, 0119, retired by 0159), as the function owner, in the same transaction as the change
--- it records. A member's own session has no business writing history rows by hand: the row's field, old and new values and its edited_at were all
--- the writer's to choose, so a hand-written row is indistinguishable from a recorded one.
+-- THE RULE. A session's change history is written only by the governed session commands (edit_session_started_at, 0167; soft_delete_session_area,
+-- 0123; finalize_session, 0119, retired by 0159), as the function owner, in the same transaction as the change they record. A member has no
+-- direct INSERT.
 --
 -- WHAT THIS CHANGES
 --   * drops the 0008/0117 member INSERT policy "session_audit_studio_member_insert";

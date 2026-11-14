@@ -1,5 +1,5 @@
 -- Rollback of 0345: restore the member INSERT policy exactly as 0117 defined it, and the table INSERT grant to authenticated.
--- Reversing this re-opens hand-written session_audit rows (free field, values and edited_at) to any active member of the studio.
+-- Reversing this restores direct INSERT on session_audit for any active member of the studio.
 -- Only `authenticated` gets its grant back: anon and PUBLIC were revoked by 0336 where it is applied, and the policy below can never pass for them
 -- (it needs auth.uid()), so they are not re-granted. No column-level grant existed before 0345, so none is recreated.
 begin;

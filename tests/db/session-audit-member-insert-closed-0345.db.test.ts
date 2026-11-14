@@ -12,7 +12,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// 0345 (Untangle M1-04): a studio member has no direct INSERT into session_audit. Rows are written only by the governed session commands, which
+// 0345: a studio member has no direct INSERT into session_audit. Rows are written only by the governed session commands, which
 // run as the table owner. Synthetic placeholder values only; no clinical text.
 
 let A: SeededStudio;
@@ -59,14 +59,14 @@ describe("0345: a member cannot write a session_audit row by hand", () => {
     expect(await rows(sessionA)).toBe(before);
   });
 
-  it("a BACKDATED row is refused (edited_at was the writer's to choose)", async () => {
+  it("an insert with an explicit edited_at value is refused", async () => {
     const before = await rows(sessionA);
     await expect(insertAudit(A.userId, sessionA, A.practitionerId, "2020-01-01T00:00:00Z")).rejects.toThrow(DENIED);
     expect(await rows(sessionA)).toBe(before);
     expect((await adminQuery(`select count(*)::int n from public.session_audit where session_id=$1 and edited_at < '2021-01-01'`, [sessionA])).rows[0].n).toBe(0);
   });
 
-  it("a row attributed to a colleague is refused too (attribution was never the only problem)", async () => {
+  it("an insert naming another practitioner is refused too", async () => {
     await expect(insertAudit(A.userId, sessionA, colleague.practitionerId)).rejects.toThrow(DENIED);
   });
 

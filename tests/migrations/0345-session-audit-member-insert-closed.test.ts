@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
 
-// 0345 (Untangle M1-04) source contract. The behaviour is proved against a database in tests/db/session-audit-member-insert-closed-0345.db.test.ts.
+// 0345 source contract. The behaviour is proved against a database in tests/db/session-audit-member-insert-closed-0345.db.test.ts.
 const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0345")}`, "utf8");
 const down = () => readFileSync(`supabase/rollbacks/${fileForVersion("0345").replace(/\.sql$/, ".down.sql")}`, "utf8");
 const code = (t: string) => t.replace(/--[^\n]*/g, "");
