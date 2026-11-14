@@ -130,6 +130,22 @@ describe("0287 activation rule: source contract", () => {
     expect(rows.map((r) => r.key)).not.toContain("appt.complete");
   });
 
+  it("every key the catalog marks deny_only is a NARROW release; no observe or not_yet key is released (AH1)", async () => {
+    const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
+    const seed = code.match(/insert into public\.permission_key_release[\s\S]*?;/)![0];
+    const narrow = [...seed.matchAll(/\('([a-z_.]+)', null, '[^']+', 'narrow'\)/g)].map((m) => m[1]).sort();
+    const all = [...seed.matchAll(/\('([a-z_.]+)', null, '[^']+', '(?:full|narrow)'\)/g)].map((m) => m[1]);
+    const keys = (CATALOG as readonly { key: string }[]).map((d) => d.key);
+    const denyOnly = keys.filter((k) => enforcementOf(k) === "deny_only").sort();
+    // vacuous before the enforcement branch sets the field; the literal list above pins the six either way
+    expect(denyOnly.filter((k) => !narrow.includes(k))).toEqual([]);
+    // clin.edit_records is seeded PENDING ahead of the catalog flip (decision, OPS 4 Nov): its enforcement is the held 0289 guard plus the app gates,
+    // and the catalog keeps it not_yet until the 0289 proof and reviews. The flip commit removes this carve-out.
+    const RELEASED_AHEAD_OF_FLIP = ["clin.edit_records"];
+    expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)) && !RELEASED_AHEAD_OF_FLIP.includes(k))).toEqual([]);
+    for (const k of RELEASED_AHEAD_OF_FLIP) expect(all, `${k} is no longer seeded: remove it from RELEASED_AHEAD_OF_FLIP`).toContain(k);
+  });
+
   it("AZ1: narrowing never waits for activation; the FULL branch lets a value below the snapshot keep applying (a narrow-to-full upgrade cannot re-widen)", () => {
     const base = code.slice(code.indexOf("create or replace function public.perm_base_scope"), code.indexOf("create or replace function public.perm_scope_source"));
     const full = base.slice(base.indexOf("if v_stored is not null and (v_active or v_stored_at >= v_rel.released_at)"));

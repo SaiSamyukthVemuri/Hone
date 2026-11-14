@@ -314,9 +314,15 @@ export async function SecondaryStack({
       <div data-testid="dashboard-lower-row" className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <div className="flex min-w-0 flex-col gap-4">
         {!isOwner && personalCharting !== null && (
-          <PersonalChartingCard
-            metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
-          />
+          personalCharting !== CHECK_UNAVAILABLE && personalCharting.notAvailable ? (
+            <p role="status" data-testid="personal-charting-not-available" className="text-sm text-neutral-500">
+              Charting timeliness is not available to your role.
+            </p>
+          ) : (
+            <PersonalChartingCard
+              metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
+            />
+          )
         )}
           {isOwner && practiceMetrics && <ChartedWithin24hCard metrics={practiceMetrics} />}
         </div>
@@ -641,6 +647,8 @@ async function resolveNeedsAttentionInput({
     assistant: followUpAssistant,
     intakesAwaitingReview,
     todo: dashboardTodo,
+    // Roles R4 (RO-1): a viewer without clin.view_records is told so; an empty list is never presented as "all caught up".
+    notAvailableToRole: followUpAssistant.notAvailable === true || clientsNeedingAttention.notAvailable === true,
     unavailableChecks: [
       ...(intakesUnavailable ? [UNAVAILABLE_INTAKE_REVIEW] : []),
       ...(paymentUnavailable ? [UNAVAILABLE_PAYMENT_SETUP] : []),
@@ -706,6 +714,9 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     });
     const unpaid = unpaidRead?.ok ? { windowDays: unpaidRead.windowDays, notReturned: unpaidRead.notReturned, unlisted: unpaidRead.unlisted } : null;
     const countKnown = !model.unavailableChecks.some((c) => !STUDIO_ONLY_CHECKS.has(c));
+    // Roles R4 (RO-1): a restricted viewer's records follow-up is not available. No dismissal is read or applied, so nothing a dismissal could
+    // reveal (a hidden or restored records reminder, a count of them) can reach this render.
+    if (model.notAvailableToRole) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };
     // Non-owners have no dismissals, no Dismissed view and no Dismiss: their list is the model as built.
     if (!props.isOwner) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: false, dismissalsUnavailable: false, countKnown };
     // Gate OFF: nothing is dismissed, nothing is read, nothing is called.
@@ -747,7 +758,10 @@ async function HeadingCountValue(props: OwnerNeedsInputs) {
     const v = await resolveVisibleNeeds(props);
     const { clients, items } = headingCount(v.shown);
     // A check that feeds the client cards could not run: no number, never "0".
-    text = v.countKnown ? `${clients} ${clients === 1 ? "client" : "clients"}, ${items} ${items === 1 ? "item" : "items"}` : "Unavailable";
+    // Roles R4 (RO-1): a viewer without clin.view_records is never given a number that could read as "nothing needs review" (or count records follow-up).
+    text = v.shown.notAvailableToRole
+      ? "Not available to your role"
+      : v.countKnown ? `${clients} ${clients === 1 ? "client" : "clients"}, ${items} ${items === 1 ? "item" : "items"}` : "Unavailable";
   } catch {
     text = "Unavailable";
   }

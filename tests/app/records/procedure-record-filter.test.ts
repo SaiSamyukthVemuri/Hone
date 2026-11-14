@@ -161,10 +161,10 @@ describe("query layer: filter shape and scoping", () => {
     // correction never appears in Procedure Records / the inspection print.
     const fn = QUERIES.slice(
       QUERIES.indexOf("export async function getClientProcedureRecords"),
-      QUERIES.indexOf("export async function getClientProcedureRecords") + 900,
+      QUERIES.indexOf("export async function getClientProcedureRecords") + 1300,
     );
     expect(fn).toMatch(/\.from\("sessions"\)/);
-    expect(fn).toMatch(/\.eq\("studio_id", studioId\)[\s\S]{0,400}\.is\("deleted_at", null\)/);
+    expect(fn).toMatch(/\.eq\("studio_id", studioId\)[\s\S]{0,800}\.is\("deleted_at", null\)/);
   });
 
   it("PR #318: unfiltered procedures print shows a truncation notice at the cap", () => {

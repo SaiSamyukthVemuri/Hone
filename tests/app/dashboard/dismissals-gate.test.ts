@@ -120,7 +120,7 @@ describe("source pins: gate OFF never calls the three commands", () => {
   it("the panel only offers Dismiss, the Dismissed view and the note when the gate says so", () => {
     const panel = read("app/(app)/dashboard/needs-attention-panel.tsx");
     expect(panel).toMatch(/enabled: isOwner && dismissalsEnabled && !dismissalsUnavailable/);
-    expect(panel).toMatch(/const dismissedView = isOwner && dismissalsEnabled \?/);
+    expect(panel).toMatch(/const dismissedView = isOwner && dismissalsEnabled && !needs\.notAvailableToRole \?/); // RO-1: also withheld for a restricted viewer
     expect(panel).toMatch(/const dismissalsNote = isOwner && dismissalsEnabled && dismissalsUnavailable \?/);
     expect(panel).toMatch(/dismissalsEnabled = false,/);
   });

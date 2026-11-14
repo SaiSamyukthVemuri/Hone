@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -5,6 +6,7 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import { intakeForViewer, type IntakeStatusOnly } from "@/lib/intake/status-only";
 import { practitionerIntakeReviewHref } from "@/lib/dashboard/today-intake";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
@@ -110,6 +112,13 @@ export default async function AppointmentDetailPage({
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
+  // Roles engine (0287): the aftercare section (what is sent and its state) needs clin.view_aftercare. Existing-snapshot basis:
+  // every active practitioner (unchanged). Sending is a separate key (appt.aftercare_send).
+  const canViewAftercare = (await requirePermission(supabase, studio.id, "clin.view_aftercare", { appointment: id })).allowed;
+  // The prior treatment, the linked session and the clinical-notes summary are treatment RECORDS: without clin.view_records they are not read at all.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records", { appointment: id })).allowed;
+  // The briefing shows intake STATUS only; without clin.view_intake the row is carried without its answers.
+  const canViewIntake = (await requirePermission(supabase, studio.id, "clin.view_intake", { appointment: id })).allowed;
 
   const { data, error } = await supabase
     .from("appointments")
@@ -257,7 +266,7 @@ export default async function AppointmentDetailPage({
   // already used elsewhere in the app. No new RPCs, no mutations.
   let pinnedNotes: Awaited<ReturnType<typeof getPinnedNotesForClient>> = [];
   let tags: ClientTag[] = [];
-  let intake: ClientIntakeForm | null = null;
+  let intake: IntakeStatusOnly | null = null;
   let treatmentPlans: Awaited<
     ReturnType<typeof getTreatmentPlansForClient>
   > = [];
@@ -319,7 +328,8 @@ export default async function AppointmentDetailPage({
       getPinnedNotesForClient(studio.id, clientId),
       getClientTags(studio.id, clientId),
       getLatestIntakeForClient(studio.id, clientId),
-      getTreatmentPlansForClient(studio.id, clientId),
+      // Plans carry progress counted from treatment sessions and minutes: clin.view_records (Codex).
+      canViewRecords ? getTreatmentPlansForClient(studio.id, clientId) : Promise.resolve([] as Awaited<ReturnType<typeof getTreatmentPlansForClient>>),
       // THE newest charted treatment before this appointment. Same selector,
       // same batched block read and same fail-soft contract as the charting
       // screen and /sessions/new, this page just has to fetch its own bounded
@@ -329,7 +339,7 @@ export default async function AppointmentDetailPage({
       // Two round-trips, independent of how long the client's history is, how
       // many areas each block treats and how many passes each area carries. It
       // replaces three: newest row → that row's blocks → structured areas.
-      loadLastChartedTreatmentForClient({
+      !canViewRecords ? null : loadLastChartedTreatmentForClient({
         studioId: studio.id,
         clientId,
         // Strictly before this appointment. Not now(), which would let a
@@ -347,7 +357,7 @@ export default async function AppointmentDetailPage({
       // returns the most recent linked session in case future flows
       // ever produce more than one (today the action treats the FK
       // as effectively one-to-one per coalesce window).
-      supabase
+      !canViewRecords ? null : supabase
         .from("sessions")
         .select("id, started_at, modality")
         .eq("studio_id", studio.id)
@@ -364,19 +374,19 @@ export default async function AppointmentDetailPage({
       // electrolysis and laser visits where the card goes on to render
       // nothing. Same helper the client profile calls: no new query shape, no
       // second note model, no write path.
-      getClinicalNotesSummary(clientId),
+      !canViewRecords ? null : getClinicalNotesSummary(clientId),
     ]);
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;
-    intake = intakeRes;
+    intake = intakeForViewer(intakeRes, canViewIntake);
     treatmentPlans = plansRes;
-    if (linkedSessionRes.error) {
+    if (linkedSessionRes?.error) {
       throw new Error(
-        `Failed to load linked session: ${dbErrorCode(linkedSessionRes.error)}`,
+        `Failed to load linked session: ${dbErrorCode(linkedSessionRes!.error)}`,
       );
     }
-    linkedSession = (linkedSessionRes.data ?? null) as
+    linkedSession = (linkedSessionRes?.data ?? null) as
       | Pick<Session, "id" | "started_at" | "modality">
       | null;
 
@@ -390,9 +400,9 @@ export default async function AppointmentDetailPage({
     //
     // Structured areas arrive inside the same block select the loader already
     // performs, so the old attachStructuredAreas round-trip is gone.
-    prepUnavailable = lastTreatment.unavailable;
-    prepNarrative = lastTreatment.narrative;
-    if (lastTreatment.treatment) {
+    prepUnavailable = lastTreatment?.unavailable ?? false;
+    if (lastTreatment) prepNarrative = lastTreatment.narrative;
+    if (lastTreatment?.treatment) {
       const selected = lastTreatment.treatment;
       prepMemory = buildAppointmentPrepMemory(
         prepMemoryInputFromTreatment(selected),
@@ -454,6 +464,7 @@ export default async function AppointmentDetailPage({
       />
 
       <LastTreatmentSection
+        notAvailableToRole={!canViewRecords}
         memory={prepMemory}
         unavailable={prepUnavailable}
         narrative={prepNarrative}
@@ -490,18 +501,29 @@ export default async function AppointmentDetailPage({
           treatment (the same product fact the postcare section below encodes),
           so charting must remain reachable rather than being replaced by the
           notes CTA. Read-only; the write path is unchanged. */}
-      {!isCancelled && (
+      {!isCancelled && canViewRecords && (
         <ConsultationNotesCard
           clientId={data.client?.id ?? null}
           isConsultation={data.service?.modality === "consultation"}
           summary={clinicalNotesSummary}
         />
       )}
+      {!isCancelled && !canViewRecords && (
+        <p role="status" data-testid="consultation-notes-not-available" className="text-sm text-neutral-500">
+          Consultation notes are not available to your role.
+        </p>
+      )}
 
-      <TreatmentPlanCard
-        plans={activePlans}
-        clientId={data.client?.id ?? null}
-      />
+      {canViewRecords ? (
+        <TreatmentPlanCard
+          plans={activePlans}
+          clientId={data.client?.id ?? null}
+        />
+      ) : (
+        <p role="status" data-testid="treatment-plans-not-available" className="text-sm text-neutral-500">
+          Treatment plans are not available to your role.
+        </p>
+      )}
 
       {typedStatus === "confirmed" && (
         <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
@@ -570,7 +592,7 @@ export default async function AppointmentDetailPage({
           renders a clear "Postcare unavailable: no client email"
           state instead of vanishing when the client has no EMAIL. (A deleted
           client row is a different case and still renders nothing.) */}
-      {data.client && (
+      {data.client && canViewAftercare && (
         <PostcareSection
           clientEmail={data.client?.email ?? null}
           appointmentStatus={typedStatus}
@@ -935,7 +957,7 @@ function ClientBriefingCard({
 }: {
   client: ClientBriefing | null;
   tags: ClientTag[];
-  intake: ClientIntakeForm | null;
+  intake: IntakeStatusOnly | null;
   fitzpatrick: string | null;
   appointmentId: string;
 }) {
@@ -1063,7 +1085,7 @@ function IntakeStatusLine({
   intake,
   clientId,
 }: {
-  intake: ClientIntakeForm | null;
+  intake: IntakeStatusOnly | null;
   clientId: string;
 }) {
   // Intake color convention (see app/(app)/dashboard/page.tsx):
@@ -1134,11 +1156,14 @@ function IntakeStatusLine({
 // not", and delegates everything else to the shared card.
 // ---------------------------------------------------------------------------
 function LastTreatmentSection({
+  notAvailableToRole,
   memory,
   unavailable,
   narrative,
   clientId,
 }: {
+  // The viewer lacks clin.view_records: nothing was read, so this must NOT say "no previous treatment".
+  notAvailableToRole: boolean;
   memory: AppointmentPrepMemory | null;
   unavailable: boolean;
   narrative: AppointmentPrepLoad["narrative"];
@@ -1155,6 +1180,13 @@ function LastTreatmentSection({
   // out the answer. `owned` is already rendered by the treatment card, so only
   // `external` is painted here, always attributed, never implied to belong to
   // the treatment above.
+  if (notAvailableToRole) {
+    return (
+      <p role="status" data-testid="last-treatment-not-available" className="text-sm text-neutral-500">
+        Last treatment is not available to your role.
+      </p>
+    );
+  }
   const { external } = buildPrepProvenanceModel({
     selected: memory
       ? { sessionId: memory.sessionId, startedAt: memory.startedAt }

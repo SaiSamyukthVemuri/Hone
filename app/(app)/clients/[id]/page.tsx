@@ -8,6 +8,8 @@ import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
+import { contained, gateClient, once } from "@/lib/permissions/ask-permission";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
@@ -66,6 +68,7 @@ import {
   getLatestSubmittedOrReviewedIntakeForClient,
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
+import { intakeForViewer } from "@/lib/intake/status-only";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { questionnaireForRow } from "@/lib/intake/questionnaire";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
@@ -264,12 +267,39 @@ export default async function ClientCheatSheetPage({
   // Sam's ruling: a non-owner's profile payload carries no client price, session
   // price or service price. The loaders are told, and do not fetch them.
   const isOwner = canViewClientBilling(practitioner.role);
+  // Roles engine (0287): clin.view_records covers EVERY treatment-record read on this profile. Off: no session, entry, block, imported
+  // treatment memory, treatment time or clinical-notes row is read, so every card derived from them is empty (never a stale or partial record).
+  // clin.view_intake covers the intake ANSWERS and everything derived from them (self-reported Fitzpatrick); status-only access is a separate key.
+  // Started here (not awaited) so it adds no serial stage; each intake read below waits on it.
+  // Each gate is CONTAINED (a rejecting check is "not allowed", never a crashed page) and is asked only AFTER the client has resolved
+  // for this studio: no gate runs, and no profile work happens, for a client this practitioner must not serve.
+  const recordsGate = once(() =>
+    contained("clin.view_records", () =>
+      gateClient()
+        .then((db) => requirePermission(db, studio.id, "clin.view_records", { client: id }))
+        .then((d) => d.allowed),
+    ),
+  );
   const priceReads = { includePrices: isOwner };
-  const data = await getClientById(studio.id, id, priceReads);
+  const data = await getClientById(studio.id, id, { ...priceReads, includeSessions: recordsGate });
 
   if (!data) {
     notFound();
   }
+  // clin.view_intake covers the intake ANSWERS and everything derived from them; clin.view_aftercare guards the postcare send times and attempts
+  // on the Sessions tab. Started here, un-awaited, so neither adds a serial stage: each read below waits on its own promise.
+  const canViewIntakePromise = contained("clin.view_intake", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "clin.view_intake", { client: id }))
+      .then((d) => d.allowed),
+  );
+  const canViewAftercarePromise = contained("clin.view_aftercare", () =>
+    gateClient()
+      .then((db) => requirePermission(db, studio.id, "clin.view_aftercare", { client: id }))
+      .then((d) => d.allowed),
+  );
+  // The decision the sessions gate already gave inside getClientById (no second await).
+  const canViewRecords = data.sessionsAllowed;
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
   // HON-58: ONE display identity for the whole profile (preferred name alone when set; else the stored name, labelled Name on file).
@@ -322,13 +352,15 @@ export default async function ClientCheatSheetPage({
   const needsConsent = isOverview || isMessages || isOwnerBilling;
   // Card on file is billing: an owner reads it on Billing, nobody else reads it at all.
   const needsCard = isOwnerBilling;
-  const needsSessionsData = activeTab === "sessions";
-  const needsTreatmentPlans = activeTab === "treatment";
+  const needsSessionsData = activeTab === "sessions" && canViewRecords;
+  // Plan progress is counted from treatment sessions and logged minutes, so plans follow the same key (never shown as 0 minutes).
+  const needsTreatmentPlans = activeTab === "treatment" && canViewRecords;
   const needsPersonalNotes = activeTab === "notes";
   // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
   const needsPinnedNotes = isOverview || activeTab === "notes";
   const needsPortalMessageReplies = activeTab === "messages";
-  const needsConsultationNotes = activeTab === "treatment";
+  // Consultation and skin/hair clinical-note history are treatment records: clin.view_records (Codex #1341). Off: not read, not rendered.
+  const needsConsultationNotes = activeTab === "treatment" && canViewRecords;
 
   const portalLoginUrl = studio.slug
     ? `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`
@@ -376,17 +408,21 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     overviewVisitAppointments,
+    canViewAftercare,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
     // on the Sessions tab.
     needsSessionsData
-      ? getAppointmentsForClientProfile(studio.id, client.id)
+      ? canViewAftercarePromise.then((includeAftercare) => getAppointmentsForClientProfile(studio.id, client.id, { includeAftercare }))
       : Promise.resolve([] as Awaited<ReturnType<typeof getAppointmentsForClientProfile>>),
     // Rendered outside every tab block, so always needed.
     getActiveServices(studio.id, priceReads),
     needsIntake
-      ? getLatestIntakeForClient(studio.id, client.id)
+      ? Promise.all([getLatestIntakeForClient(studio.id, client.id), canViewIntakePromise]).then(([row, ok]) =>
+          // Without clin.view_intake only the status-only allow-list survives (id, status, started/submitted/reviewed timestamps).
+          intakeForViewer(row, ok),
+        )
       : Promise.resolve(null),
     // Portal access hints (last link sent / last sign-in). Overview card.
     isMessages
@@ -399,7 +435,7 @@ export default async function ClientCheatSheetPage({
     // practitioner-confirmed value lives on client.fitzpatrick_type and is
     // never overwritten by this derived display. Overview card.
     isOverview
-      ? getLatestSubmittedOrReviewedIntakeForClient(studio.id, client.id)
+      ? canViewIntakePromise.then((ok) => (ok ? getLatestSubmittedOrReviewedIntakeForClient(studio.id, client.id) : null))
       : Promise.resolve(null),
     needsPinnedNotes
       ? getPinnedNotesForClient(studio.id, client.id)
@@ -448,7 +484,7 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve(null),
     // PR #259: read-only imported treatment memory for the Before Today
     // briefing. Overview card.
-    isOverview
+    isOverview && canViewRecords
       ? getImportedTreatmentMemoriesForClient(studio.id, client.id, {
           limit: BEFORE_TODAY_IMPORTED_CAP,
         })
@@ -463,6 +499,7 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
+    canViewAftercarePromise,
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -655,7 +692,7 @@ export default async function ClientCheatSheetPage({
 
   await Promise.all([
     (async () => {
-      if (isOverview) {
+      if (isOverview && canViewRecords) {
         clinicalNotesSummary = await getClinicalNotesSummary(client.id);
       }
     })().catch((err: unknown) => {
@@ -1196,11 +1233,17 @@ export default async function ClientCheatSheetPage({
             lastChartedAt={lastTreatment?.started_at ?? null}
             lastChartedSessionId={lastTreatment?.id ?? null}
             lastChartedUnavailable={clinicalHistoryUnavailable}
+            historyNotAvailableToRole={!canViewRecords}
             next={pickNextAppointment({ appointments: overviewVisitAppointments, nowMs: visitNowMs })}
             timezone={studio.timezone}
             timeFormat={resolveTimeFormat(studio)}
           />
 
+          {!canViewRecords ? (
+            <p role="status" data-testid="last-visit-not-available" className="text-sm text-neutral-500">
+              Last treatment is not available to your role.
+            </p>
+          ) : (
           <LastVisitCard
             clientId={client.id}
             sessionId={lastTreatment?.id ?? null}
@@ -1213,6 +1256,7 @@ export default async function ClientCheatSheetPage({
             summary={lastTreatmentSummary}
             unavailable={clinicalHistoryUnavailable}
           />
+          )}
 
           {/* PR #134. Consent / e-sign per-template signed status for
               this client. Renders active templates only; archived
@@ -1324,10 +1368,12 @@ export default async function ClientCheatSheetPage({
 
           {/* PR #211: "Before today" pre-treatment briefing; below
               Client info, above Treatment Intelligence. */}
-          <BeforeTodayCard
-            briefing={beforeToday}
-            importedMemory={importedMemory}
-          />
+          {canViewRecords && (
+            <BeforeTodayCard
+              briefing={beforeToday}
+              importedMemory={importedMemory}
+            />
+          )}
 
           {/* Migration 0126: at-a-glance latest consultation + skin/hair
               analysis for appointment prep. Read-only; links to the
@@ -1343,10 +1389,16 @@ export default async function ClientCheatSheetPage({
           {/* PR #210: Treatment Intelligence; recorded-history summary
               (areas, minutes, hairs, latest setup, reactions, watch/
               plan). Below Client info, above Pricing. */}
-          <TreatmentIntelligenceCard
-            intelligence={treatmentIntelligence}
-            unavailable={intelligenceUnavailable}
-          />
+          {canViewRecords ? (
+            <TreatmentIntelligenceCard
+              intelligence={treatmentIntelligence}
+              unavailable={intelligenceUnavailable}
+            />
+          ) : (
+            <p role="status" data-testid="treatment-intelligence-not-available" className="text-sm text-neutral-500">
+              Treatment history is not available to your role.
+            </p>
+          )}
 
         </>
       )}
@@ -1644,7 +1696,13 @@ export default async function ClientCheatSheetPage({
         </section>
       )}
 
-      {activeTab === "sessions" && (
+      {activeTab === "sessions" && !canViewRecords && (
+        <p role="status" data-testid="records-not-available" className="text-sm text-neutral-500">
+          Treatment records are not available to your role.
+        </p>
+      )}
+
+      {activeTab === "sessions" && canViewRecords && (
         <>
           {/* PR #191 (Chloe smoke feedback): the Sessions tab order is
                 hers, verbatim:
@@ -1772,6 +1830,7 @@ export default async function ClientCheatSheetPage({
           <ClientAppointmentTimeline
             clientId={client.id}
             rows={appointmentTimeline}
+            aftercareAvailable={canViewAftercare}
           />
 
           {/* PR #197 (Chloe round 3): "Charted" and "Session history"
@@ -1807,6 +1866,12 @@ export default async function ClientCheatSheetPage({
             );
           })()}
         </>
+      )}
+
+      {activeTab === "treatment" && !canViewRecords && (
+        <p role="status" data-testid="consultation-not-available" className="text-sm text-neutral-500">
+          Consultation notes are not available to your role.
+        </p>
       )}
 
       {activeTab === "treatment" && clinicalNoteSections && (
@@ -1858,7 +1923,7 @@ export default async function ClientCheatSheetPage({
           <ClientBudgetCardUnavailable />
         )}
 
-      {activeTab === "treatment" && (
+      {activeTab === "treatment" && canViewRecords && (
         <TreatmentPlansCard
           clientId={client.id}
           plans={treatmentPlans}

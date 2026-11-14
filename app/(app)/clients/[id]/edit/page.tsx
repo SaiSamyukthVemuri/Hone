@@ -21,7 +21,8 @@ export default async function EditClientPage({
 }) {
   const { id } = await params;
   const { studio } = await requirePractitionerWithStudio();
-  const data = await getClientById(studio.id, id);
+  // The edit form needs the client row only; no treatment record is read (clin.view_records).
+  const data = await getClientById(studio.id, id, { includeSessions: false });
   if (!data) notFound();
 
   const c = data.client;
