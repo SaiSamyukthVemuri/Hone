@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { feeExecuteBlock, feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 
 // One manual fee per appointment at the POINT OF MONEY: the real runSessionPaymentCharge, with Stripe and the admin client
 // faked (same harness shape as stripe-error-outcome-charge). A fee attempt whose appointment already holds another fee is
@@ -304,5 +305,85 @@ describe("runner: the cross-type one-fee check runs before the claim and before 
     h.siblings = [sib({})];
     await run();
     expect(h.claimCalls).toBe(1);
+  });
+});
+
+// Vercel Security Review 01M78ZR0TYDQFXSDS6C5NWFJDH: an ambiguous first request (it may have succeeded, the response was
+// lost) followed by a refused REPLAY must never free the appointment. The replay reuses the same idempotency key. Stripe
+// authenticates and authorises before it looks the key up, so a replay can be refused (401/403/400/429) even though the
+// FIRST request created and charged a PaymentIntent. "No PaymentIntent exists" may therefore only be recorded for the
+// first send (claim result "claimed"), never for a replay (already_pending).
+describe("a refused REPLAY of an ambiguous first request never frees the appointment (01M78ZR0)", () => {
+  const raw = (over: Record<string, unknown> = {}) => ({ message: "synthetic", ...over });
+  const NOW = new Date();
+  // The stored row as the runner left it, fed back into the REAL gates used by prepare and execute.
+  const rowAfter = (): Record<string, unknown> => {
+    const merged: Record<string, unknown> = { status: "pending_stripe", stripe_payment_intent_id: null, stripe_status: null, charged_at: null };
+    for (const u of h.updates) Object.assign(merged, u);
+    return merged;
+  };
+  const asGateAttempt = (r: Record<string, unknown>) => ({
+    id: ATTEMPT, charge_type: "no_show" as const, status: r.status as string, created_at: "2026-11-12T10:00:00.000Z",
+    updated_at: NOW.toISOString(), failure_code: (r.failure_code as string) ?? null,
+    stripe_payment_intent_id: (r.stripe_payment_intent_id as string) ?? null, stripe_status: (r.stripe_status as string) ?? null,
+    charged_at: (r.charged_at as string) ?? null, stripe_charge_id: null,
+  });
+  const expectGateBlocked = () => {
+    const att = asGateAttempt(rowAfter());
+    expect(feePrepareBlock([att], "late_cancel", NOW), "prepare of the OTHER type").not.toBeNull();
+    expect(feePrepareBlock([att], "no_show", NOW), "prepare of the SAME type").not.toBeNull();
+    expect(feeExecuteBlock({ id: "other-attempt", created_at: "2026-11-12T11:00:00.000Z" }, [att], NOW), "execute of another attempt").not.toBeNull();
+  };
+  const lostFirst = async () => {
+    h.createError = new Stripe.errors.StripeConnectionError(raw()); // (a) it may have succeeded; the response was lost
+    await run();
+    expect(h.updates.some((u) => u.status === "failed")).toBe(false);
+    h.claimResult = "already_pending"; // the owner presses again: a REPLAY, same key
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), status: "pending_stripe" } };
+  };
+  const REPLAY_REFUSALS: Array<[string, () => unknown]> = [
+    ["429 StripeRateLimitError", () => new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 }))],
+    ["StripeIdempotencyError", () => new Stripe.errors.StripeIdempotencyError(raw({ type: "idempotency_error", statusCode: 400 }))],
+    ["StripeAuthenticationError (key rotated between the two requests)", () => new Stripe.errors.StripeAuthenticationError(raw({ statusCode: 401 }))],
+    ["StripePermissionError (account access changed between the two requests)", () => new Stripe.errors.StripePermissionError(raw({ statusCode: 403 }))],
+    ["StripeInvalidRequestError (e.g. the connected account is gone)", () => new Stripe.errors.StripeInvalidRequestError(raw({ type: "invalid_request_error", statusCode: 400 }))],
+    ["StripeCardError (declined replay)", () => new Stripe.errors.StripeCardError(raw({ code: "card_declined", type: "card_error", statusCode: 402 }))],
+    ["StripeConnectionError again", () => new Stripe.errors.StripeConnectionError(raw())],
+  ];
+  for (const [name, make] of REPLAY_REFUSALS) {
+    it(`(a)(b)(c)(d) ${name}: no 'no_intent_created' fact, the original attempt stays unresolved, prepare and execute stay blocked`, async () => {
+      await lostFirst();
+      h.createError = make(); // (b) the replay is refused
+      await run();
+      expect(h.updates.some((u) => u.stripe_status === "no_intent_created"), "no 'no PaymentIntent exists' fact on a replay").toBe(false); // (c)
+      expect(h.createKeys, "both requests used the same key").toHaveLength(2);
+      expect(new Set(h.createKeys).size).toBe(1);
+      expectGateBlocked(); // (d)
+    });
+  }
+  it("two replays racing, each refused or rate-limited: neither frees the gate", async () => {
+    await lostFirst();
+    const errs = [
+      new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 })),
+      new Stripe.errors.StripeAuthenticationError(raw({ statusCode: 401 })),
+    ];
+    let i = 0;
+    h.createError = null;
+    h.createReply = null;
+    const fake = h as unknown as { createError: unknown };
+    // each concurrent create call throws the next error
+    Object.defineProperty(fake, "createError", { configurable: true, get: () => errs[i++ % errs.length], set: () => {} });
+    await Promise.all([run(), run()]);
+    Object.defineProperty(fake, "createError", { configurable: true, writable: true, value: null });
+    expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(false);
+    expect(new Set(h.createKeys).size).toBe(1);
+    expectGateBlocked();
+  });
+  it("control: the FIRST send refused by Stripe (401) still records the fact and frees the appointment (provable: nothing was sent before)", async () => {
+    h.createError = new Stripe.errors.StripeAuthenticationError(raw({ statusCode: 401 }));
+    await run();
+    expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(true);
+    const att = asGateAttempt(rowAfter());
+    expect(feePrepareBlock([att], "late_cancel", NOW)).toBeNull();
   });
 });
