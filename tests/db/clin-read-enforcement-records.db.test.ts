@@ -1,15 +1,30 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio, type UserQuery } from "./helpers/harness";
 
 // 0333 (I1): the treatment-record SELECT policies require membership AND the permission key (clin.view_records / clin.view_photos).
 // Synthetic data only. Three states are proved per table: owner, KEYED practitioner, RESTRICTED practitioner; plus cross-studio, anon,
 // service-role, receptionist, PENDING key (unchanged) and ACTIVATED key (enforced), and a negative control that puts the old policy back.
 
-const MIGRATION = readFileSync("supabase/migrations/0333_clinical_read_enforcement_records.sql", "utf8");
 const KEYS = ["clin.view_records", "clin.view_photos"] as const;
 type Key = (typeof KEYS)[number];
+
+/** Rolled-back transaction: run admin statements (e.g. a temporary policy change), then read AS a user; nothing persists. */
+class Rollback<T> { constructor(readonly value: T) {} }
+async function asUserInRolledBackTx<T>(userId: string, adminStatements: string[], fn: (q: UserQuery) => Promise<T>): Promise<T> {
+  try {
+    await adminTx(async (q) => {
+      for (const stmt of adminStatements) await q(stmt);
+      await q("set local role authenticated");
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+      throw new Rollback(await fn(q));
+    });
+  } catch (e) {
+    if (e instanceof Rollback) return e.value as T;
+    throw e;
+  }
+  throw new Error("unreachable");
+}
 
 let saved: Array<{ key: string; released_at: string | null; release_tag: string; release_kind: string }> = [];
 
@@ -130,8 +145,12 @@ describe("0333, ACTIVATED keys: membership AND the key", () => {
 
   it("anon reads nothing on any of these tables", async () => {
     for (const [t] of [...RECORD_TABLES, ...PHOTO_TABLES]) {
+      // Either RLS returns zero rows or the grant is missing (42501, insufficient_privilege). ANY other error is a failure, never "nothing".
       const n = await asRole("anon", async (q) => {
-        try { return (await q(`select count(*)::int n from public.${t}`)).rows[0].n as number; } catch { return 0; } // a missing grant is also "nothing"
+        try { return (await q(`select count(*)::int n from public.${t}`)).rows[0].n as number; } catch (e) {
+          expect((e as { code?: string }).code, `${t}: anon error class`).toBe("42501");
+          return 0;
+        }
       });
       expect(n, t).toBe(0);
     }
@@ -142,18 +161,31 @@ describe("0333, ACTIVATED keys: membership AND the key", () => {
     expect(n).toBe(1);
   });
 
-  it("NEGATIVE CONTROL: with sessions' old membership-only policy back, the restricted practitioner DOES read (the test can see the defect)", async () => {
+  it("NEGATIVE CONTROL: with sessions' old membership-only policy back (inside a ROLLED-BACK transaction), the restricted practitioner DOES read (the test can see the defect, and no policy is ever rewritten)", async () => {
     const r = await seedClinical("c333n");
     await deny(r.s.studioId, "clin.view_records");
     expect((await counts(r.member.userId, RECORD_TABLES, r)).sessions).toBe(0);
-    await adminQuery(`alter policy "sessions: members select" on public.sessions using (public.is_studio_member(studio_id))`);
-    try {
-      expect((await counts(r.member.userId, RECORD_TABLES, r)).sessions).toBe(1);
-    } finally {
-      const stmt = MIGRATION.match(/alter policy "sessions: members select"[\s\S]*?;/)![0];
-      await adminQuery(stmt);
-    }
+    const leaked = await asUserInRolledBackTx(
+      r.member.userId,
+      [`alter policy "sessions: members select" on public.sessions using (public.is_studio_member(studio_id))`],
+      async (q) => (await q("select count(*)::int n from public.sessions where id = $1", [r.sessionId])).rows[0].n as number,
+    );
+    expect(leaked).toBe(1);
+    // nothing persisted: the production policy is exactly what the database had, so the shape tests below read the real definition
     expect((await counts(r.member.userId, RECORD_TABLES, r)).sessions).toBe(0);
+  });
+
+  it("D-2: treatment_reading_change_events needs ITS OWN key: with sessions' gate removed (rolled back), a restricted member still reads zero of its rows and a keyed member reads one", async () => {
+    for (const k of KEYS) await setRelease(k, true);
+    const restricted = await seedClinical("c333d2r");
+    const keyed = await seedClinical("c333d2k");
+    const rr = (await seedNineTables(restricted)).find((x) => x.table === "treatment_reading_change_events")!;
+    const kr = (await seedNineTables(keyed)).find((x) => x.table === "treatment_reading_change_events")!;
+    await deny(restricted.s.studioId, "clin.view_records");
+    const open = `alter policy "sessions: members select" on public.sessions using (public.is_studio_member(studio_id))`;
+    const read = (id: string) => async (q: UserQuery) => (await q("select count(*)::int n from public.treatment_reading_change_events where id = $1", [id])).rows[0].n as number;
+    expect(await asUserInRolledBackTx(restricted.member.userId, [open], read(rr.id))).toBe(0);
+    expect(await asUserInRolledBackTx(keyed.member.userId, [open], read(kr.id))).toBe(1);
   });
 });
 
@@ -208,6 +240,42 @@ describe("0333, shape: policies and privileges", () => {
     expect(r.rows[0].qual).toMatch(/sessions/);
     expect(r.rows[0].qual).not.toContain("is_studio_member");
     expect(r.rows[0].qual).not.toContain("session_is_visible");
+  });
+
+  // The 16 keyed SELECT policies exactly as the DATABASE normalises them (pg_policies.qual, whitespace collapsed), generated from a real reset
+  // of this migration by Team's mutation run (81221429b), NOT typed from the source: the normal form carries ::text casts and k(k) aliasing.
+  // roles must be {authenticated} and with_check NULL for every one.
+  const NORMALISED_QUALS: Array<[string, string, string]> = [
+  ["electrolysis_entries", "electrolysis_entries: members select", "(session_id IN ( SELECT s.id FROM sessions s))"],
+  ["imported_treatment_memories", "imported_treatment_memories: members select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["imported_treatment_memory_audit_events", "imported_treatment_memory_audit_events: members select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["laser_entries", "laser_entries: members select", "(session_id IN ( SELECT s.id FROM sessions s))"],
+  ["photos", "photos: members select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_photos'::text) k(k)))"],
+  ["session_audit", "session_audit_studio_member_read", "(session_id IN ( SELECT s.id FROM sessions s))"],
+  ["session_block_areas", "session_block_areas_member_select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["session_blocks", "session_blocks_member_select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["session_copy_operations", "session_copy_operations: members select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["sessions", "sessions: members select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["treatment_area_create_claims", "treatment_area_create_claims_member_select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["treatment_images", "treatment_images: members select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_photos'::text) k(k)))"],
+  ["treatment_reading_change_events", "treatment_reading_change_events_clinical_select", "((studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k))) AND (EXISTS ( SELECT 1 FROM (sessions s JOIN clients c ON (((c.id = s.client_id) AND (c.studio_id = s.studio_id)))) WHERE ((s.id = treatment_reading_change_events.session_id) AND (s.studio_id = treatment_reading_change_events.studio_id) AND (c.id = treatment_reading_change_events.client_id)))))"],
+  ["treatment_setup_captures", "treatment_setup_captures_member_select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["treatment_setup_readings", "treatment_setup_readings_member_select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ["treatment_setup_submissions", "treatment_setup_submissions_member_select", "(studio_id IN ( SELECT k.k FROM clin_key_studios('clin.view_records'::text) k(k)))"],
+  ];
+  it("D-3: every keyed SELECT policy equals its database-normalised qual, is authenticated-only and has no WITH CHECK (a DB-level pin, not a source pin)", async () => {
+    const r = await adminQuery(
+      "select tablename, policyname, cmd, roles::text roles, regexp_replace(qual, '\\s+', ' ', 'g') qual, with_check from pg_policies where schemaname='public' and cmd='SELECT' and (tablename, policyname) in (select * from unnest($1::text[], $2::text[]))",
+      [NORMALISED_QUALS.map((x) => x[0]), NORMALISED_QUALS.map((x) => x[1])],
+    );
+    expect(r.rows.length).toBe(NORMALISED_QUALS.length);
+    for (const [table, name, qual] of NORMALISED_QUALS) {
+      const row = r.rows.find((x: { tablename: string; policyname: string }) => x.tablename === table && x.policyname === name);
+      expect(row, `${table} policy`).toBeDefined();
+      expect(row.roles, table).toBe("{authenticated}");
+      expect(row.with_check, table).toBeNull();
+      expect(row.qual, table).toBe(qual);
+    }
   });
 
   it("clin_key_studios is executable by authenticated only (revoked from public, anon, service_role by name)", async () => {
