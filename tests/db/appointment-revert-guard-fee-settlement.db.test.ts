@@ -9,6 +9,8 @@
 
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   adminQuery,
   adminTx,
@@ -25,6 +27,7 @@ afterAll(async () => {
 async function seedAppt(
   studio: SeededStudio,
   status: "no_show" | "cancelled" | "completed",
+  daysAhead = 30,
 ): Promise<string> {
   const id = randomUUID();
   await adminQuery(
@@ -32,8 +35,8 @@ async function seedAppt(
        (id, studio_id, practitioner_id, client_id, service_id,
         starts_at, ends_at, duration_minutes, status)
      values ($1, $2, $3, $4, null,
-        now() + interval '30 days', now() + interval '30 days' + interval '60 minutes', 60, $5)`,
-    [id, studio.studioId, studio.practitionerId, studio.clientId, status],
+        now() + ($6 || ' days')::interval, now() + ($6 || ' days')::interval + interval '60 minutes', 60, $5)`,
+    [id, studio.studioId, studio.practitionerId, studio.clientId, status, String(daysAhead)],
   );
   await seedHistoricalAppointmentAudit({
     appointmentId: id,
@@ -161,7 +164,7 @@ describe("0344 — fee_charge blocks the revert", () => {
     const studio = await seedStudio("g0344-sp");
     const appt = await seedAppt(studio, "completed");
     // A fee on ANOTHER appointment of the same studio must not block this one.
-    const other = await seedAppt(studio, "no_show");
+    const other = await seedAppt(studio, "no_show", 40);
     await insertFee(studio, other, "no_show_fee", "succeeded", false);
     expect(await reasonFor(studio, appt)).toBeNull();
   });
@@ -222,7 +225,7 @@ describe("0344 — earlier reasons and ordering are unchanged", () => {
     await insertFee(studio, appt, "no_show_fee", "succeeded", false);
     await adminQuery(
       `update public.appointments set rescheduled_to_appointment_id = $2 where id = $1`,
-      [appt, await seedAppt(studio, "completed")],
+      [appt, await seedAppt(studio, "completed", 50)],
     );
     expect(await reasonFor(studio, appt)).toBe("rescheduled");
   });
@@ -235,22 +238,48 @@ describe("0344 — earlier reasons and ordering are unchanged", () => {
 });
 
 describe("0344 — negative control", () => {
-  it("with the new clauses dropped the same fee state is NOT blocked (proves the clauses are what block)", async () => {
-    const studio = await seedStudio("g0344-neg");
+  // Re-install the 0177 function (the down file's body) inside a transaction,
+  // so the new clauses are GONE, and roll back. With them gone the same fee or
+  // settlement state no longer blocks the revert; with them present it does.
+  const down = readFileSync(
+    join(__dirname, "..", "..", "supabase", "rollbacks", "0344_revert_guard_fee_settlement.down.sql"),
+    "utf8",
+  );
+  const fnStart = down.indexOf("create or replace function public.appointment_has_blocking_dependents(");
+  const oldFn = down.slice(fnStart, down.indexOf("$$;", fnStart) + 3);
+
+  async function revertWithoutNewClauses(studio: SeededStudio, appt: string, expected: string) {
+    const ROLLBACK = new Error("rollback");
+    let code = "";
+    await adminTx(async (q) => {
+      await q(oldFn);
+      const r = await q(
+        `select public.revert_appointment_outcome($1, $2, $3, $4, $5) code`,
+        [appt, studio.studioId, studio.userId, expected, "Marked by mistake, client rebooked"],
+      );
+      code = r.rows[0].code as string;
+      throw ROLLBACK; // adminTx rolls back on throw: the 0177 function is not left installed
+    }).catch((e) => {
+      if (e !== ROLLBACK) throw e;
+    });
+    return code;
+  }
+
+  it("fee: the revert is blocked now, and goes through once the fee clause is gone", async () => {
+    const studio = await seedStudio("g0344-negf");
     const appt = await seedAppt(studio, "no_show");
     await insertFee(studio, appt, "no_show_fee", "succeeded", false);
-    // Re-derive the verdict from the legacy tables only, as 0177 did.
-    const legacy = await adminQuery(
-      `select (
-         exists (select 1 from public.appointment_payments ap
-                  where ap.appointment_id = $1 and ap.studio_id = $2
-                    and ap.payment_status <> 'method_saved')
-         or exists (select 1 from public.manual_fee_charge_attempts m
-                     where m.appointment_id = $1 and m.studio_id = $2)
-       ) blocked`,
-      [appt, studio.studioId],
-    );
-    expect(legacy.rows[0].blocked).toBe(false);
-    expect(await reasonFor(studio, appt)).toBe("fee_charge");
+    expect(await revert(studio, appt, "no_show")).toBe("blocked_fee_charge");
+    expect(await revertWithoutNewClauses(studio, appt, "no_show")).toBe("ok");
+    expect(await reasonFor(studio, appt), "rollback restored the new function").toBe("fee_charge");
+  });
+
+  it("settlement: the revert is blocked now, and goes through once the settlement clause is gone", async () => {
+    const studio = await seedStudio("g0344-negs");
+    const appt = await seedAppt(studio, "completed");
+    await insertSettlement(studio, appt);
+    expect(await revert(studio, appt, "completed")).toBe("blocked_settlement");
+    expect(await revertWithoutNewClauses(studio, appt, "completed")).toBe("ok");
+    expect(await reasonFor(studio, appt)).toBe("settlement");
   });
 });
