@@ -297,6 +297,9 @@ export const BROWSER_GROUPS = {
       // briefing, an ordinary practitioner is refused it, and the owner-only
       // entry is not advertised in search. No new group: the taxonomy fits.
       "owner-practice-capacity.spec.ts",
+      // 0339 (HON-44 H1/H2): the owner still edits services and consent wording
+      // through the shipped actions; a practitioner is shown no edit control.
+      "owner-only-catalog-edit.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
