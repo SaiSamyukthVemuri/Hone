@@ -58,6 +58,44 @@ const GLOBAL_HOLDERS = new Set(["globalThis", "window", "self", "global"]);
 const SINK_MODULE_RE =
   /^(@\/lib\/logging(\/|$)|@sentry\/|@\/lib\/analytics(\/|$)|@\/lib\/posthog-server$|posthog-(js|node)$|@vercel\/(analytics|speed-insights)(\/|$))/;
 
+// MODULE RESOLUTION (Codex P2 #3 on #1431, the root cause of three rounds of import gaps): a module specifier is
+// never judged by its spelling. Every specifier (relative, parent-relative, `@/` alias, bare, `require`, dynamic
+// `import()`, `import x = require()`) is resolved to the real file TypeScript would load, with the repo's own
+// tsconfig, and sinks are judged by the RESOLVED path. A relative, alias or absolute specifier that does not
+// resolve is itself a violation (fail closed): the guard never guesses.
+const COMPILER_OPTIONS: ts.CompilerOptions = (() => {
+  const cfgPath = path.join(ROOT, "tsconfig.json");
+  const cfg = ts.readConfigFile(cfgPath, ts.sys.readFile);
+  return ts.parseJsonConfigFileContent(cfg.config ?? {}, ts.sys, ROOT).options;
+})();
+
+const SINK_PATH_RE =
+  /^(lib\/logging(\/|$)|lib\/analytics(\/|$)|lib\/posthog-server$|(.*\/)?node_modules\/(@sentry\/|posthog-(js|node)(\/|$)|@vercel\/(analytics|speed-insights)(\/|$)))/;
+
+export type ResolvedModule = { spec: string; path: string | null; local: boolean };
+
+/** Resolve `spec` as imported from the repo-relative `file`. `path` is the repo-relative real file without its extension (or the node_modules path). */
+export function resolveModule(file: string, spec: string): ResolvedModule {
+  const local = spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("@/");
+  const hit = ts.resolveModuleName(spec, path.join(ROOT, file), COMPILER_OPTIONS, ts.sys).resolvedModule;
+  if (!hit) return { spec, path: null, local };
+  const real = ts.sys.realpath ? ts.sys.realpath(hit.resolvedFileName) : hit.resolvedFileName;
+  const rel = path.relative(ROOT, real).split(path.sep).join("/").replace(/\.d\.ts$/, "").replace(/\.(tsx?|jsx?|mjs|cjs)$/, "");
+  return { spec, path: rel, local };
+}
+
+/** Why this specifier is a sink (or cannot be judged), or null when it is neither. */
+export function sinkReason(file: string, spec: string): string | null {
+  if (SINK_MODULE_RE.test(spec)) return spec; // a bare package name is a sink by its own name even when not installed
+  const r = resolveModule(file, spec);
+  if (r.path !== null) {
+    const normalized = r.path.replace(/\/index$/, "");
+    if (SINK_PATH_RE.test(r.path) || SINK_PATH_RE.test(normalized)) return `${spec} (resolves to ${r.path})`;
+    return null;
+  }
+  return r.local ? `${spec} (cannot be resolved)` : null;
+}
+
 function kind(file: string): ts.ScriptKind {
   return file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
@@ -143,7 +181,6 @@ export function logsNothingViolations(file: string, source: string): string[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind(file));
   const out: string[] = [];
   const at = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
-  const sink = (spec: string) => SINK_MODULE_RE.test(spec);
 
   // Aliases of the global holders (Codex P2 on #1431): `const browser = window`, `let g; g = globalThis`,
   // `const { window: w } = globalThis`, chains like `globalThis.window`. Found to a fixpoint first, so a
@@ -182,7 +219,14 @@ export function logsNothingViolations(file: string, source: string): string[] {
   const visit = (node: ts.Node): void => {
     // 2. static imports and `export ... from`
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      if (sink(node.moduleSpecifier.text)) out.push(`${file}:${at(node)} imports ${node.moduleSpecifier.text}`);
+      const why = sinkReason(file, node.moduleSpecifier.text);
+      if (why) out.push(`${file}:${at(node)} imports ${why}`);
+    }
+    // 2. `import x = require("y")`
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const e = node.moduleReference.expression;
+      const why = ts.isStringLiteralLike(e) ? sinkReason(file, e.text) : "a computed specifier";
+      if (why) out.push(`${file}:${at(node)} imports ${why}`);
     }
     // 2. `require("x")` and `import("x")`
     if (ts.isCallExpression(node)) {
@@ -190,8 +234,13 @@ export function logsNothingViolations(file: string, source: string): string[] {
       const arg = node.arguments[0];
       const isRequire = ts.isIdentifier(callee) && callee.text === "require";
       const isDynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
-      if ((isRequire || isDynamicImport) && arg && ts.isStringLiteralLike(arg) && sink(arg.text)) {
-        out.push(`${file}:${at(node)} loads ${arg.text}`);
+      if (isRequire || isDynamicImport) {
+        if (arg && ts.isStringLiteralLike(arg)) {
+          const why = sinkReason(file, arg.text);
+          if (why) out.push(`${file}:${at(node)} loads ${why}`);
+        } else if (arg) {
+          out.push(`${file}:${at(node)} loads a module by a computed specifier`);
+        }
       }
     }
     // 3. sendBeacon by ANY route (Codex P2 on #1431): the name `sendBeacon` as a property, bracket key, destructured
@@ -302,9 +351,12 @@ export function clientsAreaImports(file: string, source: string): string[] {
   collect(sf);
   const out: string[] = [];
   for (const s of specs) {
-    let base: string | null = null;
-    if (s.startsWith("./") || s.startsWith("../")) base = path.posix.normalize(path.posix.join(path.posix.dirname(file), s));
-    else if (s.startsWith("@/")) base = path.posix.normalize(s.slice(2));
+    // Resolve with the repo's tsconfig; fall back to the syntactic base only when TypeScript cannot resolve it.
+    let base: string | null = resolveModule(file, s).path;
+    if (base === null) {
+      if (s.startsWith("./") || s.startsWith("../")) base = path.posix.normalize(path.posix.join(path.posix.dirname(file), s));
+      else if (s.startsWith("@/")) base = path.posix.normalize(s.slice(2));
+    }
     if (base === null) continue;
     if (base === "lib/clients") base = "lib/clients/index";
     if (base.startsWith("lib/clients/") || base.startsWith("app/(app)/clients/") || base === "app/(app)/clients") out.push(base);
@@ -382,6 +434,23 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "const that is not literal": 'const m = "x " + Math.random(); export const f = () => { throw new Error(m); };',
     "rethrow of a caught value": 'export const f = () => { try { return 1; } catch (e) { throw e; } };',
     "throw of a computed value": 'export const f = (q: string) => { throw q; };',
+    // Codex P2 #3: resolve before judging
+    "relative import of the safe logger": 'import { safeLog } from "../logging/safe-log"; export const f = (q: string) => safeLog.info(q);',
+    "parent-relative import of the safe logger": 'import { safeLog } from "../../lib/logging/safe-log"; export const f = (q: string) => safeLog.info(q);',
+    "relative import of the analytics boundary": 'import { track } from "../analytics/server"; export const f = (q: string) => track(q);',
+    "relative import of posthog-server": 'import { x } from "../posthog-server"; export const f = () => x;',
+    "alias import of the safe logger by file": 'import { safeLog } from "@/lib/logging/safe-log"; export const f = (q: string) => safeLog.info(q);',
+    "alias import of the logging folder index": 'import * as L from "@/lib/logging"; export const f = () => L;',
+    "relative import with an explicit extension": 'import { safeLog } from "../logging/safe-log.ts"; export const f = (q: string) => safeLog.info(q);',
+    "relative require of a sink": 'const s = require("../logging/safe-log"); export const f = (q: string) => s.safeLog.info(q);',
+    "relative dynamic import of a sink": 'export const f = async () => (await import("../analytics/server")).track;',
+    "import-equals require of a sink": 'import S = require("@sentry/nextjs"); export const f = (e: unknown) => S.captureException(e);',
+    "re-export of a relative sink": 'export { safeLog } from "../logging/safe-log";',
+    "bare sentry subpath import": 'import { captureException } from "@sentry/nextjs/dist/index"; export const f = (e: unknown) => captureException(e);',
+    "computed require specifier": 'export const f = (m: string) => require(m);',
+    "computed dynamic import": 'export const f = (m: string) => import(m);',
+    "an alias import that does not resolve": 'import { x } from "@/lib/does-not-exist-anywhere"; export const f = () => x;',
+    "a relative import that does not resolve": 'import { x } from "./nope"; export const f = () => x;',
     "parameter shadowing a literal const": 'const msg = "Failed to load"; export const f = (msg: string) => { throw new Error(msg); };',
     "inner const shadowing a literal const": 'const msg = "Failed"; export const f = (q: string) => { { const msg = q; throw new Error(msg); } };',
     "catch variable shadowing a literal const": 'const e = "Failed"; export const f = () => { try { return 1; } catch (e) { throw new Error(e as string); } };',
@@ -421,6 +490,9 @@ describe("the scanner catches a planted call by what it resolves to (controls)",
     "a literal const read from an inner scope that does not shadow it": 'const msg = "Failed to load"; export const f = (q: string) => { if (q) { throw new Error(msg); } return q; };',
     "an unrelated parameter beside a literal const": 'const msg = "Failed"; export const f = (q: string) => { if (q) return q; throw new Error(msg); };',
     "a plain navigator property read": 'export const ua = () => navigator.userAgent; export const l = () => window.navigator.language;',
+    "a relative import of a sibling clients module": 'import { matchesDirectoryQuery } from "./directory-search"; export const m = matchesDirectoryQuery;',
+    "a parent-relative import of a harmless shared module": 'import { createClient } from "../supabase/server"; export const c = createClient;',
+    "an import-equals of a harmless package": 'import path = require("node:path"); export const j = path.join;',
     "a template without substitutions": 'export const f = () => { throw new Error(`Failed to load clients`); };',
   };
   for (const [name, code] of Object.entries(clean)) {
