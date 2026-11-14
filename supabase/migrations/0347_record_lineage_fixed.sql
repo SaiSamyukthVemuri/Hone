@@ -4,8 +4,8 @@
 -- NOT APPLIED. Number 0347 claimed by OPS. Hosted apply needs the owner's per-change approval.
 --
 -- THE RULE. A record keeps the client and studio it was created for. Once the row exists, an UPDATE that changes either one is refused, for every
--- role including service_role, exactly as 0160 does for sessions and entries and 0340 does for intakes. A record filed on the wrong client is
--- corrected by removing it and filing it on the right one, which keeps an attributable trail.
+-- role including service_role, exactly as 0160 does for sessions and entries. A record filed on the wrong client is
+-- corrected by filing it on the right one.
 --
 -- WHAT THIS CHANGES (guards from 0160: guard_immutable_clinical_lineage, guard_clearable_clinical_lineage)
 --   client_personal_notes   client_id, studio_id fixed          client_personal_notes_lineage_fixed
