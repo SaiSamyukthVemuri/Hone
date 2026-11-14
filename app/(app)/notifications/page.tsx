@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { SectionLabel } from "@/components/ui/section-label";
 import Link from "next/link";
+import { safeInAppHref } from "@/lib/notifications/safe-href";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
@@ -217,11 +218,12 @@ function NotificationRow({
       )}
     </div>
   );
-  if (notification.href) {
+  const href = safeInAppHref(notification.href);
+  if (href) {
     return (
       <li>
         <Link
-          href={notification.href}
+          href={href}
           className="block hover:bg-neutral-50 dark:hover:bg-neutral-900"
         >
           {inner}
