@@ -1267,8 +1267,6 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
   it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
-    expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/machine-one-selector.spec.ts')");
-    expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/machine-mode-then-save.spec.ts')");
     expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
   });

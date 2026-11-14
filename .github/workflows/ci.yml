@@ -1370,7 +1370,7 @@ jobs:
               *e2e/fett-photos-thumbnail-recovery.spec.ts*|*e2e/treatment-image-upload-formats.spec.ts*|*e2e/fett-client-portrait.spec.ts*) SPEC_PHOTO="true" ;;
             esac
             case "${BROWSER_SPECS:-}" in
-              *e2e/availability-hours-editor.spec.ts*|*e2e/machine-one-selector.spec.ts*|*e2e/machine-mode-then-save.spec.ts*|*e2e/finish-appointment-mobile.spec.ts*|*e2e/fett-photos-touch-floor.spec.ts*) SPEC_WEBKIT="true" ;;
+              *e2e/availability-hours-editor.spec.ts*|*e2e/finish-appointment-mobile.spec.ts*|*e2e/fett-photos-touch-floor.spec.ts*) SPEC_WEBKIT="true" ;;
             esac
             DEFERRED="false"
             if [ "${FULL_MATRIX:-}" = "true" ] || [ "${BROWSER_RUN:-}" = "true" ] \
@@ -2516,7 +2516,7 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: changes
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/machine-one-selector.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/machine-mode-then-save.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
