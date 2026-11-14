@@ -34,6 +34,9 @@ import {
   buildGettingStarted,
   getGettingStartedSignals,
 } from "@/lib/onboarding/getting-started";
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 
 const STUDIO = { id: "studio-1", name: "Synthetic Studio", slug: "synthetic" };
 

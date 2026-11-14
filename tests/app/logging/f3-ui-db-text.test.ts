@@ -12,6 +12,7 @@ import { classifyDbFailure, userFacingDbFailure } from "@/lib/logging/user-facin
 // reaches the returned result or the log; known SQLSTATEs keep a distinct
 // fixed sentence. Synthetic values only.
 
+vi.mock("@/lib/permissions/require-permission", () => ({ requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }) }));
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 

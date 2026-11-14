@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
@@ -113,7 +114,9 @@ export default async function ClientsPage({
   // Last visit: ONE batched read for the visible page (plus the open overview).
   const ids = data.rows.map((r) => r.id);
   if (selected && !ids.includes(selected.id)) ids.push(selected.id);
-  const lastVisits = archived
+  // Roles R4: a last visit is derived from treatment sessions, so without clin.view_records it is shown as unknown.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
+  const lastVisits = archived || !canViewRecords
     ? null
     : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
   const lastVisitMap = lastVisits && lastVisits.ok ? lastVisits.value : null;

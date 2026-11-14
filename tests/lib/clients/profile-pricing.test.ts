@@ -34,6 +34,9 @@ describe("the price-free column lists stay in step with the row types", () => {
 
 // A recording Supabase client: every table read answers empty, and each .from/.select is logged.
 const log: { table: string; select?: string }[] = [];
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     from(table: string) {
@@ -112,7 +115,8 @@ describe("the profile page wires the ruling", () => {
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
   it("the owner decision gates both loaders", () => {
     expect(PAGE).toMatch(/const isOwner = canViewClientBilling\(practitioner\.role\);/);
-    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner \};/);
+    // clinicalFields: the SAME clin.view_records decision also governs skin type and legacy skin notes on the client row (Codex P1 4476375636).
+    expect(PAGE).toMatch(/const priceReads = \{ includePrices: isOwner, includeSessions: recordsGate, clinicalFields: recordsGate \};/);
     expect(PAGE).toContain("getClientById(studio.id, id, priceReads)");
     expect(PAGE).toContain("getActiveServices(studio.id, priceReads)");
   });

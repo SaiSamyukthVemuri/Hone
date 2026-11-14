@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
@@ -35,6 +36,8 @@ export async function loadPreviousVisitNote(input: {
 }): Promise<PreviousVisitNote> {
   try {
     const supabase = await createClient();
+    // Roles R4: a previous visit's note is treatment data; without clin.view_records it is reported unavailable, never absent.
+    if (!(await requirePermission(supabase, input.studioId, "clin.view_records")).allowed) return { note: null, unavailable: true };
     const { data, error } = await supabase
       .from("sessions")
       .select("id, started_at, next_session_note")
