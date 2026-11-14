@@ -65,6 +65,8 @@ describe("0342 staff deactivate through the core (source)", () => {
       const lock = b.indexOf("acquire_studio_capacity_lock(p_studio)");
       expect(lock, n).toBeGreaterThan(0);
       expect(lock, n).toBeLessThan(b.indexOf("select count(*) into v_upcoming"));
+      // and BEFORE the membership row is locked: appointment writers hold the lock then touch the practitioner row, so the other order deadlocks
+      expect(lock, n).toBeLessThan(b.indexOf("for update;"));
     }
     expect(fn("reactivate_staff_member")).toContain("acquire_studio_capacity_lock(p_studio)");
   });
@@ -81,7 +83,7 @@ describe("0342 staff deactivate through the core (source)", () => {
     const old = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
     const oi = old.indexOf("create or replace function public.change_staff_role(");
     const oldBody = old.slice(oi, old.indexOf("\n$$;", oi) + 4).replace(/--.*$/gm, "");
-    const strip = (t: string) => t.replace(/\s+/g, " ").replace(/ ?perform public\.acquire_studio_capacity_lock\(p_studio\); ?/, " ").trim();
+    const strip = (t: string) => t.replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
     expect(strip(fn("change_staff_role"))).toBe(strip(oldBody));
   });
   it("one audit row per command, with the reason, and the active flag is the only thing flipped", () => {

@@ -213,6 +213,10 @@ begin
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
   if v_reason is not null and not public.perm_reason_ok(v_reason) then return public.perm_fail('reason_invalid'); end if;
 
+  -- RF-1 (Insurance), closed by 0342: take the studio's capacity lock BEFORE the membership row is locked and BEFORE the count. Appointment writers hold
+  -- this lock and then touch the practitioner row (foreign key), so taking the row first and the lock second is a lock-order inversion (a deadlock the
+  -- two-session test found). With the lock first, no appointment can be inserted between the count and the update below.
+  if p_expected_current_role = 'practitioner' then perform public.acquire_studio_capacity_lock(p_studio); end if;
   if p_expected_current_role = 'practitioner' then
     select pr.user_id, pr.display_name, pr.email, pr.active into v_user, v_name, v_email, v_active
       from public.practitioners pr where pr.id = p_membership and pr.studio_id = p_studio and pr.role = 'practitioner' for update;
@@ -235,9 +239,6 @@ begin
   end if;
 
   if p_expected_current_role = 'practitioner' then
-    -- RF-1 (Insurance), closed by 0342: take the studio's capacity lock BEFORE counting. Every appointment writer (booking, move, repair,
-    -- waitlist conversion) takes the same lock, so no appointment can be inserted between this count and the update below.
-    perform public.acquire_studio_capacity_lock(p_studio);
     -- Lock the practitioner's future appointments, then count EVERY one that is not cancelled (confirmed, completed, no_show), so a
     -- concurrent change to one of them cannot slip past the check (Insurance RB-5).
     select count(*) into v_upcoming from (
