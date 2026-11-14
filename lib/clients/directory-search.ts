@@ -75,6 +75,34 @@ export function matchesDirectoryQuery(row: DirectorySearchable, rawQuery: string
   return false;
 }
 
+/**
+ * Best-match-first rank for a search, from the SHOWN fields only (the same fields the match reads, so
+ * the order can reveal nothing the row does not display; Privacy S4). Lower is better:
+ *   0  the folded shown name equals the folded query
+ *   1  the shown name starts with the query
+ *   2  every query word starts a word of the shown name
+ *   3  the shown name contains every query word (the looser match above)
+ *   4  email match
+ *   5  phone match
+ * Only meaningful for a row that matchesDirectoryQuery accepted; an empty query ranks everything 0.
+ */
+export function directoryMatchRank(row: DirectorySearchable, rawQuery: string): number {
+  const query = normalizeDirectoryQuery(rawQuery);
+  if (query.length === 0) return 0;
+  const words = foldedWords(query);
+  const shown = foldForSearch(row.displayName);
+  if (words.length > 0 && shown.length > 0 && words.every((w) => shown.includes(w))) {
+    const folded = words.join(" ");
+    if (shown === folded) return 0;
+    if (shown.startsWith(folded)) return 1;
+    const shownWords = shown.split(" ");
+    if (words.every((w) => shownWords.some((sw) => sw.startsWith(w)))) return 2;
+    return 3;
+  }
+  if ((row.email ?? "").toLowerCase().includes(query.toLowerCase())) return 4;
+  return 5;
+}
+
 /** The sort key: the folded displayed name only (Privacy S4). */
 export function directorySortKey(row: { displayName: string }): string {
   return foldForSearch(row.displayName);
