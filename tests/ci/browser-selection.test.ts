@@ -252,7 +252,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 53: HON-65's dashboard-last-treatment-closed.spec.ts (Last treatment visible on the CLOSED row, owner and practitioner at 1280 and
     // 390) joined `sessions` with the other Today-roster specs. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two
     // roles x two widths), each a seeded studio, a magic-link login and one page load: about 90 seconds.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(53);
+    // Now 54: #1424's calendar-own-first.spec.ts joined `calendar`. RECORDED AS A DECISION per the note above. It is OPT-IN
+    // (CAL_OWN_FIRST_E2E=1) and self-skips in every CI lane, so the cost is listing one skipped file: no added run time. The 12-case
+    // 1280/390 matrix (about 9 minutes with a cold build) is run on demand, not in the targeted lane.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(54);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
