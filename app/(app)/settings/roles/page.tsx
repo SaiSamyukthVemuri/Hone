@@ -8,6 +8,8 @@ import {
   activatePermissionsAction,
   adoptNewDefaultsAction,
   changeStaffRoleAction,
+  deactivateStaffAction,
+  reactivateStaffAction,
   effectiveAccessAction,
   listPermissionAuditAction,
   previewActivationAction,
@@ -21,8 +23,8 @@ import {
 import { RolesEditor, type PersonView } from "./roles-editor";
 
 // Settings -> Roles (R2). Owner-only. The owner sees each role, who holds it, what the role may do, and changes it through the one
-// permission catalog. Staff are added, removed and revoked in Team (the existing flow); this page links there rather than
-// duplicating it. Receptionist accounts do not exist in the product yet, so that role lists nobody and says why.
+// permission catalog. Staff are added and invited in Team; removing and restoring access is done here, through the permission core, so it is
+// recorded in the history. Receptionist accounts do not exist in the product yet, so that role lists nobody and says why.
 
 // DN-21: this page reads ONLY the columns it shows. A practitioner row also carries a private calendar link and its checksum and an
 // invitation row carries more than a name and an address; none of that is selected, so none of it can reach a render or a prop.
@@ -110,6 +112,8 @@ export default async function RolesSettingsPage() {
         loadHistory={listPermissionAuditAction}
         loadAccess={effectiveAccessAction}
         changeRole={changeStaffRoleAction}
+        deactivate={deactivateStaffAction}
+        reactivate={reactivateStaffAction}
       />
     </div>
   );

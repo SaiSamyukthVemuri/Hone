@@ -14,7 +14,7 @@ import {
   type AuditKind,
   type ActivationPreviewResult,
   type AuditRow,
-  type ChangeRoleResult,
+  type ChangeRoleResult, StaffActiveResult,
   type CommandResult,
   type HistoryResult,
   type PersonRef,
@@ -164,7 +164,17 @@ export function parseChangeRole(raw: unknown): ChangeRoleResult {
   return id && isRole(raw.role) ? { ok: true, membershipId: id, role: raw.role } : { ok: false, error: UNEXPECTED };
 }
 
-const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed", "permissions_activated"];
+export function parseStaffActive(raw: unknown): StaffActiveResult {
+  if (!isObj(raw)) return { ok: false, error: UNEXPECTED };
+  if (raw.ok !== true) return { ok: false, error: parseError(raw) };
+  const id = str(raw.membership_id);
+  if (!id || typeof raw.active !== "boolean") return { ok: false, error: UNEXPECTED };
+  // `upcoming` is the number of upcoming appointments the person still has (0342 reports it under every policy); shown as information only.
+  const up = raw.upcoming;
+  return typeof up === "number" && Number.isInteger(up) && up >= 0 ? { ok: true, membershipId: id, active: raw.active, upcoming: up } : { ok: true, membershipId: id, active: raw.active };
+}
+
+const KINDS: readonly AuditKind[] = ["role_permissions_saved", "defaults_adopted", "role_reset", "staff_role_changed", "permissions_activated", "staff_deactivated", "staff_reactivated"];
 const scopeWord = (v: unknown): string => (v === "studio" ? "Whole studio" : v === "own" ? "Own assigned" : v === "off" ? "Off" : typeof v === "string" ? v : "unset");
 
 // A stored choice the audit row recorded as null is a choice that was REMOVED (a reset deletes it): say so, rather than "unset".
@@ -195,6 +205,7 @@ function auditChanges(
     return { before: b, after: a, storedBefore: sb, storedAfter: sa };
   }
   for (const k of Object.keys(after)) {
+    if (kind === "staff_deactivated" || kind === "staff_reactivated") continue; // the label and the person say it; the audit row carries only an active flag
     if (kind === "staff_role_changed") {
       if (k === "role") {
         b.Role = String(pre.role ?? "unset");

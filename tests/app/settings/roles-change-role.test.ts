@@ -127,7 +127,7 @@ const render = (gate: boolean) =>
     createElement(RolesEditor, {
       policies: { practitioner: policy, receptionist: policy }, reviewed: false, writable: true, notWritableReason: null, staffRoleChange: gate, people,
       timezone: "America/Toronto", previewSave: noop, previewReset: noop, previewAdopt: noop, save: noop, reset: noop, adopt: noop,
-      previewActivation: noop, activate: noop, loadHistory: noop, loadAccess: noop, reload: noop, changeRole: noop,
+      previewActivation: noop, activate: noop, loadHistory: noop, loadAccess: noop, reload: noop, changeRole: noop, deactivate: noop, reactivate: noop,
     }),
   );
 const personBlock = (html: string, id: string) => html.slice(html.indexOf(`data-person="${id}"`)).split("</li>")[0];

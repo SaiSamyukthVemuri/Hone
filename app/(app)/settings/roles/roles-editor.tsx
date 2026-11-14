@@ -9,6 +9,7 @@ import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
 import { changeRoleCopy } from "@/lib/settings/roles/change-role";
+import { REMOVE_ACCESS_COPY, RESTORE_ACCESS_COPY, RESTORE_UNAVAILABLE_LINE, type StaffAccessCopy } from "@/lib/settings/roles/staff-access";
 import { pendingActivations, type PendingActivation } from "@/lib/settings/roles/server-effective";
 import { BASELINE_NOTES, FUTURE_EFFECTS } from "@/lib/settings/roles/effects";
 import {
@@ -23,6 +24,7 @@ import {
   type ActivationPreviewResult,
   type AuditRow,
   type ChangeRoleResult,
+  type StaffActiveResult,
   type CommandResult,
   type HistoryResult,
   type PreviewResult,
@@ -85,6 +87,8 @@ export type RolesEditorProps = {
   // Move one person between practitioner and receptionist. The core is the only writer and the only judge (gate, self, owner, stale
   // role, upcoming appointments); the page shows exactly what it answers.
   changeRole: (membershipId: string, newRole: Role, expectedCurrentRole: Role, reason: string) => Promise<ChangeRoleResult>;
+  deactivate: (membershipId: string, kind: Role, reason: string) => Promise<StaffActiveResult>;
+  reactivate: (membershipId: string, kind: Role, reason: string) => Promise<StaffActiveResult>;
 };
 
 type View = "people" | "permissions" | "history";
@@ -463,7 +467,7 @@ export function RolesEditor(props: RolesEditorProps) {
         ))}
       </div>
 
-      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} changeRole={props.changeRole} refresh={() => router.refresh()} />}
+      {view === "people" && <PeoplePanel people={props.people} loadAccess={props.loadAccess} staffRoleChange={props.staffRoleChange} changeRole={props.changeRole} deactivate={props.deactivate} reactivate={props.reactivate} refresh={() => router.refresh()} />}
 
       {view === "history" && <HistoryPanel load={props.loadHistory} timeZone={props.timezone} />}
 
@@ -806,7 +810,7 @@ function HistoryPanel({ load, timeZone }: { load: (before: string | null) => Pro
               <p className="text-neutral-600 dark:text-neutral-400">
                 {r.actorName} on <FormattedDateTime iso={r.at} timeZone={timeZone} />
                 {r.role ? `, ${ROLE_LABELS[r.role].toLowerCase()}s` : ""}
-                {r.personName ? `, ${r.personName}${r.personState === "deactivated" ? " (no longer active)" : ""}` : r.kind === "staff_role_changed" ? ", former member" : ""}
+                {r.personName ? `, ${r.personName}${r.personState === "deactivated" ? " (no longer active)" : ""}` : r.kind === "staff_role_changed" || r.kind === "staff_deactivated" || r.kind === "staff_reactivated" ? ", former member" : ""}
               </p>
               {r.reason && <p className="mt-1">Reason: {r.reason}</p>}
               <ul className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
@@ -887,12 +891,16 @@ function PeoplePanel({
   loadAccess,
   staffRoleChange,
   changeRole,
+  deactivate,
+  reactivate,
   refresh,
 }: {
   people: PersonView[];
   loadAccess: RolesEditorProps["loadAccess"];
   staffRoleChange: boolean;
   changeRole: RolesEditorProps["changeRole"];
+  deactivate: RolesEditorProps["deactivate"];
+  reactivate: RolesEditorProps["reactivate"];
   refresh: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -961,6 +969,17 @@ function PeoplePanel({
                     {p.state === "active" && p.role !== "owner" && staffRoleChange && !p.isSelf && (
                       <ChangeRole person={p as PersonView & { role: Role }} changeRole={changeRole} onChanged={(text) => { setNotice(text); refresh(); }} />
                     )}
+                    {p.state === "active" && p.role !== "owner" && !p.isSelf && (
+                      <StaffAccessChange person={p as PersonView & { role: Role }} copy={REMOVE_ACCESS_COPY} act={deactivate} testId="remove-access" onDone={(text) => { setNotice(text); refresh(); }} />
+                    )}
+                    {p.state === "deactivated" && p.role !== "owner" && !staffRoleChange && (
+                      <p data-testid="restore-access-unavailable" className="break-words text-xs text-neutral-500">
+                        {RESTORE_UNAVAILABLE_LINE}
+                      </p>
+                    )}
+                    {p.state === "deactivated" && p.role !== "owner" && staffRoleChange && (
+                      <StaffAccessChange person={p as PersonView & { role: Role }} copy={RESTORE_ACCESS_COPY} act={reactivate} testId="restore-access" onDone={(text) => { setNotice(text); refresh(); }} />
+                    )}
                     {open === p.id && <AccessSummary person={p} load={loadAccess} />}
                   </li>
                 ))}
@@ -969,6 +988,77 @@ function PeoplePanel({
           </section>
         );
       })}
+    </div>
+  );
+}
+
+// Remove or restore one person's access (0342). The consequences are stated before the owner confirms; the core decides everything else and
+// its answer is shown as is. A reason is always required.
+function StaffAccessChange({ person, copy, act, testId, onDone }: { person: PersonView & { role: Role }; copy: StaffAccessCopy; act: (membershipId: string, kind: Role, reason: string) => Promise<StaffActiveResult>; testId: "remove-access" | "restore-access"; onDone: (notice: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = useId();
+  const reasonOk = reasonAcceptable("adopt", false, reason) && reason.trim() !== "";
+  async function confirm() {
+    if (busy || !reasonOk) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await act(person.id, person.role, reason.trim());
+      if (r.ok) {
+        setOpen(false);
+        setReason("");
+        onDone(copy.doneLine(person.name, r.upcoming));
+      } else {
+        setError(roleErrorMessage(r.error));
+      }
+    } catch {
+      setError(roleErrorMessage({ code: "unexpected" }));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div data-testid={testId} className="mt-1 flex min-w-0 flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${id}-panel`}
+        onClick={() => {
+          setOpen(!open);
+          setError(null);
+        }}
+        className="min-h-[44px] self-start text-sm font-medium underline underline-offset-2"
+      >
+        {open ? "Cancel" : copy.confirmLabel}
+      </button>
+      {open && (
+        <div id={`${id}-panel`} data-testid={`${testId}-panel`} className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+          <p className="break-words font-medium">{copy.title(person.name)}</p>
+          <ul className="list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            {copy.bullets.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+          <label className="flex flex-col gap-1">
+            <span className="font-medium">{copy.reasonLabel}</span>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} data-testid={`${testId}-reason`} className="w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-base dark:border-neutral-700" />
+          </label>
+          {reason.trim() !== "" && !reasonOk && <p className="text-xs text-red-700 dark:text-red-400">Say why in your own words.</p>}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={busy || !reasonOk} onClick={confirm} data-testid={`${testId}-confirm`} className="min-h-[44px] rounded-md bg-neutral-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900">
+              {busy ? "Working…" : copy.confirmLabel}
+            </button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p role="alert" data-testid={`${testId}-error`} className="break-words text-xs text-red-700 dark:text-red-400">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
