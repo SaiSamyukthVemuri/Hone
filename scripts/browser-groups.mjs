@@ -262,6 +262,8 @@ export const BROWSER_GROUPS = {
       // The same link hidden for a solo owner with nothing to review, shown otherwise (Sam, 2 Nov).
       "review-link-solo-owner.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
+      // #1424 own-calendar-first default, 1280/390 matrix (opt-in: self-skips unless CAL_OWN_FIRST_E2E=1, so a targeted lane lists it but runs nothing).
+      "calendar-own-first.spec.ts",
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-

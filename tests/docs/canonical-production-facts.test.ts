@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { currentProse, ignoreMarkers, matchAll } from "./helpers/canonical-facts";
+import { aggregatorSteps, runAggregatorSteps } from "../ci/helpers/aggregator-steps";
 
 // ---------------------------------------------------------------------------
 // CANONICAL PRODUCTION FACTS — the anti-drift guard.
@@ -4161,33 +4162,18 @@ describe("freshness policy controls (#825 6215529089)", () => {
     const agg = ci.slice(ci.indexOf("\n  browser-e2e:\n"), ci.indexOf("\n  payment-browser-e2e:"));
     expect(agg).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
     expect(agg).toMatch(/RECORD_RESULT: \$\{\{ needs\.canonical-record\.result \}\}/);
-    const body = agg.slice(agg.indexOf("run: |\n") + "run: |\n".length);
-    const script = body
-      .split("\n")
-      .map((l) => l.replace(/^ {10}/, ""))
-      .join("\n");
-    const exitOf = (env: Record<string, string>) => {
-      try {
-        execFileSync("bash", ["-c", script], {
-          env: {
-            NODE_ENV: "test",
-            PATH: process.env.PATH ?? "",
-            HOME: process.env.HOME ?? "/tmp",
-            CHANGES_RESULT: "success",
-            SHARD_RESULT: "",
-            BROWSER_RUN: "false",
-            FULL_MATRIX: "false",
-            EXTENDED: "false",
-            SHARDS: "[1]",
-            ...env,
-          },
-          stdio: "ignore",
-        });
-        return 0;
-      } catch (e) {
-        return (e as { status?: number }).status ?? -1;
-      }
-    };
+    // SHEP-LATEST-01 PR1: the aggregator is several steps; run them in order, one process each.
+    const steps = aggregatorSteps(ci);
+    const exitOf = (env: Record<string, string>) =>
+      runAggregatorSteps(steps, {
+        CHANGES_RESULT: "success",
+        SHARD_RESULT: "",
+        BROWSER_RUN: "false",
+        FULL_MATRIX: "false",
+        EXTENDED: "false",
+        SHARDS: "[1]",
+        ...env,
+      }).code;
     const record = { DOCS_ONLY: "true", PRODUCTION_RECORD: "true" };
     expect(exitOf({ ...record, RECORD_RESULT: "success" })).toBe(0);
     for (const bad of ["failure", "cancelled", "skipped", ""]) {
