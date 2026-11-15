@@ -108,6 +108,9 @@ const { createClientSpy, getCurrentPractitionerWithStudio, getSessionBlockAreasB
     getSessionBlockAreasByBlockIds: vi.fn(),
   }));
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 vi.mock("@/lib/supabase/server", () => ({ createClient: createClientSpy }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: vi.fn(() => {

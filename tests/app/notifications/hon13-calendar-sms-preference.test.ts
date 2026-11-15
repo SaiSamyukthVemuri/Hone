@@ -21,6 +21,10 @@ const h = vi.hoisted(() => ({
   ensure: vi.fn(async () => null),
 }));
 
+// The Roles engine has its own tests; this file is about the action around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({

@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import {
   localLongDate,
   todayInTz,
@@ -203,11 +204,32 @@ function scopeGuardMessage(code: string | undefined): string | null {
   }
 }
 
+// Roles engine (0287). The owner-only floor below stays until the availability commands themselves (0278) accept a non-owner, so on
+// the existing-snapshot basis this changes nothing: an owner holds every key. The key asked follows the TARGET of the change:
+// studio hours (no practitioner), the actor's own hours, or another practitioner's hours.
+async function assertAvailabilityKey(
+  studioId: string,
+  actorId: string,
+  scopePractitionerId: string | null,
+): Promise<void> {
+  const key =
+    scopePractitionerId === null || scopePractitionerId === ""
+      ? "avail.manage_studio_hours"
+      : scopePractitionerId === actorId
+        ? "avail.manage_own"
+        : "avail.manage_others";
+  if (!(await requirePermission(await createClient(), studioId, key)).allowed) {
+    throw new Error("You don't have permission to change availability.");
+  }
+}
+
 async function assertOwner(): Promise<{ studioId: string; practitionerId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
     throw new Error("Only studio owners can change availability.");
   }
+  // Every caller of assertOwner writes STUDIO-WIDE hours or blockouts.
+  await assertAvailabilityKey(studio.id, practitioner.id, null);
   return { studioId: studio.id, practitionerId: practitioner.id };
 }
 
@@ -438,6 +460,7 @@ export async function upsertScopedDayDefaultAction(
     trimmed(formData.get("practitioner_id")),
   );
   if (!scope.ok) return scope;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope.practitionerId);
 
   const dow = Number(trimmed(formData.get("day_of_week")));
   if (!Number.isInteger(dow) || dow < 0 || dow > 6)
@@ -476,6 +499,7 @@ export async function resetPractitionerDayAction(
     trimmed(formData.get("practitioner_id")),
   );
   if (!scope.ok) return scope;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope.practitionerId);
   if (scope.practitionerId === null)
     return { ok: false, error: "Choose a practitioner to reset." };
   const dow = Number(trimmed(formData.get("day_of_week")));
@@ -499,7 +523,7 @@ export async function resetPractitionerDayAction(
 export async function customizePractitionerWeekAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -507,6 +531,7 @@ export async function customizePractitionerWeekAction(
     trimmed(formData.get("practitioner_id")),
   );
   if (!scope.ok) return scope;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope.practitionerId);
   if (scope.practitionerId === null)
     return { ok: false, error: "Choose a practitioner to customize." };
 
@@ -562,6 +587,7 @@ export async function resetPractitionerWeekAction(
     trimmed(formData.get("practitioner_id")),
   );
   if (!scope.ok) return scope;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope.practitionerId);
   if (scope.practitionerId === null)
     return { ok: false, error: "Choose a practitioner to reset." };
 
@@ -590,6 +616,7 @@ export async function upsertScopedOverrideAction(
     trimmed(formData.get("practitioner_id")),
   );
   if (!scope.ok) return scope;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope.practitionerId);
 
   const effectiveDate = trimmed(formData.get("effective_date"));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))
@@ -630,6 +657,7 @@ export async function resetPractitionerOverrideAction(
     trimmed(formData.get("practitioner_id")),
   );
   if (!scope.ok) return scope;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope.practitionerId);
   if (scope.practitionerId === null)
     return { ok: false, error: "Choose a practitioner to reset." };
   const effectiveDate = trimmed(formData.get("effective_date"));
@@ -652,7 +680,8 @@ export async function resetPractitionerOverrideAction(
 export async function createBlockoutAction(
   formData: FormData,
 ): Promise<BlockActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
+  await assertAvailabilityKey(studio.id, practitioner.id, null);
   const starts = trimmed(formData.get("starts_on"));
   const ends = trimmed(formData.get("ends_on"));
   const reason = nullable(formData.get("reason"));
@@ -838,6 +867,7 @@ export async function createTimedBlockAction(
   // next-local-midnight interval; studio_blockouts remain studio-wide date
   // closures and are unaffected.
   const scope = resolveSubmittedScope(formData, undefined);
+  await assertAvailabilityKey(studio.id, practitioner.id, scope);
 
   const supabase = await createClient();
   const { error } = await supabase.from("studio_timed_blocks").insert({
@@ -874,7 +904,7 @@ export async function createTimedBlockAction(
 export async function updateTimedBlockAction(
   formData: FormData,
 ): Promise<BlockActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
   // The edit form sends the block's CURRENT mode explicitly, so editing
   // category / note / date / scope preserves all-day (or timed) mode, and the
@@ -946,6 +976,7 @@ export async function updateTimedBlockAction(
     return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
   }
   const scope = resolveSubmittedScope(formData, existing.practitioner_id);
+  await assertAvailabilityKey(studio.id, practitioner.id, scope);
 
   // The write itself is conditional on the version too: the check above can be
   // overtaken by another save between the read and this statement, and only a
@@ -1003,7 +1034,9 @@ export async function deleteTimedBlockAction(
   // Deleting a scoped block is always permitted: the lock/dormancy triggers
   // fire, but no scope guard blocks removal, so a block whose practitioner
   // later went inactive can still be cleaned up.
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
+  // The target's scope is not loaded here; the studio key is the strictest. Refine to the row's scope when R4 lifts the owner floor.
+  await assertAvailabilityKey(studio.id, practitioner.id, null);
   const id = trimmed(formData.get("id"));
   if (!id) return { ok: false, error: "Missing block id." };
   const expected = readExpectedBlockVersion(formData.get("expected_updated_at"));
@@ -1144,6 +1177,7 @@ export async function createRecurringBreakRuleAction(
   }
 
   const scope = resolveSubmittedScope(formData, undefined);
+  await assertAvailabilityKey(studio.id, practitioner.id, scope);
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
   const { error } = await admin.rpc(
@@ -1187,7 +1221,7 @@ export async function createRecurringBreakRuleAction(
 export async function updateRecurringBreakRuleAction(
   formData: FormData,
 ): Promise<BlockActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
   // Migration 0037: preserve practitioner-supplied capitalization,
   // length-only validation; see createRecurringBreakRuleAction.
@@ -1234,6 +1268,7 @@ export async function updateRecurringBreakRuleAction(
   }
   if (!existing) return { ok: false, error: "Rule not found." };
   const scope = resolveSubmittedScope(formData, existing.practitioner_id);
+  await assertAvailabilityKey(studio.id, practitioner.id, scope);
 
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
@@ -1291,7 +1326,7 @@ export async function updateRecurringBreakRuleAction(
 export async function toggleRecurringBreakRuleActiveAction(
   formData: FormData,
 ): Promise<BlockActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
   const active = trimmed(formData.get("active")) === "true";
   if (!id) return { ok: false, error: "Missing rule id." };
@@ -1317,6 +1352,7 @@ export async function toggleRecurringBreakRuleActiveAction(
   const horizonEnd = horizonEndDateInStudioTz(studio.timezone);
   const admin = createAdminClient();
   const scope = rule.practitioner_id ?? null;
+  await assertAvailabilityKey(studio.id, practitioner.id, scope);
   const { error } = await admin.rpc(
     "update_recurring_break_rule_and_rematerialize",
     {
@@ -1366,7 +1402,9 @@ export async function toggleRecurringBreakRuleActiveAction(
 export async function deleteRecurringBreakRuleAction(
   formData: FormData,
 ): Promise<BlockActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const { studio, practitioner } = await assertOwnerWithStudio();
+  // The target's scope is not loaded here; the studio key is the strictest. Refine to the row's scope when R4 lifts the owner floor.
+  await assertAvailabilityKey(studio.id, practitioner.id, null);
   const id = trimmed(formData.get("id"));
   if (!id) return { ok: false, error: "Missing rule id." };
 

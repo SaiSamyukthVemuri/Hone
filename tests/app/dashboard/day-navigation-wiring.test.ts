@@ -206,7 +206,7 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(actionCall).toMatch(
       /hasHistory:\s*\(workflow\?\.hasHistory \?\? false\) \|\| prepSummary\.hasTreatment/,
     );
-    expect(CODE).toMatch(/historyAsked=\{viewingToday\}/);
+    expect(CODE).toMatch(/historyAsked=\{viewingToday( && canViewRecords)?\}/);
   });
 
   it("resolveNextAction itself is UNTOUCHED, so today's action cannot drift", () => {

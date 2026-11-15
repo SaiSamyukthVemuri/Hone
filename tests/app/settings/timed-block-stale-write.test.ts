@@ -20,6 +20,10 @@ const db = vi.hoisted(() => ({
   interleave: null as null | (() => void),
 }));
 
+// The Roles engine has its own tests; this file is about the action around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
 vi.mock("@/lib/supabase/queries", () => ({

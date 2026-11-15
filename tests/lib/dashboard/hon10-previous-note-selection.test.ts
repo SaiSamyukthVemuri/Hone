@@ -33,6 +33,10 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 import { createClient } from "@/lib/supabase/server";
 import { getBeforeTodayPreviews } from "@/lib/dashboard/before-today-previews";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 afterEach(() => vi.clearAllMocks());
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");

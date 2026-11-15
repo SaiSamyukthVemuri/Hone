@@ -1,3 +1,4 @@
+import { requirePermission, type PermissionDb } from "@/lib/permissions/require-permission";
 // CLIENTS DIRECTORY: LAST VISIT, behind ONE function (OPS R2, Insurance
 // CLIENTS-LAST-VISIT).
 //
@@ -42,7 +43,7 @@ type Builder = {
   order: (c: string, o: { ascending: boolean }) => Builder;
   range: (a: number, b: number) => PromiseLike<{ data: Row[] | null; error: unknown }>;
 };
-export type LastVisitSupabase = { from: (t: string) => { select: (cols: string) => Builder } };
+export type LastVisitSupabase = { from: (t: string) => { select: (cols: string) => Builder } } & Partial<Pick<PermissionDb, "rpc">>;
 
 const BLOCK = 1000;
 const MAX_BLOCKS = 10;
@@ -134,6 +135,9 @@ export async function readLastVisits(
 ): Promise<LastVisitResult> {
   const ids = [...new Set(clientIds)];
   if (ids.length === 0) return { ok: true, value: new Map() };
+  // Roles R4: a last visit is derived from treatment sessions. Without clin.view_records nothing is read and the result is "unknown"
+  // (ok:false), never "no visit".
+  if (!(await requirePermission(supabase as unknown as PermissionDb, studioId, "clin.view_records")).allowed) return { ok: false };
 
   const windowStart = new Date(Date.parse(nowIso) - RECENT_WINDOW_DAYS * 86_400_000).toISOString();
   const recent = await newestInWindow(supabase, studioId, ids, nowIso, { from: windowStart, before: null });

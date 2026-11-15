@@ -43,6 +43,11 @@ const state: St = {
 
 const h = vi.hoisted(() => ({ getAvailableSlots: vi.fn(), notify: vi.fn() }));
 
+// The Roles engine has its own tests; this file is about the action around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: vi.fn(async () => ({
     practitioner: state.practitioner,

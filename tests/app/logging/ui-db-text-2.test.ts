@@ -12,6 +12,7 @@ import { captureConsole } from "../../lib/sms/helpers/log-capture";
 // log; each site goes red when its old line is restored (see the PR's
 // mutation record). Synthetic values only.
 
+vi.mock("@/lib/permissions/require-permission", () => ({ requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }) }));
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 

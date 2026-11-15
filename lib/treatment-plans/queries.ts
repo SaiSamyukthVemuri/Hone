@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { getActualMinutesForPlans } from "@/lib/treatment-time/queries";
 import type {
@@ -37,6 +38,8 @@ export async function getTreatmentPlansForClient(
   clientId: string,
 ): Promise<TreatmentPlanWithStages[]> {
   const supabase = await createClient();
+  // Roles R4: treatment data. Without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return [];
 
   const { data: plans, error: plansErr } = await supabase
     .from("treatment_plans")
@@ -114,6 +117,8 @@ export async function getActiveTreatmentPlansForClient(
   clientId: string,
 ): Promise<TreatmentPlan[]> {
   const supabase = await createClient();
+  // Roles R4: treatment data. Without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return [];
   const { data, error } = await supabase
     .from("treatment_plans")
     .select("*")
@@ -132,6 +137,8 @@ export async function getTreatmentPlanWithCount(
   planId: string,
 ): Promise<TreatmentPlanWithCount | null> {
   const supabase = await createClient();
+  // Roles R4: treatment data. Without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return null;
   const { data, error } = await supabase
     .from("treatment_plans")
     .select("*")

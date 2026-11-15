@@ -302,7 +302,8 @@ describe("P-1: includePrices is only ever derived from the owner role", () => {
             if (ts.isIdentifier(a) && a.text === "priceReads") {
               const decl = declaredValue(sf, "priceReads");
               expect(decl, `${f}: priceReads has no declaration`).not.toBeNull();
-              expect(decl, `${f}: priceReads`).toMatch(/^\{ includePrices: (isOwner|practitioner\.role === "owner") \}$/);
+              // includePrices must be the FIRST key and owner-derived; other plain read options (includeSessions, clinicalFields) may follow.
+              expect(decl, `${f}: priceReads`).toMatch(/^\{ includePrices: (isOwner|practitioner\.role === "owner")(, [A-Za-z]+: [A-Za-z.]+)* \}$/);
             }
           }
         }

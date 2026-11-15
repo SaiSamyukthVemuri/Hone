@@ -20,6 +20,8 @@ type Props = {
   lastChartedSessionId: string | null;
   /** The read behind Last charted treatment FAILED. That is not "Not recorded": nobody read an absence. */
   lastChartedUnavailable?: boolean;
+  /** The viewer lacks clin.view_records: both history rows say so instead of "No visit recorded" or "Not recorded". */
+  historyNotAvailableToRole?: boolean;
   next: NextAppointment | null;
   timezone: string;
   timeFormat: TimeFormat;
@@ -39,6 +41,7 @@ export function VisitSummary({
   lastChartedAt,
   lastChartedSessionId,
   lastChartedUnavailable = false,
+  historyNotAvailableToRole = false,
   next,
   timezone,
   timeFormat,
@@ -57,7 +60,9 @@ export function VisitSummary({
         <SectionLabel as="h2" size="caption">
           Last visit
         </SectionLabel>
-        {lastVisit && lastVisitHref ? (
+        {historyNotAvailableToRole ? (
+          <p className={EMPTY} data-testid="profile-last-visit-not-available">Not available to your role</p>
+        ) : lastVisit && lastVisitHref ? (
           <Link href={lastVisitHref} className={`${VALUE} block underline-offset-2 hover:underline`}>
             {when(lastVisit.at, timezone, timeFormat)}
           </Link>
@@ -69,7 +74,9 @@ export function VisitSummary({
         <SectionLabel as="h2" size="caption">
           Last charted treatment
         </SectionLabel>
-        {lastChartedAt && lastChartedSessionId ? (
+        {historyNotAvailableToRole ? (
+          <p className={EMPTY} data-testid="profile-last-charted-not-available">Not available to your role</p>
+        ) : lastChartedAt && lastChartedSessionId ? (
           <Link
             href={`/clients/${clientId}/sessions/${lastChartedSessionId}`}
             className={`${VALUE} block underline-offset-2 hover:underline`}

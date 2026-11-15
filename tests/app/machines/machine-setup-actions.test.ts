@@ -43,6 +43,7 @@ const DB = vi.hoisted(() => ({
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 
+vi.mock("@/lib/permissions/require-permission", () => ({ requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }) }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => SESSION.current,
 }));

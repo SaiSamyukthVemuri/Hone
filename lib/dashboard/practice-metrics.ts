@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
@@ -198,6 +199,8 @@ export type ChartedWithin24hInput = ReadonlyArray<{
 export type ChartedWithin24hMetrics = {
   completedCount: number;
   chartedWithin24hCount: number;
+  // True when the viewer lacks clin.view_records: nothing was read, so 0 of 0 is NOT a fact.
+  notAvailable?: true;
 };
 
 export function summarizeChartedWithin24h(
@@ -435,6 +438,10 @@ export async function getPracticeDashboardMetrics(
 export async function getProcedureActionMetrics(
   studioId: string,
 ): Promise<ProcedureActionMetrics> {
+  // Roles R4: procedure completeness is derived from treatment records; without clin.view_records there is nothing to summarize.
+  if (!(await requirePermission(await createClient(), studioId, "clin.view_records")).allowed) {
+    return summarizeProcedureCompleteness([]);
+  }
   return summarizeProcedureCompleteness(
     await getClientProcedureRecords(studioId, { limit: PROCEDURE_RECORD_WINDOW }),
   );

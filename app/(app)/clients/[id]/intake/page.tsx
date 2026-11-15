@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { questionnaireForRow, QUESTIONNAIRE_HISTORY_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import Link from "next/link";
 // RESP-CLIENT-INTAKE-01. Only the back control was in the measured slice; the
@@ -153,6 +154,10 @@ export default async function ClientIntakePage({
     .maybeSingle();
   if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
+
+  // Roles engine (0287): the intake ANSWERS. Without clin.view_intake the page is the same not-found as a missing client.
+  // (Status-only access, clin.view_intake_status, has no page of its own yet: R5 splits the status view out.)
+  if (!(await requirePermission(supabase, studio.id, "clin.view_intake", { client: id })).allowed) notFound();
 
   // Photo consent lives in the CLIENT PORTAL, not in the intake, so the
   // practitioner reviewing an intake would otherwise have no way to see

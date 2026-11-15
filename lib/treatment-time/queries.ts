@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { buildAreaMinutesBreakdown } from "./area-bucket";
@@ -68,6 +69,8 @@ async function loadElectrolysisRows(
   clientId: string,
 ): Promise<Row[]> {
   const supabase = await createClient();
+  // Roles R4: treatment data. Without clin.view_records nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return [];
   const { data, error } = await supabase
     .from("sessions")
     .select(
@@ -200,6 +203,8 @@ export async function getActualMinutesForPlans(
   if (planIds.length === 0) return result;
 
   const supabase = await createClient();
+  // Roles R4: logged minutes are treatment data; without clin.view_records the zeroed map is returned and nothing is read.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return result;
   const { data, error } = await supabase
     .from("sessions")
     .select(

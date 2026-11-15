@@ -5,6 +5,7 @@ import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import {
   CHANGED_BY_SOMEONE_ELSE_ERROR,
   NOT_SAVED_ERROR,
@@ -245,6 +246,22 @@ export async function updateClientAction(
   }
 
   const supabase = await createClient();
+
+  // Skin type is a clinical-record field (catalog DN-5): it is written only when the form submitted it AND the viewer holds
+  // clin.view_records. A request that carries it without the permission has it dropped here, before any write, so a form that
+  // never showed the field can neither blank nor set it.
+  if ("fitzpatrick_type" in plan.patch) {
+    const mayWriteSkinType = (await requirePermission(supabase, studio.id, "clin.view_records", { client: clientId })).allowed;
+    if (!mayWriteSkinType) {
+      delete plan.patch.fitzpatrick_type;
+      const at = plan.conditions.findIndex((c) => c.key === "fitzpatrick_type");
+      if (at >= 0) plan.conditions.splice(at, 1);
+      if (Object.keys(plan.patch).length === 0) {
+        revalidatePath(`/clients/${clientId}`);
+        redirect(`/clients/${clientId}`);
+      }
+    }
+  }
 
   const emailChanged = "email" in plan.patch;
   const email = emailChanged ? ((plan.patch.email as string | null) ?? null) : null;

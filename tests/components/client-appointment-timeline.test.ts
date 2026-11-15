@@ -165,7 +165,7 @@ describe("client profile Sessions tab embeds the appointment timeline", () => {
 
   it("calls getAppointmentsForClientProfile with the resolved studio + client ids", () => {
     expect(PAGE_SOURCE).toMatch(
-      /getAppointmentsForClientProfile\(\s*studio\.id,\s*client\.id,?\s*\)/,
+      /getAppointmentsForClientProfile\(\s*studio\.id,\s*client\.id,\s*\{ includeAftercare \}\s*\)/,
     );
   });
 

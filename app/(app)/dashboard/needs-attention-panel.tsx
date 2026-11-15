@@ -316,6 +316,13 @@ export function NeedsAttentionPanel({
       </p>
     ) : null;
 
+  // Roles R4 (RO-1): a viewer without clin.view_records is told so; an empty list is never presented as "all caught up".
+  const restrictedNote = needs.notAvailableToRole ? (
+    <p role="status" data-testid="needs-attention-not-available" className="text-sm text-neutral-600 dark:text-neutral-400">
+      Records follow-up is not available to your role.
+    </p>
+  ) : null;
+
   if (needs.clients.length === 0 && needs.studioItems.length === 0) {
     const tail = (
       <>
@@ -325,6 +332,15 @@ export function NeedsAttentionPanel({
         {dismissalsNote}
       </>
     );
+    if (restrictedNote) {
+      return (
+        <div className="flex flex-col gap-2">
+          {unavailableNote}
+          {restrictedNote}
+          {tail}
+        </div>
+      );
+    }
     // Something was capped away: this is not an all-clear.
     if (needs.notReturnedCount > 0) {
       return (
@@ -379,6 +395,7 @@ export function NeedsAttentionPanel({
   return (
     <div className="flex flex-col gap-3">
       {unavailableNote}
+      {restrictedNote}
       <ul
         id="needs-attention-list"
         className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800"

@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
@@ -111,6 +112,8 @@ export type MissingRecordsAssistant = {
   // Distinct gaps found before the display cap, so the UI can say
   // "showing N of M" honestly. Never a compliance score.
   totalFound: number;
+  // True when the viewer lacks clin.view_records: nothing was read, so this is NOT an all-clear and the UI must say so.
+  notAvailable?: true;
 };
 
 // DASH-TRUTH-02: return enough rows for the Dashboard disclosure to be real.
@@ -293,6 +296,11 @@ export async function getMissingRecordsAssistant(
   options: { limit?: number } = {},
 ): Promise<MissingRecordsAssistant> {
   const supabase = await createClient();
+  // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return {
+      ...buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [], limit: options.limit }),
+      notAvailable: true,
+    };
 
   // 1) Recent sessions (newest first), capped.
   // HON-58: the staff-facing name is the display name (preferred, else stored);

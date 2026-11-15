@@ -52,6 +52,10 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 beforeEach(() => {
   queries.length = 0;
   // One recent charted session that HAS a plan for the next visit — the exact

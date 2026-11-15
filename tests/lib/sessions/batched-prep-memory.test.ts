@@ -35,6 +35,10 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 import { createClient } from "@/lib/supabase/server";
 import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 afterEach(() => vi.clearAllMocks());
 
 type Row = Record<string, unknown>;

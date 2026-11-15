@@ -133,6 +133,10 @@ const ALWAYS = {
   client_pricing: 1,
   sessions: 1,
   services: 1,
+  // Roles engine (#1341): one has_studio_permission call per page gate. clin.view_records, clin.view_intake and clin.view_aftercare are each
+  // asked ONCE by the page, and only AFTER the client has resolved for the studio (the unknown-client pin below and the tab-behaviour refusal pin
+  // both prove no gate runs before that). The page fans the answers out itself.
+  "rpc/has_studio_permission": 3,
 };
 
 const EXPECTED: Record<string, Record<string, number>> = {
@@ -142,6 +146,8 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // the practitioner who wrote them. With no notes on file that loader
     // returns before its lookup, which is why this used to read 2.
     practitioners: 4,
+    // 3 page gates + 1 loader-level clin.view_records ask (imported treatment memory guards itself so it is safe when called alone).
+    "rpc/has_studio_permission": 4,
     client_intake_forms: 2, // latest, and latest submitted-or-reviewed
     // Last visit / Next appointment: two bounded .limit(1) reads (newest completed past appointment,
     // next upcoming). Read-only; the Sessions tab keeps its own full list read.
@@ -165,6 +171,8 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // before that request when the client has no appointments, which is why
     // this used to read 3.
     sessions: 4,
+    // 3 page gates + 2 loader-level clin.view_records asks (the two treatment-time loaders each guard themselves).
+    "rpc/has_studio_permission": 5,
     appointments: 1,
     treatment_goals: 1,
     session_blocks: 1, // last treatment only
@@ -175,6 +183,8 @@ const EXPECTED: Record<string, Record<string, number>> = {
     ...ALWAYS,
     // 2 base + 2 for the note loaders attributing the seeded notes.
     practitioners: 4,
+    // 3 page gates + 1 loader-level clin.view_records ask (a clinical-notes/treatment loader guards itself).
+    "rpc/has_studio_permission": 4,
     treatment_plans: 1,
     client_clinical_notes: 4,
     client_budget_context: 1,

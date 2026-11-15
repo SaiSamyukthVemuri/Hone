@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
@@ -98,6 +99,8 @@ export type ClientsNeedingAttention = {
   // True when the underlying scan hit its cap; counts are then "of
   // the most recent scanned sessions", documented in the UI helper.
   scanCapped: boolean;
+  // True when the viewer lacks clin.view_records: nothing was read, so this is NOT an all-clear and the UI must say so.
+  notAvailable?: true;
 };
 
 /** Two 32-bit FNV-1a passes -> 16 hex chars. A change detector, not a security hash; the output carries no readable content. */
@@ -315,6 +318,8 @@ export async function getClientsNeedingAttention(
   studioId: string,
 ): Promise<ClientsNeedingAttention> {
   const supabase = await createClient();
+  // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return { ...buildClientsNeedingAttention([], []), notAvailable: true };
   // HON-58: staff see the display name; the read still works before 0258 exists.
   const { data: sessionRows, error: sessionsError } = await readWithPreferredName((withPreferred) =>
     supabase

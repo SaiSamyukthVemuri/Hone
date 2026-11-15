@@ -161,6 +161,7 @@ const { createClientSpy, getCurrentPractitionerWithStudio, revalidatePath } =
     revalidatePath: vi.fn(),
   }));
 
+vi.mock("@/lib/permissions/require-permission", () => ({ requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }) }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: createClientSpy }));
 vi.mock("@/lib/supabase/admin-server", () => ({

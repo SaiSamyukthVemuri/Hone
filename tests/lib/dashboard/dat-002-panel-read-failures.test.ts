@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 // DAT-002: three dashboard panel loaders discarded the `error` of their reads,
 // so a failed read returned exactly what a studio with nothing to show returns.
 // Each now refuses with a fixed message (the #981 pattern), which the route

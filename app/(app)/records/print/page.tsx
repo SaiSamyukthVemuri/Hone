@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import Link from "next/link";
 import {
   getClientsForStudio,
@@ -503,6 +504,14 @@ async function ProceduresPrint({
     filter.to,
     timezone,
   );
+  // Roles R4: the procedure log is built from treatment sessions. Without clin.view_records the print says so instead of printing an empty log.
+  if (!(await requirePermission(await createClient(), studioId, "clin.view_records")).allowed) {
+    return (
+      <p role="status" data-testid="procedure-records-not-available">
+        Procedure records are not available to your role.
+      </p>
+    );
+  }
   const records = await getClientProcedureRecords(studioId, {
     clientId: filter.clientId,
     fromUtc,
@@ -525,7 +534,11 @@ async function ProceduresPrint({
     const id = identities.byClient.get(r.clientId);
     return clinicalPacketName({ name: r.clientName, preferred_name: id?.preferred_name, legal_name: id?.legal_name });
   };
-  const photoCounts = filter.clientId
+  // Photo counts are photo existence: ask the photos key too, and print no count line without it.
+  const canViewPhotos = filter.clientId
+    ? (await requirePermission(await createClient(), studioId, "clin.view_photos", { client: filter.clientId })).allowed
+    : false;
+  const photoCounts = filter.clientId && canViewPhotos
     ? await loadLinkedPhotoCounts(
         studioId,
         filter.clientId,

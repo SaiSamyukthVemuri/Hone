@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -398,6 +399,9 @@ export async function createSessionBlockAction(
     return { ok: false, error: "Inactive practitioners cannot create blocks." };
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   // Validate the new structured-area fields up front so the caller gets a
   // clean message instead of an opaque CHECK violation. Existing block
@@ -536,6 +540,9 @@ export async function updateSessionBlockAction(
     return { ok: false, error: "Inactive practitioners cannot edit blocks." };
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   // Validate any structured-area fields present in the patch. Each is
   // independent: callers can update just block_name without sending
@@ -797,6 +804,9 @@ export async function softDeleteSessionBlockAction(
     return { ok: false, error: "Inactive practitioners cannot delete blocks." };
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   // L18 Phase 2: soft retirement through soft_delete_session_block (0166).
@@ -849,6 +859,9 @@ export async function removeSessionAreaAction(
   // Defense in depth: the RPC re-derives studio + actor from auth.uid(); this
   // early lineage check gives a clean error before the round-trip.
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("soft_delete_session_area", {
@@ -1198,6 +1211,9 @@ export async function createTreatmentAreaWithEntryAction(
       };
     }
     throw cause;
+  }
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role.", unresolved: false };
   }
   // WHY THAT CATCH EXISTS (Codex, #860 4305702526). `assertSessionForClient`
   // THROWS, and the create form's catch labels anything thrown as unresolved
@@ -1704,6 +1720,9 @@ export async function updateTreatmentAreaWithEntryAction(
     return { ok: false, error: "Inactive practitioners cannot edit sessions." };
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: input.clientId })).allowed) {
+    return { ok: false, error: "Not available to your role." };
+  }
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,

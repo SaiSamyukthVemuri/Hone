@@ -65,12 +65,19 @@ type Group = {
 
 export function ClientAppointmentTimeline({
   clientId,
-  rows,
+  rows: allRows,
+  aftercareAvailable,
 }: {
   clientId: string;
   rows: ReadonlyArray<ClientAppointmentTimelineRow>;
+  // false = the viewer lacks clin.view_aftercare: the postcare detail was not loaded, and absence must not read as "nothing was sent".
+  aftercareAvailable: boolean;
 }) {
   const nowMs = Date.now();
+  // Defence in depth: the loader already withholds the postcare columns, and this drops them again if a caller passed them anyway.
+  const rows = aftercareAvailable
+    ? allRows
+    : allRows.map((r) => ({ ...r, postcare_email_sent_at: null, postcare_email_send_attempts: 0 }));
   // PR #191 (Chloe smoke feedback): "Needs charting" renders ABOVE
   // "Upcoming". Charting debt is the actionable item on this tab;
   // upcoming appointments are reference. PR #194: everything except
@@ -129,6 +136,11 @@ export function ClientAppointmentTimeline({
             nowMs={nowMs}
           />
         ))
+      )}
+      {!aftercareAvailable && (
+        <p role="status" data-testid="aftercare-not-available" className="text-xs text-neutral-500">
+          Aftercare details are not available to your role.
+        </p>
       )}
     </section>
   );

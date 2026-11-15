@@ -194,7 +194,7 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
 describe("the linked-session query is separate and unchanged", () => {
   it("still reads sessions by this appointment id", () => {
     expect(PAGE_CODE).toMatch(/\.eq\("appointment_id", id\)/);
-    expect(PAGE_CODE).toMatch(/linkedSession = \(linkedSessionRes\.data \?\? null\)/);
+    expect(PAGE_CODE).toMatch(/linkedSession = \(linkedSessionRes\?\.data \?\? null\)/);
   });
 
   it("the View session affordance still points at the LINKED session", () => {

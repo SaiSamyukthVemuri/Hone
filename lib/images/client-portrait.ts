@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   TREATMENT_IMAGES_BUCKET,
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
@@ -26,12 +27,36 @@ import {
 // path derived from that validated original (PERF-IMG-03, as on the Photos tab).
 export type ClientPortraitUrls = { url: string; thumbUrl: string | null };
 
+// DN-24: ID photos and portraits are owner-only and not delegable until the separate ID-photo review. The feature is OFF today
+// (HONE_CLIENT_PORTRAIT_ENABLED unset) and no page calls this signer, so nothing narrows on this release. This is OBSERVE-ONLY: a
+// non-owner is logged as a would-deny (ids and role only, no client data) and still served exactly as before; the owner-only refusal
+// is switched on with the review. The adopt preview and release notice list it as `id_portraits_owner_only` (Privacy X2).
+async function observePortraitOwnerOnly(studioId: string): Promise<void> {
+  try {
+    const { practitioner } = await getCurrentPractitionerWithStudio();
+    if (practitioner.role !== "owner") {
+      console.warn(
+        JSON.stringify({
+          event: "permission_observe_would_deny",
+          key: "id_portraits_owner_only",
+          role: practitioner.role,
+          studioId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+  } catch {
+    // Observing must never change what the caller gets.
+  }
+}
+
 export async function signedClientPortraitUrl(input: {
   studioId: string;
   clientId: string;
   portraitImageId: string | null | undefined;
 }): Promise<ClientPortraitUrls | null> {
   if (!input.portraitImageId) return null;
+  await observePortraitOwnerOnly(input.studioId);
   try {
     const supabase = await createClient();
     const { data: row, error } = await supabase

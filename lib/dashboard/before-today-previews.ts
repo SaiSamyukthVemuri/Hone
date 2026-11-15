@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -233,6 +234,8 @@ export async function getBeforeTodayPreviews(
   if (ids.length === 0) return out;
 
   const supabase = await createClient();
+  // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
+  if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return out;
   const sessionsRead = await readRows(
     "before_today_previews_sessions_read_failed",
     studioId,

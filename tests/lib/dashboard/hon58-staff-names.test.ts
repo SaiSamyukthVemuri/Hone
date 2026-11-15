@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 // HON-58: the dashboard's two client-naming panels show the DISPLAY name (the
 // preferred name when the client has one) and still work on a database that
 // does not have the column yet. Synthetic ids and names only.

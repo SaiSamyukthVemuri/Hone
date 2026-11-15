@@ -30,6 +30,10 @@ let member = true;
 const signed: string[] = [];
 let missingObjects = new Set<string>();
 
+// The Roles engine has its own tests; this file is about the code around it.
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: async () => ({ allowed: true, mode: "enforce", engine: true }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: vi.fn(async () => undefined) }));
 vi.mock("@/lib/supabase/queries", () => ({

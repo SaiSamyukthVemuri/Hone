@@ -12,7 +12,8 @@ import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
+// Invitations create practitioners only. Ownership never travels by invitation (it has its own protected transfer flow).
+const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["practitioner"];
 const PG_UNIQUE_VIOLATION = "23505";
 
 export type InviteResult =
@@ -119,10 +120,10 @@ export async function invitePractitionerAction(
   const email = rawEmail.toLowerCase();
 
   const roleRaw = formData.get("role");
-  const role =
-    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as PractitionerRole)
-      ? (roleRaw as PractitionerRole)
-      : "practitioner";
+  if (typeof roleRaw === "string" && roleRaw !== "" && !VALID_ROLES.includes(roleRaw as PractitionerRole)) {
+    return { ok: false, error: "Invitations can only add practitioners." };
+  }
+  const role: PractitionerRole = "practitioner";
   const displayName = nullableString(formData.get("display_name"));
 
   let context: OwnerContext;

@@ -19,6 +19,7 @@ const empty: NeedsAttention = {
   others: [],
   notReturnedCount: 0,
   unavailableChecks: [],
+  notAvailableToRole: false,
   detailsWindow: null,
 };
 const html = (n: NeedsAttention) =>
@@ -27,6 +28,13 @@ const html = (n: NeedsAttention) =>
 describe("Needs attention honest states", () => {
   it("a genuinely empty list says nothing needs attention", () => {
     expect(html(empty)).toContain("Nothing needs attention right now");
+  });
+
+  it("a role without clin.view_records is told it is not available, never the all-clear (RO-1)", () => {
+    const out = html({ ...empty, notAvailableToRole: true });
+    expect(out).toContain("not available to your role");
+    expect(out).not.toContain("Nothing needs attention right now");
+    expect(out).not.toMatch(/\b0 (visits|items)/);
   });
 
   it("an unreadable check on an otherwise empty list is NOT the all-clear", () => {

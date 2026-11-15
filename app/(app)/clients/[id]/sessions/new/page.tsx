@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import {
   getClientById,
   requirePractitionerWithStudio,
@@ -42,6 +44,8 @@ export default async function NewSessionPage({
   const { id } = await params;
   const sp = (await searchParams) ?? {};
   const { studio } = await requirePractitionerWithStudio();
+  // Charting starts from the client's treatment record (previous session, its blocks and areas): without clin.view_records there is none to read.
+  if (!(await requirePermission(await createClient(), studio.id, "clin.view_records", { client: id })).allowed) notFound();
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 

@@ -58,6 +58,10 @@ import {
   type TodayWorkflowInput,
 } from "@/lib/dashboard/today-workflow";
 
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
+
 afterEach(() => vi.clearAllMocks());
 
 type Row = Record<string, unknown>;

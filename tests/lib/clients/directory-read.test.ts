@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readLastVisits, formatStudioDate, LAST_VISIT_DEFINITION, RECENT_WINDOW_DAYS } from "@/lib/clients/last-visit";
 import { readCurrentIntake, readDirectoryClients, readNextAppointments, DIRECTORY_CLIENT_COLUMNS } from "@/lib/clients/directory-read";
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 
 type Call = { table: string; cols: string; ops: Array<[string, unknown[]]> };
 type Script = (call: Call, block: number) => { data: unknown; error: unknown };

@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getActiveServices } from "@/lib/booking/queries";
@@ -71,6 +72,8 @@ export type GettingStartedSignals = {
   // is therefore not issued for a non-owner and the item renders as
   // informational rather than as a false "to do". Unknown is never pessimism.
   paymentAttempts: number | null;
+  // False when the viewer lacks clin.view_records: the charting signals below were NOT read, so those items are informational (never a false "to do").
+  recordsAvailable?: boolean;
   runtimeLivemode: boolean;
   /**
    * Did EVERY read that next-step selection depends on actually succeed?
@@ -223,6 +226,11 @@ export function nextSetupStep(checklist: GettingStarted): ChecklistItem | null {
 export function buildGettingStarted(
   s: GettingStartedSignals,
 ): GettingStarted {
+  // Roles R4: without clin.view_records the treatment signals were not read, so a charting item is informational (review), never "to do".
+  const chartingItem = (key: string, label: string, explanation: string, done: boolean, href: string | null): ChecklistItem =>
+    s.recordsAvailable === false
+      ? review(key, label, "Treatment records are not available to your role.", null)
+      : auto(key, label, explanation, done, href);
   const sections: ChecklistSection[] = [
     {
       key: "basics",
@@ -314,49 +322,49 @@ export function buildGettingStarted(
           s.clients > 0,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "test-session",
           "Add a test session",
           "Log a session from the client profile.",
           s.sessions > 0,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "treatment-area",
           "Add a treatment area",
           "Charting is per treatment area.",
           s.treatmentAreas > 0,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "frequency",
           "Record machine frequency",
           "Sticky: your last-used frequency pre-fills new areas.",
           s.hasFrequency,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "probe",
           "Record probe",
           "Pick the probe from the catalog.",
           s.hasProbe,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "probe-lot",
           "Record probe lot/batch number",
           "Feeds procedure records and lot traceability.",
           s.hasProbeLot,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "reaction-tolerance",
           "Add reaction/tolerance",
           "Builds the client's treatment memory.",
           s.hasReactionOrTolerance,
           "/clients",
         ),
-        auto(
+        chartingItem(
           "next-visit",
           "Add a For next visit note",
           "Shows in Before today at the next appointment.",
@@ -557,6 +565,9 @@ export async function getGettingStartedSignals(
   opts: { viewerIsOwner: boolean },
 ): Promise<GettingStartedSignals> {
   const supabase = await createClient();
+  // Roles R4: the charting completeness signals are derived from treatment data. Without clin.view_records neither read is issued
+  // and the viewer's checklist is built from empty block and note reads.
+  const canViewRecords = (await requirePermission(supabase, studio.id, "clin.view_records")).allowed;
   const count = (table: string) =>
     supabase
       .from(table)
@@ -590,7 +601,9 @@ export async function getGettingStartedSignals(
           .eq("stripe_livemode", inferStripeLivemode())
       : Promise.resolve(null),
     getTreatmentConsentReadiness(studio.id),
-    supabase
+    !canViewRecords
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
       .from("session_blocks")
       // Charting unification: reactions may live as chips in the block's live
       // entries' observation_chips; embed them so the completeness check reads
@@ -601,7 +614,9 @@ export async function getGettingStartedSignals(
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
       .limit(BLOCK_SIGNAL_CAP + 1),
-    supabase
+    !canViewRecords
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
       .from("sessions")
       .select("id, next_session_note")
       .eq("studio_id", studio.id)
@@ -659,6 +674,7 @@ export async function getGettingStartedSignals(
     !blocksTruncated &&
     !notesTruncated &&
     !reactionRowsClipped &&
+    canViewRecords &&
     treatmentConsent.ok;
 
   const notes = (noteRows ?? []) as Array<{
@@ -693,6 +709,7 @@ export async function getGettingStartedSignals(
     sterileItems: sterile.count ?? 0,
     disinfectants: disinfectants.count ?? 0,
     paymentAttempts: payments === null ? null : (payments.count ?? 0),
+    recordsAvailable: canViewRecords,
     runtimeLivemode: inferStripeLivemode(),
     nextStepSignalsAvailable,
   };

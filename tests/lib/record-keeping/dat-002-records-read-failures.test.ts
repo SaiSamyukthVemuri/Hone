@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("@/lib/permissions/require-permission", () => ({
+  requirePermission: vi.fn(async () => ({ allowed: true, mode: "enforce", engine: true })),
+}));
 
 // DAT-002 follow-up (Privacy PEER-1087 N1): the /records and /records/print
 // loaders discarded the `error` of their reads, so a failed read rendered as

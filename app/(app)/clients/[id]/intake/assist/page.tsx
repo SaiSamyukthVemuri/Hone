@@ -1,3 +1,4 @@
+import { requirePermission } from "@/lib/permissions/require-permission";
 import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import { intakeRevision } from "@/lib/intake/revision";
 import Link from "next/link";
@@ -44,6 +45,8 @@ export default async function AssistedIntakePage({
   // it does not disclose that the row exists somewhere else.
   if (clientErr) notFound();
   if (!client) notFound();
+  // Roles R4: assisted entry shows the intake ANSWERS; without clin.view_intake it is the same not-found as a missing client.
+  if (!(await requirePermission(supabase, studio.id, "clin.view_intake", { client: id })).allowed) notFound();
 
   // Resolve the intake: an explicit ?intake=<id> when the practitioner came
   // from a specific history row, otherwise this client's latest. A requested
