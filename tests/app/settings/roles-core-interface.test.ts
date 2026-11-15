@@ -78,7 +78,8 @@ describe("error codes", () => {
     expect(isRowError({ code: "stale_version", currentVersion: 4 })).toBe(false);
   });
   it("every code the migration can return is a code the page knows", () => {
-    const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+    // 0287 holds the engine; 0342 adds deactivate_staff_member / reactivate_staff_member.
+  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8") + readFileSync("supabase/migrations/0342_roles_staff_deactivate_core.sql", "utf8");
     const used = new Set([...sql.matchAll(/perm_fail\('([a-z_]+)'/g)].map((m) => m[1]));
     for (const code of used) expect(ROLE_ERROR_CODES as readonly string[], code).toContain(code);
   });
@@ -127,11 +128,12 @@ describe("the actions hand the core only what the owner changed, after re-checki
 });
 
 describe("the migration's functions and parameter names are the ones the page calls", () => {
-  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+  // 0287 holds the engine; 0342 adds deactivate_staff_member / reactivate_staff_member.
+  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8") + readFileSync("supabase/migrations/0342_roles_staff_deactivate_core.sql", "utf8");
   const src = readFileSync("lib/settings/roles/core.ts", "utf8");
   it("matches every rpc name and p_ argument", () => {
     const calls = [...src.matchAll(/call\("([a-z_]+)", \{([^}]*)\}\)/g)];
-    expect(calls.length).toBe(12);
+    expect(calls.length).toBe(14);
     for (const [, fn, args] of calls) {
       const sig = sql.match(new RegExp(`function public\\.${fn}\\(([^)]*)\\)`));
       expect(sig, fn).not.toBeNull();

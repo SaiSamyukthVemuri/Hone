@@ -2,14 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
-import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
+import { coreDeactivateStaff } from "@/lib/settings/roles/core";
+import { reasonAcceptable, roleErrorMessage } from "@/lib/settings/roles/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Invitations create practitioners only. Ownership never travels by invitation (it has its own protected transfer flow).
@@ -238,27 +239,18 @@ export async function removePractitionerAction(formData: FormData): Promise<void
     throw new Error("You cannot remove yourself.");
   }
 
-  // Part 4 Item 2: deactivation goes through the locked command (studios row →
-  // capacity advisory lock), which validates the target (same-studio, not the
-  // owner) and sets active=false atomically, no raw active=false browser write,
-  // no leaked DB text. This is per-practitioner deactivation, NOT studio
-  // structural retirement; the target's appointments are preserved.
-  const admin = createAdminClient();
-  const { data, error } = await admin.rpc("set_practitioner_active_locked", {
-    p_studio_id: studioId,
-    p_actor_practitioner_id: practitionerId,
-    p_target_practitioner_id: id,
-    p_active: false,
-  });
-  if (error || data !== "ok") {
-    console.error(
-      `team_action_db_error:remove_practitioner:${error ? dbErrorCode(error) : failureCode(null, data)}`,
-    );
-    if (data === "cannot_modify_owner")
-      throw new Error("The studio owner cannot be removed.");
-    if (data === "invalid_practitioner")
-      throw new Error("Practitioner not found in this studio.");
-    throw new Error("Could not remove the practitioner. Please try again.");
+  // 0342: removal goes through the permission core (deactivate_staff_member), the same command the Roles page uses, so it records the reason and an
+  // audit row and refuses a practitioner who still has upcoming appointments. It runs as the signed-in owner. Nothing is deleted
+  // and the person keeps their sign-in. It replaces the earlier service-role call, which wrote neither a reason nor an audit row.
+  const reason = nullableString(formData.get("reason"));
+  if (!reason || !reasonAcceptable("adopt", false, reason)) {
+    throw new Error(roleErrorMessage({ code: reason ? "reason_invalid" : "reason_required" }));
+  }
+  const result = await coreDeactivateStaff(studioId, id, "practitioner", reason);
+  if (!result.ok) {
+    console.error(`team_action_db_error:remove_practitioner:${result.error.code}`);
+    throw new Error(roleErrorMessage(result.error));
   }
   revalidatePath("/settings/team");
+  revalidatePath("/settings/roles");
 }

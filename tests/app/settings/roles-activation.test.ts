@@ -177,6 +177,8 @@ describe("the page", () => {
         loadHistory: noop,
         loadAccess: noop,
         changeRole: noop,
+        deactivate: noop,
+        reactivate: noop,
         reload: noop,
       }),
     );

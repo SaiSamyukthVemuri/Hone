@@ -36,8 +36,10 @@ describe("schedule writers — locked-command wiring", () => {
     }
     expect(AVAIL).toMatch(/p_actor_practitioner_id:/);
   });
-  it("removePractitionerAction uses the locked command, not a raw active=false or leaked error", () => {
-    expect(TEAM).toMatch(/set_practitioner_active_locked/);
+  it("removePractitionerAction goes through the permission core (0342), not a raw active=false or leaked error", () => {
+    // 0342 replaced the admin-client set_practitioner_active_locked call: the core command locks the studio, records the reason and an audit row.
+    expect(TEAM).toMatch(/coreDeactivateStaff\(/);
+    expect(TEAM).not.toMatch(/set_practitioner_active_locked/);
     expect(TEAM).not.toMatch(/\.update\(\{ active: false \}\)/);
     // No raw DB message in the deactivation path.
     expect(TEAM).not.toMatch(/Failed to (look up|remove) practitioner: \$\{/);

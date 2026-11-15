@@ -51,6 +51,8 @@ const render = (over: Record<string, unknown> = {}) =>
       loadHistory: noop,
       loadAccess: noop,
       changeRole: noop,
+      deactivate: noop,
+      reactivate: noop,
       reload: noop,
       ...over,
     }),

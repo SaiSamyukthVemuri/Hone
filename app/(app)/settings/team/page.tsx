@@ -160,8 +160,19 @@ function CurrentPractitioners({
                 </div>
               </div>
               {p.role !== "owner" && !isSelf && (
-                <form action={removePractitionerAction}>
+                <form action={removePractitionerAction} className="flex flex-wrap items-center gap-2">
                   <input type="hidden" name="id" value={p.id} />
+                  <label className="sr-only" htmlFor={`remove-reason-${p.id}`}>
+                    Why you are removing access (required)
+                  </label>
+                  <input
+                    id={`remove-reason-${p.id}`}
+                    name="reason"
+                    required
+                    maxLength={500}
+                    placeholder="Why (required)"
+                    className="min-h-[36px] w-44 rounded-md border border-neutral-300 bg-transparent px-2 text-xs dark:border-neutral-700"
+                  />
                   <button
                     type="submit"
                     className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"

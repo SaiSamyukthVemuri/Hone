@@ -2,8 +2,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import type { Role } from "@/lib/permissions/catalog";
-import type { AccessResult, ActivationPreviewResult, ChangeRoleResult, CommandResult, HistoryResult, PreviewResult } from "./api";
-import { UNEXPECTED, parseAccess, parseActivationPreview, parseChangeRole, parseCommand, parseHistory, parsePreview, parseState, type CoreState } from "./core-parse";
+import type { AccessResult, ActivationPreviewResult, ChangeRoleResult, CommandResult, HistoryResult, PreviewResult, StaffActiveResult } from "./api";
+import { UNEXPECTED, parseAccess, parseActivationPreview, parseChangeRole, parseCommand, parseHistory, parsePreview, parseStaffActive, parseState, type CoreState } from "./core-parse";
 
 // The ONLY place the Roles page talks to the permission core (0287). Every call runs as the signed-in user, so the core decides who the
 // owner is from the CURRENT membership row (never from anything passed here) and refuses everyone else with a code. A transport error
@@ -114,4 +114,17 @@ export async function coreChangeRole(
       p_reason: reason === "" ? null : reason,
     }),
   );
+}
+
+export type StaffKind = "practitioner" | "receptionist";
+
+/** Take one person's access away (0342). The core refuses self, an owner, someone already inactive, upcoming appointments (while the studio's rule is
+ *  "block"), and a missing reason; it writes the audit row in the same transaction. Nothing is deleted. */
+export async function coreDeactivateStaff(studioId: string, membershipId: string, kind: StaffKind, reason: string): Promise<StaffActiveResult> {
+  return parseStaffActive(await call("deactivate_staff_member", { p_studio: studioId, p_membership: membershipId, p_kind: kind, p_reason: reason === "" ? null : reason }));
+}
+
+/** Give a deactivated person their access back (0342). Behind the same operator gate as a role change. */
+export async function coreReactivateStaff(studioId: string, membershipId: string, kind: StaffKind, reason: string): Promise<StaffActiveResult> {
+  return parseStaffActive(await call("reactivate_staff_member", { p_studio: studioId, p_membership: membershipId, p_kind: kind, p_reason: reason === "" ? null : reason }));
 }

@@ -1,0 +1,6 @@
+{
+  "pr": 1446,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0342_roles_staff_deactivate_core.sql"],
+  "release_receipt": "01-ops/1446-release-receipt.json"
+}

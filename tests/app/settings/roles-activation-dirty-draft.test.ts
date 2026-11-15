@@ -64,6 +64,8 @@ async function mount(over: Record<string, unknown>) {
         loadHistory: failing,
         loadAccess: failing,
         changeRole: failing,
+        deactivate: failing,
+        reactivate: failing,
         reload: failing,
         ...over,
       }),

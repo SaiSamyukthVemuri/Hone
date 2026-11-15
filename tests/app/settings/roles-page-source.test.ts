@@ -24,7 +24,7 @@ describe("the Roles actions", () => {
   const bodies = actions.split(/^export async function /m).slice(1);
   it("re-check the owner on the server before the core is called, in every action", () => {
     expect(actions).toMatch(/practitioner\.role === "owner"/);
-    expect(bodies).toHaveLength(12);
+    expect(bodies).toHaveLength(14); // 0342 added deactivateStaffAction and reactivateStaffAction
     for (const b of bodies) {
       const name = b.slice(0, b.indexOf("("));
       expect(b.indexOf("await assertOwner()"), name).toBeGreaterThan(-1);
