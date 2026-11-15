@@ -122,6 +122,19 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
+### The 0310 apply (out of order; facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0310-apply-receipt-20261115.json`)
+
+- **What it is.** `0310_block_machine_identity_mode_contract.sql`: replaces the one function behind the three signed-in machine-identity commands. It refuses a machine mode the published contract does not allow for the machine's profile and version, an option-gated mode when the option is not positively present, and a profile that differs from the unit. The file is carried by #1369.
+- **Out of order.** 0310 is below the hosted max `0340`. It was applied with `db push --include-all` inside its own sealed stage that held only the hosted files plus 0310; the dry run listed exactly 0310. `hosted_out_of_order` declares it; the declared hosted maximum stays `0340`.
+- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package (`01-ops/SAM-AUTHORIZATION-0310-b00-20261115T163821Z.txt`): 0310 only, `--include-all` within its stage, a dry run listing exactly 0310, a read-back to follow. It covers no other migration and no activation.
+- **Package.** Sealed package SEAL-SHA256SUMS `d10855e3…`.
+- **Pre-apply read (Part A, 2026-11-15, 16:35:04Z to 16:35:06Z, client side).** PASS: 270 history rows, max `0340`, `0310` absent; no open transactions.
+- **Read-back (2026-11-15, 16:39:13Z to 16:39:15Z, client side).** **OVERALL PASS**, reconcile ALL: 271 rows, max `0340`, `0310` present once.
+- **Scope on hosted.** Only the function `apply_block_machine_identity` changed. Tables, policies, grants and data are unchanged.
+- **Follow-up.** A 24-hour read-only re-run of the read-back, on or after 2026-11-16T16:40Z, is still to be recorded.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
 
 - **What changed.** Sam approved, in Sam's own words, activating HON-7 V1 in production with the corrected notice from #1414 and #1415. The activation instant is **2026-11-09T15:19:06Z**: the answers flag (`WAITLIST_DECLINE_ANSWERS`) and owner email (`HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED`, with `HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE` set to that instant) were created as Production-only environment variables, then production was redeployed on `c671beb22` (READY 15:21:44Z). Variables created 15:19:06Z; redeploy READY 15:21:44Z; the deadline is counted from the earlier instant (conservative).
