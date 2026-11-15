@@ -8,7 +8,6 @@ const sql = () => readFileSync(`supabase/migrations/${fileForVersion("0332")}`, 
 const code = () => sql().replace(/--.*$/gm, "");
 
 describe("0332 activation hash includes the ship gates (source)", () => {
-  // No isRepoMax pin: only the CURRENT maximum migration's own test asserts it (CLAUDE.md §2), and 0342 now is.
   it("exists exactly once", () => {
     expect(countVersion("0332")).toBe(1);
   });

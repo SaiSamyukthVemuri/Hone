@@ -22,3 +22,17 @@ That template (`dist/ingestion/code-mode.js`, `createCodeModeAgentsSnippet`) har
 scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki." That sentence is false here. No
 OpenWiki workflow is installed, and the one OpenWiki generates at init was deliberately not committed. After
 any OpenWiki run, restore the on-demand wording above before committing, until the upstream template is fixed.
+
+## DRAFT-DEFERRED
+
+A draft PR does not run the heavy lanes (database, browser shards, payment,
+mobile, Google, storage-photos, webkit). When the diff needs any of them, the
+stable `browser e2e (local stack)` check **fails** with
+`DRAFT-DEFERRED: draft PR: required coverage for this diff was deferred.`
+
+- It means required coverage has **not run**. It is not evidence of an
+  application defect.
+- Do not weaken tests, and do not rerun or push to the draft to make it green.
+- Mark the PR ready for review when you want full verification; the
+  `ready_for_review` run executes the required coverage on the same head.
+- The PR is **not mergeable** until all required coverage has passed.

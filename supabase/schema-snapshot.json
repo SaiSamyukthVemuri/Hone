@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 268,
+    "count": 269,
     "last": "0342_roles_staff_deactivate_core.sql",
-    "sha256": "c1f98ffd817300b0bbbaff9448731e9402ee45d9825f44b914465ce3b03e5796"
+    "sha256": "e357803b63bec5f85a05352651bedabd6fd552f899ca2e716866b4553f8e1af7"
   },
   "public": {
     "tables": [
