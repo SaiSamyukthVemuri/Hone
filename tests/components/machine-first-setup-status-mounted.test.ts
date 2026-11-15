@@ -65,15 +65,15 @@ afterEach(() => {
   host = root = null;
 });
 
-const reading = (field: string, n: number) => ({
+const reading = (field: string, n: number, revision = 1, groupKey = "g1") => ({
   blockId: "block-synthetic",
-  captureId: "capture-1",
-  revision: 1,
+  captureId: `capture-${groupKey}-${revision}`,
+  revision,
   deviceId: "room-9",
   profileId: "fixture:mounted",
   profileVersion: 1,
   modeKey: "galvanic",
-  groupKey: "g1",
+  groupKey,
   channels: [1],
   stageKey: null,
   fieldKey: field,
@@ -128,7 +128,7 @@ describe("the status block says the machine and the readings separately", () => 
       recordedSetup: [reading("current", 120), reading("duration", 2)],
     });
     expect(s.identity).toBe("Machine:saved to this block. Mode: saved.");
-    expect(s.readings).toContain("2 saved to this block's machine record");
+    expect(s.readings).toContain("2 settings saved to this block's machine record");
     expect(s.readings).not.toContain("none yet");
   });
 
@@ -142,47 +142,99 @@ describe("the status block says the machine and the readings separately", () => 
     }
   });
 
-  it("when the list could not be read but this visit saved readings, the count is a floor: at least N", async () => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    const onRecord = async () => ({ ok: true as const, written: 2 });
-    const render = (extra: Record<string, unknown>) =>
-      act(() =>
-        root!.render(
-          withRegistry(
-            newViewRef(),
-            createElement(MachineFirstSetupPanel, {
-              devices: [DEVICE],
-              scope: SCOPE,
-              catalogue: [PROFILE],
-              initialModeKey: "galvanic",
-              initialDeviceId: "room-9",
-              savedDeviceId: "room-9",
-              savedModeKey: "galvanic",
-              blockId: "block-synthetic",
-              onRecord,
-              ...extra,
-            } as never),
-          ),
-        ),
-      );
-    render({});
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    for (const [id, v] of [["reading-current", "120"], ["reading-duration", "1.5"]] as const) {
-      const input = host.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
-      act(() => {
-        set.call(input, v);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    }
-    await act(async () => {
-      host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!.click();
+  it("a REVISED group is not double counted: three fields revised once is 3 settings, not 6", () => {
+    const rows = [
+      reading("current", 100, 1), reading("duration", 1, 1), reading("rate", 5, 1),
+      reading("current", 110, 2), reading("duration", 2, 2), reading("rate", 6, 2),
+    ];
+    const s = mount({ initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic", recordedSetup: rows });
+    expect(s.readings).toContain("3 settings saved");
+    expect(s.readings).not.toContain("6");
+  });
+
+  it("an ABSENCE-only row is not a setting: only the values count, and absence alone reads none yet", () => {
+    const absent = (field: string, revision = 1) => ({ ...reading(field, 0, revision), value: { kind: "absent", reason: "not-shown" } });
+    const mixed = mount({
+      initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic",
+      recordedSetup: [reading("current", 120), absent("duration")],
     });
-    render({ recordedSetupUnavailable: true });
-    const text = host.querySelector('[data-testid="machine-first-status-readings"]')!.textContent;
-    expect(text).toContain("at least 2 saved");
-    expect(text).not.toContain("none yet");
+    expect(mixed.readings).toContain("1 setting saved");
+    act(() => root?.unmount());
+    host?.remove();
+    const only = mount({
+      initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic",
+      recordedSetup: [absent("current"), absent("duration")],
+    });
+    expect(only.readings).toContain("none yet");
+  });
+
+  describe("after a save in THIS visit the list is the old snapshot until the host refreshes it", () => {
+    async function savedThen(extra: Record<string, unknown>, before: unknown[]) {
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      const onRecord = async () => ({ ok: true as const, written: 3 });
+      const render = (more: Record<string, unknown>) =>
+        act(() =>
+          root!.render(
+            withRegistry(
+              newViewRef(),
+              createElement(MachineFirstSetupPanel, {
+                devices: [DEVICE], scope: SCOPE, catalogue: [PROFILE],
+                initialModeKey: "galvanic", initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic",
+                blockId: "block-synthetic", onRecord, recordedSetup: before, ...extra, ...more,
+              } as never),
+            ),
+          ),
+        );
+      render({});
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      for (const [id, v] of [["reading-current", "120"], ["reading-duration", "1.5"]] as const) {
+        const input = host.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+        act(() => { set.call(input, v); input.dispatchEvent(new Event("input", { bubbles: true })); });
+      }
+      await act(async () => { host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!.click(); });
+      return { render, text: () => host!.querySelector('[data-testid="machine-first-status-readings"]')!.textContent ?? "" };
+    }
+    const earlier = () => [reading("current", 1, 1, "g0"), reading("duration", 1, 1, "g0")];
+
+    it("the list has NOT refreshed: at least N, never an exact count", async () => {
+      const { text } = await savedThen({}, earlier());
+      expect(text()).toContain("at least 2 settings saved");
+    });
+
+    it("the SAME array handed back again is still not a refresh", async () => {
+      const list = earlier();
+      const { render, text } = await savedThen({}, list);
+      render({ recordedSetup: list });
+      expect(text()).toContain("at least 2");
+    });
+
+    it("the refresh LANDS (a new list): exact again", async () => {
+      const { render, text } = await savedThen({}, earlier());
+      render({ recordedSetup: [...earlier(), reading("current", 120, 1, "g1"), reading("duration", 1.5, 1, "g1")] });
+      expect(text()).toContain("4 settings saved");
+      expect(text()).not.toContain("at least");
+    });
+
+    it("the post-save refresh FAILED (submissionBlocked): still at least", async () => {
+      const { render, text } = await savedThen({}, earlier());
+      render({ recordedSetup: [...earlier()], submissionBlocked: true });
+      expect(text()).toContain("at least 2");
+    });
+
+    it("an empty list that has not refreshed says it saved, not none", async () => {
+      const { text } = await savedThen({}, []);
+      expect(text()).toContain("saved this visit");
+      expect(text()).not.toContain("none yet");
+    });
+
+    it("the list became unreadable after the save: saved this visit, no count claimed", async () => {
+      const { render, text } = await savedThen({}, earlier());
+      render({ recordedSetupUnavailable: true });
+      expect(text()).toContain("saved this visit");
+      expect(text()).not.toMatch(/\d settings? saved/);
+    });
   });
 
   it("an area saved as the existing workflow reports its identity as saved too", () => {
