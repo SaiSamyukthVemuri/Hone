@@ -1,5 +1,4 @@
--- Down for 0350: restore the 0237 body of record_setup_group_in_scope (the option check that a NULL element in the installed
--- options slips past). Rollback only; never run against a hosted database without approval. No data is touched.
+-- Down for 0350: restore the 0237 body of record_setup_group_in_scope. Rollback only; never run against a hosted database without approval. No data is touched.
 begin;
 set local lock_timeout = '5s';
 

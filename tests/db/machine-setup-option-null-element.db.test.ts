@@ -16,19 +16,15 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// 0350 — a NULL element in a machine's installed options never lets an
-// option-gated mode through.
+// 0350 — an option-gated mode is recorded only when its option is fitted.
 //
 // THE RULE. A mode that requires an installed option may be recorded only when
-// the machine's option list holds that option. A list that holds a NULL element
-// and not the option is "not fitted": the save is refused (check_violation).
+// the machine's option list holds that option. Any other list, including one
+// with an empty or unknown element, is "not fitted": the save is refused
+// (check_violation).
 //
-// WHY IT NEEDS A TEST OF ITS OWN. `x = any (array)` is NULL, not false, when the
-// array holds a NULL and has no match, and `not NULL` is NULL, so the refusing
-// IF did not fire. `register_studio_machine` stores a NULL element as given, so
-// the case is reachable through ordinary registration. The negative control at
-// the bottom installs the previous body and shows the same save is ACCEPTED
-// there, so the refusals above it come from the fix and not from the fixture.
+// The comparison at the bottom installs the previous body for comparison, so
+// the outcomes above it are shown to come from 0350 and not from the fixture.
 //
 // SYNTHETIC DATA ONLY: a fixture profile id, seeded studios, no real client.
 // ===========================================================================
@@ -92,7 +88,7 @@ const groupsJson = () =>
 const SAVE_SQL = `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`;
 
 async function arrange(options: Array<string | null>) {
-  const studio = await seedStudio();
+  const studio = await seedStudio(`null-option-${randomUUID().slice(0, 6)}`);
   const { blockId } = await seedSession(studio);
   const machineId = await machineWith(studio, options);
   const route = await routeFor(blockId);
@@ -171,8 +167,8 @@ async function rolledBackAs<T>(userId: string, installSql: string, fn: (c: PoolC
   }
 }
 
-describe("NEGATIVE CONTROL: with the 0237 body installed, the same {NULL} save to a gated mode is ACCEPTED", () => {
-  it("the old condition lets it through (so the refusals above come from 0350)", async () => {
+describe("NEGATIVE CONTROL: the previous body installed for comparison", () => {
+  it("the previous body gives a different outcome for the same save (so the refusals above come from 0350)", async () => {
     const a = await arrange([null]);
     const accepted = await rolledBackAs(a.studio.userId, functionBlock(OLD_FILE), async (c) => {
       const r = await c.query(SAVE_SQL, a.args(GATED));
@@ -181,7 +177,7 @@ describe("NEGATIVE CONTROL: with the 0237 body installed, the same {NULL} save t
     expect(accepted.readings).toBe(1);
   });
 
-  it("and the 0350 body installed the same way refuses it", async () => {
+  it("and the 0350 body installed the same way refuses the save", async () => {
     const a = await arrange([null]);
     await expect(
       rolledBackAs(a.studio.userId, functionBlock(NEW_FILE), async (c) => {

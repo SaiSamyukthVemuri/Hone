@@ -3,7 +3,7 @@
   "migrations": {
     "count": 266,
     "last": "0350_setup_option_check_null_element.sql",
-    "sha256": "5e1e38d2fd80423bfa0e82cdaecb86703d1d33e94676e1667a00bab57711d7bf"
+    "sha256": "e062b504c76ebd680fb7cca93d75db46a89d2b2cacbb110098ec5ce3747cb2ed"
   },
   "public": {
     "tables": [

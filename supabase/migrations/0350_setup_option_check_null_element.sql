@@ -1,14 +1,12 @@
--- 0350 — A NULL element in a machine's installed options can no longer let an option-gated mode through.
--- DRAFT: not applied, not reviewed. Forward fix; 0237 is applied and frozen.
+-- 0350 — An option-gated mode is recorded only when its option is fitted. Forward fix; 0237 is applied and frozen.
 --
 -- THE RULE. A mode that requires an installed option may be recorded only when that option is fitted. Whether the option is
--- fitted is decided as a yes/no: it is fitted only when the list holds it. Anything else, including a list that holds a NULL
--- element and not the option, means "not fitted" and the mode is refused (check_violation).
+-- fitted is decided as a yes/no: it is fitted only when the list holds it. Anything else means "not fitted" and the mode is
+-- refused (check_violation).
 --
--- WHAT CHANGES. One condition in record_setup_group_in_scope. `x = any (array)` is NULL, not false, when the array holds a NULL
--- element and no match; `not NULL` is NULL, so the refusing IF did not fire. The condition is now `(…) is not true`, which
--- is true for false and for NULL. The signature, the language, the security setting, the search_path, the body and the grants
--- are otherwise exactly those of 0237. No table, policy, trigger or data is touched.
+-- WHAT CHANGES. One condition in record_setup_group_in_scope, which is now `(…) is not true`. The signature, the language, the
+-- security setting, the search_path, the body and the grants are otherwise exactly those of 0237. No table, policy, trigger or
+-- data is touched.
 --
 -- NOT CHANGED, AND WHY. The channel-conflict scan in the same function compares stored group keys with `= any` over the
 -- participating-groups list. That list never holds a NULL element: the save command builds it with each key coalesced to ''
@@ -85,7 +83,7 @@ begin
       'No field contract is published for this machine profile version and mode, so its settings cannot be recorded.'
       using errcode = 'check_violation';
   end if;
-  -- `= any` is NULL, not false, when the list holds a NULL element and lacks the option; "is not true" refuses that case too.
+  -- The mode is allowed only when the option is positively present; every other outcome refuses.
   if v_requires_option is not null
      and (v_requires_option = any (coalesce(p_installed_options, '{}'::text[]))) is not true then
     raise exception

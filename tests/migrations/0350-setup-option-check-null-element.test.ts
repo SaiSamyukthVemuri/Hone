@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { isRepoMax } from "./helpers/migration-state";
 
-// Source contract for 0350 (a NULL element in a machine's installed options never lets an option-gated mode through).
+// Source contract for 0350 (an option-gated mode is recorded only when its option is fitted).
 // The behavioural proof, with a negative control, is tests/db/machine-setup-option-null-element.db.test.ts.
 const ROOT = join(__dirname, "..", "..");
 const NEW_FILE = readFileSync(join(ROOT, "supabase/migrations/0350_setup_option_check_null_element.sql"), "utf8");
@@ -25,7 +25,7 @@ describe("0350 source contract", () => {
     expect(isRepoMax("0350")).toBe(true);
   });
 
-  it("uses the fail-closed form and not the NULL-propagating one", () => {
+  it("uses the fail-closed form and not the previous one", () => {
     expect(NEW_FILE).toContain(FIXED);
     expect(NEW_FILE).not.toContain(BUGGY);
   });
