@@ -76,13 +76,24 @@ export async function updateStudioFeeAmountsAction(
   if (current.no_show_fee_enabled === true && current.no_show_fee_mode === "fixed" && fixedFeeCentsIssue(noShow) !== null) {
     return { ok: false, error: "Turn no-show fees off before clearing or zeroing the amount." };
   }
-  const { error } = await supabase
+  // Compare-and-set: the validity check above read these four values. If another tab changed any of them since (for
+  // example turned a fee ON), this write must not land, or it could leave an ON fixed fee with no amount. Zero rows
+  // matched means "changed elsewhere": nothing is written and the owner is told to refresh.
+  const guards: Array<[string, boolean | string | null]> = [
+    ["late_cancel_fee_enabled", current.late_cancel_fee_enabled ?? null],
+    ["no_show_fee_enabled", current.no_show_fee_enabled ?? null],
+    ["late_cancel_fee_mode", current.late_cancel_fee_mode ?? null],
+    ["no_show_fee_mode", current.no_show_fee_mode ?? null],
+  ];
+  let write = supabase
     .from("studios")
     .update({
       late_cancel_fee_cents: lateCancel,
       no_show_fee_cents: noShow,
     })
     .eq("id", studio.id);
+  for (const [column, value] of guards) write = value === null ? write.is(column, null) : write.eq(column, value);
+  const { data: written, error } = await write.select("id");
   if (error) {
     console.error(
       JSON.stringify({
@@ -95,6 +106,12 @@ export async function updateStudioFeeAmountsAction(
     return {
       ok: false,
       error: "We couldn't save the fee amounts. Please try again.",
+    };
+  }
+  if (!written || written.length === 0) {
+    return {
+      ok: false,
+      error: "This setting was changed somewhere else. Refresh the page to see the current value, then try again.",
     };
   }
   revalidatePath("/settings/payments", "layout");

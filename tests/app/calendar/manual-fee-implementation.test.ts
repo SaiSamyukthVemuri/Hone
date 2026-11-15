@@ -35,12 +35,28 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 const updates: Array<Record<string, unknown>> = [];
+// A stateful studios row: the amounts action READS the switches/modes, then UPDATEs with those values as conditions. `beforeWrite`
+// lets a test change the row between the two (another tab), and the UPDATE applies only if every condition still holds.
+const studioRow: Record<string, unknown> = {};
+let beforeWrite: (() => void) | null = null;
+const resetStudioRow = () => Object.assign(studioRow, { late_cancel_fee_enabled: false, no_show_fee_enabled: false, late_cancel_fee_mode: "fixed", no_show_fee_mode: "fixed", late_cancel_fee_cents: null, no_show_fee_cents: null });
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     from: () => ({
-      // the amounts action first READS the current switches/modes (to refuse blanking a live amount), then updates
-      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { late_cancel_fee_enabled: false, no_show_fee_enabled: false, late_cancel_fee_mode: "fixed", no_show_fee_mode: "fixed" }, error: null }) }) }),
-      update: (row: Record<string, unknown>) => { updates.push(row); return { eq: async () => ({ error: null }) }; },
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { ...studioRow }, error: null }) }) }),
+      update: (row: Record<string, unknown>) => {
+        const filters: Array<[string, unknown]> = [];
+        const q: Record<string, unknown> = {};
+        q.eq = (c: string, v: unknown) => { filters.push([c, v]); return q; };
+        q.is = (c: string, v: unknown) => { filters.push([c, v ?? null]); return q; };
+        q.select = async () => {
+          beforeWrite?.();
+          const ok = filters.every(([c, v]) => c === "id" || (studioRow[c] ?? null) === v);
+          if (ok) { updates.push(row); Object.assign(studioRow, row); }
+          return { data: ok ? [{ id: "studio-1" }] : [], error: null };
+        };
+        return q;
+      },
     }),
   }),
 }));
@@ -66,7 +82,7 @@ function prepareForm(extra: Record<string, string> = {}) {
   for (const [k, v] of Object.entries(extra)) fd.set(k, v);
   return fd;
 }
-beforeEach(() => { inserted.length = 0; updates.length = 0; insertError = null; role = "owner"; eligibility = eligible(5000); });
+beforeEach(() => { resetStudioRow(); beforeWrite = null; inserted.length = 0; updates.length = 0; insertError = null; role = "owner"; eligibility = eligible(5000); });
 
 describe("the amount is the saved fixed amount, never a posted one", () => {
   it("prepare writes eligibility.amountCents and ignores amount fields in the form", async () => {
@@ -134,6 +150,24 @@ describe("the owner-only fixed-amount setting", () => {
     const res = await updateStudioFeeAmountsAction(form(late, noShow));
     expect(res.ok).toBe(false);
     expect(updates).toHaveLength(0);
+  });
+  it("another tab turns the fee ON between the read and the write: the amount write is refused as changed elsewhere and nothing is written", async () => {
+    beforeWrite = () => { studioRow.late_cancel_fee_enabled = true; };
+    const res = await updateStudioFeeAmountsAction(form("", "10"));
+    expect(res).toEqual({ ok: false, error: expect.stringMatching(/changed somewhere else/i) });
+    expect(updates).toHaveLength(0);
+    expect(studioRow.late_cancel_fee_cents).toBeNull();
+  });
+  it("the same for the no-show switch and for a mode change in between", async () => {
+    for (const change of [() => { studioRow.no_show_fee_enabled = true; }, () => { studioRow.late_cancel_fee_mode = "percent"; }, () => { studioRow.no_show_fee_mode = "percent"; }]) {
+      resetStudioRow(); updates.length = 0; beforeWrite = change;
+      expect((await updateStudioFeeAmountsAction(form("", ""))).ok).toBe(false);
+      expect(updates).toHaveLength(0);
+    }
+  });
+  it("with nothing changed in between the write lands", async () => {
+    expect((await updateStudioFeeAmountsAction(form("", "10"))).ok).toBe(true);
+    expect(updates).toHaveLength(1);
   });
   it("the ceiling ($200.00) is accepted; a blank clears the amount to null", async () => {
     expect((await updateStudioFeeAmountsAction(form("200", ""))).ok).toBe(true);
