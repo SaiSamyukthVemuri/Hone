@@ -235,6 +235,8 @@ export type MachineFirstSetupPanelProps = {
    * area is native when its unit is no longer selectable (Codex #1369 4485874041; Insurance W-1).
    */
   savedDeviceId?: string | null;
+  /** The mode stored on the area's own record, or null when it holds a unit without one (migration 0301 allows that). */
+  savedModeKey?: string | null;
   /**
    * What kind of machine is in force, so the host form can show ONLY that
    * machine's fields: the existing fields for `legacy` and `none`, none of the
@@ -344,6 +346,7 @@ function MachineFirstSetupPanelImpl({
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
+  savedModeKey = null,
   onKindChange,
   onResolvedChoice,
   onRecord,
@@ -1176,7 +1179,10 @@ function MachineFirstSetupPanelImpl({
         identitySaved={
           Boolean(blockId) && (savedDeviceId !== null || (initialLegacyChosen && legacyMachine !== null))
         }
-        readingsSaved={recordedSetupUnavailable ? null : Math.max(savedCount, recordedSetup.length)}
+        modeSaved={Boolean(blockId) && savedDeviceId !== null && savedModeKey !== null && savedModeKey !== ""}
+        // When the saved list could not be read, this visit's own saves are still a true floor ("at least N").
+        readingsSaved={recordedSetupUnavailable ? (savedCount > 0 ? savedCount : null) : Math.max(savedCount, recordedSetup.length)}
+        readingsExact={!recordedSetupUnavailable}
         rememberedDeviceId={selection.persisted}
       />
     </section>
@@ -1208,15 +1214,21 @@ function PersistenceStatus({
   hasScope,
   persistence,
   identitySaved,
+  modeSaved,
   readingsSaved,
+  readingsExact,
   rememberedDeviceId,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
-  /** The block has a saved machine identity (a unit and mode, or the existing workflow). */
+  /** The block has a saved machine (a unit, or the existing workflow). */
   identitySaved: boolean;
+  /** ...and that unit has a saved mode. A unit can be saved without one, and the line must not claim it. */
+  modeSaved: boolean;
   /** Readings saved for this block, or null when that could not be read. */
   readingsSaved: number | null;
+  /** False when the saved list could not be read: the count is then a floor, not the total. */
+  readingsExact: boolean;
   /**
    * The machine ACTUALLY remembered right now, or null.
    *
@@ -1256,8 +1268,8 @@ function PersistenceStatus({
       </div>
       {identitySaved && (
         <div className="flex gap-1.5" data-testid="machine-first-status-identity">
-          <dt className="font-medium">Machine and mode:</dt>
-          <dd>saved to this block.</dd>
+          <dt className="font-medium">Machine:</dt>
+          <dd>saved to this block.{modeSaved ? " Mode: saved." : ""}</dd>
         </div>
       )}
       <div className="flex gap-1.5" data-testid="machine-first-status-readings">
@@ -1270,7 +1282,7 @@ function PersistenceStatus({
           {readingsSaved === null
             ? "could not be checked just now. The treatment fields below are unchanged and remain the record."
             : readingsSaved > 0
-              ? `${readingsSaved} saved to this block's machine record. The treatment fields below are separate and unchanged.`
+              ? `${readingsExact ? "" : "at least "}${readingsSaved} saved to this block's machine record. The treatment fields below are separate and unchanged.`
               : "none yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>

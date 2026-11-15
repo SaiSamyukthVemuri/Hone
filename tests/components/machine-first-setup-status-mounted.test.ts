@@ -114,8 +114,8 @@ function mount(extra: Record<string, unknown>) {
 
 describe("the status block says the machine and the readings separately", () => {
   it("a saved machine and mode, no readings: the identity is saved, the readings are none yet", () => {
-    const s = mount({ initialDeviceId: "room-9", savedDeviceId: "room-9" });
-    expect(s.identity).toBe("Machine and mode:saved to this block.");
+    const s = mount({ initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic" });
+    expect(s.identity).toBe("Machine:saved to this block. Mode: saved.");
     expect(s.readings).toContain("Readings from this panel:none yet");
     expect(s.all).not.toContain("nothing from this panel");
   });
@@ -124,11 +124,65 @@ describe("the status block says the machine and the readings separately", () => 
     const s = mount({
       initialDeviceId: "room-9",
       savedDeviceId: "room-9",
+      savedModeKey: "galvanic",
       recordedSetup: [reading("current", 120), reading("duration", 2)],
     });
-    expect(s.identity).toBe("Machine and mode:saved to this block.");
+    expect(s.identity).toBe("Machine:saved to this block. Mode: saved.");
     expect(s.readings).toContain("2 saved to this block's machine record");
     expect(s.readings).not.toContain("none yet");
+  });
+
+  it("a unit saved WITHOUT a mode claims the machine only, never the mode", () => {
+    for (const savedModeKey of [null, ""]) {
+      const s = mount({ initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey });
+      expect(s.identity).toBe("Machine:saved to this block.");
+      expect(s.all).not.toContain("Mode: saved");
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
+  it("when the list could not be read but this visit saved readings, the count is a floor: at least N", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const onRecord = async () => ({ ok: true as const, written: 2 });
+    const render = (extra: Record<string, unknown>) =>
+      act(() =>
+        root!.render(
+          withRegistry(
+            newViewRef(),
+            createElement(MachineFirstSetupPanel, {
+              devices: [DEVICE],
+              scope: SCOPE,
+              catalogue: [PROFILE],
+              initialModeKey: "galvanic",
+              initialDeviceId: "room-9",
+              savedDeviceId: "room-9",
+              savedModeKey: "galvanic",
+              blockId: "block-synthetic",
+              onRecord,
+              ...extra,
+            } as never),
+          ),
+        ),
+      );
+    render({});
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    for (const [id, v] of [["reading-current", "120"], ["reading-duration", "1.5"]] as const) {
+      const input = host.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+      act(() => {
+        set.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    await act(async () => {
+      host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!.click();
+    });
+    render({ recordedSetupUnavailable: true });
+    const text = host.querySelector('[data-testid="machine-first-status-readings"]')!.textContent;
+    expect(text).toContain("at least 2 saved");
+    expect(text).not.toContain("none yet");
   });
 
   it("an area saved as the existing workflow reports its identity as saved too", () => {
@@ -136,7 +190,8 @@ describe("the status block says the machine and the readings separately", () => 
       initialLegacyChosen: true,
       legacyMachine: { profileId: "dectro-apilus:xcell", label: "Dectro xCell" },
     });
-    expect(s.identity).toBe("Machine and mode:saved to this block.");
+    expect(s.identity).toBe("Machine:saved to this block.");
+    expect(s.identity).not.toContain("Mode");
   });
 
   it("a NEW area (no block) states no saved identity and no readings", () => {
