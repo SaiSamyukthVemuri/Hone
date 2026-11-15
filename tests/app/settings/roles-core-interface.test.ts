@@ -46,7 +46,7 @@ beforeEach(() => {
   for (const f of Object.values(core)) f.mockClear();
 });
 
-describe("reason rule (Sam, batch 4)", () => {
+describe("reason rule (platform operator)", () => {
   it("is required for adopt, reset and a sensitive raise; optional otherwise", () => {
     expect(reasonRequired("adopt", false)).toBe(true);
     expect(reasonRequired("reset", false)).toBe(true);
@@ -315,7 +315,7 @@ describe("the editor", () => {
   });
 });
 
-describe("the server-side wiring guard (OPS 3 Nov): enforcement is the catalog's, so the action refuses before the core", () => {
+describe("the server-side wiring guard (platform operator, 3 Nov): enforcement is the catalog's, so the action refuses before the core", () => {
   const setEnforcement = (key: string, v: string | undefined) => {
     (CATALOG.find((d) => d.key === key) as { enforcement?: unknown }).enforcement = v;
   };

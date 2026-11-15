@@ -12,7 +12,7 @@ const people = [
   { id: "p1", name: "Chloe Owner", email: "owner@example.test", role: "owner" as const, state: "active" as const },
   { id: "p2", name: "Alex Practitioner", email: "alex@example.test", role: "practitioner" as const, state: "active" as const },
   { id: "i1", name: "Taylor Invitee", email: "taylor@example.test", role: "receptionist" as const, state: "invited" as const },
-  { id: "d1", name: "Sam Former", email: "former@example.test", role: "practitioner" as const, state: "deactivated" as const },
+  { id: "d1", name: "Dana Former", email: "former@example.test", role: "practitioner" as const, state: "deactivated" as const },
 ];
 // Enforcement is catalog truth (#1341's TypeScript catalog), so these tests set it on the entry for the duration of one render and put it back.
 const withEnforcement = <T,>(map: Record<string, unknown>, fn: () => T): T => {
@@ -62,7 +62,7 @@ describe("the Roles control center opens on People", () => {
     for (const label of ["Active (2)", "Invitation pending (1)", "Deactivated (1)"]) expect(html).toContain(label);
     expect(html).toContain("Chloe Owner");
     expect(html).toContain("Taylor Invitee");
-    expect(html).toContain("Sam Former");
+    expect(html).toContain("Dana Former");
     expect(html).toMatch(/data-people-state="invited"/);
   });
   it("starts on the People tab, with Permissions and History alongside", () => {
@@ -86,7 +86,7 @@ describe("the Roles control center opens on People", () => {
   });
 });
 
-describe("batch 3 owner-only copy", () => {
+describe("owner-only copy", () => {
   const html = render({ initialView: "permissions" });
   it("says recording an erasure request deletes nothing and erasure is not available yet", () => {
     expect(html).toContain("Recording a request deletes nothing; erasure is not available yet");
@@ -103,7 +103,7 @@ describe("batch 3 owner-only copy", () => {
   });
 });
 
-describe("batch 4 page items", () => {
+describe("page items", () => {
   const html = render({ initialView: "permissions" });
   it("explains the specific effect beside every studio-business setting the catalog labels so", async () => {
     const { CATALOG } = await import("@/lib/permissions/catalog");
@@ -121,7 +121,7 @@ describe("batch 4 page items", () => {
   });
 });
 
-describe("only enforced keys are editable (OPS decision 3 Nov)", () => {
+describe("only enforced keys are editable (platform operator decision, 3 Nov)", () => {
   const row = (html: string, key: string) => html.split(`data-permission-row="${key}"`)[1]?.split("data-permission-row=")[0] ?? "";
   it("says at the top of Permissions what this release enforces", () => {
     const html = render({ initialView: "permissions" });

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ROLE_ERROR_CODES } from "@/lib/settings/roles/api";
 import { roleErrorMessage } from "@/lib/settings/roles/api";
 
-// Insurance PEER-1335 3888b802a: PY-2 .. PY-6. Source pins: the editor is a client component with no DOM harness in this repo, so the
+//. Source pins: the editor is a client component with no DOM harness in this repo, so the
 // behaviour is pinned where it is written.
 const editor = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
 const model = readFileSync("lib/settings/roles/model.ts", "utf8");
@@ -53,7 +53,7 @@ describe("PY-6 'unexpected' does not claim nothing changed", () => {
     expect(fn("async function onSave")).toContain("resolveUnexpected(boundVersion, reviewedEdits.current)");
     expect(fn("async function confirmPreview")).toContain("resolveUnexpected(boundVersion, null)");
     const body = fn("async function resolveUnexpected");
-    expect(body).toContain("readBack()"); // wraps props.reload() (B-2)
+    expect(body).toContain("readBack()"); // wraps props.reload()
     expect(body).toContain("classifyUnexpected(");
     expect(body).not.toContain("fresh.state.version === boundVersion");
     expect(body).toContain("UNCERTAIN_SAVE_MESSAGE");
@@ -106,7 +106,7 @@ describe("editing is disabled while a save, reset, adopt or read-back is in flig
   });
 });
 
-// Insurance/Privacy B-1, B-2 on #1335.
+//.
 describe("the busy window outlasts the refresh and a rejected promise ends it", () => {
   const SRC = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
   it("B-1: router.refresh runs inside a transition and busy includes it (refresh() returns void, so awaiting it would hold nothing)", () => {

@@ -71,7 +71,7 @@ describe("rebaseDrafts: only this owner's own choices survive an uncertain save"
     expect(rebased.practitioner.values).toEqual(fresh.practitioner.values);
     expect(rebased.receptionist.values).toEqual(fresh.receptionist.values);
   });
-  it("Insurance F1: basis and gates come from the FRESH policy, never from the draft", () => {
+  it("basis and gates come from the FRESH policy, never from the draft", () => {
     const mk = (basis: string, gate: boolean, v: Record<string, string>) =>
       ({ basis, values: v, gates: { receptionist_finance: gate } }) as unknown as StudioPolicy;
     const both = (practitioner: StudioPolicy, receptionist: StudioPolicy) => ({ practitioner, receptionist }) as Record<Role, StudioPolicy>;

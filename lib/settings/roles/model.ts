@@ -51,7 +51,7 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
   d.scopes.length === 2 ? (scope === "off" ? "Off" : "On") : SCOPE_LABELS[scope];
 
 // Whether the app yet enforces a key is a fact about APP WIRING, so it lives in the TypeScript catalog (`enforcement`, proven against the
-// wired keys by #1341's truth test) and NOT in the database (OPS decision, 3 Nov). ONLY "enforced" makes a key fully editable. An absent or
+// wired keys by #1341's truth test) and NOT in the database (platform operator decision, 3 Nov). ONLY "enforced" makes a key fully editable. An absent or
 // unrecognised value reads as "not_yet": a missing flag makes the page more read-only, never more open.
 // "deny_only": refusal works but a wider grant may be inert because a legacy check still stands in front, so the key can be set at or
 // BELOW the studio's current snapshot/default and wider options are disabled. Only "enforced" takes effect both ways.
@@ -92,9 +92,9 @@ export type RoleRow = {
   // Finer controls sit under Advanced: a fixed baseline, a key held by a ship gate, or one still awaiting a decision.
   advanced: boolean;
   pendingDecision: boolean;
-  // approved_policy: the value shown is the APPROVED narrower policy; the database may still allow more until the closing PRs ship (P-1).
+  // approved_policy: the value shown is the APPROVED narrower policy; the database may still allow more until the closing PRs ship.
   snapshotBasis: SnapshotBasis;
-  // 'Not available yet' is ONLY for the receptionist legal-name keys (Sam, group 6). It never describes a practitioner's current access.
+  // 'Not available yet' is ONLY for the receptionist legal-name keys (platform operator). It never describes a practitioner's current access.
   gateNote: string | null;
   // Any other ship gate: raising the key is held until the condition is met. Plain information, not a refusal of current access.
   heldUntil: string | null;
@@ -132,7 +132,7 @@ const dependentsOf = (key: string, role: Role): PermissionDef[] =>
 /** The scope a deny_only key may not be raised above: the studio's current baseline (new-studio default or existing snapshot). */
 const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scope => (policy.basis === "new_studio" ? d.newStudioDefault[role] : d.existingSnapshot[role]);
 
-// NQ-10 (Sam, 3 Nov): a saved choice whose prerequisite is off is PRESERVED but INACTIVE. It is never deleted, and turning it on never
+// NQ-10 (platform operator, 3 Nov): a saved choice whose prerequisite is off is PRESERVED but INACTIVE. It is never deleted, and turning it on never
 // turns the prerequisite on for the owner: the row says what it needs and the owner decides.
 // The core says this saved choice is not in force: its key is not released yet, or the release has not been activated by the owner.
 export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. It takes effect when this setting is released and you activate it.";

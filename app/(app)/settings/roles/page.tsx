@@ -24,7 +24,7 @@ import { RolesEditor, type PersonView } from "./roles-editor";
 // permission catalog. Staff are added, removed and revoked in Team (the existing flow); this page links there rather than
 // duplicating it. Receptionist accounts do not exist in the product yet, so that role lists nobody and says why.
 
-// DN-21: this page reads ONLY the columns it shows. A practitioner row also carries a private calendar link and its checksum and an
+// This page reads ONLY the columns it shows. A practitioner row also carries a private calendar link and its checksum and an
 // invitation row carries more than a name and an address; none of that is selected, so none of it can reach a render or a prop.
 type StaffRow = { id: string; display_name: string; email: string | null; role: string; active: boolean };
 type InviteRow = { id: string; display_name: string | null; email: string; role: string };

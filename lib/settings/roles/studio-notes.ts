@@ -1,5 +1,5 @@
-// Owner-only studio settings that sit beside the permission rows but are NOT permission keys (Sam, 3 Nov, batch 3). The wording is
-// decided; the page shows it as given. Keep it in step with the catalog's FIXED_OWNER_ONLY notes (DN-18 erasure, DN-20 portal).
+// Owner-only studio settings that sit beside the permission rows but are NOT permission keys (platform operator, 3 Nov). The wording is
+// decided; the page shows it as given. Keep it in step with the catalog's FIXED_OWNER_ONLY notes (erasure, portal).
 
 export type StudioLink = { href: string; label: string };
 

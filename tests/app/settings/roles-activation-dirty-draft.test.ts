@@ -165,7 +165,7 @@ describe("permission editing is locked while an activation is in flight", () => 
   });
 });
 
-// Privacy Q3/Q4 on #1335: the reason box asks owners to keep client names and clinical details out of it, and History says what it covers.
+// the reason box asks owners to keep client names and clinical details out of it, and History says what it covers.
 describe("copy: reason hint and History scope", () => {
   it("the activation reason box carries the no-client-details line", async () => {
     await mount({});

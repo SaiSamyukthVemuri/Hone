@@ -58,7 +58,7 @@ export type CommandResult = { ok: true; newVersion: number } | { ok: false; erro
 /** change_staff_role: the membership the person now holds and the role they now have. */
 export type ChangeRoleResult = { ok: true; membershipId: string; role: Role } | { ok: false; error: RoleError };
 
-/** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 Insurance AA-1). */
+/** An activation preview: the usual per-role diff plus the keys it names and the hash a commit must carry back (0287 AA-1). */
 export type ActivationPreview = ServerPreview & { keys: string[]; digest: string; sensitiveKeys: string[]; confirmationRequired: boolean };
 export type ActivationPreviewResult = { ok: true; preview: ActivationPreview } | { ok: false; error: RoleError };
 
@@ -105,7 +105,7 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
 
 export type Operation = "save" | "reset" | "adopt";
 
-// Sam, batch 4: a reason is REQUIRED when adopting defaults, resetting saved permissions, or expanding sensitive access (including
+// Platform operator decision: a reason is REQUIRED when adopting defaults, resetting saved permissions, or expanding sensitive access (including
 // widening its scope); optional otherwise. A character count is not proof of a useful reason, so there is no minimum length. The page
 // only refuses blank and placeholder-only text as a convenience; the permission core makes the same refusal. Before/after is
 // recorded automatically either way.

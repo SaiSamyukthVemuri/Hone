@@ -118,7 +118,7 @@ const people = [
   { id: "o1", name: "Chloe Owner", email: "o@example.test", role: "owner" as const, state: "active" as const, isSelf: true },
   { id: "p2", name: "Alex Practitioner", email: "a@example.test", role: "practitioner" as const, state: "active" as const },
   { id: "r1", name: "Riley Reception", email: "r@example.test", role: "receptionist" as const, state: "active" as const },
-  { id: "d1", name: "Sam Former", email: "f@example.test", role: "practitioner" as const, state: "deactivated" as const },
+  { id: "d1", name: "Dana Former", email: "f@example.test", role: "practitioner" as const, state: "deactivated" as const },
   { id: "i1", name: "Taylor Invitee", email: "t@example.test", role: "receptionist" as const, state: "invited" as const },
   { id: "me", name: "Self Practitioner", email: "s@example.test", role: "practitioner" as const, state: "active" as const, isSelf: true },
 ];

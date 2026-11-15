@@ -1,6 +1,6 @@
 import { CATALOG, type PermissionDef } from "@/lib/permissions/catalog";
 
-// PRESENTATION ONLY. The Roles page shows Sam's eight plain-language sections. A section is a way to lay keys out, never a combined
+// PRESENTATION ONLY. The Roles page shows the platform operator's eight plain-language sections. A section is a way to lay keys out, never a combined
 // grant: every key keeps its own scope and its own consequence. Each catalog group belongs to exactly one section (a test pins that
 // no key is dropped or doubled), and a group the catalog adds later lands in Studio operations until it is placed here on purpose.
 

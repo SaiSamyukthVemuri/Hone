@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StudioPolicy } from "@/lib/permissions/catalog";
 
-// Insurance/Privacy B-1 and B-2 on #1335 (Codex P2 4477378035): editing is disabled while a save is in flight, so a rejected promise or a
+// editing is disabled while a save is in flight, so a rejected promise or a
 // refresh that is still applying must never leave the editor stuck read-only. Mounted in jsdom (this file only). Synthetic data.
 
 const refresh = vi.fn();

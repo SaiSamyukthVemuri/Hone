@@ -38,7 +38,7 @@ const pol = (basis: PolicyBasis | null, values: Record<string, Scope> = {}, gate
 const isEffectiveAllowed = (role: Role, def: PermissionDef, s: Scope) => scopesFor(def, role).includes(s);
 
 describe("catalog shape", () => {
-  it("has unique keys, each in exactly one group (Sam's eight plus the three added by the capability audit), and every group is used", () => {
+  it("has unique keys, each in exactly one group (the platform operator's eight plus the three added by the capability audit), and every group is used", () => {
     expect(new Set(DEFS.map((x) => x.key)).size).toBe(DEFS.length);
     for (const x of DEFS) expect(GROUPS).toContain(x.group);
     for (const g of GROUPS) expect(DEFS.some((x) => x.group === g)).toBe(true);
@@ -112,7 +112,7 @@ describe("prerequisites", () => {
     for (const k of ["price.appointment", "price.view_client_prices", "rep.financial_reports", "rep.lifetime_spend"]) expect(d(k).requires, k).toContain("pay.view_appointment");
   });
 
-  it("Q25 (Sam, 3 Nov): studio totals have NO prerequisite on the payment view, and the payment view needs nothing from them", () => {
+  it("(platform operator, 3 Nov): studio totals have NO prerequisite on the payment view, and the payment view needs nothing from them", () => {
     expect(d("rep.studio_totals").requires).toEqual([]);
     expect(d("pay.view_appointment").requires).not.toContain("rep.studio_totals");
     const p = pol("new_studio", { "rep.studio_totals": "studio" });
@@ -137,7 +137,7 @@ describe("prerequisites", () => {
   });
 });
 
-// ──────────────── Insurance D-1 / D-2 and Privacy F1 / F2 ────────────────
+// ──────────────── and ────────────────
 describe("D-1: a missing stored value resolves to the studio's policy BASIS, never to the new-studio default", () => {
   it("an existing studio with no stored rows resolves to the SNAPSHOT for every key and role (no silent widening)", () => {
     for (const r of ROLES) for (const x of DEFS) {
@@ -263,7 +263,7 @@ describe("F2: ship gates are READ. An unmet gate makes the role-key unavailable 
   });
 });
 
-describe("Sam's spec, encoded", () => {
+describe("the platform operator's spec, encoded", () => {
   it("C.3: every finance key defaults ON for both staff roles in a new studio, as SEPARATE keys", () => {
     const keys = ["pay.record_external", "pay.charge_saved_card", "pay.refund", "pay.void", "pay.correct_or_waive", "price.appointment", "price.service_list", "price.fee_amounts"];
     expect(new Set(keys).size).toBe(8);
@@ -320,7 +320,7 @@ describe("Sam's spec, encoded", () => {
   });
 
   it("C.4: routine communications are ON within scope and both bulk and audit-log access are OFF for both roles", () => {
-    // Settled by OPS (3 Nov): ON for both staff roles in a NEW studio (C.4); an existing studio keeps today's access (practitioner Studio, receptionist Off).
+    // Settled by the platform operator (3 Nov): ON for both staff roles in a NEW studio (C.4); an existing studio keeps today's access (practitioner Studio, receptionist Off).
     for (const r of ROLES) { expect(d("comm.send_routine").newStudioDefault[r]).not.toBe("off"); expect(d("comm.bulk_message").newStudioDefault[r]).toBe("off"); expect(d("rep.audit_log_view").newStudioDefault[r]).toBe("off"); }
   });
 
@@ -350,7 +350,7 @@ describe("Sam's spec, encoded", () => {
     for (const x of DEFS.filter((y) => ["payments", "pricing"].includes(y.group) || y.key.startsWith("rep."))) for (const r of ROLES) expect(x.existingSnapshot[r], `${x.key} ${r}`).toBe("off");
   });
 
-  it("the database holes are OFF in the snapshot and say so (H1, H2, M-2, M-3, M-4)", () => {
+  it("the database holes are OFF in the snapshot and say so", () => {
     for (const k of ["price.service_list", "clin.edit_consent_templates", "pay.view_appointment", "rep.lifetime_spend", "price.view_client_prices"]) expect(d(k).snapshotBasis).toBe("approved_policy");
   });
 
@@ -362,8 +362,8 @@ describe("Sam's spec, encoded", () => {
     expect(d("client.view_legal_name").note).toMatch(/review banner/);
   });
 
-  it("D-3: every snapshot that rests only on OPS's source reading of today's behaviour is pinned by an exact list, so a new one is a visible, reviewed change (it is a reading, not a runtime proof)", () => {
-    // DN-30 (decided 3 Nov): practitioners do these today, so the snapshot is Studio, preserved for every existing studio.
+  it("D-3: every snapshot that rests only on a source reading of today's behaviour is pinned by an exact list, so a new one is a visible, reviewed change (it is a reading, not a runtime proof)", () => {
+    // Decided 3 Nov: practitioners do these today, so the snapshot is Studio, preserved for every existing studio.
     expect(d("clin.edit_intake").existingSnapshot.practitioner).toBe("studio");
     expect(d("comm.send_routine").existingSnapshot.practitioner).toBe("studio");
     expect(d("clin.edit_intake").pendingDecision ?? []).not.toContain("DN-30");
@@ -377,9 +377,9 @@ describe("Sam's spec, encoded", () => {
       "clin.view_aftercare:practitioner", "clin.view_intake:practitioner",
       "clin.view_photos:practitioner", "clin.view_records:practitioner",
       "clin.edit_intake:practitioner", "comm.send_routine:practitioner",
-      // DN-9, DN-14 and DN-30 (decided 3 Nov): separately configurable, each preserved for existing practitioners.
+      // Decided 3 Nov: separately configurable, each preserved for existing practitioners.
       "clin.view_intake_status:practitioner", "clin.review_intake:practitioner", "comm.send_intake_link:practitioner", "comm.send_portal_link:practitioner", "comm.send_portal_reply:practitioner",
-      // DN-3 and DN-5 (decided, 2 Nov): practitioners keep today's studio-wide access to these data groups and to the safety records.
+      // Decided 2 Nov: practitioners keep today's studio-wide access to these data groups and to the safety records.
       ...["dob_address", "allergies_cautions", "budget", "personal_notes", "tags", "health_fields"].flatMap((g) => [`client.view_${g}:practitioner`, `client.edit_${g}:practitioner`]),
       "records.view_sterilisation_disinfection:practitioner", "records.log_sterilisation_disinfection:practitioner",
     ].sort());
@@ -449,8 +449,8 @@ describe("the doc embeds the generated table and states the new rules", () => {
   });
 });
 
-describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", () => {
-  it("printing a clinical record is not offered to receptionists (R0-Q2), so a change for one is refused", () => {
+describe("and Codex review of 35dcf28d7, and the platform operator's group 4 (3 Nov)", () => {
+  it("printing a clinical record is not offered to receptionists, so a change for one is refused", () => {
     expect(d("clin.print_record").offeredTo).toEqual({ practitioner: true, receptionist: false });
     expect(checkChange("receptionist", "clin.print_record", "studio", pol("new_studio", { "clin.view_records": "studio" })).ok).toBe(false);
   });
@@ -459,7 +459,7 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
     expect(FEE_AMOUNT_READ.shownToClientsAtBooking).toBe("readable by staff");
     expect(MANDATORY.join("\n")).toMatch(/fee amount clients see at booking is open to staff; any other fee field needs price\.fee_amounts or pay\.view_appointment/);
   });
-  it("batch 3 (Sam, 3 Nov): calendar pause is R4, staff reading is unchanged for editing, and A6 recipient wording is carried", () => {
+  it("3 Nov decisions (platform operator): calendar pause is R4, staff reading is unchanged for editing, and A6 recipient wording is carried", () => {
     expect(NARROWINGS.find((n) => n.id === "deactivated_calendar_owner")!.stage).toBe("R4");
     expect(d("price.fee_amounts").requires).toEqual([]);
     expect(d("wl.expire_close").requires).toEqual(["wl.view_queue"]);
@@ -468,14 +468,14 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
     expect(d("appt.handoff_own").note).toMatch(/ACTIVE practitioner of the SAME studio who is configured for the service/);
     for (const x of DEFS.filter((k) => k.key.startsWith("wl.") && k.key !== "wl.view_queue")) expect(x.requires, x.key).toContain("wl.view_queue");
   });
-  it("OPS technical calls (3 Nov): reassign has no Own scope (handoff_own is the only way to hand away one's own); notes edit implies read of scheduling notes only", () => {
+  it("technical calls (3 Nov): reassign has no Own scope (handoff_own is the only way to hand away one's own); notes edit implies read of scheduling notes only", () => {
     expect(d("appt.reassign").scopes).toEqual(["off", "studio"]);
     expect(d("appt.reassign").own).toBeUndefined();
     expect(d("appt.handoff_own").offeredTo).toEqual({ practitioner: true, receptionist: false });
     expect(d("appt.edit_notes").note).toMatch(/EDIT grant implies READ of the same scheduling notes, never clinical notes, and there is no separate read key/);
     expect(catalogByKey.has("appt.view_notes")).toBe(false);
   });
-  it("batch 4 (Sam, 3 Nov): the consequence label is on exactly prices, fees, hours, waitlist rules and admission rules, each with its own effect line", () => {
+  it("3 Nov decisions (platform operator): the consequence label is on exactly prices, fees, hours, waitlist rules and admission rules, each with its own effect line", () => {
     const flagged = DEFS.filter((x) => x.affectsFutureStudioBusiness).map((x) => x.key).sort();
     expect(flagged).toEqual(["admit.booking_rules", "admit.change_policy", "avail.manage_studio_hours", "price.fee_amounts", "price.service_list", "wlrules.invitation_rounds", "wlrules.policy_and_text"]);
     const lines = new Set<string>();
@@ -487,7 +487,7 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
     expect(lines.size).toBe(flagged.length);
     for (const x of DEFS.filter((y) => !y.affectsFutureStudioBusiness)) expect(x.futureBusinessEffect, x.key).toBeUndefined();
   });
-  it("batch 4: waitlist rules need no queue view; the client directory is a fixed baseline for both roles", () => {
+  it("waitlist rules need no queue view; the client directory is a fixed baseline for both roles", () => {
     expect(d("wlrules.invitation_rounds").requires).toEqual([]);
     expect(d("wlrules.policy_and_text").requires).toEqual([]);
     expect(d("client.view_directory").ownerConfigurable).toBe(false);
@@ -507,7 +507,7 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
   it("R-6: every other waitlist operation requires wl.view_queue", () => {
     for (const x of DEFS.filter((k) => k.group === "waitlist_operations" && k.key !== "wl.view_queue")) expect(x.requires, x.key).toContain("wl.view_queue");
   });
-  it("G1 (Privacy F9): colleagues' note edits stay tied to 0283 in the key's note, and a receptionist stays behind the scheduling-notes gate", () => {
+  it("G1: colleagues' note edits stay tied to 0283 in the key's note, and a receptionist stays behind the scheduling-notes gate", () => {
     expect(d("appt.edit_notes").note).toMatch(/0283/);
     expect(d("appt.edit_notes").shipGate?.receptionist).toBe("receptionist_scheduling_notes");
   });
@@ -515,20 +515,20 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
     expect(d("avail.manage_own").newStudioDefault.practitioner).toBe("studio");
     expect(d("avail.manage_own").existingSnapshot.practitioner).toBe("off");
   });
-  it("DN-9: an intake resend needs the messaging key and the intake STATUS read, never the answers or the chart", () => {
+  it("an intake resend needs the messaging key and the intake STATUS read, never the answers or the chart", () => {
     const k = d("comm.send_intake_link");
     expect(k.requires).toEqual(expect.arrayContaining(["comm.send_routine", "clin.view_intake_status"]));
     expect(k.requires).not.toContain("clin.view_intake");
     expect(k.requires).not.toContain("clin.view_records");
     expect(d("clin.view_intake_status").requires).not.toContain("clin.view_intake");
   });
-  it("DN-14: portal replies are practitioner ON, receptionist OFF, owner-configurable for both", () => {
+  it("portal replies are practitioner ON, receptionist OFF, owner-configurable for both", () => {
     const k = d("comm.send_portal_reply");
     expect(k.newStudioDefault).toEqual({ practitioner: "studio", receptionist: "off" });
     expect(k.offeredTo).toEqual({ practitioner: true, receptionist: true });
     expect(k.ownerConfigurable).toBe(true);
   });
-  it("DN-30: sending intake links, sending portal links and reviewing intake are separate keys, each preserved for existing practitioners", () => {
+  it("sending intake links, sending portal links and reviewing intake are separate keys, each preserved for existing practitioners", () => {
     for (const key of ["comm.send_intake_link", "comm.send_portal_link", "clin.review_intake", "clin.edit_intake"]) {
       expect(d(key).existingSnapshot.practitioner, key).toBe("studio");
       expect(d(key).existingSnapshot.receptionist, key).toBe("off");
@@ -540,8 +540,8 @@ describe("Insurance and Codex review of 35dcf28d7, and Sam's group 4 (3 Nov)", (
   });
 });
 
-describe("Sam's group 5 (3 Nov): payment details", () => {
-  it("DN-11: client prices have a separate set key, OFF for both roles, owner-configurable; reads follow the view key", () => {
+describe("the platform operator's group 5 (3 Nov): payment details", () => {
+  it("client prices have a separate set key, OFF for both roles, owner-configurable; reads follow the view key", () => {
     const k = d("price.edit_client_prices");
     expect(k.newStudioDefault).toEqual({ practitioner: "off", receptionist: "off" });
     expect(k.existingSnapshot).toEqual({ practitioner: "off", receptionist: "off" });
@@ -550,27 +550,27 @@ describe("Sam's group 5 (3 Nov): payment details", () => {
     expect(k.requires).toContain("price.view_client_prices");
     expect(k.pendingDecision ?? []).not.toContain("DN-11");
   });
-  it("DN-23a: requiring a card to book is owner-only and has no staff key", () => {
+  it("requiring a card to book is owner-only and has no staff key", () => {
     expect(FIXED_OWNER_ONLY.map((f) => f.id)).toContain("require_card_to_book");
     expect(DEFS.some((x) => /require_card|card_on_file/.test(x.key))).toBe(false);
   });
-  it("DN-10 and DN-23b are carried as build requirements", () => {
+  it("card-authorisation consent and late-cancel fee rules are carried as build requirements", () => {
     const m = MANDATORY.join("\n");
     for (const re of [/card-authorisation consent is READ-ONLY/, /signed originals can never be edited or deleted/, /agreed prices unless someone explicitly edits/, /NO invented default and is never activated automatically/, /policy snapshot taken at THAT booking/, /duplicate charges are prevented/]) expect(m).toMatch(re);
   });
-  it("DN-23b: a late-cancel fee charge is gated by the fee-charging key, and the coverage row names the held migration", () => {
+  it("a late-cancel fee charge is gated by the fee-charging key, and the coverage row names the held migration", () => {
     expect(catalogByKey.has("pay.charge_saved_card")).toBe(true);
   });
 });
 
-describe("Sam's group 6 (3 Nov): deletion, data rights, rollout timing", () => {
-  it("DN-18, DN-20, DN-25: erasure, the portal setting, archive and restore are fixed owner-only items with no staff key", () => {
+describe("the platform operator's group 6 (3 Nov): deletion, data rights, rollout timing", () => {
+  it("erasure, the portal setting, archive and restore are fixed owner-only items with no staff key", () => {
     const ids = FIXED_OWNER_ONLY.map((f) => f.id);
     for (const id of ["erase_client_permanently", "client_portal_setting", "archive_clients", "restore_deleted_records", "full_studio_data_export"]) expect(ids).toContain(id);
     expect(FIXED_OWNER_ONLY.find((f) => f.id === "erase_client_permanently")?.note).toMatch(/EXECUTION stays unavailable/);
     expect(FIXED_OWNER_ONLY.find((f) => f.id === "erase_client_permanently")?.note).toMatch(/No retention period is invented/);
   });
-  it("DN-26: receptionist legal-name keys are unavailable behind a gate whose text says 'Not available yet' until privacy enforcement and logging are verified", () => {
+  it("receptionist legal-name keys are unavailable behind a gate whose text says 'Not available yet' until privacy enforcement and logging are verified", () => {
     expect(GATES.receptionist_legal_name).toMatch(/Not available yet/);
     expect(GATES.receptionist_legal_name).toMatch(/access logging/);
     const r = checkChange("receptionist", "client.view_legal_name", "studio", pol("new_studio", {}, {}));
@@ -583,11 +583,11 @@ describe("Sam's group 6 (3 Nov): deletion, data rights, rollout timing", () => {
   });
 });
 
-describe("Sam's group 7 (3 Nov): platform and operations", () => {
-  it("every decision DN-1..DN-30 is decided: the log is the single authority and nothing is left pending", () => {
+describe("the platform operator's group 7 (3 Nov): platform and operations", () => {
+  it("every audit decision is decided and nothing is left pending", () => {
     expect(Object.entries(DECISIONS).filter(([, e]) => e.status !== "decided")).toEqual([]);
   });
-  it("DN-16, DN-29 and the two unnumbered items are narrowings with a named stage and notice", () => {
+  it("the Google-flag and rate-limit items and the two unnumbered ones are narrowings with a named stage and notice", () => {
     const ids = NARROWINGS.map((n) => n.id);
     for (const id of ["google_flags_operator_only", "deactivated_calendar_owner", "rate_limit_outage", "anonymous_public_writes_closed"]) expect(ids).toContain(id);
   });
@@ -597,7 +597,7 @@ describe("Sam's group 7 (3 Nov): platform and operations", () => {
   });
 });
 
-describe("enforcement state (Privacy X3)", () => {
+describe("enforcement state", () => {
   it("R4 marks exactly the keys the app asks: 7 enforced, 6 deny_only, 1 observe, every other key not_yet", async () => {
     const { CATALOG, enforcementOf } = await import("@/lib/permissions/catalog");
     const by = (st: string) => CATALOG.filter((d) => enforcementOf(d.key) === st).map((d) => d.key).sort();

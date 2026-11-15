@@ -43,7 +43,7 @@ export type RoleDiff = {
 };
 
 // What the enforcement release will take away from existing practitioners, whatever the owner does on this page. These are fixed
-// owner-only items, so they are not keys and no setting can keep them. Shown as a standing notice (DN-25), not only in a preview.
+// owner-only items, so they are not keys and no setting can keep them. Shown as a standing notice, not only in a preview.
 export function releaseNarrowings(): FixedNarrowing[] {
   return FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => ({ id: f.id, label: f.label, note: f.note ?? null, kind: "narrows" as const }));
 }

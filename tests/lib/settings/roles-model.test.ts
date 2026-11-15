@@ -113,7 +113,7 @@ describe("group labels", () => {
   });
 });
 
-describe("'Not available yet' is only for the receptionist legal-name keys (Sam, group 6)", () => {
+describe("'Not available yet' is only for the receptionist legal-name keys (platform operator)", () => {
   const rowsFor = (role: "practitioner" | "receptionist") => buildRoleModel(role, snapshot).flatMap((g) => g.rows);
   it("a receptionist legal-name key carries the note and cannot be raised", () => {
     const withGate = defs.filter((d) => d.shipGate?.receptionist === "receptionist_legal_name");
@@ -151,7 +151,7 @@ describe("'Not available yet' is only for the receptionist legal-name keys (Sam,
   });
 });
 
-describe("an 'Own assigned' option always shows what 'own' means (Sam batch 1, Q6)", () => {
+describe("an 'Own assigned' option always shows what 'own' means (platform operator)", () => {
   it("every practitioner row that offers Own carries the catalog's definition, so the owner reads it beside the scope", () => {
     for (const row of buildRoleModel("practitioner", snapshot).flatMap((g) => g.rows)) {
       if (row.options.some((o) => o.scope === "own")) expect(row.ownMeaning, row.key).toBeTruthy();
@@ -159,7 +159,7 @@ describe("an 'Own assigned' option always shows what 'own' means (Sam batch 1, Q
   });
 });
 
-describe("truthfulness (Insurance P-1)", () => {
+describe("truthfulness", () => {
   it("every approved_policy row says so, so the page never claims it is today's database behaviour", () => {
     const rows = ROLES.flatMap((role) => buildRoleModel(role, snapshot).flatMap((g) => g.rows));
     const approved = rows.filter((r) => r.snapshotBasis === "approved_policy");
@@ -168,7 +168,7 @@ describe("truthfulness (Insurance P-1)", () => {
   });
 });
 
-describe("the release-time owner-only change is a standing notice (DN-25)", () => {
+describe("the release-time owner-only change is a standing notice", () => {
   it("lists every fixed owner-only item that narrows access, the same list the adoption preview uses", () => {
     const ids = releaseNarrowings().map((f) => f.id).sort();
     expect(ids).toEqual(FIXED_OWNER_ONLY.filter((f) => f.existingEffect === "narrows").map((f) => f.id).sort());

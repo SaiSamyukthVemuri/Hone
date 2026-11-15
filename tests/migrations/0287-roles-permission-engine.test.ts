@@ -74,7 +74,7 @@ describe("0287 permission engine: shape", () => {
   });
 });
 
-// Activation rule (Sam, 3 Nov). Source contract; behaviour is proved by tests/db/permission-activation.db.test.ts (NOT RUN until the slot).
+// Activation rule (platform operator, 3 Nov). Source contract; behaviour is proved by tests/db/permission-activation.db.test.ts (NOT RUN until the slot).
 const fnBodies = () => code.split(/(?=create or replace function public\.)/).map((b) => [b.split("\n$$;")[0], b.match(/^create or replace function public\.(\w+)/)?.[1]] as const).filter(([, n]) => n).map(([b, n]) => Object.assign([b, n] as string[], {}));
 
 describe("0287 activation rule: source contract", () => {
@@ -139,7 +139,7 @@ describe("0287 activation rule: source contract", () => {
     const denyOnly = keys.filter((k) => enforcementOf(k) === "deny_only").sort();
     // vacuous before the enforcement branch sets the field; the literal list above pins the six either way
     expect(denyOnly.filter((k) => !narrow.includes(k))).toEqual([]);
-    // clin.edit_records is seeded PENDING ahead of the catalog flip (decision, OPS 4 Nov): its enforcement is the held 0289 guard plus the app gates,
+    // clin.edit_records is seeded PENDING ahead of the catalog flip (decision, platform operator, 4 Nov): its enforcement is the held 0289 guard plus the app gates,
     // and the catalog keeps it not_yet until the 0289 proof and reviews. The flip commit removes this carve-out.
     const RELEASED_AHEAD_OF_FLIP = ["clin.edit_records"];
     expect(all.filter((k) => ["observe", "not_yet"].includes(enforcementOf(k)) && !RELEASED_AHEAD_OF_FLIP.includes(k))).toEqual([]);
@@ -164,7 +164,7 @@ describe("0287 activation rule: source contract", () => {
     expect(code).not.toMatch(/grant execute on function public\.perm_activation_hash/);
   });
 
-  it("adopt, reset and activation require sensitive_confirmed when their result newly enables a sensitive key (Insurance PY-1)", () => {
+  it("adopt, reset and activation require sensitive_confirmed when their result newly enables a sensitive key", () => {
     for (const fn of ["reset_role_to_defaults", "adopt_new_defaults", "activate_released_permissions"])
       expect(code, fn).toMatch(new RegExp(`function public\\.${fn}\\([^)]*p_sensitive_confirmed boolean default false\\)`));
     expect(code.match(/message = public\.perm_fail\('sensitive_unconfirmed'\)/g)!.length).toBeGreaterThanOrEqual(3);

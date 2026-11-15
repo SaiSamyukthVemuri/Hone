@@ -1317,7 +1317,7 @@ function ActivationSection({
       // The keys, version and digest are the ones the owner was shown; the core refuses the commit if any of them has moved.
       const r = await activate(review.keys, review.version, reason.trim(), review.digest, confirmed);
       setBusy(false);
-      // Insurance N1: the draft is locked while this runs, but a result must never be applied over one that became dirty anyway.
+      // N1: the draft is locked while this runs, but a result must never be applied over one that became dirty anyway.
       if (draftRef.current && r.ok) {
         setMessage(ACTIVATION_DISCARDED_LINE);
         onActivated();

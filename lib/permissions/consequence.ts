@@ -6,7 +6,7 @@ import type { PermissionDef } from "./catalog";
 export type ConsequenceClass = "financial" | "sensitive" | "destructive";
 
 // `destructive` is reserved for the protected deletion, archive and restore controls. Those are FIXED owner-only items, not
-// catalog keys, so no delegable key is ever classed destructive (OPS, 3 Nov). Cancelling and voiding are ordinary or financial.
+// catalog keys, so no delegable key is ever classed destructive (platform operator, 3 Nov). Cancelling and voiding are ordinary or financial.
 const FINANCIAL_GROUPS: readonly string[] = ["payments", "pricing"];
 
 export function consequenceClass(d: Pick<PermissionDef, "key" | "group" | "sensitive">): ConsequenceClass | null {

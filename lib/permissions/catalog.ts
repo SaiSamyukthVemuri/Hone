@@ -1,4 +1,4 @@
-// R0 of the studio Roles and permissions program (Sam, 2 Nov 2026; spec = section C of the build brief, binding).
+// R0 of the studio Roles and permissions program (the platform operator, 2 Nov 2026; spec = section C of the build brief, binding).
 //
 // ONE catalog. This file is pure data plus two pure helpers. NOTHING imports it yet, so it changes no behaviour. R1's
 // migration (0287) seeds its catalog table FROM this file and a test pins the two together, so the page (R2), the server
@@ -8,7 +8,7 @@
 //   role      practitioner | receptionist. The owner always has every permission and is not configurable.
 //   scope     off | own | studio. A boolean capability only allows off | studio ("studio" means ON).
 //   own       the key's `own` text says what "own" means (usually: the appointment is assigned to the actor).
-//   defaults  what a NEW studio gets (Sam's shipped defaults).
+//   defaults  what a NEW studio gets (the platform operator's shipped defaults).
 //   snapshot  what an EXISTING studio keeps until its owner reviews a before/after summary and adopts or customizes
 //             (C.6). It is today's APPROVED policy, never a database hole (H1, H2, M-2, M-3, M-4 are OFF in it).
 //
@@ -21,7 +21,7 @@ export const SCOPES = ["off", "own", "studio"] as const;
 export type Scope = (typeof SCOPES)[number];
 export const scopeRank = (s: Scope): number => SCOPES.indexOf(s);
 
-// Sam's eight groups, then the three added by the capability audit, in page order.
+// The platform operator's eight groups, then the three added by the capability audit, in page order.
 export const GROUPS = [
   "appointments",
   "clients_identity",
@@ -31,12 +31,12 @@ export const GROUPS = [
   "pricing",
   "availability",
   "reports",
-  // Added after the capability audit (Sam, 2 Nov): waitlist ENTRY operations and waitlist RULES/AUTOMATION are separate groups,
+  // Added after the capability audit (platform operator, 2 Nov): waitlist ENTRY operations and waitlist RULES/AUTOMATION are separate groups,
   // and accepting new clients is an explicit group.
   "waitlist_operations",
   "waitlist_rules",
   "accepting_new_clients",
-  // Sterilisation and disinfection logs (Sam, 2 Nov, DN-3).
+  // Sterilisation and disinfection logs (platform operator, 2 Nov).
   "safety_records",
 ] as const;
 export type Group = (typeof GROUPS)[number];
@@ -44,12 +44,12 @@ export type Group = (typeof GROUPS)[number];
 export const PHASES = ["R3", "R4", "R5"] as const;
 export type Phase = (typeof PHASES)[number];
 
-// A decision Sam has not made yet (DECISION-MATRIX E1, DN-1..DN-30). `pendingDecision` on a key means: the key is built, but its
+// A decision the platform operator has not made yet. `pendingDecision` on a key means: the key is built, but its
 // VALUE is not guessed. Every studio (new or existing) gets today's behaviour (the existing-studio snapshot) until the decision is
 // made, and the page marks it. `touchedByDecision` means a decision concerns what the key covers but does NOT decide its value.
 export type DecisionId = `DN-${number}`;
-// An open question OPS is putting to Sam (01-ops/ROLES-RECONCILIATION.md section c: Q-n; Q-14b is the follow-up to Q-14). B-n are
-// Team-raised items from its section b (a key or value no decision backs); OPS numbers the Q series, so B-n never collides with it.
+// An open question put to the platform operator (Q-n; Q-14b is the follow-up to Q-14). B-n are
+// Team-raised items from its section b (a key or value no decision backs); the Q series is numbered separately, so B-n never collides with it.
 // A key flagged with one is built, but its value is not backed by a decision, so it is pinned like a pending DN.
 export type QuestionId = `Q-${number}` | `Q-${number}b` | `B-${number}`;
 export type DecisionRef = DecisionId | QuestionId;
@@ -96,7 +96,7 @@ const BOOL = ["off", "studio"] as const;
 const SCOPED = ["off", "own", "studio"] as const;
 const BOTH = { practitioner: true, receptionist: true } as const;
 const ASSIGNED = "an appointment whose assigned practitioner is the actor";
-// Shown to owners beside the "own" scope of every client-based key (portal replies, client-price view). Decided (Sam, 3 Nov, batch 4 and its
+// Shown to owners beside the "own" scope of every client-based key (portal replies, client-price view). Decided (platform operator, 3 Nov, and its
 // clarification): a client with a NON-CANCELLED appointment assigned to the actor, past or upcoming, WITHIN THIS STUDIO. The CURRENT assignment is
 // evaluated on the server. After a reassignment the former practitioner is denied ONLY when no other qualifying appointment still makes the client
 // theirs AND no broader studio-wide permission applies. The relationship alone grants no additional clinical access.
@@ -108,12 +108,12 @@ const PAY_VIEW = "pay.view_appointment";
 // Ship gates. A gated key is EFFECTIVELY OFF for the gated role until the studio policy says the gate is satisfied. The fact is
 // an operator-controlled release flag that defaults to NOT satisfied, so an unreleased capability can never come on by default.
 export const GATES = {
-  receptionist_finance: "Receptionist removal live in production (#1303) AND the direct receptionist-invitation path (R-1) closed",
-  receptionist_legal_name: "privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (Sam, 3 Nov, DN-26); until then the Roles page shows \"Not available yet\", not a switch",
-  receptionist_scheduling_notes: "R4 has confirmed from source that scheduling notes are a different field from clinical notes, or limited the receptionist view to a scheduling-only field (Privacy F6)",
+  receptionist_finance: "Receptionist removal live in production (#1303) AND the direct receptionist-invitation path closed",
+  receptionist_legal_name: "privacy enforcement (0280/0290 receptionist name privacy) and legal-name access logging are deployed AND verified (platform operator, 3 Nov); until then the Roles page shows \"Not available yet\", not a switch",
+  receptionist_scheduling_notes: "R4 has confirmed from source that scheduling notes are a different field from clinical notes, or limited the receptionist view to a scheduling-only field",
   practitioner_legal_name_edit: "Stale-write protection and versions for legal-name edits (#1328 / M1) are in production",
   practitioner_completion: "#1315 and the 0277 apply (the assigned-only completion rule) are in production",
-  receptionist_waitlist: "The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (Sam, 2 Nov, DN-15a)",
+  receptionist_waitlist: "The receptionist waitlist screen AND its backend enforcement (R5 / 0286) are in production (platform operator, 2 Nov)",
 } as const;
 export type GateId = keyof typeof GATES;
 
@@ -147,7 +147,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: false,
     enforcedIn: "R5",
-    note: "Decided (Sam, 3 Nov, batch 4): names and basic contact details are a FIXED BASELINE for ACTIVE practitioners and receptionists of that studio, not a toggle. Preferred-name / \"Name on file\" privacy is preserved. It grants no legal identity, clinical information, bulk export or access to another studio. A pending, removed or deactivated person has none of it.",
+    note: "Decided (platform operator, 3 Nov): names and basic contact details are a FIXED BASELINE for ACTIVE practitioners and receptionists of that studio, not a toggle. Preferred-name / \"Name on file\" privacy is preserved. It grants no legal identity, clinical information, bulk export or access to another studio. A pending, removed or deactivated person has none of it.",
   },
   {
     key: "appt.book",
@@ -196,7 +196,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     enforcement: "deny_only",
-    note: "Sam's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (decided, Sam 3 Nov, Q17 / R0-Q3); the Own scope was removed from this key (OPS technical call, 3 Nov), so Off or Studio only.",
+    note: "The platform operator's spec turns practitioners' reassignment of colleagues' appointments OFF. Handing away one's OWN appointment is the separate key appt.handoff_own (platform operator, 3 Nov); the Own scope was removed from this key (platform operator, 3 Nov), so Off or Studio only.",
   },
   {
     key: "appt.handoff_own",
@@ -211,7 +211,7 @@ export const CATALOG = [
     offeredTo: { practitioner: true, receptionist: false },
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (Sam, 3 Nov, Q17 / R0-Q3): OFF by default and owner-configurable. The recipient must be an ACTIVE practitioner of the SAME studio who is configured for the service (A6, decided 3 Nov), and the hand-off is refused once the appointment has started or been treated. Moving someone else's appointment stays appt.reassign.",
+    note: "Decided (platform operator, 3 Nov): OFF by default and owner-configurable. The recipient must be an ACTIVE practitioner of the SAME studio who is configured for the service (A6, decided 3 Nov), and the hand-off is refused once the appointment has started or been treated. Moving someone else's appointment stays appt.reassign.",
   },
   {
     key: "appt.cancel",
@@ -261,7 +261,7 @@ export const CATALOG = [
     enforcedIn: "R4",
     enforcement: "enforced",
     shipGate: { receptionist: "receptionist_scheduling_notes" },
-    note: "R4 requirements (Privacy F6/F9): confirm scheduling and clinical notes are separate fields before a receptionist can read or write notes. Decided (OPS technical call, 3 Nov): an EDIT grant implies READ of the same scheduling notes, never clinical notes, and there is no separate read key; R4 enforces it; colleagues' note edits by practitioners are an approved policy only once note versions (0283) ship, so R4 must not enforce the new-studio default for colleagues' notes before them.",
+    note: "R4 requirements: confirm scheduling and clinical notes are separate fields before a receptionist can read or write notes. Decided (platform operator, 3 Nov): an EDIT grant implies READ of the same scheduling notes, never clinical notes, and there is no separate read key; R4 enforces it; colleagues' note edits by practitioners are an approved policy only once note versions (0283) ship, so R4 must not enforce the new-studio default for colleagues' notes before them.",
   },
   {
     key: "appt.complete",
@@ -280,7 +280,7 @@ export const CATALOG = [
     enforcedIn: "R4",
     enforcement: "observe",
     shipGate: { practitioner: "practitioner_completion" },
-    note: "Today's code lets any practitioner complete any started appointment in the studio. Sam's assigned-only rule is the approved policy and #1315/0277 is its vehicle, so the snapshot is 'own' and R4 may not ship before them (open point R0-Q1). Not offered to receptionists in this version.",
+    note: "Today's code lets any practitioner complete any started appointment in the studio. The platform operator's assigned-only rule is the approved policy and #1315/0277 is its vehicle, so the snapshot is 'own' and R4 may not ship before them. Not offered to receptionists in this version.",
   },
   {
     key: "appt.aftercare_send",
@@ -313,7 +313,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     enforcement: "deny_only",
-    note: "Settled (OPS, 3 Nov, DN-13): ON for practitioners in a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot stays Off (today's approved access) and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
+    note: "Settled (platform operator, 3 Nov): ON for practitioners in a NEW studio only. Today a practitioner cannot change working hours, so an existing studio's snapshot stays Off (today's approved access) and nobody gains hours control at adoption (own hours = #1318/0278, held). Receptionists have no hours of their own.",
   },
   {
     key: "avail.manage_others",
@@ -346,7 +346,7 @@ export const CATALOG = [
     enforcement: "deny_only",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes the hours the studio can be booked in. Appointments already booked are not moved or cancelled.",
-    note: "Decided (Sam, 2 Nov, DN-13): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
+    note: "Decided (platform operator, 2 Nov): a separate permission from avail.manage_others; both OFF by default, owner-configurable. Managing one's own availability (avail.manage_own) stays separate: ON for practitioners in a NEW studio and Off for existing studios, which cannot do it today.",
   },
 
   // ─────────────────────────── clients and identity ───────────────────────────
@@ -395,7 +395,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_legal_name" },
-    note: "The receptionist legal-name switch exists per studio today (default OFF, hidden in the app, unaudited, settable by API). Nobody approved a value above OFF, so the snapshot is OFF for every studio (basis approved_policy). Any studio whose switch is found ON is LISTED in the owner's review banner instead of being carried forward; counting them is a separate read-only step for OPS or Sam.",
+    note: "The receptionist legal-name switch exists per studio today (default OFF, hidden in the app, unaudited, settable by API). Nobody approved a value above OFF, so the snapshot is OFF for every studio (basis approved_policy). Any studio whose switch is found ON is LISTED in the owner's review banner instead of being carried forward; counting them is a separate read-only step for the operator or the platform operator.",
   },
   {
     key: "client.edit_legal_name",
@@ -477,7 +477,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-7): removing a pass, a block or a treated area counts as EDITING under this key; the original and its version history are preserved. Deleting a whole session stays owner-only. Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only).",
+    note: "Decided (platform operator, 2 Nov): removing a pass, a block or a treated area counts as EDITING under this key; the original and its version history are preserved. Deleting a whole session stays owner-only. Not offered to receptionists in this version (decided by the platform operator, 3 Nov: receptionist clinical access is view-only).",
   },
   {
     key: "clin.view_photos",
@@ -509,7 +509,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only).",
+    note: "Not offered to receptionists in this version (decided by the platform operator, 3 Nov: receptionist clinical access is view-only).",
   },
   {
     key: "clin.view_intake",
@@ -542,7 +542,7 @@ export const CATALOG = [
     enforcedIn: "R4",
     enforcement: "enforced",
     sensitive: true,
-    note: "Decided (Sam, 3 Nov, Q16): one of the four receptionist view-only switches (records, photos, intake answers, aftercare), Off by default and read-only. Today aftercare is read inside the session record (audit row CLIN-10), so practitioners keep the same studio-wide reading as clin.view_records. The key name is Team's; OPS confirmed the switch, not the name.",
+    note: "Decided (platform operator, 3 Nov): one of the four receptionist view-only switches (records, photos, intake answers, aftercare), Off by default and read-only. Today aftercare is read inside the session record (audit row CLIN-10), so practitioners keep the same studio-wide reading as clin.view_records. The key name is Team's; the operator confirmed the switch, not the name.",
   },
   {
     key: "clin.view_intake_status",
@@ -557,7 +557,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission PLUS this status read. It neither requires nor grants the intake answers (clin.view_intake) or the chart.",
+    note: "Decided (platform operator, 3 Nov): requesting an intake update or resending the intake link needs the messaging permission PLUS this status read. It neither requires nor grants the intake answers (clin.view_intake) or the chart.",
   },
   {
     key: "clin.edit_intake",
@@ -573,7 +573,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only). Decided (Sam, 3 Nov, DN-30): practitioners run assisted intake today (audit row 2:C2-53), so today's access is preserved for every existing studio and stays separately configurable; nothing is removed silently at rollout.",
+    note: "Not offered to receptionists in this version (decided by the platform operator, 3 Nov: receptionist clinical access is view-only). Decided (platform operator, 3 Nov): practitioners run assisted intake today (audit row 2:C2-53), so today's access is preserved for every existing studio and stays separately configurable; nothing is removed silently at rollout.",
   },
   {
     key: "clin.review_intake",
@@ -589,7 +589,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Decided (Sam, 3 Nov, DN-30): practitioners review intake today (audit row 2:C2-51); preserved for existing studios and separately configurable from editing answers.",
+    note: "Decided (platform operator, 3 Nov): practitioners review intake today (audit row 2:C2-51); preserved for existing studios and separately configurable from editing answers.",
   },
   {
     key: "clin.print_record",
@@ -605,7 +605,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "Not offered to receptionists in this version (decided, Sam 3 Nov, Q16 / R0-Q2: receptionist clinical access is view-only).",
+    note: "Not offered to receptionists in this version (decided by the platform operator, 3 Nov: receptionist clinical access is view-only).",
   },
   {
     key: "clin.edit_consent_templates",
@@ -621,7 +621,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R4",
     sensitive: true,
-    note: "The app is owner-only today but the database lets any practitioner write the table (H2). The snapshot is the approved owner-only policy.",
+    note: "The app is owner-only today but the database lets any practitioner write the table. The snapshot is the approved owner-only policy.",
   },
 
   // ───────────────────────────── communications ─────────────────────────────
@@ -639,7 +639,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (Sam, 3 Nov, DN-30): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. A NEW studio gets Sam's section C.4 default: ON for both staff roles (practitioner: whole studio, matching today's access so no studio gains or loses; receptionist: whole studio). Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
+    note: "Decided (platform operator, 3 Nov): practitioners send these today, so every existing studio keeps practitioner Studio and receptionist Off. A NEW studio gets the platform operator's section C.4 default: ON for both staff roles (practitioner: whole studio, matching today's access so no studio gains or loses; receptionist: whole studio). Sending intake links, portal links and portal replies are SEPARATE keys that require this one. A permission never overrides consent, opt-outs or channel activation.",
   },
   {
     key: "comm.send_intake_link",
@@ -654,7 +654,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (DN-9): needs the messaging permission and the intake STATUS read, never the answers or chart. Practitioners send intake links today (audit row 2:C2-52); preserved and separately configurable (DN-30). Sending always respects consent, opt-outs and channel activation.",
+    note: "Decided: needs the messaging permission and the intake STATUS read, never the answers or chart. Practitioners send intake links today (audit row 2:C2-52); preserved and separately configurable. Sending always respects consent, opt-outs and channel activation.",
   },
   {
     key: "comm.send_portal_link",
@@ -669,7 +669,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (DN-30): practitioners send portal links today (audit row 2:C2-74); preserved and separately configurable. Sending always respects consent, opt-outs and channel activation.",
+    note: "Decided: practitioners send portal links today (audit row 2:C2-74); preserved and separately configurable. Sending always respects consent, opt-outs and channel activation.",
   },
   {
     key: "comm.send_portal_reply",
@@ -685,7 +685,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R5",
-    note: "Decided (Sam, 3 Nov, DN-14 / Q6): offered at whole-studio AND assigned-client (own) scope; existing studios keep their approved current access (practitioner whole studio, receptionist Off) and a new studio gets the same. The assigned-client scope can be enabled only once its definition is shown to owners. The sender is recorded and the history preserved; staff can never rewrite a client's original reply (closes D-M).",
+    note: "Decided (platform operator, 3 Nov): offered at whole-studio AND assigned-client (own) scope; existing studios keep their approved current access (practitioner whole studio, receptionist Off) and a new studio gets the same. The assigned-client scope can be enabled only once its definition is shown to owners. The sender is recorded and the history preserved; staff can never rewrite a client's original reply (closes D-M).",
   },
   {
     key: "comm.bulk_message",
@@ -722,7 +722,7 @@ export const CATALOG = [
     killSwitch: true,
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
-    note: "Strict prerequisite of every payment and pricing key below: turning it OFF disables them all. The app hides money from practitioners today, but the database still lets them read paid amounts and card metadata (M-2, M-3); the snapshot is the approved OFF. R3 closes those reads at the COLUMN level (no processor identifiers or card metadata beyond brand and last 4 for any staff role), not only in the UI.",
+    note: "Strict prerequisite of every payment and pricing key below: turning it OFF disables them all. The app hides money from practitioners today, but the database still lets them read paid amounts and card metadata; the snapshot is the approved OFF. R3 closes those reads at the COLUMN level (no processor identifiers or card metadata beyond brand and last 4 for any staff role), not only in the UI.",
   },
   {
     key: "pay.record_external",
@@ -814,7 +814,7 @@ export const CATALOG = [
     killSwitch: true,
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
-    note: "The earlier proposal made this depend on 'record manual payment'. Sam lists them as separate switches, so the only prerequisite is seeing the payment.",
+    note: "The earlier proposal made this depend on 'record manual payment'. The platform operator lists them as separate switches, so the only prerequisite is seeing the payment.",
   },
 
   // ─────────────────────────────── pricing ───────────────────────────────
@@ -853,7 +853,7 @@ export const CATALOG = [
     killSwitch: true,
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
-    note: "M-4: client_pricing is readable by every member today, while Sam's earlier decision lists per-client prices as forbidden to practitioners. The snapshot is the approved OFF; Sam's C.3 allows the per-client prices needed for authorized work, which this key grants.",
+    note: "M-4: client_pricing is readable by every member today, while the platform operator's earlier decision lists per-client prices as forbidden to practitioners. The snapshot is the approved OFF; the platform operator's C.3 allows the per-client prices needed for authorized work, which this key grants.",
   },
   {
     key: "price.service_list",
@@ -873,7 +873,7 @@ export const CATALOG = [
     futureBusinessEffect: "Changes the price shown to clients and charged for future bookings of the service. Appointments already booked keep the price recorded on them.",
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
-    note: "Owner-only in the app today but open to any practitioner at the database (H1); the snapshot is the approved owner-only policy. Studio-wide: labelled 'affects future studio business'.",
+    note: "Owner-only in the app today but open to any practitioner at the database; the snapshot is the approved owner-only policy. Studio-wide: labelled 'affects future studio business'.",
   },
   {
     key: "price.fee_amounts",
@@ -893,7 +893,7 @@ export const CATALOG = [
     futureBusinessEffect: "Changes the no-show and late-cancellation fee amounts shown to clients at booking and applied to future outcomes. Fees already recorded are not changed.",
     sensitive: true,
     shipGate: { receptionist: "receptionist_finance" },
-    note: "Decided (Sam, 2 Nov, DN-27): staff read only the studio name, timezone and booking preferences their work needs; fee amounts require this key or the relevant payment key.",
+    note: "Decided (platform operator, 2 Nov): staff read only the studio name, timezone and booking preferences their work needs; fee amounts require this key or the relevant payment key.",
   },
 
   // ─────────────────────────────── reports ───────────────────────────────
@@ -912,7 +912,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-1): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business. Decided (Sam, 3 Nov, Q25): NO prerequisite on pay.view_appointment, and the payment view needs nothing from this key. A total must not expose any individual payment, client or appointment detail.",
+    note: "Decided (platform operator, 2 Nov): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business. Decided (platform operator, 3 Nov): NO prerequisite on pay.view_appointment, and the payment view needs nothing from this key. A total must not expose any individual payment, client or appointment detail.",
   },
   {
     key: "rep.financial_reports",
@@ -929,7 +929,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-1): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business.",
+    note: "Decided (platform operator, 2 Nov): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business.",
   },
   {
     key: "rep.lifetime_spend",
@@ -946,7 +946,7 @@ export const CATALOG = [
     enforcedIn: "R3",
     killSwitch: true,
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-1): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business. A practitioner can sum lifetime spend by reading paid amounts at the database today (M-2); the snapshot is the approved OFF and R3 closes the read.",
+    note: "Decided (platform operator, 2 Nov): when an owner permits it, staff reach this under a separate Reports entry; practitioners and receptionists never see Business. A practitioner can sum lifetime spend by reading paid amounts at the database today; the snapshot is the approved OFF and R3 closes the read.",
   },
   {
     key: "rep.bulk_export",
@@ -962,7 +962,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 3 Nov, Q19 / DN-19): OFF by default; an export also needs access to EVERY included row and field, re-checked at generation AND at download. Credentials, payment secrets and other studios' data are always excluded. The owner export is a different, fixed owner-only item (link lifetime 15 minutes, single owner session, technical parameter set by OPS).",
+    note: "Decided (platform operator, 3 Nov): OFF by default; an export also needs access to EVERY included row and field, re-checked at generation AND at download. Credentials, payment secrets and other studios' data are always excluded. The owner export is a different, fixed owner-only item (link lifetime 15 minutes, single owner session, technical parameter set by the operator).",
   },
   {
     key: "rep.audit_log_view",
@@ -981,8 +981,8 @@ export const CATALOG = [
   },
   // ───────────── added after the capability audit (2 Nov): structural keys, values pinned to today's behaviour ─────────────
   // Every key below exists so the capability is covered by the ONE catalog. Today only the owner can do any of it, so every
-  // snapshot is Off / Off and the keys are NOT OFFERED to staff: the owner cannot switch them on until Sam decides (the DN ids).
-  // ───────────────────────────── waitlist operations (one key per action; Sam, 2 Nov, DN-15a) ─────────────────────────────
+  // snapshot is Off / Off and the keys are NOT OFFERED to staff: the owner cannot switch them on until the platform operator decides (the DN ids).
+  // ───────────────────────────── waitlist operations (one key per action; platform operator, 2 Nov) ─────────────────────────────
   // Receptionist ON for the whole studio, practitioner OFF, both owner-configurable. A receptionist value is effective only once the
   // `receptionist_waitlist` gate is satisfied. Today only the owner can do any of it, so every existing-studio snapshot is Off.
   {
@@ -1034,7 +1034,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_waitlist" },
-    note: "Importing never implies consent and never triggers a message automatically (Sam, 2 Nov). Audit rows WL-8.",
+    note: "Importing never implies consent and never triggers a message automatically (platform operator, 2 Nov). Audit rows WL-8.",
   },
   {
     key: "wl.withdraw_entry",
@@ -1068,7 +1068,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_waitlist" },
-    note: "Decided (Sam, 3 Nov, Q8 / DN-15a): expiring and closing moved to wl.expire_close; every waitlist action needs queue-view access. Importing never creates consent or sends a message. Audit rows WL-4.",
+    note: "Decided (platform operator, 3 Nov): expiring and closing moved to wl.expire_close; every waitlist action needs queue-view access. Importing never creates consent or sends a message. Audit rows WL-4.",
   },
   {
     key: "wl.expire_close",
@@ -1085,7 +1085,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_waitlist" },
-    note: "Decided (Sam, 3 Nov, Q8 / DN-15a): its own permission, separate from claim, release and requeue. Needs queue-view access. Audit rows WL-4.",
+    note: "Decided (platform operator, 3 Nov): its own permission, separate from claim, release and requeue. Needs queue-view access. Audit rows WL-4.",
   },
   {
     key: "wl.offer_booking",
@@ -1136,7 +1136,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     sensitive: true,
     shipGate: { receptionist: "receptionist_waitlist" },
-    note: "Separate because it records consent. Receptionist ON is Sam's decision (DN-15a) and is usable only when the screen and backend enforcement ship. STOP scope is undecided (DN-17) and today's phone-wide STOP stays. Audit rows WL-10.",
+    note: "Separate because it records consent. Receptionist ON is the platform operator's decision and is usable only when the screen and backend enforcement ship. STOP scope is undecided and today's phone-wide STOP stays. Audit rows WL-10.",
   },
   // ───────────────────────────── waitlist rules and automation ─────────────────────────────
   {
@@ -1154,7 +1154,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes how many prospects are invited to book and when invitations close, which decides who can book new-client time next.",
-    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-15b). Decided (Sam, 3 Nov, batch 4): changing these settings does NOT need queue-view access; any action that reads or changes individual entries still needs the relevant wl.* entry permissions. A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
+    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (platform operator, 2 Nov). Decided (platform operator, 3 Nov): changing these settings does NOT need queue-view access; any action that reads or changes individual entries still needs the relevant wl.* entry permissions. A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
   },
   {
     key: "wlrules.policy_and_text",
@@ -1171,7 +1171,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes the waitlist admission policy, who may claim a slot first and the wording prospects see. It applies to prospects who join or are invited after the change.",
-    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-15b). Decided (Sam, 3 Nov, batch 4): changing these settings does NOT need queue-view access; any action that reads or changes individual entries still needs the relevant wl.* entry permissions. A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
+    note: "Rules and automation, deliberately separate from operating entries; OFF for both staff roles, owner-configurable (platform operator, 2 Nov). Decided (platform operator, 3 Nov): changing these settings does NOT need queue-view access; any action that reads or changes individual entries still needs the relevant wl.* entry permissions. A permission alone never enables SMS and never overrides consent or opt-out restrictions.",
   },
   // ───────────────────────────── accepting new clients ─────────────────────────────
   {
@@ -1189,7 +1189,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes whether the studio is Open, Waitlist or Closed to new clients. Every new-client visitor to the public booking page sees the new mode at once.",
-    note: "OFF for both staff roles, owner-configurable (Sam, 2 Nov, DN-4a). This is the PERMISSION to change the admission policy. The studio's actual Open / Waitlist / Closed setting is a studio setting, not a permission, and the page keeps the two visibly apart. The public enforcement of the mode stays a mandatory server rule. Settled (Q13, from group 2): the setting is separate from this key.",
+    note: "OFF for both staff roles, owner-configurable (platform operator, 2 Nov). This is the PERMISSION to change the admission policy. The studio's actual Open / Waitlist / Closed setting is a studio setting, not a permission, and the page keeps the two visibly apart. The public enforcement of the mode stays a mandatory server rule. Settled (Q13, from group 2): the setting is separate from this key.",
   },
   {
     key: "admit.booking_rules",
@@ -1206,7 +1206,7 @@ export const CATALOG = [
     enforcedIn: "R5",
     affectsFutureStudioBusiness: true,
     futureBusinessEffect: "Changes how far ahead new clients may book and the rules for public new-client booking. It applies to bookings made after the change.",
-    note: "Decided (Sam, 3 Nov, Q12 / DN-4a, DN-4b): covers booking windows and new-client booking rules ONLY. Studio identity (web address, timezone, address, intro) and service duration and buffers stay under their own separate controls. OFF for both staff roles, owner-configurable.",
+    note: "Decided (platform operator, 3 Nov): covers booking windows and new-client booking rules ONLY. Studio identity (web address, timezone, address, intro) and service duration and buffers stay under their own separate controls. OFF for both staff roles, owner-configurable.",
   },
   // ───────────────────────────── single capabilities with an open decision ─────────────────────────────
   {
@@ -1224,9 +1224,9 @@ export const CATALOG = [
     enforcedIn: "R3",
     sensitive: true,
     killSwitch: true,
-    note: "Decided (Sam, 3 Nov, DN-11): a separate permission to set or change a client's own price, OFF for both staff roles and owner-configurable. Reading follows price.view_client_prices and its scope. Every change is recorded. Appointments already booked keep their agreed price unless someone explicitly edits that appointment's price.",
+    note: "Decided (platform operator, 3 Nov): a separate permission to set or change a client's own price, OFF for both staff roles and owner-configurable. Reading follows price.view_client_prices and its scope. Every change is recorded. Appointments already booked keep their agreed price unless someone explicitly edits that appointment's price.",
   },
-  // ───────────── client details, one view and one edit key per data group (Sam, 2 Nov, DN-5) ─────────────
+  // ───────────── client details, one view and one edit key per data group (platform operator, 2 Nov) ─────────────
   // Practitioners keep today's studio-wide access; receptionists are OFF and the owner may grant READ-ONLY per group (the edit keys are
   // not offered to receptionists), for example allergies and cautions without the full chart.
   {
@@ -1243,7 +1243,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
+    note: "Decided (platform operator, 2 Nov): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
     key: "client.edit_dob_address",
@@ -1259,7 +1259,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Not offered to receptionists (read-only grants only, DN-5).",
+    note: "Not offered to receptionists (read-only grants only).",
   },
   {
     key: "client.view_allergies_cautions",
@@ -1275,7 +1275,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
+    note: "Decided (platform operator, 2 Nov): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
     key: "client.edit_allergies_cautions",
@@ -1291,7 +1291,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Not offered to receptionists (read-only grants only, DN-5).",
+    note: "Not offered to receptionists (read-only grants only).",
   },
   {
     key: "client.view_budget",
@@ -1307,7 +1307,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
+    note: "Decided (platform operator, 2 Nov): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
     key: "client.edit_budget",
@@ -1323,7 +1323,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Not offered to receptionists (read-only grants only, DN-5).",
+    note: "Not offered to receptionists (read-only grants only).",
   },
   {
     key: "client.view_personal_notes",
@@ -1339,7 +1339,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
+    note: "Decided (platform operator, 2 Nov): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
     key: "client.edit_personal_notes",
@@ -1355,7 +1355,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Not offered to receptionists (read-only grants only, DN-5).",
+    note: "Not offered to receptionists (read-only grants only).",
   },
   {
     key: "client.view_tags",
@@ -1371,7 +1371,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
+    note: "Decided (platform operator, 2 Nov): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
     key: "client.edit_tags",
@@ -1387,7 +1387,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Not offered to receptionists (read-only grants only, DN-5).",
+    note: "Not offered to receptionists (read-only grants only).",
   },
   {
     key: "client.view_health_fields",
@@ -1403,7 +1403,7 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Decided (Sam, 2 Nov, DN-5): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
+    note: "Decided (platform operator, 2 Nov): practitioners keep today's studio-wide access; receptionists OFF with a read-only grant available per data group.",
   },
   {
     key: "client.edit_health_fields",
@@ -1419,9 +1419,9 @@ export const CATALOG = [
     ownerConfigurable: true,
     enforcedIn: "R5",
     sensitive: true,
-    note: "Not offered to receptionists (read-only grants only, DN-5).",
+    note: "Not offered to receptionists (read-only grants only).",
   },
-  // ───────────── sterilisation and disinfection logs (Sam, 2 Nov, DN-3) ─────────────
+  // ───────────── sterilisation and disinfection logs (platform operator, 2 Nov) ─────────────
   {
     key: "records.view_sterilisation_disinfection",
     group: "safety_records",
@@ -1435,7 +1435,7 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (Sam, 3 Nov, Q10 / DN-3): ON for practitioners, OFF for receptionists (offered, owner may turn on), separate from logging. Exposure-incident history is NOT this key: it is visible to the owner and the person who reported it only.",
+    note: "Decided (platform operator, 3 Nov): ON for practitioners, OFF for receptionists (offered, owner may turn on), separate from logging. Exposure-incident history is NOT this key: it is visible to the owner and the person who reported it only.",
   },
   {
     key: "records.log_sterilisation_disinfection",
@@ -1450,14 +1450,14 @@ export const CATALOG = [
     offeredTo: BOTH,
     ownerConfigurable: true,
     enforcedIn: "R4",
-    note: "Decided (Sam, 3 Nov, Q10 / DN-3): a separate permission from viewing and it requires viewing; ON for practitioners, OFF for receptionists.",
+    note: "Decided (platform operator, 3 Nov): a separate permission from viewing and it requires viewing; ON for practitioners, OFF for receptionists.",
   },
 ] as const satisfies readonly PermissionDef[];
 
 export type PermissionKey = (typeof CATALOG)[number]["key"];
 
 // ───────────────────────── never configurable ─────────────────────────
-// Sam C.5 and the brief's section B. None of these has a key, so no page, server path or database function can grant them.
+// operator list C.5 and the brief's section B. None of these has a key, so no page, server path or database function can grant them.
 // `existingEffect` says what adopting this version does to an existing studio's staff: "none" or "narrows" (a notice is required).
 
 export type FixedOwnerOnly = {
@@ -1475,7 +1475,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
   { id: "staff_invite_remove_role_change", label: "Inviting, removing and changing the role of staff", source: "C.5", existingEffect: "none", note: "Part of 'managing roles'. R-1 (a receptionist created outside the desk) is a hole in exactly this item." },
   { id: "ownership_transfer", label: "Transferring ownership", source: "C.5", existingEffect: "none" },
   { id: "permission_system_administration", label: "Changing the permission catalog, overrides, operator kill switch or their audit tables", source: "C.5", existingEffect: "none", note: "Only through the owner-only writer functions; a role can never grant itself anything." },
-  { id: "full_studio_data_export", label: "The whole-studio data export and backup", source: "this_version", existingEffect: "none", note: "A complete egress of client data. rep.bulk_export never covers it. Decided (Sam, 3 Nov, DN-19): the owner export includes every client-linked item the studio may export (intake, photos, messages, legal identity, consent, notes) and EXCLUDES credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped." },
+  { id: "full_studio_data_export", label: "The whole-studio data export and backup", source: "this_version", existingEffect: "none", note: "A complete egress of client data. rep.bulk_export never covers it. Decided (platform operator, 3 Nov): the owner export includes every client-linked item the studio may export (intake, photos, messages, legal identity, consent, notes) and EXCLUDES credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped." },
   { id: "provider_credentials_bank_payouts", label: "Payment-provider credentials, bank accounts and payouts", source: "C.5", existingEffect: "none" },
   { id: "studio_account_deletion", label: "Studio or account deletion", source: "C.5", existingEffect: "none" },
   { id: "permanent_deletion_bulk_destructive", label: "Permanent deletion and bulk destructive actions", source: "C.5", existingEffect: "none" },
@@ -1486,42 +1486,42 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "narrows",
     enforcedBy: ["public.soft_delete_session", "public.archive_treatment_image"],
-    note: "Practitioners can soft-delete a colleague's session (reason, audited) and photos today. Owner-only is a NARROWING: it needs a notice in the owner's review banner and to the affected staff. Removing a pass, a block or a treated area is EDITING under clin.edit_records, not deletion (DN-7).",
+    note: "Practitioners can soft-delete a colleague's session (reason, audited) and photos today. Owner-only is a NARROWING: it needs a notice in the owner's review banner and to the affected staff. Removing a pass, a block or a treated area is EDITING under clin.edit_records, not deletion.",
   },
   {
     id: "revert_recorded_outcome",
     label: "Undoing a recorded outcome",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, Q9 / DN-12): owner-only, NO time window, a reason is required and the history is kept. The outcomes that can be undone are completion, no-show and cancellation. It never reverses money, erases records or resends messages; settlement goes through refund or correction.",
+    note: "Decided (platform operator, 3 Nov): owner-only, NO time window, a reason is required and the history is kept. The outcomes that can be undone are completion, no-show and cancellation. It never reverses money, erases records or resends messages; settlement goes through refund or correction.",
   },
   {
     id: "require_card_to_book",
     label: "Requiring a card on file to book",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, DN-23a): an owner-only studio setting on the payment settings page, separate from staff permissions. Not a key.",
+    note: "Decided (platform operator, 3 Nov): an owner-only studio setting on the payment settings page, separate from staff permissions. Not a key.",
   },
   {
     id: "erase_client_permanently",
     label: "Permanent client erasure (request, review, confirmation)",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, Q18 / DN-18): owner-only, tracked and audited. The UI states that recording a request deletes nothing and that execution remains unavailable. The tracked request needs a held table (number to be claimed from OPS when built). The workflow is DESIGNED (see the design section of this document). EXECUTION stays unavailable until retention requirements and exceptions are reviewed. No retention period is invented and no promise is made that data is erased from backups.",
+    note: "Decided (platform operator, 3 Nov): owner-only, tracked and audited. The UI states that recording a request deletes nothing and that execution remains unavailable. The tracked request needs a held table (number to be claimed from the operator when built). The workflow is DESIGNED (see the design section of this document). EXECUTION stays unavailable until retention requirements and exceptions are reviewed. No retention period is invented and no promise is made that data is erased from backups.",
   },
   {
     id: "client_portal_setting",
     label: "Turning the client portal on or off for the studio",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, DN-20): an owner-only studio setting, preserved ON for existing studios. OFF blocks existing portal links and sessions on their NEXT request, including messaging, rebooking and card saving, and keeps all records. Independent intake and consent flows keep working, but it must be verified that their links cannot bypass the portal restriction. The affected workflows are explained to the owner before confirmation (Q20).",
+    note: "Decided (platform operator, 3 Nov): an owner-only studio setting, preserved ON for existing studios. OFF blocks existing portal links and sessions on their NEXT request, including messaging, rebooking and card saving, and keeps all records. Independent intake and consent flows keep working, but it must be verified that their links cannot bypass the portal restriction. The affected workflows are explained to the owner before confirmation.",
   },
   {
     id: "late_cancel_window",
     label: "Setting the late-cancellation window",
     source: "this_version",
     existingEffect: "none",
-    note: "Decided (Sam, 3 Nov, Q1/Q2, DN-23b): an owner-set studio policy in whole hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable. Not a staff key. Charging it also needs pay.charge_saved_card.",
+    note: "Decided (platform operator, 3 Nov): an owner-set studio policy in whole hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable. Not a staff key. Charging it also needs pay.charge_saved_card.",
   },
   {
     id: "id_portraits_owner_only",
@@ -1529,7 +1529,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "narrows",
     enforcedBy: ["lib/images/client-portrait.ts (observe-only until the ID-photo review; logs a would-deny for non-owners and refuses nobody)"],
-    note: "Decided (Sam, 2 Nov, DN-24): owner-only and not delegable until the separate ID-photo review (#1296 / 0275) is complete. The portrait feature is OFF everywhere today (HONE_CLIENT_PORTRAIT_ENABLED is unset, and no page calls the signer), so nobody loses anything on the release; the entry exists so the adopt preview and the release notice name it before it can be turned on. Privacy C1.",
+    note: "Decided (platform operator, 2 Nov): owner-only and not delegable until the separate ID-photo review (#1296 / 0275) is complete. The portrait feature is OFF everywhere today (HONE_CLIENT_PORTRAIT_ENABLED is unset, and no page calls the signer), so nobody loses anything on the release; the entry exists so the adopt preview and the release notice name it before it can be turned on. C1.",
   },
   {
     id: "archive_clients",
@@ -1537,7 +1537,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "narrows",
     enforcedBy: ["clients.archived_at write path (0050)", "public.record_client_archive_audit_governed"],
-    note: "Any practitioner can archive any client today. A NARROWING; notice required. Decided (Sam, 3 Nov, DN-25): owner-only only when the enforcement release goes live, with advance notice to existing studios; history and recoverability are kept and no existing record is deleted by the rollout.",
+    note: "Any practitioner can archive any client today. A NARROWING; notice required. Decided (platform operator, 3 Nov): owner-only only when the enforcement release goes live, with advance notice to existing studios; history and recoverability are kept and no existing record is deleted by the rollout.",
   },
   {
     id: "restore_deleted_records",
@@ -1545,16 +1545,16 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
     source: "this_version",
     existingEffect: "narrows",
     enforcedBy: ["client unarchive path (UnarchiveRowControl)", "session restore path: to confirm"],
-    note: "Whether practitioners can restore today is source-only; treated as a narrowing until verified. Decided (Sam, 3 Nov, DN-25): owner-only at the enforcement release with advance notice; nothing is deleted by the rollout.",
+    note: "Whether practitioners can restore today is source-only; treated as a narrowing until verified. Decided (platform operator, 3 Nov): owner-only at the enforcement release with advance notice; nothing is deleted by the rollout.",
   },
 ];
 
-// Not in Sam's list and not given a key: they stay owner-only simply because no key exists. Flagged for reviewers as
-// "not offered as toggles", NOT as "fixed by Sam" (open point R0-Q5).
+// Not in the platform operator's list and not given a key: they stay owner-only simply because no key exists. Flagged for reviewers as
+// "not offered as toggles", NOT as "fixed by the platform operator".
 export const NOT_OFFERED_AS_TOGGLES: readonly string[] = [
-  "Studio administration other than the keys above (studio details, email and text toggles, tracking, the Google destination, machines, onboarding): owner-only this release (Sam, 2 Nov, DN-4b)",
+  "Studio administration other than the keys above (studio details, email and text toggles, tracking, the Google destination, machines, onboarding): owner-only this release (platform operator, 2 Nov)",
   "Payment settings policy such as 'card required' (stays owner-only; the settings page must split it from the fee AMOUNTS key)",
-  "Viewing signed consent contents and policy acknowledgements: ride on intake access (clin.view_intake, Sam, 12 Nov), no separate key. Viewing machine settings: rides on clin.view_records, no separate key",
+  "Viewing signed consent contents and policy acknowledgements: ride on intake access (clin.view_intake, the platform operator, 12 Nov), no separate key. Viewing machine settings: rides on clin.view_records, no separate key",
   "ID-photo store and portrait (0275 / 0231): not built or feature-off; no key until they ship",
   "Hone subscription and billing portal, tax and currency, receipt branding, business name",
 ];
@@ -1564,7 +1564,7 @@ export const NOT_OFFERED_AS_TOGGLES: readonly string[] = [
 // enforcement point and the notice in the owner's review banner (the "nothing changes until adopted" promise).
 export type Narrowing = {
   readonly id: string;
-  // A DN number, or G7:<name> for a log item Sam decided without one (ROLES-DECISIONS-LOG group 7).
+  // A DN number, or G7:<name> for a log item the platform operator decided without one (ROLES-DECISIONS-LOG group 7).
   readonly decision: DecisionId | `G7:${string}`;
   readonly label: string;
   readonly stage: "R1" | "R4" | "R5";
@@ -1676,21 +1676,21 @@ export const NARROWINGS: readonly Narrowing[] = [
   },
 ];
 
-// Platform settings only the OPERATOR changes (Sam, 3 Nov, Q3/DN-16/DN-29; OPS technical parameters for Q19b and Q21). They are NOT
-// catalog keys and NOT owner settings: an owner can neither see a toggle nor change a value. The numbers are provisional (Sam may override).
+// Platform settings only the OPERATOR changes (platform operator, 3 Nov; provisional technical parameters). They are NOT
+// catalog keys and NOT owner settings: an owner can neither see a toggle nor change a value. The numbers are provisional (the platform operator may override).
 export type OperatorSetting = { readonly id: string; readonly label: string; readonly value: string; readonly note: string };
 export const OPERATOR_CONFIG: readonly OperatorSetting[] = [
-  { id: "limiter_fallback_visitor", label: "Fallback limit per visitor when the rate limiter is down", value: "5 attempts per 10 minutes", note: "Attempts are counted whether they fail or not (Q3, DN-29)." },
-  { id: "limiter_fallback_studio", label: "Fallback limit per studio when the rate limiter is down", value: "30 attempts per hour", note: "If the shared fallback cannot enforce a bound, submissions are refused safely and the operator is alerted without client data (Q3)." },
-  { id: "anonymous_visitor_limit", label: "Anonymous waitlist and demo submissions per visitor", value: "5 attempts per hour", note: "Failures counted (Q21, OPS technical parameter)." },
-  { id: "anonymous_email_limit", label: "Anonymous waitlist and demo submissions per email", value: "3 attempts per day", note: "One active waitlist entry per email per studio; a repeat changes nothing and returns the same neutral response (Q21)." },
-  { id: "owner_export_link_lifetime", label: "Lifetime of an owner export download link", value: "15 minutes, one owner session, re-checked on download", note: "Expired links refuse (Q19b, OPS technical parameter)." },
-  { id: "google_studio_flags", label: "Google Calendar studio feature flags", value: "operator only, guarded in the database", note: "Owners keep their normal connect and disconnect (DN-16)." },
+  { id: "limiter_fallback_visitor", label: "Fallback limit per visitor when the rate limiter is down", value: "5 attempts per 10 minutes", note: "Attempts are counted whether they fail or not." },
+  { id: "limiter_fallback_studio", label: "Fallback limit per studio when the rate limiter is down", value: "30 attempts per hour", note: "If the shared fallback cannot enforce a bound, submissions are refused safely and the operator is alerted without client data." },
+  { id: "anonymous_visitor_limit", label: "Anonymous waitlist and demo submissions per visitor", value: "5 attempts per hour", note: "Failures counted (platform operator)." },
+  { id: "anonymous_email_limit", label: "Anonymous waitlist and demo submissions per email", value: "3 attempts per day", note: "One active waitlist entry per email per studio; a repeat changes nothing and returns the same neutral response." },
+  { id: "owner_export_link_lifetime", label: "Lifetime of an owner export download link", value: "15 minutes, one owner session, re-checked on download", note: "Expired links refuse (platform operator)." },
+  { id: "google_studio_flags", label: "Google Calendar studio feature flags", value: "operator only, guarded in the database", note: "Owners keep their normal connect and disconnect." },
 ];
 
-// Who may READ a fee amount (Insurance R-3). Changing one is price.fee_amounts; reading is separate and today every member can read every
+// Who may READ a fee amount. Changing one is price.fee_amounts; reading is separate and today every member can read every
 // studio column. Staff otherwise read only the studio name, timezone and booking preferences, through a column-limited read.
-// Decided (Sam, 3 Nov, Q14 / DN-27, Q14b): staff may READ the service prices and fee amounts clients actually see when booking. Changing a fee
+// Decided (platform operator, 3 Nov): staff may READ the service prices and fee amounts clients actually see when booking. Changing a fee
 // needs price.fee_amounts. Any other fee or financial setting needs one of `anyOf`; private financial settings and client-specific prices are
 // never exposed outside their permitted scope.
 export const FEE_AMOUNT_READ = {
@@ -1699,52 +1699,52 @@ export const FEE_AMOUNT_READ = {
   staffOtherwise: ["studio name", "timezone", "booking preferences"],
 } as const;
 
-// Always true whatever the owner configures (Sam C.5, C.7, brief section B).
+// Always true whatever the owner configures (operator list C.5, C.7, brief section B).
 export const MANDATORY: readonly string[] = [
   "Studio isolation on every path (app, API, database function, export, link, search)",
   "Consent requirements",
-  "Decided (Sam, 3 Nov, Q4 / DN-5): the client-detail groups are safety (allergies and cautions together, separate from the clinical record), personal (date of birth, birthday, address), budget, personal notes, tags and appointment health notes; pronouns belong to display and contact identity (client.view_directory, client.edit_contact) and NEVER to legal-name access; skin type, skin notes and treatment goals are part of the clinical record (clin.view_records, clin.edit_records); receptionist access is never broadened silently, and budget and personal notes are never bundled into another grant",
-  "Decided (Sam, 3 Nov, Q1 / DN-23b): the late-cancellation window is a whole number of hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable; only the owner sets it and the policy is shown to the owner clearly before they enable it",
-  "Decided (Sam, 3 Nov, Q3 / DN-29): provisional OPERATOR-configurable fallback limits when the limiter is down are 5 attempts per visitor per 10 minutes and 30 per studio per hour; attempts are counted whether they fail or not; concurrent requests and multiple app instances are tested; if the shared fallback cannot enforce a bound, submissions are refused safely; the operator is alerted without client data. These are operator configuration, not catalog keys and not owner settings",
-  "Decided (OPS technical parameters, provisional, 3 Nov): anonymous waitlist and demo submissions are limited per visitor (5 per hour) and per email (3 per day) counting failures, with one active waitlist entry per email per studio (a repeat changes nothing and returns the same neutral response); operator-configurable, with the same concurrency, multi-instance and fail-closed tests",
-  "Decided (Sam, 3 Nov, Q7 / DN-11): setting a client-specific price is whole-studio only (Off or On), OFF for both staff roles, owner-configurable, and grants no other pricing or payment permission",
-  "Decided (Sam, 3 Nov, DN-16): the Google Calendar studio feature flags are operator-only, enforced by a database guard; owners keep their normal connect and disconnect",
-  "Decided (Sam, 3 Nov, Q22): if no active owner remains, studio calendar sync pauses and the operator is alerted without client data; it resumes only after an active owner explicitly reconnects; other studios' connections are preserved, and the UI says events already copied into an external calendar may remain",
-  "Decided (DN-29): when the rate limiter is down, token and link operations (intake, manage booking, invitation, portal sign-in) refuse safely with a retry message, public booking stays available only with bounded fallback protection (never unlimited), and the operator is alerted without client data or secret links",
-  "Decided (Sam, 3 Nov): anonymous waitlist and demo submissions have no direct database writes; they go through validated server endpoints with rate and quantity limits, and tests prove normal public sign-up works and no privileged key reaches the browser",
-  "Decided (DN-17): SMS STOP behaviour is unchanged and current opt-outs are retained; the provider configuration is investigated before any change is proposed; no activation or messages are authorized",
-  "Decided (Sam, 3 Nov, DN-25): archive, delete and restore become owner-only only when the enforcement release goes live, with advance notice to existing studios; ordinary deletion stays recoverable with its history and no existing record is deleted by the rollout",
-  "Decided (Q18 / DN-18): a permanent erasure request is owner-only, tracked and audited, and the UI says recording one deletes nothing and execution is unavailable; the workflow is designed but there is no execution until retention requirements and exceptions are reviewed; no retention period is invented and no complete erasure from backups is promised",
-  "Decided (DN-19): the owner export covers all client-linked information the studio may export (intake, photos, messages, legal identity, consent, notes) and excludes credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped; staff exports need the explicit export permission (OFF by default) AND access to every included row and field, are re-checked at generation and at download, and always exclude credentials, payment secrets and other studios' data (Q19)",
-  "Decided (Q20 / DN-20): turning the client portal off blocks existing portal links and sessions on their next request (messaging, rebooking and card saving included), preserves records and explains the affected workflows before confirmation; independent intake and consent flows keep working, and it must be verified that their links cannot bypass the portal restriction",
-  "Decided (DN-26): receptionist legal-name permissions show \"Not available yet\" (not an actionable switch) until privacy enforcement and access logging are deployed and verified; the preferred name / \"Name on file\" behaviour is preserved",
-  "Decided (Sam, 3 Nov, DN-10): card-authorisation consent is READ-ONLY, follows the payment-view permission and its scope (practitioners: own appointments; receptionists: studio-wide when enabled), shows only the authorisation relevant to THAT payment without granting intake or clinical access, and signed originals can never be edited or deleted",
-  "Decided (DN-11): appointments already booked keep their agreed prices unless someone explicitly edits that appointment, and every client-specific price change is recorded",
-  "Decided (DN-23b): a late-cancellation fee needs an explicit owner-configured window with NO invented default and is never activated automatically; the server decides eligibility from the recorded cancellation time, the appointment time and the policy snapshot taken at THAT booking; the fee-charging permission (pay.charge_saved_card) is also required; duplicate charges are prevented and the reason and history are kept",
-  "Decided (Sam, 3 Nov, Q14 / Q14b / DN-27): staff may read published service prices and the fee amounts clients see when booking; changing fees stays price.fee_amounts; private financial settings and client-specific prices are never exposed outside the permitted scope",
-  "Decided (Sam, 3 Nov, Q25): studio totals need no payment-view prerequisite and reports never reveal an individual payment, client or appointment detail",
-  "Decided (Sam, 3 Nov, Q17 / R0-Q3): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be an active practitioner of the same studio configured for the service, and it is refused once the appointment has started or been treated",
-  "Reading a fee amount clients see at booking is open to staff; any other fee field needs price.fee_amounts or pay.view_appointment at any scope, through a column-limited studios read, never the whole row (DN-27, Q14b)",
-  "Decided (Sam, 3 Nov, batch 4): waitlist rule and automation settings (wlrules.*) need no queue-view access; anything that reads or changes an individual entry still needs the relevant wl.* permission",
-  "Decided (Sam, 3 Nov, batch 4): an assigned client is a client of this studio with a non-cancelled appointment CURRENTLY assigned to the actor, past or upcoming; the current assignment is evaluated on the server, access ends only when no other qualifying appointment remains and no studio-wide permission applies, and the relationship alone grants no clinical access",
-  "Decided (Sam, 3 Nov, batch 4): names and basic contact details are a fixed baseline for active practitioners and receptionists of the studio, with preferred-name privacy kept and no legal identity, clinical information, bulk export or other-studio access",
-  "Decided (Sam, 3 Nov, Q8 / DN-15a): every waitlist action (wl.*) requires queue-view access; expiring and closing unbooked entries is its own key; importing never creates consent or sends a message",
+  "Decided (platform operator, 3 Nov): the client-detail groups are safety (allergies and cautions together, separate from the clinical record), personal (date of birth, birthday, address), budget, personal notes, tags and appointment health notes; pronouns belong to display and contact identity (client.view_directory, client.edit_contact) and NEVER to legal-name access; skin type, skin notes and treatment goals are part of the clinical record (clin.view_records, clin.edit_records); receptionist access is never broadened silently, and budget and personal notes are never bundled into another grant",
+  "Decided (platform operator, 3 Nov): the late-cancellation window is a whole number of hours from 1 to 168, UNSET by default; unset means late-cancellation charging is unavailable; only the owner sets it and the policy is shown to the owner clearly before they enable it",
+  "Decided (platform operator, 3 Nov): provisional OPERATOR-configurable fallback limits when the limiter is down are 5 attempts per visitor per 10 minutes and 30 per studio per hour; attempts are counted whether they fail or not; concurrent requests and multiple app instances are tested; if the shared fallback cannot enforce a bound, submissions are refused safely; the operator is alerted without client data. These are operator configuration, not catalog keys and not owner settings",
+  "Decided (platform operator, 3 Nov): anonymous waitlist and demo submissions are limited per visitor (5 per hour) and per email (3 per day) counting failures, with one active waitlist entry per email per studio (a repeat changes nothing and returns the same neutral response); operator-configurable, with the same concurrency, multi-instance and fail-closed tests",
+  "Decided (platform operator, 3 Nov): setting a client-specific price is whole-studio only (Off or On), OFF for both staff roles, owner-configurable, and grants no other pricing or payment permission",
+  "Decided (platform operator, 3 Nov): the Google Calendar studio feature flags are operator-only, enforced by a database guard; owners keep their normal connect and disconnect",
+  "Decided (platform operator, 3 Nov): if no active owner remains, studio calendar sync pauses and the operator is alerted without client data; it resumes only after an active owner explicitly reconnects; other studios' connections are preserved, and the UI says events already copied into an external calendar may remain",
+  "Decided: when the rate limiter is down, token and link operations (intake, manage booking, invitation, portal sign-in) refuse safely with a retry message, public booking stays available only with bounded fallback protection (never unlimited), and the operator is alerted without client data or secret links",
+  "Decided (platform operator, 3 Nov): anonymous waitlist and demo submissions have no direct database writes; they go through validated server endpoints with rate and quantity limits, and tests prove normal public sign-up works and no privileged key reaches the browser",
+  "Decided: SMS STOP behaviour is unchanged and current opt-outs are retained; the provider configuration is investigated before any change is proposed; no activation or messages are authorized",
+  "Decided (platform operator, 3 Nov): archive, delete and restore become owner-only only when the enforcement release goes live, with advance notice to existing studios; ordinary deletion stays recoverable with its history and no existing record is deleted by the rollout",
+  "Decided: a permanent erasure request is owner-only, tracked and audited, and the UI says recording one deletes nothing and execution is unavailable; the workflow is designed but there is no execution until retention requirements and exceptions are reviewed; no retention period is invented and no complete erasure from backups is promised",
+  "Decided: the owner export covers all client-linked information the studio may export (intake, photos, messages, legal identity, consent, notes) and excludes credentials, payment secrets, other studios' data and platform security information; generated files and download links are short-lived and owner-scoped; staff exports need the explicit export permission (OFF by default) AND access to every included row and field, are re-checked at generation and at download, and always exclude credentials, payment secrets and other studios' data",
+  "Decided: turning the client portal off blocks existing portal links and sessions on their next request (messaging, rebooking and card saving included), preserves records and explains the affected workflows before confirmation; independent intake and consent flows keep working, and it must be verified that their links cannot bypass the portal restriction",
+  "Decided: receptionist legal-name permissions show \"Not available yet\" (not an actionable switch) until privacy enforcement and access logging are deployed and verified; the preferred name / \"Name on file\" behaviour is preserved",
+  "Decided (platform operator, 3 Nov): card-authorisation consent is READ-ONLY, follows the payment-view permission and its scope (practitioners: own appointments; receptionists: studio-wide when enabled), shows only the authorisation relevant to THAT payment without granting intake or clinical access, and signed originals can never be edited or deleted",
+  "Decided: appointments already booked keep their agreed prices unless someone explicitly edits that appointment, and every client-specific price change is recorded",
+  "Decided: a late-cancellation fee needs an explicit owner-configured window with NO invented default and is never activated automatically; the server decides eligibility from the recorded cancellation time, the appointment time and the policy snapshot taken at THAT booking; the fee-charging permission (pay.charge_saved_card) is also required; duplicate charges are prevented and the reason and history are kept",
+  "Decided (platform operator, 3 Nov): staff may read published service prices and the fee amounts clients see when booking; changing fees stays price.fee_amounts; private financial settings and client-specific prices are never exposed outside the permitted scope",
+  "Decided (platform operator, 3 Nov): studio totals need no payment-view prerequisite and reports never reveal an individual payment, client or appointment detail",
+  "Decided (platform operator, 3 Nov): handing away one's own appointment (appt.handoff_own) is OFF by default and owner-configurable; the recipient must be an active practitioner of the same studio configured for the service, and it is refused once the appointment has started or been treated",
+  "Reading a fee amount clients see at booking is open to staff; any other fee field needs price.fee_amounts or pay.view_appointment at any scope, through a column-limited studios read, never the whole row",
+  "Decided (platform operator, 3 Nov): waitlist rule and automation settings (wlrules.*) need no queue-view access; anything that reads or changes an individual entry still needs the relevant wl.* permission",
+  "Decided (platform operator, 3 Nov): an assigned client is a client of this studio with a non-cancelled appointment CURRENTLY assigned to the actor, past or upcoming; the current assignment is evaluated on the server, access ends only when no other qualifying appointment remains and no studio-wide permission applies, and the relationship alone grants no clinical access",
+  "Decided (platform operator, 3 Nov): names and basic contact details are a fixed baseline for active practitioners and receptionists of the studio, with preferred-name privacy kept and no legal identity, clinical information, bulk export or other-studio access",
+  "Decided (platform operator, 3 Nov): every waitlist action (wl.*) requires queue-view access; expiring and closing unbooked entries is its own key; importing never creates consent or sends a message",
   "Turning wl.view_queue off turns every other waitlist operation key off for that role, and wl.offer_booking and wl.record_sms_consent still check consent and opt-out at the send and record paths, not in the key",
-  "Decided (Sam, 3 Nov, DN-9): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",
-  "Decided (DN-14): the sender of every staff portal message is recorded, history is preserved, and staff can never rewrite a client's original reply",
-  "Decided (DN-22): notification read state is per person; a user reads only notifications they may see and changes only their own read state",
-  "Decided (Sam, 3 Nov): all sending (messages, links, portal replies, aftercare) respects consent, opt-outs and existing channel-activation restrictions; no permission overrides them",
-  "Decided (Sam, 2 Nov, DN-8): a session's performer is corrected only by the owner or the currently recorded performer, with a reason and audit history; the replacement must be an eligible practitioner of that studio; who actually entered each record is preserved; signatures, attestations and payment history are never rewritten; reassignment cannot be used to bypass a permission",
-  "Decided (Q23 / DN-3): exposure-incident history is visible to the owner and the person who reported it only; a removed reporter loses access through that studio and the owner keeps it",
-  "Decided (Sam, 3 Nov, Q9 / DN-12): undoing a recorded outcome (completion, no-show or cancellation) is owner-only, has no time window and needs a reason; it never reverses money, erases records or resends messages (settlement goes through refund or correction)",
-  "Decided (Sam, 2 Nov, DN-15): importing a waitlist entry never records consent and never sends a message; a waitlist rules permission never enables SMS and never overrides consent or opt-out restrictions",
-  "Decided (DN-4a): the permission to change the admission policy is separate from the studio's actual Open / Waitlist / Closed setting, and public enforcement of that setting is a server rule no permission can bypass",
-  "Decided (DN-6): starting a treatment follows the permitted completion scope; it never gives a receptionist clinical access and never completes an appointment automatically",
-  "Decided (Sam, 2 Nov, DN-1/DN-2): practitioners and receptionists never see the Business tab, whatever keys are on; staff reports appear under a separate Reports entry, and Business data is protected too",
-  "Decided (DN-21): colleagues see staff display names and calendar colours only; private email and account details, Google account emails, pending invitations and personal or operational alerts are visible to the owner and that person only",
-  "Decided (DN-21): calendar-feed tokens and their hashes are secrets: never in a colleague listing, a search result, an export, a log or the Roles page",
-  "Decided (DN-27): staff read only the studio name, timezone and booking preferences their permitted work needs; fee amounts need the relevant payment or pricing permission",
-  "Decided (DN-28): Getting Started shows only the tasks the viewer has permission to perform",
+  "Decided (platform operator, 3 Nov): requesting an intake update or resending the intake link needs the messaging permission plus the intake STATUS read; it never needs or grants the intake answers or the chart",
+  "Decided: the sender of every staff portal message is recorded, history is preserved, and staff can never rewrite a client's original reply",
+  "Decided: notification read state is per person; a user reads only notifications they may see and changes only their own read state",
+  "Decided (platform operator, 3 Nov): all sending (messages, links, portal replies, aftercare) respects consent, opt-outs and existing channel-activation restrictions; no permission overrides them",
+  "Decided (platform operator, 2 Nov): a session's performer is corrected only by the owner or the currently recorded performer, with a reason and audit history; the replacement must be an eligible practitioner of that studio; who actually entered each record is preserved; signatures, attestations and payment history are never rewritten; reassignment cannot be used to bypass a permission",
+  "Decided: exposure-incident history is visible to the owner and the person who reported it only; a removed reporter loses access through that studio and the owner keeps it",
+  "Decided (platform operator, 3 Nov): undoing a recorded outcome (completion, no-show or cancellation) is owner-only, has no time window and needs a reason; it never reverses money, erases records or resends messages (settlement goes through refund or correction)",
+  "Decided (platform operator, 2 Nov): importing a waitlist entry never records consent and never sends a message; a waitlist rules permission never enables SMS and never overrides consent or opt-out restrictions",
+  "Decided: the permission to change the admission policy is separate from the studio's actual Open / Waitlist / Closed setting, and public enforcement of that setting is a server rule no permission can bypass",
+  "Decided: starting a treatment follows the permitted completion scope; it never gives a receptionist clinical access and never completes an appointment automatically",
+  "Decided (platform operator, 2 Nov): practitioners and receptionists never see the Business tab, whatever keys are on; staff reports appear under a separate Reports entry, and Business data is protected too",
+  "Decided: colleagues see staff display names and calendar colours only; private email and account details, Google account emails, pending invitations and personal or operational alerts are visible to the owner and that person only",
+  "Decided: calendar-feed tokens and their hashes are secrets: never in a colleague listing, a search result, an export, a log or the Roles page",
+  "Decided: staff read only the studio name, timezone and booking preferences their permitted work needs; fee amounts need the relevant payment or pricing permission",
+  "Decided: Getting Started shows only the tasks the viewer has permission to perform",
   "Payment authorization: saved-card authorisation evidence is required and amounts are derived by the server",
   "Truthful clinical attribution: acting for a colleague never attributes their attestation; 'risks explained' records the person who explained",
   "The owner always has every permission; a studio always keeps at least one active owner; nobody can promote themselves",
@@ -1765,7 +1765,7 @@ export const MANDATORY: readonly string[] = [
 // ───────────────────────── pure helpers ─────────────────────────
 
 // Is a key's setting acted on by the code in this release? The Roles page shows `not_yet` keys as "Not enforced yet" and not editable
-// (Privacy X3/H3): saving a switch that nothing reads would otherwise look like control.
+//: saving a switch that nothing reads would otherwise look like control.
 //   enforced  a server action, page or signer asks the key and BOTH directions take effect: turning it off refuses, turning it on grants.
 //   deny_only the key is asked and turning it off refuses, but a legacy check stands in front (the practitioner-only action path, the
 //             owner-only availability floor, the owner-only reassign refusal), so WIDENING it grants nothing yet. The Roles page lets it be
@@ -1779,7 +1779,7 @@ export const enforcementOf = (key: string): EnforcementState => catalogByKey.get
 
 export const catalogByKey: ReadonlyMap<string, PermissionDef> = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
 
-// ─────────── studio policy state (D-1) ───────────
+// ─────────── studio policy state ───────────
 // Every studio carries a POLICY BASIS: `existing_snapshot` until its owner reviews the before/after summary and adopts (or saves a
 // custom configuration), `new_studio` for studios created under the shipped defaults. A key with no stored value resolves to the
 // studio's BASIS, never to the new-studio default. A studio whose basis is unknown (null) resolves every key to Off.
@@ -1803,7 +1803,7 @@ export function defaultsFor(role: Role, basis: PolicyBasis): Record<string, Scop
 }
 
 // The scopes the owner may pick for a role. "Own assigned appointments" means nothing for a receptionist (they are never the
-// assigned practitioner), so it is not offered to them (D-5).
+// assigned practitioner), so it is not offered to them.
 export const scopesFor = (d: PermissionDef, role: Role): readonly Scope[] =>
   role === "receptionist" ? d.scopes.filter((s) => s !== "own") : d.scopes;
 
@@ -1812,7 +1812,7 @@ export const scopesFor = (d: PermissionDef, role: Role): readonly Scope[] =>
 //   2. the stored value, else the studio's BASIS value (never the new-studio default for an existing studio).
 //   3. a stored value the role may not hold (outside scopesFor) is Off.
 //   4. capped by every prerequisite's effective scope. A capped result that the key does not allow becomes Off, so a
-//      boolean key can never come out as 'own' (D-2): a key that spans the studio needs its prerequisite at that scope.
+//      boolean key can never come out as 'own': a key that spans the studio needs its prerequisite at that scope.
 //   5. an unmet ship gate caps the key at the existing-studio snapshot (see below).
 // A prerequisite turned Off makes dependents effectively Off while their STORED values are kept.
 export function effectiveScope(role: Role, key: string, policy: StudioPolicy, seen: ReadonlySet<string> = new Set()): Scope {

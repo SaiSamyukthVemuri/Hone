@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// Source guards for Settings -> Roles (R2). DN-21: the page reads only the columns it shows, so a calendar-feed token (or its
+// Source guards for Settings -> Roles (R2). The page reads only the columns it shows, so a calendar-feed token (or its
 // hash) or any other private field can never reach a render or a prop. The actions re-check the owner and never fake a save.
 const page = readFileSync("app/(app)/settings/roles/page.tsx", "utf8");
 const actions = readFileSync("app/(app)/settings/roles/actions.ts", "utf8");
 const editor = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
 const store = readFileSync("lib/settings/roles/policy-store.ts", "utf8");
 
-describe("the Roles page shows only names and addresses, never tokens or hashes (DN-21)", () => {
+describe("the Roles page shows only names and addresses, never tokens or hashes", () => {
   it("selects explicit columns, never *", () => {
     expect(page).not.toMatch(/\.select\(\s*["'`]\*/);
     expect(page).toMatch(/\.select\("id, display_name, email, role, active"\)/);
@@ -37,7 +37,7 @@ describe("the Roles actions", () => {
     expect(actions.match(/ok: true/g)).toHaveLength(2); // the return type and the value, both in reloadPolicyAction
     expect(actions).toMatch(/\{ ok: true; state: StudioPolicyState \}/);
   });
-  it("bind every write to the version a preview returned, and send it to the core (Insurance P-3)", () => {
+  it("bind every write to the version a preview returned, and send it to the core", () => {
     for (const fn of ["saveRolePolicyAction", "resetRolePolicyAction", "adoptNewDefaultsAction"]) {
       const b = bodies.find((x) => x.startsWith(fn))!;
       expect(b, fn).toMatch(/isVersion\(expectedVersion\)/);
@@ -83,7 +83,7 @@ describe("Codex 3 Nov on #1335: a reset is confirmed for the role that was previ
     expect(editor).toMatch(/onCancel=\{\(\) => \{\s*\n\s*previewSeq\.current \+= 1;/);
   });
   it("after a successful save the saved and draft policies come from the core, not from the draft", () => {
-    expect(save).toMatch(/await readBack\(\)/); // readBack wraps props.reload() so a rejection is a failed read, not a stuck editor (B-2)
+    expect(save).toMatch(/await readBack\(\)/); // readBack wraps props.reload() so a rejection is a failed read, not a stuck editor
     expect(save).not.toMatch(/setSaved\(drafts\)/);
     expect(save).toMatch(/setSaved\(fresh\.state\.policies\)/);
     expect(save).toMatch(/setDrafts\(fresh\.state\.policies\)/);
