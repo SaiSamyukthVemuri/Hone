@@ -58,7 +58,10 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
 export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
-export const ENFORCEMENT_SCOPE_LINE = "Enforced in the app once you activate them: appointments, clinical viewing, photos, availability; other areas are shown for planning.";
+// Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet, so this page must not say a setting is
+// enforced. The app is wired for these areas; the database does not check them yet, and nothing is in force until released and activated.
+export const ENFORCEMENT_SCOPE_LINE =
+  "These settings are not in force yet. The app is wired to read them for appointments, clinical viewing, photos and availability, and they take effect only once released and you activate them. The database does not check them yet. Other areas are shown for planning.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
   const v = catalogEnforcementOf(key);
@@ -96,8 +99,28 @@ export type RoleRow = {
   // Any other ship gate: raising the key is held until the condition is met. Plain information, not a refusal of current access.
   heldUntil: string | null;
   needs: string[]; // labels of prerequisites
+  live: LiveStatus; // saved vs in force, from the core's own answer (S3)
   alsoSwitchesOff: string[]; // labels of dependents that follow this key down (their stored values are kept)
 };
+
+// S3: one plain line per key saying what the owner SAVED and what is IN FORCE for staff right now. The in-force value is the core's own
+// answer (never the TypeScript mirror), so when the core could not be read the line says so instead of guessing. Read-only: no control.
+export type LiveStatus = { state: "live" | "not_live" | "unknown"; saved: Scope; inForce: Scope | null };
+
+export const liveStatusOf = (saved: Scope, key: string, policy: PolicyWithServer): LiveStatus => {
+  const inForce = policy.server?.effective[key];
+  if (inForce === undefined) return { state: "unknown", saved, inForce: null };
+  const inert = isInertUntilReleased(policy.server?.source[key]);
+  return { state: !inert && inForce === saved ? "live" : "not_live", saved, inForce };
+};
+
+export const LIVE_UNKNOWN_LINE = "In force now: not shown, because the current access could not be read.";
+export const liveStatusLine = (st: LiveStatus, text: (s: Scope) => string): string =>
+  st.state === "unknown"
+    ? `Saved: ${text(st.saved)}. ${LIVE_UNKNOWN_LINE}`
+    : st.state === "live"
+      ? `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}.`
+      : `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}. The saved setting is not in force yet.`;
 
 export type RoleGroupModel = { group: string; label: string; rows: RoleRow[] };
 
@@ -188,6 +211,7 @@ export function buildRoleModel(role: Role, policy: PolicyWithServer): RoleGroupM
         gateNote: gate === "receptionist_legal_name" && role === "receptionist" && policy.gates?.[gate] !== true ? GATES[gate] : null,
         heldUntil: gate && gate !== "receptionist_legal_name" && policy.gates?.[gate] !== true ? GATES[gate] : null,
         needs: d.requires.map((r) => catalogByKey.get(r)?.label ?? r),
+        live: liveStatusOf(chosen, d.key, policy),
         alsoSwitchesOff: dependents.map((x) => x.label),
       });
     }
