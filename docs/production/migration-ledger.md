@@ -126,6 +126,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 - **What it is.** `0310_block_machine_identity_mode_contract.sql`: replaces the one function behind the three signed-in machine-identity commands. It refuses a machine mode the published contract does not allow for the machine's profile and version, an option-gated mode when the option is not positively present, and a profile that differs from the unit. The file is carried by #1369.
 - **Out of order.** Applied out of order, below the declared hosted maximum, which is unchanged; `hosted_out_of_order` declares it.
+- **Older declarations.** 0310 was removed from the `unhosted_below` lists of the nine older entries (0313, 0323 to 0327, 0338, 0339 and 0340), because a version cannot be both hosted and unhosted. Their other contents are unchanged.
 - **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package (`01-ops/SAM-AUTHORIZATION-0310-b00-20261115T163821Z.txt`): 0310 only, `--include-all` within its stage, a dry run listing exactly 0310, a read-back to follow. It covers no other migration and no activation.
 - **Package.** Sealed package SEAL-SHA256SUMS `d10855e3…`.
 - **Pre-apply read (Part A, 2026-11-15, 16:35:04Z to 16:35:06Z, client side).** PASS: 270 history rows, max `0340`, `0310` absent; no open transactions.
