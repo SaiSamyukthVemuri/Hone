@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, liveStatusLine, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
@@ -635,6 +635,14 @@ function RowList({
               {row.ownMeaning && <p className="mt-0.5 break-words text-xs text-neutral-500">Own assigned means: {row.ownMeaning}.</p>}
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
                 <span data-testid="default-setting">New-studio default: {scopeText(row.defaultScope)}</span>
+                {(() => {
+                  const live = (savedRows.get(row.key) ?? row).live;
+                  return (
+                    <span data-testid="live-vs-saved" data-live-state={live.state}>
+                      {liveStatusLine(live, scopeText)}
+                    </span>
+                  );
+                })()}
                 {unsaved && <span data-testid="unsaved-mark" className="font-medium text-neutral-800 dark:text-neutral-200">Unsaved change</span>}
               </div>
               {row.needs.length > 0 && (
@@ -687,7 +695,7 @@ function RowList({
             {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
             {row.enforcement === "deny_only" && (
               <p data-testid="deny-only-note" className="break-words text-xs text-neutral-600 dark:text-neutral-400">
-                Turning this down takes effect now. {WIDENING_LATER_LINE}
+                Turning this down is saved now. It is in force only when the line above says so. {WIDENING_LATER_LINE}
               </p>
             )}
             {(row.enforcement === "observe" || row.enforcement === "not_yet") && (
@@ -1094,7 +1102,7 @@ function AccessSummary({ person, load }: { person: PersonView; load: RolesEditor
   const defs = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
   return (
     <div data-testid="access-summary" className="mt-2 flex flex-col gap-2 text-sm">
-      <p className="text-neutral-600 dark:text-neutral-400">Access in force right now. Choices saved but waiting for activation, and unsaved edits, are not counted here.</p>
+      <p className="text-neutral-600 dark:text-neutral-400">Access in force right now, as the permission settings give it. Choices saved but waiting for activation, and unsaved edits, are not counted here. The database does not check these settings yet.</p>
       <ul className="flex flex-col gap-0.5">
         {state.rows.map((r) => (
           <li key={r.key} data-access-row={r.key} data-effective={r.scope} className="break-words text-xs">

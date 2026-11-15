@@ -254,7 +254,7 @@ describe("Discard is an ordinary save back to the basis", () => {
 describe("View access labelling", () => {
   const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
   it("says it is access in force, not saved-but-waiting or unsaved, and flags a pending saved choice", () => {
-    expect(src).toContain("Access in force right now. Choices saved but waiting for activation, and unsaved edits, are not counted here.");
+    expect(src).toContain("Access in force right now, as the permission settings give it. Choices saved but waiting for activation, and unsaved edits, are not counted here. The database does not check these settings yet.");
     expect(src).toMatch(/r\.source === "inactive_until_activated"[\s\S]{0,200}waiting for activation/);
   });
 });
