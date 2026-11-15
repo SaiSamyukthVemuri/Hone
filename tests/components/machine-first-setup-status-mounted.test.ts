@@ -149,6 +149,7 @@ describe("the status block says the machine and the readings separately", () => 
     ];
     const s = mount({ initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic", recordedSetup: rows });
     expect(s.readings).toContain("3 settings saved");
+    expect(s.readings).toContain("(earlier versions kept)");
     expect(s.readings).not.toContain("6");
   });
 
@@ -165,7 +166,8 @@ describe("the status block says the machine and the readings separately", () => 
       initialDeviceId: "room-9", savedDeviceId: "room-9", savedModeKey: "galvanic",
       recordedSetup: [absent("current"), absent("duration")],
     });
-    expect(only.readings).toContain("none yet");
+    expect(only.readings).toContain("no values yet");
+    expect(only.readings).not.toContain("none yet");
   });
 
   describe("after a save in THIS visit the list is the old snapshot until the host refreshes it", () => {
@@ -198,16 +200,19 @@ describe("the status block says the machine and the readings separately", () => 
     }
     const earlier = () => [reading("current", 1, 1, "g0"), reading("duration", 1, 1, "g0")];
 
-    it("the list has NOT refreshed: at least N, never an exact count", async () => {
+    it("the list has NOT refreshed: no number at all", async () => {
       const { text } = await savedThen({}, earlier());
-      expect(text()).toContain("at least 2 settings saved");
+      expect(text()).toContain("saved this visit. The count will update when the list refreshes");
+      expect(text()).not.toMatch(/\d settings? saved/);
+      expect(text()).not.toContain("at least");
     });
 
     it("the SAME array handed back again is still not a refresh", async () => {
       const list = earlier();
       const { render, text } = await savedThen({}, list);
       render({ recordedSetup: list });
-      expect(text()).toContain("at least 2");
+      expect(text()).toContain("saved this visit. The count will update");
+      expect(text()).not.toMatch(/\d/);
     });
 
     it("the refresh LANDS (a new list): exact again", async () => {
@@ -217,16 +222,24 @@ describe("the status block says the machine and the readings separately", () => 
       expect(text()).not.toContain("at least");
     });
 
-    it("the post-save refresh FAILED (submissionBlocked): still at least", async () => {
+    it("the post-save refresh FAILED (submissionBlocked): still no number", async () => {
       const { render, text } = await savedThen({}, earlier());
       render({ recordedSetup: [...earlier()], submissionBlocked: true });
-      expect(text()).toContain("at least 2");
+      expect(text()).toContain("saved this visit. The count will update");
+      expect(text()).not.toMatch(/\d/);
     });
 
     it("an empty list that has not refreshed says it saved, not none", async () => {
       const { text } = await savedThen({}, []);
-      expect(text()).toContain("saved this visit");
+      expect(text()).toContain("saved this visit. The count will update");
       expect(text()).not.toContain("none yet");
+    });
+
+    it("a revision with FEWER fields than the one before: the old count is not shown as if it were a floor", async () => {
+      const before = [reading("current", 1, 1, "g0"), reading("duration", 1, 1, "g0"), reading("rate", 1, 1, "g0")];
+      const { text } = await savedThen({}, before);
+      expect(text()).not.toMatch(/\d/);
+      expect(text()).toContain("saved this visit");
     });
 
     it("the list became unreadable after the save: saved this visit, no count claimed", async () => {
