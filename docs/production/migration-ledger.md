@@ -149,19 +149,6 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
-### The 0341 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0341-apply-receipt-20261115.json`)
-
-- **What it is.** `0341_portal_message_member_write_policies.sql`: on the client portal message and reply tables it removes the member write policies and revokes INSERT and UPDATE from `anon` and `authenticated`; the application writes both tables through the server admin client. The file is carried by #1460; the apply was migration-first.
-- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package: apply 0341 only, with a plain push and without `--include-all`. It covers no other migration.
-- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `d6bb5449…`.
-- **Pre-apply read (Part A, 2026-11-15, 16:47:51Z to 16:47:53Z, client side).** PASS: 271 history rows, max `0340`, `0341` absent; no open transactions.
-- **Read-backs (client side).** The first read-back (16:52:46Z to 16:52:48Z) passed. The verifying read-back (16:57:20Z to 16:57:39Z) was **OVERALL PASS**, and reconcile ALL followed at 16:57:55Z.
-- **Hosted at the verifying read-back:** 272 rows, max `0341`. By the row count (271 before, plus `0341` once, equals 272), `0328` to `0337` remain not hosted.
-- **Scope on hosted.** Only `client_portal_messages` and `client_portal_message_replies` changed: the three member write policies were dropped and INSERT and UPDATE were revoked from `anon` and `authenticated`. The two member SELECT policies, every SELECT grant and `service_role` are unchanged; no function, trigger, column or data changed.
-- **Declared hosted maximum.** Advanced to `0341` in `migration-state.json` by this record, from the receipt only.
-- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
-- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
-
 ### The 0350 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0350-apply-receipt-20261115.json`)
 
 - **What it is.** `0350_setup_option_check_null_element.sql`: replaces one function so that a setup mode that requires an installed option is recorded only when the option is positively fitted; an unknown or incomplete option list refuses it. The file is carried by #1476; the apply was migration-first.
