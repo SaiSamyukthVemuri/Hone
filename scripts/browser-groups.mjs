@@ -162,6 +162,10 @@ export const BROWSER_GROUPS = {
       // condition is reported, required once it is, hidden again on retraction,
       // and read back truthfully on the practitioner review grid.
       "intake-diabetes-thyroid-subtypes.spec.ts",
+      // 0340: one intake through every legitimate browser writer in order
+      // (token save, token submit, owner review, notes); client and studio
+      // never move and the form is never hidden.
+      "intake-identity-journey.spec.ts",
     ],
   },
   portal: {
@@ -299,6 +303,9 @@ export const BROWSER_GROUPS = {
       // briefing, an ordinary practitioner is refused it, and the owner-only
       // entry is not advertised in search. No new group: the taxonomy fits.
       "owner-practice-capacity.spec.ts",
+      // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
+      // through the shipped actions; a practitioner is shown no edit control.
+      "owner-only-catalog-edit.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
