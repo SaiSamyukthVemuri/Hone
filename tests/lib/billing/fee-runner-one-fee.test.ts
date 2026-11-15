@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   siblingsError: null as unknown,
   claimCalls: 0,
   holdNext: null as Promise<void> | null,
+  clientError: null as unknown,
+  order: [] as string[],
   heldSignal: (() => {}) as () => void,
 }));
 
@@ -65,7 +67,11 @@ vi.mock("@/lib/stripe/server", () => ({
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
-  getSessionPaymentStripe: () => fakeStripe,
+  getSessionPaymentStripe: () => {
+    h.order.push("client");
+    if (h.clientError) throw h.clientError;
+    return fakeStripe;
+  },
 }));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: { severity: string; event: string }) => {
@@ -149,6 +155,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     rpc: async (name: string) => {
       if (name !== "claim_session_payment_charge_attempt") return { data: null, error: null };
       h.claimCalls += 1;
+      h.order.push("claim");
       return {
         data: [
           {
@@ -221,6 +228,8 @@ beforeEach(() => {
   h.siblings = [];
   h.siblingsError = null;
   h.claimCalls = 0;
+  h.clientError = null;
+  h.order = [];
   h.holdNext = null;
   h.heldSignal = () => {};
   h.rows = {
@@ -522,5 +531,78 @@ describe("one sender per fee attempt: the claim winner (P1 interleaving and a cr
     expect(guard).toBeGreaterThan(0);
     expect(guard).toBeLessThan(retry);
     expect(src.slice(guard - 900, guard)).toMatch(/"late_cancellation_fee"[\s\S]*"no_show_fee"/);
+  });
+});
+
+describe("the Stripe client is obtained BEFORE the claim: a client failure claims nothing and blocks nothing", () => {
+  const asReason = (reason: string) => {
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), charge_reason: reason } };
+  };
+  for (const reason of ["no_show_fee", "late_cancellation_fee", "session_payment"]) {
+    it(`${reason}: getStripe throws -> no claim, no row change, no Stripe call, a clear error`, async () => {
+      asReason(reason);
+      h.clientError = new Error("STRIPE_SECRET_KEY is not set.");
+      h.createReply = OK_PI;
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "blocked" });
+      expect((r as { message: string }).message).toMatch(/temporarily unavailable\. This press sent nothing\. Refresh the page to see the attempt's current status/);
+      expect((r as { message: string }).message, "no provider or key detail in the message").not.toMatch(/STRIPE_SECRET_KEY|sk_/);
+      expect((r as { message: string }).message, "it must not read as 'this attempt is unpaid' or 'unchanged'").not.toMatch(/Nothing was charged|nothing was changed|unpaid/i);
+      expect(h.claimCalls, "the attempt is never claimed").toBe(0);
+      expect(h.updates, "no row is written").toEqual([]);
+      expect(h.createKeys, "no PaymentIntent create").toHaveLength(0);
+    });
+    it(`${reason}: the normal path is unchanged (client first, then the claim, then one create)`, async () => {
+      asReason(reason);
+      h.createReply = OK_PI;
+      const r = await run();
+      expect(r).toMatchObject({ ok: true, outcome: "succeeded" });
+      expect(h.order.slice(0, 2)).toEqual(["client", "claim"]);
+      expect(h.claimCalls).toBe(1);
+      expect(h.createKeys).toHaveLength(1);
+    });
+  }
+  it("after a client failure the attempt is still ready and can be run again once the client works", async () => {
+    h.clientError = new Error("boom");
+    expect(await run()).toMatchObject({ ok: false, outcome: "blocked" });
+    expect(h.claimCalls).toBe(0);
+    h.clientError = null;
+    h.createReply = OK_PI;
+    expect(await run()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.claimCalls).toBe(1);
+  });
+});
+
+describe("an ALREADY-CLAIMED attempt keeps the existing manual-review handling when the client cannot be built", () => {
+  const asRow = (reason: string, status: string) => {
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), charge_reason: reason, status } };
+  };
+  for (const reason of ["no_show_fee", "late_cancellation_fee"]) {
+    it(`${reason}: pending_stripe with no PaymentIntent + client failure -> needs_manual_review, critical alert, no create, no row change`, async () => {
+      asRow(reason, "pending_stripe");
+      h.claimResult = "already_pending";
+      h.clientError = new Error("STRIPE_SECRET_KEY is not set.");
+      h.createReply = OK_PI;
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(h.alerts).toContainEqual({ severity: "critical", event: "session_payment_needs_manual_review" });
+      expect(h.createKeys, "no PaymentIntent create").toHaveLength(0);
+      expect(h.updates, "no row is written").toEqual([]);
+    });
+    it(`${reason}: ready + client failure keeps the blocked result and claims nothing`, async () => {
+      asRow(reason, "ready");
+      h.clientError = new Error("STRIPE_SECRET_KEY is not set.");
+      const r = await run();
+      expect(r).toMatchObject({ ok: false, outcome: "blocked" });
+      expect(h.claimCalls).toBe(0);
+      expect(h.updates).toEqual([]);
+      expect(h.createKeys).toHaveLength(0);
+    });
+  }
+  it("source pin: the early client build is guarded by status ready", () => {
+    const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
+    const at = src.indexOf("let stripe: Stripe | undefined;");
+    expect(at).toBeGreaterThan(0);
+    expect(src.slice(at, at + 200)).toMatch(/if \(attemptRow\.status === "ready"\)/);
   });
 });
