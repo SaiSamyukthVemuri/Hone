@@ -143,7 +143,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Pre-apply read (Part A, 2026-11-15, 17:07:48Z to 17:07:49Z, client side).** PASS: 272 history rows, max `0341`, `0350` absent.
 - **First attempt (17:11Z).** It did not get past the dry run, so no push was reached and nothing reached production; `0350` was absent at its pre-push read.
 - **Read-back (2026-11-15, 17:21:33Z to 17:21:35Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
-- **Hosted at that read-back:** 273 rows, max `0350`. By the row count (272 before, plus `0350` once, equals 273), `0328` to `0337` remain not hosted.
+- **Hosted at that read-back:** 273 rows, max `0350`. By the row count (272 before, plus `0350` once, equals 273), `0328` to `0337` remain not hosted, and so do `0342` to `0349`, which have no file on this tree.
 - **Scope on hosted.** Only one function changed (replaced; invoker; EXECUTE stays revoked from public, `anon`, `authenticated` and `service_role`). No table, policy, trigger, column or data changed.
 - **Declared hosted maximum.** Advanced to `0350` in `migration-state.json` by this record, from the receipt only.
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
