@@ -1,22 +1,19 @@
--- Migration 0353. Waitlist single legal name (HON-58, #1331).
+-- Migration 0353. Waitlist single legal name.
 --
--- ADDITIVE ONLY: one new column, one new CHECK, one new function version. Sealed 0202 is NOT edited, and its
--- complete_waitlist_profile_by_grant stays exactly as shipped (v1 keeps refusing a blank family name). No column is
--- dropped. No data is changed or backfilled: every existing row keeps single_legal_name = false.
--- Renumbered from the held draft 0286 (the number is below the hosted head and cannot be used). The v2 body was diffed
--- against the live 0202 body: the only differences are the single-name rule and the new flag.
+-- ADDITIVE ONLY: one new column, one new CHECK, one new function version. The sealed 0202 completion command is not edited and
+-- stays exactly as shipped (it keeps refusing a blank family name). No column is dropped. No data is changed or backfilled:
+-- every existing row keeps single_legal_name = false. The new function body was diffed against the live 0202 body: the only
+-- differences are the single-name rule and the new flag.
 --
--- DECISIONS AND BLOCKERS (Privacy PEER-1331-FC6E5DD5):
--- 1. JOIN PATH: a single name is offered at COMPLETION ONLY. 0202 join_new_client_waitlist_with_profile is NOT changed: it
---    still requires both names, always writes the flag false, and composes the name from both parts.
--- 2. ROUTING: once the capability is enabled the app calls THIS v2 for every completion (flag true or false), because v1
+-- RULES:
+-- 1. The join path is unchanged. A single name is offered at completion only; the join command still requires both names, always
+--    writes the flag false, and composes the name from both parts.
+-- 2. Once the app enables the option it calls the new function for every completion (flag true or false), because the old command
 --    on a row that already has the flag true would hit the new CHECK and raise instead of returning a code.
--- 3. READ SIDE: the entry select behind the completion draft adds single_legal_name in the SAME change that flips the
---    capability (selecting a missing column fails before apply). Not part of this migration.
--- 4. CONVERSION BLOCKER (Privacy C4): turning an entry into a client (booking conversion, 0195 family) must NOT invent a
---    family name. A single-name entry must stay unconvertible until the identity program defines the client single-name
---    representation. This blocks ENABLEMENT, not this migration.
--- 5. Enabling is a separate reviewed change (capability true, singleNameOption true, read side) after the apply.
+-- 3. The conversion blocker applies: turning an entry into a client (booking conversion) must not invent a family name. A single-name
+--    entry stays unconvertible until the client single-name representation is defined. This blocks enabling the option, not this
+--    migration.
+-- 4. Enabling is a separate reviewed change (capability, option and the read side that selects the new column), made after the apply.
 -- Tests: tests/db/waitlist-single-legal-name.db.test.ts (behaviour) and tests/migrations/0353-waitlist-single-legal-name.test.ts
 -- (source contract). Rollback: supabase/rollbacks/0353_waitlist_single_legal_name.down.sql.
 begin;

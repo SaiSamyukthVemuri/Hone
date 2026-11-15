@@ -149,7 +149,7 @@ describe("0353 waitlist single legal name (v2 command)", () => {
     });
   });
 
-  it("M5 (Privacy): no browser role can write the new flag, by column privilege or by an update", async () => {
+  it("no browser role can write the new flag, by column privilege or by an update", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       const r = await adminQuery(
         `select has_column_privilege($1, 'public.new_client_waitlist_entries', 'single_legal_name', 'UPDATE') as u,
