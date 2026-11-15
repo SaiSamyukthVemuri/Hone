@@ -60,6 +60,7 @@ import { ClientPinnedNotesCard } from "@/components/client-pinned-notes-card";
 import { TreatmentPlansCard } from "@/components/treatment-plans-card";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getActiveServices } from "@/lib/booking/queries";
+import { publishedServicePriceReads } from "@/lib/booking/service-price-visibility";
 import { resolveTimeFormat, todayInTz } from "@/lib/booking/tz";
 import {
   getLatestIntakeForClient,
@@ -384,7 +385,8 @@ export default async function ClientCheatSheetPage({
       ? getAppointmentsForClientProfile(studio.id, client.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getAppointmentsForClientProfile>>),
     // Rendered outside every tab block, so always needed.
-    getActiveServices(studio.id, priceReads),
+    // Published service prices follow the studio control; the client's own prices above stay owner-only.
+    publishedServicePriceReads(studio.id, isOwner).then((reads) => getActiveServices(studio.id, reads)),
     needsIntake
       ? getLatestIntakeForClient(studio.id, client.id)
       : Promise.resolve(null),
