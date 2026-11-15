@@ -46,7 +46,7 @@ async function publish(): Promise<void> {
   await adminQuery(`select public.sync_machine_profile_contract($1,1,$2,4::smallint,$3,$4::jsonb)`, [PROFILE, "gated", OPTION, fields]);
   await adminQuery(`select public.sync_machine_profile_contract($1,2,$2,4::smallint,null,$3::jsonb)`, [PROFILE, "v2only", fields]);
 }
-const register = (s: SeededStudio, options: string[]) =>
+const register = (s: SeededStudio, options: Array<string | null>) =>
   asUser(s.userId, async (q) => {
     const r = await q(`select public.register_studio_machine($1,$2,1,$3,$4) as id`, [s.studioId, PROFILE, `Room ${randomUUID().slice(0, 4)}`, options]);
     return r.rows[0].id as string;
@@ -105,12 +105,15 @@ const blockCount = async (sessionId: string) =>
   (await adminQuery(`select count(*)::int as n from public.session_blocks where session_id = $1 and deleted_at is null`, [sessionId])).rows[0].n as number;
 
 /** Unsupported identities and modes. `unit` picks which registered unit (or none) the call carries. */
-type Case = { name: string; unit: "bare" | "fitted" | "none"; profile: "unit" | "xcell" | "other" | "none"; mode: string | null; onlyWrappers?: string[] };
+type Case = { name: string; unit: "bare" | "fitted" | "nullBare" | "nullFitted" | "none"; profile: "unit" | "xcell" | "other" | "none"; mode: string | null; onlyWrappers?: string[] };
 const CASES: Case[] = [
   { name: "an unknown mode on a registered unit", unit: "bare", profile: "unit", mode: "totally-bogus-mode" },
   { name: "a 120-character mode on a registered unit", unit: "bare", profile: "unit", mode: "x".repeat(120) },
   { name: "an option-gated mode on a unit without the option", unit: "bare", profile: "unit", mode: "gated" },
   { name: "a mode published only for another version of the profile", unit: "bare", profile: "unit", mode: "v2only" },
+  // installed_options may hold a NULL element (register_studio_machine does not reject one): `= any` is then NULL, not false, when
+  // the required option is absent, and the refusal must still happen.
+  { name: "an option-gated mode on a unit whose installed options hold a NULL element and lack the option", unit: "nullBare", profile: "unit", mode: "gated" },
   { name: "no unit and a profile that is not the supported legacy machine", unit: "none", profile: "other", mode: null, onlyWrappers: ["record_block_machine_identity", "create_block_with_initial_setup_and_identity"] },
   { name: "no unit, the legacy machine, and a mode", unit: "none", profile: "xcell", mode: "galvanic", onlyWrappers: ["record_block_machine_identity", "create_block_with_initial_setup_and_identity"] },
 ];
@@ -120,6 +123,7 @@ const ACCEPTED_BEFORE_0310 = new Set([
   "a 120-character mode on a registered unit",
   "an option-gated mode on a unit without the option",
   "a mode published only for another version of the profile",
+  "an option-gated mode on a unit whose installed options hold a NULL element and lack the option",
   "no unit and a profile that is not the supported legacy machine",
 ]);
 
@@ -128,11 +132,13 @@ async function arrange(label: string) {
   const s = await seedStudio(label);
   const bare = await register(s, []);
   const fitted = await register(s, [OPTION]);
-  return { s, bare, fitted };
+  const nullBare = await register(s, [null]);
+  const nullFitted = await register(s, [null, OPTION]);
+  return { s, bare, fitted, nullBare, nullFitted };
 }
-const argsFor = (c: Case, s: SeededStudio, bare: string, fitted: string, sessionId: string, blockId: string): Args => ({
+const argsFor = (c: Case, s: SeededStudio, bare: string, fitted: string, sessionId: string, blockId: string, nullBare = "", nullFitted = ""): Args => ({
   s, sessionId, blockId,
-  machine: c.unit === "bare" ? bare : c.unit === "fitted" ? fitted : null,
+  machine: c.unit === "bare" ? bare : c.unit === "fitted" ? fitted : c.unit === "nullBare" ? nullBare : c.unit === "nullFitted" ? nullFitted : null,
   profile: c.profile === "unit" ? null : c.profile === "xcell" ? XCELL : c.profile === "other" ? OTHER : null,
   mode: c.mode,
   key: `k-${randomUUID()}`,
@@ -161,11 +167,11 @@ describe("every wrapper granted to authenticated refuses unsupported identities 
   for (const w of WRAPPERS) {
     for (const c of CASES.filter((x) => applicable(w, x))) {
       it(`${w.name}: ${c.name} is refused and nothing is stored`, async () => {
-        const { s, bare, fitted } = await arrange(`dr-${w.name.slice(0, 6)}`);
+        const { s, bare, fitted, nullBare, nullFitted } = await arrange(`dr-${w.name.slice(0, 6)}`);
         const { sessionId, blockId } = await seedSession(s);
         const before = await storedFor(blockId);
         const blocksBefore = await blockCount(sessionId);
-        const e = await refused(asUser(s.userId, (q) => w.call(q, argsFor(c, s, bare, fitted, sessionId, blockId))));
+        const e = await refused(asUser(s.userId, (q) => w.call(q, argsFor(c, s, bare, fitted, sessionId, blockId, nullBare, nullFitted))));
         expect(e, "the database must refuse").not.toBeNull();
         expect(await storedFor(blockId)).toEqual(before);
         expect(await blockCount(sessionId), "no block is created by a refused create").toBe(blocksBefore);
@@ -216,10 +222,10 @@ describe("NEGATIVE CONTROL: the same calls, made as a signed-in member, are ACCE
   for (const w of WRAPPERS.filter((x) => x.takesProfile)) {
     for (const c of CASES.filter((x) => applicable(w, x) && ACCEPTED_BEFORE_0310.has(x.name))) {
       it(`${w.name}: ${c.name} is stored when the 0301 body is installed (rolled back afterwards)`, async () => {
-        const { s, bare, fitted } = await arrange(`nc-${w.name.slice(0, 6)}`);
+        const { s, bare, fitted, nullBare, nullFitted } = await arrange(`nc-${w.name.slice(0, 6)}`);
         const { sessionId, blockId } = await seedSession(s);
         const accepted = await rolledBackAs(s.userId, BODY_0301, async (client) => {
-          const args = argsFor(c, s, bare, fitted, sessionId, blockId);
+          const args = argsFor(c, s, bare, fitted, sessionId, blockId, nullBare, nullFitted);
           await w.call((t, p) => client.query(t, p) as never, args);
           await client.query("reset role");
           const row = await client.query(
@@ -231,7 +237,7 @@ describe("NEGATIVE CONTROL: the same calls, made as a signed-in member, are ACCE
         // The earlier function body stores the unsupported identity or mode, so the refusals above come from 0310.
         expect(accepted.machine_mode_key !== null || accepted.machine_profile_id === OTHER).toBe(true);
         // and the real (0310) function refuses the same call afterwards, outside the rolled-back transaction
-        const e = await refused(asUser(s.userId, (q) => w.call(q, argsFor(c, s, bare, fitted, sessionId, blockId))));
+        const e = await refused(asUser(s.userId, (q) => w.call(q, argsFor(c, s, bare, fitted, sessionId, blockId, nullBare, nullFitted))));
         expect(e).not.toBeNull();
       });
     }
@@ -312,5 +318,40 @@ describe("receipt replay: a replay never writes, and a new payload always meets 
     const two = await asUser(s.userId, (q) => stamp({ query: q } as never, s, sessionId, blockId, { machine: fitted, profile: null, mode: "gated", key }));
     expect(two.rows[0].r.reused).toBe(true);
     expect(two.rows[0].r.updated_at).toBe(one.rows[0].r.updated_at);
+  });
+});
+
+describe("a NULL element in a unit's installed options never lets an option-gated mode through", () => {
+  const FIXED = "(v_requires = any (coalesce(v_unit_options, '{}'::text[]))) is not true";
+  const BUGGY = "not (v_requires = any (coalesce(v_unit_options, '{}'::text[])))";
+  it("the sealed body carries the fail-closed form, and the control body is exactly that body with the old form restored", () => {
+    expect(BODY_0310).toContain(FIXED);
+    expect(BODY_0310).not.toContain(BUGGY);
+    expect(BODY_0310.replace(FIXED, BUGGY)).toContain(BUGGY);
+  });
+  const GATED_NULL = CASES.find((c) => c.unit === "nullBare")!;
+  for (const w of WRAPPERS) {
+    it(`${w.name}: installed options {NULL} plus a gated mode is refused; {NULL, required option} is accepted`, async () => {
+      const { s, bare, fitted, nullBare, nullFitted } = await arrange(`nu-${w.name.slice(0, 6)}`);
+      const refusedSession = await seedSession(s);
+      const e = await refused(asUser(s.userId, (q) => w.call(q, argsFor(GATED_NULL, s, bare, fitted, refusedSession.sessionId, refusedSession.blockId, nullBare, nullFitted))));
+      expect(e?.code).toBe("23514");
+      expect((await storedFor(refusedSession.blockId)).machine_mode_key).toBeNull();
+      const okSession = await seedSession(s);
+      await asUser(s.userId, (q) => w.call(q, argsFor({ ...GATED_NULL, unit: "nullFitted" }, s, bare, fitted, okSession.sessionId, okSession.blockId, nullBare, nullFitted)));
+      // the create wrapper makes a NEW block, so look across the session's blocks rather than at the seeded one
+      const modes = (await adminQuery(`select machine_mode_key from public.session_blocks where session_id = $1 and deleted_at is null and machine_mode_key is not null`, [okSession.sessionId])).rows;
+      expect(modes.map((r) => r.machine_mode_key)).toEqual(["gated"]);
+    });
+  }
+  it("NEGATIVE CONTROL: with the old `not (... = any ...)` form restored, the same call is ACCEPTED (rolled back), so the refusals above come from the fix", async () => {
+    const { s, nullBare } = await arrange("nu-nc");
+    const { sessionId, blockId } = await seedSession(s);
+    const stored = await rolledBackAs(s.userId, BODY_0310.replace(FIXED, BUGGY), async (c) => {
+      await RECORD((t, p) => c.query(t, p) as never, { s, sessionId, blockId, machine: nullBare, profile: null, mode: "gated", key: `k-${randomUUID()}` });
+      await c.query("reset role");
+      return (await c.query(`select machine_mode_key from public.session_blocks where id = $1`, [blockId])).rows[0].machine_mode_key as string | null;
+    });
+    expect(stored, "the old form lets an option-gated mode through").toBe("gated");
   });
 });

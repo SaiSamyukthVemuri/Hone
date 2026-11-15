@@ -172,8 +172,9 @@ begin
         raise exception 'That machine does not offer that mode.'
           using errcode = 'check_violation';
       end if;
+      -- `= any` is NULL, not false, when the array holds a NULL element and lacks the option; "is not true" refuses that case too.
       if v_requires is not null
-         and not (v_requires = any (coalesce(v_unit_options, '{}'::text[]))) then
+         and (v_requires = any (coalesce(v_unit_options, '{}'::text[]))) is not true then
         raise exception 'This machine does not have the % option fitted, so its mode cannot be recorded.', v_requires
           using errcode = 'check_violation';
       end if;
