@@ -72,16 +72,34 @@ describe("0342 staff deactivate through the core (source)", () => {
     expect(fn("reactivate_staff_member")).toContain("perm_fail('already_active')");
     expect(fn("reactivate_staff_member")).toContain("perm_fail('other_membership_active')");
   });
-  it("RF-1: the capacity lock is taken BEFORE the upcoming-appointments count in all three commands", () => {
+  it("RF-1: the capacity lock is taken BEFORE the upcoming-appointments count in the commands that count", () => {
     for (const n of ["deactivate_staff_member", "change_staff_role"]) {
       const b = fn(n);
       const lock = b.indexOf("acquire_studio_capacity_lock(p_studio)");
       expect(lock, n).toBeGreaterThan(0);
       expect(lock, n).toBeLessThan(b.indexOf("select count(*) into v_upcoming"));
-      // and BEFORE the membership row is locked: appointment writers hold the lock then touch the practitioner row, so the other order deadlocks
-      expect(lock, n).toBeLessThan(b.indexOf("for update;"));
     }
-    expect(fn("reactivate_staff_member")).toContain("acquire_studio_capacity_lock(p_studio)");
+  });
+  // Codex P2 on 0342 (4571004182, 4571048877, 4571157071, 4571122379, 4571160115): ONE lock order in every command that touches a membership:
+  // studio row (FOR NO KEY UPDATE) -> capacity lock -> membership-kind lock -> membership row. The proof that it does not deadlock is the two-session
+  // test in tests/db/permission-staff-lock-order-0342.db.test.ts; this pins the text so the order cannot be edited away without that test running.
+  it("lock order: studio row, then capacity lock, then membership-kind lock, then the membership row, in all three commands", () => {
+    for (const n of ["deactivate_staff_member", "reactivate_staff_member", "change_staff_role"]) {
+      const b = fn(n);
+      const studio = b.indexOf("from public.studios s where s.id = p_studio for no key update");
+      const cap = b.indexOf("acquire_studio_capacity_lock(p_studio)");
+      const kind = b.indexOf("studio_membership_kind_lock(p_studio, v_lock_user)");
+      const row = b.indexOf("for update;", kind);
+      expect(studio, `${n} studio row`).toBeGreaterThan(0);
+      expect(cap, `${n} capacity`).toBeGreaterThan(studio);
+      expect(kind, `${n} kind lock`).toBeGreaterThan(cap);
+      expect(row, `${n} row lock after the kind lock`).toBeGreaterThan(kind);
+      // the studio row is NEVER FOR UPDATE here: that would block the foreign-key share lock a membership insert takes while holding the kind lock
+      expect(b, n).not.toMatch(/from public\.studios s where s\.id = p_studio for update/);
+      // the locked read is re-checked against the user the kind lock was taken for
+      expect(b, n).toContain("v_user is distinct from v_lock_user");
+      expect(b, n).toContain("'membership_changed_concurrently'");
+    }
   });
   it("the upcoming-appointments rule is ONE switch: keep ships and reports the count; block and reassign refuse with their own codes", () => {
     // Sam, while away: preserve current production behaviour for unanswered product decisions. Removal always works today, so 'keep' ships.
@@ -96,7 +114,7 @@ describe("0342 staff deactivate through the core (source)", () => {
     expect(b).toContain("'has_upcoming_appointments'");
     expect(b).toMatch(/ap\.status <> 'cancelled' and ap\.starts_at > now\(\)\s+for update/);
   });
-  // Two deliberate differences from 0287's body, and no others: (1) the capacity lock for a practitioner before the membership select (RF-1),
+  // Two deliberate differences from 0287's body, and no others: (1) the lock sequence before the membership select (RF-1, and the Codex lock-order rounds), with a re-check of the user it was taken for,
   // (2) the old practitioner row's private calendar-feed hash is revoked in the statement that deactivates it (S2-4: a later reactivate must not
   // reopen the old link). The rollback restores 0287 byte for byte.
   it("change_staff_role is 0287's body plus the lock and the two feed revokes, and nothing else changed", () => {
@@ -104,7 +122,9 @@ describe("0342 staff deactivate through the core (source)", () => {
     const old = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
     const oi = old.indexOf("create or replace function public.change_staff_role(");
     const oldBody = old.slice(oi, old.indexOf("\n$$;", oi) + 4).replace(/--.*$/gm, "");
-    const strip = (t: string) => t.replace(/, calendar_feed_token_hash = null/g, "").replace(/\s+/g, " ").replace(/ ?if p_expected_current_role = 'practitioner' then perform public\.acquire_studio_capacity_lock\(p_studio\); end if; ?/, " ").trim();
+    const LOCKS = /if p_expected_current_role = 'practitioner' then perform 1 from public\.studios s where s\.id = p_studio for no key update; if not found then return public\.perm_fail\('not_found'\); end if; perform public\.acquire_studio_capacity_lock\(p_studio\); select pr\.user_id into v_lock_user from public\.practitioners pr where pr\.id = p_membership and pr\.studio_id = p_studio and pr\.role = 'practitioner'; else select r\.user_id into v_lock_user from public\.studio_receptionists r where r\.id = p_membership and r\.studio_id = p_studio; end if; if v_lock_user is not null then perform public\.studio_membership_kind_lock\(p_studio, v_lock_user\); end if; /;
+    const RECHECK = / ?if v_user is distinct from v_lock_user then raise exception 'membership_changed_concurrently' using errcode = '40001'; end if; ?/;
+    const strip = (t: string) => t.replace(/, calendar_feed_token_hash = null/g, "").replace(/\s+/g, " ").replace(LOCKS, " ").replace(RECHECK, " ").replace(/ v_lock_user uuid;/, "").replace(/\s+/g, " ").trim();
     expect(strip(fn("change_staff_role"))).toBe(strip(oldBody));
   });
   it("one audit row per command, with the reason, and deactivation flips only the active flag (plus the feed revoke, pinned below)", () => {

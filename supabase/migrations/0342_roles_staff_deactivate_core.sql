@@ -56,6 +56,7 @@ declare
   a record;
   v_reason text;
   v_user uuid;
+  v_lock_user uuid;
   v_active boolean;
   v_role text;
   v_upcoming bigint := 0;
@@ -66,8 +67,23 @@ begin
   if p_kind is null or p_kind not in ('practitioner', 'receptionist') then return public.perm_fail('unknown_role'); end if;
   if p_membership is null then return public.perm_fail('not_found'); end if;
 
-  -- The lock comes first: it serialises with every appointment writer, so the count below cannot be overtaken (RF-1).
-  if p_kind = 'practitioner' then perform public.acquire_studio_capacity_lock(p_studio); end if;
+  -- LOCK ORDER (Codex P2 on 0342): studio row, then the capacity lock, then the membership-kind lock, then the membership row. Appointment writers
+  -- lock the studio row FOR UPDATE and then the capacity lock (0150, 0170, 0220), so the studio row must come first. The kind lock must precede the row
+  -- lock because add_studio_receptionist, set_studio_receptionist_active and the invitation acceptance take it first (0216, 0218). The studio row is
+  -- locked FOR NO KEY UPDATE: it still serialises with every FOR UPDATE writer, but it does not block the foreign-key share locks that a
+  -- membership insert takes while holding the kind lock.
+  -- The lock for a practitioner also serialises with every appointment writer, so the count below cannot be overtaken (RF-1).
+  if p_kind = 'practitioner' then
+    perform 1 from public.studios s where s.id = p_studio for no key update;
+    if not found then return public.perm_fail('not_found'); end if;
+    perform public.acquire_studio_capacity_lock(p_studio);
+    select pr.user_id into v_lock_user from public.practitioners pr where pr.id = p_membership and pr.studio_id = p_studio;
+  else
+    select r.user_id into v_lock_user from public.studio_receptionists r where r.id = p_membership and r.studio_id = p_studio;
+  end if;
+  if not found then return public.perm_fail('not_found'); end if;
+  -- The user id is read unlocked only to name the lock; the locked read below re-checks it.
+  if v_lock_user is not null then perform public.studio_membership_kind_lock(p_studio, v_lock_user); end if;
 
   if p_kind = 'practitioner' then
     select pr.user_id, pr.active, pr.role into v_user, v_active, v_role
@@ -78,6 +94,9 @@ begin
     select r.user_id, r.active into v_user, v_active
       from public.studio_receptionists r where r.id = p_membership and r.studio_id = p_studio for update;
     if not found then return public.perm_fail('not_found'); end if;
+  end if;
+  if v_user is distinct from v_lock_user then
+    raise exception 'membership_changed_concurrently' using errcode = '40001';
   end if;
   if v_user is not null and v_user = auth.uid() then return public.perm_fail('self_change'); end if;
   if not v_active then return public.perm_fail('not_active'); end if;
@@ -128,6 +147,7 @@ declare
   a record;
   v_reason text;
   v_user uuid;
+  v_lock_user uuid;
   v_active boolean;
   v_role text;
   v_email text;
@@ -140,8 +160,20 @@ begin
   if p_kind is null or p_kind not in ('practitioner', 'receptionist') then return public.perm_fail('unknown_role'); end if;
   if p_membership is null then return public.perm_fail('not_found'); end if;
 
+  -- Same lock order as deactivate_staff_member (studio row, capacity lock, membership-kind lock, membership row). Reactivating a practitioner can insert
+  -- service_practitioners rows through the 0134 trigger, whose studio foreign key takes a share lock on the studio row, so the studio row comes first.
   if p_kind = 'practitioner' then
+    perform 1 from public.studios s where s.id = p_studio for no key update;
+    if not found then return public.perm_fail('not_found'); end if;
     perform public.acquire_studio_capacity_lock(p_studio);
+    select pr.user_id into v_lock_user from public.practitioners pr where pr.id = p_membership and pr.studio_id = p_studio;
+  else
+    select r.user_id into v_lock_user from public.studio_receptionists r where r.id = p_membership and r.studio_id = p_studio;
+  end if;
+  if not found then return public.perm_fail('not_found'); end if;
+  if v_lock_user is not null then perform public.studio_membership_kind_lock(p_studio, v_lock_user); end if;
+
+  if p_kind = 'practitioner' then
     select pr.user_id, pr.active, pr.role into v_user, v_active, v_role
       from public.practitioners pr where pr.id = p_membership and pr.studio_id = p_studio for update;
     if not found then return public.perm_fail('not_found'); end if;
@@ -150,6 +182,9 @@ begin
     select r.user_id, r.active, r.email into v_user, v_active, v_email
       from public.studio_receptionists r where r.id = p_membership and r.studio_id = p_studio for update;
     if not found then return public.perm_fail('not_found'); end if;
+  end if;
+  if v_user is distinct from v_lock_user then
+    raise exception 'membership_changed_concurrently' using errcode = '40001';
   end if;
   if v_user is not null and v_user = auth.uid() then return public.perm_fail('self_change'); end if;
   if v_active then return public.perm_fail('already_active'); end if;
@@ -194,6 +229,7 @@ declare
   a record;
   v_reason text;
   v_user uuid;
+  v_lock_user uuid;
   v_name text;
   v_email text;
   v_active boolean;
@@ -218,10 +254,21 @@ begin
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
   if v_reason is not null and not public.perm_reason_ok(v_reason) then return public.perm_fail('reason_invalid'); end if;
 
-  -- RF-1 (Insurance), closed by 0342: take the studio's capacity lock BEFORE the membership row is locked and BEFORE the count. Appointment writers hold
-  -- this lock and then touch the practitioner row (foreign key), so taking the row first and the lock second is a lock-order inversion (a deadlock the
-  -- two-session test found). With the lock first, no appointment can be inserted between the count and the update below.
-  if p_expected_current_role = 'practitioner' then perform public.acquire_studio_capacity_lock(p_studio); end if;
+  -- RF-1 (Insurance), closed by 0342, and the lock order Codex asked for: studio row (FOR NO KEY UPDATE), then the capacity lock, then the membership-kind
+  -- lock, then the membership row. Appointment writers hold the studio row FOR UPDATE and then the capacity lock, then touch the practitioner row (foreign
+  -- key), so taking the row first and the lock second is a lock-order inversion; the receptionist insert below also needs a share lock on the studio row, so the
+  -- studio row must come before the capacity lock. The kind lock precedes the row lock as in add_studio_receptionist (0216) and the invitation acceptance (0218).
+  -- With the locks first, no appointment can be inserted between the count and the update below.
+  if p_expected_current_role = 'practitioner' then
+    perform 1 from public.studios s where s.id = p_studio for no key update;
+    if not found then return public.perm_fail('not_found'); end if;
+    perform public.acquire_studio_capacity_lock(p_studio);
+    select pr.user_id into v_lock_user from public.practitioners pr where pr.id = p_membership and pr.studio_id = p_studio and pr.role = 'practitioner';
+  else
+    select r.user_id into v_lock_user from public.studio_receptionists r where r.id = p_membership and r.studio_id = p_studio;
+  end if;
+  -- Not found here falls through to the same refusals as before (owner_role_fixed or not_found) from the locked read below.
+  if v_lock_user is not null then perform public.studio_membership_kind_lock(p_studio, v_lock_user); end if;
   if p_expected_current_role = 'practitioner' then
     select pr.user_id, pr.display_name, pr.email, pr.active into v_user, v_name, v_email, v_active
       from public.practitioners pr where pr.id = p_membership and pr.studio_id = p_studio and pr.role = 'practitioner' for update;
@@ -235,6 +282,9 @@ begin
     select r.user_id, r.display_name, r.email, r.active into v_user, v_name, v_email, v_active
       from public.studio_receptionists r where r.id = p_membership and r.studio_id = p_studio for update;
     if not found then return public.perm_fail('not_found'); end if;
+  end if;
+  if v_user is distinct from v_lock_user then
+    raise exception 'membership_changed_concurrently' using errcode = '40001';
   end if;
   if v_user is not null and v_user = auth.uid() then return public.perm_fail('self_change'); end if;
   if not v_active then return public.perm_fail('not_active'); end if;
