@@ -21,7 +21,7 @@ const functionBlock = (sql: string): string => {
 };
 
 describe("0350 source contract", () => {
-  it("is the current maximum migration (only the max may assert this)", () => {
+  it("is no longer the current maximum migration (only the max may assert it)", () => {
     expect(isRepoMax("0350")).toBe(false);
   });
 
