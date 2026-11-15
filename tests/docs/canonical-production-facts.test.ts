@@ -337,7 +337,10 @@ async function loadClassifier(): Promise<(files: string[]) => { docs_only: boole
 // claim the receipt makes. Nothing is taken on trust:
 //
 //   (a) it is a two-parent merge whose subject is GitHub's
-//       "Merge pull request #N from ...";
+//       "Merge pull request #N from ...", or a one-parent squash merge made by
+//       GitHub (committer `GitHub <noreply@github.com>`) whose subject ends
+//       "(#N)" and is not a revert (the receipt is then bound the
+//       same way, and runtime and migrations are recomputed against its parent);
 //   (b) the receipt is bound to it - either added BY that merge (the in-PR
 //       form, <N>.json absent from its first parent), or naming its exact SHA
 //       in `merge` (the late form, for a merge that has already landed);
@@ -369,6 +372,18 @@ export type PendingReceipt = {
 
 const RECEIPT_KEYS = new Set(["pr", "merge", "runtime", "migrations", "release_receipt"]);
 const MERGE_SUBJECT = /^Merge pull request #(\d+) from /;
+/**
+ * A squash merge has ONE parent, GitHub's default subject "<title> (#N)" and
+ * the committer `GitHub <noreply@github.com>`. It is covered by a receipt exactly
+ * as a two-parent merge is, but only in this narrow form: the committer must be
+ * GitHub's, and the subject must END with "(#N)" and must not be a revert (a
+ * revert's subject is `Revert "<title> (#N)"` and would otherwise name the
+ * reverted PR). Everything else is recomputed from git as for a merge: the
+ * receipt must be ADDED by the commit, name the same PR, and match its diff
+ * against its parent for runtime and migrations.
+ */
+const GITHUB_COMMITTER = "GitHub <noreply@github.com>";
+const SQUASH_SUBJECT = /^(?!Revert\b).*\(#(\d+)\)\s*$/;
 
 /** Strict: an unknown key, a wrong type or a mismatched pointer is malformed, never ignored. */
 export function parseReceipt(text: string): { ok: true; receipt: PendingReceipt } | { ok: false; reason: string } {
@@ -400,13 +415,19 @@ export function parseReceipt(text: string): { ok: true; receipt: PendingReceipt 
 async function mergeFacts(
   g: Git,
   c: string,
-): Promise<{ parents: number; pr: number | null; firstParent: string | null; runtime: boolean; migrations: string[] } | null> {
+): Promise<{ parents: number; pr: number | null; committer: string | null; firstParent: string | null; runtime: boolean; migrations: string[] } | null> {
   const parents = g("rev-list", "--parents", "-n", "1", c)?.split(" ").slice(1) ?? null;
   if (parents === null) return null;
   const subject = g("log", "-1", "--format=%s", c);
   if (subject === null) return null;
-  const pr = subject.match(MERGE_SUBJECT)?.[1];
+  const pr =
+    parents.length === 2
+      ? subject.match(MERGE_SUBJECT)?.[1]
+      : parents.length === 1
+        ? subject.match(SQUASH_SUBJECT)?.[1]
+        : undefined;
   const firstParent = parents[0] ?? null;
+  const committer = g("log", "-1", "--format=%cn <%ce>", c);
   const files = firstParent ? g("diff", "--name-only", "--no-renames", firstParent, c) : null;
   if (files === null) return null;
   const list = files.split("\n").filter(Boolean);
@@ -414,6 +435,7 @@ async function mergeFacts(
   return {
     parents: parents.length,
     pr: pr ? Number(pr) : null,
+    committer,
     firstParent,
     // A3's deployed decision, applied to this merge alone.
     runtime: list.some((f) => nonShippingReason(f) === null && !classify([f]).docs_only),
@@ -430,8 +452,16 @@ export async function receiptCoverage(
   const at = c.slice(0, 8);
   const facts = await mergeFacts(g, c);
   if (!facts) return { ok: false, reason: `${at} cannot be inspected` };
-  if (facts.parents !== 2 || !facts.firstParent) return { ok: false, reason: `${at} is not a two-parent merge` };
-  if (facts.pr === null) return { ok: false, reason: `${at} is not a GitHub pull-request merge` };
+  if ((facts.parents !== 2 && facts.parents !== 1) || !facts.firstParent) {
+    return { ok: false, reason: `${at} is not a two-parent merge or a one-parent squash merge` };
+  }
+  if (facts.pr === null) return { ok: false, reason: `${at} is not a GitHub pull-request merge or squash merge` };
+  // A one-parent commit is only a squash merge when GitHub made it: a web or API
+  // squash carries this committer, while a direct push carries its author's own
+  // address, so a local commit is refused here. This narrows what is accepted.
+  if (facts.parents === 1 && facts.committer !== GITHUB_COMMITTER) {
+    return { ok: false, reason: `${at} is a one-parent commit whose committer is not ${GITHUB_COMMITTER}, so it is not a GitHub squash merge` };
+  }
 
   let receipt: PendingReceipt | null = null;
   const named = late.filter((r) => r.merge === c);
@@ -1898,9 +1928,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
-const APPLY_HISTORY_ENTRIES = 25;
+const APPLY_HISTORY_ENTRIES = 27;
 const APPLY_HISTORY_DIGEST =
-  "4868d6a4e9db8e710a06bb615a2f4048c789bd0e287f04d8975f64acb03629fa";
+  "d9594c8b8f03e97a07c8148bd49d4e2459f2a7b165dae8727b9e580034b838e8";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**
@@ -4352,12 +4382,17 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
       }
     };
     let clock = 1_800_000_000; // fixed git time, so lag controls are deterministic
-    const run = (args: string[], at?: number) => {
+    const run = (args: string[], at?: number, committer?: { name: string; email: string }) => {
       const when = `${at ?? clock} +0000`;
       execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], {
         cwd: dir,
         stdio: "ignore",
-        env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+        env: {
+          ...process.env,
+          GIT_AUTHOR_DATE: when,
+          GIT_COMMITTER_DATE: when,
+          ...(committer ? { GIT_COMMITTER_NAME: committer.name, GIT_COMMITTER_EMAIL: committer.email } : {}),
+        },
       });
     };
     const write = (f: string, body: string) => {
@@ -4390,14 +4425,28 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
       return head();
     };
     /** A direct, single-parent commit on prod (what branch protection forbids). */
-    const direct = (files: Record<string, string>) => {
+    const direct = (files: Record<string, string>, subject = "direct push") => {
       clock += 60;
       for (const [f, body] of Object.entries(files)) write(f, body);
       run(["add", "-A"]);
-      run(["commit", "-qm", "direct push"]);
+      run(["commit", "-qm", subject]);
       return head();
     };
-    return { g, land, direct, head };
+    /** A GitHub squash merge: ONE parent, subject "<title> (#N)" unless overridden. */
+    const GITHUB = { name: "GitHub", email: "noreply@github.com" };
+    const squash = (pr: number, files: Record<string, string>, opts: { subject?: string; committer?: { name: string; email: string } } = {}) => {
+      const br = `b${++n}`;
+      clock += 60;
+      run(["checkout", "-q", "-b", br, "prod"]);
+      for (const [f, body] of Object.entries(files)) write(f, body);
+      run(["add", "-A"]);
+      run(["commit", "-qm", br]);
+      run(["checkout", "-q", "prod"]);
+      run(["merge", "-q", "--squash", br]);
+      run(["commit", "-qm", opts.subject ?? `title (#${pr})`], undefined, opts.committer ?? GITHUB);
+      return head();
+    };
+    return { g, land, direct, squash, head };
   }
   const receipt = (pr: number, runtime: boolean, migrations: string[] = [], merge?: string) =>
     JSON.stringify({ pr, ...(merge ? { merge } : {}), runtime, migrations, release_receipt: `01-ops/${pr}-release-receipt.json` });
@@ -4475,15 +4524,31 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     expect((await coveredSince(t.g, tr, tp, [])).ok).toBe(true);
   });
 
-  it("N4. a direct (single-parent) commit changing app code is never covered, even carrying a receipt", async () => {
+  it("N4. a direct (single-parent) commit not made by GitHub is never covered, even carrying a receipt and a (#N) subject", async () => {
     const r = receiptRepo();
     const recorded = r.head();
     const prod = r.direct({ "app/page.tsx": "v2\n", [file(40)]: receipt(40, true) });
     const out = await coveredSince(r.g, recorded, prod, []);
     expect(out.ok).toBe(false);
-    expect((out as { reason: string }).reason).toMatch(/not a two-parent merge/);
+    expect((out as { reason: string }).reason).toMatch(/not a GitHub pull-request merge or squash merge/);
     // Nor by a late receipt naming its exact SHA.
     expect((await coveredSince(r.g, recorded, prod, [late(receipt(40, true, [], prod))])).ok).toBe(false);
+    // The squash-shaped direct push: subject ends "(#99)", it adds a correct 99.json,
+    // and only the committer differs from a GitHub squash (the twin below).
+    const f = receiptRepo();
+    const fr = f.head();
+    const fp = f.direct({ "app/page.tsx": "v2\n", [file(99)]: receipt(99, true) }, "direct push (#99)");
+    const fo = await coveredSince(f.g, fr, fp, []);
+    expect(fo.ok).toBe(false);
+    expect((fo as { reason: string }).reason).toMatch(/committer is not GitHub <noreply@github\.com>/);
+    const t = receiptRepo();
+    const tr = t.head();
+    expect((await coveredSince(t.g, tr, t.squash(99, { "app/page.tsx": "v2\n", [file(99)]: receipt(99, true) }, { subject: "direct push (#99)" }), [])).ok).toBe(true);
+    // A local commit carrying a user's noreply address is not GitHub either.
+    const u = receiptRepo();
+    const ur = u.head();
+    const up = u.squash(99, { "app/page.tsx": "v2\n", [file(99)]: receipt(99, true) }, { committer: { name: "x", email: "x@users.noreply.github.com" } });
+    expect((await coveredSince(u.g, ur, up, [])).ok).toBe(false);
   });
 
   it("N5. a receipt for a different PR number than the merge subject does not cover it", async () => {
@@ -4561,6 +4626,111 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const out = await coveredSince(r.g, recorded, prod, []);
     expect(out.ok).toBe(false);
     expect((await runtimeChangedSince(r.g, recorded, prod))).toEqual(["app/x.ts"]); // the deletion ships
+  });
+
+  // SQUASH MERGES. A squash commit has one parent, so the rule used to refuse it
+  // outright and every squash needed a record refresh to make it the recorded
+  // HEAD and pin. It is now covered when its subject ends "(#N)" (and is not a
+  // revert), the receipt is ADDED by that commit, and the receipt's runtime and
+  // migrations equal what the commit's diff against its parent says. The checks
+  // that compare the receipt with git are the same code path as for a merge.
+  it("S1. a squash with a correct receipt is covered by A5, A3 and A7 — and was RED before", async () => {
+    const r = receiptRepo();
+    const pinned = r.head();
+    const prod = r.squash(70, { "app/page.tsx": "v2\n", [file(70)]: receipt(70, true) });
+    expect(recordOnlySince(r.g, pinned, prod).ok).toBe(false); // old A5: red
+    expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual(["app/page.tsx"]); // old A3: red
+    expect(await runtimeCoveredSince(r.g, pinned, pinned, prod, [])).toEqual({ ok: true });
+    const since = await coveredSince(r.g, pinned, prod, []);
+    expect(since).toEqual({ ok: true, commits: 1, covered: [prod] });
+    expect(coveredLag(r.g, (since as { covered: string[] }).covered, prod)).toEqual({ ok: true });
+  });
+
+  it("S2. a squash whose receipt is for another PR does not cover it", async () => {
+    const a = receiptRepo();
+    const ar = a.head();
+    const ap = a.squash(71, { "app/page.tsx": "v2\n", [file(72)]: receipt(72, true) }); // no 71.json
+    expect((await coveredSince(a.g, ar, ap, [])).ok).toBe(false);
+    const b = receiptRepo();
+    const br = b.head();
+    const bp = b.squash(71, { "app/page.tsx": "v2\n", [file(71)]: receipt(72, true) }); // contents claim #72
+    const out = await coveredSince(b.g, br, bp, []);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/merges #71 but its receipt is for #72/);
+    const t = receiptRepo(); // twin: the right PR
+    const tr = t.head();
+    expect((await coveredSince(t.g, tr, t.squash(71, { "app/page.tsx": "v2\n", [file(71)]: receipt(71, true) }), [])).ok).toBe(true);
+  });
+
+  it("S3. a squash whose receipt already existed before it (reused or backdated) does not cover it", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    r.land(73, { [file(74)]: receipt(74, true) }); // record-only merge that pre-places #74's receipt
+    const prod = r.squash(74, { "app/page.tsx": "v2\n" });
+    const out = await coveredSince(r.g, recorded, prod, []);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/already existed before this merge/);
+  });
+
+  it("S4. a squash whose receipt understates runtime, or omits a migration, is refused", async () => {
+    const mig = "supabase/migrations/0251_x.sql";
+    const a = receiptRepo();
+    const ar = a.head();
+    const ap = a.squash(75, { "app/page.tsx": "v2\n", [file(75)]: receipt(75, false) });
+    const ao = await coveredSince(a.g, ar, ap, []);
+    expect(ao.ok).toBe(false);
+    expect((ao as { reason: string }).reason).toMatch(/receipt says runtime:false, but its diff is runtime:true/);
+    const b = receiptRepo();
+    const br = b.head();
+    const bp = b.squash(76, { [mig]: "select 1;\n", [file(76)]: receipt(76, true, []) });
+    const bo = await coveredSince(b.g, br, bp, []);
+    expect(bo.ok).toBe(false);
+    expect((bo as { reason: string }).reason).toMatch(/declares migrations \[\], but it changes/);
+    const t = receiptRepo(); // twin: declared
+    const tr = t.head();
+    expect((await coveredSince(t.g, tr, t.squash(76, { [mig]: "select 1;\n", [file(76)]: receipt(76, true, [mig]) }), [])).ok).toBe(true);
+  });
+
+  it("S5. a revert subject never covers: Revert \"… (#N)\" is not a squash of #N", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    const prod = r.squash(77, { "app/page.tsx": "v2\n", [file(77)]: receipt(77, true) }, { subject: 'Revert "title (#77)"' });
+    const out = await coveredSince(r.g, recorded, prod, []);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/not a GitHub pull-request merge or squash merge/);
+    for (const subject of ["title (#77) extra", "title #77", "(#77) title"]) {
+      const x = receiptRepo();
+      const xr = x.head();
+      expect((await coveredSince(x.g, xr, x.squash(77, { "app/page.tsx": "v2\n", [file(77)]: receipt(77, true) }, { subject }), [])).ok).toBe(false);
+    }
+  });
+
+  it("S6. a squash with no receipt is refused; a late receipt naming its exact SHA covers it only when correct", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    // no receipt: refused (the receipt is what binds the claim).
+    const prod = r.squash(78, { "app/page.tsx": "v2\n" });
+    expect((await coveredSince(r.g, recorded, prod, [])).ok).toBe(false);
+    // a late receipt naming the squash SHA covers it, as for a merge.
+    expect((await coveredSince(r.g, recorded, prod, [late(receipt(78, true, [], prod))])).ok).toBe(true);
+    expect((await coveredSince(r.g, recorded, prod, [late(receipt(78, false, [], prod))])).ok).toBe(false);
+  });
+
+  it("S7. POSITIVE CONTROL on the real squashes #1444 (a7a825b94) and #1447 (2d69bc6a8)", async () => {
+    // C2: on a shallow clone the commits are absent, so this control returns
+    // early there (as A1 documents) and proves nothing; CI runs it at full depth.
+    if (!GIT_USABLE) return;
+    for (const [sha, pr, runtime] of [
+      ["a7a825b942f5dec930d6c3860154bdfaea2320ad", 1444, true],
+      ["2d69bc6a890f7aab8d6eb14072d631fd6bd328b4", 1447, true],
+    ] as const) {
+      if (git("cat-file", "-t", sha) !== "commit") continue;
+      const parents = git("rev-list", "--parents", "-n", "1", sha)?.split(" ").slice(1) ?? [];
+      expect(parents.length, `${sha} is a one-parent squash`).toBe(1);
+      expect(git("log", "-1", "--format=%cn <%ce>", sha), `${sha} carries the GitHub committer`).toBe("GitHub <noreply@github.com>");
+      const out = await receiptCoverage(git, sha, []);
+      expect(out, `${pr}: ${JSON.stringify(out)}`).toEqual({ ok: true, runtime });
+    }
   });
 
   it("late receipts: an exact-SHA receipt covers a merge that landed without one; one for another SHA does not", async () => {
