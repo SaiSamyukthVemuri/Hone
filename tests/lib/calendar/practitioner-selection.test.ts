@@ -6,10 +6,14 @@ import {
   SELECTION_PARAM,
   SELECTION_STORAGE_PREFIX,
   filterBySelection,
+  clearLegacySelection,
+  decideFirstVisit,
+  firstVisitParam,
   isSelected,
   miniCalendarHref,
   parseSelection,
   readStoredSelection,
+  selectionStorageKey,
   restoreParam,
   sanitizeStoredSelection,
   selectedPractitioners,
@@ -109,14 +113,44 @@ describe("persistence: URL param plus a per-viewer local preference, no DB write
     const m = new Map<string, string>();
     return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), m };
   };
-  it("stores and reads the serialised selection per studio", () => {
+  it("stores and reads the serialised selection per studio AND per viewer", () => {
     const s = mem();
-    writeStoredSelection(s, "studio-1", "p1,p2");
-    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1")).toBe("p1,p2");
-    expect(readStoredSelection(s, "studio-1")).toBe("p1,p2");
-    expect(readStoredSelection(s, "studio-2")).toBeNull();
-    writeStoredSelection(s, "studio-1", undefined); // everyone
-    expect(readStoredSelection(s, "studio-1")).toBe("all");
+    writeStoredSelection(s, "studio-1", "viewer-d", "p1,p2");
+    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1:viewer-d")).toBe("p1,p2");
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("p1,p2");
+    expect(readStoredSelection(s, "studio-2", "viewer-d")).toBeNull();
+    writeStoredSelection(s, "studio-1", "viewer-d", undefined); // everyone
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("all");
+  });
+  it("a second viewer on the same browser never reads the first viewer's choice (Photos O4)", () => {
+    const s = mem();
+    writeStoredSelection(s, "studio-1", "viewer-d", "p-d");
+    expect(readStoredSelection(s, "studio-1", "viewer-e")).toBeNull();
+    // First visit for E: nothing stored, so E lands on E's own column, not D's.
+    expect(firstVisitParam(readStoredSelection(s, "studio-1", "viewer-e"), "p-e", ["p-d", "p-e"])).toBe("p-e");
+    // E's own later choice is E's alone and D's is untouched.
+    writeStoredSelection(s, "studio-1", "viewer-e", "p-d,p-e");
+    expect(readStoredSelection(s, "studio-1", "viewer-e")).toBe("p-d,p-e");
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("p-d");
+  });
+  it("the pre-fix per-studio key is never read or written, so nobody inherits it and D's later choice is unaffected", () => {
+    const s = mem();
+    s.setItem(SELECTION_STORAGE_PREFIX + "studio-1", "p-d"); // left by an older build
+    expect(readStoredSelection(s, "studio-1", "viewer-e")).toBeNull();
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBeNull();
+    writeStoredSelection(s, "studio-1", "viewer-d", "p-x");
+    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1")).toBe("p-d"); // untouched
+    expect(readStoredSelection(s, "studio-1", "viewer-d")).toBe("p-x");
+  });
+  it("without a usable viewer id nothing is read or written (no shared fallback key)", () => {
+    const s = mem();
+    for (const bad of [null, undefined, "", "a b", "x:y", "<s>"]) {
+      writeStoredSelection(s, "studio-1", bad, "p1");
+      expect(readStoredSelection(s, "studio-1", bad)).toBeNull();
+    }
+    expect(s.m.size).toBe(0);
+    expect(selectionStorageKey("studio-1", "viewer-d")).toBe(SELECTION_STORAGE_PREFIX + "studio-1:viewer-d");
+    expect(selectionStorageKey("", "viewer-d")).toBeNull();
   });
   it("restores a stored subset or none, never 'all' (nothing to change)", () => {
     expect(restoreParam("p1,p2")).toBe("p1,p2");
@@ -132,9 +166,9 @@ describe("persistence: URL param plus a per-viewer local preference, no DB write
   });
   it("survives unavailable storage", () => {
     const boom = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(readStoredSelection(boom, "s")).toBeNull();
-    expect(() => writeStoredSelection(boom, "s", "p1")).not.toThrow();
-    expect(readStoredSelection(null, "s")).toBeNull();
+    expect(readStoredSelection(boom, "s", "v")).toBeNull();
+    expect(() => writeStoredSelection(boom, "s", "v", "p1")).not.toThrow();
+    expect(readStoredSelection(null, "s", "v")).toBeNull();
   });
   it("carries the selection onto hrefs, across date and view changes, and omits it for everyone", () => {
     expect(withSelection("/calendar?view=day&day=2026-11-02", "p1,p2")).toBe(`/calendar?view=day&day=2026-11-02&${SELECTION_PARAM}=p1%2Cp2`);
@@ -208,5 +242,119 @@ describe("duplicate ids never widen a selection (Y1)", () => {
   });
   it("a stored preference is stored without its duplicates", () => {
     expect(sanitizeStoredSelection("p1,p1,p2")).toBe("p1,p2");
+  });
+});
+
+describe("first visit opens on the viewer's own column (a default, never an access control)", () => {
+  it("never chosen + a listed practitioner + others to see = the viewer's own id", () => {
+    expect(firstVisitParam(null, "p2", LISTED)).toBe("p2");
+  });
+
+  it("a stored preference always wins: 'all' stays everyone, a list is restored, none is kept", () => {
+    expect(firstVisitParam("all", "p2", LISTED)).toBeNull();
+    expect(firstVisitParam("p3,p4", "p2", LISTED)).toBe("p3,p4");
+    expect(firstVisitParam("none", "p2", LISTED)).toBe("none");
+  });
+
+  it("an owner or a viewer with no practitioner record stays on everyone", () => {
+    expect(firstVisitParam(null, null, LISTED)).toBeNull();
+    expect(firstVisitParam(null, undefined, LISTED)).toBeNull();
+    expect(firstVisitParam(null, "", LISTED)).toBeNull();
+  });
+
+  it("an id that is not listed (deactivated, foreign) never becomes a selection", () => {
+    expect(firstVisitParam(null, "ghost", LISTED)).toBeNull();
+  });
+
+  it("a studio with only the viewer listed has nothing to narrow: everyone", () => {
+    expect(firstVisitParam(null, "p1", ["p1"])).toBeNull();
+    expect(firstVisitParam(null, "p1", [])).toBeNull();
+  });
+
+  it("the result round-trips: parsing it selects exactly the viewer, and every other person is one tap away", () => {
+    const param = firstVisitParam(null, "p2", LISTED);
+    const sel = parseSelection(param, LISTED);
+    expect(sel.mode).toBe("some");
+    expect([...sel.ids]).toEqual(["p2"]);
+    expect(serializeSelection([...sel.ids, "p3"], LISTED)).toBe("p2,p3");
+  });
+});
+
+describe("an explicit choice in this mount is never undone by the first-visit default, even with storage blocked (Codex P2, #1424)", () => {
+  const LISTED = ["p1", "p2", "p3"];
+  const blocked = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+  // The caller's in-memory flag, driven the way the sidebar effect drives it.
+  function mount() {
+    let decided = false;
+    return (hasParam: boolean, ownFirstId: string | null) => {
+      const r = decideFirstVisit({ decided, hasParam, readStored: () => readStoredSelection(blocked, "s", "v"), ownFirstId, listedIds: LISTED });
+      decided = r.decided;
+      return r.param;
+    };
+  }
+  it("explicit ?people= link, then ticking everyone removes the param: nothing is reinstated", () => {
+    const effect = mount();
+    expect(effect(true, "p1")).toBeNull(); // the link carries the selection
+    expect(effect(false, "p1")).toBeNull(); // everyone ticked, param removed, storage unreadable
+  });
+  it("a plain first visit applies the own default once; unticking back to everyone then stays everyone", () => {
+    const effect = mount();
+    expect(effect(false, "p1")).toBe("p1"); // first visit, nothing stored (blocked)
+    expect(effect(true, "p1")).toBeNull(); // the URL now carries it
+    expect(effect(false, "p1")).toBeNull(); // viewer chose everyone: no re-apply
+  });
+  it("a new mount (reload) with storage blocked applies the default again: that is the first visit, by design", () => {
+    expect(mount()(false, "p1")).toBe("p1");
+  });
+  it("with working storage the stored preference still wins over the default on the first decision", () => {
+    const s = { m: new Map<string, string>(), getItem(k: string) { return this.m.get(k) ?? null; }, setItem(k: string, v: string) { this.m.set(k, v); } };
+    writeStoredSelection(s, "s", "v", "p2,p3");
+    expect(decideFirstVisit({ decided: false, hasParam: false, readStored: () => readStoredSelection(s, "s", "v"), ownFirstId: "p1", listedIds: LISTED }).param).toBe("p2,p3");
+  });
+  it("readStored is not even called once a choice exists", () => {
+    let reads = 0;
+    const read = () => { reads += 1; return null; };
+    decideFirstVisit({ decided: true, hasParam: false, readStored: read, ownFirstId: "p1", listedIds: LISTED });
+    decideFirstVisit({ decided: false, hasParam: true, readStored: read, ownFirstId: "p1", listedIds: LISTED });
+    expect(reads).toBe(0);
+  });
+});
+
+describe("the pre-fix per-studio key is removed once, unread (Privacy N1, #1424)", () => {
+  function store(initial: Record<string, string>) {
+    const m = new Map(Object.entries(initial));
+    const reads: string[] = [];
+    return { m, reads, getItem: (k: string) => { reads.push(k); return m.get(k) ?? null; }, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
+  }
+  it("removes exactly the legacy key and leaves every other key, without reading anything", () => {
+    const s = store({
+      [SELECTION_STORAGE_PREFIX + "studio-1"]: "p-d", // legacy, studio-1
+      [SELECTION_STORAGE_PREFIX + "studio-1:viewer-d"]: "p-d", // per-viewer key
+      [SELECTION_STORAGE_PREFIX + "studio-2"]: "p-x", // another studio's legacy key
+      "hone:calendar:sidebar:v1": "closed",
+    });
+    clearLegacySelection(s, "studio-1");
+    expect([...s.m.keys()].sort()).toEqual(
+      [
+        "hone:calendar:sidebar:v1",
+        SELECTION_STORAGE_PREFIX + "studio-1:viewer-d",
+        SELECTION_STORAGE_PREFIX + "studio-2",
+      ].sort(),
+    );
+    expect(s.reads).toEqual([]); // never inspected
+  });
+  it("does not widen what the per-viewer key stores, and a later choice still round-trips", () => {
+    const s = store({ [SELECTION_STORAGE_PREFIX + "studio-1"]: "p-d" });
+    clearLegacySelection(s, "studio-1");
+    writeStoredSelection(s, "studio-1", "viewer-d", "p1,p2");
+    expect(s.m.get(SELECTION_STORAGE_PREFIX + "studio-1:viewer-d")).toBe("p1,p2");
+    expect(s.m.has(SELECTION_STORAGE_PREFIX + "studio-1")).toBe(false);
+  });
+  it("is harmless when there is nothing to remove, no studio id, no storage, or storage throws", () => {
+    const s = store({});
+    expect(() => clearLegacySelection(s, "studio-1")).not.toThrow();
+    expect(() => clearLegacySelection(s, "")).not.toThrow();
+    expect(() => clearLegacySelection(null, "studio-1")).not.toThrow();
+    expect(() => clearLegacySelection({ removeItem: () => { throw new Error("blocked"); } }, "studio-1")).not.toThrow();
   });
 });
