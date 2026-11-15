@@ -1,6 +1,6 @@
 "use client";
 
-import { currentSettingCount } from "@/lib/machines/recorded-count";
+import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
@@ -1185,10 +1185,12 @@ function MachineFirstSetupPanelImpl({
         }
         modeSaved={Boolean(blockId) && savedDeviceId !== null && savedModeKey !== null && savedModeKey !== ""}
         // CURRENT settings (the highest revision of each group, absences not counted), never the row count: the list holds every
-        // revision. It is EXACT only while the list is known current; after a save of this visit the list is the old snapshot until
-        // the host's refresh replaces it, and when that refresh failed or the list could not be read it stays old, so then the
-        // count is a floor ("at least N"), and nothing is shown at all when the list could not be read.
-        readingsSaved={recordedSetupUnavailable ? null : currentSettingCount(recordedSetup)}
+        // revision. A number is shown ONLY while the list is known current. After a save of this visit the list is the old snapshot
+        // until the host's refresh replaces it, and when that refresh failed it stays old; the old count is not even a floor (a later
+        // revision can have fewer fields, or absences), so then NO number is shown.
+        readingsSaved={recordedSetupUnavailable ? null : recordedSummary(recordedSetup).current}
+        earlierVersions={recordedSummary(recordedSetup).earlierVersions}
+        absenceOnly={recordedSummary(recordedSetup).absenceOnly}
         readingsExact={
           !recordedSetupUnavailable &&
           !submissionBlocked &&
@@ -1230,6 +1232,8 @@ function PersistenceStatus({
   readingsSaved,
   readingsExact,
   savedThisVisit,
+  earlierVersions,
+  absenceOnly,
   rememberedDeviceId,
 }: {
   hasScope: boolean;
@@ -1240,8 +1244,12 @@ function PersistenceStatus({
   modeSaved: boolean;
   /** Readings saved for this block, or null when that could not be read. */
   readingsSaved: number | null;
-  /** False when the saved list could not be read: the count is then a floor, not the total. */
+  /** False while the list is known stale (saved this visit, refresh not landed or failed): no number is shown then. */
   readingsExact: boolean;
+  /** Some rows are superseded revisions. */
+  earlierVersions: boolean;
+  /** Rows exist and every current one is an absence. */
+  absenceOnly: boolean;
   /** This visit saved readings (so "could not be read" is not "nothing"). */
   savedThisVisit: boolean;
   /**
@@ -1298,11 +1306,13 @@ function PersistenceStatus({
             ? savedThisVisit
               ? "saved this visit. The count could not be read just now. The treatment fields below are separate and unchanged."
               : "could not be checked just now. The treatment fields below are unchanged and remain the record."
-            : readingsSaved > 0
-              ? `${readingsExact ? "" : "at least "}${readingsSaved} setting${readingsSaved === 1 ? "" : "s"} saved to this block's machine record. The treatment fields below are separate and unchanged.`
-              : savedThisVisit && !readingsExact
-                ? "saved this visit. The count will update when the list refreshes. The treatment fields below are separate and unchanged."
-                : "none yet. The treatment fields below are unchanged and remain the record."}
+            : !readingsExact
+              ? "saved this visit. The count will update when the list refreshes. The treatment fields below are separate and unchanged."
+              : readingsSaved > 0
+                ? `${readingsSaved} setting${readingsSaved === 1 ? "" : "s"} saved to this block's machine record${earlierVersions ? " (earlier versions kept)" : ""}. The treatment fields below are separate and unchanged.`
+                : absenceOnly
+                  ? "no values yet. The treatment fields below are unchanged and remain the record."
+                  : "none yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>
     </dl>

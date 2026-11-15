@@ -22,3 +22,16 @@ describe("currentSettingCount", () => {
     expect(currentSettingCount([r("g1", "a", 1), r("g1", "a", 1)])).toBe(1);
   });
 });
+
+import { recordedSummary } from "@/lib/machines/recorded-count";
+describe("recordedSummary", () => {
+  it("flags earlier versions only when a superseded revision exists", () => {
+    expect(recordedSummary([r("g1", "a", 1)]).earlierVersions).toBe(false);
+    expect(recordedSummary([r("g1", "a", 1), r("g1", "a", 2)]).earlierVersions).toBe(true);
+  });
+  it("is absence-only when rows exist and none is a value", () => {
+    expect(recordedSummary([]).absenceOnly).toBe(false);
+    expect(recordedSummary([r("g1", "a", 1, true)]).absenceOnly).toBe(true);
+    expect(recordedSummary([r("g1", "a", 1, true), r("g1", "b", 1)]).absenceOnly).toBe(false);
+  });
+});

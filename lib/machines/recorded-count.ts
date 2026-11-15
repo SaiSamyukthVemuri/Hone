@@ -21,3 +21,22 @@ export function currentSettingCount(readings: readonly RecordedReading[]): numbe
   }
   return seen.size;
 }
+
+/**
+ * What the status line needs beyond the count. `earlierVersions`: some row belongs to a superseded revision (it is kept, not shown as
+ * current). `absenceOnly`: the block has recorded rows, and every current one is an absence, so "none yet" would hide a recorded fact.
+ */
+export function recordedSummary(readings: readonly RecordedReading[]): {
+  current: number;
+  earlierVersions: boolean;
+  absenceOnly: boolean;
+} {
+  const top = new Map<string, number>();
+  for (const r of readings) top.set(r.groupKey, Math.max(top.get(r.groupKey) ?? 0, r.revision));
+  const current = currentSettingCount(readings);
+  return {
+    current,
+    earlierVersions: readings.some((r) => r.revision < (top.get(r.groupKey) ?? 0)),
+    absenceOnly: readings.length > 0 && current === 0,
+  };
+}
