@@ -235,3 +235,44 @@ describe("the option cannot be enabled early", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("dark path: the v2 command is never called while the capability is false (it does not exist on hosted)", () => {
+  beforeEach(() => {
+    h.calls = [];
+  });
+  it("no completion shape reaches complete_waitlist_profile_by_grant_v2 with the capability off", async () => {
+    expect(server.WAIT_04B_CAPABILITIES.singleLegalName).toBe(false);
+    const shapes = [
+      SINGLE,
+      { ...SINGLE, lastName: "Ignored" },
+      { ...SINGLE, firstName: "Ada", lastName: "Lovelace", singleLegalName: false },
+      { ...SINGLE, firstName: "Ada", lastName: "Lovelace", singleLegalName: undefined },
+      { ...SINGLE, firstName: "Ada", lastName: "  ", singleLegalName: false },
+    ];
+    for (const patch of shapes) {
+      await server.completeWaitlistProfile({
+        capabilityToken: TOKEN,
+        patch: patch as typeof SINGLE,
+        smsOperationalConsent: false,
+        consentSource: "prospect_link",
+      });
+    }
+    expect(h.calls.length).toBeGreaterThan(0);
+    expect(h.calls.filter((c) => /_v2$/.test(c.fn))).toEqual([]);
+    expect(h.calls.every((c) => c.fn === "complete_waitlist_profile_by_grant" && !("p_single_name" in c.args))).toBe(true);
+  });
+  it("the v2 name appears in exactly one non-test source file, and only behind the capability", () => {
+    const roots = ["app", "components", "lib"].flatMap((d) => walk(join(process.cwd(), d)));
+    const code = (f: string) =>
+      readFileSync(f, "utf8")
+        .split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join("\n");
+    const files = roots.filter((f) => /complete_waitlist_profile_by_grant_v2/.test(code(f)));
+    expect(files.map((f) => f.slice(process.cwd().length + 1))).toEqual(["lib/waitlist/profile-completion-server.ts"]);
+    const src = readFileSync(join(process.cwd(), "lib/waitlist/profile-completion-server.ts"), "utf8");
+    expect(src).toMatch(/const useV2 = WAIT_04B_CAPABILITIES\.singleLegalName === true;/);
+    expect((src.match(/complete_waitlist_profile_by_grant_v2/g) ?? []).length).toBe(1);
+    expect(src).toMatch(/useV2\s*\?\s*"complete_waitlist_profile_by_grant_v2"\s*:\s*"complete_waitlist_profile_by_grant"/);
+  });
+});
