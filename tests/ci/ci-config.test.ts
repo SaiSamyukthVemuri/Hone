@@ -2914,6 +2914,11 @@ describe("HON-18 existing browser job executes guarded native proof", () => {
     expect(check(annotated([{ type: "upstream-econnreset-retry" }], 3))).toContain("3 actual passes, zero skips/retries; upstream resets retried: 1");
     expect(check(annotated([{ type: "other" }, { type: "upstream-econnreset-retry" }, { type: "upstream-econnreset-retry" }], 2)))
       .toContain("upstream resets retried: 1");
+    // Only THIS annotation counts: an annotated case of another type adds nothing.
+    expect(check(annotated([{ type: "other" }], 2))).toContain("upstream resets retried: 0");
+    // A case that needed a test retry (two results) is refused even when both results passed.
+    expect(() => check(report([{ status: "failed" }, { status: "passed" }]))).toThrow();
+    expect(() => check(report([{ status: "passed" }, { status: "passed" }]))).toThrow();
     // An annotation never rescues a failing or retried case.
     const failing = { suites: [{ specs: [{ tests: [{ expectedStatus: "passed", results: [{ status: "failed" }], annotations: [{ type: "upstream-econnreset-retry" }] }] }] }], errors: [] };
     expect(() => check(failing)).toThrow();
