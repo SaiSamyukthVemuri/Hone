@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 265,
+    "count": 266,
     "last": "0339_owner_only_services_and_consent_template_writes.sql",
-    "sha256": "8a885ae456f5ad7ab7344fa7b095de2d1d7424b9dafe06c44dd4e842b1947fbf"
+    "sha256": "395cf40f8ef4970f9eb1d7d65b8ec7f0775bd0ae9f468563eaa532740f47f684"
   },
   "public": {
     "tables": [
