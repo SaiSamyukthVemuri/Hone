@@ -249,6 +249,8 @@ beforeEach(() => {
     // Explicit verified synthetic configuration; no runtime country default.
     studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
+    // The studio's own switches (0351): ON here so these tests keep exercising the runner past the setting gate.
+    studios: { late_cancel_fee_enabled: true, no_show_fee_enabled: true },
   };
 });
 

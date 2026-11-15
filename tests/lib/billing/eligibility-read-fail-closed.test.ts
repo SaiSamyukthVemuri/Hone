@@ -233,6 +233,8 @@ function healthyManualFee() {
     id: STUDIO,
     no_show_fee_cents: 5000,
     late_cancel_fee_cents: 5000,
+    late_cancel_fee_enabled: true,
+    no_show_fee_enabled: true,
   });
   empty("payment_charge_attempts");
   empty("manual_fee_charge_attempts");
@@ -485,6 +487,37 @@ describe("MANUAL FEE: read error != absence", () => {
     healthyManualFee();
     const { eligible } = await feeReasons();
     expect(eligible).toBe(true);
+  });
+
+  // PREPARE side of the studio's own switches (0351): the fee type must be ON for THIS studio.
+  const studioRow = (over: Record<string, unknown>) =>
+    rows("studios", { id: STUDIO, no_show_fee_cents: 5000, late_cancel_fee_cents: 5000, late_cancel_fee_enabled: true, no_show_fee_enabled: true, ...over });
+  it("studio switch OFF for the type being charged blocks prepare with the plain setting message (test mode too)", async () => {
+    healthyManualFee();
+    const baseArgs = feeArgs() as { chargeType?: string };
+    const isLate = baseArgs.chargeType === "late_cancel" || baseArgs.chargeType === undefined;
+    studioRow(isLate ? { late_cancel_fee_enabled: false } : { no_show_fee_enabled: false });
+    const { eligible, reasons } = await feeReasons();
+    expect(eligible).toBe(false);
+    expect(reasons.join(" | ")).toMatch(/turned off for this studio/i);
+  });
+  it("the OTHER type's switch being on does not help; a missing or non-boolean switch is OFF", async () => {
+    healthyManualFee();
+    for (const bad of [{ late_cancel_fee_enabled: undefined, no_show_fee_enabled: undefined }, { late_cancel_fee_enabled: "true", no_show_fee_enabled: "true" }, { late_cancel_fee_enabled: false, no_show_fee_enabled: false }]) {
+      studioRow(bad);
+      const { eligible, reasons } = await feeReasons();
+      expect(eligible).toBe(false);
+      expect(reasons.join(" | ")).toMatch(/turned off for this studio/i);
+    }
+  });
+  it("LIVE mode needs BOTH the switch and the release list: switch ON alone stays held", async () => {
+    healthyManualFee();
+    h.livemode = true;
+    studioRow({});
+    const { eligible, reasons } = await feeReasons();
+    expect(eligible).toBe(false);
+    expect(reasons.join(" | ")).toMatch(/on hold for this launch/i);
+    expect(reasons.join(" | ")).not.toMatch(/turned off for this studio/i);
   });
 });
 

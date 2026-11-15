@@ -174,7 +174,7 @@ describe("no percentage engine, and no new policy model", () => {
   });
   it("the fee amount in eligibility comes from exactly the two saved columns", () => {
     const code = codeOnly(read("lib/billing/manual-fee-eligibility.ts"));
-    expect(code).toContain('.select("late_cancel_fee_cents, no_show_fee_cents")');
+    expect(code).toContain('.select("late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled")');
     expect(code).toMatch(/studioRow\.late_cancel_fee_cents/);
     expect(code).toMatch(/studioRow\.no_show_fee_cents/);
   });

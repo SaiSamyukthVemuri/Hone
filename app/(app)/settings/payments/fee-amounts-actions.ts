@@ -12,6 +12,12 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 // columns at once. Either field may be left blank to clear the
 // configured amount (column becomes NULL; the manual-fee preview then
 // blocks charge prepare for that type with "fee not configured").
+//
+// It also writes the two per-studio manual-fee switches (migration 0351,
+// default OFF). A switch can be turned ON only with an amount above zero,
+// the same rule the charge eligibility applies (NULL and 0 are "not
+// configured"), so the owner is told here instead of at charge time. The
+// server is the authority: the page's checkboxes are presentation only.
 
 export type UpdateFeeAmountsResult =
   | { ok: true }
@@ -56,12 +62,31 @@ export async function updateStudioFeeAmountsAction(
     };
   }
 
+  const lateEnabled = formData.get("late_cancel_enabled") === "true";
+  const noShowEnabled = formData.get("no_show_enabled") === "true";
+  if (lateEnabled && (lateCancel == null || lateCancel === 0)) {
+    return {
+      ok: false,
+      error:
+        "Enter a late cancellation fee amount above $0.00 before turning late cancellation fees on.",
+    };
+  }
+  if (noShowEnabled && (noShow == null || noShow === 0)) {
+    return {
+      ok: false,
+      error:
+        "Enter a no-show fee amount above $0.00 before turning no-show fees on.",
+    };
+  }
+
   const supabase = await createClient();
   const { error } = await supabase
     .from("studios")
     .update({
       late_cancel_fee_cents: lateCancel,
       no_show_fee_cents: noShow,
+      late_cancel_fee_enabled: lateEnabled,
+      no_show_fee_enabled: noShowEnabled,
     })
     .eq("id", studio.id);
   if (error) {

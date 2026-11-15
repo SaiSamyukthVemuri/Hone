@@ -21,6 +21,7 @@ import {
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { currencyLabel } from "@/lib/billing/payment-jurisdiction";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { MANUAL_FEE_STATE_COPY, manualFeeEffectiveState } from "@/lib/billing/manual-fee-studio-setting";
 
 export type PaymentsViewKind = "setup" | "card-on-file" | "fees";
 
@@ -44,6 +45,41 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
     // The fee currency is the studio's VERIFIED jurisdiction currency, never a
     // constant; an unknown or unreadable jurisdiction prints "not confirmed".
     const feeJurisdictionOnly = await getStudioPaymentJurisdiction(studio.id);
+    // "Saved" versus "actually active" (Sam, 15 Nov). Payment readiness here is the same server-derived capability the
+    // setup banner uses, plus a confirmed jurisdiction. The gate itself is the one prepare and execute call.
+    const feeSupabase = await createClient();
+    const { data: feeRows, error: feeRowsErr } = await feeSupabase.rpc("get_studio_payment_settings_display", {
+      p_studio_id: studio.id,
+      p_stripe_livemode: inferStripeLivemode(),
+    });
+    const feeRow = Array.isArray(feeRows) ? feeRows[0] : feeRows;
+    const feeConnect = deriveConnectCapability(
+      feeRow
+        ? {
+            accountStatus: feeRow.account_status ?? null,
+            chargesEnabled: feeRow.charges_enabled === true,
+            payoutsEnabled: feeRow.payouts_enabled === true,
+          }
+        : feeRowsErr
+          ? undefined
+          : null,
+    );
+    const paymentsReady = feeConnect === "ready" && feeJurisdictionOnly.ok;
+    const feeLivemode = inferStripeLivemode();
+    const lateState = manualFeeEffectiveState({
+      chargeReason: "late_cancellation_fee",
+      settingRow: studio,
+      paymentsReady,
+      livemode: feeLivemode,
+      studioId: studio.id,
+    });
+    const noShowState = manualFeeEffectiveState({
+      chargeReason: "no_show_fee",
+      settingRow: studio,
+      paymentsReady,
+      livemode: feeLivemode,
+      studioId: studio.id,
+    });
     return (
       <section className="flex flex-col gap-8">
         <SettingsViewHeading
@@ -57,6 +93,10 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
         <FeeAmountsCard
           initialLateCancelCents={studio.late_cancel_fee_cents}
           initialNoShowCents={studio.no_show_fee_cents}
+          initialLateCancelEnabled={studio.late_cancel_fee_enabled === true}
+          initialNoShowEnabled={studio.no_show_fee_enabled === true}
+          lateStatus={MANUAL_FEE_STATE_COPY[lateState]}
+          noShowStatus={MANUAL_FEE_STATE_COPY[noShowState]}
           currencyLabel={
             feeJurisdictionOnly.ok
               ? currencyLabel(feeJurisdictionOnly.jurisdiction.currency)

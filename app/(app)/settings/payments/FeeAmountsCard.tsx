@@ -12,6 +12,12 @@ import { updateStudioFeeAmountsAction } from "./fee-amounts-actions";
 type Props = {
   initialLateCancelCents: number | null;
   initialNoShowCents: number | null;
+  // Migration 0351: the owner's switches. Off unless explicitly turned on.
+  initialLateCancelEnabled: boolean;
+  initialNoShowEnabled: boolean;
+  // Server-derived, from the same gate prepare and execute use: what is SAVED and what is ACTUALLY ACTIVE.
+  lateStatus: { saved: string; effective: string };
+  noShowStatus: { saved: string; effective: string };
   // "CAD" | "USD" from the studio's verified payment jurisdiction, resolved on
   // the server. null = not confirmed: the card says so instead of printing a
   // currency it does not know.
@@ -26,8 +32,14 @@ function centsToDollarsInput(cents: number | null): string {
 export function FeeAmountsCard({
   initialLateCancelCents,
   initialNoShowCents,
+  initialLateCancelEnabled,
+  initialNoShowEnabled,
+  lateStatus,
+  noShowStatus,
   currencyLabel,
 }: Props) {
+  const [lateEnabled, setLateEnabled] = useState(initialLateCancelEnabled);
+  const [noShowEnabled, setNoShowEnabled] = useState(initialNoShowEnabled);
   const [lateCancel, setLateCancel] = useState(
     centsToDollarsInput(initialLateCancelCents),
   );
@@ -37,10 +49,15 @@ export function FeeAmountsCard({
   const [saved, setSaved] = useState({
     lateCancel: centsToDollarsInput(initialLateCancelCents),
     noShow: centsToDollarsInput(initialNoShowCents),
+    lateEnabled: initialLateCancelEnabled,
+    noShowEnabled: initialNoShowEnabled,
   });
   useUnsavedChangesGuard(
     "payment-fees",
-    lateCancel !== saved.lateCancel || noShow !== saved.noShow,
+    lateCancel !== saved.lateCancel ||
+      noShow !== saved.noShow ||
+      lateEnabled !== saved.lateEnabled ||
+      noShowEnabled !== saved.noShowEnabled,
   );
   const [pending, startTransition] = useTransition();
   const [status, setStatus] = useState<
@@ -53,13 +70,15 @@ export function FeeAmountsCard({
     const fd = new FormData();
     fd.set("late_cancel_dollars", lateCancel);
     fd.set("no_show_dollars", noShow);
+    fd.set("late_cancel_enabled", lateEnabled ? "true" : "false");
+    fd.set("no_show_enabled", noShowEnabled ? "true" : "false");
     startTransition(async () => {
       const r = await updateStudioFeeAmountsAction(fd);
       if (!r.ok) {
         setStatus({ kind: "error", message: r.error });
         return;
       }
-      setSaved({ lateCancel, noShow });
+      setSaved({ lateCancel, noShow, lateEnabled, noShowEnabled });
       setStatus({ kind: "ok" });
     });
   }
@@ -74,12 +93,14 @@ export function FeeAmountsCard({
           Set the dollar amount the studio may charge per type. Leave a
           field blank to clear the amount. Money is not charged here.
         </p>
-        <p className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          Live manual fee charging is currently on hold for this launch. Fee
-          amounts here are configuration only: saving never charges anyone,
-          and no-show / late-cancellation fees cannot be charged in live mode
-          unless manual fees are explicitly approved. Session payments are
-          unaffected.
+        <p className="rounded-md bg-neutral-50 px-2 py-1 text-xs text-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+          Both fees are off until you turn them on. When a fee is on, you can
+          charge it from an appointment, one deliberate press at a time, and
+          only for a client with a card on file and a signed card
+          authorization. Nothing is ever charged automatically, and saving
+          here never charges anyone. Turning a fee off stops new charges of
+          that type, including any you had prepared but not yet run. Payments
+          already sent are not affected. Session payments are unaffected.
         </p>
       </div>
 
@@ -104,6 +125,19 @@ export function FeeAmountsCard({
           </div>
         </label>
 
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={lateEnabled}
+            onChange={(e) => setLateEnabled(e.target.checked)}
+            data-testid="late-cancel-fee-enabled"
+          />
+          <span>Allow late cancellation fees</span>
+        </label>
+        <p className="-mt-2 ml-6 text-xs text-neutral-600 dark:text-neutral-400" data-testid="late-cancel-fee-enabled-status">
+          {lateStatus.saved}. {lateStatus.effective}.
+        </p>
+
         <label className="flex flex-col gap-1 text-xs">
           <span className="font-medium uppercase tracking-wider text-neutral-500">
             No-show fee
@@ -123,6 +157,19 @@ export function FeeAmountsCard({
             </span>
           </div>
         </label>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={noShowEnabled}
+            onChange={(e) => setNoShowEnabled(e.target.checked)}
+            data-testid="no-show-fee-enabled"
+          />
+          <span>Allow no-show fees</span>
+        </label>
+        <p className="-mt-2 ml-6 text-xs text-neutral-600 dark:text-neutral-400" data-testid="no-show-fee-enabled-status">
+          {noShowStatus.saved}. {noShowStatus.effective}.
+        </p>
 
         <div className="flex items-center gap-3">
           <button

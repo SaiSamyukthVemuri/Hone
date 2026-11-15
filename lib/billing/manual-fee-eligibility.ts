@@ -5,6 +5,7 @@ import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdicti
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { manualFeeSettingBlockMessage } from "@/lib/billing/manual-fee-studio-setting";
 import {
   MANUAL_FEE_AMOUNT_CEILING_CENTS,
   type EligibilityAppointmentSummary,
@@ -362,7 +363,7 @@ export async function getManualFeeChargeEligibility(
   let currency: string | null = null;
   const { data: studioRow, error: studioErr } = await admin
     .from("studios")
-    .select("late_cancel_fee_cents, no_show_fee_cents")
+    .select("late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled")
     .eq("id", args.studioId)
     .maybeSingle();
   if (studioErr) {
@@ -370,6 +371,10 @@ export async function getManualFeeChargeEligibility(
   } else if (!studioRow) {
     reasons.push("Studio not found.");
   } else {
+    // The studio's own setting for this fee (0351). Both the setting and, in LIVE mode, the release list above must
+    // allow it. Fails closed: anything but `true` is OFF.
+    const settingHold = manualFeeSettingBlockMessage(feeChargeReason, studioRow);
+    if (settingHold) reasons.push(settingHold);
     const cents =
       serverChargeType === "late_cancel"
         ? studioRow.late_cancel_fee_cents

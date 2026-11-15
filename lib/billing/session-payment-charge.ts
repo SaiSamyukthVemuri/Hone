@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { loadManualFeeSettingBlockMessage } from "@/lib/billing/manual-fee-studio-setting";
 import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
@@ -1383,6 +1384,16 @@ export async function runSessionPaymentCharge(args: {
   const liveHold = liveChargeReasonBlockMessage(attemptRow.charge_reason, livemode, args.studioId);
   if (liveHold) {
     return { ok: false, outcome: "live_mode_blocked", message: liveHold };
+  }
+  // The studio's OWN setting for this manual fee (0351), re-read NOW, so an attempt prepared while the fee was on is
+  // refused if the owner has since turned it off. It applies only to an attempt that has NOT been sent ("ready"):
+  // anything already claimed or sent (pending_stripe, requires_action, and every terminal state) is reconciled and
+  // refreshed exactly as before. Fails closed on an unreadable setting. session_payment is not governed by it.
+  if (attemptRow.status === "ready") {
+    const settingHold = await loadManualFeeSettingBlockMessage(admin, attemptRow.studio_id, attemptRow.charge_reason);
+    if (settingHold) {
+      return { ok: false, outcome: "blocked", message: settingHold };
+    }
   }
   // Codex P1 #4369182087 (#1035). The currency sent to Stripe is the attempt's
   // PERSISTED currency, and only cad or usd are currencies Hone charges in: an
