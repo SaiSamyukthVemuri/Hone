@@ -16,7 +16,7 @@ import {
 //
 // CUSTOM-PRICING DATE. `today` is the current date in the studio's timezone, exactly as the session path uses. A
 // cancelled appointment's own date may be earlier or later than today; this is a stated definition, and a question
-// for Sam and Chloe in the PR body.
+// for the platform operator and the studio, in the PR body.
 
 export type AppointmentPriceLoad =
   | { ok: true; result: SessionPaymentAmountResult }

@@ -3,7 +3,7 @@
   "migrations": {
     "count": 271,
     "last": "0352_payment_charge_attempt_claimed_at.sql",
-    "sha256": "118d8af67e10d4263336cf1ee2f48e9e309fb3d73da46a30a02d770a0355c86d"
+    "sha256": "7eded20bdf930f0193896d5ba599d5a47cd6c6e3f6519df4b41cbdaad2063305"
   },
   "public": {
     "tables": [

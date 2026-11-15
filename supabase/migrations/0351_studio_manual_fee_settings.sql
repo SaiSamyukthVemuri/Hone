@@ -1,7 +1,6 @@
 -- 0351: per-studio settings for the two manual fees (late cancellation, no-show): on/off, fixed-or-percent mode, percent value,
 -- the frozen calculation basis on the attempt, and an append-only change record. NOT APPLIED. Hosted apply needs
--- the platform operator's per-change approval and its own package. Number chosen from `npm run migration:state` (next free 0342) and the open
--- PRs: 0342-0350 are claimed by open work.
+-- the platform operator's per-change approval and its own package. Number chosen from `npm run migration:state` (the next free number at the time).
 --
 -- WHAT. Two boolean columns on public.studios, NOT NULL DEFAULT false:
 --   late_cancel_fee_enabled   the owner allows manual LATE-CANCELLATION fee charges for this studio

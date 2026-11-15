@@ -162,7 +162,7 @@ describe("the fee receipt names the fee and the amount, never a session payment"
 });
 
 describe("the percentage engine is bounded, and no new policy model", () => {
-  // Decision trail: PR #145 shipped fixed amounts only and this guard said "no percentage engine". Sam later authorised a
+  // Decision trail: PR #145 shipped fixed amounts only and this guard said "no percentage engine". the platform operator later authorised a
   // percent-of-session-price mode (0351), so the guard is EXTENDED, not loosened: the arithmetic lives in ONE pure module, the
   // files below still compute nothing, and no form field ever carries a charge amount.
   const NO_CALC = [
