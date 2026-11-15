@@ -27,8 +27,8 @@ const TABLES = [
 ] as const;
 
 describe("0339: shape", () => {
-  it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0339")).toBe(true);
+  it("is no longer the current maximum (only the max may assert it is)", () => {
+    expect(isRepoMax("0339")).toBe(false);
   });
 
   it("consumes exactly one number", () => {

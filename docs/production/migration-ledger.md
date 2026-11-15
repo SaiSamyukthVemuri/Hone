@@ -21,11 +21,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0339**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14 and 2026-11-15, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338` and `0339` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338 and 0339 read-backs were each one row above the read before them). |
-| **Repo migration max** | **0339** (`0339_owner_only_services_and_consent_template_writes.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
+| **Hosted (production) migration max** | **0340**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14 and 2026-11-15, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339` and `0340` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339 and 0340 read-backs were each one row above the read before them). |
+| **Repo migration max** | **0340** (`0340_intake_terminal_identity_immutability.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
-| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338` and `0339` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
-| **Next free number** | Next free number is **0340** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338`, `0339` and `0340` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
+| **Next free number** | Next free number is **0341** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### What the two pending migrations are (no hosted claim)
@@ -108,6 +108,19 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Declared hosted maximum.** Advanced to `0339` in `migration-state.json` by this record, from the receipt only.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+
+### The 0340 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0340-apply-receipt-20261115.json`)
+
+- **What it is.** `0340_intake_terminal_identity_immutability.sql`: fixes a client intake form's client and studio once the form exists, and stops a signed-in caller changing the deletion marker of a submitted or reviewed intake. The file is carried by #1447; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package: apply 0340 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `36ce3dca…`.
+- **Pre-apply read (Part A, 2026-11-15, 14:15:00Z to 14:15:02Z, client side).** PASS: 269 history rows, max `0339`, `0340` absent; no open transactions.
+- **Read-back (2026-11-15, 14:24:23Z to 14:24:25Z, client side).** **OVERALL PASS**, reconcile ALL; the runner exited 0.
+- **Hosted at that read-back:** 270 rows, max `0340`. By the row count (269 through `0339`, plus `0340` once, equals 270), `0328` to `0337` remain not hosted.
+- **Scope on hosted.** Only `client_intake_forms` changed: two new triggers and one invoker function with no API execute. The existing triggers, grants and data are unchanged.
+- **Declared hosted maximum.** Advanced to `0340` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
 
