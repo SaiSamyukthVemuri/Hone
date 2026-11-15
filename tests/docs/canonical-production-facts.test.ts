@@ -458,9 +458,7 @@ export async function receiptCoverage(
   if (facts.pr === null) return { ok: false, reason: `${at} is not a GitHub pull-request merge or squash merge` };
   // A one-parent commit is only a squash merge when GitHub made it: a web or API
   // squash carries this committer, while a direct push carries its author's own
-  // address and could otherwise forge the "(#N)" subject and a receipt. (A
-  // deliberate forger can still SET the committer field; this closes the
-  // accidental and the naive case, not that one.)
+  // address, so a local commit is refused here. This narrows what is accepted.
   if (facts.parents === 1 && facts.committer !== GITHUB_COMMITTER) {
     return { ok: false, reason: `${at} is a one-parent commit whose committer is not ${GITHUB_COMMITTER}, so it is not a GitHub squash merge` };
   }
