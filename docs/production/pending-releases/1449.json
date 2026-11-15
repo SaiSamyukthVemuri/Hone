@@ -1,0 +1,8 @@
+{
+  "pr": 1449,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0310_block_machine_identity_mode_contract.sql"
+  ],
+  "release_receipt": "01-ops/1449-release-receipt.json"
+}
