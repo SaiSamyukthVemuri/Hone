@@ -100,7 +100,11 @@ begin
       return public.perm_fail(case when v_policy = 'reassign' then 'reassign_required' else 'has_upcoming_appointments' end,
                               null, null, null, jsonb_build_object('count', v_upcoming));
     end if;
-    update public.practitioners set active = false where id = p_membership;
+    -- S2-4: the private calendar feed (/calendar-feed/<token>) is honoured only while `active`, so a deactivated person's URL is closed today, but
+    -- reactivation would silently reopen the OLD url, which may have been shared or leaked. Revoke it with the deactivation: the hash is the only
+    -- thing stored (0116 dropped the raw token), and a database function cannot mint a token the person could be shown, so NULL (revoked) is the
+    -- rotation. After a restore they generate a fresh feed link in their own profile; the old one stays dead.
+    update public.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership;
   else
     update public.studio_receptionists set active = false, deactivated_at = now() where id = p_membership;
   end if;
@@ -162,7 +166,9 @@ begin
   if not public.perm_reason_ok(v_reason) then return public.perm_fail('reason_invalid'); end if;
 
   if p_kind = 'practitioner' then
-    update public.practitioners set active = true where id = p_membership;
+    -- S2-4: a restored practitioner never gets an old private calendar-feed link back. Idempotent, and it covers a row that was already inactive
+    -- (with its old hash) before this migration existed, with no data write at apply time. They generate a fresh link in their profile.
+    update public.practitioners set active = true, calendar_feed_token_hash = null where id = p_membership;
   else
     update public.studio_receptionists set active = true, deactivated_at = null where id = p_membership;
   end if;
@@ -248,7 +254,9 @@ begin
     if v_upcoming > 0 then
       return public.perm_fail('has_upcoming_appointments', null, null, null, jsonb_build_object('count', v_upcoming));
     end if;
-    update public.practitioners set active = false where id = p_membership;
+    -- S2-4: same revoke as deactivate_staff_member. The old practitioner row stays inactive, but reactivate_staff_member could restore it later and
+    -- that would reopen the old private calendar-feed link. Cleared in the statement that deactivates it.
+    update public.practitioners set active = false, calendar_feed_token_hash = null where id = p_membership;
     select r.id into v_new_id from public.studio_receptionists r where r.studio_id = p_studio and v_user is not null and r.user_id = v_user for update;
     if v_new_id is not null then
       update public.studio_receptionists set active = true, deactivated_at = null where id = v_new_id;
@@ -262,7 +270,8 @@ begin
     update public.studio_receptionists set active = false, deactivated_at = now() where id = p_membership;
     select pr.id into v_new_id from public.practitioners pr where pr.studio_id = p_studio and v_user is not null and pr.user_id = v_user and pr.role = 'practitioner' for update;
     if v_new_id is not null then
-      update public.practitioners set active = true where id = v_new_id;
+      -- S2-4: same as reactivate_staff_member: an older inactive practitioner row comes back without its old feed link.
+      update public.practitioners set active = true, calendar_feed_token_hash = null where id = v_new_id;
     else
       insert into public.practitioners (studio_id, user_id, display_name, email, role, active)
       values (p_studio, v_user, v_name, v_email, 'practitioner', true) returning id into v_new_id;

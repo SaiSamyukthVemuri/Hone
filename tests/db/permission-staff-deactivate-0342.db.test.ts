@@ -65,6 +65,62 @@ describe("deactivate_staff_member", () => {
     expect(rows[0]).toMatchObject({ membership_id: m.practitionerId, membership_kind: "practitioner", reason: REASON, actor_user_id: s.userId });
     expect(rows[0].before).toEqual({ active: true });
   });
+  it("S2-4: deactivating a practitioner revokes their private calendar feed, and restoring them does not bring the old link back", async () => {
+    const s = await seedStudio("d342f");
+    await openGate(s.studioId);
+    const m = await seedMember(s, "f1");
+    const bystander = await seedMember(s, "f2");
+    const hash = "a".repeat(64);
+    const otherHash = "b".repeat(64);
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, hash]);
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [bystander.practitionerId, otherHash]);
+    const feed = async (id: string) => (await adminQuery("select calendar_feed_token_hash h from public.practitioners where id=$1", [id])).rows[0].h;
+    // A refused removal revokes nothing (the revoke is part of the same statement as the deactivation, not a side effect of trying).
+    expect(await deact(m.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: false, code: "refused" });
+    expect(await feed(m.practitionerId)).toBe(hash);
+    expect(await deact(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, active: false });
+    expect(await feed(m.practitionerId)).toBeNull();
+    expect(await feed(bystander.practitionerId)).toBe(otherHash);
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, active: true });
+    expect(await feed(m.practitionerId)).toBeNull();
+  });
+
+  it("S2-4: moving a practitioner to receptionist revokes the old practitioner row's calendar feed too, so restoring that row never reopens the old link", async () => {
+    const s = await seedStudio("d342g");
+    await openGate(s.studioId);
+    const m = await seedMember(s, "g1");
+    const hash = "c".repeat(64);
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, hash]);
+    const feed = async () => (await adminQuery("select calendar_feed_token_hash h, active from public.practitioners where id=$1", [m.practitionerId])).rows[0];
+    // Refused (self, not the owner's own row) leaves it alone.
+    expect(await call(m.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ ok: false });
+    expect(await feed()).toMatchObject({ h: hash, active: true });
+    expect(await call(s.userId, "select public.change_staff_role($1,$2,'receptionist','practitioner',null) as r", [s.studioId, m.practitionerId])).toMatchObject({ ok: true });
+    expect(await feed()).toMatchObject({ h: null, active: false });
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ code: "other_membership_active" });
+    expect(await feed()).toMatchObject({ h: null });
+  });
+
+  it("S2-4: a practitioner row that was ALREADY inactive with an old feed link (legacy, set by hand) comes back with that link dead", async () => {
+    const s = await seedStudio("d342h");
+    await openGate(s.studioId);
+    const m = await seedMember(s, "h1");
+    const hash = "d".repeat(64);
+    // Legacy state: inactive before 0342's revoke ever ran, hash still stored.
+    await adminQuery("update public.practitioners set active=false, calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, hash]);
+    const row = async () => (await adminQuery("select calendar_feed_token_hash h, active from public.practitioners where id=$1", [m.practitionerId])).rows[0];
+    expect(await row()).toMatchObject({ h: hash, active: false });
+    // A refused restore (non-owner) changes nothing.
+    expect(await react(m.userId, s.studioId, m.practitionerId, "practitioner")).toEqual({ ok: false, code: "refused" });
+    expect(await row()).toMatchObject({ h: hash, active: false });
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ ok: true, active: true });
+    expect(await row()).toMatchObject({ h: null, active: true });
+    // Idempotent: restoring again is refused as already active and the hash stays null; a link generated afterwards is theirs to keep.
+    expect(await react(s.userId, s.studioId, m.practitionerId, "practitioner")).toMatchObject({ code: "already_active" });
+    await adminQuery("update public.practitioners set calendar_feed_token_hash=$2 where id=$1", [m.practitionerId, "e".repeat(64)]);
+    expect((await row()).h).toBe("e".repeat(64));
+  });
+
   it("deactivates a receptionist (a path that did not exist), stamping deactivated_at", async () => {
     const s = await seedStudio("d342r");
     const d = await seedDesk(s, "d2");
