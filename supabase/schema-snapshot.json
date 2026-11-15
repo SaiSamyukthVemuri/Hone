@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 268,
-    "last": "0338_one_manual_fee_per_appointment.sql",
-    "sha256": "66610dddfd9fb8c15ce22eca0b6301ee98c225ad1a6512f3ebb7f0b43a5d9b74"
+    "count": 270,
+    "last": "0340_intake_terminal_identity_immutability.sql",
+    "sha256": "c130cbd3ff9a041d7a138ceaab30608cb348db5513dbcf2ca6803deb7c13dcec"
   },
   "public": {
     "tables": [
@@ -302,6 +302,7 @@
       "enforce_appointment_buffer",
       "enforce_appointment_transition",
       "enforce_intake_terminal_immutability",
+      "enforce_intake_terminal_visibility",
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
