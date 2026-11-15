@@ -8,6 +8,7 @@ import {
   formatBasisPoints,
   manualFeeConfigIssue,
   parsePercentTextToBp,
+  noFeeOwedMessage,
   percentFeeRefusalMessage,
   roundHalfUpPercentCents,
 } from "@/lib/billing/manual-fee-percent";
@@ -55,13 +56,21 @@ describe("rounding: half-up to the cent, in integer arithmetic", () => {
 });
 
 describe("refusals: no fallback, no cap, no substitution", () => {
-  it("a zero or missing basis never produces a fee", () => {
-    for (const b of [0, -1, null, undefined, NaN, 1.5, "100"]) {
+  it("basis 0 (an explicit $0 price) is a ZERO FEE, not an error", () => {
+    expect(computePercentFee(0, 7500)).toEqual({ ok: false, reason: "no_fee_owed", basisCents: 0, percentBp: 7500 });
+    expect(noFeeOwedMessage(0, 7500)).toBe("Appointment price $0.00 \u00d7 75% = $0.00. No fee is owed, so there is nothing to prepare.");
+  });
+  it("a positive price whose percentage rounds to $0.00 is also a zero fee, distinct from invalid_basis", () => {
+    expect(computePercentFee(1, 1)).toEqual({ ok: false, reason: "no_fee_owed", basisCents: 1, percentBp: 1 });
+    expect(computePercentFee(4999, 1)).toEqual({ ok: false, reason: "no_fee_owed", basisCents: 4999, percentBp: 1 });
+  });
+  it("null, undefined, negative, fractional, NaN or non-numeric basis is invalid_basis (not a zero fee)", () => {
+    for (const b of [-1, null, undefined, NaN, 1.5, "100"]) {
       expect(computePercentFee(b, 7500)).toEqual({ ok: false, reason: "invalid_basis" });
     }
   });
-  it("a result of 0 is refused", () => {
-    expect(computePercentFee(4999, 1)).toEqual({ ok: false, reason: "zero_amount" });
+  it("no_fee_owed never exposes an amount", () => {
+    expect(computePercentFee(0, 7500)).not.toHaveProperty("amountCents");
   });
   it("a result at or above the ceiling is refused (not capped)", () => {
     // 20000 = 200.00: 26667 cents at 75% = 20000.25 -> 20000 -> refused
@@ -76,7 +85,7 @@ describe("refusals: no fallback, no cap, no substitution", () => {
     }
   });
   it("every refusal has an owner message that names no fallback amount", () => {
-    for (const r of ["invalid_percent", "invalid_basis", "zero_amount", "at_or_above_ceiling"] as const) {
+    for (const r of ["invalid_percent", "invalid_basis", "at_or_above_ceiling"] as const) {
       expect(percentFeeRefusalMessage(r)).toMatch(/\w/);
       expect(percentFeeRefusalMessage(r)).not.toMatch(/\$50|C\$|fixed amount/i);
     }

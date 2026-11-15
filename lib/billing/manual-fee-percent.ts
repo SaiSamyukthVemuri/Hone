@@ -17,14 +17,13 @@ import { MANUAL_FEE_AMOUNT_CEILING_CENTS } from "@/lib/billing/manual-fee-types"
 export const PERCENT_BP_MIN = 1;
 export const PERCENT_BP_MAX = 10000;
 
-export type PercentFeeRefusal =
-  | "invalid_percent"
-  | "invalid_basis"
-  | "zero_amount"
-  | "at_or_above_ceiling";
+export type PercentFeeRefusal = "invalid_percent" | "invalid_basis" | "at_or_above_ceiling";
 
+// A fee of exactly $0.00 is NOT a refusal and not an error: it is a calculated answer ("no fee is owed"). It is its own
+// variant so it can never be mistaken for a chargeable amount: ok is false, no amount is exposed, no attempt is created.
 export type PercentFeeResult =
   | { ok: true; amountCents: number; basisCents: number; percentBp: number }
+  | { ok: false; reason: "no_fee_owed"; basisCents: number; percentBp: number }
   | { ok: false; reason: PercentFeeRefusal };
 
 export function isValidPercentBp(bp: unknown): bp is number {
@@ -38,11 +37,13 @@ export function roundHalfUpPercentCents(basisCents: number, percentBp: number): 
 
 export function computePercentFee(basisCents: unknown, percentBp: unknown): PercentFeeResult {
   if (!isValidPercentBp(percentBp)) return { ok: false, reason: "invalid_percent" };
-  if (typeof basisCents !== "number" || !Number.isSafeInteger(basisCents) || basisCents <= 0) {
+  // Basis 0 (an explicit $0 price) is a real price and gives a zero fee. null, negative, fractional or non-numeric is
+  // not a price at all: invalid_basis.
+  if (typeof basisCents !== "number" || !Number.isSafeInteger(basisCents) || basisCents < 0) {
     return { ok: false, reason: "invalid_basis" };
   }
   const amountCents = roundHalfUpPercentCents(basisCents, percentBp);
-  if (amountCents <= 0) return { ok: false, reason: "zero_amount" };
+  if (amountCents <= 0) return { ok: false, reason: "no_fee_owed", basisCents, percentBp };
   if (amountCents >= MANUAL_FEE_AMOUNT_CEILING_CENTS) return { ok: false, reason: "at_or_above_ceiling" };
   return { ok: true, amountCents, basisCents, percentBp };
 }
@@ -53,11 +54,14 @@ export function percentFeeRefusalMessage(reason: PercentFeeRefusal): string {
       return "The fee percentage is not set. Set it in Settings, Payments.";
     case "invalid_basis":
       return "This appointment's service price could not be used to calculate a percentage fee.";
-    case "zero_amount":
-      return "The percentage fee rounds to $0.00 for this appointment, so no fee was prepared.";
     case "at_or_above_ceiling":
       return "The percentage fee for this appointment is above the maximum a single fee may be, so no fee was prepared. Nothing was capped or changed.";
   }
+}
+
+/** "Appointment price $0.00 x 75% = $0.00. No fee is owed, so there is nothing to prepare." Not an error. */
+export function noFeeOwedMessage(basisCents: number, percentBp: number): string {
+  return `Appointment price ${dollars(basisCents)} \u00d7 ${formatBasisPoints(percentBp)} = $0.00. No fee is owed, so there is nothing to prepare.`;
 }
 
 /** "75% of $120.00 session price = $90.00" (currency code is appended by the caller). */

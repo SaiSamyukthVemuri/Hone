@@ -19,7 +19,7 @@ import {
   type ManualFeeEligibility,
 } from "./manual-fee-types";
 import { loadAppointmentSessionPrice } from "@/lib/billing/authoritative-appointment-price";
-import { computePercentFee, fixedFeeCentsIssue, isValidPercentBp, percentFeeRefusalMessage } from "@/lib/billing/manual-fee-percent";
+import { computePercentFee, fixedFeeCentsIssue, isValidPercentBp, noFeeOwedMessage, percentFeeRefusalMessage } from "@/lib/billing/manual-fee-percent";
 // Re-export the symbols server-side code already imports from this
 // module so existing call sites keep working without touching them.
 export {
@@ -364,6 +364,7 @@ export async function getManualFeeChargeEligibility(
   //    onto the row).
   let amountCents: number | null = null;
   let feeBasis: ManualFeeBasis | null = null;
+  let noFeeOwed = false;
   let currency: string | null = null;
   const { data: studioRow, error: studioErr } = await admin
     .from("studios")
@@ -400,16 +401,28 @@ export async function getManualFeeChargeEligibility(
         if (!price.ok) {
           if (price.reason === "read_failed") pushReadFailure(reasons);
           else reasons.push("Appointment not found for this studio.");
+        } else if (price.result.kind === "free") {
+          // An explicit $0 menu price (FREE-01) is a decided price: the fee is $0.00 and nothing is prepared.
+          noFeeOwed = true;
+          reasons.push(noFeeOwedMessage(0, bp));
         } else if (price.result.kind !== "resolved") {
+          // missing_service / missing_price / ambiguous_custom_pricing: refusals, each with its own message, no fallback.
           reasons.push(
             price.result.kind === "ambiguous_custom_pricing"
               ? "This client has conflicting current custom prices for this service, so a percentage fee cannot be calculated."
-              : "This appointment has no usable session price, so a percentage fee cannot be calculated.",
+              : price.result.kind === "missing_service"
+                ? "This appointment has no booked service, so a percentage fee cannot be calculated."
+                : "No price is configured for this appointment's service, so a percentage fee cannot be calculated.",
           );
         } else {
           const computed = computePercentFee(price.result.amountCents, bp);
           if (!computed.ok) {
-            reasons.push(percentFeeRefusalMessage(computed.reason));
+            if (computed.reason === "no_fee_owed") {
+              noFeeOwed = true;
+              reasons.push(noFeeOwedMessage(computed.basisCents, computed.percentBp));
+            } else {
+              reasons.push(percentFeeRefusalMessage(computed.reason));
+            }
           } else {
             amountCents = computed.amountCents;
             feeBasis = { calcMode: "percent", basisCents: computed.basisCents, percentBp: computed.percentBp };
@@ -605,6 +618,7 @@ export async function getManualFeeChargeEligibility(
     policyAcknowledgement: policyAckSummary,
     amountCents,
     feeBasis,
+    noFeeOwed,
     currency,
     timingClassification: "practitioner_asserted",
     existingAttempts,

@@ -75,6 +75,7 @@ const {
   NO_SHOW_FEE_DISABLED_MESSAGE,
   loadManualFeeExecuteHold,
   MANUAL_FEE_SETTINGS_CHANGED_MESSAGE,
+  MANUAL_FEE_PRICE_CHANGED_MESSAGE,
   manualFeeEffectiveState,
   manualFeeSettingBlockMessage,
 } = await import("@/lib/billing/manual-fee-studio-setting");
@@ -381,7 +382,11 @@ describe("no automatic fee charge path exists", () => {
 });
 
 
+const priceMock = vi.hoisted(() => ({ load: vi.fn() }));
+vi.mock("@/lib/billing/authoritative-appointment-price", () => ({ loadAppointmentSessionPrice: priceMock.load }));
+
 describe("execute hold: the owner's settings now versus what was frozen at prepare", () => {
+  beforeEach(() => { priceMock.load.mockReset(); priceMock.load.mockResolvedValue({ ok: true, result: { kind: "resolved", amountCents: 12000, source: "service_price", serviceName: "S", durationMinutes: null, customPricingNote: null } }); });
   const FIXED = { id: ATTEMPT, studio_id: STUDIO, charge_reason: LATE, amount_cents: 5000 };
   // A fake whose studios row and frozen attempt row are chosen per test; reads are the only thing it supports.
   const mk = (studio: unknown, frozen: unknown, studioErr = false, frozenErr = false) => ({
@@ -405,6 +410,23 @@ describe("execute hold: the owner's settings now versus what was frozen at prepa
     expect(await loadManualFeeExecuteHold(mk(pct, FROZEN_PCT), FIXED)).toBeNull();
     expect(await loadManualFeeExecuteHold(mk({ ...pct, late_cancel_fee_percent_bp: 5000 }, FROZEN_PCT), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
     expect(await loadManualFeeExecuteHold(mk({ ...BOTH_ON }, FROZEN_PCT), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+  });
+  it("percent: a price that became $0, missing, ambiguous or unreadable after prepare blocks execute; a different positive price does not", async () => {
+    const pct = { ...BOTH_ON, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: 7500, timezone: "America/Toronto" };
+    const frozen = { ...FROZEN_PCT, appointment_id: "appt-1" };
+    for (const result of [
+      { kind: "free", serviceName: "S", durationMinutes: null },
+      { kind: "missing_price", serviceName: "S" },
+      { kind: "missing_service" },
+      { kind: "ambiguous_custom_pricing", serviceName: "S", candidateCents: [1, 2] },
+    ]) {
+      priceMock.load.mockResolvedValue({ ok: true, result });
+      expect(await loadManualFeeExecuteHold(mk(pct, frozen), FIXED)).toBe(MANUAL_FEE_PRICE_CHANGED_MESSAGE);
+    }
+    priceMock.load.mockResolvedValue({ ok: false, reason: "read_failed" });
+    expect(await loadManualFeeExecuteHold(mk(pct, frozen), FIXED)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
+    priceMock.load.mockResolvedValue({ ok: true, result: { kind: "resolved", amountCents: 9999, source: "service_price", serviceName: "S", durationMinutes: null, customPricingNote: null } });
+    expect(await loadManualFeeExecuteHold(mk(pct, frozen), FIXED)).toBeNull();
   });
   it("a fee with no frozen calculation, or an unreadable read, fails closed", async () => {
     expect(await loadManualFeeExecuteHold(mk(BOTH_ON, { calc_mode: null, basis_cents: null, percent_bp: null }), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);

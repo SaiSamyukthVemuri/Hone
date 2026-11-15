@@ -156,6 +156,8 @@ export type ManualFeeEligibility =
       policyAcknowledgement: EligibilityPolicyAckSummary | null;
       amountCents: number | null;
       feeBasis: ManualFeeBasis | null;
+      /** True when percent mode calculated a fee of exactly $0.00 (zero price or rounds to zero): nothing is owed, no attempt. */
+      noFeeOwed: boolean;
       currency: string | null;
       timingClassification: "practitioner_asserted";
       existingAttempts: EligibilityExistingAttemptSummary[];

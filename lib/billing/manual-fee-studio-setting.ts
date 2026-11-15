@@ -1,5 +1,7 @@
 import "server-only";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadAppointmentSessionPrice } from "@/lib/billing/authoritative-appointment-price";
 import { manualFeeConfigIssue, type FeeConfigRow } from "@/lib/billing/manual-fee-percent";
 
 // The studio's OWN setting for each manual fee (migration 0351): studios.late_cancel_fee_enabled and
@@ -111,6 +113,9 @@ export const MANUAL_FEE_STATE_COPY: Record<ManualFeeEffectiveState, { saved: str
 //
 // RECOVERY. A refusal here leaves a still-"ready" attempt in place, and it occupies the one-fee-per-appointment slot (0338).
 // The owner cancels it from the appointment (cancel is not gated by this check) and prepares it again with the new settings.
+export const MANUAL_FEE_PRICE_CHANGED_MESSAGE =
+  "This appointment's service price is no longer a usable price (it is now $0, missing or ambiguous), so the fee was not sent. Cancel this prepared charge and check the price.";
+
 export const MANUAL_FEE_SETTINGS_CHANGED_MESSAGE =
   "The fee settings changed after this fee was prepared, so it was not run. Cancel this prepared fee and prepare it again.";
 
@@ -134,7 +139,7 @@ export async function loadManualFeeExecuteHold(
     const studio = await db
       .from("studios")
       .select(
-        "late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode, no_show_fee_mode, late_cancel_fee_percent_bp, no_show_fee_percent_bp, late_cancel_fee_cents, no_show_fee_cents",
+        "late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode, no_show_fee_mode, late_cancel_fee_percent_bp, no_show_fee_percent_bp, late_cancel_fee_cents, no_show_fee_cents, timezone",
       )
       .eq("id", attempt.studio_id)
       .maybeSingle();
@@ -143,7 +148,7 @@ export async function loadManualFeeExecuteHold(
     if (off) return off;
     const frozen = await db
       .from("payment_charge_attempts")
-      .select("calc_mode, basis_cents, percent_bp")
+      .select("calc_mode, basis_cents, percent_bp, appointment_id")
       .eq("id", attempt.id)
       .maybeSingle();
     if (frozen.error || !frozen.data) return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
@@ -151,6 +156,16 @@ export async function loadManualFeeExecuteHold(
     if (frozen.data.calc_mode === "percent") {
       const bp = late ? studio.data.late_cancel_fee_percent_bp : studio.data.no_show_fee_percent_bp;
       if (mode !== "percent" || bp !== frozen.data.percent_bp) return MANUAL_FEE_SETTINGS_CHANGED_MESSAGE;
+      // The appointment's price must still be a usable one. A price that became $0, missing or ambiguous (or cannot be read)
+      // after prepare blocks the send. A DIFFERENT positive price does not: the frozen amount is what the owner confirmed.
+      const price = await loadAppointmentSessionPrice({
+        admin: admin as SupabaseClient,
+        studioId: attempt.studio_id,
+        appointmentId: String(frozen.data.appointment_id ?? ""),
+        studioTimezone: String(studio.data.timezone ?? ""),
+      });
+      if (!price.ok) return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
+      if (price.result.kind !== "resolved") return MANUAL_FEE_PRICE_CHANGED_MESSAGE;
       return null;
     }
     if (frozen.data.calc_mode === "fixed") {

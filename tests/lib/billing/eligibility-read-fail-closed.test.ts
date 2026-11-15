@@ -816,13 +816,49 @@ describe("MANUAL FEE percent mode: the amount comes from the reviewed price reso
       if (e.eligible) expect(e.amountCents).toBe(expected);
     }
   });
-  it("a missing price, a free service and a missing service are refused with no fallback amount (never the fixed $50)", async () => {
-    for (const service of [{ name: "Service", price_cents: null }, { name: "Service", price_cents: 0 }, null]) {
+  it("an explicit $0 menu price is a ZERO FEE: not an error, no attempt, stated with its basis", async () => {
+    healthyManualFee(); pctStudio(); appt({ name: "Service", price_cents: 0 }); empty("client_pricing");
+    const e = await result();
+    expect(e.eligible).toBe(false);
+    if (!e.eligible) {
+      expect(e.noFeeOwed).toBe(true);
+      expect(e.amountCents).toBeNull();
+      expect(e.feeBasis).toBeNull();
+    }
+    expect(reasonsOf(e)).toMatch(/Appointment price \$0\.00 \u00d7 75% = \$0\.00\. No fee is owed, so there is nothing to prepare\./);
+    expect(reasonsOf(e)).not.toMatch(/could not be calculated|no usable|\$50/i);
+  });
+  it("a zero CUSTOM client price is not 'charge nothing': the resolver ignores it and the menu price decides", async () => {
+    healthyManualFee(); pctStudio(); appt({ name: "Service", price_cents: 12000 }); customPrice(0);
+    const e = await result();
+    expect(e.eligible).toBe(true);
+    if (e.eligible) expect(e.feeBasis).toEqual({ calcMode: "percent", basisCents: 12000, percentBp: 7500 });
+  });
+  it("a zero custom price on a service with no menu price is a missing price (refusal)", async () => {
+    healthyManualFee(); pctStudio(); appt({ name: "Service", price_cents: null }); customPrice(0);
+    const e = await result();
+    expect(e.eligible).toBe(false);
+    if (!e.eligible) expect(e.noFeeOwed).toBe(false);
+    expect(reasonsOf(e)).toMatch(/No price is configured/i);
+  });
+  it("a positive price whose percentage rounds to $0.00 is a zero fee, not an error", async () => {
+    healthyManualFee(); pctStudio({ no_show_fee_percent_bp: 1 }); appt({ name: "Service", price_cents: 1 }); empty("client_pricing");
+    const e = await result();
+    expect(e.eligible).toBe(false);
+    if (!e.eligible) { expect(e.noFeeOwed).toBe(true); expect(e.amountCents).toBeNull(); }
+    expect(reasonsOf(e)).toMatch(/No fee is owed, so there is nothing to prepare/);
+  });
+  it("a missing price and a missing service are REFUSALS with their own messages and no fallback amount (never the fixed $50)", async () => {
+    for (const [service, msg] of [
+      [{ name: "Service", price_cents: null }, /No price is configured/i],
+      [null, /no booked service/i],
+    ] as const) {
       healthyManualFee(); pctStudio(); appt(service); empty("client_pricing");
       const e = await result();
       expect(e.eligible).toBe(false);
-      expect(reasonsOf(e)).toMatch(/no usable session price/i);
-      if (!e.eligible) expect(e.amountCents).toBeNull();
+      expect(reasonsOf(e)).toMatch(msg);
+      expect(reasonsOf(e)).not.toMatch(/\$50|No fee is owed/i);
+      if (!e.eligible) { expect(e.amountCents).toBeNull(); expect(e.noFeeOwed).toBe(false); }
     }
   });
   it("conflicting equally-current custom prices are refused", async () => {
