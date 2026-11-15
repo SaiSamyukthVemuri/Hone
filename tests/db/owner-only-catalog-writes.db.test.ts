@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, adminTx, closePool, seedMember, seedStudio, type SeededStudio, type UserQuery } from "./helpers/harness";
 
-// 0339 (HON-44 gaps H1, H2): INSERT and UPDATE on public.services and public.consent_form_templates are owner-only
+// 0339 (owner-only writes on services and consent wording): INSERT and UPDATE on public.services and public.consent_form_templates are owner-only
 // in the database, for a caller that reaches PostgREST directly with their own session (role authenticated + their
 // JWT claims, the repository's stand-in for a user's own client). Role AND tenant probes on the real migrated chain.
 // Synthetic data only; every probe runs in a transaction that is rolled back.

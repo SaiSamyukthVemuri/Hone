@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax } from "./helpers/migration-state";
 
-// 0339: services and consent_form_templates writes are owner-only (HON-44 gaps H1, H2). STATIC contract only.
+// 0339: services and consent_form_templates writes are owner-only. STATIC contract only.
 // Behaviour is proved against a real database in tests/db/owner-only-catalog-writes.db.test.ts.
 
 const root = join(__dirname, "..", "..");

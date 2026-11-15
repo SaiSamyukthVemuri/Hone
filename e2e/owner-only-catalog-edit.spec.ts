@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { getE2eServiceId, seedE2eMember, seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 
-// 0339 (HON-44 H1/H2): services and consent wording are owner-only in the database as well as in the app.
+// 0339: owner-only writes on services and consent wording, in the database as well as in the app. Services and consent wording are owner-only.
 // Real browser, real local stack, DB rows as ground truth: the owner's edits still land through the shipped
 // actions, and a non-owner practitioner is shown no edit control on either settings page.
 

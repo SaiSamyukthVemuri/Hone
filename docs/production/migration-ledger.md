@@ -107,6 +107,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Scope on hosted.** Only `consent_form_templates` changed; the `services` policies were re-created identically, from `0302`.
 - **Declared hosted maximum.** Advanced to `0339` in `migration-state.json` by this record, from the receipt only.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
 
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
 

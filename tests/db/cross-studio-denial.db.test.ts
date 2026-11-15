@@ -14,7 +14,7 @@ import {
 // through PostgREST), direct table writes and RPCs. Every denial has a POSITIVE CONTROL with the same statement shape from the
 // rightful actor, so a denial cannot pass because the statement was malformed or the row never existed.
 //
-// H1/H2 rows assert denial (services: 0302/0339; consent_form_templates: 0339). Behaviour per role is in
+// the owner-only writes on services and consent wording assert denial (services: 0302/0339; consent_form_templates: 0339). Behaviour per role is in
 // owner-only-catalog-writes.db.test.ts.
 // "Owner-only" here describes PRODUCTION BEHAVIOUR TODAY and the snapshot for existing studios. Under the Roles program (R1/R3/R4)
 // services and consent-template writes become permission-gated, not owner-only by identity; replace these owner-only assertions

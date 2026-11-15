@@ -77,8 +77,8 @@ describe("HON-44 catalog: every authenticated write policy is scoped to the call
 // screen does. Every policy that grants INSERT/UPDATE/DELETE on these must therefore require ownership.
 const OWNER_ONLY_WRITE_TABLES = [
   "studios",
-  "services", // H1, owner-only writes (0302; 0339 re-creates them); behaviour in owner-only-catalog-writes.db.test.ts
-  "consent_form_templates", // H2, owner-only writes (0339); same behavioural test
+  "services", // owner-only writes (0302; 0339 re-creates them); behaviour in owner-only-catalog-writes.db.test.ts
+  "consent_form_templates", // owner-only writes (0339); same behavioural test
   "client_pricing",
   "pending_invitations",
   "studio_availability_default",
