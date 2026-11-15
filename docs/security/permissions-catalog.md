@@ -243,8 +243,8 @@ Groups 1 to 7 of the audit decisions (`01-ops/ROLES-DECISIONS-LOG.md`) are in th
 
 **Not offered as toggles** (not in Sam's list, so no key; they stay owner-only because nothing can grant them; flagged for
 reviewers to confirm): studio settings (booking rules, integrations, machine registry); payment settings policy such as "card
-required" (the settings page must split it from the fee amounts key); viewing signed consent contents and machine settings (ride
-on clinical read); the ID-photo store and portrait (not built or feature-off); Hone subscription and billing portal, tax and
+required" (the settings page must split it from the fee amounts key); viewing signed consent contents and policy acknowledgements (ride
+on intake access, clin.view_intake, Sam 12 Nov) and viewing machine settings (ride on clinical read); the ID-photo store and portrait (not built or feature-off); Hone subscription and billing portal, tax and
 currency, receipt branding, business name.
 
 ## Mandatory whatever the owner configures
