@@ -87,6 +87,8 @@ The runtime does **not** claim to implement the records below unchanged. These a
    - A fork head is `fork_head`.
    - A changed-file list that cannot be proven complete is `diff_too_large`.
    - Every applicable run counts, as in the operator's V1 profile, rather than CI-ATTEST-01's `run_number` frontier.
+     One exception (SHEP-LATEST-01): a draft deferral (a run whose `browser e2e (local stack)` job failed at its `DRAFT-DEFERRED` step)
+     is ignored once the PR is marked ready and a newer, non-deferral run that lists this PR exists; see SPEC-05A §3.4 step 10.
 7. **CAP-01 §4 readers.** V1's readers differ from CAP-01's frozen reader set, and this list is that difference;
    CAP-01 itself is not amended:
    - **Parameters.** Three readers take a branch or ref name, which CAP-01 forbids: the head-branch PR list

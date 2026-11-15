@@ -84,7 +84,7 @@ function realCase(n: 800 | 810) {
 const outcome = (input: any) => bindCi(input);
 
 describe("parseWorkflowRuns and parseRunJobs (single-response listings)", () => {
-  it("reads #810's one pull_request run, without its mutable pull_requests association", () => {
+  it("reads #810's one pull_request run, projecting only its PR numbers (never the raw pull_requests objects)", () => {
     const r = ok(
       parseWorkflowRuns(load("ci/runs-810.json"), {
         workflowId: WORKFLOW,
@@ -97,6 +97,7 @@ describe("parseWorkflowRuns and parseRunJobs (single-response listings)", () => 
       runNumber: 2855,
       workflowId: WORKFLOW,
       event: "pull_request",
+      pullRequests: [810],
       headSha: "958b9d536e055e746499262cdc1a740e13501bf2",
       headBranch: "feat/eng-loop-v1-05a",
       headRepoId: REPO,

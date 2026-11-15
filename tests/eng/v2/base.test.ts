@@ -86,7 +86,7 @@ describe("parsePrContext (GraphQL, exact fields)", () => {
     });
     expect(r).toEqual({
       ok: true,
-      record: { createdAt: "2026-10-07T20:16:40Z", changedFiles: 11, baseRefChanges: 0, associatedPrNumbers: [810] },
+      record: { createdAt: "2026-10-07T20:16:40Z", readyForReviewAt: null, changedFiles: 11, baseRefChanges: 0, associatedPrNumbers: [810] },
     });
   });
 

@@ -53,7 +53,9 @@ export const PR_CONTEXT_QUERY =
   "query($owner:String!,$name:String!,$n:Int!,$h:GitObjectID!){repository(owner:$owner,name:$name){" +
   "pullRequest(number:$n){number createdAt changedFiles " +
   "baseRefChanges:timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT,AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT," +
-  "AUTOMATIC_BASE_CHANGE_FAILED_EVENT],first:100){pageInfo{hasNextPage} nodes{__typename}}} " +
+  "AUTOMATIC_BASE_CHANGE_FAILED_EVENT],first:100){pageInfo{hasNextPage} nodes{__typename}} " +
+  // SHEP-LATEST-01 (SPEC-05A step 10): the PR's LATEST ready-for-review event, and nothing else of the timeline.
+  "readyForReview:timelineItems(itemTypes:[READY_FOR_REVIEW_EVENT],last:1){nodes{... on ReadyForReviewEvent{createdAt}}}} " +
   "object(oid:$h){__typename ... on Commit{associatedPullRequests(first:100){pageInfo{hasNextPage} nodes{number}}}}}}";
 
 /** REST compare/{baseSha}...{headSha}: drift, merge base and changed files. */
@@ -97,6 +99,18 @@ function connection(conn, nodeOk) {
   return conn;
 }
 
+/**
+ * The latest ready-for-review instant from `timelineItems(itemTypes:[READY_FOR_REVIEW_EVENT], last:1)`, or null.
+ * Null covers an empty, missing, capped (more than the one node asked for) or malformed timeline: for THIS read only,
+ * a bad timeline is not `malformed` (SPEC-05A step 10 overrides section 4's usual rule), it means no supersession.
+ */
+function readyInstant(t) {
+  if (!isObject(t) || !hasExactly(t, ["nodes"]) || !Array.isArray(t.nodes) || t.nodes.length !== 1) return null;
+  const n = t.nodes[0];
+  if (!isObject(n) || !hasExactly(n, ["createdAt"]) || !isIsoUtc(n.createdAt)) return null;
+  return n.createdAt;
+}
+
 /** GraphQL PR context: creation time, file count, base changes, associated PRs. */
 export const parsePrContext = guarded((raw, opts) => {
   const expectedNumber = requested(opts, "expectedNumber", isPosInt);
@@ -114,7 +128,10 @@ export const parsePrContext = guarded((raw, opts) => {
   if (repo.object === null) return fail("read_failed", "the head commit is not readable");
 
   const p = repo.pullRequest;
-  if (!isObject(p) || !hasExactly(p, ["number", "createdAt", "changedFiles", "baseRefChanges"])) {
+  // `readyForReview` is optional on input: an answer without it (every answer recorded before SHEP-LATEST-01) reads
+  // as "no ready-for-review instant", which can only ever mean NO supersession (SPEC-05A step 10), never a failure.
+  const hasReady = isObject(p) && Object.hasOwn(p, "readyForReview");
+  if (!isObject(p) || !hasExactly(p, hasReady ? ["number", "createdAt", "changedFiles", "baseRefChanges", "readyForReview"] : ["number", "createdAt", "changedFiles", "baseRefChanges"])) {
     return fail("malformed", "the pull request does not carry exactly the requested fields");
   }
   if (p.number !== expectedNumber) {
@@ -137,6 +154,7 @@ export const parsePrContext = guarded((raw, opts) => {
 
   return okRecord({
     createdAt: p.createdAt,
+    readyForReviewAt: hasReady ? readyInstant(p.readyForReview) : null,
     changedFiles: p.changedFiles,
     baseRefChanges: changes.pageInfo.hasNextPage ? "too_many" : changes.nodes.length,
     associatedPrNumbers: assoc.pageInfo.hasNextPage ? "too_many" : assoc.nodes.map((n) => n.number).sort(byNumber),

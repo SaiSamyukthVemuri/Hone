@@ -335,7 +335,7 @@ describe("collector §5.1/§5.3: answers for another request are refused by the 
   });
 });
 
-describe("collector §5.3: jobs are read for exactly the applicable, completed/success runs", () => {
+describe("collector §5.3: jobs are read for exactly the applicable, completed/success runs, and (SHEP-LATEST-01) completed/failure runs", () => {
   const mixed = () => {
     const w = goldenC();
     w.base.runs = [
@@ -361,13 +361,22 @@ describe("collector §5.3: jobs are read for exactly the applicable, completed/s
     expect(r.evidence.rows.ci).toMatchObject({ ok: true, value: { outcome: "PENDING" } });
   });
 
-  it("an applicable FAILED run gets no job listing; the CI row is FAILED", async () => {
+  it("an applicable completed/failure run's jobs are read, only to tell a draft deferral from another failure; a plain failure stays FAILED", async () => {
     const w = goldenC();
     w.base.runs = [ownRun({ conclusion: "failure" })];
-    w.base.jobs = {};
+    w.base.jobs = { [RUN_810]: allGreenJobs() };
     const { r, fake } = await run(w);
     expect(fake.violations).toEqual([]);
-    expect(fake.kinds().some((k) => String(k).startsWith("jobs:"))).toBe(false);
+    expect(fake.kinds().some((k) => String(k).startsWith("jobs:"))).toBe(true);
+    expect(r.evidence.rows.ci).toMatchObject({ ok: true, value: { outcome: "FAILED" } });
+  });
+
+  it("an unreadable jobs listing for a failed run leaves it a plain FAILED run; it never fails the collection", async () => {
+    const w = goldenC();
+    w.base.runs = [ownRun({ conclusion: "failure" })];
+    w.base.jobs = { [RUN_810]: { tooLarge: true } };
+    const { r } = await run(w);
+    expect(r.ok).toBe(true);
     expect(r.evidence.rows.ci).toMatchObject({ ok: true, value: { outcome: "FAILED" } });
   });
 
@@ -378,8 +387,8 @@ describe("collector §5.3: jobs are read for exactly the applicable, completed/s
     expectFailure(r, "ci_candidate_listing_too_large", "collect", "jobs too large");
   });
 
-  it("every failed conclusion: no jobs read", async () => {
-    for (const c of FAILED_CONCLUSIONS) {
+  it("every failed conclusion other than `failure`: no jobs read (a cancelled or timed-out run is never a deferral)", async () => {
+    for (const c of FAILED_CONCLUSIONS.filter((x: string) => x !== "failure")) {
       const w = goldenC();
       w.base.runs = [ownRun({ conclusion: c })];
       w.base.jobs = {};

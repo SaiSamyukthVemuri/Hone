@@ -206,7 +206,7 @@ describe("row 2 verify: parsePrContext (§2.2)", () => {
     // 05B draft stacked on #810, so §3.4 rule 5 reads #810 as shared_head (see row 3, "LIVE stacked PR").
     const r = parsePrContext(REAL.verify("pr-context-810-at-958b9d53.json"), params);
     expect(r.ok, JSON.stringify(r)).toBe(true);
-    expect(r.record).toEqual({ createdAt: "2026-10-07T20:16:40Z", changedFiles: 61, baseRefChanges: 0, associatedPrNumbers: [810, 815] });
+    expect(r.record).toEqual({ createdAt: "2026-10-07T20:16:40Z", readyForReviewAt: null, changedFiles: 61, baseRefChanges: 0, associatedPrNumbers: [810, 815] });
   });
 
   it("REAL (verifier, read-only GraphQL): #720's single BaseRefChangedEvent is counted from the filtered nodes — 1", () => {

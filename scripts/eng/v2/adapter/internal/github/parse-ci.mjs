@@ -5,8 +5,9 @@
 // what came back is `ci_candidate_listing_too_large`, and a schema violation is
 // `malformed`, which wins. Records come out in a canonical order, so any
 // reordering of the same answer normalizes to the same listing (CAP-01 L7).
-// A run's mutable `pull_requests` association is never read: it is GitHub's
-// current view, not what triggered the run.
+// A run's `pull_requests` association is GitHub's current view, not proof of what
+// triggered the run, so it is only ever used to REFUSE: it can stop a run from
+// superseding a draft deferral (SPEC-05A step 10, clause c), never to admit one.
 // ---------------------------------------------------------------------------
 
 import {
@@ -50,7 +51,9 @@ export const parseWorkflowRuns = guarded((raw) => {
       typeof r.status !== "string" ||
       !isStringOrNull(r.conclusion) ||
       !isPosInt(r.run_attempt) ||
-      !isIsoUtc(r.created_at)
+      !isIsoUtc(r.created_at) ||
+      !Array.isArray(r.pull_requests) ||
+      !r.pull_requests.every((p) => isObject(p) && isPosInt(p.number))
     ) {
       return fail("malformed", "a run does not carry its identity, state and creation time");
     }
@@ -70,6 +73,7 @@ export const parseWorkflowRuns = guarded((raw) => {
       conclusion: r.conclusion,
       runAttempt: r.run_attempt,
       createdAt: r.created_at,
+      pullRequests: [...new Set(r.pull_requests.map((p) => p.number))].sort((a, b) => a - b),
     });
   }
   if (!complete(raw.total_count, raw.workflow_runs.length)) {
@@ -86,6 +90,26 @@ export const parseWorkflowRuns = guarded((raw) => {
 const byString = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const conclusionKey = (c) => (c === null ? "" : `=${c}`);
 
+/**
+ * A job's steps in runner order (SHEP-LATEST-01), or null when the listing carries none. A `steps` that is present but
+ * is not a list of { number, name, status, conclusion } with distinct numbers is `undefined` here: malformed.
+ */
+function parseSteps(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) return undefined;
+  const steps = [];
+  const numbers = new Set();
+  for (const st of raw) {
+    if (!isObject(st) || !isPosInt(st.number) || !isNonEmptyString(st.name) || typeof st.status !== "string" || !isStringOrNull(st.conclusion)) {
+      return undefined;
+    }
+    if (numbers.has(st.number)) return undefined;
+    numbers.add(st.number);
+    steps.push({ number: st.number, name: st.name, status: st.status, conclusion: st.conclusion });
+  }
+  return steps.sort((a, b) => a.number - b.number);
+}
+
 /** REST actions/runs/{runId}/jobs?filter=latest&per_page=100: the latest attempt's jobs. */
 export const parseRunJobs = guarded((raw, opts) => {
   const runId = requested(opts, "runId", isPosInt);
@@ -99,7 +123,9 @@ export const parseRunJobs = guarded((raw, opts) => {
       return fail("malformed", "a job does not carry a name, status and conclusion");
     }
     if (j.run_id !== runId) return fail("malformed", "a job belongs to another run");
-    jobs.push({ name: j.name, status: j.status, conclusion: j.conclusion });
+    const steps = parseSteps(j.steps);
+    if (steps === undefined) return fail("malformed", "a job's steps are not a list of { number, name, status, conclusion }");
+    jobs.push({ name: j.name, status: j.status, conclusion: j.conclusion, steps });
   }
   if (!complete(raw.total_count, raw.jobs.length)) {
     return fail("ci_candidate_listing_too_large", "the jobs are not provably complete in one response");
@@ -109,7 +135,8 @@ export const parseRunJobs = guarded((raw, opts) => {
     (a, b) =>
       byString(a.name, b.name) ||
       byString(a.status, b.status) ||
-      byString(conclusionKey(a.conclusion), conclusionKey(b.conclusion)),
+      byString(conclusionKey(a.conclusion), conclusionKey(b.conclusion)) ||
+      byString(JSON.stringify(a.steps), JSON.stringify(b.steps)),
   );
   return okRecord({ jobs });
 });
