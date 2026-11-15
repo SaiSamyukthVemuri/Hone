@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 266,
+    "count": 268,
     "last": "0341_portal_message_member_write_policies.sql",
-    "sha256": "e2055b9986b8f1ad8875188184429ef65aa5eac949fb5d6d727cb27480264a35"
+    "sha256": "1f07083444b6455599dd653144b4e25eb8716e78adb21d7de2db0396868a8c27"
   },
   "public": {
     "tables": [
@@ -290,6 +290,7 @@
       "enforce_appointment_buffer",
       "enforce_appointment_transition",
       "enforce_intake_terminal_immutability",
+      "enforce_intake_terminal_visibility",
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
