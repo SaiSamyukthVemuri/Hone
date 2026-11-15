@@ -62,10 +62,17 @@ async function loadRow(studioId: string): Promise<Row | null> {
 }
 
 // The compare-and-set write. `expected` is the value the caller loaded; null is matched with IS NULL.
-async function casWrite(studioId: string, column: string, expected: unknown, next: unknown): Promise<FeeSettingResult> {
+// `guards` are OTHER columns the validity check read (loadRow): the write also requires them to be unchanged, so a concurrent change to one
+// of them (another tab turning the switch ON, clearing the percentage...) makes this write STALE instead of leaving an enabled, unusable setting.
+type Guard = [column: string, value: unknown];
+function guardsFor(row: Row, type: FeeType, whats: Array<"enabled" | "mode" | "percent_bp" | "cents">): Guard[] {
+  return whats.map((w) => [col(type, w), row[col(type, w)] ?? null] as Guard);
+}
+async function casWrite(studioId: string, column: string, expected: unknown, next: unknown, guards: Guard[] = []): Promise<FeeSettingResult> {
   const supabase = await createClient();
   let q = supabase.from("studios").update({ [column]: next }).eq("id", studioId);
   q = expected === null ? q.is(column, null) : q.eq(column, expected as string | number | boolean);
+  for (const [gc, gv] of guards) q = gv === null ? q.is(gc, null) : q.eq(gc, gv as string | number | boolean);
   const { data, error } = await q.select("id");
   if (error) {
     console.error(
@@ -102,7 +109,9 @@ export async function setManualFeeEnabledAction(input: {
     }
     if (issue) return { ok: false, error: SAVE_FAILED };
   }
-  return casWrite(studioId, col(input.feeType, "enabled"), input.expectedEnabled, input.enabled);
+  // Turning ON was validated against the mode, percentage and amount just read: they must still be those values at the write.
+  return casWrite(studioId, col(input.feeType, "enabled"), input.expectedEnabled, input.enabled,
+    input.enabled ? guardsFor(row, input.feeType, ["mode", "percent_bp", "cents"]) : []);
 }
 
 /** Choose fixed or percent for one fee type. `expectedMode` is the saved value the page showed. */
@@ -133,7 +142,8 @@ export async function setManualFeeModeAction(input: {
     }
     if (issue) return { ok: false, error: SAVE_FAILED };
   }
-  return casWrite(studioId, col(input.feeType, "mode"), input.expectedMode, input.mode);
+  // The check above depends on whether the fee is ON and on the percentage and amount: all must be unchanged at the write.
+  return casWrite(studioId, col(input.feeType, "mode"), input.expectedMode, input.mode, guardsFor(row, input.feeType, ["enabled", "percent_bp", "cents"]));
 }
 
 /** Save the percentage for one fee type. `percentText` is what the owner typed ("75", "12.5"); `expectedBp` the saved value (null if none). */
@@ -154,6 +164,7 @@ export async function setManualFeePercentAction(input: {
     next = parsePercentTextToBp(text);
     if (next === null) return { ok: false, error: "The percentage must be between 0.01% and 100%, with up to two decimals." };
   }
+  let guards: Guard[] = [];
   if (next === null) {
     const row = await loadRow(studioId);
     if (!row) return { ok: false, error: SAVE_FAILED };
@@ -161,6 +172,8 @@ export async function setManualFeePercentAction(input: {
     if (row[col(input.feeType, "enabled")] === true && row[col(input.feeType, "mode")] === "percent") {
       return { ok: false, error: `Turn ${NAME[input.feeType]} fees off before clearing the percentage.` };
     }
+    // Clearing was allowed because the fee was OFF (or not percent): it must still be at the write.
+    guards = guardsFor(row, input.feeType, ["enabled", "mode"]);
   }
-  return casWrite(studioId, col(input.feeType, "percent_bp"), input.expectedBp, next);
+  return casWrite(studioId, col(input.feeType, "percent_bp"), input.expectedBp, next, guards);
 }

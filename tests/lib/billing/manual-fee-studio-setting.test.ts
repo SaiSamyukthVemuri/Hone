@@ -147,6 +147,14 @@ describe("saved versus actually active (the Settings screen uses the same gates 
   it("saved OFF is off whatever else is true", () => {
     for (const ready of [true, false]) for (const live of [true, false]) expect(state(LATE, BOTH_OFF, ready, live)).toBe("off");
   });
+  it("saved ON in percent mode with NO percentage (the unusable state a race could leave) is NOT active, never 'Active', whatever else is true", () => {
+    const unusable = { ...BOTH_ON, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: null, no_show_fee_mode: "percent", no_show_fee_percent_bp: null };
+    for (const ready of [true, false]) for (const live of [true, false]) {
+      expect(state(LATE, unusable, ready, live)).toBe("not_active_config");
+      expect(state(NOSHOW, unusable, ready, live)).toBe("not_active_config");
+    }
+    expect(MANUAL_FEE_STATE_COPY.not_active_config.effective).toMatch(/^Not active: the fee amount or percentage is not set/);
+  });
   it("saved ON, payments not ready: NOT active (payments), in test and live", () => {
     expect(state(LATE, BOTH_ON, false, false)).toBe("not_active_payments");
     expect(state(LATE, BOTH_ON, false, true)).toBe("not_active_payments");

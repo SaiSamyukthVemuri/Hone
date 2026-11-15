@@ -10,6 +10,9 @@ const h = vi.hoisted(() => ({
   matchRows: 1,
   updateError: false,
   readError: false,
+  // Interleaving: called right before the UPDATE runs (after loadRow), to simulate another tab writing in between.
+  beforeUpdate: null as null | (() => void),
+  evaluate: false,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -18,14 +21,25 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: async () => (h.readError ? { data: null, error: { code: "x" } } : { data: h.row, error: null }) }) }),
+      select: () => ({ eq: () => ({ maybeSingle: async () => (h.readError ? { data: null, error: { code: "x" } } : { data: { ...h.row }, error: null }) }) }),
       update: (patch: Record<string, unknown>) => {
         const [column, value] = Object.entries(patch)[0];
         const u: Upd = { column, value, filters: [] };
         const q: Record<string, unknown> = {};
         q.eq = (c: string, v: unknown) => { u.filters.push(["eq", c, v]); return q; };
         q.is = (c: string, v: unknown) => { u.filters.push(["is", c, v]); return q; };
-        q.select = async () => { h.updates.push(u); return h.updateError ? { data: null, error: { code: "x" } } : { data: Array.from({ length: h.matchRows }, () => ({ id: "s1" })), error: null }; };
+        q.select = async () => {
+          h.beforeUpdate?.();
+          h.updates.push(u);
+          if (h.updateError) return { data: null, error: { code: "x" } };
+          if (h.evaluate) {
+            // A stateful database: the UPDATE applies only if every filter still holds on the CURRENT row.
+            const ok = u.filters.every(([op, c, v]) => (c === "id" ? true : op === "is" ? (h.row[c] ?? null) === null : h.row[c] === v));
+            if (ok) h.row[u.column] = u.value;
+            return { data: ok ? [{ id: "s1" }] : [], error: null };
+          }
+          return { data: Array.from({ length: h.matchRows }, () => ({ id: "s1" })), error: null };
+        };
         return q;
       },
     }),
@@ -39,7 +53,7 @@ const FIXED_OK = {
   late_cancel_fee_cents: 5000, no_show_fee_cents: 5000, late_cancel_fee_enabled: false, no_show_fee_enabled: false,
   late_cancel_fee_mode: "fixed", no_show_fee_mode: "fixed", late_cancel_fee_percent_bp: null, no_show_fee_percent_bp: null,
 };
-beforeEach(() => { h.role = "owner"; h.row = { ...FIXED_OK }; h.updates = []; h.matchRows = 1; h.updateError = false; h.readError = false; });
+beforeEach(() => { h.role = "owner"; h.row = { ...FIXED_OK }; h.updates = []; h.matchRows = 1; h.updateError = false; h.readError = false; h.beforeUpdate = null; h.evaluate = false; });
 
 describe("owner only", () => {
   it("a practitioner who is not the owner changes nothing, through every action", async () => {
@@ -122,5 +136,42 @@ describe("validity: a fee can be turned ON only when it could produce a charge",
     h.readError = true;
     expect((await setManualFeeEnabledAction({ feeType: "late_cancel", enabled: true, expectedEnabled: false })).ok).toBe(false);
     expect(h.updates).toEqual([]);
+  });
+});
+
+describe("interleaved tabs: a concurrent change to a value the validity check read makes the write STALE", () => {
+  const stale = { ok: false, error: expect.stringMatching(/changed somewhere else/i) };
+  it("mode -> percent while another tab turns the fee ON: stale, so no ON + percent + no percentage", async () => {
+    h.evaluate = true;
+    h.beforeUpdate = () => { h.row.late_cancel_fee_enabled = true; };
+    expect(await setManualFeeModeAction({ feeType: "late_cancel", mode: "percent", expectedMode: "fixed" })).toEqual(stale);
+    expect(h.row.late_cancel_fee_mode).toBe("fixed");
+    expect(h.row.late_cancel_fee_enabled).toBe(true);
+  });
+  it("clearing the percentage while another tab turns the fee ON in percent mode: stale, the percentage stays", async () => {
+    h.evaluate = true;
+    h.row = { ...FIXED_OK, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: 7500 };
+    h.beforeUpdate = () => { h.row.late_cancel_fee_enabled = true; };
+    expect(await setManualFeePercentAction({ feeType: "late_cancel", percentText: "", expectedBp: 7500 })).toEqual(stale);
+    expect(h.row.late_cancel_fee_percent_bp).toBe(7500);
+  });
+  it("turning ON while another tab switches the mode to percent (no percentage): stale, the fee stays OFF", async () => {
+    h.evaluate = true;
+    h.beforeUpdate = () => { h.row.late_cancel_fee_mode = "percent"; };
+    expect(await setManualFeeEnabledAction({ feeType: "late_cancel", enabled: true, expectedEnabled: false })).toEqual(stale);
+    expect(h.row.late_cancel_fee_enabled).toBe(false);
+  });
+  it("turning ON while another tab changes the fixed amount to blank: stale", async () => {
+    h.evaluate = true;
+    h.beforeUpdate = () => { h.row.late_cancel_fee_cents = null; };
+    expect(await setManualFeeEnabledAction({ feeType: "late_cancel", enabled: true, expectedEnabled: false })).toEqual(stale);
+    expect(h.row.late_cancel_fee_enabled).toBe(false);
+  });
+  it("with no interleaving every one of these writes still succeeds", async () => {
+    h.evaluate = true;
+    expect((await setManualFeePercentAction({ feeType: "late_cancel", percentText: "75", expectedBp: null })).ok).toBe(true);
+    expect((await setManualFeeModeAction({ feeType: "late_cancel", mode: "percent", expectedMode: "fixed" })).ok).toBe(true);
+    expect((await setManualFeeEnabledAction({ feeType: "late_cancel", enabled: true, expectedEnabled: false })).ok).toBe(true);
+    expect(h.row).toMatchObject({ late_cancel_fee_enabled: true, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: 7500 });
   });
 });
