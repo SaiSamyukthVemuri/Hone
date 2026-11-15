@@ -16,7 +16,7 @@ export function CurrentPill() {
   return (
     <span
       data-testid="today-current-pill"
-      className="inline-flex items-center rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white dark:bg-blue-500 dark:text-white"
+      className="inline-flex items-center rounded-full bg-blue-600 px-2 py-0.5 text-[10px] leading-3 font-semibold uppercase tracking-wider text-white dark:bg-blue-500 dark:text-white"
     >
       Current
     </span>
@@ -52,7 +52,7 @@ export function CardOnFilePill({ status }: { status: CardOnFileStatus | null }) 
     <span
       data-testid="today-card-status"
       data-card-status={status}
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${CARD_ON_FILE_CLASS[status]}`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] leading-3 font-medium uppercase tracking-wider ${CARD_ON_FILE_CLASS[status]}`}
     >
       {CARD_ON_FILE_LABEL[status]}
     </span>

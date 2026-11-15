@@ -284,6 +284,8 @@ export async function POST(req: Request): Promise<Response> {
         eventId: event.id,
         eventType: event.type,
         errorClass: thrownErrorClass(err),
+        // the same bounded label stored on stripe_events.error below
+        failureLabel: boundedErrorLabel(err),
         ...stripeErrorFields(err),
       });
       // PR #153. Persistent webhook processing failure is a critical

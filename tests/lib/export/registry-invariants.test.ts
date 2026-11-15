@@ -61,10 +61,15 @@ describe("the real registry satisfies every invariant", () => {
     );
   });
 
-  it("the only declared renames are the two laser flattenings, and they are documented", () => {
+  it("the only declared renames are the two laser flattenings and the decline answers' two function names, and they are documented", () => {
     const mapped = exportedResources().filter((e) => e.disposition.emittedAs);
-    expect(mapped.map((e) => e.resource)).toEqual(["laser_entries"]);
-    const m = mapped[0].disposition.emittedAs!;
+    expect(mapped.map((e) => e.resource).sort()).toEqual(["laser_entries", "waitlist_decline_answers"]);
+    const answers = mapped.find((e) => e.resource === "waitlist_decline_answers")!.disposition;
+    expect(answers.rpcSource).toBeDefined(); // a rename outside the laser files is only legitimate for an rpc-sourced read
+    expect(answers.emittedAs!.followup_id.headers).toEqual(["answer_id", "followup_id"]);
+    expect(answers.emittedAs!.erased_at.headers).toEqual(["answers_erased_at"]);
+    for (const entry of Object.values(answers.emittedAs!)) expect(entry.note.trim().length).toBeGreaterThan(20);
+    const m = mapped.find((e) => e.resource === "laser_entries")!.disposition.emittedAs!;
     expect(m.session_number.headers).toEqual(["treatment_number"]);
     expect(m.equipment_params.headers).toEqual(["fluence", "pulse_width", "spot_size"]);
     for (const entry of Object.values(m)) {

@@ -33,12 +33,17 @@ describe("legacy fee executor removed", () => {
       .trim()
       .split("\n")
       .filter(Boolean);
-    expect(out.length).toBe(1);
-    expect(out[0]).toContain("lib/billing/manual-fee-eligibility.ts");
-    const eligibility = read("lib/billing/manual-fee-eligibility.ts");
-    const at = eligibility.indexOf('from("manual_fee_charge_attempts")');
-    expect(eligibility.slice(at, at + 200)).toMatch(/\.select\(/);
-    expect(eligibility.slice(at, at + 200)).not.toMatch(/\.insert|\.update|\.delete/);
+    // Exactly two READERS: the fee-eligibility helper, and the dashboard's unpaid-balance check (#1356 AO2: a manual fee on the
+    // appointment makes its amount unavailable). Each is a bare select; neither writes.
+    expect(out.length).toBe(2);
+    const files = out.map((l) => l.split(":")[0]).sort();
+    expect(files).toEqual(["lib/billing/manual-fee-eligibility.ts", "lib/dashboard/other-money-forms.ts"]);
+    for (const f of files) {
+      const src = read(f);
+      const at = src.indexOf('from("manual_fee_charge_attempts")');
+      expect(src.slice(at, at + 200), f).toMatch(/\.select\(/);
+      expect(src.slice(at, at + 200), f).not.toMatch(/\.insert|\.update|\.delete/);
+    }
   });
 
   it("the canonical executor remains intact (single PaymentIntent call site)", () => {

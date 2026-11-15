@@ -33,7 +33,7 @@ const ROW = PAGE_CODE.slice(
 );
 const PAGE_BODY = PAGE_CODE.slice(
   PAGE_CODE.indexOf("export default async function DashboardPage("),
-  PAGE_CODE.indexOf("function DaySummary("),
+  PAGE_CODE.indexOf("function AppointmentRow("),
 );
 
 vi.mock("@/app/(app)/clients/[id]/portal-link-actions", () => ({
@@ -98,9 +98,9 @@ describe("A — Current", () => {
 // B — consultation notes in one tap, to the EXISTING writer
 // ---------------------------------------------------------------------------
 describe("B — Consultation notes", () => {
-  it("the row links to the canonical consultation tab (repoint to Treatment follows #1300)", () => {
+  it("the row links to the Treatment tab, where the consultation writer lives since #1300", () => {
     expect(ROW).toMatch(
-      /href=\{`\/clients\/\$\{appt\.client_id\}\?tab=consultation`\}/,
+      /href=\{`\/clients\/\$\{appt\.client_id\}\?tab=treatment`\}/,
     );
     expect(ROW).toMatch(/data-testid="today-consultation-notes"/);
     // No invented route and no second composer.
@@ -333,7 +333,8 @@ describe("row hygiene", () => {
     // gutter at phone width. The strip still wraps; it now wraps from the body
     // edge on a phone and from the right on `sm:` and up.
     expect(ROW).toMatch(/flex flex-wrap items-center justify-start gap-x-3 gap-y-1/);
-    expect(ROW).toMatch(/sm:justify-end/);
+    // FIDELITY C: the strip now lives inside the closed-by-default visit details, left-aligned.
+    expect(ROW).toMatch(/data-testid="today-row-details"/);
   });
 });
 

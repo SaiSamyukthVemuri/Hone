@@ -336,7 +336,7 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
     const landed = new URL(page.url());
     expect(landed.pathname).toBe(`/clients/${client.clientId}`);
     // The requested tab is preserved — the acknowledgement changed no semantics.
-    // ?tab=consultation is a legacy link: the server redirects it to Treatment.
+    // The consultation CTA links straight to ?tab=treatment.
     expect(landed.searchParams.get("tab")).toBe("treatment");
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
     await expect(liveRegion).toHaveCount(0);

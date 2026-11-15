@@ -36,7 +36,7 @@ describe("P2: no metrics object crosses a client boundary", () => {
     const stack = readFileSync(join(DIR, "secondary-stack.tsx"), "utf8");
     // The only client component the stack renders with data is the panel; it
     // receives `needs`, built by the pure model.
-    expect(stack).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
+    expect(stack).toMatch(/<NeedsAttentionPanel\s+needs=\{v\.shown\}/);
   });
 });
 

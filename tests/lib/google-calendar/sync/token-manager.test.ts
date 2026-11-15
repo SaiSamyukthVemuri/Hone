@@ -306,3 +306,74 @@ describe("refresh-secret read failure is preserved (not forced reconnect)", () =
     expect(kv.size).toBe(0); // no lock left held
   });
 });
+
+describe("store WRITE failures (real ConnectionWriteError shape)", () => {
+  it("a rotated token that could not be stored is NOT success: transient rotation_store_failed, no cached access token, fixed log string", async () => {
+    const { ConnectionWriteError } = await import("@/lib/google-calendar/store-write-error");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store } = makeStore("enc:rt1");
+    store.storeRotatedToken = vi.fn(async () => {
+      throw new ConnectionWriteError("store_rotated_token");
+    });
+    const { client } = makeClient([ok("at1", 3600, "rt2")]);
+    const cache = createAccessTokenCache();
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.kind).toBe("transient");
+      expect(r.code).toBe("rotation_store_failed");
+    }
+    expect(cache.get(CONN, Date.now(), 0)).toBeNull();
+    expect(spy).toHaveBeenCalledWith("google_calendar_error:token_refresh:store_rotated_token");
+    spy.mockRestore();
+  });
+
+  it("a failed reconnect mark is logged with a fixed string and the invalid_grant outcome is still reported", async () => {
+    const { ConnectionWriteError } = await import("@/lib/google-calendar/store-write-error");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store } = makeStore("enc:rt1");
+    store.markReconnectRequired = vi.fn(async () => {
+      throw new ConnectionWriteError("mark_reconnect_required");
+    });
+    const client: Pick<GoogleRestClient, "refreshToken"> = {
+      refreshToken: vi.fn<RefreshFn>(async () => ({ ok: false, error: { kind: "invalid_grant", status: 400, code: "invalid_grant", retryAfterSeconds: null } })),
+    };
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok).toBe(false);
+    expect(spy).toHaveBeenCalledWith("google_calendar_error:token_refresh:mark_reconnect_required");
+    spy.mockRestore();
+  });
+
+  it("a failed touch of the expiry column does not fail a refresh that succeeded", async () => {
+    const { ConnectionWriteError } = await import("@/lib/google-calendar/store-write-error");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store } = makeStore("enc:rt1");
+    store.touchTokenExpiry = vi.fn(async () => {
+      throw new ConnectionWriteError("touch_token_expiry");
+    });
+    const { client } = makeClient([ok("at1", 3600, null)]);
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok && r.accessToken).toBe("at1");
+    expect(spy).toHaveBeenCalledWith("google_calendar_error:token_refresh:touch_token_expiry");
+    spy.mockRestore();
+  });
+
+  it("a non-ConnectionWriteError is not mistaken for a write error: nothing is logged as a store step and the refresh is not reported as success", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store } = makeStore("enc:rt1");
+    store.markReconnectRequired = vi.fn(async () => {
+      throw new Error("unexpected");
+    });
+    const client: Pick<GoogleRestClient, "refreshToken"> = {
+      refreshToken: vi.fn<RefreshFn>(async () => ({ ok: false, error: { kind: "invalid_grant", status: 400, code: "invalid_grant", retryAfterSeconds: null } })),
+    };
+    const tm = createTokenManager({ store, crypto: makeCrypto(), client, cache: createAccessTokenCache() });
+    const r = await tm.ensureAccessToken(CONN, STUDIO);
+    expect(r.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalledWith(expect.stringContaining("google_calendar_error:token_refresh:"));
+    spy.mockRestore();
+  });
+});

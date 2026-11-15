@@ -815,6 +815,10 @@ export type Client = {
   // Migration 0258 (HON-58): the name the client goes by. Optional here so a row
   // read before the migration (or a fixture) need not carry it; null/absent means none.
   preferred_name?: string | null;
+  // Migration 0281: per-concept revisions stamped by the clients_identity_guard trigger (never written by the app). Optional
+  // so a row read before the migration (or a fixture) need not carry them.
+  name_revision?: number;
+  preferred_name_revision?: number;
   pronouns: string | null;
   date_of_birth: string | null;
   phone: string | null;
@@ -1497,7 +1501,11 @@ export type PractitionerNotificationEventType =
   // every other role's reads (lib/notifications/owner-only-events.ts). Deduped on
   // the mode-scoped SetupIntent business key.
   | "card_added"
-  | "card_replaced";
+  | "card_replaced"
+  // Written by the waitlist decline command (HON-7), owner-only like the card events.
+  | "waitlist_offer_declined"
+  // Written by the waitlist withdrawal command (HON-7, 0325), owner-only like the decline event.
+  | "waitlist_withdrawal_requested";
 
 export type PractitionerNotification = {
   id: string;

@@ -1,0 +1,157 @@
+import { test, expect, type Page } from "@playwright/test";
+import {
+  seedE2eDashboardMemoryClient,
+  seedE2eIntake,
+  seedE2eMember,
+  seedFutureAppointmentAt,
+  getOwnerPractitionerId,
+  getStudioTimezone,
+  seedE2eStudio,
+  sql,
+} from "./helpers/seed";
+import { loginByMagicLink } from "./helpers/flows";
+
+// ===========================================================================
+// #1308 phone fixes, proved in a browser (Sam, 2 Nov): an unbroken 95-character client name must not
+// widen the Dashboard at 320 or 390, and tapping the appointment name on a touch phone must reach the
+// appointment page every time. Not run locally (no stack here); Photos / CI own the run.
+// ===========================================================================
+// A page-level scrollWidth check cannot see overflow inside an overflow-hidden ancestor (the roster
+// clips its cards), so this ALSO asserts every link and card's right edge against its own container
+// and against the viewport.
+
+const T = 15_000;
+const LONG_NAME = "Abcdefghij".repeat(9) + "Klmno"; // 95 characters, no break opportunity
+
+async function seedStudioWithLongName() {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eDashboardMemoryClient(seed, { cautionNote: null });
+  await sql(`update public.clients set name = $1 where id = $2`, [LONG_NAME, clientId]);
+  // An intake awaiting review puts this client in Needs attention.
+  await seedE2eIntake(seed.studioId, clientId, "submitted");
+  // FIXED studio-local times, never "now + N hours": a relative offset crosses local midnight when CI runs late in the
+  // day and the visit lands on tomorrow's roster. The studio clock reads ~09:00 at seed time (timezoneWithLocalMorning), the
+  // memory client's own visit sits at about 11:00-13:00 local, and these three are two hours apart after it, all well inside
+  // one local day and never overlapping (the studio-wide exclusion refuses an overlap).
+  const tz = await getStudioTimezone(seed.studioId);
+  const owner = await getOwnerPractitionerId(seed.studioId);
+  await seedFutureAppointmentAt(seed.studioId, owner, clientId, tz, "14:00");
+  await seedFutureAppointmentAt(seed.studioId, owner, clientId, tz, "16:00");
+  return { seed, clientId, tz };
+}
+
+async function assertNoSidewaysOverflow(page: Page, width: number) {
+  const report = await page.evaluate((vw) => {
+    const doc = document.documentElement;
+    const offenders: string[] = [];
+    const scope = document.querySelector("main") ?? document.body;
+    const nodes = scope.querySelectorAll<HTMLElement>(
+      'a, li, [data-testid^="today-row"], [data-attention-client], details, summary',
+    );
+    nodes.forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return; // not rendered (closed details content)
+      // Something meant to scroll sideways on its own is allowed to extend past its box.
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const ox = getComputedStyle(p).overflowX;
+        if (ox === "auto" || ox === "scroll") return;
+      }
+      const parent = el.parentElement?.getBoundingClientRect();
+      const label = `${el.tagName.toLowerCase()}[${el.getAttribute("data-testid") ?? el.getAttribute("href") ?? ""}]`;
+      if (r.right > vw + 1) offenders.push(`${label} right ${Math.round(r.right)} > viewport ${vw}`);
+      else if (parent && parent.width > 0 && r.right > parent.right + 1) {
+        offenders.push(`${label} right ${Math.round(r.right)} > container ${Math.round(parent.right)}`);
+      }
+    });
+    return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth, offenders };
+  }, width);
+  expect(report.scrollWidth, `document scrollWidth ${report.scrollWidth}`).toBeLessThanOrEqual(width);
+  expect(report.offenders, report.offenders.join("\n")).toEqual([]);
+  await assertSummaryStripTextInsideCells(page);
+}
+
+// The strip's LABELS and values, not only its cards: text that overflows its own cell does not widen the page, so the page-level
+// checks above cannot see it (Photos, fa5183e8d at 320: "APPOINTMENTS" ran past its card and touched "BOOKED TIME"). Each dt/dd must
+// fit its own box (scrollWidth) and end inside its cell, and no label may reach into the next cell.
+async function assertSummaryStripTextInsideCells(page: Page) {
+  const bad = await page.evaluate(() => {
+    const out: string[] = [];
+    const strip = document.querySelector('[data-testid="dashboard-summary-strip"]');
+    if (!strip) return ["summary strip not found"];
+    strip.querySelectorAll<HTMLElement>("dt, dd").forEach((el) => {
+      const cell = el.parentElement!.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const text = (el.textContent ?? "").trim();
+      if (el.scrollWidth > el.clientWidth + 1) out.push(`${text}: content ${el.scrollWidth} > box ${el.clientWidth}`);
+      // Range over the text itself: a block's own box can look fine while its glyphs spill out.
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const t = range.getBoundingClientRect();
+      if (t.right > cell.right + 0.5 || t.left < cell.left - 0.5 || r.right > cell.right + 0.5) {
+        out.push(`${text}: text right ${Math.round(t.right)} vs cell right ${Math.round(cell.right)}`);
+      }
+    });
+    return out;
+  });
+  expect(bad, bad.join("\n")).toEqual([]);
+}
+
+for (const width of [320, 390]) {
+  test.describe(`dashboard at ${width}px with a 95-character unbroken client name`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true });
+
+    test(`owner: no sideways scroll, Needs attention and the Today rows stay inside the page`, async ({ page }) => {
+      const { seed } = await seedStudioWithLongName();
+      await loginByMagicLink(page, seed.ownerEmail);
+      await page.goto("/dashboard");
+      await expect(page.getByTestId("today-row-client-name").first()).toBeVisible({ timeout: T });
+      await expect(page.locator("[data-attention-client]").first()).toBeVisible({ timeout: T });
+      await assertNoSidewaysOverflow(page, width);
+    });
+
+    test(`practitioner: no sideways scroll with the same name on their own appointments`, async ({ page }) => {
+      const { seed, clientId, tz } = await seedStudioWithLongName();
+      const member = await seedE2eMember(seed);
+      await seedFutureAppointmentAt(seed.studioId, member.practitionerId, clientId, tz, "18:00");
+      await loginByMagicLink(page, member.email);
+      await page.goto("/dashboard");
+      await expect(page.getByTestId("today-row-client-name").first()).toBeVisible({ timeout: T });
+      await assertNoSidewaysOverflow(page, width);
+    });
+  });
+}
+
+// AUTHORITATIVE TAP METHOD: `page.touchscreen.tap(x, y)` at the centre of the name span's bounding box, on a context with
+// hasTouch + isMobile at 390px. That dispatches real touch events at a coordinate, exactly what a finger does, so it also fails
+// if something overlays the name. An ad hoc probe that clicks an element handle or dispatches a synthetic event can miss a link
+// that a finger reaches; this spec is the reference and a probe that disagrees should be compared against it.
+test.describe("tapping the appointment name on a 390px touch phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("reaches /calendar/<id> on every one of 5 taps across the rows", async ({ page }) => {
+    const { seed } = await seedStudioWithLongName();
+    await loginByMagicLink(page, seed.ownerEmail, { openRowDetails: false });
+    await page.goto("/dashboard");
+    const names = page.getByTestId("today-row-client-name");
+    await expect(names.first()).toBeVisible({ timeout: T });
+    const rows = await names.count();
+    expect(rows).toBeGreaterThanOrEqual(3);
+    for (let tap = 0; tap < 5; tap += 1) {
+      const index = tap % rows;
+      const name = page.getByTestId("today-row-client-name").nth(index);
+      const href = await page
+        .getByTestId("today-row-body")
+        .nth(index)
+        .evaluate((el) => (el as HTMLAnchorElement).getAttribute("href"));
+      expect(href, `tap ${tap}`).toMatch(/^\/calendar\/[0-9a-f-]{36}$/);
+      await name.scrollIntoViewIfNeeded();
+      const box = await name.boundingBox();
+      if (!box) throw new Error(`tap ${tap}: the name has no box`);
+      await page.touchscreen.tap(box.x + Math.min(box.width / 2, 60), box.y + box.height / 2);
+      await page.waitForURL(`**${href}`, { timeout: T });
+      expect(new URL(page.url()).pathname, `tap ${tap}`).toBe(href);
+      await page.goto("/dashboard");
+      await expect(page.getByTestId("today-row-client-name").first()).toBeVisible({ timeout: T });
+    }
+  });
+});

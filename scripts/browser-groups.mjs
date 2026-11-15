@@ -51,6 +51,8 @@ export const BROWSER_GROUPS = {
       // before a block exists, then the one atomic save that follows. Same
       // group as its sibling for the same reason.
       "machine-create-mode-journey.spec.ts",
+      // HON-8: the same journey on the REAL Senior and Junior 3G contracts (the sibling uses synthetic ids only).
+      "machine-real-3g.spec.ts",
       // MPX-03: changing the machine or the mode UNDER a typed draft, and the
       // unit going out of service mid-draft. Same surface again - the panel
       // inside the settings-block form - so the same group: a diff to that
@@ -111,6 +113,16 @@ export const BROWSER_GROUPS = {
       // the right-side action moving from reading (Review Before Today) to
       // doing (Chart session). Same Today row, so the same group.
       "dashboard-all-pinned-notes.spec.ts",
+      // Insurance PEER-1308 D-4: the CLOSED compact row (pinned notes, allergy flag, caution line,
+      // intake pill visible) proved without the helper that opens the row details.
+      "dashboard-closed-row.spec.ts",
+      // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
+      "dashboard-last-treatment-closed.spec.ts",
+      // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
+      "dashboard-phone-overflow.spec.ts",
+      // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
+      // (no Dismiss while 0298 is held), and the gate-ON dismissal cases on a stack that has the migration.
+      "dashboard-attention-dismissal.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be
@@ -148,6 +160,10 @@ export const BROWSER_GROUPS = {
       // condition is reported, required once it is, hidden again on retraction,
       // and read back truthfully on the practitioner review grid.
       "intake-diabetes-thyroid-subtypes.spec.ts",
+      // 0340: one intake through every legitimate browser writer in order
+      // (token save, token submit, owner review, notes); client and studio
+      // never move and the form is never hidden.
+      "intake-identity-journey.spec.ts",
     ],
   },
   portal: {
@@ -242,7 +258,14 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
+      // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
+      "review-assignments-navigation.spec.ts",
+      // The same link hidden for a solo owner with nothing to review, shown otherwise (Sam, 2 Nov).
+      "review-link-solo-owner.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
+      // #1424 own-calendar-first default, 1280/390 matrix (opt-in: self-skips unless CAL_OWN_FIRST_E2E=1, so a targeted lane lists it but runs nothing).
+      "calendar-own-first.spec.ts",
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
@@ -278,6 +301,9 @@ export const BROWSER_GROUPS = {
       // briefing, an ordinary practitioner is refused it, and the owner-only
       // entry is not advertised in search. No new group: the taxonomy fits.
       "owner-practice-capacity.spec.ts",
+      // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
+      // through the shipped actions; a practitioner is shown no edit control.
+      "owner-only-catalog-edit.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -368,6 +394,10 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
+      // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
+      // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
+      // /clients/** has no PATH_TO_GROUP pattern.
+      "client-profile-save.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a

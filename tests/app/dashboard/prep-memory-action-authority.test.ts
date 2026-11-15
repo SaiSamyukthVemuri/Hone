@@ -128,9 +128,10 @@ describe("the client boundary carries only the visible projection", () => {
     // *Link closing tag, not one spelling — UI-01C swapped the row body to
     // PendingContainerLink, which is the same anchor with an out-of-flow
     // pending presentation inside it, and cannot move this boundary.
-    expect(PAGE_CODE).toMatch(
-      /<\/\w*Link>[\s\S]{0,600}<DashboardTreatmentMemory/,
-    );
+    // FIDELITY C: it now sits inside the row's closed-by-default <details>, still AFTER the link closes.
+    const closeAt = PAGE_CODE.indexOf("</PendingContainerLink>");
+    expect(closeAt).toBeGreaterThan(-1);
+    expect(PAGE_CODE.indexOf("<DashboardTreatmentMemory")).toBeGreaterThan(closeAt);
   });
 });
 

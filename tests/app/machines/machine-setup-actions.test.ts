@@ -1141,6 +1141,10 @@ describe("the synthetic demo profile cannot reach production", () => {
       "synthetic:native-senior-3g-text",
       "synthetic:native-junior-3g-text",
     ].sort();
+    // The REAL profiles that are active on their own merits (HON-8's first slice): the gate neither adds nor removes them. Pinned by
+    // id so a stray activation of any other real profile still fails here, and so these two are never read as synthetic.
+    const realActiveIds = realBefore.filter((p) => p.availability === "active").map((p) => p.profileId).sort();
+    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
     const on = synthetic.catalogueForRuntime(base);
     const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));
     expect(fixtures.map((p) => p.profileId).sort()).toEqual(expectedSyntheticIds);
@@ -1151,7 +1155,7 @@ describe("the synthetic demo profile cannot reach production", () => {
     expect(realOn).toEqual(realBefore);
     realOn.forEach((profile, index) => expect(profile).toBe(MACHINE_CATALOGUE[index]));
     expect(on.filter((p) => p.availability === "active").map((p) => p.profileId).sort())
-      .toEqual(expectedSyntheticIds);
+      .toEqual([...expectedSyntheticIds, ...realActiveIds].sort());
 
     const closedEnvironments = [
       ["absent flag", {}],
@@ -1169,7 +1173,8 @@ describe("the synthetic demo profile cannot reach production", () => {
       const off = synthetic.catalogueForRuntime(env as NodeJS.ProcessEnv);
       expect(off, label).toEqual(realBefore);
       expect(off.some((p) => p.profileId.startsWith("synthetic:")), label).toBe(false);
-      expect(off.filter((p) => p.availability === "active"), label).toEqual([]);
+      // Gate closed: no synthetic identity, and the only active profiles are the real ones that are active regardless of the gate.
+      expect(off.filter((p) => p.availability === "active").map((p) => p.profileId).sort(), label).toEqual(realActiveIds);
       off.forEach((profile, index) => expect(profile, label).toBe(MACHINE_CATALOGUE[index]));
     }
     expect(MACHINE_CATALOGUE).toEqual(realBefore);

@@ -67,6 +67,23 @@ vi.mock("@/lib/rate-limit/public", async (importOriginal) => {
   };
 });
 
+// inviteToBookAction now refuses a send while admission is closed/unreadable (0204 refuses
+// the booking), BEFORE reaching the adapter. This lane has no session, so state the studio
+// and an admitting mode explicitly; the cases below are about the submission boundary.
+vi.mock("@/lib/supabase/queries", async (orig) => ({
+  ...((await orig()) as object),
+  // An owner with NO user id: the adapter answers `not_a_member` (a refusal, never a commit),
+  // which is exactly the "no session, cannot commit" state these cases rely on.
+  getCurrentPractitionerWithStudio: async () => ({
+    practitioner: { role: "owner", user_id: null },
+    studio: { id: "studio-under-test", slug: "studio-a" },
+  }),
+}));
+vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
+  ...((await orig()) as object),
+  getNewClientAdmissionMode: async () => ({ ok: true, mode: "waitlist", source: "persisted" }),
+}));
+
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     getAll: () => Array.from(hoisted.jar, ([name, value]) => ({ name, value })),
@@ -434,7 +451,7 @@ describe("the practitioner binding is a real production consumer", () => {
     // and the only permitted alternative is `null`, which grants nothing.
     expect(page).toContain("admissionCommandAdapter.capabilities");
     expect(page).toMatch(
-      /capabilities=\{\s*canOfferInvite\(capacity\)\s*\?\s*admissionCommandAdapter\.capabilities\s*:\s*null\s*\}/,
+      /capabilities=\{\s*!invitesBlockedByAdmission\s*\?\s*admissionCommandAdapter\.capabilities\s*:\s*null\s*\}/,
     );
     // NEVER A LITERAL. An inline object would be a second capability authority.
     expect(page).not.toMatch(/capabilities=\{\s*\{/);
@@ -723,14 +740,18 @@ describe("initial invitation delivery", () => {
     // gone, so the second burns capacity on someone who cannot be handed a link.
     const code = stripComments(readFileSync("lib/waitlist/invite-to-book-adapter.ts", "utf8"));
     const preCommit = code.slice(
-      code.indexOf("const { data, error } = await admin.rpc"),
+      code.indexOf("let { data, error } = await admit();"),
       code.indexOf("const expiresAt = readString(row"),
     );
     expect(preCommit.length).toBeGreaterThan(50);
     // The transport-error arm returns the indeterminate singleton, and does NOT
     // construct a refusal.
     expect(preCommit).toMatch(/if \(error\) return INDETERMINATE_ADMISSION;/);
-    expect(preCommit).not.toContain('state: "refused"');
+    // The ONE definite refusal permitted before the transport-error arm is the absent-command answer
+    // (PGRST202 / 42883: refused BEFORE the function ran, so nothing can have been created).
+    const withoutAbsentArm = preCommit.replace('return { state: "refused", code: "not_yet_available" };', "");
+    expect(preCommit.match(/state: "refused"/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(withoutAbsentArm).not.toContain('state: "refused"');
 
     // NO BLIND RETRY AND NO INFERRED RECONCILIATION. "A live invitation exists"
     // does not prove THIS attempt made it — a concurrent operator is enough to

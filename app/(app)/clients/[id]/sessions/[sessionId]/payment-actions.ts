@@ -269,6 +269,7 @@ export async function prepareSessionPaymentChargeAction(
     studioId,
     sessionId,
     studioTimezone,
+    viewerIsOwner: actorIsOwner,
   });
   if (!priced.ok) {
     return { ok: false, error: loadFailureMessage(priced.failure) };
@@ -456,6 +457,7 @@ export async function executeSessionPaymentChargeAction(
   let practitionerId: string;
   let studioId: string;
   let studioTimezone: string;
+  let viewerIsOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
@@ -463,6 +465,7 @@ export async function executeSessionPaymentChargeAction(
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
+    viewerIsOwner = practitioner.role === "owner";
   } catch (err) {
     logInternal("session_payment_execute_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
@@ -545,6 +548,7 @@ export async function executeSessionPaymentChargeAction(
             studioId,
             sessionId: attemptSessionId,
             studioTimezone,
+            viewerIsOwner,
           }),
     );
     if (!permission.allow) {

@@ -135,7 +135,10 @@ describe("dashboard 'Supplies expiring' card is studio-scoped", () => {
   it("dashboard fetches it scoped to the current studio + feeds the To-do model", () => {
     expect(DASH).toMatch(/getExpiringSterileItems\(studio\.id, todayLocal\)/);
     expect(DASH).toMatch(/supplies: expiringSupplies/);
-    expect(DASH).toMatch(/<NeedsAttentionPanel\s+needs=\{buildNeedsAttention\(/);
+    // Intended change (dashboard attention, #1356): the panel now takes the model through the visibility resolver (dismissals applied)
+    // instead of calling buildNeedsAttention inline. The model is still built by buildNeedsAttention, and the panel still renders it.
+    expect(DASH).toMatch(/buildNeedsAttention\(\{/);
+    expect(DASH).toMatch(/<NeedsAttentionPanel\s+needs=\{v\.shown\}/);
     expect(DASH).not.toMatch(/SuppliesExpiringCard/);
   });
   it("a non-expiring supply produces no row (no clutter) and lot numbers never surface", () => {

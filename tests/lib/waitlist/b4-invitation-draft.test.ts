@@ -27,6 +27,7 @@ import {
   controlState,
   delegateFor,
   draftToInviteInput,
+  DEFAULT_BOOKING_WINDOW_DAYS,
   emptyDraft,
   entryActionSurface,
   practitionerActionAvailability,
@@ -2168,7 +2169,7 @@ describe("the composer's draft", () => {
     // whole rather than what any one field happens to hold today.
     expect(draftToInviteInput("e1", draft())).toEqual({
       entryId: "e1",
-      scope: { serviceId: "svc-1", windowDays: 7, allowedWeekdays: null },
+      scope: { serviceId: "svc-1", windowDays: DEFAULT_BOOKING_WINDOW_DAYS, allowedWeekdays: null },
     });
   });
 

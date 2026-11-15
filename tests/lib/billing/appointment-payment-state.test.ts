@@ -183,7 +183,7 @@ vi.mock("@/lib/stripe/server", () => ({
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+  createClient: async () => ((globalThis as { __mkSb?: () => unknown }).__mkSb = () => ({
     from: (table: string) => {
       const eqs: Array<[string, unknown]> = [];
       const ins: Array<[string, readonly unknown[]]> = [];
@@ -215,7 +215,11 @@ vi.mock("@/lib/supabase/server", () => ({
       };
       return q;
     },
-  }),
+  }))(),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  // 0303: client_pricing reads run on the service role; serve the same fake as the user client.
+  createAdminClient: () => (globalThis as { __mkSb?: () => unknown }).__mkSb!(),
 }));
 
 const STUDIO = "studio-1";
@@ -409,3 +413,14 @@ describe("HON-45: settlementDisplayState carries part payments", () => {
   });
 });
 
+
+describe("HON-65: the attempts read has a fixed order", () => {
+  it("both surfaces read payment_charge_attempts ordered by (created_at, id), because the reducer returns on the first succeeded row", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const file of ["lib/billing/appointment-payment-state.ts", "lib/dashboard/unpaid-attention.ts"]) {
+      const src = readFileSync(file, "utf8");
+      if (file.endsWith("appointment-payment-state.ts")) expect(src).toMatch(/\.order\("created_at", \{ ascending: true \}\)\s*\.order\("id", \{ ascending: true \}\)/);
+      else expect(src).toMatch(/localeCompare\(y\.created_at[\s\S]{0,40}localeCompare\(y\.id/);
+    }
+  });
+});

@@ -12,13 +12,18 @@ const legal = readFileSync("app/(app)/clients/[id]/legal-identity-actions.ts", "
 
 describe("no automatic name changes", () => {
   it("the edit writes preferred_name only inside the submitted-field guard", () => {
-    expect(update).toMatch(/formData\.has\("preferred_name"\)/);
-    expect(update).toMatch(/\.\.\.\(preferredRead && preferredRead\.ok \? \{ preferred_name: preferredRead\.value \} : \{\}\)/);
+    // Submitted-field guard now lives in the shared planner: an absent key is never a candidate, a blank is
+    // refused unless the explicit clear action came with it.
+    const plan = readFileSync("lib/clients/profile-baseline.ts", "utf8");
+    expect(plan).toMatch(/if \(!formData\.has\(key\)\) continue;/);
+    expect(plan).toMatch(/clear_preferred_name"\) !== "yes"/);
+    expect(update).toMatch(/planProfileUpdate\(/);
     expect((update.match(/preferred_name:/g) ?? []).length).toBe(1);
   });
   it("saving a legal name never touches the clients table", () => {
     expect(legal).not.toMatch(/from\("clients"\)\s*\.(update|insert|upsert)/);
-    expect(legal).toMatch(/from\("client_legal_identities"\)\.upsert/);
+    expect(legal).toMatch(/from\("client_legal_identities"\)/);
+    expect(legal).not.toMatch(/\.upsert\(/);
     expect(legal).not.toMatch(/preferred_name/);
   });
   it("the legal identity is staff entry only: source is fixed, nothing infers or imports it", () => {

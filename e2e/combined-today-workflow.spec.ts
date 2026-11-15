@@ -184,7 +184,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
 
       // Chronological: the earlier appointment renders first.
       const times = await rows.evaluateAll((els) =>
-        els.map((e) => e.querySelector("div.tabular-nums")?.textContent?.trim() ?? ""),
+        els.map((e) => e.querySelector("div.tabular-nums > span")?.textContent?.trim() ?? ""),
       );
       expect(times.filter(Boolean)).toHaveLength(2);
       const toMinutes = (t: string) => {
@@ -235,7 +235,11 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await openDashboard(page);
 
       const section = todaySection(page);
-      await expect(section.getByText(/1 appointment · 1 client/)).toHaveCount(1);
+      // The counts live in the summary strip (DaySummary was folded into it): the Appointments
+      // value, with the client count as its sub-label.
+      const strip = page.getByTestId("dashboard-summary-strip");
+      await expect(strip.getByTestId("summary-appointments-value")).toHaveText("1");
+      await expect(strip.getByTestId("summary-clients-sublabel")).toHaveText("1 client");
       // ...and the empty state is absent on a day that has appointments.
       await expect(page.getByText("No appointments today.")).toHaveCount(0);
       // The Book appointment action is unchanged.
