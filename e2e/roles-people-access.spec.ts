@@ -76,7 +76,7 @@ async function openPeople(page: Page): Promise<void> {
 }
 
 async function openOwnerCalendar(page: Page): Promise<void> {
-  await page.goto("/calendar");
+  await page.goto("/calendar?view=week");
   await expect(page.getByTestId("calendar-sidebar")).toBeAttached();
 }
 
