@@ -223,9 +223,10 @@ describe("real persistence status is stated in the UI", () => {
   });
 
   it("says nothing from the panel is recorded, and the fields below still are", () => {
-    expect(html).toContain("Recorded:");
-    expect(html).toContain("nothing from this panel");
+    expect(html).toContain("Readings from this panel:");
+    expect(html).toContain("none yet");
     expect(html).toContain("remain the record");
+    expect(html).not.toContain("Machine and mode:");
   });
 
   it("never claims a saved selection", () => {

@@ -415,7 +415,7 @@ function MachineFirstSetupPanelImpl({
     restored ? restored.modeKey : initialModeKey,
   );
   // How many readings this panel has actually saved in this mount. Drives the
-  // "Recorded:" line, which previously claimed "nothing" even after a save.
+  // "Readings from this panel" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
   const selectRef = useRef<HTMLSelectElement | null>(null);
   const [legacyChosen, setLegacyChosen] = useState(
@@ -1171,7 +1171,12 @@ function MachineFirstSetupPanelImpl({
       <PersistenceStatus
         hasScope={scope != null}
         persistence={persistence}
-        savedCount={savedCount}
+        // WHAT THE BLOCK HOLDS, not what this visit did: the saved identity comes from the area's own record, and the readings are
+        // the ones recorded for the block (this visit's own saves are the floor until the page refreshes them).
+        identitySaved={
+          Boolean(blockId) && (savedDeviceId !== null || (initialLegacyChosen && legacyMachine !== null))
+        }
+        readingsSaved={recordedSetupUnavailable ? null : Math.max(savedCount, recordedSetup.length)}
         rememberedDeviceId={selection.persisted}
       />
     </section>
@@ -1202,13 +1207,16 @@ export function MachineFirstSetupPanel(props: MachineFirstSetupPanelProps) {
 function PersistenceStatus({
   hasScope,
   persistence,
-  savedCount,
+  identitySaved,
+  readingsSaved,
   rememberedDeviceId,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
-  /** Readings this panel has actually saved, so the line below is derived. */
-  savedCount: number;
+  /** The block has a saved machine identity (a unit and mode, or the existing workflow). */
+  identitySaved: boolean;
+  /** Readings saved for this block, or null when that could not be read. */
+  readingsSaved: number | null;
   /**
    * The machine ACTUALLY remembered right now, or null.
    *
@@ -1246,19 +1254,24 @@ function PersistenceStatus({
           </dd>
         )}
       </div>
-      <div className="flex gap-1.5">
-        <dt className="font-medium">Recorded:</dt>
+      {identitySaved && (
+        <div className="flex gap-1.5" data-testid="machine-first-status-identity">
+          <dt className="font-medium">Machine and mode:</dt>
+          <dd>saved to this block.</dd>
+        </div>
+      )}
+      <div className="flex gap-1.5" data-testid="machine-first-status-readings">
+        <dt className="font-medium">Readings from this panel:</dt>
         <dd>
           {/*
-            This line used to say "nothing from this panel" unconditionally,
-            which stopped being true the moment reading entry shipped: after a
-            successful save it contradicted both the success message and the
-            rows actually inserted, leaving a practitioner unsure whether the
-            settings were stored (Codex, 9c6fbbe5).
+            Two facts, said separately. "Nothing from this panel" used to cover both, and it was wrong twice: after a machine is chosen
+            (the block saves the machine and mode) and on reopen beside the saved list (it counted only this visit's saves).
           */}
-          {savedCount > 0
-            ? `${savedCount} setting${savedCount === 1 ? "" : "s"} saved to this block's machine record. The treatment fields below are separate and unchanged.`
-            : "nothing from this panel yet. The treatment fields below are unchanged and remain the record."}
+          {readingsSaved === null
+            ? "could not be checked just now. The treatment fields below are unchanged and remain the record."
+            : readingsSaved > 0
+              ? `${readingsSaved} saved to this block's machine record. The treatment fields below are separate and unchanged.`
+              : "none yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>
     </dl>
