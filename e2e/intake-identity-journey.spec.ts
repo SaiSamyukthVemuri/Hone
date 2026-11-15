@@ -12,7 +12,7 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 import { INTAKE_STEPS, TOTAL_STEPS } from "@/lib/intake/questions";
 
-// 0340 (HON-78): one intake taken through every legitimate browser writer, in order, against the real local
+// 0340: one intake taken through every legitimate browser writer, in order, against the real local
 // database with 0340 in the chain: the client's token-page save, the client's submit, the owner's review, then the
 // owner's notes. After every step the row still belongs to the same client and studio and is not hidden.
 //

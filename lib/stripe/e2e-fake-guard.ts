@@ -38,6 +38,11 @@ function deployedEnvironmentSignal(env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
+// True when ANY hosted/deployed-runtime marker is present (the same markers that refuse the fake).
+export function isDeployedRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return deployedEnvironmentSignal(env) !== null;
+}
+
 // Throws (fail-closed) unless fake Stripe is explicitly + safely enabled.
 export function assertE2eFakeStripeAllowed(
   env: NodeJS.ProcessEnv = process.env,

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, adminTx, asRole, closePool, seedMember, seedStudio, userQuery, type SeededStudio } from "./helpers/harness";
 
-// 0340 (HON-78): an intake cannot be moved to another client or studio (any state, any caller), and a submitted
+// 0340: an intake cannot be moved to another client or studio (any state, any caller), and a submitted
 // or reviewed one cannot be hidden or restored by a signed-in member using their own session against the table (the Data API path). Real migrated chain,
 // synthetic placeholder answers only.
 

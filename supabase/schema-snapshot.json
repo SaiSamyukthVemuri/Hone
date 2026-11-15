@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 265,
+    "count": 267,
     "last": "0340_intake_terminal_identity_immutability.sql",
-    "sha256": "25701f9b4a668dc86dec35f2d045554e4f57b8cd335b9fc529fcc2b0eec69e11"
+    "sha256": "d9c137dc4795d6375de822e36882a5027275d1b0a86334293157bd1242ae3c04"
   },
   "public": {
     "tables": [
