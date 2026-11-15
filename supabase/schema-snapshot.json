@@ -3,7 +3,7 @@
   "migrations": {
     "count": 270,
     "last": "0351_studio_manual_fee_settings.sql",
-    "sha256": "64f05b51b56d1c0bd237c3c71b26d3e81874c8b3602f4be8ef4887a54d43dfb9"
+    "sha256": "a95f520533a44effe2570fcfecb5a7fcf638ceac36dd3fa333c3550f261e5b07"
   },
   "public": {
     "tables": [
