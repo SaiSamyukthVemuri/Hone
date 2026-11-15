@@ -88,6 +88,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     order: 20,
   },
   { id: "team", group: "studio", label: "Team", href: "/settings/team", roles: OWNER, order: 30 },
+  { id: "roles", group: "studio", label: "Roles", href: "/settings/roles", roles: OWNER, order: 31 },
   {
     id: "booking",
     group: "studio",

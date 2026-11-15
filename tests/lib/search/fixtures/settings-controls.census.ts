@@ -412,6 +412,15 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-pending-invitations",
   },
 
+  // ------------------------------------------------------------------ roles
+  {
+    page: "/settings/roles",
+    label: "Roles",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-roles",
+  },
+
   // ---------------------------------------------------------------- consent
   {
     page: "/settings/consent",
