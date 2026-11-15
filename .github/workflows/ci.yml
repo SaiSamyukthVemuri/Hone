@@ -1236,7 +1236,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Aggregate browser shard results
+      # CI-DRAFT-01 follow-up (SHEP-LATEST-01 PR1). One job, three steps, so a draft deferral
+      # is a step of its own: a step named exactly `DRAFT-DEFERRED` that FAILED is the
+      # only thing the merge-status tooling accepts as "this failure is a deferral, not a defect".
+      # Every step carries the same env block and recomputes what it needs from it; NO shell
+      # state crosses a step boundary. Order matters: the changes-gate and canonical-record
+      # checks (step 1) run before any draft handling (step 2), so a classifier or record failure
+      # can never be reported as a deferral. The job name `browser e2e (local stack)` is unchanged.
+      - name: Fail closed on prerequisites
         env:
           # The GATE's own outcome, not just its outputs. Load-bearing: see the
           # fail-closed check at the top of the script.
@@ -1306,6 +1313,33 @@ jobs:
             exit 1
           fi
 
+      - name: DRAFT-DEFERRED
+        if: ${{ github.event.pull_request.draft == true }}
+        env:
+          # The GATE's own outcome, not just its outputs. Load-bearing: see the
+          # fail-closed check at the top of the script.
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHARD_RESULT: ${{ needs.browser-e2e-shard.result }}
+          BROWSER_RUN: ${{ needs.changes.outputs.browser_run }}
+          FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
+          EXTENDED: ${{ needs.changes.outputs.browser_extended }}
+          SHARDS: ${{ needs.changes.outputs.browser_shards }}
+          RECORD_RESULT: ${{ needs.canonical-record.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
+          DOCS_CONSISTENCY: ${{ needs.changes.outputs.docs_consistency }}
+          # CI-DRAFT-01. Inputs to the draft-deferral calculation below: exactly the
+          # classifier outputs the draft-gated heavy jobs' own conditions read.
+          IS_DRAFT: ${{ github.event.pull_request.draft == true }}
+          DATABASE: ${{ needs.changes.outputs.database }}
+          SECURITY: ${{ needs.changes.outputs.security }}
+          PAYMENT: ${{ needs.changes.outputs.payment }}
+          MOBILE: ${{ needs.changes.outputs.mobile }}
+          GOOGLE_CALENDAR: ${{ needs.changes.outputs.google_calendar }}
+          BROWSER_SPECS: ${{ needs.changes.outputs.browser_specs }}
+        run: |
+          set -euo pipefail
+
           # CI-DRAFT-01. DEFERRED DRAFT COVERAGE FAILS CLOSED.
           #
           # A draft PR skips the heavy lanes (each carries
@@ -1352,6 +1386,32 @@ jobs:
             fi
             echo "draft PR: this diff requires no heavy coverage"
           fi
+
+      - name: Aggregate browser shard results
+        env:
+          # The GATE's own outcome, not just its outputs. Load-bearing: see the
+          # fail-closed check at the top of the script.
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHARD_RESULT: ${{ needs.browser-e2e-shard.result }}
+          BROWSER_RUN: ${{ needs.changes.outputs.browser_run }}
+          FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
+          EXTENDED: ${{ needs.changes.outputs.browser_extended }}
+          SHARDS: ${{ needs.changes.outputs.browser_shards }}
+          RECORD_RESULT: ${{ needs.canonical-record.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
+          DOCS_CONSISTENCY: ${{ needs.changes.outputs.docs_consistency }}
+          # CI-DRAFT-01. Inputs to the draft-deferral calculation below: exactly the
+          # classifier outputs the draft-gated heavy jobs' own conditions read.
+          IS_DRAFT: ${{ github.event.pull_request.draft == true }}
+          DATABASE: ${{ needs.changes.outputs.database }}
+          SECURITY: ${{ needs.changes.outputs.security }}
+          PAYMENT: ${{ needs.changes.outputs.payment }}
+          MOBILE: ${{ needs.changes.outputs.mobile }}
+          GOOGLE_CALENDAR: ${{ needs.changes.outputs.google_calendar }}
+          BROWSER_SPECS: ${{ needs.changes.outputs.browser_specs }}
+        run: |
+          set -euo pipefail
 
           REQUIRED="false"
           if [ "$BROWSER_RUN" = "true" ] || [ "$FULL_MATRIX" = "true" ]; then REQUIRED="true"; fi

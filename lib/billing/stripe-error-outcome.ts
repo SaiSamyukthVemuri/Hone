@@ -28,6 +28,14 @@ import Stripe from "stripe";
 // documents that it says nothing about whether that EARLIER request succeeded
 // (Codex P1 4301326107). It arises exactly on a retry of an ambiguous first
 // attempt, so treating it as a refusal would reopen the double charge.
+// CHARGE path (Sam's E2 standard): a 429 is TRANSIENT, not a refusal. Retrying the same request can
+// succeed, and nothing proves no PaymentIntent exists, so a rate limit must leave the attempt where
+// every other unknown outcome goes (pending_stripe, manual review, still blocking), never `failed`.
+// The refund runner keeps the broader predicate above; that is a separate decision.
+export function isDefinitiveChargeRefusal(err: unknown): boolean {
+  return isDefinitiveStripeRefusal(err) && !(err instanceof Stripe.errors.StripeRateLimitError);
+}
+
 export function isDefinitiveStripeRefusal(err: unknown): boolean {
   return (
     err instanceof Stripe.errors.StripeCardError ||
