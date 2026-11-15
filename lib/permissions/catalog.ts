@@ -1540,7 +1540,7 @@ export const FIXED_OWNER_ONLY: readonly FixedOwnerOnly[] = [
 export const NOT_OFFERED_AS_TOGGLES: readonly string[] = [
   "Studio administration other than the keys above (studio details, email and text toggles, tracking, the Google destination, machines, onboarding): owner-only this release (Sam, 2 Nov, DN-4b)",
   "Payment settings policy such as 'card required' (stays owner-only; the settings page must split it from the fee AMOUNTS key)",
-  "Viewing signed consent contents and machine settings: ride on clin.view_records, no separate key",
+  "Viewing signed consent contents and policy acknowledgements: ride on intake access (clin.view_intake, Sam, 12 Nov), no separate key. Viewing machine settings: rides on clin.view_records, no separate key",
   "ID-photo store and portrait (0275 / 0231): not built or feature-off; no key until they ship",
   "Hone subscription and billing portal, tax and currency, receipt branding, business name",
 ];
