@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion } from "./helpers/migration-state";
+import { countVersion, isRepoMax } from "./helpers/migration-state";
 
 // 0339: services and consent_form_templates writes are owner-only (HON-44 gaps H1, H2). STATIC contract only.
 // Behaviour is proved against a real database in tests/db/owner-only-catalog-writes.db.test.ts.
@@ -27,6 +27,10 @@ const TABLES = [
 ] as const;
 
 describe("0339: shape", () => {
+  it("is the current maximum migration (only the max may assert this)", () => {
+    expect(isRepoMax("0339")).toBe(true);
+  });
+
   it("consumes exactly one number", () => {
     expect(countVersion("0339")).toBe(1);
   });
