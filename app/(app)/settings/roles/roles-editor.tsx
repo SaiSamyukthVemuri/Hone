@@ -687,7 +687,7 @@ function RowList({
             {row.locked && <p className="break-words text-xs text-neutral-500">{row.locked}</p>}
             {row.enforcement === "deny_only" && (
               <p data-testid="deny-only-note" className="break-words text-xs text-neutral-600 dark:text-neutral-400">
-                Turning this down takes effect now. {WIDENING_LATER_LINE}
+                Turning this down is saved now. It is in force only when the line above says so. {WIDENING_LATER_LINE}
               </p>
             )}
             {(row.enforcement === "observe" || row.enforcement === "not_yet") && (
@@ -1094,7 +1094,7 @@ function AccessSummary({ person, load }: { person: PersonView; load: RolesEditor
   const defs = new Map((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d]));
   return (
     <div data-testid="access-summary" className="mt-2 flex flex-col gap-2 text-sm">
-      <p className="text-neutral-600 dark:text-neutral-400">Access in force right now. Choices saved but waiting for activation, and unsaved edits, are not counted here.</p>
+      <p className="text-neutral-600 dark:text-neutral-400">Access in force right now, as the permission settings give it. Choices saved but waiting for activation, and unsaved edits, are not counted here. The database does not check these settings yet.</p>
       <ul className="flex flex-col gap-0.5">
         {state.rows.map((r) => (
           <li key={r.key} data-access-row={r.key} data-effective={r.scope} className="break-words text-xs">
