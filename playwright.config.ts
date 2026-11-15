@@ -76,7 +76,13 @@ export default defineConfig({
     // whenever Playwright writes artifacts, which Fast-Refreshes the
     // page mid-test and aborts in-flight server actions. A built
     // server is deterministic and matches what CI would run.
-    command: "npm run e2e:server",
+    // HONE_E2E_REUSE_BUILD=1 starts the build an EARLIER step of the same job
+    // already produced for this checkout instead of compiling it again. Only
+    // the CI native-3G step sets it (pinned in tests/ci/ci-config.test.ts): its
+    // server differs from the ordinary pass by one runtime-read variable, so
+    // the second `next build` (~100 s per shard) produced an identical build.
+    // With no .next present `next start` exits and the run fails loudly.
+    command: process.env.HONE_E2E_REUSE_BUILD === "1" ? "npm run start" : "npm run e2e:server",
     url: E2E_APP_ORIGIN,
     env: E2E_WEB_SERVER_ENV,
     // TEST-PORT-01. This was `!process.env.CI`, i.e. TRUE locally, which is how

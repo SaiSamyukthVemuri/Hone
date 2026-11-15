@@ -1182,6 +1182,9 @@ jobs:
           NODE
         env:
           HONE_SYNTHETIC_MACHINE_PROFILE: "1"
+          # The `e2e` step above built this checkout in this workspace. The
+          # flag is read at request time, so start that build, not a second one.
+          HONE_E2E_REUSE_BUILD: "1"
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
 
       - name: Upload Playwright traces on failure

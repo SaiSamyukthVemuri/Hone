@@ -2869,6 +2869,23 @@ describe("HON-18 existing browser job executes guarded native proof", () => {
   });
 
 
+  it("reuses the ordinary pass's build only in the native step, and nowhere else", () => {
+    // Only a step that runs AFTER a full `next build` in the same job may skip the build.
+    const setters = Object.entries(doc.jobs).flatMap(([name, j]) =>
+      (j.steps ?? []).filter((step) => (step.env as Record<string, string> | undefined)?.HONE_E2E_REUSE_BUILD !== undefined).map((step) => `${name}/${String(step.id)}`),
+    );
+    expect(setters).toEqual(["browser-e2e-shard/native3g"]);
+    expect(doc.env?.HONE_E2E_REUSE_BUILD).toBeUndefined();
+    expect(job.env?.HONE_E2E_REUSE_BUILD).toBeUndefined();
+    expect(CI.match(/HONE_E2E_REUSE_BUILD/g)?.length).toBe(1);
+    expect((native.env as Record<string, string>).HONE_E2E_REUSE_BUILD).toBe("1");
+    // The ordinary pass still compiles: the default command is the production build.
+    const config = readFileSync(path.join(process.cwd(), "playwright.config.ts"), "utf8");
+    expect(config).toContain('command: process.env.HONE_E2E_REUSE_BUILD === "1" ? "npm run start" : "npm run e2e:server",');
+    // The web server env never forwards it, so it cannot change what the server does.
+    expect(readFileSync(path.join(process.cwd(), "e2e/helpers/local-env.ts"), "utf8")).not.toContain("HONE_E2E_REUSE_BUILD");
+  });
+
   const verification = String(native.run).match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)!;
   function check(report: unknown): string {
     if (!verification) throw new Error("native verification program missing");
