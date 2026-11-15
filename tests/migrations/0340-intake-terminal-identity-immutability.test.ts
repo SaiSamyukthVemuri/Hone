@@ -14,8 +14,8 @@ const E = exec(readFileSync(join(root, `supabase/migrations/${NAME}.sql`), "utf8
 const DOWN = exec(readFileSync(join(root, `supabase/rollbacks/${NAME}.down.sql`), "utf8"));
 
 describe("0340: shape", () => {
-  it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0340")).toBe(true);
+  it("is no longer the current maximum migration (only the max may assert it)", () => {
+    expect(isRepoMax("0340")).toBe(false);
   });
 
   it("consumes exactly one number, opens its own transaction and arms lock_timeout inside it", () => {
