@@ -195,13 +195,19 @@ function FeeTypeSection({
           type="checkbox"
           checked={savedEnabled}
           disabled={pending}
-          onChange={(e) =>
+          onChange={(e) => {
+            // Capture the intended value SYNCHRONOUSLY. This input is controlled: once the handler returns React restores
+            // `checked` to the saved value, so reading e.target.checked after the await would read the OLD value, save ON, and
+            // then record OFF (and send a stale expectedEnabled with the next save). One captured value feeds the request,
+            // the success state and (through savedEnabled) the next expectedEnabled.
+            const intended = e.target.checked;
+            const expected = savedEnabled;
             run(
-              () => setManualFeeEnabledAction({ feeType, enabled: e.target.checked, expectedEnabled: savedEnabled }),
-              () => setSavedEnabled(e.target.checked),
+              () => setManualFeeEnabledAction({ feeType, enabled: intended, expectedEnabled: expected }),
+              () => setSavedEnabled(intended),
               "Saved.",
-            )
-          }
+            );
+          }}
           data-testid={`${slug}-fee-enabled`}
         />
         <span>Allow {title.toLowerCase()}s</span>
