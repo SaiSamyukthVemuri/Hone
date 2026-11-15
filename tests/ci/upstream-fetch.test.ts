@@ -66,11 +66,36 @@ describe("fetchUpstreamOnce", () => {
     expect(totalRetries(t)).toBe(1);
   });
 
-  it("recognises a reset by code or by message, and nothing else", () => {
+  it("recognises a reset by its code, or by Playwright's exact message form", () => {
     expect(isConnectionReset(reset())).toBe(true);
+    expect(isConnectionReset(Object.assign(new Error("anything"), { code: "ECONNRESET" }))).toBe(true);
+    expect(isConnectionReset(new Error("route.fetch: read ECONNRESET"))).toBe(true);
     expect(isConnectionReset(new Error("read ECONNRESET"))).toBe(true);
+    expect(isConnectionReset(new Error("route.fetch: read ECONNRESET\nCall log:\n  - → POST http://localhost:3111/x"))).toBe(true);
     expect(isConnectionReset(new Error("ECONNREFUSED"))).toBe(false);
     expect(isConnectionReset(null)).toBe(false);
+    expect(isConnectionReset("read ECONNRESET")).toBe(false);
+  });
+
+  it("a message that merely MENTIONS ECONNRESET is not a reset and is not retried", async () => {
+    for (const message of [
+      "the action failed; a previous ECONNRESET was logged",
+      "upstream returned 500 after read ECONNRESET on another request",
+      "route.fetch: socket hang up (not an ECONNRESET)",
+      "Error: something read ECONNRESET happened",
+    ]) {
+      const failure = new Error(message);
+      expect(isConnectionReset(failure)).toBe(false);
+      const route = scripted([failure, "ok"]); const t = fresh();
+      await expect(fetchUpstreamOnce(route, t)).rejects.toBe(failure);
+      expect(route.calls).toBe(1);
+    }
+  });
+
+  it("an error with the ECONNRESET code and an unrelated message IS retried", async () => {
+    const route = scripted([Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }), "ok"]); const t = fresh();
+    await expect(fetchUpstreamOnce(route, t)).resolves.toEqual({ ok: true });
+    expect(t.retriesPerFetch).toEqual([1]);
   });
 });
 

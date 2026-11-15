@@ -1178,7 +1178,8 @@ jobs:
           if (report.errors?.length || tests.length === 0 || tests.some((test) => test.expectedStatus !== 'passed' || test.results.length !== 1 || test.results[0].status !== 'passed')) {
             throw new Error('Native acceptance requires actual passing cases, with no skips or retries');
           }
-          console.log(`Native acceptance: ${tests.length} actual passes, zero skips/retries`);
+          const resets = tests.filter((test) => (test.annotations ?? []).some((a) => a.type === 'upstream-econnreset-retry')).length;
+          console.log(`Native acceptance: ${tests.length} actual passes, zero skips/retries; upstream resets retried: ${resets}`);
           NODE
         env:
           HONE_SYNTHETIC_MACHINE_PROFILE: "1"

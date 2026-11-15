@@ -2904,6 +2904,20 @@ describe("HON-18 existing browser job executes guarded native proof", () => {
   it("accepts a real nested passing case", () => {
     expect(check(report([{ status: "passed" }]))).toContain("1 actual passes, zero skips/retries");
   });
+  const annotated = (annotations: Array<{ type: string }>, tests = 1) => ({
+    suites: [{ suites: [{ specs: [{ tests: Array.from({ length: tests }, (_, i) => ({
+      expectedStatus: "passed", results: [{ status: "passed" }], annotations: i === 0 ? annotations : [],
+    })) }] }] }], errors: [],
+  });
+  it("prints how many passing cases needed an upstream reset retry, and never changes the pass condition", () => {
+    expect(check(report([{ status: "passed" }]))).toContain("zero skips/retries; upstream resets retried: 0");
+    expect(check(annotated([{ type: "upstream-econnreset-retry" }], 3))).toContain("3 actual passes, zero skips/retries; upstream resets retried: 1");
+    expect(check(annotated([{ type: "other" }, { type: "upstream-econnreset-retry" }, { type: "upstream-econnreset-retry" }], 2)))
+      .toContain("upstream resets retried: 1");
+    // An annotation never rescues a failing or retried case.
+    const failing = { suites: [{ specs: [{ tests: [{ expectedStatus: "passed", results: [{ status: "failed" }], annotations: [{ type: "upstream-econnreset-retry" }] }] }] }], errors: [] };
+    expect(() => check(failing)).toThrow();
+  });
   it.each(["skipped", "failed", "interrupted"])("refuses a %s native result", (status) => {
     expect(() => check(report([{ status }]))).toThrow();
   });

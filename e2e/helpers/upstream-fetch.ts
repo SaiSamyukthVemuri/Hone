@@ -25,9 +25,16 @@ export interface UpstreamTally {
   retriesPerFetch: number[];
 }
 
+// A reset is recognised by its error CODE, or by Playwright's own message form for it: the
+// first line is exactly "<api>: read ECONNRESET" (the call log follows on later lines). A
+// message that merely MENTIONS the text, for example an application error, is not a reset.
+const PLAYWRIGHT_RESET_LINE = /^(?:[\w.]+: )?read ECONNRESET$/;
+
 export const isConnectionReset = (error: unknown): boolean => {
-  const code = (error as { code?: unknown } | null)?.code;
-  return code === "ECONNRESET" || /\bECONNRESET\b/.test(String((error as { message?: unknown } | null)?.message ?? error));
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === "ECONNRESET") return true;
+  return typeof message === "string" && PLAYWRIGHT_RESET_LINE.test(message.split("\n")[0]!.trim());
 };
 
 export async function fetchUpstreamOnce<R>(route: FetchableRoute<R>, tally: UpstreamTally): Promise<R> {
