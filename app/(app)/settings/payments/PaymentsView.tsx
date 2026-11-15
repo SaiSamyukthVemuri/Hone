@@ -45,7 +45,7 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
     // The fee currency is the studio's VERIFIED jurisdiction currency, never a
     // constant; an unknown or unreadable jurisdiction prints "not confirmed".
     const feeJurisdictionOnly = await getStudioPaymentJurisdiction(studio.id);
-    // "Saved" versus "actually active" (Sam, 15 Nov). Payment readiness here is the same server-derived capability the
+    // "Saved" versus "actually active". Payment readiness here is the same server-derived capability the
     // setup banner uses, plus a confirmed jurisdiction. The gate itself is the one prepare and execute call.
     const feeSupabase = await createClient();
     const { data: feeRows, error: feeRowsErr } = await feeSupabase.rpc("get_studio_payment_settings_display", {

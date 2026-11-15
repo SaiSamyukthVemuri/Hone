@@ -1,7 +1,7 @@
 import "server-only";
 import { recordOpsAlertDurably } from "@/lib/ops/alerts";
 
-// NON-MUTATING sweep for a manual fee attempt that is stuck (Sam's monitoring criterion: detection that does not depend on
+// NON-MUTATING sweep for a manual fee attempt that is stuck (a monitoring requirement: detection that does not depend on
 // the charge runner or the webhook running again).
 //
 // WHAT IT FINDS. A payment_charge_attempts row whose charge_reason is no_show_fee or late_cancellation_fee, whose status is
@@ -20,8 +20,8 @@ import { recordOpsAlertDurably } from "@/lib/ops/alerts";
 //
 // WHAT IT DOES. Reads attempts; writes ONLY an ops_alerts row (the existing critical alert
 // "session_payment_needs_manual_review", which also emails OPS_ALERT_EMAILS) through recordOpsAlertDurably. It NEVER updates or
-// deletes an attempt, never calls Stripe, never charges, refunds, cancels or retries. First responder: OPS. Stripe
-// investigation escalates to Sam.
+// deletes an attempt, never calls Stripe, never charges, refunds, cancels or retries. First responder: the on-call operator. Stripe
+// investigation escalates to the platform operator.
 //
 // ONCE PER ATTEMPT (DEDUPE). Before alerting, it looks for an existing alert with the same event, the same attempt id in
 // safe_details and the same sweep reason; if one exists (resolved or not) it stays silent. A run that fails to persist the

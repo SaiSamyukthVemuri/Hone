@@ -1,5 +1,5 @@
 -- 0351: per-studio on/off settings for the two manual fees (late cancellation, no-show). NOT APPLIED. Hosted apply needs
--- Sam's per-change approval and its own package. Number chosen from `npm run migration:state` (next free 0342) and the open
+-- the platform operator's per-change approval and its own package. Number chosen from `npm run migration:state` (next free 0342) and the open
 -- PRs: 0342-0350 are claimed by open work.
 --
 -- WHAT. Two boolean columns on public.studios, NOT NULL DEFAULT false:

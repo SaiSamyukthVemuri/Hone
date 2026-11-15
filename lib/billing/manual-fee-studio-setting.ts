@@ -87,15 +87,15 @@ export async function loadManualFeeSettingBlockMessage(
 // TEMPORARY RELEASE CONTROL. The per-reason release lists (HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS and
 // HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS in live-charge-reason-allowlist.ts) are a rollout control, not the studio-facing
 // feature.
-// For EACH fee type separately, its list is removed only when ALL of these hold (OPS, per Sam, 15 Nov 2026):
+// For EACH fee type separately, its list is removed only when ALL of these hold (set by the platform operator, 15 Nov 2026):
 //   (a) the settings migration (0351) is applied and read back;
-//   (b) the readiness of that type has been reviewed (Insurance, and Privacy for the wording);
+//   (b) the readiness of that type has been reviewed (payment-safety review, and a wording review);
 //   (c) its tests pass, including the test-mode smoke for that type;
 //   (d) monitoring is in place for stuck or unclear fee attempts;
-//   (e) Sam gives explicit rollout approval, in his own words.
+//   (e) the platform operator gives explicit rollout approval.
 // There is NO minimum number of days or of real charged fees: a real fee is never created to satisfy a testing count.
 // The removal is a PR that deletes that type's release check, after which the owner's setting plus payment readiness
-// alone govern. First responder for a stuck or unclear fee attempt is OPS; Stripe investigation escalates to Sam.
+// alone govern. First responder for a stuck or unclear fee attempt is the on-call operator; Stripe investigation escalates to the platform operator.
 // ---------------------------------------------------------------------------
 
 export type ManualFeeEffectiveState = "off" | "active" | "not_active_payments" | "not_active_release";
@@ -118,5 +118,5 @@ export const MANUAL_FEE_STATE_COPY: Record<ManualFeeEffectiveState, { saved: str
   off: { saved: "Saved as off", effective: "Not active" },
   active: { saved: "Saved as on", effective: "Active" },
   not_active_payments: { saved: "Saved as on", effective: "Not active: payments are not ready" },
-  not_active_release: { saved: "Saved as on", effective: "Not active yet: release pending" },
+  not_active_release: { saved: "Saved as on", effective: "Not active yet: not released for your studio" },
 };

@@ -36,15 +36,15 @@ const MANUAL_FEE_CHARGE_REASONS = new Set<string>(["no_show_fee", "late_cancella
 // TEMPORARY RELEASE CONTROL, not the studio-facing feature. The studio-facing switch is the owner's own setting
 // (studios.late_cancel_fee_enabled / no_show_fee_enabled, 0351, lib/billing/manual-fee-studio-setting.ts). In LIVE mode a
 // fee needs BOTH that setting ON and the studio in that reason's list here; in TEST mode only the setting applies.
-// For EACH fee type separately, its list is removed only when ALL of these hold (OPS, per Sam, 15 Nov 2026):
+// For EACH fee type separately, its list is removed only when ALL of these hold (set by the platform operator, 15 Nov 2026):
 //   (a) the settings migration (0351) is applied and read back;
-//   (b) the readiness of that type has been reviewed (Insurance, and Privacy for the wording);
+//   (b) the readiness of that type has been reviewed (payment-safety review, and a wording review);
 //   (c) its tests pass, including the test-mode smoke for that type;
 //   (d) monitoring is in place for stuck or unclear fee attempts;
-//   (e) Sam gives explicit rollout approval, in his own words.
+//   (e) the platform operator gives explicit rollout approval.
 // There is NO minimum number of days or of real charged fees: a real fee is never created to satisfy a testing count.
 // Removal is a PR that deletes that type's release check here, after which the owner's setting plus payment readiness
-// alone govern. First responder for a stuck or unclear attempt: OPS; Stripe investigation escalates to Sam.
+// alone govern. First responder for a stuck or unclear attempt: the on-call operator; Stripe investigation escalates to the platform operator.
 export const LATE_CANCEL_FEE_LIVE_STUDIOS_ENV = "HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS";
 export const NO_SHOW_FEE_LIVE_STUDIOS_ENV = "HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS";
 

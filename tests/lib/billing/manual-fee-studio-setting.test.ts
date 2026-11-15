@@ -155,7 +155,7 @@ describe("saved versus actually active (the Settings screen uses the same gates 
     expect(state(LATE, BOTH_ON, true, false)).toBe("active");
     expect(state(NOSHOW, BOTH_ON, true, false)).toBe("active");
   });
-  it("saved ON, ready, LIVE mode, studio NOT on that type's release list: NOT active (release pending)", () => {
+  it("saved ON, ready, LIVE mode, studio NOT on that type's release list: NOT active (not released for the studio)", () => {
     expect(state(LATE, BOTH_ON, true, true)).toBe("not_active_release");
     vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, STUDIO);
     expect(state(LATE, BOTH_ON, true, true)).toBe("not_active_release"); // the OTHER type's list does not open this one
@@ -178,7 +178,7 @@ describe("saved versus actually active (the Settings screen uses the same gates 
   it("the screen never says Active unless the state is active, and never says on-and-active for a gated type", () => {
     for (const s of ["off", "not_active_payments", "not_active_release"] as const) expect(MANUAL_FEE_STATE_COPY[s].effective).not.toMatch(/^Active/);
     expect(MANUAL_FEE_STATE_COPY.active.effective).toBe("Active");
-    expect(MANUAL_FEE_STATE_COPY.not_active_release.effective).toMatch(/release pending/);
+    expect(MANUAL_FEE_STATE_COPY.not_active_release.effective).toMatch(/not released for your studio/);
     expect(MANUAL_FEE_STATE_COPY.not_active_payments.effective).toMatch(/payments are not ready/);
   });
   it("the Settings page asks this function, with the same gates, and holds no studio id or env read of its own", () => {
@@ -316,8 +316,47 @@ describe("PREPARE and the owner-only write use the same gate (source pins)", () 
     for (const f of ["lib/billing/manual-fee-studio-setting.ts", "lib/billing/live-charge-reason-allowlist.ts"]) {
       const src = read(f);
       expect(src.startsWith('import "server-only";')).toBe(true);
-      expect(src).toMatch(/Sam gives explicit rollout approval/);
+      expect(src).toMatch(/the platform operator gives explicit rollout approval/);
       expect(src).not.toMatch(/14 days|5 real|at least 5/);
     }
+  });
+});
+
+// "Nothing is ever charged automatically" (Settings copy). This pins it: the fee-charge server actions have exactly one importer
+// (the owner-facing card), the shared runner has exactly the two owner-pressed callers, and no cron route or library job reaches either.
+import { readdirSync, statSync } from "node:fs";
+describe("no automatic fee charge path exists", () => {
+  const root = path.resolve(__dirname, "../../..");
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === ".next" || name.startsWith(".")) continue;
+      const p = path.join(dir, name);
+      if (statSync(p).isDirectory()) walk(p, out);
+      else if (/\.(ts|tsx)$/.test(name)) out.push(path.relative(root, p));
+    }
+    return out;
+  };
+  const files = [...walk(path.join(root, "app")), ...walk(path.join(root, "lib"))];
+  const importersOf = (needle: RegExp) =>
+    files
+      .filter((f) => needle.test(readFileSync(path.join(root, f), "utf8").split("\n").filter((l) => /^\s*(import|export)\b|\bfrom\s+["']/.test(l) || /import\(/.test(l)).join("\n")))
+      .sort();
+  it("the fee prepare and charge actions are imported only by the owner-facing card", () => {
+    expect(importersOf(/manual-fee-actions/)).toEqual(["app/(app)/calendar/[id]/ManualFeeChargeCard.tsx"]);
+  });
+  it("the shared runner is called only from the two owner-pressed actions (plus its own helpers)", () => {
+    const callers = importersOf(/session-payment-charge["']/).filter((f) => !f.startsWith("lib/billing/"));
+    expect(callers).toEqual(["app/(app)/calendar/[id]/manual-fee-actions.ts", "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts"]);
+  });
+  it("no cron route imports either", () => {
+    for (const f of files.filter((x) => x.startsWith("app/api/cron/"))) {
+      const src = readFileSync(path.join(root, f), "utf8");
+      expect(src).not.toMatch(/manual-fee-actions|session-payment-charge|payment-actions/);
+    }
+  });
+  it("the charge action requires the owner and an explicit confirmation", () => {
+    const src = readFileSync(path.join(root, "app/(app)/calendar/[id]/manual-fee-actions.ts"), "utf8");
+    expect(src).toMatch(/practitioner\.role !== "owner"/);
+    expect(src).toMatch(/confirmCharge !== "true"/);
   });
 });
