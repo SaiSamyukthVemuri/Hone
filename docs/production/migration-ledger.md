@@ -21,11 +21,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0341**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14 and 2026-11-15, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340` and `0341` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340 and 0341 read-backs were each one row above the read before them). |
-| **Repo migration max** | **0341** (`0341_portal_message_member_write_policies.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
+| **Hosted (production) migration max** | **0350**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14 and 2026-11-15, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341` and `0350` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341 and 0350 read-backs were each one row above the read before them). |
+| **Repo migration max** | **0350** (`0350_setup_option_check_null_element.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
-| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338`, `0339`, `0340` and `0341` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
-| **Next free number** | Next free number is **0342** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338`, `0339`, `0340`, `0341` and `0350` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
+| **Next free number** | Next free number is **0351** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### What the two pending migrations are (no hosted claim)
@@ -132,6 +132,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Hosted at the verifying read-back:** 272 rows, max `0341`. By the row count (271 before, plus `0341` once, equals 272), `0328` to `0337` remain not hosted.
 - **Scope on hosted.** Only `client_portal_messages` and `client_portal_message_replies` changed: the three member write policies were dropped and INSERT and UPDATE were revoked from `anon` and `authenticated`. The two member SELECT policies, every SELECT grant and `service_role` are unchanged; no function, trigger, column or data changed.
 - **Declared hosted maximum.** Advanced to `0341` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0350 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0350-apply-receipt-20261115.json`)
+
+- **What it is.** `0350_setup_option_check_null_element.sql`: replaces one function so that a setup mode that requires an installed option is recorded only when the option is positively fitted; an unknown or incomplete option list refuses it. The file is carried by #1476; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-15 (`01-ops/SAM-AUTHORIZATION-0350-b00-20261115T171120Z.txt`), for this exact sealed package: apply 0350 only, with a plain push and without `--include-all`. It covers no other migration. After an earlier attempt that applied nothing, the owner gave a second approval, in their own words, for one new attempt under the same seal.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `cee54efa…`.
+- **Pre-apply read (Part A, 2026-11-15, 17:07:48Z to 17:07:49Z, client side).** PASS: 272 history rows, max `0341`, `0350` absent.
+- **First attempt (17:11Z).** It did not get past the dry run, so no push was reached and nothing reached production; `0350` was absent at its pre-push read.
+- **Read-back (2026-11-15, 17:21:33Z to 17:21:35Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
+- **Hosted at that read-back:** 273 rows, max `0350`. By the row count (272 before, plus `0350` once, equals 273), `0328` to `0337` remain not hosted, and so do `0342` to `0349`, which have no file on this tree.
+- **Scope on hosted.** Only one function changed (replaced; invoker; EXECUTE stays revoked from public, `anon`, `authenticated` and `service_role`). No table, policy, trigger, column or data changed.
+- **Declared hosted maximum.** Advanced to `0350` in `migration-state.json` by this record, from the receipt only.
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
