@@ -1,5 +1,6 @@
 "use client";
 
+import { currentSettingCount } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
@@ -420,6 +421,8 @@ function MachineFirstSetupPanelImpl({
   // How many readings this panel has actually saved in this mount. Drives the
   // "Readings from this panel" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
+  // The recorded list as it stood when this visit last saved: while the host still passes THAT array, its refresh has not landed.
+  const [savedAgainst, setSavedAgainst] = useState<{ list: typeof recordedSetup } | null>(null);
   const selectRef = useRef<HTMLSelectElement | null>(null);
   const [legacyChosen, setLegacyChosen] = useState(
     initialLegacyChosen && legacyMachine !== null,
@@ -654,6 +657,7 @@ function MachineFirstSetupPanelImpl({
             out.written ??
             input.groups.reduce((n, g) => n + g.readings.length, 0);
           setSavedCount((n) => n + written);
+          setSavedAgainst({ list: recordedSetup });
         }
         return out;
       }
@@ -1180,9 +1184,17 @@ function MachineFirstSetupPanelImpl({
           Boolean(blockId) && (savedDeviceId !== null || (initialLegacyChosen && legacyMachine !== null))
         }
         modeSaved={Boolean(blockId) && savedDeviceId !== null && savedModeKey !== null && savedModeKey !== ""}
-        // When the saved list could not be read, this visit's own saves are still a true floor ("at least N").
-        readingsSaved={recordedSetupUnavailable ? (savedCount > 0 ? savedCount : null) : Math.max(savedCount, recordedSetup.length)}
-        readingsExact={!recordedSetupUnavailable}
+        // CURRENT settings (the highest revision of each group, absences not counted), never the row count: the list holds every
+        // revision. It is EXACT only while the list is known current; after a save of this visit the list is the old snapshot until
+        // the host's refresh replaces it, and when that refresh failed or the list could not be read it stays old, so then the
+        // count is a floor ("at least N"), and nothing is shown at all when the list could not be read.
+        readingsSaved={recordedSetupUnavailable ? null : currentSettingCount(recordedSetup)}
+        readingsExact={
+          !recordedSetupUnavailable &&
+          !submissionBlocked &&
+          !(savedAgainst !== null && savedAgainst.list === recordedSetup)
+        }
+        savedThisVisit={savedCount > 0}
         rememberedDeviceId={selection.persisted}
       />
     </section>
@@ -1217,6 +1229,7 @@ function PersistenceStatus({
   modeSaved,
   readingsSaved,
   readingsExact,
+  savedThisVisit,
   rememberedDeviceId,
 }: {
   hasScope: boolean;
@@ -1229,6 +1242,8 @@ function PersistenceStatus({
   readingsSaved: number | null;
   /** False when the saved list could not be read: the count is then a floor, not the total. */
   readingsExact: boolean;
+  /** This visit saved readings (so "could not be read" is not "nothing"). */
+  savedThisVisit: boolean;
   /**
    * The machine ACTUALLY remembered right now, or null.
    *
@@ -1280,10 +1295,14 @@ function PersistenceStatus({
             (the block saves the machine and mode) and on reopen beside the saved list (it counted only this visit's saves).
           */}
           {readingsSaved === null
-            ? "could not be checked just now. The treatment fields below are unchanged and remain the record."
+            ? savedThisVisit
+              ? "saved this visit. The count could not be read just now. The treatment fields below are separate and unchanged."
+              : "could not be checked just now. The treatment fields below are unchanged and remain the record."
             : readingsSaved > 0
-              ? `${readingsExact ? "" : "at least "}${readingsSaved} saved to this block's machine record. The treatment fields below are separate and unchanged.`
-              : "none yet. The treatment fields below are unchanged and remain the record."}
+              ? `${readingsExact ? "" : "at least "}${readingsSaved} setting${readingsSaved === 1 ? "" : "s"} saved to this block's machine record. The treatment fields below are separate and unchanged.`
+              : savedThisVisit && !readingsExact
+                ? "saved this visit. The count will update when the list refreshes. The treatment fields below are separate and unchanged."
+                : "none yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>
     </dl>
