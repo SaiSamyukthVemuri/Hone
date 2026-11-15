@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 268,
-    "last": "0338_one_manual_fee_per_appointment.sql",
-    "sha256": "66610dddfd9fb8c15ce22eca0b6301ee98c225ad1a6512f3ebb7f0b43a5d9b74"
+    "count": 269,
+    "last": "0342_roles_staff_deactivate_core.sql",
+    "sha256": "6f48aa9f09d2c78e2b05a95e6ddcba43189ae50299390345c64df5a9a9a3125a"
   },
   "public": {
     "tables": [
@@ -278,6 +278,7 @@
       "current_privacy_version",
       "current_terms_version",
       "dashboard_attention_events_immutable",
+      "deactivate_staff_member",
       "decline_new_client_waitlist_invitation",
       "decline_waitlist_invitation_times_unsuitable",
       "decline_waitlist_invitation_with_answers",
@@ -423,6 +424,7 @@
       "perm_run_basis",
       "perm_run_changes",
       "perm_scope_source",
+      "perm_upcoming_policy",
       "permission_audit_append_only",
       "platform_lead_alerts_guard",
       "practitioner_cancel_appointment",
@@ -440,6 +442,7 @@
       "public_booking_tz_offset_minutes",
       "public_cancel_appointment_with_token",
       "public_reschedule_slot_candidates",
+      "reactivate_staff_member",
       "read_waitlist_admission_round_consumed",
       "read_waitlist_followup_status",
       "read_waitlist_followups",
