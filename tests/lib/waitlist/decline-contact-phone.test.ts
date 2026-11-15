@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { WAITLIST_PHONE_REQUIRED, WAITLIST_PHONE_TOO_LONG, validateWaitlistPhone } from "@/lib/waitlist/signup-contact";
 import {
   CONTACT_PHONE_PROBLEM_COPY,
   CONTACT_PHONE_SHAPE,
@@ -11,7 +12,7 @@ import {
   validateDeclineContactPhone,
 } from "@/lib/waitlist/decline-contact-phone";
 
-// HON-7 0328, independent part: pure phone rules for the "None of these times work" response. Synthetic numbers only.
+// Pure phone rules for the "None of these times work" response. Synthetic numbers only.
 // SENTINEL is a number nobody owns; no output may carry its digits except the masked hint's last four.
 const SENTINEL_TYPED = "(647) 555-0187";
 const SENTINEL_TYPED_DIGITS = "6475550187";
@@ -24,7 +25,7 @@ describe("validateDeclineContactPhone", () => {
     expect(validateDeclineContactPhone("+44 7700 900123")).toEqual({ ok: true, e164: "+447700900123" });
   });
 
-  it("every accepted number matches the 0328 stored shape and length", () => {
+  it("every accepted number matches the stored shape and length", () => {
     for (const raw of [SENTINEL_TYPED, "647 555 0187", "+447700900123", "+819012345678"]) {
       const r = validateDeclineContactPhone(raw);
       expect(r.ok).toBe(true);
@@ -132,8 +133,32 @@ describe("resolveContactChoice", () => {
   });
 });
 
-describe("the independent part stays unwired", () => {
-  // The 0328 app change removes this block when it wires the module. It must not be called from the action, the form or any page until the 0328 migration is applied and read back (rollout order B1).
+describe("number hardening", () => {
+  it("refuses letters and an extension marker instead of folding the extension into the number", () => {
+    for (const raw of ["+1 555 123 4567 ext 99", "647 555 0187 x12", "647-555-0187 ext. 3", "call 6475550187"]) {
+      expect(validateDeclineContactPhone(raw)).toEqual({ ok: false, problem: "invalid" });
+      expect(maskOnFilePhone(raw)).toEqual({ available: false });
+    }
+  });
+  it("an on-file number without the stored shape is unusable", () => {
+    expect(maskOnFilePhone("+0123456789")).toEqual({ available: false });
+  });
+  it("the mask never shows more than half the digits", () => {
+    expect(PHONE_MASK_DIGITS).toBe(4);
+    expect(maskOnFilePhone("+1234567")).toEqual({ available: false }); // 7 digits (also below the sender's minimum)
+    expect(maskOnFilePhone("+12345678")).toEqual({ available: true, lastDigits: "5678" }); // 8 digits: exactly half
+    expect(maskOnFilePhone("+16475550142")).toEqual({ available: true, lastDigits: "0142" });
+  });
+  it("the problem class is pinned to the sender's own copy, so a change to that copy fails here", () => {
+    expect(validateWaitlistPhone("").ok === false && (validateWaitlistPhone("") as { error: string }).error).toBe(WAITLIST_PHONE_REQUIRED);
+    expect((validateWaitlistPhone("1".repeat(41)) as { error: string }).error).toBe(WAITLIST_PHONE_TOO_LONG);
+    expect(validateDeclineContactPhone("")).toEqual({ ok: false, problem: "required" });
+    expect(validateDeclineContactPhone("1".repeat(41))).toEqual({ ok: false, problem: "too_long" });
+  });
+});
+
+describe("the phone rules stay unwired", () => {
+  // The wiring change removes this block. The module must not be called from an action, a form or a page until the storage that holds a number is applied and read back.
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name.startsWith(".")) continue;
@@ -152,7 +177,7 @@ describe("the independent part stays unwired", () => {
   });
   it("the module imports nothing that stores, sends or reads a database", () => {
     const src = readFileSync(join(process.cwd(), "lib/waitlist/decline-contact-phone.ts"), "utf8");
-    const imports = [...src.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
+    const imports = [...src.matchAll(/^import [^;]*? from "([^"]+)";$/gms)].map((m) => m[1]);
     expect(imports.sort()).toEqual(["./signup-contact", "@/lib/sms/phone"]);
     expect(src).not.toMatch(/supabase|fetch\(|console\./);
   });
