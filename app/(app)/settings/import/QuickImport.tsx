@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import Link from "next/link";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { fieldControlClass } from "@/components/ui/field";
@@ -32,6 +33,8 @@ export function QuickImport({ template }: { template: string }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
+  // Pasted text that has not been imported yet is unsaved work.
+  useUnsavedChangesGuard("quick-import", text.trim() !== "" && summary === null);
 
   function reset() {
     setText("");

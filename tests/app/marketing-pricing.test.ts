@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PRICING_PLANS, CURRENCY, POSITIONING } from "@/lib/marketing/content";
 
-// Pricing page guards: CAD everywhere, three honest plans, no artificial
+// Pricing page guards: USD everywhere, three honest plans, no artificial
 // feature restrictions / caps / quotas, no unsupported annual, no self-service
 // checkout, no multi-location or Google Calendar claims, no stale $19 pilot.
 
@@ -17,11 +17,11 @@ function stripComments(s: string): string {
 const RAW = read("app/pricing/page.tsx");
 const PAGE = stripComments(RAW).replace(/\s+/g, " ");
 
-describe("pricing: CAD + three plans", () => {
-  it("declares CAD and the three plans in the shared source of truth", () => {
-    expect(CURRENCY).toBe("CAD");
+describe("pricing: USD + three tiers", () => {
+  it("declares USD and the three tiers in the shared source of truth", () => {
+    expect(CURRENCY).toBe("USD");
     const ids = PRICING_PLANS.map((p) => p.id);
-    expect(ids).toEqual(["founding-solo", "solo", "studio"]);
+    expect(ids).toEqual(["solo", "studio", "larger"]);
   });
 
   it("renders the plans from the shared constants + metadata helper", () => {
@@ -29,12 +29,12 @@ describe("pricing: CAD + three plans", () => {
     expect(PAGE).toMatch(/marketingMetadata\("\/pricing"\)/);
   });
 
-  it("shows the founding transition + Studio seats + guided onboarding", () => {
-    expect(PAGE).toMatch(/CAD \$29/);
-    expect(PAGE).toMatch(/CAD \$39/);
-    expect(PAGE).toMatch(/CAD \$49/);
-    expect(PAGE).toMatch(/CAD \$99/);
-    expect(PAGE).toMatch(/first 12 months/);
+  it("shows USD prices + Studio seats + contact-us above three + guided onboarding", () => {
+    expect(PAGE).toMatch(/US\$49\/month for one practitioner/);
+    expect(PAGE).toMatch(/US\$99\/month/);
+    expect(PAGE).toMatch(/prices are in US dollars \(USD\)/i);
+    expect(PAGE).toMatch(/more than three practitioners, contact us/);
+    expect(PAGE).not.toMatch(/\bCAD\b|Canadian dollars|founding solo|first 12 months/i);
     expect(PAGE).toMatch(/up to three practitioners/);
     expect(PAGE).toMatch(/Studio setup is completed through guided onboarding/);
   });

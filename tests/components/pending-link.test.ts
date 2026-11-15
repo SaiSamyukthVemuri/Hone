@@ -414,23 +414,26 @@ describe("UI-01C: the row body and the calendar toolbar are wired to it", () => 
     expect(dash).toMatch(
       /<PendingContainerLink[\s\S]{0,300}href=\{`\/calendar\/\$\{appt\.id\}`\}/,
     );
-    // Destination and layout both unchanged — this is presentation only.
+    // Destination unchanged. The layout classes follow the compact row (#1308): the body is a direct flex
+    // item of the row, full width on a phone and the growing column beside Visit details and Open on desktop.
     expect(dash).toMatch(
-      /<PendingContainerLink[\s\S]{0,300}className="flex min-w-0 gap-4"/,
+      /<PendingContainerLink[\s\S]{0,300}className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"/,
     );
     expect(dash).toContain('pendingLabel="Opening appointment…"');
   });
 
   it("every calendar toolbar control that navigates is a PendingLink", () => {
-    // Six real client navigations: Week and Month (the toggle), then Today,
-    // Previous, Next and Upcoming. The toggle renders one element per tab.
-    expect(toolbar.match(/<PendingLink\b/g) ?? []).toHaveLength(4);
+    // Real client navigations: Week and Month (the toggle), then Today,
+    // Previous, Next and Upcoming, plus the owner-only "Review practitioner
+    // assignments" link (HON-44). The toggle renders one element per tab.
+    expect(toolbar.match(/<PendingLink\b/g) ?? []).toHaveLength(5);
     expect(toggle.match(/<PendingLink\b/g) ?? []).toHaveLength(1);
     for (const testid of [
       "calendar-today",
       "calendar-prev",
       "calendar-next",
       "calendar-upcoming",
+      "calendar-review-assignments",
     ]) {
       expect(toolbarSrc).toMatch(
         new RegExp(`<PendingLink[\\s\\S]{0,400}${testid}`),

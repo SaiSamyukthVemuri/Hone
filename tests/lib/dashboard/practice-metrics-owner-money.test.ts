@@ -39,29 +39,32 @@ vi.mock("@/lib/supabase/server", () => ({
   } }),
 }));
 
-import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import {
+  getPracticeDashboardMetrics,
+  getProcedureActionMetrics,
+} from "@/lib/dashboard/practice-metrics";
 
 beforeEach(() => { fixture.reads = []; });
 
 describe("HON-44 practice metrics money is owner-only at the read", () => {
-  it("a non-owner never reads payment attempts or service prices", async () => {
-    const metrics = await getPracticeDashboardMetrics(
-      "studio-A", "America/Toronto", "week", { viewerIsOwner: false },
-    );
-    expect(fixture.reads.some((r) => r.table === "payment_charge_attempts")).toBe(false);
-    expect(fixture.reads.some((r) => /price_cents|services\(/.test(r.columns))).toBe(false);
-    expect(metrics.money).toBeNull();
-    expect(JSON.stringify(metrics)).not.toMatch(/ValueCents|testPayments|12000/);
+  it("the loader REFUSES a non-owner before issuing any read", async () => {
+    // WS-DB: it no longer runs for a non-owner at all. The cast stands in for a
+    // caller that bypasses the `true`-only type.
+    await expect(
+      getPracticeDashboardMetrics("studio-A", "America/Toronto", "week", {
+        viewerIsOwner: false as unknown as true,
+      }),
+    ).rejects.toThrow("Practice metrics are owner-only");
+    expect(fixture.reads).toEqual([]);
   });
 
-  it("a non-owner keeps the non-money operational counts", async () => {
-    const metrics = await getPracticeDashboardMetrics(
-      "studio-A", "America/Toronto", "week", { viewerIsOwner: false },
-    );
-    expect(metrics.appointments.total).toBe(1);
-    expect(metrics.appointments.completed).toBe(1);
-    expect(metrics.chartedWithin24h).toBeDefined();
-    expect(metrics.actions).toBeDefined();
+  it("a non-owner gets the procedure roll-up with no appointment, payment or price read", async () => {
+    const actions = await getProcedureActionMetrics("studio-A");
+    expect(actions).toBeDefined();
+    expect(fixture.reads.some((r) => r.table === "payment_charge_attempts")).toBe(false);
+    expect(fixture.reads.some((r) => r.table === "appointments")).toBe(false);
+    expect(fixture.reads.some((r) => /price_cents|services\(/.test(r.columns))).toBe(false);
+    expect(JSON.stringify(actions)).not.toMatch(/ValueCents|testPayments|12000/);
   });
 
   it("the owner still reads and receives service value and payment counts", async () => {

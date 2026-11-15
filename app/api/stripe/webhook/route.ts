@@ -284,6 +284,8 @@ export async function POST(req: Request): Promise<Response> {
         eventId: event.id,
         eventType: event.type,
         errorClass: thrownErrorClass(err),
+        // the same bounded label stored on stripe_events.error below
+        failureLabel: boundedErrorLabel(err),
         ...stripeErrorFields(err),
       });
       // PR #153. Persistent webhook processing failure is a critical
@@ -830,6 +832,9 @@ async function handleSetupIntentSucceeded(
     previousCardRetiredId: saved.previous_card_id ?? null,
     cardChangeNotification: notif.eventType,
     cardChangeNotificationDeduped: notif.deduped,
+    // Set when no notice was made (the studio has no active owner), so the
+    // result does not read as if one had been created.
+    cardChangeNotificationSkipped: notif.skipped ?? null,
   };
 }
 

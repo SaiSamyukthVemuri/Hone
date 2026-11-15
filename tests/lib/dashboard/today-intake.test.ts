@@ -240,11 +240,12 @@ describe("Today intake projection (source pins)", () => {
 
   it("the loader exists and is the only intake read on the Today path", () => {
     expect(LOADER.length).toBeGreaterThan(0);
-    // Exactly two `client_intake_forms` reads on the dashboard: the per-client
-    // status projection and the studio-wide awaiting-review COUNT. Neither is
-    // per-appointment.
+    // Exactly ONE `client_intake_forms` read in the page: the per-client status
+    // projection. WS-DB (R3) moved the studio-wide awaiting-review read into
+    // lib/dashboard/intakes-awaiting-review.ts, so the page no longer carries a
+    // second one. Not per-appointment.
     const reads = PAGE.match(/\.from\("client_intake_forms"\)/g) ?? [];
-    expect(reads).toHaveLength(2);
+    expect(reads).toHaveLength(1);
   });
 
   it("8. the read is studio-scoped and restricted to today's clients", () => {

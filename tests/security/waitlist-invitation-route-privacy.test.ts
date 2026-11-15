@@ -69,6 +69,7 @@ const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "/api/clients/[clientId]/images", why: "same route, nested; the segment is a treatment-image row id, authorised by the shared signer against the session's studio AND the client above it, never a credential" },
   { prefix: "/clients/[id]/sessions", why: "authenticated app route nested under a client; the segment is a session row id and the client id above it is equally not a credential" },
   { prefix: "/e2e-fault", why: "E2E fault-injection harness, not a production surface" },
+  { prefix: "/settings/calendar", why: "authenticated Settings route; the segment is a fixed view slug resolved against the per-practitioner Calendar slot (unknown slug is notFound), never a credential" },
   { prefix: "/ingest", why: "same-origin PostHog proxy (app/ingest/[...path], #828 G-07/G-26); the catch-all segments are PostHog SDK endpoint paths (e, flags, static/<version>, array/<public project key>), allowlisted by prefix, never a Hone credential" },
 ];
 

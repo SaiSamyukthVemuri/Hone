@@ -92,7 +92,7 @@ describe("JSON-LD", () => {
     expect(webSiteLd()["@type"]).toBe("WebSite");
   });
 
-  it("SoftwareApplication offers equal the visible plan prices (CAD)", () => {
+  it("SoftwareApplication offers equal the visible plan prices (USD)", () => {
     const app = softwareApplicationLd();
     expect(app["@type"]).toBe("SoftwareApplication");
     const offers = app.offers.itemListElement;
@@ -100,14 +100,15 @@ describe("JSON-LD", () => {
     expect(offers.length).toBe(priced.length);
     for (const plan of priced) {
       const offer = offers.find((o) => o.name === plan.name)!;
-      expect(offer.priceCurrency).toBe("CAD");
+      expect(offer.priceCurrency).toBe("USD");
       expect(offer.price).toBe(priceValue(plan.priceLabel as string));
     }
     // sanity on the actual numbers
     const byName = Object.fromEntries(offers.map((o) => [o.name, o.price]));
-    expect(byName["Founding Solo"]).toBe(29);
     expect(byName["Solo"]).toBe(49);
     expect(byName["Studio"]).toBe(99);
+    // The contact-us tier and the removed Founding Solo offer emit no Offer.
+    expect(Object.keys(byName).sort()).toEqual(["Solo", "Studio"]);
   });
 
   it("BreadcrumbList positions increment and items are absolute", () => {

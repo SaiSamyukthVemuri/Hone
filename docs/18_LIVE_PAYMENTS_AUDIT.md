@@ -272,7 +272,7 @@ All current copy is test-mode-truthful and **unchanged by PR #201** (pinned). Co
 | Current test-mode string | Where | Future live label (PR #202, after review) |
 |---|---|---|
 | "This prepares a test-mode payment record. It does not charge the client." | `components/session-payment-prepare-card.tsx` header | "This prepares a payment record. The charge runs in the next step." |
-| "Run test charge" (+ confirm variant) | `session-payment-prepare-card.tsx` ready panel; `ManualFeeChargeCard.tsx` ready panel | "Run charge" |
+| "Run test charge" (+ confirm variant) | `session-payment-prepare-card.tsx` ready panel; `ManualFeeChargeCard.tsx` ready panel | "Run charge" (session card); fee card: "Charge <fee type> ($amount)" with the saved fixed amount stated above it |
 | "This was a Stripe test-mode charge. No live card was charged." | `session-payment-prepare-card.tsx` succeeded + refunded panels | "Card payment processed via Stripe." |
 | "This was a Stripe test-mode attempt. No live card is charged." | `session-payment-prepare-card.tsx` failure panel | "The charge did not complete. No card was charged." |
 | "Test mode only. No live card will be charged." | `ManualFeeChargeCard.tsx` (x2) | removed (live) |

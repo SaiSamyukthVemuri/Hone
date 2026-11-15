@@ -89,7 +89,7 @@ export async function saveTrackingProviderConfigAction(
   const { error } = await query;
   if (error) return { ok: false, error: "Could not save provider configuration." };
 
-  revalidatePath("/settings/tracking");
+  revalidatePath("/settings/integrations", "layout");
   return { ok: true, last4 };
 }
 
@@ -115,6 +115,6 @@ export async function clearTrackingTokenAction(
     .eq("provider", provider);
   if (error) return { ok: false, error: "Could not remove the token." };
 
-  revalidatePath("/settings/tracking");
+  revalidatePath("/settings/integrations", "layout");
   return { ok: true };
 }

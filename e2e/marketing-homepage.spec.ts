@@ -24,7 +24,7 @@ async function expectNoPageOverflow(page: Page, label: string) {
 test.describe("marketing homepage (desktop)", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("category hero, sections, CAD pricing, trust, walkthrough CTA", async ({ page }) => {
+  test("category hero, sections, USD pricing, trust, walkthrough CTA", async ({ page }) => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
@@ -51,7 +51,7 @@ test.describe("marketing homepage (desktop)", () => {
       "One record, from booking to payment",
       "Know what was used, and when",
       "How your records are kept",
-      "Plans in Canadian dollars",
+      "Plans in US dollars (USD)",
       "See it with a returning client",
     ]) {
       await expect(page.getByRole("heading", { name }), `missing: ${name}`).toBeVisible();
@@ -70,9 +70,9 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(page.getByText("Before today").first()).toBeVisible();
     await expect(page.getByText(/Maya R\./).first()).toBeVisible();
 
-    // CAD pricing (not the old $19 pilot). No badge on any plan here — the
+    // USD pricing (not the old $19 pilot). No badge on any plan here — the
     // deck removed it from the homepage; /pricing owns plan emphasis.
-    await expect(page.getByText("CAD $49")).toBeVisible();
+    await expect(page.getByText("US$49")).toBeVisible();
     await expect(page.getByText("$19")).toHaveCount(0);
 
     // MKT-02D: NO TIER IS RECOMMENDED. This asserted "Most popular" was
@@ -310,6 +310,6 @@ test.describe("marketing homepage (mobile)", () => {
     }
     await dialog.getByRole("link", { name: "Pricing" }).click();
     await page.waitForURL(/\/pricing$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Plans in Canadian dollars" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Plans in US dollars (USD)" })).toBeVisible();
   });
 });

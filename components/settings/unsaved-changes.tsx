@@ -53,10 +53,23 @@ export function isLeavingNavigation(
   return url.pathname !== current.pathname || url.search !== current.search;
 }
 
-export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
+export function UnsavedChangesProvider({
+  children,
+  onHold,
+  onStay,
+}: {
+  children: ReactNode;
+  /** Called as a navigation is held and the dialog opens. */
+  onHold?: (anchor: HTMLAnchorElement) => void;
+  /** Called when the person chooses "Stay" (the held navigation is dropped). */
+  onStay?: (anchor: HTMLAnchorElement | null) => void;
+}) {
+  const heldAnchor = useRef<HTMLAnchorElement | null>(null);
   const dirtyKeys = useRef(new Set<string>());
   const router = useRouter();
   const [leaving, setLeaving] = useState<string | null>(null);
+  const onHoldRef = useRef(onHold);
+  onHoldRef.current = onHold;
 
   const setDirty = useCallback((key: string, dirty: boolean) => {
     if (dirty) dirtyKeys.current.add(key);
@@ -81,6 +94,8 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
       // Hold the navigation and ask. "Leave" navigates to the same target.
       e.preventDefault();
       e.stopPropagation();
+      heldAnchor.current = anchor;
+      onHoldRef.current?.(anchor);
       setLeaving(anchor.href);
     }
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -97,8 +112,9 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     const href = leaving;
     setLeaving(null);
     if (!href) return;
-    // Leaving discards the edits, so the guard must not block this navigation.
-    dirtyKeys.current.clear();
+    // router.push raises no click, so the click guard cannot re-trap it. The
+    // dirty set is left alone: a form that unmounts clears its own key, and one
+    // that stays mounted (same-page link) is still guarded.
     const url = new URL(href, window.location.origin);
     router.push(`${url.pathname}${url.search}${url.hash}`);
   }
@@ -113,7 +129,10 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
         confirmLabel="Leave"
         cancelLabel="Stay"
         onConfirm={leave}
-        onCancel={() => setLeaving(null)}
+        onCancel={() => {
+          setLeaving(null);
+          onStay?.(heldAnchor.current);
+        }}
       />
     </GuardContext.Provider>
   );

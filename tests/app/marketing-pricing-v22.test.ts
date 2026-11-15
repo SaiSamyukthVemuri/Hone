@@ -19,7 +19,7 @@ import {
 //
 // These guards are written against the RENDERED SOURCE with comments stripped,
 // because a rule that a comment can satisfy is not a rule. The existing
-// marketing-pricing suite already covers CAD, the three plan ids, the stale
+// marketing-pricing suite already covers USD, the three plan ids, the stale
 // $19/$149 framing, Google Calendar and self-service activation; this file adds
 // only what v2.2 changed.
 
@@ -88,7 +88,7 @@ describe("v2.2 headline and seat lines", () => {
     // From the shared constant since MKT-03 revision 3, which also dropped
     // "Simple" (a benefit the page asserted rather than showed) and the full stop.
     expect(PRICING).toContain("<Display className=\"max-w-[18ch]\">{POSITIONING.pricingHeading}</Display>");
-    expect(POSITIONING.pricingHeading).toBe("Plans in Canadian dollars");
+    expect(POSITIONING.pricingHeading).toBe("Plans in US dollars (USD)");
     expect(PRICING).not.toContain("Straightforward pricing, in Canadian dollars.");
     expect(PRICING).not.toContain("Simple plans");
   });
@@ -118,16 +118,17 @@ describe("v2.2 headline and seat lines", () => {
     // explicit that no code enforces the count and that the boundary is honoured
     // during guided onboarding. The solo tiers say one for the same reason.
     const byId = Object.fromEntries(PRICING_PLANS.map((p) => [p.id, p]));
-    expect(byId["founding-solo"].seats).toBe("1 practitioner");
     expect(byId["solo"].seats).toBe("1 practitioner");
     expect(byId["studio"].seats).toBe("up to 3 practitioners");
+    expect(byId["larger"].seats).toBe("more than 3 practitioners");
   });
 
-  it("keeps the founding transition exact, both halves", () => {
-    // $29 without the $39 successor would be the deal without its condition.
-    const t = PRICING_PLANS.find((p) => p.id === "founding-solo")?.transition ?? "";
-    expect(t).toContain("CAD $29/month for the first 12 months");
-    expect(t).toContain("CAD $39/month while continuously subscribed");
+  it("no longer offers Founding Solo, in the plans or the copy", () => {
+    // Removed 1 Nov 2026 (owner decision). Existing customer commitments are
+    // honoured outside the public site.
+    expect(PRICING_PLANS.map((p) => p.name)).not.toContain("Founding Solo");
+    expect(CONTENT).not.toMatch(/founding solo|CAD \$29|CAD \$39/i);
+    expect(PRICING).not.toMatch(/founding solo|CAD \$29|CAD \$39/i);
   });
 });
 
@@ -279,13 +280,13 @@ describe("v2.2 prohibitions, enforced rather than merely absent today", () => {
     });
   }
 
-  it("the plan set is exactly the three v2.2 tiers", () => {
-    // A fourth tier appearing is the same defect as a two-practitioner tier
+  it("the plan set is exactly Solo, Studio and the contact-us tier", () => {
+    // A further tier appearing is the same defect as a two-practitioner tier
     // appearing, and this catches it whatever it is called.
     expect(PRICING_PLANS.map((p) => p.id)).toEqual([
-      "founding-solo",
       "solo",
       "studio",
+      "larger",
     ]);
   });
 });

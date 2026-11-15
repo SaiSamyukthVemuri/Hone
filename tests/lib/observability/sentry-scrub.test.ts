@@ -268,3 +268,118 @@ describe("tracesSampleRate", () => {
     expect(tracesSampleRate()).toBe(1);
   });
 });
+
+// Privacy K7-A (#1292): a typed directory search lives in the query string, and
+// the generic redaction cannot tell a name from a word. Every URL-bearing Sentry
+// field drops the query and fragment.
+describe("a typed search term in the URL never reaches Sentry (K7-A)", () => {
+  const URL_WITH_TERM = "/clients?q=jane%20smith";
+  const TERM = /jane|smith/i;
+
+  it("control: the ordinary value redaction alone does NOT remove a typed name (why the strip exists)", () => {
+    expect(redactString(URL_WITH_TERM)).toMatch(TERM);
+  });
+
+  it("navigation breadcrumbs: from, to and url lose the query and fragment", () => {
+    const crumb = scrubBreadcrumb({
+      category: "navigation",
+      data: { from: "/clients?q=jane%20smith&page=2#row", to: `${URL_WITH_TERM}&client=x`, url: URL_WITH_TERM },
+    } as Breadcrumb);
+    expect(JSON.stringify(crumb)).not.toMatch(TERM);
+    expect(crumb!.data).toMatchObject({ from: "/clients", to: "/clients", url: "/clients" });
+  });
+
+  it("control: a non-navigation breadcrumb keeps its own fields (only the named categories change)", () => {
+    const crumb = scrubBreadcrumb({ category: "ui.click", data: { target: "button#save" } } as Breadcrumb);
+    expect(crumb!.data).toEqual({ target: "button#save" });
+  });
+
+  it("span URL attributes lose the query; query-only attributes are removed", () => {
+    const event = scrubTransactionEvent({
+      type: "transaction",
+      spans: [
+        {
+          description: `GET ${URL_WITH_TERM}`,
+          data: {
+            "http.url": `https://app.example.test${URL_WITH_TERM}`,
+            "url.full": `https://app.example.test${URL_WITH_TERM}#x`,
+            "http.target": URL_WITH_TERM,
+            "url.query": "q=jane%20smith",
+            "http.query": "?q=jane%20smith",
+            "http.method": "GET",
+          },
+        },
+      ],
+    } as unknown as Event);
+    const span = (event.spans as unknown as Array<{ description: string; data: Record<string, unknown> }>)[0];
+    expect(JSON.stringify(event)).not.toMatch(TERM);
+    expect(span.description).toBe("GET /clients");
+    expect(span.data["http.url"]).toBe("https://app.example.test/clients");
+    expect(span.data).not.toHaveProperty("url.query");
+    expect(span.data).not.toHaveProperty("http.query");
+    expect(span.data["http.method"]).toBe("GET");
+  });
+
+  it("control: a SQL span description with ? placeholders is not mangled", () => {
+    const event = scrubTransactionEvent({
+      type: "transaction",
+      spans: [{ description: "select id from clients where studio_id = ? and name = ?" }],
+    } as unknown as Event);
+    expect((event.spans as unknown as Array<{ description: string }>)[0].description).toBe(
+      "select id from clients where studio_id = ? and name = ?",
+    );
+  });
+
+  it("the transaction name loses the query (bare path and 'METHOD path')", () => {
+    expect(scrubTransactionEvent({ type: "transaction", transaction: `GET ${URL_WITH_TERM}` } as Event).transaction).toBe("GET /clients");
+    expect(scrubTransactionEvent({ type: "transaction", transaction: URL_WITH_TERM } as Event).transaction).toBe("/clients");
+    // Control: a route-shaped name with no query is unchanged.
+    expect(scrubTransactionEvent({ type: "transaction", transaction: "GET /clients" } as Event).transaction).toBe("GET /clients");
+  });
+
+  it("the request: url loses the query and fragment, query_string is removed", () => {
+    const event = scrubErrorEvent({
+      request: { url: `https://app.example.test${URL_WITH_TERM}#a`, query_string: "q=jane%20smith" },
+    } as unknown as ErrorEvent);
+    expect(JSON.stringify(event)).not.toMatch(TERM);
+    expect((event.request as { url: string }).url).toBe("https://app.example.test/clients");
+    expect(event.request).not.toHaveProperty("query_string");
+  });
+
+  it("the ROOT span (contexts.trace) of a transaction and of an error event drops the query too (M1)", () => {
+    const trace = {
+      trace_id: "0123456789abcdef0123456789abcdef",
+      span_id: "0123456789abcdef",
+      op: "http.server",
+      description: `GET ${URL_WITH_TERM}`,
+      data: {
+        "http.target": URL_WITH_TERM,
+        "url.full": `https://app.example.test${URL_WITH_TERM}#x`,
+        "url.query": "q=jane%20smith",
+        "http.query": "?q=jane%20smith",
+        "http.status_code": 200,
+      },
+    };
+    const tx = scrubTransactionEvent({ type: "transaction", contexts: { trace: structuredClone(trace) } } as unknown as Event);
+    const err = scrubErrorEvent({ contexts: { trace: structuredClone(trace) } } as unknown as ErrorEvent);
+    for (const event of [tx, err]) {
+      expect(JSON.stringify(event)).not.toMatch(TERM);
+      const ctx = event.contexts!.trace as unknown as { description: string; op: string; data: Record<string, unknown> };
+      expect(ctx.description).toBe("GET /clients");
+      expect(ctx.data["http.target"]).toBe("/clients");
+      expect(ctx.data["url.full"]).toBe("https://app.example.test/clients");
+      expect(ctx.data).not.toHaveProperty("url.query");
+      expect(ctx.data).not.toHaveProperty("http.query");
+      // Control: the trace's own structure survives.
+      expect(ctx.op).toBe("http.server");
+      expect(ctx.data["http.status_code"]).toBe(200);
+    }
+  });
+
+  it("the original context object is not mutated", () => {
+    const ctx = { description: `GET ${URL_WITH_TERM}`, data: { "url.query": "q=jane" } };
+    scrubTransactionEvent({ type: "transaction", contexts: { trace: ctx } } as unknown as Event);
+    expect(ctx.description).toContain("jane");
+    expect(ctx.data["url.query"]).toBe("q=jane");
+  });
+});

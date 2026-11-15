@@ -508,17 +508,17 @@ describe("treatment plan: no longer a budget authority", () => {
 });
 
 describe("consultation surface", () => {
-  it("L. the tab query value is still `consultation` (deep links unbroken)", () => {
-    expect(CLIENT_PAGE).toContain('activeTab === "consultation"');
-    expect(CLIENT_PAGE).toContain("?tab=consultation");
+  it("L. consultation now lives under the Treatment tab; ?tab=consultation still resolves (redirect)", () => {
+    expect(CLIENT_PAGE).toContain('activeTab === "treatment" && clinicalNoteSections');
+    expect(CLIENT_PAGE).toContain("isLegacyProfileTab(sp.tab)");
   });
 
   it("the Budget card renders on that existing tab, not a new one", () => {
     const idx = CLIENT_PAGE.indexOf("<ClientBudgetCard");
     expect(idx).toBeGreaterThan(-1);
     const preceding = CLIENT_PAGE.slice(0, idx);
-    expect(preceding.lastIndexOf('activeTab === "consultation"')).toBeGreaterThan(
-      preceding.lastIndexOf('activeTab === "personal"'),
+    expect(preceding.lastIndexOf('activeTab === "treatment"')).toBeGreaterThan(
+      preceding.lastIndexOf('activeTab === "sessions"'),
     );
   });
 

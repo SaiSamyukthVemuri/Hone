@@ -51,6 +51,16 @@ export function bookingSettingsErrorSentence(raw: unknown): string {
 }
 
 /** The redirect for a failure: a code only. */
-export function bookingSettingsErrorUrl(code: BookingSettingsErrorCode): string {
-  return `/settings/booking?error=${code}`;
+export type BookingSettingsView = "link" | "window";
+
+/** Only the two known views name a route; anything else is the doorway. */
+export function parseBookingSettingsView(raw: unknown): BookingSettingsView | null {
+  return raw === "link" || raw === "window" ? raw : null;
+}
+
+export function bookingSettingsErrorUrl(
+  code: BookingSettingsErrorCode,
+  view?: BookingSettingsView | null,
+): string {
+  return `/settings/booking${view ? `/${view}` : ""}?error=${code}`;
 }

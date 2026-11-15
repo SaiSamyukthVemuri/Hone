@@ -45,7 +45,7 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
   });
 
   await test.step("open the client's Consultation tab", async () => {
-    await page.goto(`/clients/${clientId}?tab=consultation`);
+    await page.goto(`/clients/${clientId}?tab=treatment`);
     await expect(
       page.getByRole("heading", { name: /consultation notes/i }),
     ).toBeVisible({ timeout: 20_000 });
@@ -174,7 +174,7 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     const box = await cta.boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
     await cta.click();
-    await expect(page).toHaveURL(new RegExp(`/clients/${clientId}\\?tab=consultation`));
+    await expect(page).toHaveURL(new RegExp(`/clients/${clientId}\\?tab=treatment`));
     // ...and that tab now says what it holds. This journey runs at MOBILE
     // width, where the profile tabs are a <select> rather than the desktop
     // <button> row — so assert the option, not a button. Scoped to the profile
@@ -184,7 +184,7 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
       page
         .getByRole("navigation", { name: "Client profile sections" })
         .locator("select"),
-    ).toContainText("Consultation & Skin/Hair");
+    ).toContainText("Treatment");
   });
 });
 
@@ -245,7 +245,7 @@ test("legacy skin notes are read-only and the canonical record outranks them", a
   const canonical = page.getByRole("link", { name: /add skin & hair analysis/i });
   await expect(canonical).toBeVisible();
   await canonical.click();
-  await expect(page).toHaveURL(/tab=consultation/);
+  await expect(page).toHaveURL(/tab=treatment/);
 
   // 5. Add a real skin/hair analysis note through the canonical flow.
   const before = await getClinicalNoteCount(clientId, "skin_hair_analysis");

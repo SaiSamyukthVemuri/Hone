@@ -76,9 +76,8 @@ describe("render gates", () => {
   const imagesPage = read("app/(app)/clients/[id]/images/page.tsx");
   const manager = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
 
-  it("header: signs nothing and renders no portrait when OFF", () => {
-    expect(header).toMatch(/clientPortraitEnabled\(\)\s*\?\s*signedClientPortraitUrl\(/);
-    expect(header).toMatch(/:\s*Promise\.resolve\(null\)/);
+  it("header: the profile signs nothing and renders no portrait at all (initials only)", () => {
+    expect(header).not.toMatch(/signedClientPortraitUrl|clientPortraitEnabled|ClientPortrait\b/);
   });
 
   it("images tab: passes no portrait id and renders no control when OFF", () => {
@@ -111,7 +110,8 @@ describe("source guard: every portrait caller goes through the policy", () => {
     const rpcFiles = files.filter((f) => /rpc\(\s*"set_client_portrait"/.test(read(f)));
     const signFiles = callers(/signedClientPortraitUrl\s*\(/, ["lib/images/client-portrait.ts"]);
     expect(rpcFiles).toEqual(["app/(app)/clients/[id]/images/actions.ts"]);
-    expect(signFiles).toEqual(["app/(app)/clients/[id]/page.tsx"]);
+    // The profile page no longer signs a portrait; the images route is the only gated surface.
+    expect(signFiles).toEqual([]);
     for (const f of [...rpcFiles, ...signFiles]) {
       const src = read(f);
       expect(src, f).toContain('from "@/lib/images/portrait-policy"');

@@ -5,6 +5,7 @@ import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
 import { studioClientContactEmail } from "@/lib/email/studio-identity";
 import { POSTCARE_PREVIEW_REFERENCE, postcareOpening, postcareSubject } from "@/lib/email/templates/postcare";
+import { fieldControlClass } from "@/components/ui/field";
 
 // Toolbar helpers and preview modal for the postcare editor. Both are
 // co-located here so PostcareSettingsForm.tsx stays focused on field
@@ -189,7 +190,7 @@ export function MarkdownLiteTextarea({
         rows={rows}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+        className={fieldControlClass({ fullWidth: false, className: "leading-relaxed" })}
       />
     </div>
   );

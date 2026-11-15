@@ -78,6 +78,6 @@ export async function updateStudioFeeAmountsAction(
       error: "We couldn't save the fee amounts. Please try again.",
     };
   }
-  revalidatePath("/settings/payments");
+  revalidatePath("/settings/payments", "layout");
   return { ok: true };
 }

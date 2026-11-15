@@ -170,7 +170,10 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
   it("the operational surfaces it sat beside are untouched", () => {
     // The Daily Prep Brief card is retired into the combined Today workflow.
     expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
-    expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
+    // Intended change (dashboard attention, #1356): the panel takes the model via the visibility resolver (dismissals applied);
+    // the model is still built by buildNeedsAttention.
+    expect(PAGE).toMatch(/buildNeedsAttention\(\{/);
+    expect(PAGE).toMatch(/<NeedsAttentionPanel\s+needs=\{v\.shown\}/);
   });
 
   // DASH-TRUTH-04: the Dashboard no longer carries ANY feedback prompt. The

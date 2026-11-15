@@ -14,12 +14,13 @@ const MANAGER = read(
   "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
 );
 const PAGE = read("app/(app)/clients/[id]/images/page.tsx");
-const TAB_BAR = read("components/profile-tab-bar.tsx");
+const PROFILE_PAGE = read("app/(app)/clients/[id]/page.tsx");
 
 describe("navigation", () => {
-  it("the client tab bar surfaces a 'Treatment Photos' link to the images route", () => {
-    expect(TAB_BAR).toMatch(/Treatment Photos/);
-    expect(TAB_BAR).toMatch(/\$\{pathname\}\/images/);
+  it("the Photos tab surfaces a link to the images route", () => {
+    expect(PROFILE_PAGE).toMatch(/activeTab === "photos"/);
+    expect(PROFILE_PAGE).toMatch(/Open treatment photos/);
+    expect(PROFILE_PAGE).toMatch(/\/clients\/\$\{client\.id\}\/images/);
   });
 });
 

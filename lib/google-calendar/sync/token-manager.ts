@@ -1,6 +1,7 @@
 import "server-only";
 import { type AccessTokenCache, DEFAULT_EXPIRY_SKEW_MS } from "./access-token-cache";
 import type { GoogleRestClient } from "./google-rest-client";
+import { ConnectionWriteError } from "../store-write-error";
 
 // Google Calendar: Phase B2.1: token-refresh lifecycle for the worker.
 //
@@ -116,6 +117,16 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
   const coordinator = deps.coordinator ?? inProcessOnlyCoordinator;
   const inflight = new Map<string, Promise<TokenResult>>();
 
+  // The outcome (reconnect_required) is reported either way; a mark that did not stick is logged so it is not silent, and the next refresh retries it.
+  async function markOrLog(connectionId: string, studioId: string, code: string): Promise<void> {
+    try {
+      await deps.store.markReconnectRequired(connectionId, studioId, code);
+    } catch (e) {
+      if (!(e instanceof ConnectionWriteError)) throw e;
+      console.error(`google_calendar_error:token_refresh:${e.step}`);
+    }
+  }
+
   async function refreshUnderLock(connectionId: string, studioId: string): Promise<TokenResult> {
     // Double-check the cache inside the lock (an in-process waiter may already
     // have filled it). Access tokens are per-process, so a peer PROCESS that
@@ -145,13 +156,13 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
       throw e;
     }
     if (!cipher) {
-      await deps.store.markReconnectRequired(connectionId, studioId, "no_refresh_token");
+      await markOrLog(connectionId, studioId, "no_refresh_token");
       deps.cache.clear(connectionId);
       return { ok: false, kind: "reconnect_required", code: "no_refresh_token" };
     }
     const dec = deps.crypto.decrypt(cipher);
     if (!dec.ok) {
-      await deps.store.markReconnectRequired(connectionId, studioId, "decrypt_failed");
+      await markOrLog(connectionId, studioId, "decrypt_failed");
       deps.cache.clear(connectionId);
       return { ok: false, kind: "reconnect_required", code: "decrypt_failed" };
     }
@@ -160,7 +171,7 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
     if (!refreshed.ok) {
       const e = refreshed.error;
       if (e.kind === "invalid_grant") {
-        await deps.store.markReconnectRequired(connectionId, studioId, "invalid_grant");
+        await markOrLog(connectionId, studioId, "invalid_grant");
         deps.cache.clear(connectionId);
         return { ok: false, kind: "reconnect_required", code: "invalid_grant" };
       }
@@ -184,17 +195,32 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
         deps.cache.clear(connectionId);
         return { ok: false, kind: "transient", code: "rotation_encrypt_failed" };
       }
-      await deps.store.storeRotatedToken({
-        connectionId,
-        studioId,
-        encryptedRefreshToken: enc.ciphertext,
-        refreshTokenLast4: enc.last4,
-        encryptionKeyVersion: enc.keyVersion,
-      });
+      try {
+        await deps.store.storeRotatedToken({
+          connectionId,
+          studioId,
+          encryptedRefreshToken: enc.ciphertext,
+          refreshTokenLast4: enc.last4,
+          encryptionKeyVersion: enc.keyVersion,
+        });
+      } catch (e) {
+        if (!(e instanceof ConnectionWriteError)) throw e;
+        // Google rotated the token and we could NOT keep the new one. Do not cache the access token (the next refresh must retry the
+        // persist) and do not report success: a transient result retries, and a dead old token then surfaces as invalid_grant, loudly.
+        console.error(`google_calendar_error:token_refresh:${e.step}`);
+        deps.cache.clear(connectionId);
+        return { ok: false, kind: "transient", code: "rotation_store_failed" };
+      }
     }
 
     const expiresAtMs = now() + refreshed.expiresInSeconds * 1000;
-    await deps.store.touchTokenExpiry(connectionId, studioId, new Date(expiresAtMs).toISOString());
+    try {
+      await deps.store.touchTokenExpiry(connectionId, studioId, new Date(expiresAtMs).toISOString());
+    } catch (e) {
+      if (!(e instanceof ConnectionWriteError)) throw e;
+      // Informational column only (the in-process cache holds the token): the refresh itself succeeded, so log and carry on.
+      console.error(`google_calendar_error:token_refresh:${e.step}`);
+    }
     deps.cache.set(connectionId, refreshed.accessToken, expiresAtMs);
     return { ok: true, accessToken: refreshed.accessToken, connection: conn };
   }

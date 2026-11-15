@@ -45,6 +45,7 @@ import { PostcareSendButton } from "../PostcareSendButton";
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { ManualFeeChargeCard } from "./ManualFeeChargeCard";
+import { projectFeeEligibility } from "@/lib/billing/manual-fee-card-view";
 import { getManualFeeChargeEligibility } from "@/lib/billing/manual-fee-eligibility";
 import {
   appointmentDisplayStatus,
@@ -99,12 +100,14 @@ export default async function AppointmentDetailPage({
     day?: string | string[];
     week?: string | string[];
     month?: string | string[];
+    cancelled?: string | string[];
   }>;
 }) {
   const { id } = await params;
   // Safe, internal-only back link: returns to the view/date the practitioner
   // came from (falls back to /calendar). Never an external URL.
   const backHref = calendarReturnHref(await searchParams);
+  const justCancelled = (await searchParams).cancelled === "1";
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
@@ -409,6 +412,15 @@ export default async function AppointmentDetailPage({
       >
         ← Calendar
       </Link>
+
+      {isCancelled && justCancelled ? (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+        >
+          Appointment cancelled.
+        </p>
+      ) : null}
 
       <StatusHeader
         serviceName={data.service?.name ?? "Appointment"}
@@ -736,8 +748,8 @@ export default async function AppointmentDetailPage({
       {showManualFeeCard && manualFeeLateCancel && manualFeeNoShow && (
         <ManualFeeChargeCard
           appointmentId={id}
-          lateCancel={manualFeeLateCancel}
-          noShow={manualFeeNoShow}
+          lateCancel={projectFeeEligibility(manualFeeLateCancel, new Date(), isOwner)}
+          noShow={projectFeeEligibility(manualFeeNoShow, new Date(), isOwner)}
         />
       )}
 

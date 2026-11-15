@@ -28,11 +28,11 @@ import {
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
-// Pricing page, CAD, three plans, no artificial feature restrictions, no
+// Pricing page, USD (US$), three plans, no artificial feature restrictions, no
 // caps/quotas, no unsupported annual, no self-service checkout, no Google
 // Calendar or multi-location claims. Core features are identical across plans;
 // tiers differ only by who they're for and how many practitioners they cover.
-// Grounded in docs/marketing/product-truth-register.md (Studio $99 decision).
+// Grounded in docs/marketing/product-truth-register.md (Studio US$99 decision).
 
 export const metadata: Metadata = marketingMetadata("/pricing");
 
@@ -67,7 +67,7 @@ const INCLUDED: string[] = [
 const FAQ: { q: string; a: string }[] = [
   {
     q: "How much does Hone cost?",
-    a: "Founding Solo is CAD $29/month for your first 12 months, then CAD $39/month while you stay continuously subscribed. Solo is CAD $49/month. Studio is CAD $99/month for up to three practitioners. All prices are in Canadian dollars.",
+    a: "Solo is US$49/month for one practitioner. Studio is US$99/month for up to three practitioners. If your studio has more than three practitioners, contact us. All prices are in US dollars (USD).",
   },
   {
     // NARROWED WITH ITS ANSWER. This asked "...or a contract?" and, once the
@@ -91,7 +91,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "How does the Studio plan work?",
-    a: "Studio covers up to three practitioners at CAD $99/month, and Studio setup is completed through guided onboarding. If your studio has more than three practitioners, get in touch and we'll set up a plan that fits.",
+    a: "Studio covers up to three practitioners at US$99/month, and Studio setup is completed through guided onboarding. If your studio has more than three practitioners, get in touch and we'll set up a plan that fits.",
   },
   {
     q: "Does Hone replace my other tools?",
@@ -113,7 +113,7 @@ function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
 
       <p className="mt-3">
         <span className="text-[2rem] font-semibold leading-[1.15] text-ink">
-          {plan.priceLabel ?? "Talk to us"}
+          {plan.priceLabel ?? "Contact us"}
         </span>
         {plan.cadence ? (
           <span className="text-[0.9375rem] text-muted"> {plan.cadence}</span>
@@ -191,7 +191,7 @@ export default function PricingPage() {
             ))}
           </ul>
           <p className="mt-3 text-[0.875rem] text-muted">
-            Prices are in Canadian dollars (CAD). Setup and payment activation happen during
+            Prices are in US dollars (USD). Setup and payment activation happen during
             guided onboarding; there is no self-service checkout.
           </p>
           <CTAButton

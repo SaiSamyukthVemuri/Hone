@@ -27,10 +27,15 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1" }, studio: { id: "studio-A" } }),
+  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1", role: "owner" }, studio: { id: "studio-A" } }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    // 0281: the edit is one function call; record its patch where the old chain recorded `.update(row)`.
+    rpc: async (_name: string, args: { p_client_id: string; p_patch: Record<string, unknown> }) => {
+      db.updates.push(JSON.parse(JSON.stringify(args.p_patch)));
+      return { data: args.p_client_id, error: null };
+    },
     from: (table: string) => {
       expect(table).toBe("clients");
       const filters: Array<[string, unknown]> = [];
@@ -67,7 +72,8 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         update: (row: Record<string, unknown>) => {
           db.updates.push(row);
-          const u = { eq: () => u, then: (resolve: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
+          // update(patch).eq(...).is(...).select("id"): the conditional write reports the row it changed.
+          const u = { eq: () => u, is: () => u, select: async () => ({ data: [{ id: "client-x" }], error: null }) };
           return u;
         },
       };
@@ -91,6 +97,15 @@ async function edit(fields: Record<string, string>, confirm: string[] = []) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   for (const id of confirm) fd.append("confirm_possible_duplicate", id);
+  // The page's loaded values travel with the form; here they are the stored row as it stands.
+  const stored = db.rows.find((r) => r.id === fields.client_id);
+  if (stored && !fd.has("baseline")) {
+    fd.set("baseline", JSON.stringify({
+      name: stored.name, preferred_name: null, pronouns: null, date_of_birth: stored.date_of_birth, phone: stored.phone,
+      email: null, address: null, fitzpatrick_type: null, allergies: null, emergency_contact_name: null,
+      emergency_contact_phone: null,
+    }));
+  }
   try {
     return { result: await updateClientAction(fd), redirected: null as string | null };
   } catch (err) {
@@ -163,10 +178,11 @@ describe("HON-58 I1: an edit that creates a probable duplicate warns before savi
     expect(db.updates).toHaveLength(0);
   });
 
-  it("a failed read of the stored record refuses the save", async () => {
-    db.failStored = true;
-    const { result } = await edit(bobAs({ phone: "604.555.0199" }));
-    expect(result).toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
+  it("a form with no baseline (an older page) is refused and saves nothing", async () => {
+    const fd = new FormData();
+    fd.set("client_id", "client-bob"); fd.set("name", "Bob Lee"); fd.set("phone", "604.555.0199");
+    const result = await updateClientAction(fd);
+    expect(result).toMatchObject({ ok: false });
     expect(db.updates).toHaveLength(0);
   });
 
@@ -188,5 +204,35 @@ describe("HON-58 I1: the edit page's 'save anyway' wording", () => {
     expect(edit).toContain('saveAnywayLabel="Save changes anyway"');
     expect(form).toContain('saveAnywayLabel = "Save as a new client anyway"');
     expect(form).toContain("{saveAnywayLabel}");
+  });
+});
+
+// Codex P2 on #1358 (0281): a stored name that is ALREADY over 200 characters (older data) must not block an edit of
+// another field. The length rule applies when the submitted name differs from the stored one.
+describe("legacy over-length stored name", () => {
+  const LONG = "L".repeat(250);
+  const LEGACY: Row = { id: "client-legacy", studio_id: "studio-A", name: LONG, phone: "250-555-0111", sms_phone: "+12505550111", date_of_birth: "1975-05-06", archived_at: null };
+  const legacyAs = (over: Record<string, string>) => ({ client_id: "client-legacy", name: LONG, phone: "250-555-0111", date_of_birth: "1975-05-06", ...over });
+
+  it("saves another field while the unchanged long name is re-submitted", async () => {
+    db.rows = [LEGACY];
+    const { result, redirected } = await edit(legacyAs({ pronouns: "they/them" }));
+    expect(result).toBeUndefined();
+    expect(redirected).toBe("/clients/client-legacy");
+    expect(db.updates).toHaveLength(1);
+  });
+
+  it("still refuses a CHANGED name that is over 200 characters, and writes nothing", async () => {
+    db.rows = [LEGACY];
+    const { result } = await edit(legacyAs({ name: "M".repeat(251) }));
+    expect(result).toEqual({ ok: false, error: "Name must be 200 characters or fewer." });
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it("saves a changed name that is within the limit", async () => {
+    db.rows = [LEGACY];
+    const { redirected } = await edit(legacyAs({ name: "Short Synthetic" }));
+    expect(redirected).toBe("/clients/client-legacy");
+    expect(db.updates).toHaveLength(1);
   });
 });

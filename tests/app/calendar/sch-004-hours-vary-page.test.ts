@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   ranges: [] as Array<[string, string]>,
 }));
 
+vi.mock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink: async () => false }));
 vi.mock("@/lib/supabase/queries", () => ({
   requirePractitionerWithStudio: async () => ({
     practitioner: { id: "p-owner", role: "owner", display_name: "Owner" },
@@ -144,7 +145,9 @@ describe("SCH-004 week view banner", () => {
   it("loads the week by studio-local midnights across the November DST change", async () => {
     // America/Toronto falls back on Sunday 2026-11-01: EDT (-4) to EST (-5).
     await render({ week: "2026-11-01" });
-    expect(state.ranges.at(-1)).toEqual(["2026-11-01T04:00:00.000Z", "2026-11-08T05:00:00.000Z"]);
+    expect(state.ranges).toContainEqual(["2026-11-01T04:00:00.000Z", "2026-11-08T05:00:00.000Z"]);
+    // The time-insights lookback reads the 24 h BEFORE the period and ends exactly where it starts.
+    expect(state.ranges).toContainEqual(["2026-10-31T04:00:00.000Z", "2026-11-01T04:00:00.000Z"]);
   });
 });
 
@@ -179,6 +182,6 @@ describe("SCH-004 month view banner", () => {
     state.studio.timezone = "Pacific/Kiritimati";
     state.defaults.push(day(0, null, null, "P"));
     expect(await render({ view: "month", month: "2026-07-01" })).toContain(BANNER);
-    expect(state.ranges.at(-1)).toEqual(["2026-06-30T10:00:00.000Z", "2026-07-31T10:00:00.000Z"]);
+    expect(state.ranges).toContainEqual(["2026-06-30T10:00:00.000Z", "2026-07-31T10:00:00.000Z"]);
   });
 });

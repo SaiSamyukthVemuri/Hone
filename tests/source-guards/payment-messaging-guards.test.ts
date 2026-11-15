@@ -101,7 +101,7 @@ describe("banned stale payment claims (runtime app/lib/components)", () => {
 
 describe("payment status copy comes from the shared presenter layer", () => {
   it("Settings → Payments derives its banner/portal/booking copy from the presenter", () => {
-    const page = readFileSync(path.join(ROOT, "app/(app)/settings/payments/page.tsx"), "utf8");
+    const page = readFileSync(path.join(ROOT, "app/(app)/settings/payments/PaymentsView.tsx"), "utf8");
     expect(page).toMatch(/from "@\/lib\/payments\/payment-status-presenter"/);
     expect(page).toMatch(/connectBannerCopy\(/);
     const component = readFileSync(

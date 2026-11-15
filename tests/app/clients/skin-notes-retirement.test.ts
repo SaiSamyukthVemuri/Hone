@@ -255,7 +255,7 @@ describe("the canonical action outranks the legacy display", () => {
   it("that action points at the append-only clinical-notes surface", () => {
     const idx = PROFILE.indexOf("Add skin &amp; hair analysis");
     const block = PROFILE.slice(Math.max(0, idx - 400), idx);
-    expect(block).toMatch(/tab=consultation/);
+    expect(block).toMatch(/tab=treatment/);
   });
 
   it("the canonical action renders BEFORE the legacy text", () => {

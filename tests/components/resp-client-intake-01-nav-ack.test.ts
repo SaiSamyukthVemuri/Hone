@@ -32,15 +32,17 @@ const INTAKE = "app/(app)/clients/[id]/intake/page.tsx";
 const HISTORY = "app/(app)/clients/[id]/intake/IntakeHistoryList.tsx";
 const TABBAR = "components/profile-tab-bar.tsx";
 
-const ALL = [PROFILE, INTAKE, HISTORY, TABBAR] as const;
+// The tab bar no longer holds the Treatment Photos link (Photos is a tab); its own buttons keep
+// the local pending vocabulary and are pinned separately below.
+const ALL = [PROFILE, INTAKE, HISTORY] as const;
 
 /** Every control converted by this slice, with the label it must announce. */
 const CONVERTED = [
   { file: PROFILE, href: "/sessions/new`", label: "Opening new session…", count: 1 },
-  { file: PROFILE, href: "?tab=consultation`", label: "Opening consultation…", count: 1 },
+  { file: PROFILE, href: "?tab=treatment`", label: "Opening consultation…", count: 1 },
   { file: PROFILE, href: "/intake`", label: "Opening intake…", count: 3 },
   { file: PROFILE, href: "/sessions/${lastTreatment.id}`", label: "Opening session…", count: 1 },
-  { file: TABBAR, href: "${pathname}/images`", label: "Opening treatment photos…", count: 2 },
+  { file: PROFILE, href: "/images`", label: "Opening treatment photos…", count: 1 },
   { file: INTAKE, href: "/clients/${id}`", label: "Opening client…", count: 2 },
   { file: HISTORY, href: "?intake=${row.id}`", label: "Opening intake version…", count: 1 },
 ] as const;
@@ -107,7 +109,7 @@ describe("RESP-CLIENT-INTAKE-01: the two raw anchors are gone", () => {
 
   it("both converted hrefs are preserved byte-for-byte", () => {
     expect(codeOnly(read(PROFILE))).toContain(
-      "href={`/clients/${client.id}?tab=consultation`}",
+      "href={`/clients/${client.id}?tab=treatment`}",
     );
     expect(codeOnly(read(HISTORY))).toContain(
       "href={`/clients/${clientId}/intake?intake=${row.id}`}",
@@ -121,8 +123,9 @@ describe("RESP-CLIENT-INTAKE-01: the slice did not grow", () => {
     // measured slice. Converting them would be the blanket adoption this work
     // is scoped against, and would make the PR unreviewable against its brief.
     const code = codeOnly(read(PROFILE));
-    expect(code).toContain('href="/clients"');
-    expect(code).toMatch(/<Link\s+href="\/clients"/);
+    // The href is the validated directory return path (falls back to /clients): still a bare <Link>.
+    expect(code).toContain('"/clients"');
+    expect(code).toMatch(/<Link\s+href=\{directoryReturnTo \?\? "\/clients"\}/);
     const edits = code.match(/<Link\s+href=\{`\/clients\/\$\{client\.id\}\/edit`\}/g);
     expect(edits ?? []).toHaveLength(2);
   });
@@ -137,7 +140,7 @@ describe("RESP-CLIENT-INTAKE-01: the slice did not grow", () => {
 
   it("the tab bar's own button vocabulary was NOT replaced", () => {
     // The seven tab controls are <button>s that own their own transition; they
-    // keep the local copy. Only the Treatment Photos LINK moved to the shipped
+    // keep the local copy. The Treatment Photos LINK now lives on the Photos tab (page.tsx) and uses the shipped
     // primitive. Deleting the local copy would silence the tabs.
     const code = codeOnly(read(TABBAR));
     expect(code).toContain("PENDING_MARK");

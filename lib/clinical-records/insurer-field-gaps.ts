@@ -21,9 +21,12 @@
 //
 // WHAT IT DELIBERATELY DOES NOT DECIDE
 // ===========================================================================
-// - Legal vs preferred name is HON-58's open design. The one stored name is
-//   labelled "Name on record". It is never presented as a legal name or as a
-//   preferred name, because nothing records which one it is.
+// - Legal vs preferred name is HON-58 (migration 0258): a preferred_name column
+//   on clients and a separate, owner/practitioner-only legal identity. This
+//   packet does not read either yet, so the one stored name stays labelled
+//   "Name on record" and is never presented as a legal or a preferred name.
+//   Wiring the legal identity in (OPS Q2: insurer output prints the legal name
+//   only, via insurerDocumentName in lib/clients/identity.ts) is HON-46's step.
 // - MRN, diagnosis and insurance-case capture belong to HON-60. The MRN is
 //   distinct from the insurer member/policy identifier, so they are two
 //   separate gaps here and must never be merged into one field.
@@ -60,7 +63,7 @@ export const INSURER_FIELD_GAPS: readonly InsurerFieldGap[] = [
     key: "legal_identity",
     label: "Legal name",
     reason:
-      "Not on the client profile, which stores one name and does not record whether it is the legal name. A legal name given on an intake form is not included in this packet.",
+      "Not on the client profile row. Staff can record a legal name separately (HON-58, migration 0258; owner and practitioner only), and a legal name given on an intake form is kept with the intake; neither is included in this packet yet.",
   },
   {
     key: "medical_record_number",

@@ -10,6 +10,7 @@ import {
 } from "@/lib/export/resource-registry";
 
 import { ExportButton } from "./ExportButton";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 async function loadCounts(studioId: string): Promise<{
   clientCount: number;
@@ -46,7 +47,11 @@ function fmt(n: number): string {
 }
 
 export default async function DataSettingsPage() {
-  const { studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
+  // WS-D: studio data export is owner-only (the action already refuses; the page no longer shows a non-owner the studio-wide totals).
+  if (practitioner.role !== "owner") {
+    return <OwnerOnlyNotice>Only studio owners can view and export studio data.</OwnerOnlyNotice>;
+  }
   const { clientCount, sessionCount, entryCount } = await loadCounts(studio.id);
 
   // One source for what this page claims and what the ZIP contains.
@@ -60,7 +65,7 @@ export default async function DataSettingsPage() {
         {/* UI-R02. This page spelled its heading a SECOND way — Fraunces, bold,
             plus an inline letterSpacing override — while /notifications used
             `text-3xl font-semibold tracking-tight`. One page, one spelling. */}
-        <PageHeader title="Your data" headingLevel={2} />
+        <PageHeader title="Your data" headingLevel={2} focusTitle />
         <p className="max-w-[640px] text-base leading-relaxed text-neutral-700 dark:text-neutral-300 md:text-lg">
           {studio.name} has {fmt(clientCount)}{" "}
           {clientCount === 1 ? "client" : "clients"}, {fmt(sessionCount)}{" "}

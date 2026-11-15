@@ -57,10 +57,14 @@ function makeClient() {
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => makeClient() }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
-    practitioner: { id: "pr1", role: "owner", active: true },
+    practitioner: { id: "pr1", user_id: "u1", role: "owner", active: true },
     studio: { id: "s1", name: "Willow Studio" },
   }),
 }));
+// The saved-answers export reads through the owner-gated function with the admin client. Here it answers with no rows unless a test scripts it, so
+// every other read in these cases is what actually fails.
+let answersRpc: () => { data: unknown; error: unknown } = () => ({ data: [], error: null });
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: async () => answersRpc() }) }));
 
 let logs: ReturnType<typeof captureConsole>;
 beforeEach(() => {
@@ -284,5 +288,17 @@ describe("settings/data/actions.ts: the export read failure", () => {
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("Failed to load data for export") });
     expectNoLeak(r);
     expect(logs.events().find((e) => e.event === "studio_export_read_failed")).toMatchObject({ code: "42501" });
+  });
+
+  it("a saved-answers read error fails the export without database text", async () => {
+    answersRpc = () => ({ data: null, error: hostile("42501") });
+    try {
+      const r = await runExport("no_such_table", hostile("42501"));
+      expect(r).toMatchObject({ ok: false, error: expect.stringContaining("Failed to load data for export") });
+      expectNoLeak(r);
+      expect(logs.events().find((e) => e.event === "studio_export_read_failed")).toMatchObject({ code: "42501" });
+    } finally {
+      answersRpc = () => ({ data: [], error: null });
+    }
   });
 });

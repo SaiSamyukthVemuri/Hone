@@ -174,6 +174,7 @@ export async function resolveQuickCheckoutContext(
       args.studioId,
       args.appointmentId,
       args.studioTimezone,
+      args.viewerIsOwner,
     ),
   };
 
@@ -217,6 +218,7 @@ export async function resolveQuickCheckoutContext(
     studioId: args.studioId,
     sessionId,
     studioTimezone: args.studioTimezone,
+    viewerIsOwner: args.viewerIsOwner,
   });
   const amountResult = priced.ok ? priced.result : null;
 

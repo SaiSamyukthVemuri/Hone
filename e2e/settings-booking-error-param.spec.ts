@@ -22,7 +22,7 @@ function banner(page: Page) {
 
 async function open(page: Page, query: string) {
   await page.goto(`/settings/booking${query}`);
-  await expect(page.getByRole("heading", { name: "Booking", exact: true })).toBeVisible({ timeout: T });
+  await expect(page.getByRole("heading", { name: "Booking link", exact: true })).toBeVisible({ timeout: T });
 }
 
 test.describe("/settings/booking ?error= is a code, never text", () => {

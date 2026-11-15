@@ -345,7 +345,12 @@ function scrubContexts(
   for (const [rawKey, ctx] of Object.entries(contexts)) {
     const key = scrubKey(rawKey, out);
     if (STANDARD_CONTEXT_KEYS.has(key)) {
-      const scrubbed = deepScrub(ctx, { redactKeys: false }, seen, 0);
+      const scrubbed = deepScrub(
+        key === "trace" && isRecord(ctx) ? stripTraceContext(ctx) : ctx,
+        { redactKeys: false },
+        seen,
+        0,
+      );
       if (key === "device" && isRecord(scrubbed) && "name" in scrubbed) {
         delete scrubbed.name; // device.name can be the owner's name
       }
@@ -391,6 +396,44 @@ function scrubRequest(request: Record<string, unknown>): void {
   }
 }
 
+/** A label that may start with an HTTP method and carry a URL ("GET /clients?q=x", a
+ *  transaction name or a span description): drop the query and fragment of the URL
+ *  token only. A description that is not URL-shaped (a SQL statement with `?`
+ *  placeholders) is left to the ordinary redactions. K7-A: a typed search term lives
+ *  in the query string, and the generic redaction does not know a name from a word. */
+function stripLabelQuery(label: string): string {
+  return label.replace(
+    /^((?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)?(\/\S*|https?:\/\/\S*)/,
+    (_m, method: string | undefined, url: string) => `${method ?? ""}${sanitizeUrlString(url)}`,
+  );
+}
+
+// Span attributes that hold a URL (sanitized) or only its query/fragment (deleted).
+const SPAN_URL_KEYS = ["http.url", "url.full", "url", "url.original", "http.target", "url.path"];
+const SPAN_QUERY_KEYS = ["url.query", "http.query", "url.fragment", "http.fragment"];
+
+/** URL attributes of a span's data bag: sanitize the URL ones, delete the query-only ones. */
+function stripSpanUrlData(data: Record<string, unknown>): void {
+  for (const key of SPAN_URL_KEYS) {
+    if (typeof data[key] === "string") data[key] = sanitizeUrlString(data[key] as string);
+  }
+  for (const key of SPAN_QUERY_KEYS) delete data[key];
+}
+
+/** The trace context ("contexts.trace") IS the root span of a transaction and the trace of an
+ *  error event: the page URL lives in its data and description (Insurance M1). Same two key
+ *  lists as child spans. Returns a copy; the original is never mutated. */
+function stripTraceContext(ctx: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...ctx };
+  if (typeof out.description === "string") out.description = stripLabelQuery(out.description);
+  if (isRecord(out.data)) {
+    const data = { ...out.data };
+    stripSpanUrlData(data);
+    out.data = data;
+  }
+  return out;
+}
+
 /** Scrub (or drop) a single breadcrumb. Shared by beforeBreadcrumb and the
  *  in-event breadcrumb pass so both paths behave identically. */
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
@@ -412,6 +455,13 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
       typeof data.url === "string"
     ) {
       data.url = sanitizeUrlString(data.url);
+    }
+    // Navigation breadcrumbs carry the from/to paths, which include the query
+    // (K7-A: "/clients?q=<typed name>").
+    if (breadcrumb.category === "navigation") {
+      for (const key of ["from", "to", "url"]) {
+        if (typeof data[key] === "string") data[key] = sanitizeUrlString(data[key] as string);
+      }
     }
     breadcrumb.data = deepScrub(
       data,
@@ -457,7 +507,7 @@ function scrubEventCommon<T extends Event>(event: T): T {
   // credential is gone. Applied in the COMMON path so error and transaction
   // events are covered by one contract.
   if (typeof event.transaction === "string") {
-    event.transaction = redactString(event.transaction);
+    event.transaction = redactString(stripLabelQuery(event.transaction));
   }
 
   if (event.exception?.values) {
@@ -535,9 +585,10 @@ export function scrubTransactionEvent<T extends Event>(event: T): T {
     for (const span of event.spans) {
       const s = span as unknown as Record<string, unknown>;
       if (typeof s.description === "string") {
-        s.description = redactString(s.description);
+        s.description = redactString(stripLabelQuery(s.description));
       }
       if (isRecord(s.data)) {
+        stripSpanUrlData(s.data);
         s.data = deepScrub(s.data, { redactKeys: true }, new WeakSet(), 0);
       }
     }

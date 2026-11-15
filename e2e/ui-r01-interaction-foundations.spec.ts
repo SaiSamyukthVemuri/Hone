@@ -132,7 +132,7 @@ async function gotoDataSettings(page: Page) {
 async function gotoBookingSettings(page: Page) {
   const seed = await seedE2eStudio();
   await loginAsOwner(page, seed);
-  await page.goto("/settings/booking");
+  await page.goto("/settings/booking/window");
   // WAIT FOR HYDRATION BEFORE CLICKING, or there is no client pending state to
   // observe. Before this line the proof clicked a <button type="submit"> whose
   // island had not hydrated yet, so the browser performed a NATIVE form POST —

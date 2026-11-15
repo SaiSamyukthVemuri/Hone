@@ -164,7 +164,7 @@ describe("dedupe_key partial unique index (SetupIntent business-operation idempo
       eventType: "card_added",
       title: "Card added on file",
       body: "Client card-change-notif added visa ending in 4242.",
-      href: `/clients/${s.clientId}?tab=overview`,
+      href: `/clients/${s.clientId}?tab=billing`,
     });
     expect(first.code).toBeNull();
     expect(first.id).toBeTruthy();
@@ -174,7 +174,7 @@ describe("dedupe_key partial unique index (SetupIntent business-operation idempo
       eventType: "card_added",
       title: "Card added on file",
       body: "Client card-change-notif added visa ending in 4242.",
-      href: `/clients/${s.clientId}?tab=overview`,
+      href: `/clients/${s.clientId}?tab=billing`,
     });
     expect(second.code).toBe("23505"); // unique_violation -> writer returns deduped:true
   });
@@ -185,14 +185,14 @@ describe("dedupe_key partial unique index (SetupIntent business-operation idempo
       eventType: "card_replaced",
       title: "Card replaced on file",
       body: "Client card-change-notif replaced the card on file with visa ending in 4242.",
-      href: `/clients/${s.clientId}?tab=overview`,
+      href: `/clients/${s.clientId}?tab=billing`,
     });
     const b = await insertNotification({
       dedupeKey: `stripe:setup_intent:test:seti_${randomUUID().slice(0, 8)}`,
       eventType: "card_replaced",
       title: "Card replaced on file",
       body: "Client card-change-notif replaced the card on file with visa ending in 4242.",
-      href: `/clients/${s.clientId}?tab=overview`,
+      href: `/clients/${s.clientId}?tab=billing`,
     });
     expect(a.code).toBeNull();
     expect(b.code).toBeNull();
@@ -226,7 +226,7 @@ describe("dedupe_key partial unique index (SetupIntent business-operation idempo
       eventType: "card_added",
       title: "Card added on file",
       body: "Client card-change-notif added visa ending in 4242.",
-      href: `/clients/${s.clientId}?tab=overview`,
+      href: `/clients/${s.clientId}?tab=billing`,
     });
     expect(r.code).toBe("23514"); // check_violation
   });
@@ -241,7 +241,7 @@ describe("a card_added notification is studio-wide with a safe body", () => {
       eventType: "card_added",
       title: "Card added on file",
       body,
-      href: `/clients/${s.clientId}?tab=overview`,
+      href: `/clients/${s.clientId}?tab=billing`,
     });
     expect(ins.code).toBeNull();
 
@@ -254,7 +254,7 @@ describe("a card_added notification is studio-wide with a safe body", () => {
     expect(row.practitioner_id).toBeNull(); // studio-wide
     expect(row.event_type).toBe("card_added");
     expect(row.client_id).toBe(s.clientId);
-    expect(row.href).toBe(`/clients/${s.clientId}?tab=overview`);
+    expect(row.href).toBe(`/clients/${s.clientId}?tab=billing`);
     // No forbidden data in the body.
     expect(row.body).toContain("visa");
     expect(row.body).toContain("4242");

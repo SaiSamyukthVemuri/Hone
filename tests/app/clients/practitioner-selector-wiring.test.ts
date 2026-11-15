@@ -27,9 +27,11 @@ describe("target-aware slot loader + eligible-practitioners action", () => {
     expect(ACTIONS).not.toMatch(/error:\s*serviceErr\.message/);
     expect(ACTIONS).toMatch(/booking_slot_db_error:/);
   });
-  it("the eligible-practitioners action is owner + capacity-ON only and returns display names only", () => {
+  it("the eligible-practitioners action is owner-only (either capacity mode) and returns display names only", () => {
     expect(ACTIONS).toMatch(/export async function fetchEligiblePractitionersAction/);
-    expect(ACTIONS).toMatch(/practitioner_capacity_enabled !== true \|\| practitioner\.role !== "owner"/);
+    expect(ACTIONS).toMatch(/practitioner\.role !== "owner"/);
+    // capacity OFF lists every active practitioner (assignment only; no service eligibility)
+    expect(ACTIONS).toMatch(/if \(studio\.practitioner_capacity_enabled !== true\) \{[\s\S]*?\.eq\("active", true\)/);
     expect(ACTIONS).toMatch(/return \{ ok: true, practitioners: \[\] \}/);
     // Reads scope to the studio; returns id + displayName (no email/metadata).
     expect(ACTIONS).toMatch(/\.eq\("studio_id", studio\.id\)/);
@@ -70,8 +72,8 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
 });
 
 describe("BookAppointment — owner selector, member self-only, confirmation", () => {
-  it("shows the selector ONLY for a capacity-ON owner", () => {
-    expect(BOOK).toMatch(/const showSelector = practitionerCapacityEnabled && isOwner/);
+  it("shows the selector ONLY for an owner (either capacity mode)", () => {
+    expect(BOOK).toMatch(/const showSelector = isOwner;/);
     expect(BOOK).toMatch(/\{showSelector && \(/);
     expect(BOOK).toMatch(/fetchEligiblePractitionersAction/);
   });

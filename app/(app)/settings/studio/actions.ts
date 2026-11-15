@@ -62,7 +62,7 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
   }
 
   revalidatePath("/dashboard");
-  revalidatePath("/settings/studio");
+  revalidatePath("/settings/studio", "layout");
   revalidatePath("/settings/team");
 }
 
@@ -97,30 +97,16 @@ export async function updateStudioDisplayPreferencesAction(
     .update({ birthday_reminder_color: color, time_format_preference: rawTimeFormat })
     .eq("id", studio.id);
   if (error) {
-    // Time-format preference (migration 0109): in the brief window after code
-    // deploys but before 0109 is applied the column does not exist, and the
-    // colour must still save. Only "column does not exist" falls back to a
-    // colour-only write; any other error is surfaced with nothing written.
-    const missingColumn =
-      /time_format_preference/i.test(error.message) ||
-      error.code === "PGRST204" ||
-      error.code === "42703";
-    if (!missingColumn) {
-      return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(error)}` };
-    }
-    const { error: colorError } = await supabase
-      .from("studios")
-      .update({ birthday_reminder_color: color })
-      .eq("id", studio.id);
-    if (colorError) {
-      return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(colorError)}` };
-    }
+    // 0109 is applied on every database (hosted history is complete below it),
+    // so a missing time_format_preference column is a real error here, never a
+    // reason to report "Saved" for a write that stored only the colour.
+    return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(error)}` };
   }
 
   revalidatePath("/dashboard");
   revalidatePath("/calendar");
-  revalidatePath("/settings/calendar");
-  revalidatePath("/settings/studio");
+  revalidatePath("/settings/calendar", "layout");
+  revalidatePath("/settings/studio", "layout");
   return { ok: true };
 }
 
@@ -192,7 +178,7 @@ export async function setStudioEmailSettingsAction(
     return { ok: false, error: "Could not save settings. Please try again." };
   }
 
-  revalidatePath("/settings/studio");
+  revalidatePath("/settings/studio", "layout");
   return { ok: true };
 }
 
@@ -243,7 +229,7 @@ export async function setClientSelfServiceAction(
     return { ok: false, error: "Could not save settings. Please try again." };
   }
 
-  revalidatePath("/settings/studio");
+  revalidatePath("/settings/studio", "layout");
   return { ok: true };
 }
 
@@ -341,8 +327,8 @@ export async function updateStudioPostcareAction(
   }
 
   // F4: the form is rendered on /settings/intake, so that page must refresh too.
-  revalidatePath("/settings/studio");
-  revalidatePath("/settings/intake");
+  revalidatePath("/settings/studio", "layout");
+  revalidatePath("/settings/forms", "layout");
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +400,6 @@ export async function updateStudioPolicyAction(
     throw new Error(`Failed to update studio policy: ${dbErrorCode(error)}`);
   }
 
-  revalidatePath("/settings/intake");
-  revalidatePath("/settings/payments");
+  revalidatePath("/settings/forms", "layout");
+  revalidatePath("/settings/payments", "layout");
 }

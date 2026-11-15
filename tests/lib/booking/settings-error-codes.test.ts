@@ -78,7 +78,7 @@ describe("the redirect carries codes only", () => {
   });
 
   it("the page does not render the raw parameter", () => {
-    const page = readFileSync("app/(app)/settings/booking/page.tsx", "utf8");
+    const page = readFileSync("app/(app)/settings/booking/BookingView.tsx", "utf8");
     expect(page).toContain("bookingSettingsErrorSentence(errorParam)");
     expect(page).not.toMatch(/error=\{errorParam\}|error=\{errorMessage \?\? null\}/);
   });

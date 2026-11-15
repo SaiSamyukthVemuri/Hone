@@ -265,17 +265,17 @@ test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboa
     });
 
     await test.step("regression: the operational hierarchy is unchanged", async () => {
-      // Today first, To do second, Birthdays after — and nothing new inserted.
+      // Today first, Needs attention second (WS-DB), Birthdays after — and nothing new inserted.
       const headings = await page
         .locator("main h2, h2")
         .allTextContents();
       const own = headings.filter((h) =>
-        ["Today", "To do", "Birthdays this month"].includes(h.trim()),
+        ["Today", "Needs attention", "Birthdays this month"].includes(h.trim()),
       );
       expect(own[0]).toBe("Today");
-      expect(own[1]).toBe("To do");
+      expect(own[1]).toBe("Needs attention");
       await expect(
-        page.getByRole("heading", { name: "To do", exact: true }),
+        page.getByRole("heading", { name: "Needs attention", exact: true }),
       ).toBeVisible();
     });
   });

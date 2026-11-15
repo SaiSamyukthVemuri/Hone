@@ -17,7 +17,7 @@ import {
 // The shared marketing-data module (lib/marketing/content.ts) is the single
 // source of truth every marketing page/component reads. These pins lock the
 // load-bearing, easy-to-erode truths of the flagship rebuild so a later stage
-// cannot silently reintroduce a "Book" CTA on a lead-capture form, a non-CAD
+// cannot silently reintroduce a "Book" CTA on a lead-capture form, a non-USD
 // price, fake scarcity, or a Google Calendar claim.
 
 // Collect every string value reachable from the module's exports so the
@@ -62,30 +62,30 @@ describe("marketing content — CTA truthfulness (addendum §3)", () => {
   });
 });
 
-describe("marketing content — CAD pricing (prompt §15)", () => {
-  it("declares CAD as the SaaS currency", () => {
-    expect(CURRENCY).toBe("CAD");
+describe("marketing content — USD pricing (owner decision, 1 Nov 2026)", () => {
+  it("declares USD as the SaaS currency", () => {
+    expect(CURRENCY).toBe("USD");
   });
 
-  it("labels every published price with CAD $", () => {
+  it("labels every published price with US$", () => {
     for (const plan of PRICING_PLANS) {
       if (plan.priceLabel !== null) {
-        expect(plan.priceLabel).toMatch(/^CAD \$\d/);
+        expect(plan.priceLabel).toMatch(/^US\$\d/);
       }
     }
   });
 
-  it("uses the exact founding / solo / studio prices", () => {
+  it("uses the exact solo / studio prices and a priceless contact-us tier", () => {
     const byId = Object.fromEntries(PRICING_PLANS.map((p) => [p.id, p]));
-    expect(byId["founding-solo"].priceLabel).toBe("CAD $29");
-    expect(byId["founding-solo"].transition).toContain("CAD $39");
-    expect(byId["founding-solo"].transition).toContain("first 12 months");
-    expect(byId["solo"].priceLabel).toBe("CAD $49");
-    expect(byId["studio"].priceLabel).toBe("CAD $99");
+    expect(byId["solo"].priceLabel).toBe("US$49");
+    expect(byId["studio"].priceLabel).toBe("US$99");
+    expect(byId["larger"].priceLabel).toBeNull();
+    expect(byId["larger"].cadence).toBeNull();
     expect(byId["studio"].seats).toBe("up to 3 practitioners");
     // Deck v2.2 states a seat line on every tier, not only Studio.
-    expect(byId["founding-solo"].seats).toBe("1 practitioner");
     expect(byId["solo"].seats).toBe("1 practitioner");
+    expect(byId["larger"].seats).toBe("more than 3 practitioners");
+    expect(Object.keys(byId)).not.toContain("founding-solo");
   });
 });
 

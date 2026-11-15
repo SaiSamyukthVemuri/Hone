@@ -46,7 +46,7 @@ export async function updateOwnProfileAction(formData: FormData): Promise<void> 
   }
 
   revalidatePath("/settings/profile");
-  revalidatePath("/settings/studio");
+  revalidatePath("/settings/studio", "layout");
   revalidatePath("/settings/team");
   revalidatePath("/dashboard");
 }

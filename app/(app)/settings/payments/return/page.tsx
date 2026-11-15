@@ -5,19 +5,21 @@
 // Stripe and reflect the freshly synced state.
 
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { refreshAccountStatusFromStripe } from "@/lib/stripe/account";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
+import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 
 export const dynamic = "force-dynamic";
 
 export default async function StripeOnboardingReturnPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    redirect("/settings/payments");
+    return (
+      <OwnerOnlyNotice>Only the studio owner can manage payments.</OwnerOnlyNotice>
+    );
   }
 
   const admin = createAdminClient();

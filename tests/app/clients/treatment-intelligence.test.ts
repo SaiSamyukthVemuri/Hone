@@ -271,17 +271,16 @@ describe("buildTreatmentIntelligence: areas", () => {
 });
 
 describe("placement + UI", () => {
-  it("renders on the client profile Overview between Client info and Pricing", () => {
+  it("renders on the client profile Overview after Client info (Pricing moved to Billing)", () => {
     const overview = PAGE.slice(
       PAGE.indexOf('{activeTab === "overview"'),
       PAGE.indexOf('{activeTab === "messages"'),
     );
     const info = overview.indexOf("Client info");
     const intel = overview.indexOf("<TreatmentIntelligenceCard");
-    const pricing = overview.lastIndexOf("Pricing");
     expect(info).toBeGreaterThan(-1);
     expect(intel).toBeGreaterThan(info);
-    expect(pricing).toBeGreaterThan(intel);
+    expect(overview).not.toMatch(/>\s*Pricing\s*</);
   });
 
   it("titled Treatment Intelligence with the required helper + judgment copy", () => {

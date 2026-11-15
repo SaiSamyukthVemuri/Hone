@@ -21,7 +21,12 @@ import path from "node:path";
 // ===========================================================================
 
 const ROOT = path.resolve(__dirname, "../../..");
-const DASH = readFileSync(path.join(ROOT, "app/(app)/dashboard/page.tsx"), "utf8");
+// The pinned-note rendering moved out of the page into RowSafetyLines (rendered inside the row-body link), so
+// the page and that component are read together: the guarantees below are about what the roster renders.
+const DASH =
+  readFileSync(path.join(ROOT, "app/(app)/dashboard/page.tsx"), "utf8") +
+  "\n" +
+  readFileSync(path.join(ROOT, "app/(app)/dashboard/row-safety-lines.tsx"), "utf8");
 const QUERIES = readFileSync(path.join(ROOT, "lib/client-pinned-notes/queries.ts"), "utf8");
 
 /** Comment-stripped, so explanatory prose can neither satisfy an assertion nor

@@ -209,8 +209,7 @@ describe("permissions — search advertises only what the caller can already ope
       ["settings", "Settings"],
       ["getting started", "Getting Started"],
       ["profile", "Profile"],
-      ["intake", "Forms & Postcare"],
-      ["launch", "Launch"],
+      ["intake", "Intake form preview"],
       ["notifications", "Notifications"],
       ["sterile", "Sterile Items"],
       ["disinfectant", "Disinfectants"],
@@ -265,7 +264,7 @@ describe("permissions — search advertises only what the caller can already ope
   it("google resolves for the audiences that actually have the surface", () => {
     // Owner: the studio-level Integrations page, whichever way the flag sits.
     expect(top("google", OWNER)).toBe("Google Calendar");
-    expect(hrefs("google", OWNER)).toContain("/settings/integrations");
+    expect(hrefs("google", OWNER)).toContain("/settings/integrations/google-calendar");
     expect(top("calendar sync", OWNER)).toBe("Google Calendar");
     // Practitioner with the flag on: their OWN connection card, on Profile.
     const withFlag = { isOwner: false, googleCalendarEnabled: true };
@@ -708,7 +707,8 @@ describe("coverage tripwire — a new destination needs an explicit decision", (
     const open = memberSees;
 
     expect(ownerGated.size).toBeGreaterThanOrEqual(10);
-    expect(open.size).toBeGreaterThanOrEqual(3);
+    // WS-D: Launch is owner-only, so Profile and Forms & Postcare are the two ungated tabs.
+    expect(open.size).toBeGreaterThanOrEqual(2);
     // A tab cannot be in both regions, or the resolution is wrong.
     for (const href of ownerGated) expect(open.has(href)).toBe(false);
 

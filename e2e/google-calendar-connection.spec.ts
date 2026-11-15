@@ -25,7 +25,7 @@ test("Google Calendar card: flag-gated, dormant, fail-closed when unconfigured",
 
   await test.step("with the flag OFF, the Google Calendar card is absent", async () => {
     await page.goto("/settings/profile");
-    await expect(page.getByRole("heading", { name: /^Profile$/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^Personal details$/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /connect google calendar/i })).toHaveCount(0);
     // The one-way iCal feed card is unaffected and still present.
     await expect(page.getByText(/calendar feed/i).first()).toBeVisible();

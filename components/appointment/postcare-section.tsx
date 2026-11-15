@@ -151,7 +151,7 @@ export function PostcareSection(props: {
           </p>
           {props.isOwner ? (
             <a
-              href="/settings/intake#postcare"
+              href="/settings/forms/postcare"
               className="self-start rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
             >
               Configure postcare

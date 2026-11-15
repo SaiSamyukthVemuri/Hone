@@ -116,17 +116,14 @@ describe("updateStudioDisplayPreferencesAction", () => {
     expect(updates).toHaveLength(0);
   });
 
-  it("tolerates a missing time_format_preference column (migration 0109 not applied yet)", async () => {
+  it("reports a missing time_format_preference column as an error, never as Saved", async () => {
     failTimeFormat = { code: "42703", message: "column does not exist" };
     const result = await updateStudioDisplayPreferencesAction(
       form({ birthday_reminder_color: "green", time_format: "12h" }),
     );
-    expect(result).toEqual({ ok: true });
-    // The colour still saved, through the colour-only fallback.
-    expect(updates.map((u) => u.values)).toEqual([
-      { birthday_reminder_color: "green", time_format_preference: "12h" },
-      { birthday_reminder_color: "green" },
-    ]);
+    expect(result.ok).toBe(false);
+    // No colour-only fallback write: nothing is stored under a "Saved" message.
+    expect(updates).toHaveLength(1);
   });
 
   it("surfaces any other error with NOTHING written (no partial save)", async () => {

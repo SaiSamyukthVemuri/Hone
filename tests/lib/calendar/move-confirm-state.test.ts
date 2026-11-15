@@ -4,6 +4,7 @@ import {
   MOVE_REASON,
   isDifferentInstant,
   moveConfirmState,
+  parseCustomMoveTime,
   type MoveConfirmInput,
 } from "@/app/(app)/calendar/move-confirm-state";
 
@@ -63,6 +64,27 @@ describe("A — time-only custom move with a healthy practitioner", () => {
     expect(s.canConfirm).toBe(true);
     expect(s.reassignmentNotice).toBeNull();
   });
+});
+
+describe("custom time entry", () => {
+  it.each([
+    ["03:30 PM", "15:30"],
+    ["15:30", "15:30"],
+    ["15:30:00", "15:30"],
+    ["15:30:00.000", "15:30"],
+    ["12:00 AM", "00:00"],
+    ["12:00 PM", "12:00"],
+    ["3:37 pm", "15:37"],
+  ])("converts %s to %s without changing the selected minute", (input, expected) => {
+    expect(parseCustomMoveTime(input)).toBe(expected);
+  });
+
+  it.each(["3:3", "3:30", "3:30 P", "13:30 PM", "24:00", "15:60", "15:30:01"])(
+    "rejects the incomplete or invalid time %s",
+    (input) => {
+      expect(parseCustomMoveTime(input)).toBe("");
+    },
+  );
 });
 
 describe("the reported case — the current practitioner can no longer hold it", () => {
@@ -328,5 +350,27 @@ describe("the gate applies that one law in BOTH modes", () => {
     });
     expect(s.canConfirm).toBe(false);
     expect(s.disabledReason).toBe(MOVE_REASON.reassignmentRequired);
+  });
+});
+
+describe("capacity OFF — an inactive or missing holder never blocks a time-only move (Codex P2)", () => {
+  // Capacity OFF is studio-wide: `move_appointment_core` (0220) lets an owner move the time and keep the holder.
+  const off = { holderMustBeValid: false, target: "", currentPractitionerId: "p-gone" } as const;
+  it("inactive holder, nothing chosen, valid custom time: enabled, no notice, not a reassignment", () => {
+    const s = state({ ...off });
+    expect(s).toMatchObject({ canConfirm: true, disabledReason: null, reassignmentRequired: false, reassignmentNotice: null, isReassign: false });
+  });
+  it("missing holder, an offered slot chosen: enabled", () => {
+    const s = state({ ...off, currentPractitionerId: "", mode: "available_slot", hasSlot: true, proposedStartsAt: "2031-09-15T11:00:00.000Z" });
+    expect(s.canConfirm).toBe(true);
+  });
+  it("a chosen target must still be an eligible practitioner", () => {
+    expect(state({ ...off, target: "p-nobody" }).canConfirm).toBe(false);
+    expect(state({ ...off, target: "p-b" })).toMatchObject({ canConfirm: true, isReassign: true });
+  });
+  it("capacity ON (the default) is unchanged: the same inputs still require a reassignment", () => {
+    const s = state({ target: "", currentPractitionerId: "p-gone" });
+    expect(s).toMatchObject({ canConfirm: false, disabledReason: MOVE_REASON.reassignmentRequired, reassignmentRequired: true });
+    expect(s.reassignmentNotice).toBe(MOVE_NOTICE.ineligibleHolder);
   });
 });

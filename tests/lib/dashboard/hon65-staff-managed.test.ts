@@ -138,12 +138,26 @@ describe("wiring and boundaries (source guards)", () => {
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
   const mod = readFileSync("lib/dashboard/staff-managed.ts", "utf8");
   it("the page reads the posture for ITS studio only and the stack passes it to both consumers", () => {
-    expect(page).toMatch(/loadStaffManagedClinic\(supabase,\s*studio\.id\)/);
+    // WS-DB: the checked variant keeps "unknown" distinct; the copy posture still defaults to standard.
+    expect(page).toMatch(/loadStaffManagedClinicChecked\(\s*supabase,\s*studio\.id,?\s*\)/);
+    expect(page).toMatch(/v === STAFF_MANAGED_UNKNOWN \? false : v/);
     expect(stack).toMatch(/staffManaged,\n\s*\},/);
     expect(stack).toMatch(/<PracticeSnapshot[\s\S]*?staffManaged=\{staffManaged\}/);
   });
   it("no portal-off flag is invented: the module reads only the two HON-47 columns and no money field", () => {
     expect(mod).toMatch(/client_cancellation_enabled, client_reschedule_enabled/);
     expect(mod).not.toMatch(/portal_enabled|portal_off|online_booking|self_booking|price_cents|stripe/i);
+  });
+});
+
+describe("WS-DB: an unreadable posture is stated, not silently defaulted", () => {
+  it("the checked loader returns 'unknown' on a read error or a throw, and a boolean otherwise", async () => {
+    const { loadStaffManagedClinicChecked, STAFF_MANAGED_UNKNOWN } = await import("@/lib/dashboard/staff-managed");
+    const client = (result: unknown, throws = false) =>
+      ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => { if (throws) throw new Error("x"); return result; } }) }) }) }) as never;
+    expect(await loadStaffManagedClinicChecked(client({ data: null, error: { message: "x" } }), "s")).toBe(STAFF_MANAGED_UNKNOWN);
+    expect(await loadStaffManagedClinicChecked(client(null, true), "s")).toBe(STAFF_MANAGED_UNKNOWN);
+    expect(await loadStaffManagedClinicChecked(client({ data: { client_cancellation_enabled: false, client_reschedule_enabled: false }, error: null }), "s")).toBe(true);
+    expect(await loadStaffManagedClinicChecked(client({ data: { client_cancellation_enabled: true, client_reschedule_enabled: false }, error: null }), "s")).toBe(false);
   });
 });

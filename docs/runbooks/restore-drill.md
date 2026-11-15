@@ -58,7 +58,7 @@ synthetic practitioner. GoTrue's admin API issues the magic-link token and
 because the drill runs no mail server. It then reads:
 
 1. `/clients`: the seeded client's link and rendered name;
-2. `/clients/<id>?tab=consultation`: the record heading and the restored
+2. `/clients/<id>?tab=treatment` (`consultation` is a legacy alias the app redirects): the record heading and the restored
    clinical note;
 3. `/api/clients/<id>/images/<image>/signed-url`: the app signs one restored
    photo, and the bytes behind that URL must hash equal to the bytes the drill

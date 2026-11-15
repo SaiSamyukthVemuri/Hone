@@ -54,6 +54,10 @@ const admissionScenario: {
 // `newClientAdmissionIsCutOver` from this module - so a mock that supplied only
 // the read would leave the bridge calling `undefined`. Stub the READ, keep
 // every pure predicate real: they are the thing under test here.
+// WS-D: the layout also reads launch readiness for an owner (to show or hide "Setup"). That read is not what this file measures, so it is stubbed
+// as "unknown" (never complete); it must not add reads to the presence-read counts asserted below.
+vi.mock("@/lib/booking/new-client-readiness", () => ({ getNewClientReadiness: async () => ({ status: "unknown", unavailable: [] }) }));
+
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();

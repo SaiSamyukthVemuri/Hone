@@ -30,7 +30,7 @@ describe("ClientForm wiring (source pins)", () => {
   const form = readFileSync("components/client-form.tsx", "utf8");
 
   it("submits through the payload builder", () => {
-    expect(form).toContain("buildClientFormData(values, hiddenFields, confirmPossibleDuplicateIds)");
+    expect(form).toMatch(/buildClientFormData\(\s*values,[\s\S]*?confirmPossibleDuplicateIds,?\s*\)/);
   });
 
   it("the ordinary submit never confirms; only the warning's button does, for every warned client", () => {

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -72,6 +73,7 @@ vi.mock("next/link", async () => {
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { ProfileTabBar } = await import("@/components/profile-tab-bar");
+const { profileTabsFor } = await import("@/lib/clients/profile-tabs");
 
 type Tab = {
   label: string;
@@ -91,6 +93,7 @@ function render(state: {
   return renderToStaticMarkup(
     createElement(ProfileTabBar, {
       active: state.active as Parameters<typeof ProfileTabBar>[0]["active"],
+      tabs: profileTabsFor({ isOwner: true }),
     }),
   );
 }
@@ -204,9 +207,9 @@ describe("UI-01D: the pending target is represented separately", () => {
     const html = render({
       pending: true,
       active: "overview",
-      requested: "personal",
+      requested: "notes",
     });
-    expect(liveRegion(html)).toBe("Opening Personal Notes…");
+    expect(liveRegion(html)).toBe("Opening Notes…");
     expect(liveRegion(html)).not.toMatch(/opened|loaded|done/i);
   });
 
@@ -244,11 +247,11 @@ describe("UI-01D: pending state cannot go stale", () => {
     const second = render({
       pending: true,
       active: "overview",
-      requested: "personal",
+      requested: "notes",
     });
     expect(find(first, "Sessions")?.ariaBusy).toBe("true");
     expect(find(second, "Sessions")?.ariaBusy).toBeNull();
-    expect(find(second, "Personal Notes")?.ariaBusy).toBe("true");
+    expect(find(second, "Notes")?.ariaBusy).toBe("true");
     expect(markCount(second)).toBe(1);
     expect(tabs(second).filter((t) => t.ariaBusy === "true")).toHaveLength(1);
   });
@@ -285,18 +288,29 @@ describe("UI-01D: a spinner is not the proof, and the mobile control is untouche
     expect(html).toMatch(/pointer-events-none absolute inset-0 m-auto/);
   });
 
-  it("leaves the mobile select's own pending behaviour exactly as it was", () => {
-    // PR #238 made the phone control a native <select>; it is outside the
-    // repaired mechanism and its lock is unchanged.
-    expect(
-      selectDisabled(
-        render({ pending: true, active: "overview", requested: "sessions" }),
-      ),
-    ).toBe(true);
-    expect(
-      selectDisabled(
-        render({ pending: false, active: "overview", requested: null }),
-      ),
-    ).toBe(false);
+  it("never disables the mobile select mid-flight, so keyboard focus survives (PB-F1)", () => {
+    // A browser blurs a control when it becomes disabled; the select must stay enabled and only
+    // announce busy, like the desktop tabs.
+    const pendingHtml = render({ pending: true, active: "overview", requested: "sessions" });
+    expect(selectDisabled(pendingHtml)).toBe(false);
+    expect(pendingHtml.match(/<select([^>]*)>/)?.[1]).toMatch(/aria-busy="true"/);
+    const restHtml = render({ pending: false, active: "overview", requested: null });
+    expect(selectDisabled(restHtml)).toBe(false);
+    expect(restHtml.match(/<select([^>]*)>/)?.[1]).not.toMatch(/aria-busy/);
+  });
+
+  it("sticks BELOW the sticky app header, on desktop tabs and the 390 select alike (Codex P2)", () => {
+    const html = render({ pending: false, active: "overview", requested: null });
+    // One <nav> carries both the select (phones) and the tab row (md+), so one offset covers both.
+    const nav = html.match(/<nav([^>]*)>/)?.[1] ?? "";
+    expect(nav).toMatch(/sticky top-14 z-20/);
+    expect(nav).not.toMatch(/top-0/);
+    const src = readFileSync("components/profile-tab-bar.tsx", "utf8");
+    expect(src).toMatch(/querySelector\("header"\)/);
+    expect(src).toMatch(/style=\{headerHeight > 0 \? \{ top: headerHeight \} : undefined\}/);
+    expect(src).toMatch(/top < headerHeight/);
+    // stays under the header (z-30)
+    const layout = readFileSync("app/(app)/layout.tsx", "utf8");
+    expect(layout).toMatch(/<header className="sticky top-0 z-30/);
   });
 });

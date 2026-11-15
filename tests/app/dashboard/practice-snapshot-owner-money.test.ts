@@ -55,7 +55,7 @@ describe("HON-44 practice snapshot money is owner-only", () => {
   it("the page requests money only for the owner", () => {
     const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
     expect(page).toMatch(
-      /getPracticeDashboardMetrics\(\s*studio\.id,\s*studio\.timezone,\s*period,\s*\{\s*viewerIsOwner:\s*isOwner,?\s*\}/,
+      /isOwner\s*\?\s*getPracticeDashboardMetrics\(\s*studio\.id,\s*studio\.timezone,\s*period,\s*\{\s*viewerIsOwner:\s*true,?\s*\}\s*\)\s*:\s*Promise\.resolve\(null\)/,
     );
   });
 });

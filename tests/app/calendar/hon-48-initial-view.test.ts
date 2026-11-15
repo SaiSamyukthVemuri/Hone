@@ -73,21 +73,21 @@ describe("the page applies the rule to the initial entry only", () => {
   });
 
   it("a week-view 'Today' names the week, or a team studio would be sent to the Day view", () => {
-    expect(PAGE).toContain('todayHref="/calendar?view=week"');
+    expect(PAGE).toContain('todayHref={withSelection("/calendar?view=week", sidebar.param)}');
     expect(PAGE).not.toMatch(/todayHref="\/calendar"/);
-    expect(MOBILE).toContain('router.push("/calendar?view=week")');
+    expect(MOBILE).toContain('router.push(withSelection("/calendar?view=week", selectionParam))');
     expect(MOBILE).not.toContain('router.push("/calendar")');
   });
 
   it("every other in-page link already carries a parameter, so none re-enters the default", () => {
-    const hrefs = [...PAGE.matchAll(/(?:weekHref|monthHref|dayHref|prevHref|todayHref|nextHref)=\{?[`"]([^`"]+)[`"]/g)].map((m) => m[1]);
+    const hrefs = [...PAGE.matchAll(/(?:weekHref|monthHref|dayHref|prevHref|todayHref|nextHref)=\{?(?:withSelection\()?[`"]([^`"]+)[`"]/g)].map((m) => m[1]);
     expect(hrefs.length).toBeGreaterThan(8);
     for (const h of hrefs) expect(h, h).toMatch(/^\/calendar\?/);
   });
 
   it("the Day view's non-team redirect and Week tab keep a parameter, so there is no redirect loop", () => {
     expect(PAGE).toContain("redirect(`/calendar?day=${date}`)");
-    expect(PAGE).toContain("weekHref={`/calendar?day=${date}`}");
+    expect(PAGE).toContain("weekHref={withSelection(`/calendar?day=${date}`, sidebar.param)}");
   });
 
   it("permissions are not read here: no role or owner check decides the initial view", () => {
@@ -116,10 +116,13 @@ describe("e2e specs on a team studio never rely on the bare /calendar default", 
     expect(team).toEqual(expect.arrayContaining(["team-day-view.spec.ts", "practitioner-quick-book-studio-b.spec.ts"]));
   });
 
-  it("a spec that enables capacity and seeds practitioners has no bare /calendar navigation, except team-day-view", () => {
+  it("a spec that enables capacity and seeds practitioners has no bare /calendar navigation, except team-day-view and calendar-own-first", () => {
     const offenders: string[] = [];
     for (const f of files) {
       if (f === "team-day-view.spec.ts") continue;
+      // #1424: the FIRST visit to the bare /calendar is the behaviour under test (a practitioner opens on their own column), so this spec
+      // navigates there on purpose. Exempt by name; it is opt-in (CAL_OWN_FIRST_E2E=1) and asserts the resulting view itself.
+      if (f === "calendar-own-first.spec.ts") continue;
       const src = readFileSync(`e2e/${f}`, "utf8");
       const team = /setStudioCapacityEnabled\([^)]*true/.test(src) && /seedE2eMember|seedFettStudio/.test(src);
       if (team && BARE_CALENDAR.test(src)) offenders.push(f);

@@ -52,7 +52,7 @@ export function ClinicalNotesSummary({
           Consultation &amp; skin/hair
         </h2>
         <Link
-          href={`/clients/${clientId}?tab=consultation`}
+          href={`/clients/${clientId}?tab=treatment`}
           className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-600 underline dark:text-neutral-300"
         >
           View / edit
