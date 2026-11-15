@@ -75,7 +75,8 @@ describe("session card integration — owner threading + no default leak", () =>
   it("the Refund button is owner-gated in the UI (server auth unchanged)", () => {
     // The refund action block is gated on isOwner; server-side owner-only
     // authorization in payment-actions is not touched by this PR.
-    expect(CARD).toMatch(/isOwner &&[\s\S]{0,80}!persistedSucceeded/);
+    // R1: the same gate also requires refundDisplayState to allow a NEW refund (no refund in flight, done or traced).
+    expect(CARD).toMatch(/isOwner &&[\s\S]{0,80}display\.mayStartRefund/);
   });
   it("no inline processor id / full-email rows survive in the default face", () => {
     const codeOnly = CARD.split("\n")
