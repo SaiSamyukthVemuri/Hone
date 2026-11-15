@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 266,
+    "count": 269,
     "last": "0350_setup_option_check_null_element.sql",
-    "sha256": "e062b504c76ebd680fb7cca93d75db46a89d2b2cacbb110098ec5ce3747cb2ed"
+    "sha256": "4a57dd37dc3eef3c2918b9b6e6176fb3590050d9595530a7a9d9a4093cfa8bc5"
   },
   "public": {
     "tables": [
@@ -290,6 +290,7 @@
       "enforce_appointment_buffer",
       "enforce_appointment_transition",
       "enforce_intake_terminal_immutability",
+      "enforce_intake_terminal_visibility",
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",

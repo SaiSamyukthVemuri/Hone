@@ -12,7 +12,7 @@ const code = (s: string) => s.replace(/--.*$/gm, "");
 
 describe("0338 source contract", () => {
   const body = code(SQL);
-  it("is no longer the maximum migration (only the max may assert that)", () => {
+  it("is no longer the current maximum (only the max may assert it is)", () => {
     expect(isRepoMax("0338")).toBe(false);
   });
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
