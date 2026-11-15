@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Hosted public.waitlist has no `source` column (R1, 2026-11-01), so an insert
+// Hosted public.waitlist has no `source` column, so an insert
 // that names it fails with PGRST204 and the signup is lost. The action sends the
 // email only; where the column exists its default ('landing', migration 0004)
 // fills it.
@@ -17,7 +17,7 @@ vi.mock("@/lib/rate-limit/public", () => ({
 
 import { submitWaitlistEntry } from "@/app/actions/waitlist";
 
-// Hosted public.waitlist columns, from the catalog Sam relayed (R1, 2026-11-01):
+// Hosted public.waitlist columns: the insert names only columns the table is known to hold:
 // id, email (NOT NULL, UNIQUE), practice_name (nullable), created_at. `source`,
 // which repo migration 0004 declares, is ABSENT on hosted. Change this list only
 // with hosted evidence, never from the repo's migrations.
