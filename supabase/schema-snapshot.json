@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 270,
-    "last": "0341_portal_message_member_write_policies.sql",
-    "sha256": "7460e90f8e8a27131b116ec028512470667f1f04a1a49ec5f12b87af0738f492"
+    "count": 271,
+    "last": "0350_setup_option_check_null_element.sql",
+    "sha256": "cc1c2f585fdd5dbddb55145fa8c999131343e550215d17d3be569afa34256abd"
   },
   "public": {
     "tables": [
