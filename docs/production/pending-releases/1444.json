@@ -1,0 +1,1 @@
+{"pr":1444,"runtime":true,"migrations":["supabase/migrations/0339_owner_only_services_and_consent_template_writes.sql"],"release_receipt":"01-ops/1444-release-receipt.json"}
