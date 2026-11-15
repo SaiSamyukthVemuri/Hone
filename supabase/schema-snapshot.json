@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 269,
+    "count": 270,
     "last": "0351_studio_manual_fee_settings.sql",
-    "sha256": "f1cb410773d80d119241765f6ccc7f9fadfd50c443ca0d96704147ad5eda6048"
+    "sha256": "64f05b51b56d1c0bd237c3c71b26d3e81874c8b3602f4be8ef4887a54d43dfb9"
   },
   "public": {
     "tables": [
