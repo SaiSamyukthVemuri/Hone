@@ -13,5 +13,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const summary = await sweepStuckFeeAttempts({ admin: createAdminClient() });
-  return NextResponse.json({ ok: !summary.read_failed, ...summary });
+  // Non-200 when detection itself failed (its read failed, or an alert could not be recorded), so the cron run shows as failed.
+  const healthy = !summary.read_failed && summary.alert_failed === 0;
+  return NextResponse.json({ ok: healthy, ...summary }, { status: healthy ? 200 : 500 });
 }

@@ -73,7 +73,8 @@ const {
   MANUAL_FEE_SETTING_UNREADABLE_MESSAGE,
   MANUAL_FEE_STATE_COPY,
   NO_SHOW_FEE_DISABLED_MESSAGE,
-  loadManualFeeSettingBlockMessage,
+  loadManualFeeExecuteHold,
+  MANUAL_FEE_SETTINGS_CHANGED_MESSAGE,
   manualFeeEffectiveState,
   manualFeeSettingBlockMessage,
 } = await import("@/lib/billing/manual-fee-studio-setting");
@@ -85,8 +86,13 @@ const ATTEMPT = "33333333-3333-4333-8333-333333333333";
 const PRACT = "44444444-4444-4444-8444-444444444444";
 const LATE = "late_cancellation_fee" as const;
 const NOSHOW = "no_show_fee" as const;
-const BOTH_OFF = { late_cancel_fee_enabled: false, no_show_fee_enabled: false };
-const BOTH_ON = { late_cancel_fee_enabled: true, no_show_fee_enabled: true };
+const CONFIG = {
+  late_cancel_fee_mode: "fixed", no_show_fee_mode: "fixed",
+  late_cancel_fee_percent_bp: null, no_show_fee_percent_bp: null,
+  late_cancel_fee_cents: 5000, no_show_fee_cents: 5000,
+};
+const BOTH_OFF = { ...CONFIG, late_cancel_fee_enabled: false, no_show_fee_enabled: false };
+const BOTH_ON = { ...CONFIG, late_cancel_fee_enabled: true, no_show_fee_enabled: true };
 
 const ROWS: Record<string, unknown> = {
   client_payment_methods: { id: "cpm-1", studio_id: STUDIO, client_id: "c1", status: "active", stripe_livemode: false, stripe_account_id: "acct_test", stripe_customer_id: "cus_test", stripe_payment_method_id: "pm_test", card_authorization_signature_id: "sig-1" },
@@ -99,7 +105,8 @@ const attemptRow = (over: Record<string, unknown> = {}) => ({
   amount_cents: 5000, currency: "cad", status: "ready", stripe_livemode: false, client_payment_method_id: "cpm-1",
   card_authorization_signature_id: "sig-1", stripe_account_id: "acct_test", stripe_customer_id: "cus_test",
   stripe_payment_method_id: "pm_test", stripe_payment_intent_id: null, stripe_idempotency_key: null,
-  updated_at: "2026-08-01T00:00:00.000Z", created_at: "2026-08-01T00:00:00.000Z", ...over,
+  updated_at: "2026-08-01T00:00:00.000Z", created_at: "2026-08-01T00:00:00.000Z",
+  calc_mode: "fixed", basis_cents: null, percent_bp: null, ...over,
 });
 const run = () => runSessionPaymentCharge({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: PRACT });
 
@@ -129,14 +136,6 @@ describe("the studio setting is a pure, fail-closed gate", () => {
   it("session_payment and unknown reasons are not governed by it", () => {
     expect(manualFeeSettingBlockMessage("session_payment", BOTH_OFF)).toBeNull();
     expect(manualFeeSettingBlockMessage("some_future_reason", null)).toBeNull();
-  });
-  it("loader: a read error, a missing row or a thrown reader reads as unreadable (blocked), never as on", async () => {
-    const mk = (res: unknown, throws = false) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => { if (throws) throw new Error("x"); return res; } }) }) }) });
-    expect(await loadManualFeeSettingBlockMessage(mk({ data: null, error: { code: "x" } }), STUDIO, LATE)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
-    expect(await loadManualFeeSettingBlockMessage(mk({ data: null, error: null }), STUDIO, LATE)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
-    expect(await loadManualFeeSettingBlockMessage(mk(null, true), STUDIO, LATE)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
-    expect(await loadManualFeeSettingBlockMessage(mk({ data: BOTH_ON, error: null }), STUDIO, LATE)).toBeNull();
-    expect(await loadManualFeeSettingBlockMessage(mk({ data: BOTH_ON, error: null }), STUDIO, "session_payment")).toBeNull();
   });
 });
 
@@ -287,30 +286,50 @@ describe("EXECUTE: the runner re-reads the studio setting before any claim or St
 
 describe("PREPARE and the owner-only write use the same gate (source pins)", () => {
   const read = (rel: string) => readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
-  it("eligibility reads the switches and applies manualFeeSettingBlockMessage with the same fee reason as the live gate", () => {
+  it("eligibility reads the settings and applies manualFeeSettingBlockMessage with the same fee reason as the live gate", () => {
     const src = read("lib/billing/manual-fee-eligibility.ts");
-    expect(src).toMatch(/\.select\("late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled"\)/);
+    expect(src).toMatch(/late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode, no_show_fee_mode, late_cancel_fee_percent_bp, no_show_fee_percent_bp, timezone/);
     expect(src).toMatch(/manualFeeSettingBlockMessage\(feeChargeReason, studioRow\)/);
     expect(src).toMatch(/liveChargeReasonBlockMessage\(feeChargeReason, livemode, args\.studioId\)/);
   });
-  it("the runner checks the setting only for an unsent (ready) attempt, after the live gate and before the claim", () => {
+  it("the runner reads the settings THREE times for a new (ready) fee: early, immediately before the claim, and after the claim before the create; never for a sent attempt", () => {
     const src = read("lib/billing/session-payment-charge.ts");
     const run = src.slice(src.indexOf("export async function runSessionPaymentCharge"));
     const live = run.indexOf("liveChargeReasonBlockMessage(");
-    const set = run.indexOf("loadManualFeeSettingBlockMessage(");
+    const early = run.indexOf("loadManualFeeExecuteHold(admin, attemptRow)");
+    const pre = run.indexOf("loadManualFeeExecuteHold(admin, attemptRow)", early + 10);
     const claim = run.indexOf("claim_session_payment_charge_attempt");
+    const post = run.indexOf("loadManualFeeExecuteHold(admin, attemptRow)", pre + 10);
+    const create = run.indexOf("sender.paymentIntents.create(");
+    expect(run.match(/loadManualFeeExecuteHold\(/g)?.length).toBe(3);
     expect(live).toBeGreaterThan(-1);
-    expect(set).toBeGreaterThan(live);
-    expect(claim).toBeGreaterThan(set);
-    expect(run.slice(live, set)).toMatch(/attemptRow\.status === "ready"/);
+    expect(early).toBeGreaterThan(live);
+    expect(pre).toBeGreaterThan(early);
+    expect(claim).toBeGreaterThan(pre);
+    expect(post).toBeGreaterThan(claim);
+    expect(create).toBeGreaterThan(post);
+    // all three sit under the isNewManualFee condition, which is the unsent (ready) attempt
+    expect(run).toMatch(/const isNewManualFee = attemptRow\.status === "ready"/);
+    for (const idx of [early, pre, post]) expect(run.slice(Math.max(0, idx - 80), idx)).toMatch(/isNewManualFee/);
+    // the post-claim refusal retains the claim for manual review and never reaches the create call
+    expect(run.slice(post, create)).toMatch(/needs_manual_review/);
   });
-  it("the fee-amounts action stays owner-only, refuses ON with a zero or blank amount, and writes the switches", () => {
+  it("the amounts action stays owner-only and no longer writes any switch, mode or percentage", () => {
     const src = read("app/(app)/settings/payments/fee-amounts-actions.ts");
     expect(src).toMatch(/practitioner\.role !== "owner"/);
-    expect(src).toMatch(/lateEnabled && \(lateCancel == null \|\| lateCancel === 0\)/);
-    expect(src).toMatch(/noShowEnabled && \(noShow == null \|\| noShow === 0\)/);
-    expect(src).toMatch(/late_cancel_fee_enabled: lateEnabled/);
-    expect(src).toMatch(/no_show_fee_enabled: noShowEnabled/);
+    // it may READ the switches and modes (to refuse blanking a live amount) but the only UPDATE it issues carries the two amounts
+    const update = src.slice(src.indexOf(".update("), src.indexOf(".eq(\"id\", studio.id);", src.indexOf(".update(")));
+    expect(update).not.toMatch(/_fee_enabled|_fee_mode|_percent_bp/);
+    expect(src).toMatch(/\.update\(\{\s*late_cancel_fee_cents: lateCancel,\s*no_show_fee_cents: noShow,\s*\}\)/);
+  });
+  it("each setting has its own owner-only compare-and-set action", () => {
+    const src = read("app/(app)/settings/payments/fee-settings-actions.ts");
+    expect(src.match(/export async function set\w+Action/g)).toHaveLength(3);
+    expect(src.match(/await owner\(\)/g)).toHaveLength(3);
+    expect(src).toMatch(/expected === null \? q\.is\(column, null\) : q\.eq\(column, expected/);
+    expect(src).toMatch(/data\.length === 0\) return \{ ok: false, error: STALE \}/);
+    // never the service role: the owner's own session and RLS
+    expect(src).not.toMatch(/createAdminClient/);
   });
   it("the state module is server-only and the release-criteria comment carries no day or charge-count threshold", () => {
     for (const f of ["lib/billing/manual-fee-studio-setting.ts", "lib/billing/live-charge-reason-allowlist.ts"]) {
@@ -358,5 +377,59 @@ describe("no automatic fee charge path exists", () => {
     const src = readFileSync(path.join(root, "app/(app)/calendar/[id]/manual-fee-actions.ts"), "utf8");
     expect(src).toMatch(/practitioner\.role !== "owner"/);
     expect(src).toMatch(/confirmCharge !== "true"/);
+  });
+});
+
+
+describe("execute hold: the owner's settings now versus what was frozen at prepare", () => {
+  const FIXED = { id: ATTEMPT, studio_id: STUDIO, charge_reason: LATE, amount_cents: 5000 };
+  // A fake whose studios row and frozen attempt row are chosen per test; reads are the only thing it supports.
+  const mk = (studio: unknown, frozen: unknown, studioErr = false, frozenErr = false) => ({
+    from: (t: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => {
+      if (t === "studios") return { data: studio, error: studioErr ? { code: "x" } : null };
+      return { data: frozen, error: frozenErr ? { code: "x" } : null };
+    } }) }) }),
+  });
+  const FROZEN_FIXED = { calc_mode: "fixed", basis_cents: null, percent_bp: null };
+  const FROZEN_PCT = { calc_mode: "percent", basis_cents: 12000, percent_bp: 7500 };
+  it("fixed: unchanged settings pass", async () => {
+    expect(await loadManualFeeExecuteHold(mk(BOTH_ON, FROZEN_FIXED), FIXED)).toBeNull();
+  });
+  it("fixed: the amount, the mode or the switch changed since prepare is refused", async () => {
+    expect(await loadManualFeeExecuteHold(mk({ ...BOTH_ON, late_cancel_fee_cents: 6000 }, FROZEN_FIXED), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+    expect(await loadManualFeeExecuteHold(mk({ ...BOTH_ON, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: 7500 }, FROZEN_FIXED), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+    expect(await loadManualFeeExecuteHold(mk({ ...BOTH_ON, late_cancel_fee_enabled: false }, FROZEN_FIXED), FIXED)).toBe(LATE_CANCEL_FEE_DISABLED_MESSAGE);
+  });
+  it("percent: same percentage passes; a different percentage, or the mode switched back to fixed, is refused", async () => {
+    const pct = { ...BOTH_ON, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: 7500 };
+    expect(await loadManualFeeExecuteHold(mk(pct, FROZEN_PCT), FIXED)).toBeNull();
+    expect(await loadManualFeeExecuteHold(mk({ ...pct, late_cancel_fee_percent_bp: 5000 }, FROZEN_PCT), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+    expect(await loadManualFeeExecuteHold(mk({ ...BOTH_ON }, FROZEN_PCT), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+  });
+  it("a fee with no frozen calculation, or an unreadable read, fails closed", async () => {
+    expect(await loadManualFeeExecuteHold(mk(BOTH_ON, { calc_mode: null, basis_cents: null, percent_bp: null }), FIXED)).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+    expect(await loadManualFeeExecuteHold(mk(null, FROZEN_FIXED), FIXED)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
+    expect(await loadManualFeeExecuteHold(mk(BOTH_ON, null, false, true), FIXED)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
+    const throwing = { from: () => { throw new Error("x"); } };
+    expect(await loadManualFeeExecuteHold(throwing, FIXED)).toBe(MANUAL_FEE_SETTING_UNREADABLE_MESSAGE);
+  });
+  it("session payments and unknown reasons are not governed by it", async () => {
+    expect(await loadManualFeeExecuteHold(mk(null, null, true), { ...FIXED, charge_reason: "session_payment" })).toBeNull();
+  });
+});
+
+describe("runner: the three reads (behaviour)", () => {
+  it("a fee whose settings changed since prepare is refused before the claim and stays ready (recoverable)", async () => {
+    h.studioRow = { ...BOTH_ON, late_cancel_fee_cents: 6000 };
+    const r = await run();
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toBe(MANUAL_FEE_SETTINGS_CHANGED_MESSAGE);
+    expect(h.rpcs).toEqual([]);
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it("a pending_stripe attempt reads no setting at all (reconcile is never re-gated)", async () => {
+    h.attempt = attemptRow({ status: "pending_stripe", stripe_payment_intent_id: "pi_1" });
+    await run().catch(() => undefined);
+    expect(h.studioReads).toBe(0);
   });
 });

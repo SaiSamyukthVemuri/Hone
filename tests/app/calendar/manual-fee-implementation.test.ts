@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 // Manual late-cancel / no-show fees: the rules that make a fee safe, run as behaviour where a mock can
@@ -37,7 +37,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 const updates: Array<Record<string, unknown>> = [];
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
-    from: () => ({ update: (row: Record<string, unknown>) => { updates.push(row); return { eq: async () => ({ error: null }) }; } }),
+    from: () => ({
+      // the amounts action first READS the current switches/modes (to refuse blanking a live amount), then updates
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { late_cancel_fee_enabled: false, no_show_fee_enabled: false, late_cancel_fee_mode: "fixed", no_show_fee_mode: "fixed" }, error: null }) }) }),
+      update: (row: Record<string, unknown>) => { updates.push(row); return { eq: async () => ({ error: null }) }; },
+    }),
   }),
 }));
 
@@ -53,7 +57,7 @@ import { buildPaymentReceiptEmail, chargeReasonLabel } from "@/lib/email/templat
 
 const eligible = (amountCents: number) => ({
   eligible: true, cardPaymentMethodId: "cpm-1", cardAuthorizationSignatureId: "sig-1", policyAcknowledgementId: "ack-1",
-  policySnapshotHash: "h", amountCents, currency: "cad", timingClassification: "practitioner_asserted",
+  policySnapshotHash: "h", amountCents, feeBasis: { calcMode: "fixed", basisCents: null, percentBp: null }, currency: "cad", timingClassification: "practitioner_asserted",
   appointment: { id: "appt-1" }, client: { id: "client-1", name: "A B" }, card: {}, cardAuthorization: {}, policyAcknowledgement: {}, existingAttempts: [],
 });
 function prepareForm(extra: Record<string, string> = {}) {
@@ -157,26 +161,50 @@ describe("the fee receipt names the fee and the amount, never a session payment"
   });
 });
 
-describe("no percentage engine, and no new policy model", () => {
-  const FILES = [
-    "app/(app)/calendar/[id]/manual-fee-actions.ts",
+describe("the percentage engine is bounded, and no new policy model", () => {
+  // Decision trail: PR #145 shipped fixed amounts only and this guard said "no percentage engine". Sam later authorised a
+  // percent-of-session-price mode (0351), so the guard is EXTENDED, not loosened: the arithmetic lives in ONE pure module, the
+  // files below still compute nothing, and no form field ever carries a charge amount.
+  const NO_CALC = [
     "app/(app)/calendar/[id]/ManualFeeChargeCard.tsx",
     "app/(app)/settings/payments/fee-amounts-actions.ts",
-    "lib/billing/manual-fee-eligibility.ts",
     "lib/billing/manual-fee-types.ts",
     "lib/billing/manual-fee-attempt-state.ts",
     "lib/billing/live-charge-reason-allowlist.ts",
     "lib/finance/collected-money-lines.ts",
   ];
-  it.each(FILES)("%s computes no fee from a percentage, rate, basis points, tier or price", (rel) => {
+  it.each(NO_CALC)("%s computes no fee from a percentage, rate, basis points, tier or price", (rel) => {
     const code = codeOnly(read(rel));
-    expect(code).not.toMatch(/percent|basis_?points|\bbps\b|fee_?rate|\btier(s|ed)?\b|\bpct\b|price_cents|resolveAuthoritativeSessionPaymentAmount/i);
+    expect(code).not.toMatch(/basis_?points|\bbps\b|fee_?rate|\btier(s|ed)?\b|\bpct\b|price_cents|resolveAuthoritativeSessionPaymentAmount|\* *percent|percent *\*|\/ *10000/i);
   });
-  it("the fee amount in eligibility comes from exactly the two saved columns", () => {
+  it("the prepare action only passes the calculation eligibility froze; it computes nothing and reads no percentage from the form", () => {
+    const code = codeOnly(read("app/(app)/calendar/[id]/manual-fee-actions.ts"));
+    expect(code).not.toMatch(/\* *percent|percent *\*|\/ *10000|resolveAuthoritativeSessionPaymentAmount|formData\.get\(["'][a-z_]*percent/i);
+    expect(code).toMatch(/calc_mode: eligibility\.feeBasis\.calcMode/);
+  });
+  it("the integer percentage arithmetic exists in exactly one module", () => {
+    const root = path.resolve(__dirname, "../../..");
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const n of readdirSync(dir)) {
+        if (n === "node_modules" || n === ".next" || n.startsWith(".")) continue;
+        const f = path.join(dir, n);
+        if (statSync(f).isDirectory()) walk(f);
+        else if (/\.(ts|tsx)$/.test(n) && /\+ *5000\) *\/ *10000/.test(readFileSync(f, "utf8"))) hits.push(path.relative(root, f));
+      }
+    };
+    walk(path.join(root, "lib")); walk(path.join(root, "app"));
+    expect(hits).toEqual(["lib/billing/manual-fee-percent.ts"]);
+  });
+  it("the fixed amount in eligibility comes from exactly the two saved amount columns, and a percent amount only from the reviewed resolver", () => {
     const code = codeOnly(read("lib/billing/manual-fee-eligibility.ts"));
-    expect(code).toContain('.select("late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled")');
+    expect(code).toContain("late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode");
     expect(code).toMatch(/studioRow\.late_cancel_fee_cents/);
     expect(code).toMatch(/studioRow\.no_show_fee_cents/);
+    expect(code).toMatch(/loadAppointmentSessionPrice\(/);
+    expect(code).toMatch(/computePercentFee\(price\.result\.amountCents, bp\)/);
+    const loader = codeOnly(read("lib/billing/authoritative-appointment-price.ts"));
+    expect(loader).toMatch(/resolveAuthoritativeSessionPaymentAmount\(/);
   });
 });
 

@@ -13,7 +13,7 @@ vi.mock("@/lib/ops/alerts", () => ({
     return h.persist;
   },
 }));
-const { sweepStuckFeeAttempts, STUCK_FEE_AFTER_MINUTES, STUCK_FEE_EVENT, STUCK_FEE_REASON_NO_PI, STUCK_FEE_REASON_PI_UNRECONCILED } = await import("@/lib/billing/stuck-fee-sweep");
+const { sweepStuckFeeAttempts, STUCK_FEE_SWEEP_READ_FAILED_EVENT, STUCK_FEE_AFTER_MINUTES, STUCK_FEE_EVENT, STUCK_FEE_REASON_NO_PI, STUCK_FEE_REASON_PI_UNRECONCILED } = await import("@/lib/billing/stuck-fee-sweep");
 
 // A fake database that RECORDS every call. The sweep may read two tables and must never write anything itself.
 type Call = { table: string; op: string; filters: Array<[string, unknown]> };
@@ -28,11 +28,20 @@ function fakeAdmin(opts: { attempts: unknown; attemptsError?: boolean; existingA
         calls.push(call);
         const q: Record<string, unknown> = {};
         const chain = (c: string) => (...a: unknown[]) => { filters.push([c, a]); return q; };
-        for (const m of ["select", "in", "lt", "order"]) q[m] = chain(m);
+        for (const m of ["select", "in", "lt", "order", "or"]) q[m] = chain(m);
         q.eq = (c: string, v: unknown) => { filters.push([c, v]); return q; };
         q.limit = () => q;
         q.then = (resolve: (v: unknown) => unknown) => {
-          if (table === "payment_charge_attempts") return resolve(opts.attemptsError ? { data: null, error: { code: "57014" } } : { data: opts.attempts, error: null });
+          if (table === "payment_charge_attempts") {
+            if (opts.attemptsError) return resolve({ data: null, error: { code: "57014" } });
+            // Evaluate the age filter the way the database would: coalesce(claimed_at, updated_at) < cutoff.
+            const orArg = String((filters.find(([c]) => c === "or")?.[1] as unknown[] | undefined)?.[0] ?? "");
+            const m = /^claimed_at\.lt\.([^,]+),and\(claimed_at\.is\.null,updated_at\.lt\.([^)]+)\)$/.exec(orArg);
+            const rows = (opts.attempts as Array<{ claimed_at?: string | null; updated_at: string }>) ?? [];
+            if (!m || m[1] !== m[2]) return resolve({ data: rows, error: null });
+            const cutoff = m[1];
+            return resolve({ data: rows.filter((r) => (r.claimed_at ?? r.updated_at) < cutoff), error: null });
+          }
           if (opts.dedupeError) return resolve({ data: null, error: { code: "57014" } });
           const id = filters.find(([c]) => c === "safe_details->>attempt_id")?.[1];
           const reason = filters.find(([c]) => c === "safe_details->>reason")?.[1];
@@ -48,7 +57,7 @@ function fakeAdmin(opts: { attempts: unknown; attemptsError?: boolean; existingA
 const A1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const A2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const row = (id: string, pi: string | null, reason = "late_cancellation_fee") => ({
-  id, studio_id: "11111111-1111-4111-8111-111111111111", client_id: "c1", appointment_id: "ap1", charge_reason: reason, stripe_payment_intent_id: pi, updated_at: "2026-11-15T10:00:00.000Z",
+  id, studio_id: "11111111-1111-4111-8111-111111111111", client_id: "c1", appointment_id: "ap1", charge_reason: reason, stripe_payment_intent_id: pi, updated_at: "2026-11-15T10:00:00.000Z", claimed_at: "2026-11-15T10:00:00.000Z" as string | null,
 });
 const NOW = new Date("2026-11-15T12:00:00.000Z");
 beforeEach(() => { h.alerts = []; h.persist = true; });
@@ -64,7 +73,7 @@ describe("stuck fee sweep: finds and alerts", () => {
     expect(JSON.stringify(get("in"))).toContain("late_cancellation_fee");
     expect(JSON.stringify(get("in"))).not.toContain("session_payment");
     expect(get("status")).toBe("pending_stripe");
-    expect(JSON.stringify(get("lt"))).toContain(new Date(NOW.getTime() - STUCK_FEE_AFTER_MINUTES * 60_000).toISOString());
+    expect(String((get("or") as unknown[])[0])).toContain(new Date(NOW.getTime() - STUCK_FEE_AFTER_MINUTES * 60_000).toISOString());
   });
   it("raises ONE critical alert per attempt, with the right reason for each kind, and no PII", async () => {
     const f = fakeAdmin({ attempts: [row(A1, null), row(A2, "pi_123", "no_show_fee")] });
@@ -84,6 +93,56 @@ describe("stuck fee sweep: finds and alerts", () => {
     const s = await sweepStuckFeeAttempts({ admin: fakeAdmin({ attempts: [] }).admin, now: NOW });
     expect(s).toMatchObject({ scanned: 0, alerted: 0 });
     expect(h.alerts).toEqual([]);
+  });
+});
+
+describe("stuck fee sweep: age is measured from the CLAIM, not from prepare or from the last write", () => {
+  const claimed = (id: string, claimedAt: string | null, updatedAt: string) => ({ ...row(id, null), claimed_at: claimedAt, updated_at: updatedAt });
+  it("an attempt prepared days ago but claimed 1 minute ago is NOT stuck (created_at is never consulted)", async () => {
+    const f = fakeAdmin({ attempts: [claimed(A1, "2026-11-15T11:59:00.000Z", "2026-11-15T11:59:00.000Z")] });
+    const s = await sweepStuckFeeAttempts({ admin: f.admin, now: NOW });
+    expect(s.scanned).toBe(0);
+    expect(h.alerts).toEqual([]);
+    expect(JSON.stringify(f.calls[0].filters)).not.toContain("created_at");
+  });
+  it("claimed 31 minutes ago is stuck even if a later write moved updated_at forward", async () => {
+    const f = fakeAdmin({ attempts: [claimed(A1, "2026-11-15T11:29:00.000Z", "2026-11-15T11:58:00.000Z")] });
+    const s = await sweepStuckFeeAttempts({ admin: f.admin, now: NOW });
+    expect(s.alerted).toBe(1);
+    expect((h.alerts[0].safeDetails as Record<string, unknown>).pending_since_source).toBe("claimed_at");
+  });
+  it("an attempt claimed before 0352 (claimed_at NULL) falls back to updated_at", async () => {
+    const f = fakeAdmin({ attempts: [claimed(A1, null, "2026-11-15T10:00:00.000Z"), claimed(A2, null, "2026-11-15T11:59:00.000Z")] });
+    const s = await sweepStuckFeeAttempts({ admin: f.admin, now: NOW });
+    expect(s.alerted).toBe(1);
+    expect((h.alerts[0].safeDetails as Record<string, unknown>).pending_since_source).toBe("updated_at");
+  });
+});
+
+describe("stuck fee sweep: which states (requires_action is not an attempt status)", () => {
+  it("the status CHECK has no requires_action, so a sent attempt can only be pending_stripe; no dead filter exists", () => {
+    const m = readFileSync(join(process.cwd(), "supabase/migrations/0073_payment_charge_attempts.sql"), "utf8");
+    const check = m.slice(m.indexOf("status text not null default 'ready'"), m.indexOf("client_payment_method_id uuid"));
+    expect(check).toMatch(/'pending_stripe'/);
+    expect(check).not.toMatch(/requires_action/);
+    const src = readFileSync(join(process.cwd(), "lib/billing/stuck-fee-sweep.ts"), "utf8").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+    expect(src).not.toMatch(/requires_action/);
+    // the runner turns a requires_action PaymentIntent into a cancelled intent and a FAILED attempt, never a resting state
+    const runner = readFileSync(join(process.cwd(), "lib/billing/session-payment-charge.ts"), "utf8");
+    expect(runner).toMatch(/failureCode: "requires_action_canceled"/);
+  });
+});
+
+describe("stuck fee sweep: the dedupe key survives the alert redactor", () => {
+  it("attempt_id and reason are stored exactly as the dedupe query will look for them (real redactor, not a fake)", async () => {
+    const { redactOpsAlertDetails } = await import("@/lib/ops/redact");
+    const f = fakeAdmin({ attempts: [row(A1, null), row(A2, "pi_123", "no_show_fee")] });
+    await sweepStuckFeeAttempts({ admin: f.admin, now: NOW });
+    for (const a of h.alerts) {
+      const stored = redactOpsAlertDetails(a.safeDetails as Record<string, unknown>);
+      expect(stored.attempt_id).toBe((a.safeDetails as Record<string, unknown>).attempt_id);
+      expect(stored.reason).toBe((a.safeDetails as Record<string, unknown>).reason);
+    }
   });
 });
 
@@ -118,10 +177,11 @@ describe("stuck fee sweep: once per attempt (dedupe)", () => {
     const s = await sweepStuckFeeAttempts({ admin: fakeAdmin({ attempts: [row(A1, null)] }).admin, now: NOW });
     expect(s).toMatchObject({ alerted: 0, alert_failed: 1 });
   });
-  it("an unreadable attempts query reports read_failed and alerts nothing", async () => {
+  it("an unreadable attempts query reports read_failed and raises ONE critical alert about the sweep itself (never silent)", async () => {
     const s = await sweepStuckFeeAttempts({ admin: fakeAdmin({ attempts: null, attemptsError: true }).admin, now: NOW });
     expect(s.read_failed).toBe(true);
-    expect(h.alerts).toEqual([]);
+    expect(h.alerts).toHaveLength(1);
+    expect(h.alerts[0]).toMatchObject({ severity: "critical", event: STUCK_FEE_SWEEP_READ_FAILED_EVENT });
   });
 });
 

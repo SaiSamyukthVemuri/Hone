@@ -5,8 +5,13 @@ import { recordOpsAlertDurably } from "@/lib/ops/alerts";
 // the charge runner or the webhook running again).
 //
 // WHAT IT FINDS. A payment_charge_attempts row whose charge_reason is no_show_fee or late_cancellation_fee, whose status is
-// pending_stripe (claimed: a sender may or may not have reached Stripe), and whose updated_at is older than
-// STUCK_FEE_AFTER_MINUTES. Two kinds, told apart because the action differs:
+// pending_stripe (claimed: a sender may or may not have reached Stripe), and whose CLAIM time is older than
+// STUCK_FEE_AFTER_MINUTES. The claim time is claimed_at (0352: stamped once at ready -> pending_stripe, immutable), falling back
+// to updated_at only for an attempt claimed before 0352 (claimed_at NULL).
+//
+// WHICH STATES. A sent attempt can only be pending_stripe: the status CHECK (0073:121-128) has no requires_action; that is a
+// Stripe status the runner cancels and records as failed (session-payment-charge.ts requires_action finalizer), so filtering
+// on it would never match. tests/lib/billing/stuck-fee-sweep.test.ts pins both facts. Two kinds, told apart because the action differs:
 //   fee_stuck_no_pi            no PaymentIntent id was recorded: the sender may have died before or after Stripe saw the request.
 //   fee_stuck_pi_unreconciled  a PaymentIntent id exists but the attempt never reached a terminal state (webhook and refresh
 //                              both missed it).
@@ -30,6 +35,7 @@ import { recordOpsAlertDurably } from "@/lib/ops/alerts";
 
 export const STUCK_FEE_AFTER_MINUTES = 30;
 export const STUCK_FEE_EVENT = "session_payment_needs_manual_review";
+export const STUCK_FEE_SWEEP_READ_FAILED_EVENT = "stuck_fee_sweep_read_failed";
 export const STUCK_FEE_REASON_NO_PI = "fee_stuck_no_pi";
 export const STUCK_FEE_REASON_PI_UNRECONCILED = "fee_stuck_pi_unreconciled";
 export const STUCK_FEE_BATCH_LIMIT = 200;
@@ -42,6 +48,7 @@ type AttemptRow = {
   charge_reason: string;
   stripe_payment_intent_id: string | null;
   updated_at: string;
+  claimed_at: string | null;
 };
 
 // The narrow surface used. The real admin client satisfies it; a test fake records every call.
@@ -65,14 +72,24 @@ export async function sweepStuckFeeAttempts(args: { admin: Admin; now?: Date }):
 
   const { data, error } = await args.admin
     .from("payment_charge_attempts")
-    .select("id, studio_id, client_id, appointment_id, charge_reason, stripe_payment_intent_id, updated_at")
+    .select("id, studio_id, client_id, appointment_id, charge_reason, stripe_payment_intent_id, updated_at, claimed_at")
     .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
     .eq("status", "pending_stripe")
-    .lt("updated_at", cutoff)
+    // age = coalesce(claimed_at, updated_at) < cutoff
+    .or(`claimed_at.lt.${cutoff},and(claimed_at.is.null,updated_at.lt.${cutoff})`)
     .order("updated_at", { ascending: true })
     .limit(STUCK_FEE_BATCH_LIMIT);
   if (error || !Array.isArray(data)) {
+    // The sweep's own read failed: detection has stopped, which is itself an incident. Raise a critical alert (never silent)
+    // and report read_failed so the route answers non-200.
     summary.read_failed = true;
+    await recordOpsAlertDurably({
+      severity: "critical",
+      event: STUCK_FEE_SWEEP_READ_FAILED_EVENT,
+      message: "The stuck manual fee sweep could not read fee attempts, so no stuck fee can be detected right now. Nothing was changed.",
+      route: "lib/billing/stuck-fee-sweep:sweepStuckFeeAttempts",
+      safeDetails: { reason: "sweep_read_failed" },
+    });
     return summary;
   }
 
@@ -115,7 +132,8 @@ export async function sweepStuckFeeAttempts(args: { admin: Admin; now?: Date }):
         attempt_id: row.id,
         charge_reason: row.charge_reason,
         reason,
-        pending_since: row.updated_at,
+        pending_since: row.claimed_at ?? row.updated_at,
+        pending_since_source: row.claimed_at ? "claimed_at" : "updated_at",
         threshold_minutes: STUCK_FEE_AFTER_MINUTES,
       },
     });

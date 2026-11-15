@@ -93,10 +93,18 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
         <FeeAmountsCard
           initialLateCancelCents={studio.late_cancel_fee_cents}
           initialNoShowCents={studio.no_show_fee_cents}
-          initialLateCancelEnabled={studio.late_cancel_fee_enabled === true}
-          initialNoShowEnabled={studio.no_show_fee_enabled === true}
-          lateStatus={MANUAL_FEE_STATE_COPY[lateState]}
-          noShowStatus={MANUAL_FEE_STATE_COPY[noShowState]}
+          lateCancel={{
+            enabled: studio.late_cancel_fee_enabled === true,
+            mode: studio.late_cancel_fee_mode === "percent" ? "percent" : "fixed",
+            percentBp: studio.late_cancel_fee_percent_bp ?? null,
+            status: MANUAL_FEE_STATE_COPY[lateState],
+          }}
+          noShow={{
+            enabled: studio.no_show_fee_enabled === true,
+            mode: studio.no_show_fee_mode === "percent" ? "percent" : "fixed",
+            percentBp: studio.no_show_fee_percent_bp ?? null,
+            status: MANUAL_FEE_STATE_COPY[noShowState],
+          }}
           currencyLabel={
             feeJurisdictionOnly.ok
               ? currencyLabel(feeJurisdictionOnly.jurisdiction.currency)

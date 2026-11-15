@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { MANUAL_FEE_AMOUNT_CEILING_CENTS } from "@/lib/billing/manual-fee-types";
+import { fixedFeeCentsIssue } from "@/lib/billing/manual-fee-percent";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Server action for the owner-only Cancellation/no-show fee amount
@@ -13,11 +14,10 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 // configured amount (column becomes NULL; the manual-fee preview then
 // blocks charge prepare for that type with "fee not configured").
 //
-// It also writes the two per-studio manual-fee switches (migration 0351,
-// default OFF). A switch can be turned ON only with an amount above zero,
-// the same rule the charge eligibility applies (NULL and 0 are "not
-// configured"), so the owner is told here instead of at charge time. The
-// server is the authority: the page's checkboxes are presentation only.
+// This action writes ONLY the two amount columns. It never changes a fee's
+// on/off switch, mode or percentage: those have their own actions in
+// fee-settings-actions.ts (one per setting, compare-and-set), so a stale tab
+// saving an amount cannot flip a switch back.
 
 export type UpdateFeeAmountsResult =
   | { ok: true }
@@ -62,31 +62,25 @@ export async function updateStudioFeeAmountsAction(
     };
   }
 
-  const lateEnabled = formData.get("late_cancel_enabled") === "true";
-  const noShowEnabled = formData.get("no_show_enabled") === "true";
-  if (lateEnabled && (lateCancel == null || lateCancel === 0)) {
-    return {
-      ok: false,
-      error:
-        "Enter a late cancellation fee amount above $0.00 before turning late cancellation fees on.",
-    };
-  }
-  if (noShowEnabled && (noShow == null || noShow === 0)) {
-    return {
-      ok: false,
-      error:
-        "Enter a no-show fee amount above $0.00 before turning no-show fees on.",
-    };
-  }
-
   const supabase = await createClient();
+  // A fixed-mode fee that is ON must keep a usable amount: refuse to blank it (turn the fee off first).
+  const { data: current } = await supabase
+    .from("studios")
+    .select("late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode, no_show_fee_mode")
+    .eq("id", studio.id)
+    .maybeSingle();
+  if (!current) return { ok: false, error: "We couldn't save the fee amounts. Please try again." };
+  if (current.late_cancel_fee_enabled === true && current.late_cancel_fee_mode === "fixed" && fixedFeeCentsIssue(lateCancel) !== null) {
+    return { ok: false, error: "Turn late cancellation fees off before clearing or zeroing the amount." };
+  }
+  if (current.no_show_fee_enabled === true && current.no_show_fee_mode === "fixed" && fixedFeeCentsIssue(noShow) !== null) {
+    return { ok: false, error: "Turn no-show fees off before clearing or zeroing the amount." };
+  }
   const { error } = await supabase
     .from("studios")
     .update({
       late_cancel_fee_cents: lateCancel,
       no_show_fee_cents: noShow,
-      late_cancel_fee_enabled: lateEnabled,
-      no_show_fee_enabled: noShowEnabled,
     })
     .eq("id", studio.id);
   if (error) {
