@@ -133,9 +133,9 @@ describe("0351 attempt calculation basis", () => {
   });
   it("consistency: legacy (all NULL), fixed (mode only) and percent (all three) are accepted; every mixed shape is refused", async () => {
     const a1 = randomUUID(); const a2 = randomUUID(); const a3 = randomUUID();
-    for (const a of [a1, a2, a3]) {
+    for (const [i, a] of [a1, a2, a3].entries()) {
       await adminQuery(`insert into public.appointments (id, studio_id, client_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at)
-        values ($1, $2, $3, '2031-03-01T10:00:00Z', '2031-03-01T11:00:00Z', 60, 0, '2031-03-01T11:00:00Z')`, [a, studio.studioId, studio.clientId]);
+        values ($1, $2, $3, $4::timestamptz, $4::timestamptz + interval '1 hour', 60, 0, $4::timestamptz + interval '1 hour')`, [a, studio.studioId, studio.clientId, `2031-03-0${i + 1}T10:00:00Z`]);
     }
     await ins(null, null, null, a1);
     await ins("fixed", null, null, a2);
@@ -144,7 +144,7 @@ describe("0351 attempt calculation basis", () => {
       ["fixed", 12000, null], ["fixed", null, 7500], [null, 12000, null], [null, null, 7500],
       ["percent", null, 7500], ["percent", 12000, null], ["percent", 0, 7500], ["percent", 12000, 0], ["percent", 12000, 10001], ["bogus", null, null],
     ] as Array<[string | null, number | null, number | null]>) {
-      await expect(ins(m, b, p, randomUUID()), `${m}/${b}/${p}`).rejects.toThrow();
+      await expect(ins(m, b, p, appt), `${m}/${b}/${p}`).rejects.toMatchObject({ code: "23514" });
     }
   });
   it("once written the basis never changes (trigger), not even for the service role", async () => {

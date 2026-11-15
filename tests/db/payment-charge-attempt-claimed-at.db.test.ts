@@ -66,7 +66,7 @@ describe.each([["fee attempt", feeAttempt], ["session payment", sessionAttempt]]
     await claim(id);
     const first = await claimedAt(id);
     await adminQuery(`select pg_sleep(0.05)`);
-    await adminQuery(`update public.payment_charge_attempts set stripe_payment_intent_id = 'pi_test_1', stripe_status = 'processing' where id = $1`, [id]);
+    await adminQuery(`update public.payment_charge_attempts set stripe_payment_intent_id = $2, stripe_status = 'processing' where id = $1`, [id, `pi_test_${id.slice(0, 12)}`]);
     const later = await claimedAt(id);
     expect(later.claimed_at).toEqual(first.claimed_at);
     expect(new Date(later.updated_at).getTime()).toBeGreaterThan(new Date(first.updated_at).getTime());

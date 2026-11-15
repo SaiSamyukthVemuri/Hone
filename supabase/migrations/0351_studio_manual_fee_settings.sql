@@ -75,9 +75,12 @@ alter table public.payment_charge_attempts
 alter table public.payment_charge_attempts
   add constraint payment_charge_attempts_calc_basis_check check (
     (calc_mode is null and basis_cents is null and percent_bp is null)
-    or (calc_mode = 'fixed' and basis_cents is null and percent_bp is null)
-    or (calc_mode = 'percent' and basis_cents > 0 and percent_bp between 1 and 10000)
+    or (calc_mode is not distinct from 'fixed' and basis_cents is null and percent_bp is null)
+    or (calc_mode is not distinct from 'percent' and basis_cents is not null and basis_cents > 0
+        and percent_bp is not null and percent_bp between 1 and 10000)
   );
+-- NULL-safe on purpose: a CHECK passes when it evaluates to UNKNOWN, so a plain `calc_mode = 'percent'` or `basis_cents > 0`
+-- would let a NULL slip through some malformed shapes.
 
 comment on column public.payment_charge_attempts.calc_mode is
   '0351. How a manual fee amount was derived at prepare: fixed or percent. NULL for session payments and attempts prepared before 0351.';
@@ -102,6 +105,11 @@ begin
   return new;
 end;
 $$;
+
+revoke execute on function public.payment_charge_attempts_calc_basis_immutable() from public;
+revoke execute on function public.payment_charge_attempts_calc_basis_immutable() from anon;
+revoke execute on function public.payment_charge_attempts_calc_basis_immutable() from authenticated;
+revoke execute on function public.payment_charge_attempts_calc_basis_immutable() from service_role;
 
 drop trigger if exists payment_charge_attempts_calc_basis_immutable on public.payment_charge_attempts;
 create trigger payment_charge_attempts_calc_basis_immutable

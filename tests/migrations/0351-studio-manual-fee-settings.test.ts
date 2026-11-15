@@ -43,8 +43,8 @@ describe("0351: shape", () => {
   it("attempt basis columns are nullable with a consistency CHECK, and immutable once written", () => {
     expect(E).toMatch(/add column if not exists calc_mode text,\s*add column if not exists basis_cents integer,\s*add column if not exists percent_bp integer/);
     expect(E).toMatch(/\(calc_mode is null and basis_cents is null and percent_bp is null\)/);
-    expect(E).toMatch(/calc_mode = 'fixed' and basis_cents is null and percent_bp is null/);
-    expect(E).toMatch(/calc_mode = 'percent' and basis_cents > 0 and percent_bp between 1 and 10000/);
+    expect(E).toMatch(/calc_mode is not distinct from 'fixed' and basis_cents is null and percent_bp is null/);
+    expect(E).toMatch(/calc_mode is not distinct from 'percent' and basis_cents is not null and basis_cents > 0\s+and percent_bp is not null and percent_bp between 1 and 10000/);
     expect(E).toMatch(/before update of calc_mode, basis_cents, percent_bp on public\.payment_charge_attempts/);
     expect(E).toMatch(/raise exception[\s\S]*calc_mode, basis_cents and percent_bp are fixed/);
   });
@@ -65,6 +65,11 @@ describe("0351: shape", () => {
       expect(E).toMatch(new RegExp(`revoke execute on function public\\.studios_manual_fee_setting_audit\\(\\) from ${role};`));
     }
     expect(E).toMatch(/after update of late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode, no_show_fee_mode,\s*late_cancel_fee_percent_bp, no_show_fee_percent_bp, late_cancel_fee_cents, no_show_fee_cents\s+on public\.studios/);
+  });
+  it("the attempt-basis trigger function is revoked from public, anon, authenticated and service_role by name too", () => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(E).toMatch(new RegExp(`revoke execute on function public\\.payment_charge_attempts_calc_basis_immutable\\(\\) from ${role};`));
+    }
   });
   it("adds no policy on studios and no function other than the two guards", () => {
     expect(E.match(/create or replace function public\.(\w+)/g)).toEqual([
