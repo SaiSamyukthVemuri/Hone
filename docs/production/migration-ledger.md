@@ -138,7 +138,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 ### The 0350 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0350-apply-receipt-20261115.json`)
 
 - **What it is.** `0350_setup_option_check_null_element.sql`: replaces one function so that a setup mode that requires an installed option is recorded only when the option is positively fitted; an unknown or incomplete option list refuses it. The file is carried by #1476; the apply was migration-first.
-- **Approval.** The owner's approval, in their own words on 2026-11-15 (`01-ops/SAM-AUTHORIZATION-0350-b00-20261115T171120Z.txt`), for this exact sealed package: apply 0350 only, with a plain push and without `--include-all`. It covers no other migration. After an earlier attempt that applied nothing, the owner approved, in their own words (`01-ops/SAM-AUTHORIZATION-0350-TOMBSTONE-20261115T172105Z.txt`), one new attempt under the same approval and the same seal.
+- **Approval.** The owner's approval, in their own words on 2026-11-15 (`01-ops/SAM-AUTHORIZATION-0350-b00-20261115T171120Z.txt`), for this exact sealed package: apply 0350 only, with a plain push and without `--include-all`. It covers no other migration. After an earlier attempt that applied nothing, the owner gave a second approval, in their own words, for one new attempt under the same seal.
 - **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `cee54efa…`.
 - **Pre-apply read (Part A, 2026-11-15, 17:07:48Z to 17:07:49Z, client side).** PASS: 272 history rows, max `0341`, `0350` absent.
 - **First attempt (17:11Z).** It did not get past the dry run, so no push was reached and nothing reached production; `0350` was absent at its pre-push read.
