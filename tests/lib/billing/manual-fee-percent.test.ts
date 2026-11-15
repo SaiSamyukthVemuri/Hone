@@ -9,6 +9,7 @@ import {
   manualFeeConfigIssue,
   parsePercentTextToBp,
   noFeeOwedMessage,
+  MAX_PERCENT_BASIS_CENTS,
   percentFeeRefusalMessage,
   roundHalfUpPercentCents,
 } from "@/lib/billing/manual-fee-percent";
@@ -68,6 +69,13 @@ describe("refusals: no fallback, no cap, no substitution", () => {
     for (const b of [-1, null, undefined, NaN, 1.5, "100"]) {
       expect(computePercentFee(b, 7500)).toEqual({ ok: false, reason: "invalid_basis" });
     }
+  });
+  it("a basis too large to multiply safely is refused, never silently imprecise", () => {
+    expect(computePercentFee(MAX_PERCENT_BASIS_CENTS + 1, 10000)).toEqual({ ok: false, reason: "invalid_basis" });
+    expect(computePercentFee(Number.MAX_SAFE_INTEGER, 7500)).toEqual({ ok: false, reason: "invalid_basis" });
+    expect(Number.isSafeInteger(MAX_PERCENT_BASIS_CENTS * 10000 + 5000)).toBe(true);
+    // at the bound it is computed (and refused only by the ceiling), not mis-multiplied
+    expect(computePercentFee(MAX_PERCENT_BASIS_CENTS, 10000)).toEqual({ ok: false, reason: "at_or_above_ceiling" });
   });
   it("no_fee_owed never exposes an amount", () => {
     expect(computePercentFee(0, 7500)).not.toHaveProperty("amountCents");

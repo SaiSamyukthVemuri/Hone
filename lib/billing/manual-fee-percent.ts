@@ -16,6 +16,8 @@ import { MANUAL_FEE_AMOUNT_CEILING_CENTS } from "@/lib/billing/manual-fee-types"
 
 export const PERCENT_BP_MIN = 1;
 export const PERCENT_BP_MAX = 10000;
+/** floor((MAX_SAFE_INTEGER - 5000) / PERCENT_BP_MAX): the largest basis for which basis * bp + 5000 is still a safe integer at 100%. */
+export const MAX_PERCENT_BASIS_CENTS = Math.floor((Number.MAX_SAFE_INTEGER - 5000) / PERCENT_BP_MAX);
 
 export type PercentFeeRefusal = "invalid_percent" | "invalid_basis" | "at_or_above_ceiling";
 
@@ -42,6 +44,9 @@ export function computePercentFee(basisCents: unknown, percentBp: unknown): Perc
   if (typeof basisCents !== "number" || !Number.isSafeInteger(basisCents) || basisCents < 0) {
     return { ok: false, reason: "invalid_basis" };
   }
+  // Bound the basis BEFORE multiplying: basis x bp (+5000) must stay a safe integer, or the integer arithmetic silently loses
+  // precision. A price anywhere near this is not a real price; refuse it (no cap, no fallback).
+  if (basisCents > MAX_PERCENT_BASIS_CENTS) return { ok: false, reason: "invalid_basis" };
   const amountCents = roundHalfUpPercentCents(basisCents, percentBp);
   if (amountCents <= 0) return { ok: false, reason: "no_fee_owed", basisCents, percentBp };
   if (amountCents >= MANUAL_FEE_AMOUNT_CEILING_CENTS) return { ok: false, reason: "at_or_above_ceiling" };

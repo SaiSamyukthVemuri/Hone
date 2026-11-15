@@ -13,7 +13,7 @@ vi.mock("@/lib/ops/alerts", () => ({
     return h.persist;
   },
 }));
-const { sweepStuckFeeAttempts, STUCK_FEE_SWEEP_READ_FAILED_EVENT, STUCK_FEE_AFTER_MINUTES, STUCK_FEE_EVENT, STUCK_FEE_REASON_NO_PI, STUCK_FEE_REASON_PI_UNRECONCILED } = await import("@/lib/billing/stuck-fee-sweep");
+const { sweepStuckFeeAttempts, STUCK_FEE_SWEEP_READ_FAILED_EVENT, STUCK_FEE_AFTER_MINUTES, STUCK_FEE_EVENT, STUCK_FEE_REASON_NO_PI, STUCK_FEE_REASON_PI_UNRECONCILED, STUCK_FEE_BATCH_LIMIT, STUCK_FEE_MAX_PAGES } = await import("@/lib/billing/stuck-fee-sweep");
 
 // A fake database that RECORDS every call. The sweep may read two tables and must never write anything itself.
 type Call = { table: string; op: string; filters: Array<[string, unknown]> };
@@ -31,6 +31,7 @@ function fakeAdmin(opts: { attempts: unknown; attemptsError?: boolean; existingA
         for (const m of ["select", "in", "lt", "order", "or"]) q[m] = chain(m);
         q.eq = (c: string, v: unknown) => { filters.push([c, v]); return q; };
         q.limit = () => q;
+        q.range = (from: number, to: number) => { filters.push(["range", [from, to]]); return q; };
         q.then = (resolve: (v: unknown) => unknown) => {
           if (table === "payment_charge_attempts") {
             if (opts.attemptsError) return resolve({ data: null, error: { code: "57014" } });
@@ -38,9 +39,11 @@ function fakeAdmin(opts: { attempts: unknown; attemptsError?: boolean; existingA
             const orArg = String((filters.find(([c]) => c === "or")?.[1] as unknown[] | undefined)?.[0] ?? "");
             const m = /^claimed_at\.lt\.([^,]+),and\(claimed_at\.is\.null,updated_at\.lt\.([^)]+)\)$/.exec(orArg);
             const rows = (opts.attempts as Array<{ claimed_at?: string | null; updated_at: string }>) ?? [];
-            if (!m || m[1] !== m[2]) return resolve({ data: rows, error: null });
+            const rg = (filters.find(([c]) => c === "range")?.[1] as [number, number] | undefined) ?? [0, rows.length];
+            const slice = (xs: typeof rows) => xs.slice(rg[0], rg[1] + 1);
+            if (!m || m[1] !== m[2]) return resolve({ data: slice(rows), error: null });
             const cutoff = m[1];
-            return resolve({ data: rows.filter((r) => (r.claimed_at ?? r.updated_at) < cutoff), error: null });
+            return resolve({ data: slice(rows.filter((r) => (r.claimed_at ?? r.updated_at) < cutoff)), error: null });
           }
           if (opts.dedupeError) return resolve({ data: null, error: { code: "57014" } });
           const id = filters.find(([c]) => c === "safe_details->>attempt_id")?.[1];
@@ -182,6 +185,30 @@ describe("stuck fee sweep: once per attempt (dedupe)", () => {
     expect(s.read_failed).toBe(true);
     expect(h.alerts).toHaveLength(1);
     expect(h.alerts[0]).toMatchObject({ severity: "critical", event: STUCK_FEE_SWEEP_READ_FAILED_EVENT });
+  });
+});
+
+describe("stuck fee sweep: a full page of already-alerted rows does not hide a newer stuck attempt", () => {
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const old = (n: number) => ({ ...row(id(n), "pi_x"), updated_at: "2026-11-15T09:00:00.000Z", claimed_at: "2026-11-15T09:00:00.000Z" });
+  it("pages past 200 rows that already alerted and alerts the new one behind them", async () => {
+    const already = Array.from({ length: 200 }, (_, i) => old(i + 1));
+    const fresh = { ...row(id(999), null), updated_at: "2026-11-15T11:00:00.000Z", claimed_at: "2026-11-15T11:00:00.000Z" };
+    const f = fakeAdmin({
+      attempts: [...already, fresh],
+      existingAlerts: already.map((r) => ({ attempt_id: r.id, reason: STUCK_FEE_REASON_PI_UNRECONCILED })),
+    });
+    const s = await sweepStuckFeeAttempts({ admin: f.admin, now: NOW });
+    expect(s).toMatchObject({ scanned: 201, already_alerted: 200, alerted: 1, truncated: false });
+    expect(h.alerts).toHaveLength(1);
+    expect((h.alerts[0].safeDetails as Record<string, unknown>).attempt_id).toBe(id(999));
+  });
+  it("hitting the page cap is reported as truncated, never silent", async () => {
+    const many = Array.from({ length: STUCK_FEE_BATCH_LIMIT * STUCK_FEE_MAX_PAGES }, (_, i) => old(i + 1));
+    const f = fakeAdmin({ attempts: many, existingAlerts: many.map((r) => ({ attempt_id: r.id, reason: STUCK_FEE_REASON_PI_UNRECONCILED })) });
+    const s = await sweepStuckFeeAttempts({ admin: f.admin, now: NOW });
+    expect(s.truncated).toBe(true);
+    expect(s.scanned).toBe(STUCK_FEE_BATCH_LIMIT * STUCK_FEE_MAX_PAGES);
   });
 });
 

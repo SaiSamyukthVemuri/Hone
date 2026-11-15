@@ -6,7 +6,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) })
 vi.mock("@/lib/billing/stuck-fee-sweep", () => ({ sweepStuckFeeAttempts: async () => h.summary }));
 
 const { GET } = await import("@/app/api/cron/stuck-fee-sweep/route");
-const ok = { scanned: 0, stuck: 0, alerted: 0, already_alerted: 0, alert_failed: 0, read_failed: false };
+const ok = { scanned: 0, stuck: 0, alerted: 0, already_alerted: 0, alert_failed: 0, read_failed: false, truncated: false };
 beforeEach(() => { h.authorized = true; h.summary = { ...ok }; });
 
 describe("stuck fee sweep route", () => {
@@ -28,6 +28,10 @@ describe("stuck fee sweep route", () => {
   });
   it("non-200 when an alert could not be recorded", async () => {
     h.summary = { ...ok, stuck: 1, alert_failed: 1 };
+    expect((await GET(new Request("http://x"))).status).toBe(500);
+  });
+  it("non-200 when the sweep hit its page cap (some stuck attempt may not have been looked at)", async () => {
+    h.summary = { ...ok, truncated: true };
     expect((await GET(new Request("http://x"))).status).toBe(500);
   });
 });

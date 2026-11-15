@@ -39,6 +39,10 @@ export const STUCK_FEE_SWEEP_READ_FAILED_EVENT = "stuck_fee_sweep_read_failed";
 export const STUCK_FEE_REASON_NO_PI = "fee_stuck_no_pi";
 export const STUCK_FEE_REASON_PI_UNRECONCILED = "fee_stuck_pi_unreconciled";
 export const STUCK_FEE_BATCH_LIMIT = 200;
+// A page is STUCK_FEE_BATCH_LIMIT rows; the sweep walks pages until one is short, up to this many. Rows that have already alerted stay
+// pending_stripe (the sweep never changes an attempt), so without paging the first 200 would be the same already-alerted rows every day
+// and a newer stuck attempt behind them would never be looked at. Hitting the cap sets `truncated` (and the route reports it).
+export const STUCK_FEE_MAX_PAGES = 10;
 
 type AttemptRow = {
   id: string;
@@ -63,22 +67,37 @@ export type StuckFeeSweepSummary = {
   already_alerted: number;
   alert_failed: number;
   read_failed: boolean;
+  /** True when STUCK_FEE_MAX_PAGES full pages were read and more rows may remain: some stuck attempt may not have been looked at. */
+  truncated: boolean;
 };
 
 export async function sweepStuckFeeAttempts(args: { admin: Admin; now?: Date }): Promise<StuckFeeSweepSummary> {
   const now = args.now ?? new Date();
   const cutoff = new Date(now.getTime() - STUCK_FEE_AFTER_MINUTES * 60_000).toISOString();
-  const summary: StuckFeeSweepSummary = { scanned: 0, stuck: 0, alerted: 0, already_alerted: 0, alert_failed: 0, read_failed: false };
+  const summary: StuckFeeSweepSummary = { scanned: 0, stuck: 0, alerted: 0, already_alerted: 0, alert_failed: 0, read_failed: false, truncated: false };
 
-  const { data, error } = await args.admin
-    .from("payment_charge_attempts")
-    .select("id, studio_id, client_id, appointment_id, charge_reason, stripe_payment_intent_id, updated_at, claimed_at")
-    .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
-    .eq("status", "pending_stripe")
-    // age = coalesce(claimed_at, updated_at) < cutoff
-    .or(`claimed_at.lt.${cutoff},and(claimed_at.is.null,updated_at.lt.${cutoff})`)
-    .order("updated_at", { ascending: true })
-    .limit(STUCK_FEE_BATCH_LIMIT);
+  const rows: AttemptRow[] = [];
+  let data: unknown = null;
+  let error: unknown = null;
+  for (let page = 0; page < STUCK_FEE_MAX_PAGES; page++) {
+    const from = page * STUCK_FEE_BATCH_LIMIT;
+    const res = await args.admin
+      .from("payment_charge_attempts")
+      .select("id, studio_id, client_id, appointment_id, charge_reason, stripe_payment_intent_id, updated_at, claimed_at")
+      .in("charge_reason", ["no_show_fee", "late_cancellation_fee"])
+      .eq("status", "pending_stripe")
+      // age = coalesce(claimed_at, updated_at) < cutoff
+      .or(`claimed_at.lt.${cutoff},and(claimed_at.is.null,updated_at.lt.${cutoff})`)
+      .order("updated_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + STUCK_FEE_BATCH_LIMIT - 1);
+    data = res.data;
+    error = res.error;
+    if (error || !Array.isArray(data)) break;
+    rows.push(...(data as AttemptRow[]));
+    if (data.length < STUCK_FEE_BATCH_LIMIT) break;
+    if (page === STUCK_FEE_MAX_PAGES - 1) summary.truncated = true;
+  }
   if (error || !Array.isArray(data)) {
     // The sweep's own read failed: detection has stopped, which is itself an incident. Raise a critical alert (never silent)
     // and report read_failed so the route answers non-200.
@@ -93,7 +112,6 @@ export async function sweepStuckFeeAttempts(args: { admin: Admin; now?: Date }):
     return summary;
   }
 
-  const rows = data as AttemptRow[];
   summary.scanned = rows.length;
   for (const row of rows) {
     const reason = row.stripe_payment_intent_id ? STUCK_FEE_REASON_PI_UNRECONCILED : STUCK_FEE_REASON_NO_PI;

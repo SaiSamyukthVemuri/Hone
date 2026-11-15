@@ -14,6 +14,6 @@ export async function GET(req: Request) {
   }
   const summary = await sweepStuckFeeAttempts({ admin: createAdminClient() });
   // Non-200 when detection itself failed (its read failed, or an alert could not be recorded), so the cron run shows as failed.
-  const healthy = !summary.read_failed && summary.alert_failed === 0;
+  const healthy = !summary.read_failed && summary.alert_failed === 0 && !summary.truncated;
   return NextResponse.json({ ok: healthy, ...summary }, { status: healthy ? 200 : 500 });
 }
