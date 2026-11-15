@@ -152,6 +152,7 @@ describe("adapter (migration 0286 is held, so the option is dark)", () => {
   });
   it("with the capability on (after 0286 is applied) it calls the v2 command with p_single_name and an empty last name", async () => {
     const caps = server.WAIT_04B_CAPABILITIES as { singleLegalName?: boolean };
+    const prior = caps.singleLegalName;
     caps.singleLegalName = true;
     try {
       const r = await server.completeWaitlistProfile({ capabilityToken: TOKEN, patch: SINGLE, smsOperationalConsent: false, consentSource: "prospect_link" });
@@ -160,7 +161,7 @@ describe("adapter (migration 0286 is held, so the option is dark)", () => {
       expect(h.calls[0].args.p_single_name).toBe(true);
       expect(h.calls[0].args.p_last_name).toBe("");
     } finally {
-      caps.singleLegalName = false;
+      caps.singleLegalName = prior;
     }
   });
   it("a two-name completion still calls the v1 command with the exact v1 arguments (no p_single_name)", async () => {
@@ -189,6 +190,7 @@ describe("adapter routing once enabled", () => {
   it("every completion goes through v2, two-name with p_single_name false", async () => {
     h.calls = [];
     const caps = server.WAIT_04B_CAPABILITIES as { singleLegalName?: boolean };
+    const prior = caps.singleLegalName;
     caps.singleLegalName = true;
     try {
       const r = await server.completeWaitlistProfile({
@@ -202,7 +204,7 @@ describe("adapter routing once enabled", () => {
       expect(h.calls[0].args.p_single_name).toBe(false);
       expect(h.calls[0].args.p_last_name).toBe("Lovelace");
     } finally {
-      caps.singleLegalName = false;
+      caps.singleLegalName = prior;
     }
   });
 });
