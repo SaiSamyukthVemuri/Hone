@@ -9,11 +9,14 @@
 -- Every existing and future studio starts OFF. Adding a NOT NULL column with a constant default is a catalog change only
 -- (no table rewrite) on the supported Postgres versions.
 --
--- WHO MAY WRITE. No grant, policy or function changes here. The existing policy "studios: owners update" (0001)
+-- WHO MAY WRITE. No grant or policy on public.studios changes here. The existing policy "studios: owners update" (0001)
 -- is `using (is_studio_owner(id)) with check (is_studio_owner(id))`, so only the studio's owner can change these columns
 -- through the Data API; a member's UPDATE touches zero rows. The application writes them from an owner-checked server
 -- action (app/(app)/settings/payments/fee-amounts-actions.ts), like the amounts. service_role bypasses RLS as before.
--- No function is added, so no EXECUTE revoke is needed.
+-- TWO trigger functions ARE added (payment_charge_attempts_calc_basis_immutable and studios_manual_fee_setting_audit), and EXECUTE on
+-- each is revoked by name from public, anon, authenticated and service_role (a trigger function is never called directly). The new
+-- table studio_manual_fee_setting_changes has row level security on, one owner SELECT policy, and no INSERT, UPDATE or DELETE
+-- grant to any role.
 --
 -- WHAT THIS DOES NOT DO. It changes no charge, refund, webhook or reconciliation code and no data. The application reads the
 -- columns at prepare and again at execute (lib/billing/manual-fee-studio-setting.ts). A temporary env release list still
