@@ -17,6 +17,8 @@ async function open(): Promise<Client> {
   const c = new Client({ connectionString: url() });
   await c.connect();
   await c.query("begin");
+  // read the backend pid now: once a command is blocked on this client, a later query would queue behind it
+  (c as any).backendPid = (await c.query("select pg_backend_pid() as pid")).rows[0].pid;
   return c;
 }
 async function asUserTx(userId: string): Promise<Client> {
@@ -26,7 +28,7 @@ async function asUserTx(userId: string): Promise<Client> {
   await c.query("set local lock_timeout = '20s'");
   return c;
 }
-const pidOf = async (c: Client) => (await c.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+const pidOf = async (c: Client) => (c as any).backendPid as number;
 
 // Resolves once the backend `pid` is waiting on a lock held by someone else (or rejects after ~10 s).
 async function waitUntilBlocked(pid: number): Promise<void> {
@@ -54,7 +56,7 @@ async function seedDesk(s: SeededStudio, label: string, active: boolean) {
   const userId = randomUUID();
   await adminQuery("insert into auth.users(id,email) values ($1,$2)", [userId, `${label}-${userId.slice(0, 8)}@harness.local`]);
   const r = await adminQuery(
-    "insert into public.studio_receptionists(studio_id,user_id,display_name,email,active) values ($1,$2,$3,$4,$5) returning id",
+    "insert into public.studio_receptionists(studio_id,user_id,display_name,email,active,deactivated_at) values ($1,$2,$3,$4,$5, case when $5 then null else now() end) returning id",
     [s.studioId, userId, `Desk ${label}`, `${label}-${userId.slice(0, 8)}@harness.local`, active],
   );
   return { userId, id: r.rows[0].id as string };
