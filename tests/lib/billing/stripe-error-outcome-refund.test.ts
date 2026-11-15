@@ -198,9 +198,28 @@ describe("HON-11 #1 refund: the pending row keeps the deterministic key", () => 
 
   it("the card renders a pending refund as 'Refund pending', not 'Refund failed'", () => {
     const card = readFileSync(join(__dirname, "../../../components/session-payment-prepare-card.tsx"), "utf8");
-    expect(card).toMatch(/const persistedPending = attempt\.refundStatus === "pending_stripe";/);
+    // R1: the card reads our column AND the provider's through refundDisplayState; pending_stripe maps to "pending".
+    expect(card).toMatch(/const persistedPending = display\.kind === "pending";/);
     expect(card).toMatch(/\{persistedPending && !localRefunded && \([\s\S]{0,400}Refund pending\./);
-    expect(card).toMatch(/const persistedFailed = attempt\.refundStatus === "failed";/);
+    expect(card).toMatch(/const persistedFailed = display\.kind === "failed";/);
+  });
+});
+
+describe("Sam, 12 Nov: the person who reviews an unresolved refund is 'the studio owner' on every screen-bound message", () => {
+  it("a provider trace on the row refuses a new attempt with a message that names the studio owner (this string reaches the practitioner's screen)", async () => {
+    db.row.stripe_refund_status = "failed";
+    const r = await refund();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    const m = (r as { message: string }).message;
+    expect(m).toContain("The studio owner must review it before starting another refund.");
+    expect(m).not.toMatch(/operator/i);
+    expect(db.refundKeys, "no Stripe call").toHaveLength(0);
+  });
+  it("no user-facing message in the runner says 'studio operator' (every return message reaches the screen via the action's error)", () => {
+    const src = readFileSync(join(__dirname, "../../../lib/billing/payment-refund.ts"), "utf8");
+    const code = src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+    expect(code).not.toMatch(/studio operator/i);
+    expect((code.match(/studio owner/g) ?? []).length).toBeGreaterThanOrEqual(8);
   });
 });
 
