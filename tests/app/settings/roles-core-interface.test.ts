@@ -247,7 +247,7 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
       at: "2026-11-03T10:00:00Z",
       kind,
       role: "practitioner",
-      actor_name: "Chloe",
+      actor_name: "Morgan",
       person_name: null,
       person_state: null,
       reason: "cover",
@@ -256,7 +256,7 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
     });
     const r = parseHistory({ ok: true, rows: [row(2, "role_permissions_saved"), row(1, "role_permissions_saved")] }, 2);
     if (!r.ok) throw new Error("expected ok");
-    expect(r.rows[0]).toMatchObject({ actorName: "Chloe", before: { "Move appointments": "Off" }, after: { "Move appointments": "Whole studio" } });
+    expect(r.rows[0]).toMatchObject({ actorName: "Morgan", before: { "Move appointments": "Off" }, after: { "Move appointments": "Whole studio" } });
     expect(r.next).toBe("1");
     const short = parseHistory({ ok: true, rows: [row(1, "role_permissions_saved")] }, 50);
     if (short.ok) expect(short.next).toBeNull();

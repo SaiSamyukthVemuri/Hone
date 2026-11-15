@@ -96,7 +96,7 @@ describe("History knows the activation audit kind", () => {
     at: "2026-11-04T10:00:00Z",
     kind: "permissions_activated",
     role: "practitioner",
-    actor_name: "Chloe",
+    actor_name: "Morgan",
     reason: "Reviewed with the team",
     before: { keys: [K1, K2], effective: { [K1]: "own", [K2]: "off" } },
     after: { keys: [K1, K2], effective: { [K1]: "studio", [K2]: "off" } },

@@ -9,7 +9,7 @@ const { RolesEditor } = await import("@/app/(app)/settings/roles/roles-editor");
 
 const policy: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
 const people = [
-  { id: "p1", name: "Chloe Owner", email: "owner@example.test", role: "owner" as const, state: "active" as const },
+  { id: "p1", name: "Morgan Owner", email: "owner@example.test", role: "owner" as const, state: "active" as const },
   { id: "p2", name: "Alex Practitioner", email: "alex@example.test", role: "practitioner" as const, state: "active" as const },
   { id: "i1", name: "Taylor Invitee", email: "taylor@example.test", role: "receptionist" as const, state: "invited" as const },
   { id: "d1", name: "Dana Former", email: "former@example.test", role: "practitioner" as const, state: "deactivated" as const },
@@ -60,7 +60,7 @@ describe("the Roles control center opens on People", () => {
   const html = render();
   it("lists real members under Active, Invitation pending and Deactivated", () => {
     for (const label of ["Active (2)", "Invitation pending (1)", "Deactivated (1)"]) expect(html).toContain(label);
-    expect(html).toContain("Chloe Owner");
+    expect(html).toContain("Morgan Owner");
     expect(html).toContain("Taylor Invitee");
     expect(html).toContain("Dana Former");
     expect(html).toMatch(/data-people-state="invited"/);

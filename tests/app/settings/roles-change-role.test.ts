@@ -115,7 +115,7 @@ describe("the consequences the owner reads before confirming", () => {
 const policy: StudioPolicy = { basis: "existing_snapshot", values: {}, gates: {} };
 const noop = async () => ({ ok: false as const, error: { code: "unavailable" as const } });
 const people = [
-  { id: "o1", name: "Chloe Owner", email: "o@example.test", role: "owner" as const, state: "active" as const, isSelf: true },
+  { id: "o1", name: "Morgan Owner", email: "o@example.test", role: "owner" as const, state: "active" as const, isSelf: true },
   { id: "p2", name: "Alex Practitioner", email: "a@example.test", role: "practitioner" as const, state: "active" as const },
   { id: "r1", name: "Riley Reception", email: "r@example.test", role: "receptionist" as const, state: "active" as const },
   { id: "d1", name: "Dana Former", email: "f@example.test", role: "practitioner" as const, state: "deactivated" as const },
