@@ -931,11 +931,87 @@ describe("PR CI — path-aware lane selection", () => {
     expect(forced.length).toBeGreaterThanOrEqual(5);
   });
 
-  it("keeps PR-scoped concurrency cancellation for superseded runs", () => {
-    expect(CI).toMatch(
-      /group: hone-pr-ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/,
-    );
-    expect(CI).toMatch(/cancel-in-progress: true/);
+  // CI-PUSH-CONCURRENCY-01. A push to production must never cancel, or be replaced by, another push run
+  // (35 production merges had no green run on their own sha because each merge cancelled the previous one).
+  // The rule is checked by EVALUATING the workflow's own group and cancel expressions for concrete events, so a
+  // reworded expression that still behaves the same passes and a spelling that behaves differently does not.
+  type GhCtx = { event_name: string; sha: string; ref: string; event: { pull_request?: { number: number } } };
+  const concurrencyOf = (yaml: string) => {
+    const block = /^concurrency:\n((?:[ \t]+.*\n)+)/m.exec(yaml)?.[1] ?? "";
+    const pick = (k: string) => new RegExp(`^[ \\t]+${k}:\\s*(.+)$`, "m").exec(block)?.[1].trim() ?? "";
+    return { group: pick("group"), cancel: pick("cancel-in-progress") };
+  };
+  const evalExpr = (raw: string, github: GhCtx): unknown => {
+    const run = (expr: string): unknown => {
+      // GitHub expressions read a missing property as null (a push has no github.event.pull_request), never as an error
+      const js = expr.replace(/\bformat\(/g, "__format(").replace(/\bgithub(?:\.\w+)+/g, (m) => m.replace(/\./g, "?."));
+      const __format = (t: string, ...a: unknown[]) => t.replace(/\{(\d+)\}/g, (_x, i) => String(a[Number(i)]));
+      // eslint-disable-next-line no-new-func
+      return new Function("github", "__format", `return (${js});`)(github, __format);
+    };
+    const whole = /^\$\{\{\s*(.*?)\s*\}\}$/.exec(raw);
+    if (whole && !whole[1].includes("}}")) return run(whole[1]); // one expression: keep its type (boolean for cancel-in-progress)
+    if (raw.includes("${{")) return raw.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_m, e) => String(run(e))); // text with embedded expressions
+    return raw === "true" ? true : raw === "false" ? false : raw; // a literal
+  };
+  const ctx = (event: "push" | "pull_request", sha: string, pr?: number): GhCtx => ({
+    event_name: event,
+    sha,
+    ref: "refs/heads/claude/build-hone-saas-hOex7",
+    event: pr ? { pull_request: { number: pr } } : {},
+  });
+  const concurrencyProblems = (yaml: string): string[] => {
+    const { group, cancel } = concurrencyOf(yaml);
+    const problems: string[] = [];
+    const g = (c: GhCtx) => String(evalExpr(group, c));
+    const x = (c: GhCtx) => evalExpr(cancel, c);
+    const p1 = ctx("push", "a".repeat(40));
+    const p2 = ctx("push", "b".repeat(40));
+    if (g(p1) === g(p2)) problems.push("two pushes share a group: GitHub keeps one pending run per group, so a newer merge replaces an older one");
+    if (x(p1) !== false) problems.push("a push run is cancelled when another run in its group starts");
+    if (x(p2) !== false) problems.push("a second push run is cancelled when another run in its group starts");
+    const a = ctx("pull_request", "c".repeat(40), 77);
+    const b = ctx("pull_request", "d".repeat(40), 77);
+    if (g(a) !== g(b)) problems.push("two heads of the same PR do not share a group, so a superseded head is not cancelled");
+    if (x(a) !== true) problems.push("a PR run no longer cancels its superseded head");
+    if (g(a) === g(ctx("pull_request", "e".repeat(40), 78))) problems.push("two different PRs share a group");
+    if (g(a) === g(p1)) problems.push("a PR run and a push run share a group");
+    return problems;
+  };
+  const OLD_CONCURRENCY = [
+    "concurrency:",
+    "  group: hone-pr-ci-${{ github.event.pull_request.number || github.ref }}",
+    "  cancel-in-progress: true",
+    "",
+  ].join("\n");
+
+  it("PR runs cancel a superseded head of the same PR; push runs on production never cancel or replace each other", () => {
+    expect(concurrencyProblems(CI)).toEqual([]);
+    // the shape that was reviewed, for the next reader: PR group by number, push group by commit sha
+    const { group, cancel } = concurrencyOf(CI);
+    expect(group).toContain("github.sha");
+    expect(group).not.toContain("github.ref");
+    expect(cancel).toBe("${{ github.event_name == 'pull_request' }}");
+    expect(CI).not.toMatch(/cancel-in-progress:\s*true/);
+  });
+
+  it("NEGATIVE CONTROL: the previous rule (one group per ref, cancel always) is reported as breaking push runs", () => {
+    const problems = concurrencyProblems(OLD_CONCURRENCY);
+    expect(problems.some((p) => /two pushes share a group/.test(p))).toBe(true);
+    expect(problems.some((p) => /push run is cancelled/.test(p))).toBe(true);
+    // and the PR side of the old rule was fine, so the checker is not just failing everything
+    expect(problems.some((p) => /superseded head|different PRs|PR run/.test(p))).toBe(false);
+  });
+
+  it("NEGATIVE CONTROL: each half of the fix is needed (a per-ref group with cancel off, and a per-sha group with cancel on, both fail)", () => {
+    const cancelOffSharedGroup = OLD_CONCURRENCY.replace("cancel-in-progress: true", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    expect(concurrencyProblems(cancelOffSharedGroup).join("|")).toMatch(/two pushes share a group/);
+    expect(concurrencyProblems(cancelOffSharedGroup).join("|")).not.toMatch(/push run is cancelled/);
+    const { group } = concurrencyOf(CI);
+    const perShaCancelOn = `concurrency:\n  group: ${group}\n  cancel-in-progress: true\n`;
+    expect(concurrencyProblems(perShaCancelOn).join("|")).toMatch(/push run is cancelled/);
+    const noPrCancel = `concurrency:\n  group: ${group}\n  cancel-in-progress: false\n`;
+    expect(concurrencyProblems(noPrCancel).join("|")).toMatch(/no longer cancels its superseded head/);
   });
 
   it("honours the documented latency budgets", () => {

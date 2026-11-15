@@ -51,14 +51,21 @@ on:
 permissions:
   contents: read
 
-# Cancel in-progress runs for the same ref when a newer commit lands.
-# Keeps CI minutes bounded and stops a slow run from blocking the
-# next attempt.
+# A superseded head of the SAME pull request is cancelled; a push to the production
+# branch is never cancelled and never replaced.
+#
+# Before this, every push shared one group (the branch ref) with cancel-in-progress true, so each
+# production merge cancelled the previous merge's run: of 106 production merge commits between
+# 1 Nov and 15 Nov, 27 were cancelled (102 of the 103 cancelled push runs since 22 Oct had the
+# next push run start before they stopped) and never got a later green run on their own sha.
+# A group also holds at most ONE pending run and cancels a pending run when a newer one
+# queues, even with cancel-in-progress false, so a shared push group would still drop merges.
+# Giving each push its own group (the commit sha) means no two pushes share a group: nothing
+# is cancelled and nothing waits to be replaced.
+# Nightly/manual concurrency is separate (see nightly.yml).
 concurrency:
-  # PR-scoped so a new push to the SAME pull request cancels its superseded run.
-  # Nightly/manual concurrency is separate (see nightly.yml).
-  group: hone-pr-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('hone-pr-ci-{0}', github.event.pull_request.number) || format('hone-ci-push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # TEST-PORT-01. Locally each git worktree DERIVES a candidate app port, and Hone
 # evidence never reuses a running server, so an occupied port fails loudly
