@@ -84,7 +84,9 @@ describe("client cancel notification failure log (MSG-LOG-RAW-ERROR)", () => {
     expect(state.sendCancellationEmail).toHaveBeenCalledTimes(1);
     const out = logged(errorSpy);
     expect(out).not.toContain(PHONE);
-    expect(out).not.toContain("555");
+    // No fragment of the probe phone (+1 555 010 0199). A bare "555" also matched an
+    // ISO timestamp's milliseconds (e.g. "…:36.555Z") and failed at random.
+    expect(out).not.toMatch(/555\D?010|010\D?0199|5550100199/);
     expect(out).not.toContain(EMAIL);
     expect(out).not.toContain("Invalid recipient");
     expect(out).toContain("client_cancel_notification_email_failed");

@@ -62,7 +62,9 @@ afterEach(() => {
 function expectNoLeak() {
   const text = logged.join("\n");
   expect(text).not.toContain(LEAK_PHONE);
-  expect(text).not.toContain("555");
+  // No fragment of the probe phone (+1 555 010 0199). A bare "555" also matched an
+  // ISO timestamp's milliseconds (e.g. "…:36.555Z") and failed at random.
+  expect(text).not.toMatch(/555\D?010|010\D?0199|5550100199/);
   expect(text).not.toContain(LEAK_EMAIL);
   expect(text).not.toContain(INVITEE);
 }
