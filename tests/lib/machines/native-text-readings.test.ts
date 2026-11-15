@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES } from "../../../lib/machines/apilus-3g";
+import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES, FIRST_SLICE_ACTIVE_MODES } from "../../../lib/machines/apilus-3g";
 import { APILUS_3G_NATIVE_FIXTURES, APILUS_3G_TEXT_FIXTURES } from "../../../lib/machines/apilus-3g-fixtures";
 import { catalogueIntegrity, MACHINE_CATALOGUE, profileAtVersion } from "../../../lib/machines/catalogue";
 import { catalogueForRuntime } from "../../../lib/machines/synthetic-profile";
@@ -33,14 +33,15 @@ for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) describe(`${pr
     expect(APILUS_3G_PROFILES[index].version).toBe(2);
     expect(APILUS_3G_PROFILES[index].modes.find((m) => m.key === "blend")!.captureHold).toBeTruthy();
     expect(profileAtVersion(APILUS_3G_PROFILES[index].profileId, 2)).toBe(APILUS_3G_PROFILES[index]);
-    expect(APILUS_3G_TEXT_PROFILES[index].availability).toBe("blocked");
+    expect(APILUS_3G_TEXT_PROFILES[index].availability).toBe("active");
     expect(catalogueIntegrity([profile])).toEqual([]);
     const plan = planContractPublication([profile]);
     expect(plan.publish.length).toBe(profile.modes.length);
     const published = plan.publish.find((p) => p.p_mode_key === "blend")!;
     expect(published.p_fields).toContainEqual(expect.objectContaining({ field_key: "program_identifier", value_kind: "text", choices: [] }));
     expect(published.p_fields).toContainEqual(expect.objectContaining({ field_key: "starting_current", value_kind: "choice", choices: index === 0 ? ["Glv Hf", "Hf Glv"] : ["Glv hf", "Hf Glv"] }));
-    expect(planContractPublication().publish).toEqual([]);
+    const real = planContractPublication().publish.filter((m) => m.p_machine_profile_id === APILUS_3G_TEXT_PROFILES[index].profileId);
+    expect(real.map((m) => m.p_mode_key)).toEqual(FIRST_SLICE_ACTIVE_MODES[APILUS_3G_TEXT_PROFILES[index].profileId]);
   });
   it.each(["003i", "00", "Hf Glv", " 03i "])("preserves text %j exactly, without dose inference", (value) => {
     expect(validate("program_identifier", { kind: "text", value })).toMatchObject({ ok: true, recorded: { kind: "text", value } });
@@ -223,7 +224,7 @@ for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) {
     const published = planContractPublication([profile]).publish;
     expect(published.filter(p => p.p_fields.some(f => f.field_key === "starting_current"))
       .map(p => p.p_mode_key)).toEqual(confirmed);
-    expect(APILUS_3G_TEXT_PROFILES[index].availability).toBe("blocked");
+    expect(APILUS_3G_TEXT_PROFILES[index].availability).toBe("active");
     if (index === 1) {
       const held = APILUS_3G_TEXT_PROFILES[index].modes.find(m => m.key === "omniblend")!;
       expect(held.captureHold).toBeTruthy();
@@ -239,7 +240,9 @@ it("all six synthetic identities are absent when gate-closed or deployed, with r
     expect(catalogueForRuntime(env)).toEqual(baseline);
     expect(catalogueForRuntime(env).some((p) => p.profileId.startsWith("synthetic:"))).toBe(false);
   }
-  expect(MACHINE_CATALOGUE.filter((p) => p.availability === "active")).toEqual([]);
+  expect(MACHINE_CATALOGUE.filter((p) => p.availability === "active").map((p) => `${p.profileId}@${p.version}`).sort()).toEqual([
+    "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3",
+  ]);
 });
 
 it("existing deployment adapter carries text/choice metadata without changing numeric payloads", async () => {

@@ -110,6 +110,11 @@ function makeChain(table: string) {
 const admin = {
   from: (table: string) => makeChain(table),
   rpc: async (fn: string) => {
+    // 0323 marker: not a booking command. This suite models the state BEFORE 0323 is applied
+    // (the function does not exist); the applied case is tests/app/book/waitlist-command-no-write-before-proof.test.ts.
+    if (fn === "waitlist_closed_invited_booking_enabled") {
+      return { data: null, error: { code: "PGRST202", message: "absent" } };
+    }
     rpcCalls.push(fn);
     return {
       data: {
@@ -479,7 +484,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
     ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
     ["UNKNOWN", { ok: false } as const],
   ])(
-    "%s + valid invitation: STILL refused, and authorisation is never reached",
+    "%s + valid invitation: STILL refused (CLOSED while 0323 is not applied), and authorisation is never reached",
     async (_label, state) => {
       admissionOverride = state;
       const result = await publicBookAppointmentAction(form({ ...INVITED }));

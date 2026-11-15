@@ -61,13 +61,20 @@ test("closed row: pinned notes in full, allergy flag, caution line and intake pi
     await expect(page.getByText("Intake awaiting review").first()).toBeVisible();
   });
 
+  await test.step("HON-65 (Chloe): the Last treatment line is visible on the closed row, not behind Visit details", async () => {
+    await expect(page.getByTestId("dashboard-memory-compact").first()).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("dashboard-memory-compact").first()).toContainText("Last treatment:");
+  });
+
   await test.step("a plan note shows as a cue, with the note itself inside the closed details", async () => {
     await expect(page.getByTestId("today-row-plan-cue").first()).toHaveText(/Plan note on record/);
     await expect(page.getByText(PLAN)).toBeHidden();
     await expect(page.getByText(/^Latest setup:/)).toBeHidden();
   });
 
-  await test.step("the closed row carries none of the secondary lines or actions (OPS compact-row ruling)", async () => {
+  // The OPS compact-row ruling (#1308) is amended by HON-65 (Chloe, 4 Nov): the ONE-line Last treatment summary stays on the closed row
+  // (asserted above). Everything else below remains collapsed: only that line moved out of the details.
+  await test.step("the closed row carries none of the OTHER secondary lines or actions (compact-row ruling, amended for Last treatment)", async () => {
     await expect(page.getByText("Before today", { exact: true })).toBeHidden();
     await expect(page.getByTestId("today-consultation-notes").first()).toBeHidden();
     await expect(page.getByTestId("today-review-intake").first()).toBeHidden();

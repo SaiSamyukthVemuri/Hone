@@ -2,9 +2,12 @@ import "server-only";
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
+import { isDefinitiveChargeRefusal } from "@/lib/billing/stripe-error-outcome";
+import { STRIPE_NO_INTENT_CREATED } from "@/lib/billing/manual-fee-attempt-state";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
@@ -76,6 +79,8 @@ const FAILURE_CODE_MAX = 100;
 // historical constant/outcome name is kept: renaming is an API change.
 const LIVE_MODE_BLOCKED_MESSAGE =
   "This payment's mode does not match the current deployment mode.";
+const STRIPE_UNAVAILABLE_MESSAGE =
+  "Payments are temporarily unavailable. This press sent nothing. Refresh the page to see the attempt's current status, or contact Hone support.";
 const NEEDS_MANUAL_REVIEW_MESSAGE =
   "This charge is pending and needs manual review before retrying.";
 // PR #281: Stripe reported success but Hone could not confirm the local
@@ -938,6 +943,24 @@ async function retainNonterminalPaymentIntent(args: {
   return false;
 }
 
+// The ONE paymentIntents.cancel call site (pinned in scripts/check-stripe-gates.mjs). Both the
+// off-session requires_action finalizer below and the owner-only "Close declined attempt"
+// (lib/billing/close-declined-fee-attempt.ts) route through it, so there is exactly one place that voids a PaymentIntent. It returns the
+// cancelled PaymentIntent ONLY when Stripe's own response confirms the same id, amount and currency
+// are `canceled`; anything else throws, and the caller must treat the outcome as unresolved.
+export async function cancelPaymentIntentConfirmed(
+  stripe: Stripe,
+  pi: { id: string; amount: number; currency: string },
+  stripeAccountId: string,
+): Promise<Stripe.PaymentIntent> {
+  const canceled = await stripe.paymentIntents.cancel(pi.id, undefined, { stripeAccount: stripeAccountId });
+  if (canceled.status !== "canceled" || canceled.id !== pi.id
+      || canceled.amount !== pi.amount || canceled.currency !== pi.currency) {
+    throw new Error("payment_intent_cancel_not_confirmed");
+  }
+  return canceled;
+}
+
 // PR #320: safely finalize a PaymentIntent that resolved to `requires_action`
 // (off-session SCA). A `requires_action` PI is NOT terminal on Stripe: the
 // cardholder could complete authentication out-of-band and the PI could later
@@ -968,15 +991,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
       stripePaymentIntentId: args.pi.id, attemptId: args.attemptId };
   }
   try {
-    const canceled = await args.stripe.paymentIntents.cancel(
-      args.pi.id,
-      undefined,
-      { stripeAccount: args.stripeAccountId },
-    );
-    if (canceled.status !== "canceled" || canceled.id !== args.pi.id
-        || canceled.amount !== args.pi.amount || canceled.currency !== args.pi.currency) {
-      throw new Error("payment_intent_cancel_not_confirmed");
-    }
+    const canceled = await cancelPaymentIntentConfirmed(args.stripe, args.pi, args.stripeAccountId);
     // PI is now 'canceled' on Stripe and can never succeed: terminal 'failed'
     // is now truthful and cannot diverge.
     const failedPersisted = await writeFailedOutcome({
@@ -1335,7 +1350,7 @@ export async function runSessionPaymentCharge(args: {
   const { data: attemptRow } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, charge_reason, client_id, session_id, appointment_id, amount_cents, currency, status, stripe_livemode, client_payment_method_id, card_authorization_signature_id, stripe_account_id, stripe_customer_id, stripe_payment_method_id, stripe_payment_intent_id, stripe_idempotency_key, updated_at",
+      "id, studio_id, charge_reason, client_id, session_id, appointment_id, amount_cents, currency, status, stripe_livemode, client_payment_method_id, card_authorization_signature_id, stripe_account_id, stripe_customer_id, stripe_payment_method_id, stripe_payment_intent_id, stripe_idempotency_key, updated_at, created_at",
     )
     .eq("id", args.attemptId)
     .eq("studio_id", args.studioId)
@@ -1360,6 +1375,14 @@ export async function runSessionPaymentCharge(args: {
       outcome: "blocked",
       message: "This attempt has an unsupported charge reason.",
     };
+  }
+  // Insurance G1 (#1433): the live gate lives in the shared runner too, so a future caller of
+  // this executor (a new fee path, a job, an action) cannot skip it. In live mode a reason that
+  // is not allowed for THIS studio is refused before any claim or Stripe call. session_payment
+  // is unaffected; the call sites' own checks stay as the earlier, friendlier refusal.
+  const liveHold = liveChargeReasonBlockMessage(attemptRow.charge_reason, livemode, args.studioId);
+  if (liveHold) {
+    return { ok: false, outcome: "live_mode_blocked", message: liveHold };
   }
   // Codex P1 #4369182087 (#1035). The currency sent to Stripe is the attempt's
   // PERSISTED currency, and only cad or usd are currencies Hone charges in: an
@@ -1511,6 +1534,30 @@ export async function runSessionPaymentCharge(args: {
   }
   const card = lineage.card;
 
+  // THE STRIPE CLIENT IS OBTAINED BEFORE THE CLAIM, FOR AN UNCLAIMED ATTEMPT ONLY. Building it can fail (a missing or invalid key, a
+  // refused placeholder key, a misconfigured fake). The claim moves the attempt to pending_stripe, and a pending attempt with no
+  // PaymentIntent blocks the appointment, so a client failure AFTER the claim left a pending row that nothing had sent. Failing here
+  // leaves a ready attempt exactly as it was, claims nothing and writes nothing.
+  // An attempt that is ALREADY claimed (pending_stripe, or any state other than ready) is different: an earlier send may have charged,
+  // so it must reach the existing manual-review / reconcile handling below, which needs no client of its own here. It keeps the
+  // original order: the client is built at the create call, after that handling.
+  let stripe: Stripe | undefined;
+  if (attemptRow.status === "ready") {
+    try {
+      stripe = getSessionPaymentStripe();
+    } catch (clientErr) {
+      logInternal("session_payment_stripe_client_unavailable", {
+        attemptId: attemptRow.id,
+        errorClass: thrownErrorClass(clientErr),
+      });
+      return {
+        ok: false,
+        outcome: "blocked",
+        message: STRIPE_UNAVAILABLE_MESSAGE,
+      };
+    }
+  }
+
   // A new attempt must pass before claiming, so a country refusal leaves it
   // ready. An already uncertain attempt must still be reconcilable: provider
   // truth is not a new charge authorization and is handled below unchanged.
@@ -1522,6 +1569,20 @@ export async function runSessionPaymentCharge(args: {
   if (countryCheckedBeforeClaim && !(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
     return { ok: false, outcome: "blocked",
       message: "The studio's payment country or Stripe account country could not be verified. Refresh the payment settings or contact Hone support before charging." };
+  }
+
+  // One manual fee per appointment, across BOTH fee types, checked here at the point of money so that
+  // every caller of this runner is covered (not only the fee action). It runs only for a NEW charge
+  // (the same condition as the country check above); resuming a pending attempt creates no new money.
+  // Fails closed: an unreadable history refuses. Immediately before the claim, nothing in between.
+  if (
+    countryCheckedBeforeClaim &&
+    (attemptRow.charge_reason === "no_show_fee" || attemptRow.charge_reason === "late_cancellation_fee")
+  ) {
+    const oneFeeRefusal = await oneFeeExecuteVerdict(admin, attemptRow, livemode, new Date());
+    if (oneFeeRefusal) {
+      return { ok: false, outcome: "blocked", message: oneFeeRefusal };
+    }
   }
 
   // 5. Atomically claim the attempt. Idempotency key is deterministic
@@ -1638,6 +1699,35 @@ export async function runSessionPaymentCharge(args: {
         expectedCurrency: attemptRow.currency,
       });
     }
+    // A manual fee has exactly ONE sender: the invocation whose claim returned "claimed". A second invocation
+    // (a repeat press, another tab, a retry after a lost response) never sends, because it cannot know whether the
+    // winner's request reached Stripe, and a refusal on its own request would say nothing about the winner's. The
+    // attempt stays pending_stripe and blocking; a person resolves it from Stripe. session_payment is unchanged.
+    if (
+      attemptRow.charge_reason === "late_cancellation_fee" ||
+      attemptRow.charge_reason === "no_show_fee"
+    ) {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "session_payment_needs_manual_review",
+        message: "A manual fee is pending with no PaymentIntent id. Only the first sender may call Stripe, so this was not retried.",
+        studioId: attemptRow.studio_id,
+        clientId: attemptRow.client_id,
+        route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
+        safeDetails: {
+          attempt_id: attemptRow.id,
+          session_id: attemptRow.session_id,
+          appointment_id: attemptRow.appointment_id,
+          reason: "fee_pending_no_pi_single_sender",
+        },
+      });
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message: NEEDS_MANUAL_REVIEW_MESSAGE,
+        attemptId: attemptRow.id,
+      };
+    }
     // No PI id on the row. Check whether the claim is recent enough
     // to retry-create with the same idempotency key.
     const claimedAt = claim.updated_at
@@ -1691,10 +1781,10 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
-  const stripe = getSessionPaymentStripe();
+  const sender = stripe ?? getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
   try {
-    pi = await stripe.paymentIntents.create(
+    pi = await sender.paymentIntents.create(
       {
         amount: attemptRow.amount_cents,
         currency: attemptRow.currency,
@@ -1719,6 +1809,12 @@ export async function runSessionPaymentCharge(args: {
       {
         stripeAccount: card.stripe_account_id,
         idempotencyKey,
+        // A manual fee is sent ONCE per call. The SDK default (2 network retries, same key) could send an accepted
+        // request again and see a refusal that says nothing about the first one; a lost response must surface as
+        // unknown instead. Per request, fee reasons only: session payments keep the SDK default.
+        ...(attemptRow.charge_reason === "late_cancellation_fee" || attemptRow.charge_reason === "no_show_fee"
+          ? { maxNetworkRetries: 0 }
+          : {}),
       },
     );
   } catch (err) {
@@ -1727,7 +1823,7 @@ export async function runSessionPaymentCharge(args: {
     // the unknown-outcome path below (row stays pending_stripe).
     if (
       err instanceof Stripe.errors.StripeError &&
-      isDefinitiveStripeRefusal(err)
+      isDefinitiveChargeRefusal(err)
     ) {
       const decline = err as unknown as {
         code?: string;
@@ -1750,12 +1846,19 @@ export async function runSessionPaymentCharge(args: {
         return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
           attemptId: attemptRow.id, ...(piId ? { stripePaymentIntentId: piId } : {}) };
       }
+      // E2: record "no PaymentIntent was created" only when Stripe definitively refused AND the error
+      // carries no intent AND it is not a card error (a card error without an intent is ambiguous).
+      // Only the FIRST send can prove it. A replay (claim "already_pending", same idempotency key) follows a
+      // request that may have created and charged a PaymentIntent whose response was lost, and Stripe authenticates and
+      // authorises before it looks the key up, so a 401/403/400 on a replay says nothing about the first request.
+      const noIntentProven =
+        claim.result === "claimed" && !piId && !piStatus && !(err instanceof Stripe.errors.StripeCardError);
       const failedPersisted = await writeFailedOutcome({
         attemptId: attemptRow.id,
         studioId: attemptRow.studio_id,
         clientId: attemptRow.client_id,
         paymentIntentId: piId,
-        stripeStatus: piStatus,
+        stripeStatus: piStatus ?? (noIntentProven ? STRIPE_NO_INTENT_CREATED : null),
         failureCode: err.code ?? piStatus,
         failureMessage: "Stripe could not charge the saved card.",
         expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
@@ -1909,7 +2012,7 @@ export async function runSessionPaymentCharge(args: {
   // success cannot leave Hone 'failed' while Stripe succeeded.
   if (pi.status === "requires_action") {
     return finalizeRequiresActionPaymentIntent({
-      stripe,
+      stripe: sender,
       pi,
       expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
       stripeAccountId: card.stripe_account_id,

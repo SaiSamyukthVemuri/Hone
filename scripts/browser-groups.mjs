@@ -51,6 +51,8 @@ export const BROWSER_GROUPS = {
       // before a block exists, then the one atomic save that follows. Same
       // group as its sibling for the same reason.
       "machine-create-mode-journey.spec.ts",
+      // HON-8: the same journey on the REAL Senior and Junior 3G contracts (the sibling uses synthetic ids only).
+      "machine-real-3g.spec.ts",
       // MPX-03: changing the machine or the mode UNDER a typed draft, and the
       // unit going out of service mid-draft. Same surface again - the panel
       // inside the settings-block form - so the same group: a diff to that
@@ -114,6 +116,8 @@ export const BROWSER_GROUPS = {
       // Insurance PEER-1308 D-4: the CLOSED compact row (pinned notes, allergy flag, caution line,
       // intake pill visible) proved without the helper that opens the row details.
       "dashboard-closed-row.spec.ts",
+      // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
+      "dashboard-last-treatment-closed.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
@@ -256,6 +260,8 @@ export const BROWSER_GROUPS = {
       // The same link hidden for a solo owner with nothing to review, shown otherwise (Sam, 2 Nov).
       "review-link-solo-owner.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
+      // #1424 own-calendar-first default, 1280/390 matrix (opt-in: self-skips unless CAL_OWN_FIRST_E2E=1, so a targeted lane lists it but runs nothing).
+      "calendar-own-first.spec.ts",
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
@@ -381,6 +387,10 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
+      // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
+      // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
+      // /clients/** has no PATH_TO_GROUP pattern.
+      "client-profile-save.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a

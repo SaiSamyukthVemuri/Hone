@@ -134,7 +134,7 @@ const KNOWN_DEADLOCK = "40P01";
 // OWNER: Willow (diagnosis of HON-48-DEADLOCK, routed by OPS 3 Nov 2026). Flip to false when the fix merges. It EXPIRES on
 // KNOWN_DEFECT_EXPIRES: the guard test below fails after that date while this is still true, forcing a decision (fix landed, or OPS
 // and Sam accept the known defect for longer and move the date).
-const KNOWN_DEFECT_HON48_DEADLOCK = true;
+const KNOWN_DEFECT_HON48_DEADLOCK = false;
 const KNOWN_DEFECT_EXPIRES = "2026-11-24";
 // BA-1 (Insurance PEER-1346): the allowance is narrowed to the KNOWN cycle only: SQLSTATE 40P01 AND the error's DETAIL/CONTEXT matches this
 // signature (the lock/function names seen in the observed deadlock) AND it happened in one of the scenarios where it was observed. A

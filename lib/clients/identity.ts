@@ -80,6 +80,10 @@ export function clientIdentityPair(client: ClientIdentityFields): { display: str
   return { display, legal: legal !== null && legal !== display ? legal : null };
 }
 
+/** The longest client name the database accepts (0281, clients_identity_guard: 1 to 200 characters). */
+export const CLIENT_NAME_MAX = 200;
+export const CLIENT_NAME_TOO_LONG = `Name must be ${CLIENT_NAME_MAX} characters or fewer.`;
+
 /** The longest preferred name the database accepts (clients_preferred_name_shape). */
 export const PREFERRED_NAME_MAX = 200;
 

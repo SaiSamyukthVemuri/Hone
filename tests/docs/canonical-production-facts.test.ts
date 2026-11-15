@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { currentProse, ignoreMarkers, matchAll } from "./helpers/canonical-facts";
+import { aggregatorSteps, runAggregatorSteps } from "../ci/helpers/aggregator-steps";
 
 // ---------------------------------------------------------------------------
 // CANONICAL PRODUCTION FACTS — the anti-drift guard.
@@ -897,6 +898,9 @@ function declaredUnhostedVersions(declared: unknown): Set<string> {
 function repoHostedShapeViolations(i: {
   repo: number; hosted: number; pending: string[]; versions: string[];
   skipped: number[]; declaredUnhosted: Set<string>;
+  // Numbers the canonical record DECLARES reserved-unallocated above the hosted max (validated by migration-state.mjs). They
+  // count like a skipped slot for the contiguity check below, and only for that.
+  reserved?: number[];
 }): string[] {
   const out: string[] = [];
   if (i.hosted > i.repo) {
@@ -915,7 +919,7 @@ function repoHostedShapeViolations(i: {
   if (!(i.repo > i.hosted)) out.push("pending above hosted but the repo max is not above hosted");
   const expectedSuffix = i.versions.filter((v) => Number(v) > i.hosted);
   if (JSON.stringify(above) !== JSON.stringify(expectedSuffix)) out.push(`pending above hosted is not exactly the suffix ${expectedSuffix.join(",")}`);
-  const skipped = new Set(i.skipped);
+  const skipped = new Set([...i.skipped, ...(i.reserved ?? [])]);
   const contiguous: string[] = [];
   for (let n = i.hosted + 1; n <= i.repo; n += 1) if (!skipped.has(n)) contiguous.push(String(n).padStart(4, "0"));
   if (JSON.stringify(above) !== JSON.stringify(contiguous)) out.push("the pending suffix has a HOLE in it: a migration between the hosted head and the repo max is missing from the repository");
@@ -1052,8 +1056,13 @@ describe("canonical production docs: the ledger's current block agrees with the 
         versions: DERIVED.versions,
         skipped: DERIVED.permanently_skipped.map((v: string) => Number(v)),
         declaredUnhosted: declaredUnhostedVersions(DERIVED.hosted_out_of_order),
+        reserved: DERIVED.reserved_unallocated_above_hosted.map((v: string) => Number(v)),
       }),
     ).toEqual([]);
+  });
+
+  it("every reserved-unallocated declaration is valid (above hosted, below the repo max, no repo file)", () => {
+    expect(DERIVED.invalid_reserved_declarations).toEqual([]);
   });
 
   // F-OOO-1 / PEER-1264 C1. The shape rule, as a pure function so its negative
@@ -1090,6 +1099,14 @@ describe("canonical production docs: the ledger's current block agrees with the 
         repo: 251, versions: ["0248", "0250", "0251"], skipped: [],
         pending: ["0250", "0251"],
       }).join(" ")).toMatch(/HOLE/);
+    });
+    const gap = { repo: 252, hosted: 248, versions: ["0252"], skipped: [] as number[], pending: ["0252"] };
+    it("a hole between hosted and the pending suffix is admitted ONLY when every missing number is declared reserved", () => {
+      expect(shape({ ...gap }).join(" ")).toMatch(/HOLE/);
+      expect(shape({ ...gap, reserved: [249, 250, 251] })).toEqual([]);
+    });
+    it("NEGATIVE CONTROL: a reservation that leaves one hole undeclared still fails", () => {
+      expect(shape({ ...gap, reserved: [249, 251] }).join(" ")).toMatch(/HOLE/);
     });
     it("NEGATIVE CONTROL: hosted ahead of the repo fails", () => {
       expect(shape({ repo: 246, hosted: 248 }).join(" ")).toMatch(/AHEAD/);
@@ -1881,9 +1898,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
-const APPLY_HISTORY_ENTRIES = 19;
+const APPLY_HISTORY_ENTRIES = 23;
 const APPLY_HISTORY_DIGEST =
-  "2fab407b11662e9e7748258f76919dde197c9aee06afdbba9dc33a3857be98d6";
+  "c73f166f513d48baa65bf2c0e40aaba73a91fca229917868829a8bc4c547749d";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**
@@ -4145,33 +4162,18 @@ describe("freshness policy controls (#825 6215529089)", () => {
     const agg = ci.slice(ci.indexOf("\n  browser-e2e:\n"), ci.indexOf("\n  payment-browser-e2e:"));
     expect(agg).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
     expect(agg).toMatch(/RECORD_RESULT: \$\{\{ needs\.canonical-record\.result \}\}/);
-    const body = agg.slice(agg.indexOf("run: |\n") + "run: |\n".length);
-    const script = body
-      .split("\n")
-      .map((l) => l.replace(/^ {10}/, ""))
-      .join("\n");
-    const exitOf = (env: Record<string, string>) => {
-      try {
-        execFileSync("bash", ["-c", script], {
-          env: {
-            NODE_ENV: "test",
-            PATH: process.env.PATH ?? "",
-            HOME: process.env.HOME ?? "/tmp",
-            CHANGES_RESULT: "success",
-            SHARD_RESULT: "",
-            BROWSER_RUN: "false",
-            FULL_MATRIX: "false",
-            EXTENDED: "false",
-            SHARDS: "[1]",
-            ...env,
-          },
-          stdio: "ignore",
-        });
-        return 0;
-      } catch (e) {
-        return (e as { status?: number }).status ?? -1;
-      }
-    };
+    // SHEP-LATEST-01 PR1: the aggregator is several steps; run them in order, one process each.
+    const steps = aggregatorSteps(ci);
+    const exitOf = (env: Record<string, string>) =>
+      runAggregatorSteps(steps, {
+        CHANGES_RESULT: "success",
+        SHARD_RESULT: "",
+        BROWSER_RUN: "false",
+        FULL_MATRIX: "false",
+        EXTENDED: "false",
+        SHARDS: "[1]",
+        ...env,
+      }).code;
     const record = { DOCS_ONLY: "true", PRODUCTION_RECORD: "true" };
     expect(exitOf({ ...record, RECORD_RESULT: "success" })).toBe(0);
     for (const bad of ["failure", "cancelled", "skipped", ""]) {

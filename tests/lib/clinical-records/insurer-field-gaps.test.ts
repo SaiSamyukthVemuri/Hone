@@ -119,10 +119,13 @@ describe("schema tether", () => {
     // HON-58 (0258) added `preferred_name`, which is not one of the insurer
     // fields (the legal identity lives in its own table, never a clients
     // column), so it is the one allowed name here. A `legal_*` column on
-    // clients would still be a revisit.
+    // clients would still be a revisit. 0281 added `preferred_name_revision`, the
+    // database-stamped change counter for that same preferred name: bookkeeping, never a
+    // value and never an insurer field, so it is allowed with it.
     const suspicious = clientColumns().filter(
       (key) =>
         key !== "preferred_name" &&
+        key !== "preferred_name_revision" &&
         /legal|preferred|mrn|medical_record|diagnos|icd|problem_code|policy|member|insur|payer/.test(key),
     );
     expect(suspicious).toEqual([]);

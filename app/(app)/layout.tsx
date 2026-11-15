@@ -67,7 +67,7 @@ export default async function AppLayout({
     "shell.support-reads",
     () =>
       Promise.all([
-        loadUnreadNotificationCount(studio.id, practitioner.role === "owner"),
+        loadUnreadNotificationCount(studio.id, practitioner.role === "owner", practitioner.id),
         loadOverdueDisinfectantCount(studio.id, studio.timezone),
       ]),
   );
@@ -264,7 +264,7 @@ export default async function AppLayout({
 // query is bounded and safe to run on every authenticated page
 // render. A failure (network, missing table in a fresh env)
 // falls back to zero so the layout never breaks.
-async function loadUnreadNotificationCount(studioId: string, viewerIsOwner: boolean): Promise<number> {
+async function loadUnreadNotificationCount(studioId: string, viewerIsOwner: boolean, viewerPractitionerId: string): Promise<number> {
   try {
     const supabase = await createClient();
     // WS-D: the badge never counts what the viewer cannot read (owner-only card-on-file rows).
@@ -275,6 +275,7 @@ async function loadUnreadNotificationCount(studioId: string, viewerIsOwner: bool
         .eq("studio_id", studioId)
         .is("read_at", null),
       viewerIsOwner,
+      viewerPractitionerId,
     );
     if (error) return 0;
     return count ?? 0;

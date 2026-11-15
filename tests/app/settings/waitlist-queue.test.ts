@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  CAPACITY_EXHAUSTED_COPY,
-  CAPACITY_PANEL,
-} from "@/lib/waitlist/invitation-capacity";
+  INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_ADMISSION_UNREADABLE_COPY,
+  INVITE_CLOSED_INVITED_ONLY_COPY,
+} from "@/lib/waitlist/invite-to-book-contract";
+import { CAPACITY_EXHAUSTED_COPY } from "@/lib/waitlist/invitation-capacity";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -119,6 +121,7 @@ function capacityQuery(): QueryShape {
 const rpcCalls: RpcCall[] = [];
 const revalidated: string[] = [];
 const consoleErrors: string[] = [];
+const consoleWarns: string[] = [];
 
 const scenario = {
   role: "owner" as string,
@@ -145,6 +148,8 @@ const scenario = {
   // the honest default: most of this suite predates capacity and a studio that
   // has never opened one is the ordinary state. A row here is what the owner
   // RLS policy would return.
+  // The allowance estimate the page shows (the real action needs a second client and the slot engine).
+  allowance: { ok: true, fit: 4, outstanding: 1, open: 3, outstandingScope: "window" } as Record<string, unknown>,
   openRound: null as Record<string, unknown> | null,
   roundsError: null as { code: string } | null,
   // Deliberately answerable as a SECOND row, so the impossible-shape branch can
@@ -171,6 +176,10 @@ function reset() {
   rpcCalls.length = 0;
   revalidated.length = 0;
   consoleErrors.length = 0;
+  consoleWarns.length = 0;
+  flash.sets = [];
+  flash.value = undefined;
+  readback.value = { known: false };
   Object.assign(scenario, {
     role: "owner",
     userId: USER_ID,
@@ -187,17 +196,45 @@ function reset() {
     sectionTotals: null,
     preferences: [],
     preferencesError: null,
+    allowance: { ok: true, fit: 4, outstanding: 1, open: 3, outstandingScope: "window" },
     openRound: null,
     roundsError: null,
     extraOpenRound: null,
     roundConsumed: 0,
     ignoreRange: false,
   });
+  estimateCalls.length = 0;
 }
 
 // NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
 // Delegating to the REAL resolver with no stored value routes it through the
 // transition bridge, so the env stubbing below keeps meaning what it meant.
+// The three owner follow-up cards read through these loaders. A test may force a result to model
+// "zero active entries but n>0 items"; null passes through to the real loader (every other test).
+const followUp = vi.hoisted(() => ({
+  attention: null as unknown,
+  declined: null as unknown,
+  replies: null as unknown,
+}));
+vi.mock("@/lib/waitlist/needs-attention", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/needs-attention")>();
+  return { ...a, loadNeedsAttention: vi.fn(async (...args: Parameters<typeof a.loadNeedsAttention>) =>
+    (followUp.attention as Awaited<ReturnType<typeof a.loadNeedsAttention>> | null) ?? a.loadNeedsAttention(...args)) };
+});
+vi.mock("@/lib/waitlist/declined-attention", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/declined-attention")>();
+  return { ...a, loadDeclinedAttention: vi.fn(async (...args: Parameters<typeof a.loadDeclinedAttention>) =>
+    (followUp.declined as Awaited<ReturnType<typeof a.loadDeclinedAttention>> | null) ?? a.loadDeclinedAttention(...args)) };
+});
+vi.mock("@/lib/waitlist/times-feedback-owner", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/times-feedback-owner")>();
+  return { ...a, countTimesFeedback: vi.fn(async (...args: Parameters<typeof a.countTimesFeedback>) =>
+    (followUp.replies as Awaited<ReturnType<typeof a.countTimesFeedback>> | null) ?? a.countTimesFeedback(...args)) };
+});
+
+// Null keeps the legacy-bridge behaviour every pre-existing test relies on; a test sets a
+// STORED mode to exercise the closed-admission invite block.
+const admissionHolder = vi.hoisted(() => ({ stored: null as string | null, rule: "absent" as "applied" | "absent" | "error" }));
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
@@ -205,8 +242,8 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     ...actual,
     getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
       actual.resolveAdmission({
-        storedMode: null,
-          storedSetAt: null,
+        storedMode: admissionHolder.stored,
+        storedSetAt: admissionHolder.stored ? "2026-09-01T00:00:00.000Z" : null,
         readFailed: false,
         studioSlug: studio.slug,
       }),
@@ -223,8 +260,46 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   };
 });
 
+const estimateCalls: unknown[] = [];
+vi.mock("@/app/(app)/settings/waitlist/window-capacity-actions", () => ({
+  estimateWindowCapacityAction: async (input: unknown) => {
+    estimateCalls.push(input);
+    return scenario.allowance;
+  },
+}));
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
+}));
+
+// The flash cookie: what the action sets, and what the page reads on its next render.
+const flash: { sets: Array<{ name: string; value: string }>; value: string | undefined } = { sets: [], value: undefined };
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    set: (name: string, value: string) => {
+      flash.sets.push({ name, value });
+    },
+    get: (name: string) =>
+      name === "hone_waitlist_notice" && flash.value !== undefined ? { name, value: flash.value } : undefined,
+  }),
+}));
+/** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
+async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  expect(flash.sets).toEqual([{ name: "hone_waitlist_notice", value: key }]);
+}
+// The real `redirect` throws a NEXT_REDIRECT control-flow error; this one does too, carrying the target.
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`);
+  },
+}));
+
+// What the owner's own session reads back when a remove answer is uncertain. `known: false` is a failed read.
+const readback: { value: { known: true; status: string | null } | { known: false } } = {
+  value: { known: false },
+};
+vi.mock("@/lib/waitlist/entry-status-readback", () => ({
+  readEntryStatus: async () => readback.value,
 }));
 
 vi.mock("@/lib/supabase/queries", () => {
@@ -414,6 +489,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       throw new Error(`the waitlist action must not touch tables directly: ${table}`);
     },
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      // The 0323 marker; not a waitlist call, so it is not recorded with them.
+      if (fn === "waitlist_closed_invited_booking_enabled") {
+        if (admissionHolder.rule === "applied") return { data: true, error: null };
+        return { data: null, error: { code: admissionHolder.rule === "absent" ? "PGRST202" : "XX000", message: "x" } };
+      }
       rpcCalls.push({ fn, args });
       // THE CONSUMED COUNT IS ITS OWN ANSWER. Returning the removal result for
       // every rpc made the count NaN, which the page correctly read as unknown
@@ -489,11 +569,15 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 let errSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   reset();
   errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
     consoleErrors.push(a.map(String).join(" "));
+  });
+  warnSpy = vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
+    consoleWarns.push(a.map(String).join(" "));
   });
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-08-23T09:00:00.000Z"));
@@ -501,6 +585,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   errSpy.mockRestore();
+  warnSpy.mockRestore();
 });
 
 describe("authority", () => {
@@ -537,8 +622,12 @@ describe("the query the page asks", () => {
     // ONE BOUNDED READ PER SECTION — five of them — rather than one cap shared
     // across every state. A shared cap lets a busy section crowd another off
     // the page entirely, taking that section's only actions with it.
-    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries");
+    // The owner's needs-attention card (0313) makes its own COMPLETE read of the
+    // invited entries (id,name); it is a sixth, separate read, not a section. The
+    // declined-times card reads released entries (id,name,released_at) the same way.
+    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns !== "id,name" && x.columns !== "id,name,released_at");
     expect(pageReads).toHaveLength(5);
+    expect(queries.filter((x) => x.table === "new_client_waitlist_entries" && x.columns === "id,name")).toHaveLength(1);
     const q = pageReads.find((x) =>
       x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "waiting"),
     )!;
@@ -765,7 +854,6 @@ describe("rendered rows", () => {
       "Record consent",
       "Remove",
       "Send invitation",
-      "Start inviting",
       "They asked today",
       "They were already waiting",
       "switch: Waitlist texts",
@@ -879,6 +967,94 @@ describe("rendered rows", () => {
     });
   });
 
+  // The expanded Invite-to-book composer used to sit INSIDE the row's controls column. Opening it
+  // widened that column to the form's natural width, so the name and email were squeezed into a
+  // sliver and the controls were drawn over the form. The composer is now its own full-width band.
+  describe("row layout: the composer is a full-width band, not part of the controls column", () => {
+    /** The end index of the <div> that opens at `start`, by counting nested <div> tags. */
+    const divEnd = (html: string, start: number): number => {
+      let depth = 0;
+      for (const m of html.slice(start).matchAll(/<div\b|<\/div>/g)) {
+        depth += m[0] === "</div>" ? -1 : 1;
+        if (depth === 0) return start + m.index! + m[0].length;
+      }
+      throw new Error("unbalanced <div>");
+    };
+    const openTagStart = (html: string, marker: string): number => {
+      const at = html.indexOf(marker);
+      expect(at, `${marker} is not rendered`).toBeGreaterThan(-1);
+      return html.lastIndexOf("<div", at);
+    };
+
+    const service = (over: Record<string, unknown> = {}) => ({
+      id: "svc-1",
+      name: "Consultation",
+      modality: "consultation",
+      active: true,
+      ...over,
+    });
+    const LONG_NAME = "Alexandria-Bartholomew Montgomery-Featherstonehaugh the Third";
+    const LONG_EMAIL = "alexandria.bartholomew.montgomery.featherstonehaugh.the.third@a-very-long-subdomain.example.invalid";
+
+    it("the composer is outside the controls column, and the controls column cannot grow with it", async () => {
+      scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
+      scenario.count = 1;
+      scenario.services = [service()];
+      const html = await render();
+      const start = openTagStart(html, 'data-testid="row-controls"');
+      const end = divEnd(html, start);
+      const controls = html.slice(start, end);
+      expect(controls).not.toContain('data-testid="row-invite"');
+      expect(controls).not.toContain("composer");
+      // The controls still carry Remove, and the composer follows them in the same row.
+      expect(controls).toContain("Remove");
+      const invite = html.indexOf('data-testid="row-invite"');
+      expect(invite).toBeGreaterThan(end);
+      // A FIXED width at the breakpoint where the columns sit side by side: it can no longer
+      // take its width from whatever is inside it.
+      const tag = html.slice(start, html.indexOf(">", start) + 1);
+      expect(tag).toContain("sm:w-56");
+      expect(tag).not.toContain("sm:w-auto");
+      expect(tag).toContain("min-w-0");
+    });
+
+    it("the row is a plain column; only its first band is a side-by-side row", async () => {
+      scenario.rows = [entry()];
+      scenario.count = 1;
+      scenario.services = [service()];
+      const html = await render();
+      const li = html.slice(html.indexOf("<li"), html.indexOf(">", html.indexOf("<li")) + 1);
+      expect(li).toContain("flex-col");
+      expect(li).not.toContain("sm:flex-row");
+      const band = html.slice(html.indexOf("<li"), html.indexOf('data-testid="row-controls"'));
+      expect(band).toContain("sm:flex-row");
+    });
+
+    it("a long name and a long email wrap inside their own column instead of widening the row", async () => {
+      scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
+      scenario.count = 1;
+      const html = await render();
+      const name = html.indexOf(LONG_NAME);
+      const nameTag = html.slice(html.lastIndexOf("<p", name), name);
+      expect(nameTag).toContain("break-words");
+      const email = html.indexOf(LONG_EMAIL);
+      const emailTag = html.slice(html.lastIndexOf("<p", email), email);
+      expect(emailTag).toContain("break-all");
+      // The info column may shrink below its content (min-w-0) and takes the remaining width.
+      const infoOpen = html.slice(html.lastIndexOf("<div", name), name);
+      expect(infoOpen).toContain("min-w-0");
+      expect(infoOpen).toContain("flex-1");
+    });
+
+    it("a row with no composer (not an invitable state) has the same two-band shape", async () => {
+      scenario.rows = [entry({ status: "released" })];
+      scenario.count = 1;
+      const html = await render({ section: "released" });
+      expect(html).toContain('data-testid="row-controls"');
+      expect(html).not.toContain('data-testid="row-invite"');
+    });
+  });
+
   it("promises no queue position or capacity", async () => {
     scenario.rows = [entry()];
     scenario.count = 1;
@@ -912,12 +1088,12 @@ describe("rendered rows", () => {
     // this strips exactly those sentences and nothing else — the bare word stays
     // forbidden everywhere else in the queue.
     const OWNER_CAPACITY_COPY = [
-      "Set your invitation capacity before inviting someone to book.",
+      "We couldn't prepare invitations just now. Please try again.",
       CAPACITY_EXHAUSTED_COPY,
       "We couldn't check your invitation capacity just now. Reload the page before inviting.",
     ];
     let queueOnly = html.replace(
-      /<section[^>]*data-testid="invitation-capacity"[\s\S]*?<\/section>/,
+      /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/,
       "",
     );
     // WAIT-04A — THE ADD/IMPORT PANEL IS EXCISED FOR THE SAME REASON, AND ONLY
@@ -937,49 +1113,14 @@ describe("rendered rows", () => {
     expect(queueOnly, "the add/import panel was not excised").not.toContain(
       "add-to-waitlist",
     );
+    queueOnly = queueOnly.replace(/<span[^>]*data-testid="row-allowance"[\s\S]*?<\/span>/g, "");
     for (const c of OWNER_CAPACITY_COPY) queueOnly = queueOnly.split(c).join("");
-    expect(queueOnly, "the owner panel was not excised").not.toContain("invitation-capacity");
+    expect(queueOnly, "the owner panel was not excised").not.toContain("invitation-allowance");
     // Non-vacuity: the strip must not have emptied the queue it is scanning.
     expect(queueOnly).toContain("Invite to book");
     for (const forbidden of [/position/i, /\brank/i, /capacity/i]) {
       expect(queueOnly, `forbidden vocabulary: ${forbidden}`).not.toMatch(forbidden);
     }
-  });
-
-  it("reads the capacity with the page's OWN client, scoped and narrow", async () => {
-    // THE READ'S SHAPE IS THE GUARD. A capacity read that quietly became broad
-    // would still render correctly for this studio while exposing every other
-    // studio's rounds to the query planner -- and RLS is the authority, not the
-    // thing that makes a careless query safe to write.
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    await render();
-
-    const cap = capacityQuery();
-    // ONE CLIENT. The capacity read is recorded by the SAME fake that records
-    // the queue read, which is only possible if the page used its existing
-    // instance. A second client would not appear in `queries` at all.
-    expect(queries.filter((q) => q.table === "studio_waitlist_admission_rounds")).toHaveLength(1);
-
-    // ONLY THE COLUMNS IT RENDERS.
-    expect(cap.columns).toBe("id,allowance,opened_at");
-    expect(cap.columns).not.toContain("*");
-    // Never the practitioner ids or the close stamps: the panel shows none of
-    // them, and a column list is the cheapest place to keep that true.
-    for (const col of ["opened_by_practitioner_id", "closed_by_practitioner_id", "closed_at"]) {
-      expect(cap.columns).not.toContain(col);
-    }
-
-    // THIS STUDIO, EXPLICITLY. Defence in depth behind the owner RLS policy.
-    expect(cap.filters).toContainEqual(["eq", "studio_id", STUDIO_ID]);
-    // AND ONLY AN OPEN ROUND. Without this the page would see closed history
-    // and could present a spent capacity as live.
-    expect(cap.filters).toContainEqual(["is", "closed_at", null]);
-
-    // BOUNDED. The database guarantees at most one open round; asking for two
-    // is how the page detects that guarantee being violated rather than
-    // silently using the first row.
-    expect(cap.limit).toBe(2);
   });
 
   it("P2 4020704242 — the page builds exactly ONE owner-scoped client", async () => {
@@ -990,8 +1131,6 @@ describe("rendered rows", () => {
     // so the instance is what gets counted.
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 2, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 1;
     await render();
 
     expect(clientInstances, "the page must build exactly one createClient()").toHaveLength(1);
@@ -1006,8 +1145,8 @@ describe("rendered rows", () => {
     // NON-VACUITY. If the page issued no capacity read at all, the set above
     // would trivially be one. Both reads must actually be present.
     expect(queries.some((q) => q.table === "new_client_waitlist_entries")).toBe(true);
-    expect(queries.some((q) => q.table === "studio_waitlist_admission_rounds")).toBe(true);
-    expect(capacityQuery().clientId).toBe(entriesQuery().clientId);
+    // The admission round is plumbing: the page never reads it (0324, auto-round).
+    expect(queries.some((q) => q.table === "studio_waitlist_admission_rounds")).toBe(false);
   });
 
   it("NEGATIVE CONTROL — a second client makes that assertion fail", async () => {
@@ -1029,108 +1168,56 @@ describe("rendered rows", () => {
     expect(clientInstances.length === 1).toBe(false);
   });
 
-  it("an unreadable capacity withholds the send — it never reads as 'none'", async () => {
-    // FAIL CLOSED. "Could not read" and "no capacity" would produce the same
-    // sentence but a different fact, and treating an error as "none" would let
-    // a real open capacity be hidden -- or worse, invert later.
+  it("shows the allowance above the waitlist, with nothing to type", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.roundsError = { code: "42501" };
+    scenario.allowance = { ok: true, fit: 5, outstanding: 2, open: 3, outstandingScope: "window" };
     const html = await render();
-    expect(html).toContain(esc("We couldn't check your invitation capacity just now."));
-    expect(html).not.toContain(esc(CAPACITY_PANEL.emptyBody));
+    const panel = /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    expect(panel, "the allowance panel did not render").not.toBe("");
+    expect(panel).toContain(esc("5 consultation appointments available. You can invite 3 more people."));
+    expect(panel).toContain(esc("Availability can change; invitations don't reserve appointments."));
+    // Chloe never types a capacity, and never sees a round.
+    expect(panel).not.toMatch(/<input/);
     expect(html).not.toContain("Start inviting");
+    expect(html).not.toContain('data-testid="capacity-allowance"');
+    // ABOVE the waitlist heading.
+    expect(html.indexOf('data-testid="invitation-allowance"')).toBeLessThan(html.indexOf(">Waitlist</h2>"));
   });
 
-  it("a second open round is impossible, so it is treated as unknown", async () => {
-    // The one-open-round index forbids this. If it is ever seen, an assumption
-    // here is wrong -- picking a row would be guessing which capacity is real.
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 3, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.extraOpenRound = { id: "round-b", allowance: 9, opened_at: "2026-09-11T00:00:00.000Z" };
-    const html = await render();
-    expect(html).toContain(esc("We couldn't check your invitation capacity just now."));
-    expect(html).not.toContain("0 of 3 used");
-    expect(html).not.toContain("0 of 9 used");
-    expect(consoleErrors.join("\n")).toContain("waitlist_capacity_impossible_shape");
-  });
-
-  it("an unreadable consumed count is unknown capacity, not zero used", async () => {
-    // Zero-used would present a full capacity as fully available.
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 2, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = null;
-    const html = await render();
-    expect(html).toContain(esc("We couldn't check your invitation capacity just now."));
-    expect(html).not.toContain("0 of 2 used");
-  });
-
-  it("MATRIX 1 — no capacity: the panel explains, and no send is offered", async () => {
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    const html = await render();
-    expect(html).toContain(esc(CAPACITY_PANEL.title));
-    expect(html).toContain(esc(CAPACITY_PANEL.emptyBody));
-    expect(html).toContain(esc(CAPACITY_PANEL.startLabel));
-    // The send is unavailable BEFORE submission, and says why -- the whole point
-    // is that the practitioner does not discover this only after pressing.
-    expect(html).toContain(esc("Set your invitation capacity before inviting someone to book."));
-    expect(html).toMatch(/data-testid="composer-send"[^>]*disabled/);
-    // And the reason shown is the CAPACITY one, not the composer's ordinary
-    // "choose a service" state that would disable it anyway.
-    expect(html).toMatch(
-      /data-testid="composer-send-reason"[^>]*>Set your invitation capacity before inviting someone to book\./,
-    );
-    // No close control when nothing is open.
-    expect(html).not.toContain(esc(CAPACITY_PANEL.closeLabel));
-  });
-
-  it("MATRIX 2/3 — an open capacity shows usage and offers the send", async () => {
-    scenario.rows = [entry()];
-    scenario.count = 1;
-    // An ELIGIBLE service, because the composer refuses a send without one for
-    // its own reasons. Without it this test would assert capacity while the
-    // button stayed disabled for an unrelated cause.
+  it("repeats the allowance beside each Invite to book", async () => {
     scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
-    scenario.openRound = { id: "round-a", allowance: 1, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 0;
-    let html = await render();
-    expect(html).toContain("0 of 1 used");
-    expect(html).toContain("1 invitation remaining");
-    expect(html).toContain(esc(CAPACITY_PANEL.closeLabel));
-    // CAPACITY IS NO LONGER WHAT BLOCKS THE SEND. The button is still disabled
-    // on a fresh composer -- no service is chosen yet, which is the composer's
-    // own rule and not this feature's -- so asserting `not disabled` here would
-    // be asserting something untrue. What must be gone is the capacity REASON.
-    expect(html).not.toContain(esc("Set your invitation capacity before inviting someone to book."));
-    expect(html).not.toContain(esc(CAPACITY_EXHAUSTED_COPY));
-
-    // After one invitation is spent, the database's count moves and so does the
-    // panel. The page reads that count; it never derives it.
-    reset();
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 1, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 1;
-    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
-    html = await render();
-    expect(html).toContain("1 of 1 used");
+    scenario.allowance = { ok: true, fit: 5, outstanding: 2, open: 3, outstandingScope: "window" };
+    const html = await render();
+    expect(html).toMatch(/data-testid="row-allowance"[^>]*>You can invite 3 more people</);
   });
 
-  it("MATRIX 4 — a full capacity offers no send and never starts another", async () => {
+  it("an unreadable estimate says so and never shows a number", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
     scenario.rows = [entry()];
     scenario.count = 1;
-    scenario.openRound = { id: "round-a", allowance: 1, opened_at: "2026-09-10T00:00:00.000Z" };
-    scenario.roundConsumed = 1;
+    scenario.allowance = { ok: false };
     const html = await render();
-    expect(html).toContain("0 invitations remaining");
-    expect(html).toContain(esc(CAPACITY_EXHAUSTED_COPY));
-    expect(html).toMatch(/data-testid="composer-send"[^>]*disabled/);
-    expect(html).toMatch(/data-testid="composer-send-reason"[^>]*>You&#x27;ve used all invitations/);
-    // NOT AUTOMATICALLY REOPENED. The next capacity is the owner's decision.
-    expect(html).toContain(esc(CAPACITY_PANEL.closeLabel));
+    expect(html).toContain('data-testid="allowance-unavailable"');
+    expect(html).not.toContain('data-testid="allowance-headline"');
+    expect(html).not.toContain('data-testid="row-allowance"');
+  });
+
+  it("estimates the default window: the next two weeks, every day", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    await render();
+    expect(estimateCalls).toEqual([{ serviceId: expect.any(String), windowDays: 14, allowedWeekdays: null }]);
+  });
+
+  it("opens no round and offers no capacity control (the round is plumbing)", async () => {
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    await render();
     expect(rpcCalls.filter((c) => c.fn === "open_new_client_waitlist_admission_round")).toHaveLength(0);
   });
 
@@ -1164,20 +1251,17 @@ describe("rendered rows", () => {
     }
   });
 
-  it("the owner capacity panel forecasts nothing to a prospect", async () => {
-    // The panel may say "Invitation capacity" — that is the practitioner
-    // wording. What it must NOT do is the thing the queue guard forbids:
-    // promise a position, a rank, or when a slot will exist.
+  it("the owner allowance forecasts nothing to a prospect", async () => {
+    scenario.services = [{ id: "svc-live", name: "Initial consultation", modality: "consultation", active: true }];
     scenario.rows = [entry()];
     scenario.count = 1;
+    scenario.allowance = { ok: true, fit: 5, outstanding: 2, open: 3, outstandingScope: "window" };
     const html = await render();
-    const panel =
-      /<section[^>]*data-testid="invitation-capacity"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
-    expect(panel, "the capacity panel did not render").not.toBe("");
+    const panel = /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    expect(panel, "the allowance panel did not render").not.toBe("");
     for (const forbidden of [/position/i, /\brank/i, /spots? left/i, /estimated/i, /your turn/i]) {
-      expect(panel, `capacity panel forecast: ${forbidden}`).not.toMatch(forbidden);
+      expect(panel, `allowance panel forecast: ${forbidden}`).not.toMatch(forbidden);
     }
-    // And it never speaks the database's word for itself.
     expect(panel).not.toMatch(/admission round/i);
   });
 
@@ -1193,7 +1277,7 @@ describe("removal", () => {
   it("goes through the command with a SERVER-DERIVED tenant and actor", async () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
-    await removeWaitlistEntryAction(fd);
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
 
     expect(rpcCalls).toEqual([
       {
@@ -1232,7 +1316,7 @@ describe("removal", () => {
     fd.set("p_studio_id", "attacker-studio");
     fd.set("actor_user_id", "attacker-user");
     fd.set("role", "owner");
-    await removeWaitlistEntryAction(fd);
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_entry_id: "entry-1",
@@ -1243,10 +1327,8 @@ describe("removal", () => {
   it.each([
     ["not_found", "That waitlist entry no longer exists."],
     ["already_removed", "That entry has already been removed."],
-    // The two outcomes 0188 added so the operator could be told what to do.
-    // Reachable here even though the queue page renders only `waiting` rows: a
-    // second operator can claim, invite or convert the entry between the page
-    // render and this submit.
+    // The two outcomes 0188 added so the operator could be told what to do. Reachable because a second
+    // tab, a recipient's decline or a booking can move the entry between the page render and this submit.
     [
       "release_required",
       "That entry has been claimed or invited. Release it before removing it.",
@@ -1255,11 +1337,27 @@ describe("removal", () => {
       "not_removable",
       "That person is already a client. Converted entries stay in waitlist history.",
     ],
-    // Kept despite the route's own role check: the command re-derives membership
-    // and role in the database, so a change committed in between lands here.
+  ])("a stale-state refusal `%s` redirects with its notice and the page shows that exact copy", async (code, message) => {
+    scenario.removeResult = code;
+    const fd = new FormData();
+    fd.set("entry_id", "entry-1");
+    await expectNoticeRedirect(removeWaitlistEntryAction(fd), `remove.${code}`);
+    expect(revalidated).toEqual(["/settings/waitlist"]);
+    // A clean refusal is a warning, not a fault, and nothing was read back.
+    expect(consoleErrors).toHaveLength(0);
+    expect(consoleWarns.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
+    // The page reads the cookie the action just set, and shows exactly that copy.
+    flash.value = flash.sets[0]!.value;
+    const html = await render();
+    expect(html).toContain(message);
+  });
+
+  // Kept despite the route's own role check: the command re-derives membership and role in the
+  // database, so a change committed in between lands here. Authority is never softened to a notice.
+  it.each([
     ["not_owner", "Only studio owners can change the waitlist."],
     ["not_a_member", "Only studio owners can change the waitlist."],
-  ])("maps the command refusal `%s` to copy an owner can act on", async (code, message) => {
+  ])("the authority refusal `%s` is still thrown", async (code, message) => {
     scenario.removeResult = code;
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
@@ -1318,6 +1416,8 @@ describe("removal", () => {
     // honest answer. Everything else must say something specific.
     const GENERIC = "Could not remove that entry. Please try again.";
     const DELIBERATELY_GENERIC = new Set(["invalid_input"]);
+    // Clean "the row is not where the page assumed" answers become a notice, not a throw.
+    const NOTICED = new Set(["already_removed", "not_found", "not_removable", "release_required"]);
 
     for (const code of deployedRemovalCodes()) {
       if (code === "removed") continue;
@@ -1332,25 +1432,90 @@ describe("removal", () => {
       expect(error, `${code} did not refuse`).not.toBeNull();
       if (DELIBERATELY_GENERIC.has(code)) {
         expect(error!.message, `${code} should be deliberately generic`).toBe(GENERIC);
+      } else if (NOTICED.has(code)) {
+        expect(error!.message, `${code} should redirect with a notice`).toBe("NEXT_REDIRECT:/settings/waitlist");
+        expect(flash.sets.at(-1)?.value, `${code} notice key`).toBe(`remove.${code}`);
       } else {
         expect(error!.message, `${code} falls through to the generic error`).not.toBe(GENERIC);
       }
-      expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
+      if (!NOTICED.has(code)) expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
     }
   });
 
-  it("an unrecognised outcome or a database error is generic, never a raw code", async () => {
-    for (const setup of [
-      () => { scenario.removeResult = "some_future_code"; },
-      () => { scenario.removeError = { code: "57014" }; },
-    ]) {
-      reset();
-      setup();
-      const fd = new FormData();
-      fd.set("entry_id", "entry-1");
-      await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
-        "Could not remove that entry. Please try again.",
-      );
+  describe("an UNCERTAIN outcome reads the entry back before any retry is offered", () => {
+    const UNCERTAIN: ReadonlyArray<[string, () => void]> = [
+      ["an unrecognised code", () => { scenario.removeResult = "some_future_code"; }],
+      ["a database error", () => { scenario.removeError = { code: "57014" }; }],
+    ];
+    for (const [label, arrange] of UNCERTAIN) {
+      it(`${label}: the row is already removed -> success notice, no retry`, async () => {
+        arrange();
+        readback.value = { known: true, status: "removed" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.removed");
+      });
+      it(`${label}: the row is verifiably still there -> the generic error, a retry is honest`, async () => {
+        arrange();
+        readback.value = { known: true, status: "waiting" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(
+          "Could not remove that entry. Please try again.",
+        );
+      });
+      it(`${label}: a read that returns NO status is not a confirmation either -> unconfirmed, no retry`, async () => {
+        arrange();
+        readback.value = { known: true, status: null };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.unconfirmed");
+      });
+      it(`${label}: the row cannot be read -> an unconfirmed notice that offers no retry`, async () => {
+        arrange();
+        readback.value = { known: false };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expectNoticeRedirect(removeWaitlistEntryAction(fd), "remove.unconfirmed");
+        flash.value = "remove.unconfirmed";
+        const html = await render();
+        expect(html).toContain("We could not confirm whether that entry was removed.");
+        expect(html).not.toMatch(/try again\./i);
+      });
+      it(`${label}: is logged as a fault with no contact detail`, async () => {
+        arrange();
+        readback.value = { known: true, status: "waiting" };
+        const fd = new FormData();
+        fd.set("entry_id", "entry-1");
+        await expect(removeWaitlistEntryAction(fd)).rejects.toThrow();
+        expect(consoleErrors.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
+      });
+    }
+  });
+
+  it("a removal notice renders from the fixed table only, in its own style, and a hand-edited value shows nothing", async () => {
+    flash.value = "remove.removed";
+    const ok = await render();
+    expect(ok).toContain("Removed from the waitlist.");
+    expect(ok).not.toContain("Nothing was changed");
+    // Success is styled apart from a refusal.
+    expect(ok).toMatch(/data-tone="success"[^>]*emerald/);
+    flash.value = "release.not_releasable";
+    const refusal = await render();
+    expect(refusal).toMatch(/data-tone="refusal"[^>]*amber/);
+    expect(refusal).not.toContain("emerald-300");
+    flash.value = "<b>owned</b>";
+    const hostile = await render();
+    expect(hostile).not.toContain("owned");
+    expect(hostile).not.toContain('data-testid="lifecycle-notice"');
+  });
+
+  it("a crafted LINK cannot forge a banner: the URL parameter is not read at all", async () => {
+    flash.value = undefined;
+    for (const forged of ["remove.removed", "release.not_releasable", "<b>owned</b>"]) {
+      const html = await render({ notice: forged } as never);
+      expect(html, forged).not.toContain('data-testid="lifecycle-notice"');
+      expect(html, forged).not.toContain("Removed from the waitlist.");
     }
   });
 
@@ -1359,7 +1524,7 @@ describe("removal", () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
     await expect(removeWaitlistEntryAction(fd)).rejects.toThrow();
-    const line = consoleErrors.find((l) => l.includes("waitlist_remove_failed"));
+    const line = consoleWarns.find((l) => l.includes("waitlist_remove_failed"));
     expect(JSON.parse(line!)).toMatchObject({ studioId: STUDIO_ID, outcome: "not_found" });
     expect(line).not.toContain("jo@example.com");
   });
@@ -1689,7 +1854,9 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
-    expect(queries.filter((q) => q.table === "new_client_waitlist_entries")).toHaveLength(5);
+    // Five section reads, plus the needs-attention card's own read (id,name).
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns === "id,name")).toHaveLength(1);
   });
 
   it("and IS read when a row is invited", async () => {
@@ -1697,11 +1864,13 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
     await render();
-    // TWO invitation reads: the live-cycle predicate and the redeemed one.
-    // Identity comes from the 0189 unique index, never from ordering — so
-    // neither read carries an `order`.
+    // THREE invitation reads: the live-cycle predicate and the redeemed one the
+    // page makes, plus the needs-attention card's own redeemed-invitation read
+    // (0313), which exists only because an invited entry does. Identity comes
+    // from the 0189 unique index, never from ordering — so none of them
+    // carries an `order`.
     const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
-    expect(inv).toHaveLength(2);
+    expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
 
@@ -1711,7 +1880,8 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-rel", status: "released" })];
     scenario.count = 1;
     await render();
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at");
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -2033,8 +2203,9 @@ describe("the focused view keeps the headline honest", () => {
     scenario.rows = [...seedSection("claimed", 150), ...seedSection("waiting", 7)];
     const html = await render({ section: "claimed", page: "1" });
 
-    // Five reads either way; only the focused one asks for rows.
-    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries");
+    // Five section reads either way; only the focused one asks for rows. (The
+    // needs-attention card's own id,name read is not a section.)
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at");
     expect(reads).toHaveLength(5);
     const listed = reads.filter((q) => q.options.head === false);
     expect(listed).toHaveLength(1);
@@ -2086,7 +2257,7 @@ describe("a browser-supplied section or page can never mislead", () => {
     // declares, because `section` is MATCHED against them rather than passed
     // through.
     const statuses = queries
-      .filter((q) => q.table === "new_client_waitlist_entries")
+      .filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")
       .map((q) => q.filters.find((f) => f[0] === "eq" && f[1] === "status")?.[2]);
     expect(statuses).toEqual(["waiting", "claimed", "invited", "expired", "released"]);
   });
@@ -2827,6 +2998,132 @@ describe("0208 — each row states its SMS standing, as recorded", () => {
       "sms_consent_text_version",
     ]) {
       expect(entriesQuery().columns).not.toContain(column);
+    }
+  });
+});
+
+describe("closed admission blocks the owner's invite until 0323 is applied (0204 invited_book refuses it)", () => {
+  afterEach(() => {
+    admissionHolder.stored = null;
+    admissionHolder.rule = "absent";
+  });
+
+  it("shows NO block under Closed once 0323 is applied (the marker answers true)", async () => {
+    admissionHolder.stored = "closed";
+    admissionHolder.rule = "applied";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).not.toContain("invites-blocked-admission");
+    // Neutral information, not a warning: it names all three facts.
+    expect(html).toContain('data-testid="invites-closed-invited-only"');
+    expect(html).toContain(INVITE_CLOSED_INVITED_ONLY_COPY);
+    expect(html).toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*neutral/);
+    expect(html).not.toMatch(/data-testid="invites-closed-invited-only"[^>]*class="[^"]*amber/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toContain("Closed");
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/New clients can’t book or join your waitlist online/);
+    expect(INVITE_CLOSED_INVITED_ONLY_COPY).toMatch(/invite here can still book/);
+    // Send is not withheld for admission: neither blocked copy reaches the composer.
+    expect(html).not.toContain(INVITE_ADMISSION_CLOSED_BANNER_COPY);
+    expect(html).not.toContain(INVITE_ADMISSION_UNREADABLE_COPY);
+  });
+
+  it("the information note is absent whenever Closed is blocked, unreadable, or not Closed", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    for (const [stored, rule] of [["closed", "absent"], ["closed", "error"], ["not-a-mode", "applied"], ["waitlist", "applied"], ["open", "applied"]] as const) {
+      admissionHolder.stored = stored;
+      admissionHolder.rule = rule;
+      expect(await render(), `${stored}/${rule}`).not.toContain("invites-closed-invited-only");
+    }
+  });
+
+  it("a marker failure other than 'absent' pauses invitations without claiming Closed", async () => {
+    admissionHolder.stored = "closed";
+    admissionHolder.rule = "error";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("We couldn’t check new-client admission, so invitations are paused.");
+    expect(html).not.toContain("set to Closed");
+  });
+
+  it("says so, names Settings → Booking, and links to it", async () => {
+    admissionHolder.stored = "closed";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("New-client admission is set to Closed");
+    expect(html).toContain("Settings → Booking");
+    expect(html).toContain('href="/settings/booking#new-client-admission"');
+    expect(html).not.toContain("No invitation was created");
+  });
+
+  it("an UNREADABLE mode pauses invitations without claiming it is Closed", async () => {
+    admissionHolder.stored = "not-a-mode";
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invites-blocked-admission"');
+    expect(html).toContain("We couldn’t check new-client admission, so invitations are paused. Check Settings → Booking.");
+    expect(html).not.toContain("set to Closed");
+  });
+
+  it.each(["waitlist", "open"])("shows no block under %s", async (mode) => {
+    admissionHolder.stored = mode;
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    expect(await render()).not.toContain("invites-blocked-admission");
+  });
+});
+
+describe("owner follow-up cards render with ZERO active entries (Codex P2)", () => {
+  afterEach(() => {
+    followUp.attention = followUp.declined = followUp.replies = null;
+    vi.unstubAllEnvs();
+  });
+  const empty = () => {
+    scenario.rows = [];
+    scenario.count = 0;
+  };
+
+  it("Replies to review (n) shows, beside the empty-queue message", async () => {
+    vi.stubEnv("WAITLIST_TIMES_FEEDBACK", "1");
+    followUp.replies = { kind: "ok", n: 2 };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Replies to review (2)");
+  });
+
+  it("Needs your attention (n) shows, beside the empty-queue message", async () => {
+    followUp.attention = { kind: "ok", total: 3, shown: [{ id: "a", name: "A" }] };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Needs your attention (3)");
+  });
+
+  it("Declined the offered times (n) shows, beside the empty-queue message", async () => {
+    followUp.declined = { kind: "ok", total: 1, shown: [{ id: "d", name: "D" }], ids: new Set(["d"]) };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toContain("Declined the offered times (1)");
+  });
+
+  it("none of the three is rendered inside the active-entries branch", () => {
+    const src = readFileSync(path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const branch = src.indexOf("{active === 0 ? (");
+    expect(branch).toBeGreaterThan(-1);
+    for (const marker of ['id="needs-attention-heading"', 'data-testid="declined-card"', 'id="replies-heading"']) {
+      const at = src.indexOf(marker);
+      expect(at, marker).toBeGreaterThan(-1);
+      expect(at, `${marker} must precede the active branch`).toBeLessThan(branch);
     }
   });
 });

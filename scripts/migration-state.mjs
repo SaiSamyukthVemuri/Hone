@@ -39,6 +39,13 @@ export const CANONICAL_STATE_FILE = join(
   "migration-state.json",
 );
 
+/**
+ * Reserved numbers are ALSO declared as one marker file per number in this directory (docs/production/reserved-migrations/NNNN), so two
+ * pull requests that add or remove different reservations never edit the same line. The single array in the canonical record is still
+ * honoured. A README.md is the only other name allowed.
+ */
+export const RESERVED_DIR = join(REPO_ROOT, "docs", "production", "reserved-migrations");
+
 /** Migration numbers deliberately never used. Documented, not guessed. */
 export const PERMANENTLY_SKIPPED = Object.freeze([158]);
 
@@ -135,6 +142,21 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
 }
 
 /**
+ * The operator's apply records come in three shapes under the 01-ops handoff folder, and the record must be for THIS version:
+ *   01-ops/RECORD-NNNN-APPLIED-YYYYMMDD.md
+ *   01-ops/NNNN-APPLY-RESULT-YYYYMMDDTHHMMZ.md
+ *   01-ops/rmin-NNNN-apply-YYYYMMDD/NOTES.md
+ */
+export function applyRecordNamesVersion(path, version) {
+  if (typeof path !== "string" || !/^\d{4}$/.test(version)) return false;
+  return [
+    new RegExp(`^01-ops/RECORD-${version}-APPLIED-\\d{8}\\.md$`),
+    new RegExp(`^01-ops/${version}-APPLY-RESULT-\\d{8}T\\d{4}Z\\.md$`),
+    new RegExp(`^01-ops/rmin-${version}-apply-\\d{8}/NOTES\\.md$`),
+  ].some((re) => re.test(path));
+}
+
+/**
  * OUT-OF-ORDER STAGES. A stage may apply a migration ahead of lower, still
  * unapplied ones (0248 ahead of 0247). The canonical record declares each such
  * migration in `hosted_out_of_order`:
@@ -143,6 +165,11 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
  *
  * meaning: 0248 IS hosted, and 0247 is deliberately NOT hosted yet. This is the
  * only way a number at or below the hosted max may be absent from production.
+ *
+ * A migration production HAS applied whose file is not in this tree yet is declared in `hosted_without_repo_file`
+ * ([{ "version": "0301", "apply_record": "01-ops/RECORD-0301-APPLIED-20261106.md" }]); it is neither a gap nor unhosted.
+ * It is refused when it has a repo file, is above the hosted max, lacks an apply record, is duplicated, or also appears in
+ * `unhosted_below` or as a hosted_out_of_order entry.
  *
  * Two failures, both fatal in tests/docs/canonical-production-facts.test.ts:
  *   undeclared_gaps       a number between the first migration and the hosted
@@ -155,7 +182,7 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
  *                         declared hosted and declared unhosted
  * Pure on its inputs so the negative controls can drive it directly.
  */
-export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANENTLY_SKIPPED, declared = [] }) {
+export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANENTLY_SKIPPED, declared = [], hostedWithoutFile = [] }) {
   const present = new Set(numbers);
   const invalid = [];
   const asNumber = (v) => (typeof v === "string" && /^\d{4}$/.test(v) ? Number.parseInt(v, 10) : null);
@@ -192,13 +219,117 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
     if (hostedDeclared.has(n)) invalid.push(`${pad(n)} is declared both hosted and unhosted`);
   }
 
+  // HOSTED WITHOUT A REPO FILE. A migration production HAS applied whose file is not in this tree yet (its carrier PR has not merged).
+  // `unhosted_below` cannot say that (it means "deliberately NOT hosted"), and a hosted_out_of_order entry requires a repo file.
+  // Each entry is { version, apply_record }; the apply record is the operator's record the claim comes from.
+  const withoutFile = new Set();
+  if (!Array.isArray(hostedWithoutFile)) {
+    invalid.push("hosted_without_repo_file must be an array");
+  } else {
+    for (const entry of hostedWithoutFile) {
+      const n = asNumber(entry?.version);
+      if (n === null) {
+        invalid.push(`hosted_without_repo_file entry has no four-digit version: ${JSON.stringify(entry)}`);
+        continue;
+      }
+      const label = pad(n);
+      if (withoutFile.has(n)) invalid.push(`${label} is declared twice in hosted_without_repo_file`);
+      withoutFile.add(n);
+      for (const k of Object.keys(entry)) {
+        if (k !== "version" && k !== "apply_record") invalid.push(`${label} has an unknown key: ${k}`);
+      }
+      if (typeof entry.apply_record !== "string" || entry.apply_record.trim() === "") {
+        invalid.push(`${label} must name the apply record it comes from (apply_record)`);
+      } else if (!applyRecordNamesVersion(entry.apply_record, label)) {
+        invalid.push(`${label} apply_record is not an operator apply-record path for ${label}: ${JSON.stringify(entry.apply_record)}`);
+      }
+      if (n > hostedMaxNumber) invalid.push(`${label} is declared hosted_without_repo_file but is above hosted_migration_max`);
+      if (present.has(n)) invalid.push(`${label} is declared hosted_without_repo_file but has a repo file`);
+      if (unhostedDeclared.has(n)) invalid.push(`${label} is declared both hosted_without_repo_file and unhosted_below`);
+      if (hostedDeclared.has(n)) invalid.push(`${label} is declared both hosted_without_repo_file and a hosted_out_of_order entry`);
+    }
+  }
+
   const first = Math.min(...numbers);
   const skippedSet = new Set(skipped);
   const gaps = [];
   for (let n = first; n <= hostedMaxNumber; n += 1) {
-    if (!present.has(n) && !skippedSet.has(n) && !unhostedDeclared.has(n)) gaps.push(pad(n));
+    if (!present.has(n) && !skippedSet.has(n) && !unhostedDeclared.has(n) && !withoutFile.has(n)) gaps.push(pad(n));
   }
   return { undeclared_gaps: gaps, invalid_declarations: invalid };
+}
+
+/**
+ * RESERVED-UNALLOCATED NUMBERS ABOVE THE HOSTED MAX. Several numbers between the hosted max and a pending migration can be held by
+ * work that is not in this tree yet (a claimed but unmerged migration). The canonical record declares them once:
+ *
+ *   "reserved_unallocated_above_hosted": ["0275", "0276"]
+ *
+ * meaning: those numbers are deliberately absent from the repo (not a hole), and are neither hosted nor available. A declaration is valid
+ * only when it is a strictly ascending list of four-digit strings, every one STRICTLY between the hosted max and the repo max, and none has
+ * a repo file (a number that has a file is pending, not reserved). Anything else is invalid, and the pending-suffix shape rule is not
+ * relaxed for it. Pure on its inputs.
+ */
+export function evaluateReserved({ numbers, hostedMaxNumber, repoMaxNumber, declared }) {
+  const invalid = [];
+  if (declared === undefined) return { reserved: [], invalid };
+  if (!Array.isArray(declared)) {
+    return { reserved: [], invalid: ["reserved_unallocated_above_hosted must be an array"] };
+  }
+  const present = new Set(numbers);
+  const reserved = [];
+  let prev = -1;
+  for (const v of declared) {
+    if (!(typeof v === "string" && /^\d{4}$/.test(v))) {
+      invalid.push(`${JSON.stringify(v)} is not a four-digit string`);
+      continue;
+    }
+    const n = Number.parseInt(v, 10);
+    if (n <= prev) invalid.push(`${v} is not strictly ascending (duplicate or out of order)`);
+    prev = Math.max(prev, n);
+    if (n <= hostedMaxNumber) invalid.push(`${v} is at or below the hosted max ${pad(hostedMaxNumber)}; use hosted_out_of_order for that`);
+    else if (n >= repoMaxNumber) invalid.push(`${v} is not below the repo max ${pad(repoMaxNumber)}, so it cannot be a hole under it`);
+    if (present.has(n)) invalid.push(`${v} is declared reserved but has a repo file (it is pending, not reserved)`);
+    reserved.push(v);
+  }
+  return { reserved: invalid.length ? [] : reserved, invalid };
+}
+
+/**
+ * Reserved numbers declared as marker files. `names` are the directory entries. A four-digit name is a reservation; README.md is ignored;
+ * anything else is invalid (a typo must not silently reserve nothing). Pure on its inputs.
+ */
+export function reservedFromDirectory(names) {
+  const declared = [];
+  const invalid = [];
+  for (const n of names) {
+    if (n === "README.md") continue;
+    if (/^\d{4}$/.test(n)) declared.push(n);
+    else invalid.push(`reserved-migrations/${n} is not a four-digit marker file name`);
+  }
+  declared.sort();
+  return { declared, invalid };
+}
+
+/**
+ * Combine the array in the canonical record with the directory markers. A number declared in BOTH is invalid (ambiguous ownership);
+ * a non-array record value is passed through so evaluateReserved reports it. Pure on its inputs.
+ */
+export function mergeReservedDeclarations(arrayDeclared, dirDeclared) {
+  if (arrayDeclared === undefined) return { declared: dirDeclared.length ? dirDeclared : undefined, invalid: [] };
+  if (!Array.isArray(arrayDeclared)) return { declared: arrayDeclared, invalid: [] };
+  // The canonical array is validated AS WRITTEN (strictly ascending, four-digit, no duplicates) by evaluateReserved.
+  // Merging would sort and de-duplicate it and so hide exactly those errors, so a malformed array, or one with no
+  // markers beside it, is passed through untouched.
+  const strictlyAscending = arrayDeclared.every((v, i) => typeof v === "string" && /^\d{4}$/.test(v) && (i === 0 || arrayDeclared[i - 1] < v));
+  if (!strictlyAscending || dirDeclared.length === 0) return { declared: arrayDeclared, invalid: [] };
+  const invalid = [];
+  const inArray = new Set(arrayDeclared);
+  for (const v of dirDeclared) if (inArray.has(v)) invalid.push(`${v} is declared reserved both in the canonical record array and as a marker file`);
+  const merged = [...new Set([...arrayDeclared, ...dirDeclared])];
+  const ok = merged.every((v) => typeof v === "string" && /^\d{4}$/.test(v));
+  if (ok) merged.sort();
+  return { declared: merged, invalid };
 }
 
 /**
@@ -225,7 +356,7 @@ export function pendingMigrationVersions({ entries, hostedMaxNumber, declared = 
 /**
  * Full state: repository facts DERIVED, hosted facts DECLARED.
  */
-export function getMigrationState({ dir, canonicalFile } = {}) {
+export function getMigrationState({ dir, canonicalFile, reservedDir } = {}) {
   const entries = scanMigrations(dir);
   const numbers = entries.map((e) => e.number);
   const repoMaxNumber = numbers[numbers.length - 1];
@@ -247,7 +378,23 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     numbers,
     hostedMaxNumber,
     declared: record.hosted_out_of_order ?? [],
+    hostedWithoutFile: record.hosted_without_repo_file ?? [],
   });
+
+  // The marker directory is read for the real record only; a caller that supplies its own canonicalFile (a test) opts in explicitly.
+  const markerDir = reservedDir ?? (canonicalFile === undefined ? RESERVED_DIR : undefined);
+  const markers = markerDir !== undefined && existsSync(markerDir)
+    ? reservedFromDirectory(readdirSync(markerDir))
+    : { declared: [], invalid: [] };
+  const mergedReserved = mergeReservedDeclarations(record.reserved_unallocated_above_hosted, markers.declared);
+  const reservedEval = evaluateReserved({
+    numbers,
+    hostedMaxNumber,
+    repoMaxNumber,
+    declared: mergedReserved.declared,
+  });
+  reservedEval.invalid.push(...markers.invalid, ...mergedReserved.invalid);
+  if (reservedEval.invalid.length) reservedEval.reserved = [];
 
   return {
     repo_migration_max: pad(repoMaxNumber),
@@ -270,6 +417,9 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     repo_equals_hosted: repoMaxNumber === hostedMaxNumber,
     pending_migrations: pending,
     hosted_out_of_order: record.hosted_out_of_order ?? [],
+    hosted_without_repo_file: record.hosted_without_repo_file ?? [],
+    reserved_unallocated_above_hosted: reservedEval.reserved,
+    invalid_reserved_declarations: reservedEval.invalid,
     undeclared_gaps: outOfOrder.undeclared_gaps,
     invalid_out_of_order_declarations: outOfOrder.invalid_declarations,
     versions: entries.map((e) => e.version),

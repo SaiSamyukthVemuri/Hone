@@ -1,0 +1,369 @@
+// Client profile save: write only what the staff member changed, and only if nobody else changed it first.
+//
+// The edit form used to post every field it loaded, and the action wrote all of them back, so a tab opened
+// before an intake sync or another staff edit silently reverted the newer value, and an older form that omitted
+// a field blanked it. The form now carries the values it LOADED (the baseline, exactly as stored). The action
+// compares each submitted field with its baseline, writes only the fields that changed, and makes the write
+// conditional: `where <column> is not distinct from <baseline>` for every changed column, so zero rows means
+// somebody else changed one of them (or the client is gone) and nothing is written.
+//
+// App-only interim: the baseline comes from the browser, which is fine because it is only a precondition; it
+// can never widen what the caller may write (role, studio and RLS are checked server-side as before).
+// A database revision (held migration M1/M2) replaces this later.
+import { parsePreferredName } from "@/lib/clients/identity";
+
+export const PROFILE_KEYS = [
+  "name",
+  "preferred_name",
+  "pronouns",
+  "date_of_birth",
+  "phone",
+  "email",
+  "address",
+  "fitzpatrick_type",
+  "allergies",
+  "emergency_contact_name",
+  "emergency_contact_phone",
+] as const;
+export type ProfileKey = (typeof PROFILE_KEYS)[number];
+
+export type BaselineValue = string | number | null;
+export type ProfileBaseline = Record<ProfileKey, BaselineValue>;
+
+export const STALE_FORM_ERROR =
+  "This page is out of date. Reload it and make your change again; nothing was saved.";
+export const CHANGED_BY_SOMEONE_ELSE_ERROR =
+  "Someone else changed this client after you opened this page. Nothing was saved. Review the changes below.";
+export const NOT_SAVED_ERROR = "Not saved. Reload the page and try again.";
+export const CLEAR_PREFERRED_ERROR =
+  "To remove the preferred name, press Remove preferred name. Otherwise type a name.";
+
+export const PROFILE_FIELD_LABELS: Record<ProfileKey, string> = {
+  name: "Name",
+  preferred_name: "Preferred name",
+  pronouns: "Pronouns",
+  date_of_birth: "Date of birth",
+  phone: "Phone",
+  email: "Email",
+  address: "Address",
+  fitzpatrick_type: "Fitzpatrick type",
+  allergies: "Allergies",
+  emergency_contact_name: "Emergency contact name",
+  emergency_contact_phone: "Emergency contact phone",
+};
+
+/** The values the page loaded, exactly as stored (raw, so the conditional write can compare them). */
+export function baselineFromRow(row: Record<string, unknown>): ProfileBaseline {
+  const out = {} as ProfileBaseline;
+  for (const key of PROFILE_KEYS) {
+    const v = row[key];
+    out[key] = typeof v === "string" || typeof v === "number" ? v : null;
+  }
+  return out;
+}
+
+/**
+ * Upper bound on the baseline JSON. It is a sanity ceiling, NOT a limit on what a record may hold: a client whose
+ * stored allergies or address text is long must still be editable, so this sits far above any real profile. The
+ * request itself is already bounded by the server-action body limit (16mb in next.config.ts), and the submission
+ * carries the same values again, so half of that is the most a baseline could ever be.
+ */
+export const MAX_BASELINE_CHARS = 4_000_000;
+
+/** Strict: every key present, each a string, number or null. Anything else is not a baseline. */
+export function parseBaseline(raw: unknown): ProfileBaseline | null {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_BASELINE_CHARS) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  const out = {} as ProfileBaseline;
+  for (const key of PROFILE_KEYS) {
+    if (!(key in rec)) return null;
+    const v = rec[key];
+    if (v !== null && typeof v !== "string" && typeof v !== "number") return null;
+    out[key] = v;
+  }
+  return out;
+}
+
+function trimmedOrNull(value: string | null): string | null {
+  if (value === null) return null;
+  const t = value.trim();
+  return t.length === 0 ? null : t;
+}
+
+function intOrNull(value: string | number | null): number | null {
+  if (value === null) return null;
+  const n = typeof value === "number" ? value : value.trim() === "" ? NaN : parseInt(value, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** A stored or baseline value, put in the same shape a submission is parsed into. */
+function normalizeStored(key: ProfileKey, raw: BaselineValue): string | number | null {
+  if (key === "fitzpatrick_type") return intOrNull(raw);
+  if (key === "preferred_name") {
+    const parsed = parsePreferredName(raw === null ? null : String(raw));
+    return parsed.ok ? parsed.value : trimmedOrNull(raw === null ? null : String(raw));
+  }
+  return trimmedOrNull(raw === null ? null : String(raw));
+}
+
+/** The fields the possible-duplicate check combines. */
+export const IDENTITY_KEYS = ["name", "phone", "date_of_birth"] as const satisfies readonly ProfileKey[];
+
+export type ProfilePlan =
+  | {
+      ok: true;
+      /** Only the changed columns, parsed. Empty = nothing to save. */
+      patch: Partial<Record<ProfileKey, string | number | null>>;
+      /**
+       * The stored value each changed column must still have for the write to apply. When an identity field
+       * (name, phone, date of birth) changes, the OTHER identity fields are guarded too (`guard: true`): the
+       * duplicate check combines them, so the combination that was checked must be the one that is saved.
+       */
+      conditions: Array<{ key: ProfileKey; value: BaselineValue; guard?: boolean }>;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Decide what to write. A key absent from the submission is never a candidate, so an omitted field can never
+ * clear anything. A present key is written only when it differs from the baseline.
+ */
+export function planProfileUpdate(formData: FormData, baseline: ProfileBaseline): ProfilePlan {
+  const patch: Partial<Record<ProfileKey, string | number | null>> = {};
+  const conditions: Array<{ key: ProfileKey; value: BaselineValue; guard?: boolean }> = [];
+
+  for (const key of PROFILE_KEYS) {
+    if (!formData.has(key)) continue;
+    const raw = formData.get(key);
+    let submitted: string | number | null;
+    if (key === "name") {
+      submitted = typeof raw === "string" ? trimmedOrNull(raw) : null;
+      if (!submitted) return { ok: false, error: "Name is required." };
+    } else if (key === "preferred_name") {
+      const parsed = parsePreferredName(raw);
+      if (!parsed.ok) return { ok: false, error: parsed.error };
+      submitted = parsed.value;
+    } else if (key === "fitzpatrick_type") {
+      submitted = typeof raw === "string" ? intOrNull(raw) : null;
+    } else {
+      submitted = typeof raw === "string" ? trimmedOrNull(raw) : null;
+    }
+
+    const before = normalizeStored(key, baseline[key]);
+    if (submitted === before) continue;
+
+    if (key === "preferred_name" && submitted === null && before !== null && formData.get("clear_preferred_name") !== "yes") {
+      return { ok: false, error: CLEAR_PREFERRED_ERROR };
+    }
+    patch[key] = submitted;
+    conditions.push({ key, value: baseline[key] });
+  }
+  if (IDENTITY_KEYS.some((k) => k in patch)) {
+    for (const key of IDENTITY_KEYS) {
+      if (!(key in patch)) conditions.push({ key, value: baseline[key], guard: true });
+    }
+  }
+  return { ok: true, patch, conditions };
+}
+
+export type ProfileConflict = {
+  key: ProfileKey;
+  label: string;
+  current: string;
+  yours: string;
+  /** True when this page did not change the field: it only guards the duplicate check. */
+  guard?: boolean;
+};
+
+function asFormString(value: BaselineValue | undefined): string {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+/**
+ * After a zero-row conditional write: which changed fields no longer hold their baseline value. Only called after
+ * the role and client-access checks, and only returned to the same signed-in staff member; never logged.
+ */
+export function describeConflicts(
+  plan: Extract<ProfilePlan, { ok: true }>,
+  stored: Record<string, unknown>,
+): ProfileConflict[] {
+  const conflicts: ProfileConflict[] = [];
+  for (const { key, value, guard } of plan.conditions) {
+    const now = stored[key];
+    const nowValue: BaselineValue = typeof now === "string" || typeof now === "number" ? now : null;
+    if (nowValue === value) continue;
+    conflicts.push({
+      key,
+      label: PROFILE_FIELD_LABELS[key],
+      current: asFormString(nowValue),
+      ...(guard ? { guard: true } : {}),
+      // A guard-only field was not changed on this page: "yours" is the value this page still shows.
+      yours: guard ? asFormString(value) : asFormString(plan.patch[key] ?? null),
+    });
+  }
+  return conflicts;
+}
+
+/** A conflicting pair is shown in full up to this many characters each; beyond it the DIFFERING REGION is shown. */
+export const CONFLICT_FULL_CHARS = 300;
+/** Characters of unchanged context kept on each side of the differing region. */
+export const CONFLICT_CONTEXT_CHARS = 80;
+/** A differing region itself is capped here (values that differ everywhere); the full text stays one click away. */
+export const CONFLICT_REGION_MAX_CHARS = 600;
+
+export type ConflictSide = {
+  text: string;
+  clipped: boolean;
+  /** True when even the differing region was cut at CONFLICT_REGION_MAX_CHARS: edits further apart than the cap cannot all be shown. */
+  regionTruncated: boolean;
+  full: string;
+  /** UTF-16 offsets into `full` of the differing region, so the expanded text can be scrolled to it. Equal when nothing is marked. */
+  diffStart: number;
+  diffEnd: number;
+};
+
+export type ConflictSideName = "current" | "yours";
+
+export type ConflictPreview = {
+  current: ConflictSide;
+  yours: ConflictSide;
+  whitespaceOnly: boolean;
+  /** True when the two values differ again after the first differing run (only that first run is highlighted). */
+  moreChanges: boolean;
+};
+
+export const CONFLICT_MORE_CHANGES_NOTE = "More changes below the highlighted part.";
+
+/** The expanded box is `position: relative`, so a mark's offsetTop is already box-relative; keep a little context above it. */
+export const CONFLICT_SCROLL_PAD_PX = 24;
+export function scrollTopForMark(markOffsetTop: number): number {
+  return Math.max(0, markOffsetTop - CONFLICT_SCROLL_PAD_PX);
+}
+
+const ANCHOR_POINTS = 32;
+
+/** How far past the first divergence (code points, each side) a re-sync is searched for. Bounds the work on huge values. */
+export const CONFLICT_RESYNC_WINDOW_POINTS = 4_000;
+
+/**
+ * End (in code points, per side) of the FIRST differing run: from the common prefix, the first place where a
+ * 32-character stretch of "now" reappears in "yours" re-synchronises the two. The search is bounded to a window after
+ * the first divergence on both sides (indexOf on the anchor, no index of every window); with no anchor in it the run
+ * is highlighted to the end of the window and `more` is set. Repetitive text can re-sync early: a cosmetic limit.
+ */
+function firstRunEnd(a: string[], b: string[], prefix: number, suffix: number): { a: number; b: number; more: boolean } {
+  const aEnd = a.length - suffix;
+  const bEnd = b.length - suffix;
+  const aLimit = Math.min(a.length, prefix + CONFLICT_RESYNC_WINDOW_POINTS + ANCHOR_POINTS);
+  const bLimit = Math.min(b.length, prefix + CONFLICT_RESYNC_WINDOW_POINTS + ANCHOR_POINTS);
+  const bWindow = b.slice(prefix, bLimit).join("");
+  for (let i = prefix; i + ANCHOR_POINTS <= aLimit; i += 1) {
+    const at = bWindow.indexOf(a.slice(i, i + ANCHOR_POINTS).join(""));
+    if (at >= 0) {
+      const j = prefix + Array.from(bWindow.slice(0, at)).length;
+      return { a: i, b: j, more: a.slice(i).join("") !== b.slice(j).join("") };
+    }
+  }
+  const windowEnd = prefix + CONFLICT_RESYNC_WINDOW_POINTS;
+  if (aEnd <= windowEnd && bEnd <= windowEnd) return { a: aEnd, b: bEnd, more: false };
+  return { a: Math.min(aEnd, windowEnd), b: Math.min(bEnd, windowEnd), more: true };
+}
+
+export const CONFLICT_WHITESPACE_ONLY_NOTE = "These differ only in spaces or line breaks.";
+
+export const CONFLICT_REGION_TRUNCATED_NOTE =
+  "The changes are longer than this preview. Open the full text before choosing.";
+
+// All slicing is on CODE POINTS, never UTF-16 units, so an emoji or other astral character is never cut in half.
+function clipRegion(points: string[], full: string, prefix: number, suffix: number, runEnd: number): ConflictSide {
+  const diffStart = points.slice(0, prefix).join("").length;
+  const diffEnd = points.slice(0, runEnd).join("").length;
+  const start = Math.max(0, prefix - CONFLICT_CONTEXT_CHARS);
+  const end = Math.min(points.length, points.length - suffix + CONFLICT_CONTEXT_CHARS);
+  let body = points.slice(start, end);
+  let tail = end < points.length;
+  let regionTruncated = false;
+  if (body.length > CONFLICT_REGION_MAX_CHARS) {
+    body = body.slice(0, CONFLICT_REGION_MAX_CHARS);
+    tail = true;
+    regionTruncated = true;
+  }
+  return { text: `${start > 0 ? "…" : ""}${body.join("")}${tail ? "…" : ""}`, clipped: true, regionTruncated, full, diffStart, diffEnd };
+}
+
+/**
+ * How the review panel shows "now" and "your change". Short pairs are shown whole. For a long field a head-only preview
+ * would hide an allergy appended at the end, so the common prefix and suffix are trimmed and the region where the two
+ * values DIFFER is shown for both, with a little context and an ellipsis. Two edits far apart make that region longer
+ * than the cap; then `regionTruncated` is set and the caller must make the person open the full text before choosing.
+ */
+export function conflictPreview(current: string, yours: string): ConflictPreview {
+  const whole = (v: string): ConflictSide => ({ text: v === "" ? "(empty)" : v, clipped: false, regionTruncated: false, full: v, diffStart: 0, diffEnd: 0 });
+  const norm = (v: string) => v.replace(/\s+/g, " ").trim();
+  const whitespaceOnly = current !== yours && norm(current) === norm(yours);
+  const a = Array.from(current);
+  const b = Array.from(yours);
+  if (a.length <= CONFLICT_FULL_CHARS && b.length <= CONFLICT_FULL_CHARS) return { current: whole(current), yours: whole(yours), whitespaceOnly, moreChanges: false };
+  const max = Math.min(a.length, b.length);
+  let prefix = 0;
+  while (prefix < max && a[prefix] === b[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < max - prefix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix += 1;
+  const run = firstRunEnd(a, b, prefix, suffix);
+  const side = (points: string[], full: string, runEnd: number): ConflictSide =>
+    full === "" || points.length <= CONFLICT_FULL_CHARS ? whole(full) : clipRegion(points, full, prefix, suffix, runEnd);
+  return { current: side(a, current, run.a), yours: side(b, yours, run.b), whitespaceOnly, moreChanges: run.more };
+}
+
+const previewCache = new WeakMap<object, { current: string; yours: string; preview: ConflictPreview }>();
+
+/** conflictPreview memoised per conflict object: the panel, the gate and every re-render share one computation. */
+export function previewFor(conflict: Pick<ProfileConflict, "current" | "yours">): ConflictPreview {
+  const hit = previewCache.get(conflict);
+  if (hit && hit.current === conflict.current && hit.yours === conflict.yours) return hit.preview;
+  const preview = conflictPreview(conflict.current, conflict.yours);
+  previewCache.set(conflict, { current: conflict.current, yours: conflict.yours, preview });
+  return preview;
+}
+
+/**
+ * Which sides the person must expand before "Apply my change" is offered. Only when the differing region itself was cut
+ * (`regionTruncated`); then every side that is clipped must be opened. A side shown whole counts as already seen.
+ */
+export function sidesToOpen(conflict: Pick<ProfileConflict, "current" | "yours">): ConflictSideName[] {
+  const p = previewFor(conflict);
+  if (!p.current.regionTruncated && !p.yours.regionTruncated) return [];
+  const out: ConflictSideName[] = [];
+  if (p.current.clipped) out.push("current");
+  if (p.yours.clipped) out.push("yours");
+  return out;
+}
+
+export function needsFullTextOpen(conflict: Pick<ProfileConflict, "current" | "yours">): boolean {
+  return sidesToOpen(conflict).length > 0;
+}
+
+export const conflictOpenedKey = (key: string, side: ConflictSideName) => `${key}:${side}`;
+
+/** "Apply my change" is allowed only when every clipped side of every truncated conflict has actually been expanded. */
+export function applyMineAllowed(
+  conflicts: ReadonlyArray<Pick<ProfileConflict, "key" | "current" | "yours">>,
+  opened: ReadonlySet<string>,
+): boolean {
+  return conflicts.every((c) => sidesToOpen(c).every((side) => opened.has(conflictOpenedKey(c.key, side))));
+}
+
+/** Baseline for the form after the staff member reviewed a conflict: adopt the current stored value. */
+export function adoptCurrent(baseline: ProfileBaseline, conflicts: ReadonlyArray<ProfileConflict>): ProfileBaseline {
+  const next = { ...baseline };
+  for (const c of conflicts) {
+    next[c.key] = c.key === "fitzpatrick_type" ? intOrNull(c.current) : c.current === "" ? null : c.current;
+  }
+  return next;
+}

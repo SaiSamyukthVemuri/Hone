@@ -67,3 +67,21 @@ describe("directory search matches the shown name, email and phone", () => {
     expect(directorySortKey(staff(client({ preferred_name: null })))).toBe("jane smith");
   });
 });
+
+describe("a receptionist search cannot find the stored or a legal name (identity readiness, R3)", () => {
+  it("POSITIVE CONTROL then DENIAL: preferred, email and phone find the client; the stored and derived legal names find nothing", () => {
+    const c = client({ name: "Zyxwvut Qrstuvw", preferred_name: "Janie", legal_given_name: "Mnopqr", legal_family_name: "Stuvwx" });
+    const row = projectReceptionistRow(c);
+    expect(matchesDirectoryQuery(row, "janie")).toBe(true);
+    expect(matchesDirectoryQuery(row, "jane.s@")).toBe(true);
+    expect(matchesDirectoryQuery(row, "416 555")).toBe(true);
+    for (const term of ["zyxwvut", "qrstuvw", "zyxwvut qrstuvw", "mnopqr", "stuvwx", "zyx"]) {
+      expect(matchesDirectoryQuery(row, term)).toBe(false);
+    }
+  });
+  it("with no preferred name the stored name is not searchable by a receptionist either", () => {
+    const row = projectReceptionistRow(client({ name: "Zyxwvut Qrstuvw", preferred_name: null }));
+    expect(matchesDirectoryQuery(row, "zyxwvut")).toBe(false);
+    expect(matchesDirectoryQuery(row, "qrstuvw")).toBe(false);
+  });
+});

@@ -61,7 +61,7 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
     // EMERG-02 moved this gate out of the dialog into ONE pure state machine so
     // the button state and the sentence explaining it are produced together.
     // Same contract, asserted where it now lives.
-    expect(DIALOG).toMatch(/import \{ moveConfirmState \} from "\.\/move-confirm-state"/);
+    expect(DIALOG).toMatch(/import \{[^}]*\bmoveConfirmState\b[^}]*\} from "\.\/move-confirm-state"/);
     expect(DIALOG).toMatch(/= moveConfirmState\(\{/);
     expect(GATE).toMatch(/const targetChosen = !reassignEnabled \|\| \(target === \"\" \? !holderMustBeValid : eligibleIds\.includes\(target\)\)/);
     expect(GATE).toMatch(/if \(!targetChosen\) return blocked\(/);

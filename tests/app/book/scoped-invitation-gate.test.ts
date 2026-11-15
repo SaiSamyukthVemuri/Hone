@@ -234,7 +234,7 @@ vi.mock("@/lib/booking/queries", () => ({
   }),
 }));
 vi.mock("@/lib/booking/slots", () => ({
-  getAvailableSlots: async () => [
+  getAvailableSlots: async () => (globalThis as { __noSlots?: boolean }).__noSlots ? [] : [
     { start: START_ISO, end: new Date(START.getTime() + 45 * 60_000).toISOString() },
   ],
   filterFutureSlots: (s: unknown[]) => s,
@@ -831,6 +831,23 @@ describe("P2-1 — the invitation is spent and the booking did not commit", () =
     // Refused at the gate, nothing spent -- this is the refused code, not consumed.
     expect(out.code).toBe("invitation_refused");
     expect(booked()).toBe(false);
+  });
+
+  it("HON-7 R1a: a LOST RACE (the time is no longer free at the pre-command re-check) is coded slot_taken and spends nothing", async () => {
+    (globalThis as { __noSlots?: boolean }).__noSlots = true;
+    try {
+      const out = await publicBookAppointmentAction(
+        form({ invitation_token: TOKEN, invitation_capability: CAP }),
+      );
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error("unreachable");
+      expect(out.code).toBe("slot_taken");
+      expect(out.error).toMatch(RETRYABLE);
+      expect(redeemed()).toBe(false);
+      expect(booked()).toBe(false);
+    } finally {
+      delete (globalThis as { __noSlots?: boolean }).__noSlots;
+    }
   });
 
   it("leaves the ordinary non-invitation booking path untouched", async () => {

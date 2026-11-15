@@ -36,6 +36,7 @@ export async function markAllNotificationsAsReadAction(): Promise<MarkAllReadRes
       .eq("studio_id", studio.id)
       .is("read_at", null),
     practitioner.role === "owner",
+    practitioner.id,
   ).select("id");
   if (error) {
     return {

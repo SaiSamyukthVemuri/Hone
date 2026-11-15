@@ -804,6 +804,9 @@ export const BOOKING_WINDOW_PRESETS: ReadonlyArray<{
   { days: 30, label: "Next 30 days" },
 ];
 
+/** HON-7: a new invitation offers the full two weeks unless the owner narrows it. */
+export const DEFAULT_BOOKING_WINDOW_DAYS = 14;
+
 export const WINDOW_DAYS_MIN = 1;
 export const WINDOW_DAYS_MAX = 365;
 
@@ -1138,7 +1141,7 @@ export function composerReducer(state: ComposerState, event: ComposerEvent): Com
 export function emptyDraft(): InviteDraft {
   return {
     serviceId: null,
-    windowDays: BOOKING_WINDOW_PRESETS[0].days,
+    windowDays: DEFAULT_BOOKING_WINDOW_DAYS,
     allowedWeekdays: null,
   };
 }

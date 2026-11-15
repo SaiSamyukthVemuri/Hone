@@ -158,8 +158,14 @@ export function stripeErrorFields(error: unknown): { stripeType?: string; stripe
   return out;
 }
 
-// snake_case words joined by ':' or '.', e.g. "payment_webhook_maintenance_deferred:charge.refunded"
-const LABEL_RE = /^(?=.{3,100}$)[a-z][a-z0-9_]*(?:[:.][a-z0-9_]+)*$/;
+// snake_case words joined by ':' or '.', e.g. "payment_webhook_maintenance_deferred:charge.refunded".
+// A segment after a ':' may instead be exactly a database code in the shape
+// dbErrorCode() returns (SQLSTATE "42P01", PostgREST "PGRST202"), so a label
+// such as "save_client_card_on_file_failed:PGRST202" survives rather than
+// degrading to "handler_failed:error". No other uppercase is accepted, and a
+// run of 16+ hex characters (a hash, a UUID without its hyphens) is refused.
+const LABEL_RE =
+  /^(?=.{3,100}$)(?!.*[0-9a-fA-F]{16})[a-z][a-z0-9_]*(?:\.[a-z0-9_]+|:(?:[a-z0-9_]+|[0-9A-Z]{5}|PGRST[0-9]{3}))*$/;
 
 /**
  * A short label safe to STORE (not only to log) for a failed unit of work, for

@@ -90,7 +90,12 @@ describe("deployment contract publication selection", () => {
 
   it("keeps both required Apilus models separate and blocked with no invented Junior modes", () => {
     const plan = planContractPublication();
-    expect(plan.publish).toEqual([]);
+    // First slice: only the named v3 modes publish; v2 native contracts stay held.
+    expect(plan.publish.map((m) => `${m.p_machine_profile_id}@${m.p_machine_profile_version}:${m.p_mode_key}`)).toEqual([
+      ...["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"].map((k) => `dectro-apilus:senior-3g@3:${k}`),
+      ...["flash", "blend", "electrolysis"].map((k) => `dectro-apilus:junior-3g@3:${k}`),
+    ]);
+    expect(plan.skipped.filter((s) => s.profileId === "dectro-apilus:junior-3g" && s.version === 3).map((s) => s.mode)).toEqual(["thermolysis", "omniblend"]);
     const senior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:senior-3g" && s.version === 2);
     const junior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:junior-3g" && s.version === 2);
     expect(senior.map((s) => s.mode)).toEqual(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]);

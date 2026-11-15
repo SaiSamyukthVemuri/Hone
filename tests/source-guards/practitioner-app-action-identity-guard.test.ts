@@ -68,8 +68,6 @@ export function hasResolverCall(src: string): boolean {
 const NO_GATE_EXCEPTIONS: Record<string, string> = {
   "app/(app)/dashboard/actions.ts":
     "signOut() only; it ends the caller's own session and reads no studio data.",
-  "app/(app)/settings/waitlist/invite-actions.ts":
-    "Gate lives in the database: admit_ re-derives membership and owner role from the session (see the file header); the action trusts no role field from the request.",
 };
 
 function files(dir: string): string[] {

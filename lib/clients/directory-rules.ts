@@ -7,7 +7,8 @@
 // A result a viewer cannot explain from what the row shows would be an oracle.
 //
 // WHAT A VIEWER SEES AND SEARCHES (first release, OPS ruling):
-//   display identity  the preferred name, else the stored name. The stored name is
+//   display identity  the preferred name, else the stored name (a receptionist: else the
+//                     literal "Name on file", never the stored name). The stored name is
 //                     NOT matched, sorted on or counted when a preferred name is
 //                     displayed, for any role.
 //   contact           the email and phone the row shows.
@@ -92,7 +93,9 @@ export function projectStaffRow(c: DirectorySourceClient): DirectoryIdentityRow 
  */
 export function projectReceptionistRow(c: DirectorySourceClient): DirectoryIdentityRow {
   const row = project(c);
-  return { ...row, pronouns: null };
+  // Sam's rule (2 Nov): a receptionist sees the preferred name, otherwise the literal "Name on file". The stored
+  // name is never shown to them: it may hold the legal name, and a search matches only what the row shows.
+  return { ...row, displayName: row.nameOnFile ? NAME_ON_FILE_LABEL : row.displayName, pronouns: null };
 }
 
 /** Role in, rows out; unknown role = receptionist rules. Tested; unwired. */
