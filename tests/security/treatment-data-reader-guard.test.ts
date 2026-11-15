@@ -79,8 +79,6 @@ const ALLOW: Record<string, { cls: Cls; why: string; covers?: DataClass[] }> = {
   "app/(app)/settings/team/page.tsx": { cls: "attribution-only", why: "imports the solo-owner review-link check, which reads only who performed a visit and which appointment (sessions.performed_by_practitioner_id, appointment_id); no treatment content is read or rendered", covers: ["records"] },
   "app/(app)/calendar/check-practitioner/page.tsx": { cls: "attribution-only", why: "reads only who performed a visit (performed_by_practitioner_id), no treatment content" },
   "lib/sessions/session-lineage.ts": { cls: "write-path", why: "asserts a session belongs to a client before a write; returns no data" },
-  "lib/dashboard/intakes-awaiting-review.ts": { cls: "status-only", why: "client id, status and created_at only; never answers" },
-  "lib/clients/directory-read.ts": { cls: "status-only", why: "client id, status and created_at only; never answers" },
   "app/(app)/dashboard/page.tsx": { cls: "status-only", why: "intake STATUS per client for the roster pills (never answers); the records reads on this page are gated", covers: ["intake"] },
   "app/(app)/clients/[id]/images/page.tsx": { cls: "covered-by-photos-gate", why: "the sessions read only groups photos by session and sits behind the clin.view_photos gate (OPS decision)", covers: ["records"] },
   "app/(app)/clients/[id]/sessions/[sessionId]/session-photos.ts": { cls: "covered-by-photos-gate", why: "block embed only to group photos; behind the clin.view_photos gate", covers: ["records"] },

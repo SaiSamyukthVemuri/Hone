@@ -3,6 +3,8 @@ import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { createClient } from "@/lib/supabase/server";
+import { readIntakeStatusProjection } from "@/lib/intake/status-projection";
+import { canReadIntakeStatus } from "@/lib/intake/status-access";
 
 // Missing Records / Follow-up Assistant V1 (PR #249). The SECOND
 // agentic-style workflow in Hone, and like Daily Prep Brief (PR #241)
@@ -114,6 +116,9 @@ export type MissingRecordsAssistant = {
   totalFound: number;
   // True when the viewer lacks clin.view_records: nothing was read, so this is NOT an all-clear and the UI must say so.
   notAvailable?: true;
+  // The viewer may read treatment records but holds neither intake key: the "intake incomplete" items were NOT read, so their absence is not
+  // "no incomplete intakes" (RO-1). A surface says "Not available to your role." for that part and shows no all-clear for it.
+  intakeNotAvailable?: true;
 };
 
 // DASH-TRUTH-02: return enough rows for the Dashboard disclosure to be real.
@@ -410,20 +415,13 @@ export async function getMissingRecordsAssistant(
   //    covered by the existing Needs-attention card, so it is excluded.
   const scanClientIds = [...new Set(sessions.map((s) => s.row.client_id))];
   const incompleteIntakeClientIds = new Set<string>();
-  if (scanClientIds.length > 0) {
-    const { data: intakeRows, error: intakeError } = await supabase
-      .from("client_intake_forms")
-      .select("client_id, status, created_at")
-      .eq("studio_id", studioId)
-      .in("client_id", scanClientIds)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
-    if (intakeError) throw new Error("Failed to load missing records");
+  const intakeAllowed = await canReadIntakeStatus(supabase, studioId, false);
+  if (intakeAllowed && scanClientIds.length > 0) {
+    // The 0334 status projection (newest non-deleted form per client, never the answers).
+    const intakeRows = await readIntakeStatusProjection(supabase, studioId, scanClientIds);
+    if (intakeRows === null) throw new Error("Failed to load missing records");
     const latestByClient = new Map<string, string>();
-    for (const r of (intakeRows ?? []) as Array<{
-      client_id: string;
-      status: string;
-    }>) {
+    for (const r of intakeRows) {
       if (!latestByClient.has(r.client_id)) {
         latestByClient.set(r.client_id, r.status);
       }
@@ -468,10 +466,11 @@ export async function getMissingRecordsAssistant(
     clientName: nameByClient.get(clientId) ?? "Client",
   }));
 
-  return buildMissingRecordsAssistant({
+  const built = buildMissingRecordsAssistant({
     unchartedAppointments,
     sessions: recordedSessions,
     incompleteIntakes,
     limit: options.limit,
   });
+  return intakeAllowed ? built : { ...built, intakeNotAvailable: true };
 }

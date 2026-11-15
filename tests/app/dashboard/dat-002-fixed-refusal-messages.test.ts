@@ -47,7 +47,8 @@ function fakeClient() {
   return {
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     from: (table: string) => builder(table),
-    rpc: (fn: string) => builder(`rpc:${fn}`),
+    // the 0334 intake status projection is counted as the "client_intake_forms" read it replaced; any other rpc keeps its own key
+    rpc: (fn: string) => (fn === "intake_status_for_clients" ? { range: () => builder("client_intake_forms") } : builder(`rpc:${fn}`)),
   };
 }
 

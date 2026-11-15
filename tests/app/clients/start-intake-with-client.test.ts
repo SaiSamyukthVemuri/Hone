@@ -559,6 +559,8 @@ function healthBranch(gate: string): string {
   const stops = [
     rest.indexOf("{intake?.status"),
     rest.indexOf("{!intake"),
+    rest.indexOf("{intakeRestricted"),
+    rest.indexOf("{intakeStatusMode"),
     rest.indexOf("</section>"),
   ].filter((i) => i > -1);
   return rest.slice(0, stops.length ? Math.min(...stops) : rest.length);
@@ -567,15 +569,15 @@ function healthBranch(gate: string): string {
 describe("6. the Health & Forms card", () => {
   it("renders the CTA only in the no-intake branch", () => {
     expect(PROFILE_CODE).toMatch(
-      /\{!intake && \([\s\S]{0,600}?<StartAssistedIntakeButton clientId=\{client\.id\} \/>/,
+      /\{!intake && !intakeRestricted && !intakeStatusMode && \([\s\S]{0,600}?<StartAssistedIntakeButton clientId=\{client\.id\} \/>/,
     );
   });
 
   it("no other conditional gate stands between !intake and the CTA", () => {
     const btn = PROFILE_CODE.indexOf("<StartAssistedIntakeButton");
     expect(btn).toBeGreaterThan(-1);
-    const gate = PROFILE_CODE.lastIndexOf("{!intake && (", btn);
-    expect(gate, "the CTA must sit under a !intake gate").toBeGreaterThan(-1);
+    const gate = PROFILE_CODE.lastIndexOf("{!intake && !intakeRestricted && !intakeStatusMode && (", btn);
+    expect(gate, "the CTA must sit under the no-intake gate (not restricted, not status-only: neither may start an intake)").toBeGreaterThan(-1);
     const between = PROFILE_CODE.slice(gate, btn);
     expect(between).not.toMatch(/\{intake\?\.status/);
     expect(between).not.toMatch(/\{intake && /);

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 269,
+    "count": 270,
     "last": "0338_one_manual_fee_per_appointment.sql",
-    "sha256": "4b422c0254e91f48c34e8c27bf3645d677fe8b1fc9cbef48b9a2189705333ef0"
+    "sha256": "7f1cf51c7ec692e5e10e1f4fec3c4abe31fd0a63768570277d953f7c65c8eab8"
   },
   "public": {
     "tables": [
@@ -352,6 +352,7 @@
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
       "initialize_studio_payment_jurisdiction_from_history_v2",
+      "intake_status_for_clients",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",

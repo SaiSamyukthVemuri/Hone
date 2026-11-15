@@ -54,7 +54,11 @@ function fakeClient() {
     });
     return proxy;
   };
-  return { from: (table: string) => builder(table) };
+  return {
+    // the 0334 intake status projection is counted as the "client_intake_forms" read it replaced
+    rpc: (fn: string) => ({ range: () => builder(fn === "intake_status_for_clients" ? "client_intake_forms" : fn) }),
+    from: (table: string) => builder(table),
+  };
 }
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => fakeClient() }));

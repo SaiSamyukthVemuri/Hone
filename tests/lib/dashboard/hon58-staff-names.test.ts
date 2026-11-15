@@ -44,6 +44,8 @@ function rows(table: string): unknown[] {
 
 function fakeClient() {
   return {
+    // the 0334 intake status projection (no client join, so no preferred-name retry applies to it)
+    rpc: (fn: string) => ({ range: async () => ({ data: fn === "intake_status_for_clients" ? rows("client_intake_forms") : [], error: null }) }),
     from(table: string) {
       let columns = "";
       const settle = () => {

@@ -12,6 +12,12 @@ type Script = (call: Call, block: number) => { data: unknown; error: unknown };
 function fake(script: Script) {
   const calls: Call[] = [];
   const supabase = {
+    // the 0334 status projection: one call per page, recorded as table "rpc:<fn>" with its args
+    rpc(fn: string, args: Record<string, unknown>) {
+      const call: Call = { table: `rpc:${fn}`, cols: "", ops: [["args", [args]]] };
+      calls.push(call);
+      return { range: async (a: number, b: number) => { call.ops.push(["range", [a, b]]); return script(call, Math.floor(a / 1000)); } };
+    },
     from(table: string) {
       return {
         select(cols: string) {
@@ -89,8 +95,8 @@ describe("directory reads", () => {
     ];
     const ok = fake(() => ({ data: rows, error: null }));
     expect(await readCurrentIntake(ok.supabase, "s")).toEqual(new Map([["a", "reviewed"], ["b", "submitted"]]));
-    expect(ok.calls[0].cols).toBe("client_id, status, created_at");
-    expect(ok.calls[0].ops).toEqual(expect.arrayContaining([["is", ["deleted_at", null]]]));
+    expect(ok.calls[0].table).toBe("rpc:intake_status_for_clients"); // the projection, never client_intake_forms
+    expect(ok.calls.some((c) => c.table === "client_intake_forms")).toBe(false);
     expect(await readCurrentIntake(fake(() => ({ data: null, error: { message: "x" } })).supabase, "s")).toBeNull();
   });
 });
@@ -106,12 +112,11 @@ describe("bounded reads (Insurance K1, K2, K4)", () => {
     expect(next.calls[0].ops.filter(([m]) => m === "order").map(([, a]) => (a as unknown[])[0])).toEqual(["starts_at", "id"]);
     const intake = fake(() => ({ data: [], error: null }));
     await readCurrentIntake(intake.supabase, "s", ["a"]);
-    expect(ops(intake.calls[0])).toContain("in:client_id,a");
-    expect(intake.calls[0].ops.filter(([m]) => m === "order").map(([, a]) => (a as unknown[])[0])).toEqual(["created_at", "id"]);
-    // The unscoped (whole-studio) read has no client filter and the same tie-break.
+    expect(intake.calls[0].ops[0]).toEqual(["args", [{ p_studio_id: "s", p_client_ids: ["a"] }]]);
+    // The unscoped (whole-studio) read passes no client list (the function orders by client_id, so paging is stable).
     const whole = fake(() => ({ data: [], error: null }));
     await readCurrentIntake(whole.supabase, "s");
-    expect(whole.calls[0].ops.some(([m]) => m === "in")).toBe(false);
+    expect(whole.calls[0].ops[0]).toEqual(["args", [{ p_studio_id: "s", p_client_ids: null }]]);
     // No clients means no read at all.
     const none = fake(() => ({ data: [], error: null }));
     expect(await readNextAppointments(none.supabase, "s", NOW, [])).toEqual(new Map());
