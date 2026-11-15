@@ -85,7 +85,7 @@ describe("0341: the two portal message tables only, policies and write grants on
 
   it("consumes exactly one migration number", () => {
     expect(countVersion("0341")).toBe(1);
-    expect(isRepoMax("0341")).toBe(true); // only the current maximum asserts this (CLAUDE.md §2)
+    expect(isRepoMax("0341")).toBe(false); // no longer the maximum; only the current maximum asserts true (CLAUDE.md §2)
   });
 
   it("opens its own transaction, drops exactly the three member write policies and creates nothing", () => {
