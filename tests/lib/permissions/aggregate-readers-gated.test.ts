@@ -138,7 +138,7 @@ describe("the readers that stay in the page are gated at their call sites", () =
     const d = read("app/(app)/dashboard/page.tsx");
     expect(d).toMatch(/appt\.status === "completed" && canViewRecords/);
     expect(d).toContain("historyAsked={viewingToday && canViewRecords}");
-    expect(d).toContain("Treatment history and charting status are not available to your role.");
+    expect(d).toContain("Treatment history, pinned notes and charting status are not available to your role.");
   });
   it("Codex (calendar page): plans, last treatment and consultation notes say not available instead of empty", () => {
     const s = read("app/(app)/calendar/[id]/page.tsx");

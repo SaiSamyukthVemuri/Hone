@@ -136,6 +136,8 @@ const PAGE_GATES = [
   "clin.view_intake",
   "clin.view_intake_status", // the status-only intake key (0334)
   "clin.view_aftercare",
+  "client.view_personal_notes", // 0335: personal notes are their own key
+  "client.view_budget", // 0335: budget is its own key, independent of clin.view_records
 ] as const;
 
 const ALWAYS = {

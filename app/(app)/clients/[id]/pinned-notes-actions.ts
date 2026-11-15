@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { requirePermission } from "@/lib/permissions/require-permission";
 
 const MAX_PINNED_NOTE_LENGTH = 200;
 
@@ -74,6 +75,13 @@ export async function editClientPinnedNoteAction(
   // Authorization: an active practitioner of the CURRENT studio (throws /
   // redirects otherwise). The studio is derived from the session, NEVER the form.
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+
+  // 0335 gates SELECT on client_pinned_notes under clin.view_records, but the update below runs on the service-role client, which RLS never
+  // sees. Ask the engine here, with the SIGNED-IN user's client, BEFORE the admin client exists: the optimistic-concurrency guard (`text` must
+  // equal original_text) would otherwise let a role without the key probe whether a caution reads a given string. The refusal is the same
+  // "Not available to your role." every other restricted surface gives, and it touches nothing.
+  const gate = await requirePermission(await createClient(), studio.id, "clin.view_records", { client: clientId });
+  if (!gate.allowed) throw new Error("Not available to your role.");
 
   // client_pinned_notes carries SELECT/INSERT/DELETE RLS policies but no UPDATE
   // policy (0022), so the RLS-scoped user client cannot UPDATE and this PR does

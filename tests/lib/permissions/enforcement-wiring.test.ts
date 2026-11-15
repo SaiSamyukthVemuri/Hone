@@ -191,7 +191,7 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     // NAMED carve-out (OPS/Team, 12 Nov): clin.view_intake_status is asked by the I2 readers (the 0334 projection serves it) but stays not_yet in the
     // catalog, because the enforced flag is tied to release state (0287: every enforced key is in the release seed) and the permission-activation hold
     // stands. The flip commit removes this carve-out. It FAILS once the key is released (seeded), so it cannot outlive the hold.
-    const ASKED_AHEAD_OF_FLIP = ["clin.view_intake_status"];
+    const ASKED_AHEAD_OF_FLIP = ["clin.view_intake_status", "client.view_personal_notes", "client.view_budget"]; // the last two: 0335 readers, same hold
     for (const k of ASKED_AHEAD_OF_FLIP) {
       expect(asked, `${k} is no longer asked: remove it from ASKED_AHEAD_OF_FLIP`).toContain(k);
       expect(enforcementOf(k)).toBe("not_yet");
@@ -255,10 +255,15 @@ describe("the ASKED_AHEAD_OF_FLIP release scan (fixtures)", () => {
     expect(releasesOf([{ name: "d.sql", text: "insert into public.other values ('clin.view_intake_status');" }], K)).toEqual([]);
     expect(releasesOf([{ name: "e.sql", text: "insert into public.permission_key_release values ('x');" }].map((f) => ({ ...f, text: f.text.replace("'x'", "'x'") })), K)).toEqual([]);
   });
+  it("the 0335 keys are covered the same way", () => {
+    for (const k of ["client.view_personal_notes", "client.view_budget"]) {
+      expect(releasesOf([{ name: "z.sql", text: `insert into public.permission_key_release values ('${k}', now());` }], [k])).toEqual([`z.sql: ${k}`]);
+    }
+  });
   it("the real migrations release none of the carved-out keys today (the scan reads all of them, not vacuous)", () => {
     const files = migrationFiles();
     expect(files.length).toBeGreaterThan(200);
     expect(files.some((f) => /permission_key_release/i.test(f.text))).toBe(true);
-    expect(releasesOf(files, K)).toEqual([]);
+    expect(releasesOf(files, ["clin.view_intake_status", "client.view_personal_notes", "client.view_budget"])).toEqual([]);
   });
 });
