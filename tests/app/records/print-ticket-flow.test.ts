@@ -121,7 +121,9 @@ describe("the Location is relative, so it never depends on request.url's host", 
 
 describe("the registry entry for the open route is exact, and analytics dropping it is intended", () => {
   it("the header pattern matches the route and its suffixes, not a sibling path such as /records/print/opener", async () => {
-    const { pathToRegexp } = await import("next/dist/compiled/path-to-regexp");
+    // Next's own compiled matcher (the one its header rules use) ships no type declarations.
+    // @ts-expect-error TS7016: no declaration file for the compiled module
+    const { pathToRegexp } = (await import("next/dist/compiled/path-to-regexp")) as { pathToRegexp: (p: string) => RegExp };
     const re = pathToRegexp("/records/print/open/:token*");
     expect(re.test("/records/print/open")).toBe(true);
     expect(re.test("/records/print/open/x")).toBe(true);
