@@ -569,6 +569,90 @@ describe("a state the timing function has no honest word for is a clean refusal 
   });
 });
 
+describe("Codex 4585180160: a studio with NO policy row yet can complete its first reviewed save", () => {
+  it("preview in one transaction, save in another (the real flow): the save succeeds, and the hash is the same across the two", async () => {
+    const st = await seedStudio("review-authority-norow");
+    await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]); // a studio created before 0287's seed trigger
+    const ch = { practitioner: { "appt.cancel": "own" } };
+    let hash = "";
+    await adminTx(async (q) => {
+      await asOwner(q as Q, st.userId, async () => {
+        const p = await call(q as Q, "preview_role_changes_at", [st.studioId, ch, 0]);
+        expect(p.ok, JSON.stringify(p)).toBe(true);
+        hash = p.review_hash!;
+      });
+    });
+    expect(Number((await adminQuery(`select count(*) n from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0); // the preview left no row
+    await new Promise((r) => setTimeout(r, 50)); // a later transaction clock, as in real life
+    await adminTx(async (q) => {
+      await asOwner(q as Q, st.userId, async () => {
+        const r = await call(q as Q, "save_role_permissions_reviewed", [st.studioId, 0, ch, null, false, hash]);
+        expect(r.ok, JSON.stringify(r)).toBe(true);
+      });
+    });
+    expect(Number((await adminQuery(`select count(*) n from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(1);
+    await adminQuery(`delete from public.studio_role_permissions where studio_id = $1`, [st.studioId]);
+  });
+
+  it("a newly created studio always has its policy row, on new_studio (0287's seed trigger); a missing row is only ever completed as existing_snapshot", async () => {
+    const st = await seedStudio("review-authority-seed");
+    const row = (await adminQuery(`select basis, version from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0];
+    expect(row).toEqual({ basis: "new_studio", version: "0" }); // so the no-row path cannot be a new studio
+    await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]);
+    await inTx(async (q) => {
+      await asOwner(q, st.userId, async () => {
+        const saved = await call(q, "save_role_permissions_reviewed", [st.studioId, 0, { practitioner: { "appt.cancel": "own" } }, null, false, "0".repeat(64)]);
+        expect(saved.code).toBe("review_changed"); // refused on the stamp, but the block already completed the row
+      });
+      expect((await adm(q, `select basis from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0].basis).toBe("existing_snapshot");
+    });
+  });
+
+  it("two previews of the same request in different transactions give the same hash (no now()-derived value is in the input)", async () => {
+    const st = await seedStudio("review-authority-stable");
+    await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]);
+    const ch = { practitioner: { "appt.cancel": "own" } };
+    const hashes: string[] = [];
+    for (const wait of [0, 60]) {
+      await new Promise((r) => setTimeout(r, wait));
+      await adminTx(async (q) => {
+        await asOwner(q as Q, st.userId, async () => {
+          hashes.push((await call(q as Q, "preview_role_changes_at", [st.studioId, ch, 0])).review_hash!);
+        });
+      });
+    }
+    expect(hashes[0]).toBe(hashes[1]);
+    // and on a studio WITH a row (the seeded default is new_studio, whose basis_at is real state): still stable
+    const st2 = await seedStudio("review-authority-stable2");
+    const hs: string[] = [];
+    for (const wait of [0, 60]) {
+      await new Promise((r) => setTimeout(r, wait));
+      await adminTx(async (q) => {
+        await asOwner(q as Q, st2.userId, async () => {
+          hs.push((await call(q as Q, "preview_role_changes_at", [st2.studioId, ch, 0])).review_hash!);
+        });
+      });
+    }
+    expect(hs[0]).toBe(hs[1]);
+  });
+
+  it("on the new_studio basis a changed basis_at DOES change the hash (it is engine state there); on existing_snapshot it does not", async () => {
+    const st = await seedStudio("review-authority-basisat");
+    const review = [{ role: "practitioner", key: "appt.cancel", requested: "off" }];
+    const h = async (q: Q) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h as string;
+    await inTx(async (q) => {
+      await q(`update public.studio_permission_policy set basis = 'new_studio', basis_at = now() where studio_id = $1`, [st.studioId]);
+      const a = await h(q);
+      await q(`update public.studio_permission_policy set basis_at = now() + interval '1 day' where studio_id = $1`, [st.studioId]);
+      expect(await h(q)).not.toBe(a);
+      await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
+      const b = await h(q);
+      await q(`update public.studio_permission_policy set basis_at = now() + interval '2 day' where studio_id = $1`, [st.studioId]);
+      expect(await h(q)).toBe(b);
+    });
+  });
+});
+
 describe("staleness and the review hash bind the save", () => {
   it("a preview at a version other than the current one is refused stale_version, with nothing written", async () => {
     const st = await studio();

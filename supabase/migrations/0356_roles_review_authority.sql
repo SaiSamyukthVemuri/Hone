@@ -103,7 +103,11 @@ as $$
     'studio', p_studio,
     'version', p_version,
     'basis', (select spp.basis from public.studio_permission_policy spp where spp.studio_id = p_studio),
-    'basis_at', (select to_char(spp.basis_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') from public.studio_permission_policy spp where spp.studio_id = p_studio),
+    -- basis_at matters to the engine only on the new_studio basis (a default counts for a key released at or before it). On existing_snapshot it is the
+    -- column's now() default, which differs between the preview's transient row (rolled back) and the save's real one for a studio with no policy
+    -- row yet: hashing it would make the first reviewed save of every such studio return review_changed (Codex 4585180160). Hash the stored state.
+    'basis_at', (select case when spp.basis = 'new_studio' then to_char(spp.basis_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') end
+                   from public.studio_permission_policy spp where spp.studio_id = p_studio),
     'review', p_review,
     'sensitive_keys', (select coalesce(jsonb_agg(x order by x), '[]'::jsonb) from jsonb_array_elements_text(p_sens) x),
     'reason_required', p_widen,
