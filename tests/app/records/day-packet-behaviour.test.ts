@@ -63,7 +63,7 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-const { default: DayPacketPage } = await import("@/app/(app)/records/print/day/page");
+const { DayPacketView } = await import("@/app/(app)/records/print/_packet/day-packet-view");
 const { recordDayPacketPrintAction } = await import("@/app/(app)/records/print/day/actions");
 
 const session = (over: Record<string, unknown> = {}) => ({
@@ -72,7 +72,7 @@ const session = (over: Record<string, unknown> = {}) => ({
   aftercare_and_risks_explained_at: null, aftercare_and_risks_explained_by: null, ...over,
 });
 async function render(sp: { clientId?: string; day?: string }) {
-  const el = await DayPacketPage({ searchParams: Promise.resolve(sp) });
+  const el = await DayPacketView({ clientId: sp.clientId, day: sp.day });
   return renderToStaticMarkup(el as never);
 }
 const DAY = "2026-05-10";

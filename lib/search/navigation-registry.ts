@@ -928,7 +928,12 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/records/print/day",
     reason:
-      "Per-client clinical print; needs clientId and day; owner-only. Reached from the owner-only Print link on a session page (lib/records/print/day-entry.ts), never a destination to search for.",
+      "Retired entry for the per-client clinical print: it no longer reads clientId or day and always refuses. Kept so an old bookmark lands on a clear refusal. Never a destination to search for.",
+  },
+  {
+    route: "/records/print/ticket/[token]",
+    reason:
+      "Per-client clinical print opened by an opaque one-use ticket minted by a POST from the owner-only Print button on a session page (lib/records/print/day-entry.ts). A bearer-style route (token registry); never a destination to search for.",
   },
   {
     route: "/settings",

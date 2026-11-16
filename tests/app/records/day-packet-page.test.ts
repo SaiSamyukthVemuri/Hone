@@ -4,18 +4,25 @@ import { describe, expect, it } from "vitest";
 import { redactVercelEvent } from "@/lib/analytics/vercel-url-redaction";
 import { scrubBreadcrumb, scrubErrorEvent, scrubTransactionEvent } from "@/lib/observability/sentry-scrub";
 
-// HON-46 M2, Privacy route answer M-1..M-6 (G-26). A NEW file: it pins the URL
-// privacy of /records/print/day for the exact shape ?clientId=<uuid>&day=<date>,
-// using a synthetic id and date. G-26 is NOT fully satisfied: Vercel platform
-// request logs record the path and query before application code runs, and the
-// beacon's own Referer is closed only by this page's no-referrer policy.
+// Privacy route answer M-1..M-6. A NEW file: it pins the URL privacy of the day packet, using a synthetic id and
+// date. The packet is opened by an opaque one-use ticket (lib/records/print/ticket.ts), so neither value is in any URL;
+// the old ?clientId=&day= route no longer reads them. The platform's request log can show that a session was viewed
+// and a print opened. It does not state the day (the day can still be inferred from the session's date), and it holds
+// no reusable link.
 
 const DIR = "app/(app)/records/print/day";
+const PACKET_DIR = "app/(app)/records/print/_packet";
+const TICKET_DIR = "app/(app)/records/print/ticket/[token]";
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
-const PAGE = read(`${DIR}/page.tsx`);
+const PAGE = read(`${PACKET_DIR}/day-packet-view.tsx`); // the view: every content rule below is about it
+const DAY_ROUTE = read(`${DIR}/page.tsx`);
+const TICKET_ROUTE = read(`${TICKET_DIR}/page.tsx`);
 const ACTIONS = read(`${DIR}/actions.ts`);
 const BUTTON = read(`${DIR}/print-button.tsx`);
-const SOURCES = { page: PAGE, actions: ACTIONS, button: BUTTON };
+const SOURCES = { page: PAGE, actions: ACTIONS, button: BUTTON, dayRoute: DAY_ROUTE, ticketRoute: TICKET_ROUTE };
+
+/** Source without line comments, so a rule about CODE is not tripped by prose that names what the code avoids. */
+const code = (src: string) => src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 
 const HOST = "https://hone.care";
 const CLIENT = "7c1d2e3f-4a5b-4c6d-8e7f-a1b2c3d4e5f6";
@@ -23,32 +30,32 @@ const DAY = "2031-02-17";
 const URL_OK = `${HOST}/records/print/day?clientId=${CLIENT}&day=${DAY}`;
 const has = (s: unknown) => JSON.stringify(s).includes(CLIENT) || JSON.stringify(s).includes(DAY);
 
-describe("analytics and Sentry never see the client id or the day (query-string shape)", () => {
-  it("Vercel redaction output has neither", () => {
-    const out = redactVercelEvent({ type: "pageview" as const, url: URL_OK });
-    expect(out?.url).toBe(`${HOST}/records/print/day`);
-    expect(has(out)).toBe(false);
+const TICKET_URL = `${HOST}/records/print/ticket/${"A".repeat(127)}`;
+describe("analytics and Sentry never see the client id or the day (ticket shape)", () => {
+  it("Vercel analytics DROPS the ticket route instead of sending its path", () => {
+    expect(redactVercelEvent({ type: "pageview" as const, url: TICKET_URL })).toBeNull();
+    expect(redactVercelEvent({ type: "pageview" as const, url: `${TICKET_URL}?x=1#y` })).toBeNull();
   });
-  it("Sentry scrub of a request, a transaction name and a navigation breadcrumb has neither", () => {
-    const err = scrubErrorEvent({ request: { url: URL_OK, query_string: `clientId=${CLIENT}&day=${DAY}` } } as never);
-    const txn = scrubTransactionEvent({ transaction: `/records/print/day?clientId=${CLIENT}&day=${DAY}`, type: "transaction" } as never);
-    const crumb = scrubBreadcrumb({ category: "navigation", data: { from: "/records", to: `/records/print/day?clientId=${CLIENT}&day=${DAY}` } } as never);
-    expect(has(err)).toBe(false);
-    expect(has(txn)).toBe(false);
-    expect(has(crumb)).toBe(false);
+  it("Sentry scrub of a request, a transaction name and a navigation breadcrumb canonicalizes the ticket", () => {
+    const err = scrubErrorEvent({ request: { url: TICKET_URL } } as never);
+    const txn = scrubTransactionEvent({ transaction: `/records/print/ticket/${"A".repeat(127)}`, type: "transaction" } as never);
+    const crumb = scrubBreadcrumb({ category: "navigation", data: { from: "/records", to: `/records/print/ticket/${"A".repeat(127)}` } } as never);
+    for (const out of [err, txn, crumb]) expect(JSON.stringify(out)).not.toContain("AAAAAAAAAA");
   });
-  it("NEGATIVE CONTROL: a date in the PATH survives the redaction, which is why both values stay in the query", () => {
-    const pathShaped = redactVercelEvent({ type: "pageview" as const, url: `${HOST}/records/print/day/${DAY}?clientId=${CLIENT}` });
-    expect(pathShaped?.url).toContain(DAY);
+  it("the query-string shape is retired: the day route ignores it and the view is never given it", () => {
+    expect(code(DAY_ROUTE)).not.toMatch(/searchParams|clientId|\.day\b/);
+    expect(code(DAY_ROUTE)).toMatch(/<DayPacketView \/>/);
   });
 });
 
 describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
   it("M-1: no-referrer, noindex, force-dynamic, no revalidate", () => {
-    expect(PAGE).toMatch(/export const dynamic = "force-dynamic"/);
-    expect(PAGE).toMatch(/referrer: "no-referrer"/);
-    expect(PAGE).toMatch(/robots: \{ index: false, follow: false \}/);
-    expect(PAGE).not.toMatch(/revalidate/);
+    for (const route of [DAY_ROUTE, TICKET_ROUTE]) {
+      expect(route).toMatch(/export const dynamic = "force-dynamic"/);
+      expect(route).toMatch(/referrer: "no-referrer"/);
+      expect(route).toMatch(/robots: \{ index: false, follow: false \}/);
+      expect(route).not.toMatch(/revalidate/);
+    }
   });
   it("M-2: every link is prefetch={false} with no referrer, and none is a bare <a> to an app page", () => {
     const links = PAGE.match(/<Link\b[\s\S]*?>/g) ?? [];
@@ -58,24 +65,24 @@ describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
       expect(l, l).toMatch(/referrerPolicy="no-referrer"/);
     }
   });
-  it("M-3: the route has no dynamic path segment, so client id and day can only be query values", () => {
-    const entries = readdirSync(join(process.cwd(), DIR));
-    expect(entries.sort()).toEqual(["actions.ts", "page.tsx", "print-button.tsx"]);
-    expect(PAGE).toMatch(/searchParams/);
-    expect(PAGE).not.toMatch(/\bparams:\s*Promise/);
+  it("M-3: the only dynamic segment is the opaque ticket; no client id or day segment exists anywhere in the print routes", () => {
+    expect(readdirSync(join(process.cwd(), DIR)).sort()).toEqual(["actions.ts", "page.tsx", "print-button.tsx"]);
+    expect(readdirSync(join(process.cwd(), "app/(app)/records/print/ticket"))).toEqual(["[token]"]);
+    expect(TICKET_ROUTE).toMatch(/params: Promise<\{ token: string \}>/);
+    expect(PAGE).not.toMatch(/searchParams|useSearchParams/);
   });
   it("M-3: validation and refusal come before any audit or read, in this order: owner, day, day bounds, client, audit, load", () => {
-    const order = ["canPrintClinicalPacket(practitioner)", "parseSelectedDay(sp.day)", "checkPrintableDay(day.day", "UUID.test(sp.clientId)", "recordDayAudit(", "loadDayDocument("].map((s) => PAGE.indexOf(s));
+    const order = ["canPrintClinicalPacket(practitioner)", "parseSelectedDay(typeof rawDay", "checkPrintableDay(day.day", "UUID.test(rawClientId)", "recordDayAudit(", "loadDayDocument("].map((s) => PAGE.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
   it("M-4: no console, Sentry, analytics or logger call anywhere in the page, action or button", () => {
     for (const [name, src] of Object.entries(SOURCES)) {
-      expect(src, name).not.toMatch(/console\.|@sentry|Sentry\.|captureException|captureMessage|setTag|setContext|setExtra|track\(|posthog|safeLog|logger/i);
+      expect(code(src), name).not.toMatch(/console\.|@sentry|Sentry\.|captureException|captureMessage|setTag|setContext|setExtra|track\(|posthog|safeLog|logger/i);
     }
   });
   it("M-6: generic title, no third-party resource, @page margin 0, and an unarmed print shows only a notice", () => {
-    expect(PAGE).toMatch(/title: "Clinical record"/);
+    for (const route of [DAY_ROUTE, TICKET_ROUTE]) expect(route).toMatch(/title: "Clinical record"/);
     expect(PAGE).not.toMatch(/https?:\/\//);
     expect(PAGE).toMatch(/@page \{ margin: 0; \}/);
     expect(PAGE).toMatch(/data-packet-document\]:not\(\[data-print-armed\]\) \{ display: none !important; \}/);
