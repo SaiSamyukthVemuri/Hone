@@ -31,7 +31,7 @@ describe("S3 live vs saved", () => {
   it("a lower in-force value is not live and the line names both values", () => {
     const st = liveStatusOf("studio", key, withServer("off", "stored"));
     expect(st.state).toBe("not_live");
-    expect(liveStatusLine(st, text)).toBe("Saved: studio. In force now: off. The saved setting is not in force yet.");
+    expect(liveStatusLine(st, text)).toBe("Saved: studio. In force now: off. The saved setting is not in force yet. Once it is released, a choice that lowers access applies at once, and one that raises access waits for your activation.");
   });
   it("every model row carries a status; without the core every row is unknown", () => {
     const rows = buildRoleModel("practitioner", base).flatMap((g) => g.rows);
@@ -75,5 +75,24 @@ describe("Roles copy does not imply a setting is enforced (Team matrix, 14 Nov)"
     const src = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
     expect(src).not.toContain("takes effect now");
     expect(src).toContain("It is in force only when the line above says so.");
+  });
+
+  it("the release rule is stated true to 0287: lowering applies at once on release, raising waits for activation (pinned in every page string)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const m = await import("@/lib/settings/roles/model");
+    const rule = "a choice that lowers access applies at once, and one that raises access waits for you to activate it";
+    expect(m.RELEASE_RULE_SENTENCE).toContain(rule);
+    expect(m.ENFORCEMENT_SCOPE_LINE).toContain(rule);
+    expect(readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8")).toContain(rule);
+    // the old claim, that EVERY saved choice waits for release AND activation, is false for a lowering
+    const model = readFileSync("lib/settings/roles/model.ts", "utf8");
+    const roles = readFileSync("app/(app)/settings/roles/roles-editor.tsx", "utf8");
+    for (const s of [model, roles]) {
+      expect(s).not.toMatch(/take effect only after they are released and you activate/);
+      expect(s).not.toMatch(/do not change anyone.{1,12}s access until they are released and you activate/);
+      expect(s).not.toContain("Until this setting is released and you activate it");
+    }
+    expect(m.NOT_ACTIVE_YET_LINE).toContain("raises access");
+    expect(m.notActiveYetKeeps("practitioner", "Whole studio")).toContain("lowers access applies at once");
   });
 });

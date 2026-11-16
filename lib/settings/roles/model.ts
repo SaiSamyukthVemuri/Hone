@@ -60,10 +60,13 @@ export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
 // Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet. On THIS branch the app does not read them
 // either (lib/permissions/require-permission.ts and its callers are not here; tests/security/roles-page-only-boundary.test.ts pins that), so the
-// line must not say the app is wired to anything. Say only what is true: nothing reads these settings, and they take effect only once
-// released and activated. If enforcement ships in the app, this wording changes in that same change (a source test fails until it does).
+// line must not say the app is wired to anything. Say only what is true: nothing reads these settings, nothing is released yet, and the
+// release rule of the permission core (0287): once a setting is released, a choice that LOWERS access applies at once, and one that RAISES
+// access waits for the owner's activation. Saying "they take effect only after they are released and you activate them" was false for a
+// lowering. If enforcement ships in the app, this wording changes in that same change (a source test fails until it does).
+export const RELEASE_RULE_SENTENCE = "After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.";
 export const ENFORCEMENT_SCOPE_LINE =
-  "These settings are not in force yet. The app does not read them yet, and the database does not check them. They take effect only after they are released and you activate them.";
+  "These settings are not in force yet. The app does not read them yet, and the database does not check them. Nothing is released yet, so none of them changes anyone's access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
   const v = catalogEnforcementOf(key);
@@ -122,7 +125,7 @@ export const liveStatusLine = (st: LiveStatus, text: (s: Scope) => string): stri
     ? `Saved: ${text(st.saved)}. ${LIVE_UNKNOWN_LINE}`
     : st.state === "live"
       ? `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}.`
-      : `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}. The saved setting is not in force yet.`;
+      : `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}. The saved setting is not in force yet. Once it is released, a choice that lowers access applies at once, and one that raises access waits for your activation.`;
 
 export type RoleGroupModel = { group: string; label: string; rows: RoleRow[] };
 
@@ -137,12 +140,12 @@ const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scop
 // NQ-10 (platform operator, 3 Nov): a saved choice whose prerequisite is off is PRESERVED but INACTIVE. It is never deleted, and turning it on never
 // turns the prerequisite on for the owner: the row says what it needs and the owner decides.
 // The core says this saved choice is not in force: its key is not released yet, or the release has not been activated by the owner.
-export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. It takes effect when this setting is released and you activate it.";
+export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. A choice that raises access takes effect when this setting is released and you activate it.";
 
 // The OPPOSITE case (Codex P1 on 30555b1d0): an owner's saved or drafted choice is LOWER than what the core keeps in force, because the key is
 // not released yet (or released and not activated). Without this line the page shows Off while practitioners still have the access.
 export const notActiveYetKeeps = (role: Role, inForce: string): string =>
-  `Saved, but not in force yet. Until this setting is released and you activate it, ${ROLE_LABELS[role].toLowerCase()}s keep: ${inForce}.`;
+  `Saved, but not in force yet. Once this setting is released, a choice that lowers access applies at once. Until then, ${ROLE_LABELS[role].toLowerCase()}s keep: ${inForce}.`;
 
 export const inactiveUntilOn = (labels: string[]): string => `Inactive until ${labels.join(" and ")} ${labels.length > 1 ? "are" : "is"} on. Your choice is kept.`;
 
@@ -265,6 +268,25 @@ export function applyEdit(
   const check = checkChange(role, key, next, policy);
   if (!check.ok) return { ok: false, reason: check.reason };
   return { ok: true, policy: { ...policy, values: { ...policy.values, [key]: next } } };
+}
+
+/**
+ * The value a role is on for a key as the OWNER chose it: the stored value, else the studio basis. A draft that picks a value and then picks the
+ * original back holds an explicit basis value where the saved policy holds none; they are the same choice (Codex P2 4582593018).
+ */
+export function chosenScope(role: Role, policy: StudioPolicy, key: string): Scope | undefined {
+  const stored = policy.values[key];
+  if (stored !== undefined) return stored;
+  const def = catalogByKey.get(key);
+  return def ? baselineScope(def, role, policy) : undefined;
+}
+
+/** Whether two policies make the same choices for a role, key by key over both key sets. */
+export function sameChoices(role: Role, a: StudioPolicy, b: StudioPolicy): boolean {
+  for (const key of new Set([...Object.keys(a.values), ...Object.keys(b.values)])) {
+    if (chosenScope(role, a, key) !== chosenScope(role, b, key)) return false;
+  }
+  return true;
 }
 
 export type RoleSectionModel = { id: SectionId; label: string; common: RoleRow[]; advanced: RoleRow[] };
