@@ -104,10 +104,13 @@ describe("0356 source contract", () => {
     const raises = [...UP.matchAll(/raise exception[^;]*;/g)].map((m) => m[0]);
     expect(raises.length).toBeGreaterThan(0);
     for (const r of raises) {
-      // the one fixed-text exception: the timing function's refusal of a state it has no label for (no data in it)
-      expect(r).toMatch(/message = public\.perm_fail\(|message = 'preview'|using errcode = 'PM00[12]'|^raise exception 'perm_review_timing: no label for this state';$/);
+      expect(r).toMatch(/message = public\.perm_fail\(|message = 'preview'|using errcode = 'PM00[12]'/);
       expect(r).not.toMatch(/v_review|v_hash|p_review_hash|v_rows|p_changes/);
     }
+  });
+
+  it("every raise in the file is a coded refusal (errcode), never a bare P0001 that escapes the caller's handler", () => {
+    for (const m of UP.matchAll(/raise exception[^;]*;/g)) expect(m[0], m[0]).toMatch(/using errcode = 'PM00[12]'/);
   });
 
   it("the hash input has a fixed, documented field list (Privacy H5) and a comment that additions need review", () => {
