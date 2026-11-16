@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, liveStatusLine, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, chosenScope, liveStatusLine, sameChoices, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
@@ -131,7 +131,7 @@ export function RolesEditor(props: RolesEditorProps) {
   const reviewSeq = useRef(0);
   const reviewedEdits = useRef<Partial<Record<Role, Record<string, Scope>>> | null>(null);
 
-  const dirtyRoles = ROLES.filter((r) => JSON.stringify(drafts[r].values) !== JSON.stringify(saved[r].values));
+  const dirtyRoles = ROLES.filter((r) => !sameChoices(r, drafts[r], saved[r]));
   const dirty = dirtyRoles.length > 0;
   useUnsavedChangesGuard("roles-draft", dirty);
   // Codex P2 4477378035: while a save, reset, adopt or the read-back after it is in flight, the draft must not change: the read-back replaces
@@ -198,7 +198,7 @@ export function RolesEditor(props: RolesEditorProps) {
     const edits: Partial<Record<Role, Record<string, Scope>>> = {};
     for (const r of dirtyRoles) {
       const e: Record<string, Scope> = {};
-      for (const [k, v] of Object.entries(drafts[r].values)) if (saved[r].values[k] !== v) e[k] = v;
+      for (const [k, v] of Object.entries(drafts[r].values)) if (chosenScope(r, saved[r], k) !== v) e[k] = v;
       edits[r] = e;
     }
     return edits;
@@ -1256,8 +1256,8 @@ function ReviewPanel({
       ))}
       {data && choices.length > 0 && (
         <div data-testid="review-saved-choices" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
-          <h4 className="font-medium">Saved choices (not in force yet)</h4>
-          <p className="text-xs text-neutral-600 dark:text-neutral-400">These are stored with your settings. They do not change anyone&rsquo;s access until they are released and you activate them.</p>
+          <h4 className="font-medium">Saved choices</h4>
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">These are stored with your settings. Nothing is released yet, so none of them changes anyone&rsquo;s access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.</p>
           <ul className="mt-1 list-disc pl-5">
             {choices.map((c) => (
               <li key={`${c.role}:${c.key}`} data-saved-choice={`${c.role}:${c.key}`} className="break-words">
