@@ -45,7 +45,7 @@ function post(fields: Record<string, string>, headers: Record<string, string> = 
   return POST(new Request(`${ORIGIN}/records/print/open`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", host: "hone.test", ...headers } }));
 }
 const location = (r: Response) => r.headers.get("location") ?? "";
-const ticketOf = (r: Response) => new URL(location(r)).pathname.split("/").pop()!;
+const ticketOf = (r: Response) => new URL(location(r), ORIGIN).pathname.split("/").pop()!;
 const everything = (r: Response) => JSON.stringify([...r.headers.entries()]);
 const ID_PATTERNS = [CLIENT, CLIENT.replace(/-/g, ""), DAY, DAY.replace(/-/g, ""), "clientId", "day="];
 
@@ -61,9 +61,9 @@ describe("the POST mints a ticket and redirects with no identifier in the Locati
   it("answers 303 to /records/print/ticket/<opaque>, and neither Location nor any header holds the client id or the day", async () => {
     const r = await post({ clientId: CLIENT, day: DAY });
     expect(r.status).toBe(303);
-    expect(location(r)).toMatch(/^https:\/\/hone\.test\/records\/print\/ticket\/[A-Za-z0-9_-]{127}$/);
-    expect(new URL(location(r)).search).toBe("");
-    expect(new URL(location(r)).hash).toBe("");
+    expect(location(r)).toMatch(/^\/records\/print\/ticket\/[A-Za-z0-9_-]{127}$/);
+    expect(new URL(location(r), ORIGIN).search).toBe("");
+    expect(new URL(location(r), ORIGIN).hash).toBe("");
     for (const needle of ID_PATTERNS) expect(everything(r), needle).not.toContain(needle);
     expect(location(r)).not.toContain(OWNER);
     expect(location(r)).not.toContain(STUDIO);
@@ -101,6 +101,45 @@ describe("the 303 itself carries no-referrer, so the redirected GET sends no Ref
   });
 });
 
+describe("the Location is relative, so it never depends on request.url's host", () => {
+  it("a minted 303 and a refusal 303 are plain paths", async () => {
+    const ok = await post({ clientId: CLIENT, day: DAY });
+    expect(location(ok)).toMatch(/^\/records\/print\/ticket\/[A-Za-z0-9_-]{127}$/);
+    const no = await post({ clientId: CLIENT, day: DAY }, { origin: "https://evil.test" });
+    expect(location(no)).toBe("/records");
+  });
+  it("the same Location comes back whatever host request.url carries (a proxy's internal host)", async () => {
+    for (const url of ["https://hone.test", "http://localhost:3000", "http://app.internal.test:8080"]) {
+      const body = new URLSearchParams({ clientId: CLIENT, day: DAY });
+      const r = await POST(new Request(`${url}/records/print/open`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", host: "hone.test", origin: ORIGIN } }));
+      expect(location(r), url).toMatch(/^\/records\/print\/ticket\/[A-Za-z0-9_-]{127}$/);
+      const bad = await POST(new Request(`${url}/records/print/open`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", host: "hone.test", origin: "https://evil.test" } }));
+      expect(location(bad), url).toBe("/records");
+    }
+  });
+});
+
+describe("the registry entry for the open route is exact, and analytics dropping it is intended", () => {
+  it("the header pattern matches the route and its suffixes, not a sibling path such as /records/print/opener", async () => {
+    const { pathToRegexp } = await import("next/dist/compiled/path-to-regexp");
+    const re = pathToRegexp("/records/print/open/:token*");
+    expect(re.test("/records/print/open")).toBe(true);
+    expect(re.test("/records/print/open/x")).toBe(true);
+    for (const sibling of ["/records/print/opener", "/records/print/opened/x", "/records/print/open-all", "/records/print/day"]) {
+      expect(re.test(sibling), sibling).toBe(false);
+    }
+  });
+  it("the telemetry scrubber's matcher also leaves a sibling alone", async () => {
+    const { canonicalizeTokenPaths } = await import("@/lib/security/token-routes");
+    expect(canonicalizeTokenPaths("GET /records/print/opener/abc")).toBe("GET /records/print/opener/abc");
+    expect(canonicalizeTokenPaths("POST /records/print/open/abc")).not.toContain("abc");
+  });
+  it("analytics drops an event for the open route (intended: its path is the minting step) and keeps a sibling's", () => {
+    expect(redactVercelEvent({ url: `${ORIGIN}/records/print/open` })).toBeNull();
+    expect(redactVercelEvent({ url: `${ORIGIN}/records/print/opener` })).not.toBeNull();
+  });
+});
+
 describe("older browsers without Sec-Fetch-Site (older Safari): the same-host Origin decides", () => {
   it("a real same-host Origin is accepted: the form has no rel=noreferrer, so Safari sends its real Origin", async () => {
     const r = await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN });
@@ -110,7 +149,7 @@ describe("older browsers without Sec-Fetch-Site (older Safari): the same-host Or
   it("'Origin: null', another host, a look-alike host and a different port are refused", async () => {
     for (const origin of ["null", "https://evil.test", "https://hone.test.evil.test", "https://hone.test:8443", "http://evil.test@hone.test", ""]) {
       const r = await post({ clientId: CLIENT, day: DAY }, { origin });
-      expect(new URL(location(r)).pathname, origin).toBe("/records");
+      expect(new URL(location(r), ORIGIN).pathname, origin).toBe("/records");
     }
   });
 });
@@ -146,8 +185,8 @@ describe("the body is read only after identity and the owner gate (a stranger's 
 describe("the POST refuses without minting, and never says why", () => {
   const refused = async (r: Response) => {
     expect(r.status).toBe(303);
-    expect(new URL(location(r)).pathname).toBe("/records"); // the same place for every refusal
-    expect(new URL(location(r)).search).toBe("");
+    expect(new URL(location(r), ORIGIN).pathname).toBe("/records"); // the same place for every refusal
+    expect(new URL(location(r), ORIGIN).search).toBe("");
     for (const needle of ID_PATTERNS) expect(everything(r), needle).not.toContain(needle);
   };
   it("a non-owner, an inactive owner", async () => {

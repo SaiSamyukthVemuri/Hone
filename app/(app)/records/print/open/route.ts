@@ -25,8 +25,10 @@ const HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
 } as const;
 
-function back(request: Request): NextResponse {
-  return new NextResponse(null, { status: 303, headers: { ...HEADERS, Location: new URL("/records", request.url).toString() } });
+// The Location is RELATIVE on purpose: request.url's host is not reliable behind a proxy (under next start it can be the
+// server's own listen host), and a relative Location is resolved by the browser against the host it actually used.
+function back(_request: Request): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { ...HEADERS, Location: "/records" } });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -62,6 +64,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!minted.ok) return back(request);
   return new NextResponse(null, {
     status: 303,
-    headers: { ...HEADERS, Location: new URL(`/records/print/ticket/${minted.ticket}`, request.url).toString() },
+    headers: { ...HEADERS, Location: `/records/print/ticket/${minted.ticket}` },
   });
 }
