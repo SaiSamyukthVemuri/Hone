@@ -109,11 +109,16 @@ describe("0356 source contract", () => {
     }
   });
 
+  it("the file says what a refused save leaves behind (the default policy row) and names no review id", () => {
+    expect(UP).toContain("WHAT A REFUSAL LEAVES BEHIND");
+    expect(UP).not.toMatch(/Codex|final\d+|\b45\d{8}\b/);
+  });
+
   it("every raise in the file is a coded refusal (errcode), never a bare P0001 that escapes the caller's handler", () => {
     for (const m of UP.matchAll(/raise exception[^;]*;/g)) expect(m[0], m[0]).toMatch(/using errcode = 'PM00[12]'/);
   });
 
-  it("the hash input has a fixed, documented field list (Privacy H5) and a comment that additions need review", () => {
+  it("the hash input has a fixed, documented field list and a comment that additions need review", () => {
     expect(UP).toContain("PRIVACY: this is the covered field list; adding a name, a reason or any free text needs review.");
     expect(UP).toContain("Fields: v, studio, version, basis, basis_at, review, sensitive_keys, reason_required, releases, activations, catalog, gates.");
   });

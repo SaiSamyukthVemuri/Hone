@@ -353,7 +353,7 @@ describe("RAISE saved AFTER a full release: is it in force at once, or does it w
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
-// Insurance/Privacy evidence: the engine's own answers for each release state, immediately and after activation. One line per case.
+// Evidence: the engine's own answers for each release state, immediately and after activation. One line per case.
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 describe("engine evidence: when does a saved choice take effect? (perm_base_scope, 0287 lines 356-404 and the upsert's set_at)", () => {
   const RAISE = { role: "receptionist", key: "appt.book" }; // snapshot off, scope studio is a raise
@@ -569,7 +569,7 @@ describe("a state the timing function has no honest word for is a clean refusal 
   });
 });
 
-describe("Codex 4585180160: a studio with NO policy row yet can complete its first reviewed save", () => {
+describe("a studio with NO policy row yet can complete its first reviewed save", () => {
   it("preview in one transaction, save in another (the real flow): the save succeeds, and the hash is the same across the two", async () => {
     const st = await seedStudio("review-authority-norow");
     await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]); // a studio created before 0287's seed trigger
@@ -606,6 +606,20 @@ describe("Codex 4585180160: a studio with NO policy row yet can complete its fir
       });
       expect((await adm(q, `select basis from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0].basis).toBe("existing_snapshot");
     });
+  });
+
+  it("a REFUSED first save writes only the default policy row: no role rows, no audit row, version 0", async () => {
+    const st = await seedStudio("review-authority-norow-refused");
+    await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]);
+    await adminTx(async (q) => {
+      await asOwner(q as Q, st.userId, async () => {
+        const r = await call(q as Q, "save_role_permissions_reviewed", [st.studioId, 0, { practitioner: { "appt.cancel": "own" } }, null, false, "0".repeat(64)]);
+        expect(r).toMatchObject({ ok: false, code: "review_changed" });
+      });
+    });
+    expect((await adminQuery(`select basis, version from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows).toEqual([{ basis: "existing_snapshot", version: "0" }]);
+    expect(Number((await adminQuery(`select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+    expect(Number((await adminQuery(`select count(*) n from public.permission_audit where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
   });
 
   it("two previews of the same request in different transactions give the same hash (no now()-derived value is in the input)", async () => {
