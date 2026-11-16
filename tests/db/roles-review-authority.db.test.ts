@@ -601,6 +601,160 @@ describe("G2: a release cannot commit while a save holds the share locks", () =>
   });
 });
 
+describe("F1: a matching hash bypasses neither the reason nor the sensitive confirmation", () => {
+  it("a sensitive raise saved after a full release is refused without confirmation, then without a reason, and accepted with both", async () => {
+    const st = await seedStudio("review-authority-sens");
+    const cands = (await adminQuery(
+      `select key, scopes, snapshot_practitioner s from public.permission_catalog where sensitive and owner_configurable and offered_practitioner and snapshot_practitioner <> 'studio' order by key`,
+    )).rows as { key: string; scopes: string[]; s: string }[];
+    expect(cands.length, "a sensitive practitioner key whose snapshot is below its maximum").toBeGreaterThan(0);
+    let exercised = 0;
+    for (const c of cands) {
+      const up = c.scopes.filter((x) => rank(x) > rank(c.s)).sort((a, b) => rank(b) - rank(a))[0];
+      if (!up) continue;
+      await inTx(async (q) => {
+        await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
+        await q(`select public.mark_permissions_released(array[$1::text], 'T-sens', 'full')`, [c.key]);
+        await asOwner(q, st.userId, async () => {
+          const v = await version(q, st.studioId);
+          const ch = { practitioner: { [c.key]: up } };
+          const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+          if (!p.ok || !(p.sensitive_keys as string[]).includes(c.key)) return; // a prerequisite caps it: not a sensitive rise for this key
+          exercised += 1;
+          expect(p.reason_required).toBe(true);
+          const save = async (reason: string | null, confirmed: boolean) => {
+            await q("savepoint s1");
+            const r = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, reason, confirmed, p.review_hash]);
+            await q("rollback to savepoint s1");
+            return r;
+          };
+          expect((await save("because the studio asked for it", false)).code).toBe("sensitive_unconfirmed");
+          expect((await save(null, true)).code).toBe("reason_required");
+          expect((await save("n/a", true)).code).toBe("reason_required");
+          expect((await save("because the studio asked for it", true)).ok).toBe(true);
+        });
+      });
+    }
+    expect(exercised, "at least one sensitive key was a real sensitive rise").toBeGreaterThan(0);
+  });
+});
+
+describe("F2: lock behaviour of release against reviewed saves", () => {
+  const holdSave = async (studio: SeededStudio, ch: Record<string, unknown>) => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held!: () => void;
+    const holding = new Promise<void>((r) => (held = r));
+    const done = adminTx(async (q) => {
+      await asOwner(q as Q, studio.userId, async () => {
+        const v = await version(q as Q, studio.studioId);
+        const p = await call(q as Q, "preview_role_changes_at", [studio.studioId, ch, v]);
+        expect((await call(q as Q, "save_role_permissions_reviewed", [studio.studioId, v, ch, null, false, p.review_hash])).ok).toBe(true);
+      });
+      held();
+      await gate;
+      throw new Rollback();
+    }).catch((e) => {
+      if (!(e instanceof Rollback)) throw e;
+    });
+    await holding;
+    return { release, done };
+  };
+
+  it("a multi-key release that cannot take its lock fails whole (55P03, retryable): neither key is left released", async () => {
+    const st = await seedStudio("review-authority-f2a");
+    const h = await holdSave(st, { practitioner: { "appt.cancel": "off" } });
+    let code: string | undefined;
+    try {
+      await adminTx(async (q) => {
+        await q("set local lock_timeout = '400ms'");
+        await q(`select public.mark_permissions_released(array['appt.book', 'appt.cancel'], 'T-f2', 'full')`);
+      });
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    h.release();
+    await h.done;
+    expect(code).toBe("55P03"); // lock_not_available: the operator's retry signal
+    const rows = (await adminQuery(`select key, released_at from public.permission_key_release where key in ('appt.book', 'appt.cancel')`)).rows as { released_at: unknown }[];
+    expect(rows.map((r) => r.released_at)).toEqual([null, null]);
+  });
+
+  it("two reviewed saves in different studios do not block each other (FOR SHARE on release rows only)", async () => {
+    const a = await seedStudio("review-authority-f2b");
+    const b = await seedStudio("review-authority-f2c");
+    const h = await holdSave(a, { practitioner: { "appt.cancel": "off" } });
+    let ok = false;
+    try {
+      await adminTx(async (q) => {
+        await q("set local lock_timeout = '1500ms'");
+        await asOwner(q as Q, b.userId, async () => {
+          const v = await version(q as Q, b.studioId);
+          const ch = { practitioner: { "appt.cancel": "off" } };
+          const p = await call(q as Q, "preview_role_changes_at", [b.studioId, ch, v]);
+          ok = ((await call(q as Q, "save_role_permissions_reviewed", [b.studioId, v, ch, null, false, p.review_hash])) as Result).ok === true;
+        });
+        throw new Rollback();
+      });
+    } catch (e) {
+      if (!(e instanceof Rollback)) throw e;
+    }
+    h.release();
+    await h.done;
+    expect(ok).toBe(true);
+  });
+});
+
+describe("F3/F4: a change to the release or the catalog between preview and save is refused (review_changed)", () => {
+  it("F3: a catalog change between preview and save", async () => {
+    const st = await seedStudio("review-authority-f3");
+    await inTx(async (q) => {
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const ch = { practitioner: { "appt.cancel": "own" } };
+        const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+        await adm(q, `update public.permission_catalog set snapshot_receptionist = 'studio' where key = 'appt.cancel'`);
+        expect(await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash])).toMatchObject({ ok: false, code: "review_changed" });
+        await adm(q, `update public.permission_catalog set sensitive = not sensitive where key = 'appt.cancel'`);
+        expect(await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash])).toMatchObject({ ok: false, code: "review_changed" });
+      });
+    });
+  });
+
+  it("F4: two transactions: the preview commits first, a release COMMITS after it, and Save refuses on timing alone", async () => {
+    const st = await seedStudio("review-authority-f4");
+    const key = "appt.mark_no_show";
+    const before = (await adminQuery(`select released_at, release_tag, release_kind from public.permission_key_release where key = $1`, [key])).rows[0] as { released_at: Date | null; release_tag: string; release_kind: string };
+    expect(before.released_at, "a clean stack: the key starts unreleased").toBeNull();
+    const ch = { practitioner: { [key]: "own" } };
+    let hash = "";
+    let v = 0;
+    await adminTx(async (q) => {
+      await asOwner(q as Q, st.userId, async () => {
+        v = await version(q as Q, st.studioId);
+        const p = await call(q as Q, "preview_role_changes_at", [st.studioId, ch, v]);
+        expect(p.ok, JSON.stringify(p)).toBe(true);
+        hash = p.review_hash!;
+      });
+    });
+    try {
+      await adminQuery(`select public.mark_permissions_released(array[$1::text], 'T-f4', 'full')`, [key]); // its own committed transaction, strictly later than the preview
+      const after = await adminTx(async (q) => {
+        let r!: Result;
+        await asOwner(q as Q, st.userId, async () => {
+          r = await call(q as Q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, hash]);
+        });
+        return r;
+      });
+      expect(after).toMatchObject({ ok: false, code: "review_changed" });
+      expect(Number((await adminQuery(`select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+    } finally {
+      await adminQuery(`update public.permission_key_release set released_at = null, release_tag = $2, release_kind = $3 where key = $1`, [key, before.release_tag, before.release_kind]);
+    }
+    expect((await adminQuery(`select released_at from public.permission_key_release where key = $1`, [key])).rows[0].released_at).toBeNull();
+  });
+});
+
 describe("audit: a reviewed save records its review version and hash inside `after`, and nothing else is added", () => {
   it("reviewed save: after carries _review {version, hash}; the old save carries no _review", async () => {
     const st = await seedStudio("review-authority-audit");

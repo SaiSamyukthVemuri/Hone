@@ -25,9 +25,9 @@ const ALLOWED_RPCS = [
   "preview_activation",
   "preview_adopt_new_defaults",
   "preview_reset",
-  "preview_role_changes",
+  "preview_role_changes_at", // 0356: the reviewed pair replaces preview_role_changes and save_role_permissions
   "reset_role_to_defaults",
-  "save_role_permissions",
+  "save_role_permissions_reviewed",
 ] as const;
 
 const walk = (dir: string, out: string[] = []): string[] => {

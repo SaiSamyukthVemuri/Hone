@@ -1,3 +1,4 @@
+import type { ReviewTiming } from "./api";
 import { isInertUntilReleased, shownEffectiveScope, type PolicyWithServer } from "./server-effective";
 import { COMMON_KEYS, consequenceOf, SECTIONS, sectionOfKey, type Consequence, type SectionId } from "./sections";
 import {
@@ -59,13 +60,23 @@ export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
 // Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet. On THIS branch the app does not read them
-// either (lib/permissions/require-permission.ts and its callers are not here; tests/security/roles-page-only-boundary.test.ts pins that), so the
-// line must not say the app is wired to anything. Say only what is true: nothing reads these settings, nothing is released yet, and the
-// release rule of the permission core (0287): once a setting is released, a choice that LOWERS access applies at once, and one that RAISES
-// access waits for the owner's activation. Saying that every saved choice waits for a release and an activation was false for a lowering. If enforcement ships in the app, this wording changes in that same change (a source test fails until it does).
-export const RELEASE_RULE_SENTENCE = "After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.";
-export const ENFORCEMENT_SCOPE_LINE =
-  "These settings are not in force yet. The app does not read them yet, and the database does not check them. Nothing is released yet, so none of them changes anyone's access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.";
+// either, so the line says only what is true. WHEN a saved choice takes effect is not stated here: it depends on the key's release and on what
+// was stored when, so the database says it for every choice (the review's `timing`, 0356) and the page prints that and nothing else. A source test
+// refuses any static timing prose outside TIMING_TEXT and notActiveYetKeeps.
+export const EACH_CHOICE_LINE = "Each saved choice below says when it takes effect.";
+export const ENFORCEMENT_SCOPE_LINE = `These settings are not in force yet. The app does not read them yet, and the database does not check them. ${EACH_CHOICE_LINE}`;
+
+/** The ONE place the page words when a choice takes effect. Keys are the database's `timing` values; nothing else may state timing. */
+export const TIMING_TEXT: Record<ReviewTiming, string> = {
+  in_force_now: "In force now.",
+  applies_on_save: "Takes effect as soon as you save it.",
+  at_release: "Takes effect as soon as this setting is released.",
+  waits_for_activation: "Waits for you to activate it. Saving it again takes effect at once.",
+  waits_for_full_release: "Waits for a later full release. Activating does not change that.",
+  not_released: "Saved. This setting is not released yet, so it changes nothing today.",
+  no_change: "Nothing to save for this one.",
+  capped: "Not fully in force: another setting it needs is limiting it.",
+};
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
   const v = catalogEnforcementOf(key);
@@ -124,7 +135,7 @@ export const liveStatusLine = (st: LiveStatus, text: (s: Scope) => string): stri
     ? `Saved: ${text(st.saved)}. ${LIVE_UNKNOWN_LINE}`
     : st.state === "live"
       ? `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}.`
-      : `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}. The saved setting is not in force yet. Once it is released, a choice that lowers access applies at once, and one that raises access waits for your activation.`;
+      : `Saved: ${text(st.saved)}. In force now: ${text(st.inForce as Scope)}. The saved setting is not in force yet.`;
 
 export type RoleGroupModel = { group: string; label: string; rows: RoleRow[] };
 
@@ -139,7 +150,7 @@ const baselineScope = (d: PermissionDef, role: Role, policy: StudioPolicy): Scop
 // NQ-10 (platform operator, 3 Nov): a saved choice whose prerequisite is off is PRESERVED but INACTIVE. It is never deleted, and turning it on never
 // turns the prerequisite on for the owner: the row says what it needs and the owner decides.
 // The core says this saved choice is not in force: its key is not released yet, or the release has not been activated by the owner.
-export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet. A choice that raises access takes effect when this setting is released and you activate it.";
+export const NOT_ACTIVE_YET_LINE = "Saved, but not in force yet.";
 
 // The OPPOSITE case (Codex P1 on 30555b1d0): an owner's saved or drafted choice is LOWER than what the core keeps in force, because the key is
 // not released yet (or released and not activated). Without this line the page shows Off while practitioners still have the access.
