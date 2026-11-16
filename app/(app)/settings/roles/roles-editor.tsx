@@ -104,6 +104,9 @@ export function RolesEditor(props: RolesEditorProps) {
   const [previewConfirmed, setPreviewConfirmed] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [reviewData, setReviewData] = useState<ServerPreview | null>(null);
+  // The stored choices this review would save, taken from the very edits that were previewed. The server's diff covers effective access only,
+  // and nothing is released yet, so a choice can change here while no one's access does: the owner must still see what they are confirming.
+  const [reviewChoices, setReviewChoices] = useState<StoredChoice[]>([]);
   const [reason, setReason] = useState("");
   const router = useRouter();
   // router.refresh() returns void, not a promise, so awaiting it would not hold anything. A transition is pending until the refreshed server
@@ -165,6 +168,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     dropPreview();
     setDrafts((d) => ({ ...d, [role]: result.policy }));
   }
@@ -185,6 +189,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     dropPreview();
     setDrafts((d) => ({ ...d, [forRole]: result.policy }));
   }
@@ -211,6 +216,7 @@ export function RolesEditor(props: RolesEditorProps) {
       // Back to the draft, every choice kept, with the Review button available again for a fresh preview.
       setReviewing(false);
       setReviewData(null);
+      setReviewChoices([]);
       setConfirmed(false);
       setPreview(null);
     }
@@ -223,13 +229,35 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(true);
     setReviewData(null);
+    setReviewChoices([]);
     setConfirmed(false);
-    const r = await props.previewSave(edits);
+    let r: Awaited<ReturnType<typeof props.previewSave>>;
+    try {
+      r = await props.previewSave(edits);
+    } catch {
+      // A rejected server action (network drop, thrown error) must not leave the panel on "checking" with Save disabled for good.
+      if (seq !== reviewSeq.current) return;
+      leaveReview();
+      feedback.failed("We could not check those changes. Your choices are kept; try Review changes again.");
+      return;
+    }
     if (seq !== reviewSeq.current) return; // the draft changed (or the review was closed) while the core was answering
     if (r.ok) {
       reviewedEdits.current = edits;
+      setReviewChoices(storedChoices(saved, edits));
       setReviewData(r.preview);
-    } else handleError(r.error);
+    } else {
+      // A refused preview (unexpected, unavailable, a per-key refusal): leave the review, KEEP the draft, say why, and let the owner try again.
+      leaveReview();
+      handleError(r.error);
+    }
+  }
+  function leaveReview() {
+    setReviewing(false);
+    setReviewData(null);
+    setReviewChoices([]);
+    setReviewChoices([]);
+    setConfirmed(false);
   }
 
   const needsReason = reviewing && reasonRequired("save", sensitiveCount > 0);
@@ -271,6 +299,7 @@ export function RolesEditor(props: RolesEditorProps) {
         }
         setReviewing(false);
         setReviewData(null);
+        setReviewChoices([]);
         setConfirmed(false);
         setReason("");
         feedback.saved();
@@ -307,6 +336,7 @@ export function RolesEditor(props: RolesEditorProps) {
     setReviewed(fresh.state.reviewed);
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     setPreview(null);
     setConfirmed(false);
     if (outcome === "landed") {
@@ -327,6 +357,7 @@ export function RolesEditor(props: RolesEditorProps) {
     setDrafts(saved);
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     setConfirmed(false);
     setReason("");
     setRowError(null);
@@ -558,6 +589,7 @@ export function RolesEditor(props: RolesEditorProps) {
           {reviewing && (
             <ReviewPanel
               data={reviewData}
+              choices={reviewChoices}
               sensitiveCount={sensitiveCount}
               confirmed={confirmed}
               onConfirmed={setConfirmed}
@@ -1223,8 +1255,21 @@ function ReasonField({ id, value, onChange, required }: { id: string; value: str
   );
 }
 
+type StoredChoice = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
+const CHOICE_LABEL = new Map<string, string>((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d.label]));
+function storedChoices(saved: Record<Role, StudioPolicy>, edits: Partial<Record<Role, Record<string, Scope>>>): StoredChoice[] {
+  const out: StoredChoice[] = [];
+  for (const r of ROLES) {
+    for (const [key, to] of Object.entries(edits[r] ?? {})) {
+      out.push({ role: r, key, label: CHOICE_LABEL.get(key) ?? key, from: saved[r].values[key] ?? null, to });
+    }
+  }
+  return out;
+}
+
 function ReviewPanel({
   data,
+  choices,
   sensitiveCount,
   confirmed,
   onConfirmed,
@@ -1233,6 +1278,7 @@ function ReviewPanel({
   onReason,
 }: {
   data: ServerPreview | null;
+  choices: StoredChoice[];
   sensitiveCount: number;
   confirmed: boolean;
   onConfirmed: (v: boolean) => void;
@@ -1251,6 +1297,19 @@ function ReviewPanel({
           <DiffList item={item} testPrefix="review" />
         </div>
       ))}
+      {data && choices.length > 0 && (
+        <div data-testid="review-saved-choices" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
+          <h4 className="font-medium">Saved choices (not in force yet)</h4>
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">These are stored with your settings. They do not change anyone&rsquo;s access until they are released and you activate them.</p>
+          <ul className="mt-1 list-disc pl-5">
+            {choices.map((c) => (
+              <li key={`${c.role}:${c.key}`} data-saved-choice={`${c.role}:${c.key}`} className="break-words">
+                {ROLE_LABELS[c.role]}s, {c.label}: {c.from ? `${scopeText(c.from)} to ${scopeText(c.to)}` : `set to ${scopeText(c.to)}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {data && sensitiveCount > 0 && (
         <label className="flex items-start gap-2 text-sm font-medium">
           <input type="checkbox" checked={confirmed} onChange={(e) => onConfirmed(e.target.checked)} className="mt-1" />
