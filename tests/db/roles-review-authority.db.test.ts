@@ -1,11 +1,18 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { adminQuery, adminTx, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0356: ONE review table, built by the database, for the exact policy version a save will check. Synthetic data. Anything that releases a key or
 // writes inside a transaction below is rolled back (releasing is operator-only and must never persist on a shared stack).
+// Releases are operator-only and must never persist on a stack: a test that commits one (the two-session and F4 cases) or a mutant that lets one through
+// is undone here, from the rows as they were before the file ran.
+let releaseRows: { key: string; released_at: unknown; release_tag: string; release_kind: string }[] = [];
+beforeAll(async () => {
+  releaseRows = (await adminQuery(`select key, released_at, release_tag, release_kind from public.permission_key_release`)).rows as typeof releaseRows;
+});
 afterAll(async () => {
+  for (const r of releaseRows) await adminQuery(`update public.permission_key_release set released_at = $2, release_tag = $3, release_kind = $4 where key = $1`, [r.key, r.released_at, r.release_tag, r.release_kind]);
   await closePool();
 });
 
