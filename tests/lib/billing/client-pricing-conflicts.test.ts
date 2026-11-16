@@ -28,21 +28,31 @@ describe("same-date price conflict notice (display only)", () => {
     expect(findBlockingPriceConflicts([row("Laser", "2026-12-01", 0), row("Laser", "2026-12-01", 9000)], T)).toEqual([]);
   });
 
-  it("agrees with the resolver: reported exactly when the resolver refuses the price as ambiguous", () => {
-    // Positive prices only: production's resolver (before #1483) ignores $0 rows, so a $0 pair is covered by the next test.
-    const cases = [
-      [row("Laser", T, 4000), row("laser ", T, 12000)],
-      [row("Laser", T, 4000), row("Laser", "2026-11-01", 12000)],
-      [row("Laser", T, 5000), row("Laser", T, 5000)],
+  it("DEPENDENCY GUARD: for every case below, the helper reports a conflict exactly when the resolver this tree ships refuses the price as ambiguous", () => {
+    // This is what makes the merge-after-#1483 dependency mechanical. #1483 makes an explicit $0 client price a real price; before
+    // it, the resolver ignores $0 rows. If this tree's resolver and this helper disagree on ANY case, the notice would tell an owner
+    // something the payment path does not do (or stay silent about a block that exists), so this test fails and #1499 cannot be
+    // merged until the resolver (#1483) is in its base. Do not weaken it by removing the $0 cases.
+    const cases: [string, ReturnType<typeof row>[]][] = [
+      ["$0 + positive, same date", [row("Laser", T, 0), row("Laser", T, 12000)]],
+      ["two $0, same date", [row("Laser", T, 0), row("Laser", T, 0)]],
+      ["$0 today, positive older", [row("Laser", T, 0), row("Laser", "2026-11-01", 12000)]],
+      ["positive today, $0 older", [row("Laser", T, 12000), row("Laser", "2026-11-01", 0)]],
+      ["two different positives, same date, name case/space differs", [row("Laser", T, 4000), row("laser ", T, 12000)]],
+      ["two equal positives, same date", [row("Laser", T, 5000), row("Laser", T, 5000)]],
+      ["superseded older tie", [row("Laser", "2026-10-01", 0), row("Laser", "2026-10-01", 9000), row("Laser", T, 7000)]],
+      ["future tie", [row("Laser", "2026-12-01", 0), row("Laser", "2026-12-01", 9000), row("Laser", T, 7000)]],
+      ["other service tie", [row("Facial", T, 0), row("Facial", T, 9000), row("Laser", T, 7000)]],
     ];
-    for (const rows of cases) {
+    for (const [label, rows] of cases) {
       const r = resolveAuthoritativeSessionPaymentAmount({
-        service: { name: "Laser", price_cents: 15000, duration_minutes: 30 } as never,
+        service: { name: "Laser", price_cents: 15000 },
         appointmentDurationMinutes: 30,
-        customPricing: rows.map((x) => ({ ...x, id: "x", notes: null })) as never,
+        customPricing: rows.map((x) => ({ ...x, notes: null })),
         today: T,
-      } as never);
-      expect(findBlockingPriceConflicts(rows, T).length > 0).toBe(r.kind === "ambiguous_custom_pricing");
+      });
+      const reported = findBlockingPriceConflicts(rows, T).some((c) => c.serviceName.trim().toLowerCase() === "laser");
+      expect({ label, reported }).toEqual({ label, reported: r.kind === "ambiguous_custom_pricing" });
     }
   });
 
