@@ -34,7 +34,9 @@
 begin;
 set local lock_timeout = '5s';
 
--- The keys a review involves: the requested keys and everything they require, transitively.
+-- The keys a review involves, in BOTH directions: the requested keys, every key that (transitively) requires one of them (a dependent is capped by what it
+-- requires, so a change to a requested key can move its effective value), and everything any of those require (what caps them). A release or an activation
+-- of any of these keys can change what the save does, so all of them are hashed and share-locked.
 create or replace function public.perm_review_involved(p_keys text[])
 returns text[]
 language sql
@@ -42,12 +44,16 @@ stable
 security definer
 set search_path = ''
 as $$
-  with recursive k(key) as (
+  with recursive dependents(key) as (
     select unnest(p_keys)
     union
-    select unnest(c.requires) from public.permission_catalog c join k on c.key = k.key
+    select c.key from public.permission_catalog c join dependents d on d.key = any (c.requires)
+  ), involved(key) as (
+    select key from dependents
+    union
+    select unnest(c.requires) from public.permission_catalog c join involved i on c.key = i.key
   )
-  select coalesce(array_agg(distinct key order by key), '{}'::text[]) from k
+  select coalesce(array_agg(distinct key order by key), '{}'::text[]) from involved
 $$;
 
 -- When a saved choice takes effect, from facts only: whether the key is released, its release kind, the snapshot, what was asked, what was in force before
@@ -87,8 +93,8 @@ end
 $$;
 
 -- The exact, fixed input of the review hash. PRIVACY: this is the covered field list; adding a name, a reason or any free text needs review.
--- Fields: v, studio, version, basis, basis_at, review, sensitive_keys, reason_required, releases, activations, catalog, gates.
-create or replace function public.perm_review_hash_input(p_studio uuid, p_version bigint, p_review jsonb, p_sens jsonb, p_widen boolean)
+-- Fields: v, studio, version, basis, basis_at, review, changes, sensitive_keys, reason_required, releases, activations, catalog, gates.
+create or replace function public.perm_review_hash_input(p_studio uuid, p_version bigint, p_review jsonb, p_sens jsonb, p_widen boolean, p_changes jsonb)
 returns jsonb
 language sql
 stable
@@ -109,6 +115,11 @@ as $$
     'basis_at', (select case when spp.basis = 'new_studio' then to_char(spp.basis_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') end
                    from public.studio_permission_policy spp where spp.studio_id = p_studio),
     'review', p_review,
+    -- the COMPLETE effective diff the preview reports, as role, key, before, after only (never the catalog's consequence text), ordered by role then key:
+    -- a dependent key that moves because a requested key moved is part of what the owner approved, whether or not the review table lists it
+    'changes', (select coalesce(jsonb_agg(jsonb_build_object('role', r.role, 'key', d.value ->> 'key', 'before', d.value ->> 'before', 'after', d.value ->> 'after')
+                                           order by r.role, d.value ->> 'key'), '[]'::jsonb)
+                  from jsonb_each(coalesce(p_changes, '{}'::jsonb)) r(role, v), jsonb_array_elements(r.v) d(value)),
     'sensitive_keys', (select coalesce(jsonb_agg(x order by x), '[]'::jsonb) from jsonb_array_elements_text(p_sens) x),
     'reason_required', p_widen,
     'releases', (select coalesce(jsonb_agg(jsonb_build_object(
@@ -136,14 +147,14 @@ as $$
   )
 $$;
 
-create or replace function public.perm_review_hash(p_studio uuid, p_version bigint, p_review jsonb, p_sens jsonb, p_widen boolean)
+create or replace function public.perm_review_hash(p_studio uuid, p_version bigint, p_review jsonb, p_sens jsonb, p_widen boolean, p_changes jsonb)
 returns text
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select encode(sha256(convert_to(public.perm_review_hash_input(p_studio, p_version, p_review, p_sens, p_widen)::text, 'UTF8')), 'hex')
+  select encode(sha256(convert_to(public.perm_review_hash_input(p_studio, p_version, p_review, p_sens, p_widen, p_changes)::text, 'UTF8')), 'hex')
 $$;
 
 -- INTERNAL. The 0355 body of perm_run_changes with one more parameter; the declared differences are listed in the header.
@@ -326,7 +337,7 @@ begin
       into v_review
       from jsonb_array_elements(v_rows) r(value)
       left join public.permission_key_release rel on rel.key = r.value ->> 'key';
-    v_hash := public.perm_review_hash(p_studio, v_version, v_review, v_sens, v_widen);
+    v_hash := public.perm_review_hash(p_studio, v_version, v_review, v_sens, v_widen, v_changes);
     if p_commit and p_review_hash is not null and p_review_hash <> v_hash then
       raise exception using errcode = 'PM001', message = public.perm_fail('review_changed', null, null, v_version)::text;
     end if;
@@ -445,8 +456,8 @@ $$;
 
 revoke all on function public.perm_review_involved(text[]) from public, anon, authenticated, service_role;
 revoke all on function public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean) from public, anon, authenticated, service_role;
-revoke all on function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean) from public, anon, authenticated, service_role;
-revoke all on function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean) from public, anon, authenticated, service_role;
+revoke all on function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean, jsonb) from public, anon, authenticated, service_role;
+revoke all on function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text) from public, anon, authenticated, service_role;
 revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.preview_role_changes_at(uuid, jsonb, bigint) from public, anon, authenticated, service_role;

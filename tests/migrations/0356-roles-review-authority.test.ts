@@ -24,8 +24,8 @@ const headOf = (sql: string, name: string) => {
 const NEW_FUNCTIONS: [string, string][] = [
   ["perm_review_involved", "text[]"],
   ["perm_review_timing", "boolean, text, text, text, text, text, boolean, boolean"],
-  ["perm_review_hash_input", "uuid, bigint, jsonb, jsonb, boolean"],
-  ["perm_review_hash", "uuid, bigint, jsonb, jsonb, boolean"],
+  ["perm_review_hash_input", "uuid, bigint, jsonb, jsonb, boolean, jsonb"],
+  ["perm_review_hash", "uuid, bigint, jsonb, jsonb, boolean, jsonb"],
   ["perm_run_changes_reviewed", "uuid, jsonb, text, boolean, bigint, boolean, boolean, text"],
   ["preview_role_changes_at", "uuid, jsonb, bigint"],
   ["save_role_permissions_reviewed", "uuid, bigint, jsonb, text, boolean, text"],
@@ -118,8 +118,17 @@ describe("0356 source contract", () => {
     for (const m of UP.matchAll(/raise exception[^;]*;/g)) expect(m[0], m[0]).toMatch(/using errcode = 'PM00[12]'/);
   });
 
+  it("the involved keys run in BOTH directions (dependents and what caps them) and the hash covers the complete effective diff", () => {
+    const fn = UP.slice(UP.indexOf("create or replace function public.perm_review_involved("), UP.indexOf("-- When a saved choice takes effect"));
+    expect(fn).toContain("join dependents d on d.key = any (c.requires)"); // keys that require a requested key, transitively
+    expect(fn).toContain("select unnest(c.requires) from public.permission_catalog c join involved i on c.key = i.key"); // and what any of them require
+    expect(UP).toMatch(/v_hash := public\.perm_review_hash\(p_studio, v_version, v_review, v_sens, v_widen, v_changes\);/);
+    expect(UP).toContain("'changes', (select coalesce(jsonb_agg(jsonb_build_object('role', r.role, 'key', d.value ->> 'key', 'before', d.value ->> 'before', 'after', d.value ->> 'after')");
+    expect(UP).not.toMatch(/'changes'[^;]*consequence/); // never the catalog's free text
+  });
+
   it("the hash input has a fixed, documented field list and a comment that additions need review", () => {
     expect(UP).toContain("PRIVACY: this is the covered field list; adding a name, a reason or any free text needs review.");
-    expect(UP).toContain("Fields: v, studio, version, basis, basis_at, review, sensitive_keys, reason_required, releases, activations, catalog, gates.");
+    expect(UP).toContain("Fields: v, studio, version, basis, basis_at, review, changes, sensitive_keys, reason_required, releases, activations, catalog, gates.");
   });
 });

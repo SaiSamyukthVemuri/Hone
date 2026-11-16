@@ -203,8 +203,8 @@ revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigin
 drop function public.save_role_permissions_reviewed(uuid, bigint, jsonb, text, boolean, text);
 drop function public.preview_role_changes_at(uuid, jsonb, bigint);
 drop function public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text);
-drop function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean);
-drop function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean);
+drop function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean, jsonb);
+drop function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean, jsonb);
 drop function public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean);
 drop function public.perm_review_involved(text[]);
 

@@ -653,7 +653,7 @@ describe("a studio with NO policy row yet can complete its first reviewed save",
   it("on the new_studio basis a changed basis_at DOES change the hash (it is engine state there); on existing_snapshot it does not", async () => {
     const st = await seedStudio("review-authority-basisat");
     const review = [{ role: "practitioner", key: "appt.cancel", requested: "off" }];
-    const h = async (q: Q) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h as string;
+    const h = async (q: Q) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h as string;
     await inTx(async (q) => {
       await q(`update public.studio_permission_policy set basis = 'new_studio', basis_at = now() where studio_id = $1`, [st.studioId]);
       const a = await h(q);
@@ -950,6 +950,134 @@ describe("F3/F4: a change to the release or the catalog between preview and save
   });
 });
 
+describe("dependents: a change to a key moves every key that requires it, and the review covers them (a requested key's DEPENDENTS and what caps them)", () => {
+  const VIEW = "clin.view_records";
+  const EDIT = "clin.edit_records";
+  type Cat = { key: string; requires: string[] };
+  const closure = (cat: Cat[], requested: string[]) => {
+    const up = new Set(requested);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const c of cat) if (!up.has(c.key) && c.requires.some((r) => up.has(r))) (up.add(c.key), (grew = true));
+    }
+    const all = new Set(up);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const c of cat) if (all.has(c.key)) for (const r of c.requires) if (!all.has(r)) (all.add(r), (grew = true));
+    }
+    return [...all].sort();
+  };
+
+  it("the involved set is every requested key, everything that requires one (transitively) and everything any of those require, derived here from the catalog", async () => {
+    const cat = (await adminQuery(`select key, requires from public.permission_catalog`)).rows as Cat[];
+    for (const requested of [[VIEW], [EDIT], ["appt.view_calendar"], [VIEW, "appt.cancel"], []]) {
+      const got = (await adminQuery(`select public.perm_review_involved($1::text[]) as k`, [requested])).rows[0].k as string[];
+      expect(got, requested.join(",")).toEqual(closure(cat, requested));
+    }
+    const forView = (await adminQuery(`select public.perm_review_involved(array[$1]::text[]) as k`, [VIEW])).rows[0].k as string[];
+    expect(forView).toContain(EDIT); // the dependent
+    expect(forView).toContain("appt.view_calendar"); // what the requested key itself requires
+  });
+
+  it("Codex 4585456242: preview View clinical records off (the review shows the dependent falling too), release the dependent, Save is refused (review_changed) and writes nothing", async () => {
+    const st = await seedStudio("review-authority-dependent");
+    await inTx(async (q) => {
+      await adm(q, `insert into public.studio_role_permissions (studio_id, role, key, scope) values ($1, 'practitioner', $2, 'off')`, [st.studioId, EDIT]);
+      const rel = (await adm(q, `select key, released_at from public.permission_key_release where key = any($1)`, [[VIEW, EDIT]])).rows as { key: string; released_at: unknown }[];
+      expect(rel.find((r) => r.key === EDIT)?.released_at, "precondition: the dependent starts unreleased").toBeNull();
+      if (rel.find((r) => r.key === VIEW)?.released_at === null) await adm(q, `select public.mark_permissions_released(array[$1::text], 'T-dep-view', 'full')`, [VIEW]);
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const ch = { practitioner: { [VIEW]: "off" } };
+        const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+        expect(p.ok, JSON.stringify(p)).toBe(true);
+        const moved = ((p.changes as Record<string, { key: string; before: string; after: string }[]>).practitioner ?? []).map((c) => `${c.key}:${c.before}>${c.after}`).sort();
+        expect(moved, "the preview shows the dependent falling with the requested key").toEqual(expect.arrayContaining([`${VIEW}:studio>off`, `${EDIT}:studio>off`]));
+        await adm(q, `select public.mark_permissions_released(array[$1::text], 'T-dep-edit', 'full')`, [EDIT]); // the dependent's stored denial now applies at once
+        const before = await version(q, st.studioId);
+        const r = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash]);
+        expect(r).toMatchObject({ ok: false, code: "review_changed" });
+        expect(await version(q, st.studioId)).toBe(before);
+        expect((await adm(q, `select key, scope from public.studio_role_permissions where studio_id = $1 order by key`, [st.studioId])).rows).toEqual([{ key: EDIT, scope: "off" }]);
+        expect(Number((await adm(q, `select count(*) n from public.permission_audit where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+        // a fresh preview of the same request is a different review: Save with ITS hash succeeds
+        const p2 = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+        expect(p2.review_hash).not.toBe(p.review_hash);
+        expect(await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p2.review_hash])).toMatchObject({ ok: true });
+      });
+    });
+  });
+
+  it("the hash changes when ONLY a dependent's release or activation changes (the requested key's own rows are untouched)", async () => {
+    const st = await seedStudio("review-authority-dependent-hash");
+    const review = [{ role: "practitioner", key: VIEW, requested: "off" }];
+    await inTx(async (q) => {
+      const h = async () => (await adm(q, `select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h as string;
+      const base = await h();
+      expect((await adm(q, `select released_at from public.permission_key_release where key = $1`, [EDIT])).rows[0].released_at).toBeNull();
+      await adm(q, `update public.permission_key_release set release_tag = 'T-other' where key = $1`, [EDIT]);
+      const retagged = await h();
+      expect(retagged, "a dependent's release tag").not.toBe(base);
+      await adm(q, `update public.permission_key_release set released_at = now() where key = $1`, [EDIT]);
+      const released = await h();
+      expect(released, "a dependent's release").not.toBe(retagged);
+      await adm(q, `insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version) values ($1, $2, 'T-other', $3, 'test', 0)`, [st.studioId, EDIT, st.userId]);
+      expect(await h(), "a dependent's activation").not.toBe(released);
+    });
+  });
+
+  it("the hash covers the complete effective diff: role, key, before and after, in a canonical order, and nothing else", async () => {
+    const st = await studio();
+    const review = [{ role: "practitioner", key: "appt.cancel", requested: "off" }];
+    const g = async (changes: unknown) => (await adminQuery(`select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false, $3::jsonb) as h`, [st.studioId, JSON.stringify(review), JSON.stringify(changes)])).rows[0].h as string;
+    const a = { practitioner: [{ key: "x.b", before: "studio", after: "off", sensitive: true, consequence: "words" }, { key: "x.a", before: "own", after: "off" }], receptionist: [{ key: "x.c", before: "off", after: "studio" }] };
+    const base = await g(a);
+    expect(await g({ receptionist: a.receptionist, practitioner: [...a.practitioner].reverse() }), "order of roles and rows does not matter").toBe(base);
+    expect(await g({ ...a, practitioner: a.practitioner.map((c) => ({ ...c, consequence: "other words", sensitive: false })) }), "consequence text and the sensitive flag are not hashed here").toBe(base);
+    expect(await g({ ...a, practitioner: [a.practitioner[0]] }), "a missing row").not.toBe(base);
+    expect(await g({ ...a, practitioner: [{ ...a.practitioner[0], after: "own" }, a.practitioner[1]] }), "a different after").not.toBe(base);
+    expect(await g({ ...a, practitioner: [{ ...a.practitioner[0], before: "own" }, a.practitioner[1]] }), "a different before").not.toBe(base);
+    expect(await g({ ...a, receptionist: [{ ...a.receptionist[0], key: "x.d" }] }), "a different key").not.toBe(base);
+    expect(await g({ practitioner: a.practitioner, receptionist: [] }), "a role with no rows").not.toBe(base);
+    expect(await g({}), "no changes").not.toBe(base);
+  });
+
+  it("two sessions: a reviewed save of a requested key makes the release of its DEPENDENT wait (the share locks cover dependents)", async () => {
+    const st = await seedStudio("review-authority-dependent-lock");
+    const ch = { practitioner: { [VIEW]: "off" } };
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held!: () => void;
+    const holding = new Promise<void>((r) => (held = r));
+    const tx1 = adminTx(async (q) => {
+      await asOwner(q as Q, st.userId, async () => {
+        const v = await version(q as Q, st.studioId);
+        const p = await call(q as Q, "preview_role_changes_at", [st.studioId, ch, v]);
+        expect((await call(q as Q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash])).ok).toBe(true);
+      });
+      held();
+      await gate;
+      throw new Rollback();
+    }).catch((e) => {
+      if (!(e instanceof Rollback)) throw e;
+    });
+    await holding;
+    let code: string | undefined;
+    try {
+      await adminTx(async (q) => {
+        await q("set local lock_timeout = '400ms'");
+        await q(`select public.mark_permissions_released(array[$1::text], 'T-dep-lock', 'full')`, [EDIT]);
+      });
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    release();
+    await tx1;
+    expect(code).toBe("55P03");
+    expect((await adminQuery(`select released_at from public.permission_key_release where key = $1`, [EDIT])).rows[0].released_at).toBeNull();
+  });
+});
+
 describe("audit: a reviewed save records its review version and hash inside `after`, and nothing else is added", () => {
   it("reviewed save: after carries _review {version, hash}; the old save carries no _review", async () => {
     const st = await seedStudio("review-authority-audit");
@@ -977,30 +1105,30 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
   it("is sha256 over the UTF-8 of the canonical jsonb text of the fixed input, and the input has exactly the documented fields", async () => {
     const st = await studio();
     const review = [{ role: "practitioner", key: "appt.cancel", requested: "off" }];
-    const input = (await adminQuery(`select public.perm_review_hash_input($1, 3, $2::jsonb, '["b","a"]'::jsonb, false) as i`, [st.studioId, JSON.stringify(review)])).rows[0].i as Record<string, unknown>;
-    expect(Object.keys(input).sort()).toEqual(["activations", "basis", "basis_at", "catalog", "gates", "releases", "review", "reason_required", "sensitive_keys", "studio", "v", "version"].sort());
+    const input = (await adminQuery(`select public.perm_review_hash_input($1, 3, $2::jsonb, '["b","a"]'::jsonb, false, '{}'::jsonb) as i`, [st.studioId, JSON.stringify(review)])).rows[0].i as Record<string, unknown>;
+    expect(Object.keys(input).sort()).toEqual(["activations", "basis", "basis_at", "catalog", "changes", "gates", "releases", "review", "reason_required", "sensitive_keys", "studio", "v", "version"].sort());
     expect(input.sensitive_keys).toEqual(["a", "b"]); // sorted, not as given
-    const hash = (await adminQuery(`select public.perm_review_hash($1, 3, $2::jsonb, '["b","a"]'::jsonb, false) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h;
-    const text = (await adminQuery(`select public.perm_review_hash_input($1, 3, $2::jsonb, '["b","a"]'::jsonb, false)::text as t`, [st.studioId, JSON.stringify(review)])).rows[0].t as string;
+    const hash = (await adminQuery(`select public.perm_review_hash($1, 3, $2::jsonb, '["b","a"]'::jsonb, false, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h;
+    const text = (await adminQuery(`select public.perm_review_hash_input($1, 3, $2::jsonb, '["b","a"]'::jsonb, false, '{}'::jsonb)::text as t`, [st.studioId, JSON.stringify(review)])).rows[0].t as string;
     expect(hash).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
-    const again = (await adminQuery(`select public.perm_review_hash($1, 3, $2::jsonb, '["b","a"]'::jsonb, false) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h;
+    const again = (await adminQuery(`select public.perm_review_hash($1, 3, $2::jsonb, '["b","a"]'::jsonb, false, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h;
     expect(again).toBe(hash);
-    expect((await adminQuery(`select public.perm_review_hash($1, 4, $2::jsonb, '["b","a"]'::jsonb, false) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h).not.toBe(hash);
+    expect((await adminQuery(`select public.perm_review_hash($1, 4, $2::jsonb, '["b","a"]'::jsonb, false, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h).not.toBe(hash);
   });
 
   it("a fixed example pins the exact encoding (no policy row, no involved keys)", async () => {
     const id = "00000000-0000-4000-8000-000000000356";
-    const text = (await adminQuery(`select public.perm_review_hash_input($1, 5, '[]'::jsonb, '[]'::jsonb, false)::text as t`, [id])).rows[0].t as string;
+    const text = (await adminQuery(`select public.perm_review_hash_input($1, 5, '[]'::jsonb, '[]'::jsonb, false, '{}'::jsonb)::text as t`, [id])).rows[0].t as string;
     expect(text).toBe(
-      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000356", "catalog": [], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
+      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000356", "catalog": [], "changes": [], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
     );
-    expect((await adminQuery(`select public.perm_review_hash($1, 5, '[]'::jsonb, '[]'::jsonb, false) as h`, [id])).rows[0].h).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
+    expect((await adminQuery(`select public.perm_review_hash($1, 5, '[]'::jsonb, '[]'::jsonb, false, '{}'::jsonb) as h`, [id])).rows[0].h).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
   });
 
   it("covers the involved keys' catalog facts, release rows and the basis: changing any of them changes the hash", async () => {
     const st = await studio();
     const review = [{ role: "practitioner", key: "appt.cancel", requested: "off" }];
-    const h = async (q: Q) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h as string;
+    const h = async (q: Q) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, '[]'::jsonb, false, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review)])).rows[0].h as string;
     await inTx(async (q) => {
       const base = await h(q);
       await q(`update public.permission_catalog set snapshot_practitioner = 'own' where key = 'appt.cancel'`);
@@ -1014,7 +1142,7 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
       expect(afterBasis).not.toBe(afterRelease);
       await q(`insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version) values ($1, 'appt.cancel', 'T-hash', $2, 'hash', 0)`, [st.studioId, st.userId]);
       expect(await h(q)).not.toBe(afterBasis); // an activation row changes the hash
-      const g = async (sens: string, widen: boolean) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, $3::jsonb, $4) as h`, [st.studioId, JSON.stringify(review), sens, widen])).rows[0].h as string;
+      const g = async (sens: string, widen: boolean) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, $3::jsonb, $4, '{}'::jsonb) as h`, [st.studioId, JSON.stringify(review), sens, widen])).rows[0].h as string;
       expect(await g('["appt.cancel"]', false)).not.toBe(await g("[]", false)); // sensitive_keys
       expect(await g("[]", true)).not.toBe(await g("[]", false)); // reason_required
     });
@@ -1025,8 +1153,8 @@ describe("grants and function settings", () => {
   const INTERNAL = [
     "public.perm_review_involved(text[])",
     "public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean)",
-    "public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean)",
-    "public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean)",
+    "public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean, jsonb)",
+    "public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean, jsonb)",
     "public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text)",
     "public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean)",
   ];
