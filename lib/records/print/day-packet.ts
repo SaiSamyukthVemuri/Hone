@@ -12,8 +12,8 @@
 //
 // NEVER IN THE PACKET (and said so on the page, see PACKET_EXCLUSIONS):
 //   * phone, email, address (OPS ruling 7 Nov, HON-46 "unrelated admin data");
-//   * date of birth: a clearly marked PENDING field until Sabrina's format
-//     review decides it (OPS ruling 7 Nov), never silently printed;
+//   * date of birth: a clearly marked PENDING field until the format review
+//     decides it (OPS ruling 7 Nov), never silently printed;
 //   * private warnings and personal notes (client_personal_notes is never read);
 //   * payments, the next-session planning note, photos, intake and consent;
 //   * soft-deleted sessions, blocks and entries.
@@ -23,7 +23,7 @@ import { formatAreaLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import { NATIVE_SETTINGS_UNREADABLE, nativeSettingsForBlock, type PacketSetupReadingSource } from "./machine-settings";
 
 export const NOT_RECORDED = "Not recorded";
-/** Printed in place of a date of birth until Sabrina's format review decides it. */
+/** Printed in place of a date of birth until the format review decides it. */
 /** Said on the page so the footer describes what IS printed, not only what is not. */
 export const PACKET_INCLUDES_NOTE =
   "Per-area numbing, tolerance, reaction and caution notes recorded on this day are included.";
