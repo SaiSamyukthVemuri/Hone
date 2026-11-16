@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { isRepoMax } from "./helpers/migration-state";
 
 // Source contract for 0350 (an option-gated mode is recorded only when its option is fitted).
 // The behavioural proof, with a negative control, is tests/db/machine-setup-option-null-element.db.test.ts.
@@ -21,8 +20,8 @@ const functionBlock = (sql: string): string => {
 };
 
 describe("0350 source contract", () => {
-  it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0350")).toBe(true);
+  it("is present (only the current maximum migration may assert it is the max)", () => {
+    expect(NEW_FILE.length).toBeGreaterThan(0);
   });
 
   it("uses the fail-closed form and not the previous one", () => {

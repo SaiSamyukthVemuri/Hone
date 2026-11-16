@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 270,
-    "last": "0350_setup_option_check_null_element.sql",
-    "sha256": "705c97e6c228739fad1fae557fb70009ace9e454b7aeab6ecd60d70ab7c50952"
+    "count": 271,
+    "last": "0355_roles_save_inert_denial.sql",
+    "sha256": "78d00a6b4a7069cbb18b411bdfc9b4612852ebb1f42cf4543700dd09c007a6f7"
   },
   "public": {
     "tables": [
