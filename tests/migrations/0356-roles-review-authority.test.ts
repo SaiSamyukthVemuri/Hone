@@ -124,7 +124,13 @@ describe("0356 source contract", () => {
     expect(fn).toContain("select unnest(c.requires) from public.permission_catalog c join involved i on c.key = i.key"); // and what any of them require
     expect(UP).toMatch(/v_hash := public\.perm_review_hash\(p_studio, v_version, v_review, v_sens, v_widen, v_changes\);/);
     expect(UP).toContain("'changes', (select coalesce(jsonb_agg(jsonb_build_object('role', r.role, 'key', d.value ->> 'key', 'before', d.value ->> 'before', 'after', d.value ->> 'after')");
+    expect(UP).toContain('order by r.role collate "C", d.value ->> \'key\' collate "C"');
     expect(UP).not.toMatch(/'changes'[^;]*consequence/); // never the catalog's free text
+  });
+
+  it("`changes` and its rows are never placed in a raise, a message, or any returned text", () => {
+    for (const m of UP.matchAll(/raise exception[^;]*;/g)) expect(m[0], m[0]).not.toMatch(/v_changes|p_changes|changes/);
+    expect(UP).not.toMatch(/perm_fail\([^;]*v_changes/);
   });
 
   it("the hash input has a fixed, documented field list and a comment that additions need review", () => {

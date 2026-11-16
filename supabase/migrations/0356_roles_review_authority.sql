@@ -115,10 +115,10 @@ as $$
     'basis_at', (select case when spp.basis = 'new_studio' then to_char(spp.basis_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') end
                    from public.studio_permission_policy spp where spp.studio_id = p_studio),
     'review', p_review,
-    -- the COMPLETE effective diff the preview reports, as role, key, before, after only (never the catalog's consequence text), ordered by role then key:
+    -- the COMPLETE effective diff the preview reports, as role, key, before, after only (never the catalog's consequence text, no people, names, ids or counts), ordered by role then key in byte order (collate "C"), independent of any database collation:
     -- a dependent key that moves because a requested key moved is part of what the owner approved, whether or not the review table lists it
     'changes', (select coalesce(jsonb_agg(jsonb_build_object('role', r.role, 'key', d.value ->> 'key', 'before', d.value ->> 'before', 'after', d.value ->> 'after')
-                                           order by r.role, d.value ->> 'key'), '[]'::jsonb)
+                                           order by r.role collate "C", d.value ->> 'key' collate "C"), '[]'::jsonb)
                   from jsonb_each(coalesce(p_changes, '{}'::jsonb)) r(role, v), jsonb_array_elements(r.v) d(value)),
     'sensitive_keys', (select coalesce(jsonb_agg(x order by x), '[]'::jsonb) from jsonb_array_elements_text(p_sens) x),
     'reason_required', p_widen,

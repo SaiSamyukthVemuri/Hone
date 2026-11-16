@@ -1042,6 +1042,64 @@ describe("dependents: a change to a key moves every key that requires it, and th
     expect(await g({}), "no changes").not.toBe(base);
   });
 
+  it("the hash input's `changes` field: exact encoding and byte order of a fixed example (uppercase sorts before lowercase, whatever the database collation)", async () => {
+    const id = "00000000-0000-4000-8000-000000000356";
+    const changes = {
+      receptionist: [{ key: "a.x", before: "off", after: "studio", consequence: "words", affected: { count: 3 } }],
+      practitioner: [
+        { key: "b.y", before: "studio", after: "off" },
+        { key: "B.z", before: "own", after: "off", people: ["n"] },
+        { key: "a.w", before: "off", after: "own" },
+      ],
+    };
+    const text = (await adminQuery(`select public.perm_review_hash_input($1, 5, '[]'::jsonb, '[]'::jsonb, false, $2::jsonb)::text as t`, [id, JSON.stringify(changes)])).rows[0].t as string;
+    expect(text).toBe(
+      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000356", "catalog": [], "changes": [{"key": "B.z", "role": "practitioner", "after": "off", "before": "own"}, {"key": "a.w", "role": "practitioner", "after": "own", "before": "off"}, {"key": "b.y", "role": "practitioner", "after": "off", "before": "studio"}, {"key": "a.x", "role": "receptionist", "after": "studio", "before": "off"}], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
+    );
+    expect(text).not.toMatch(/words|people|affected|count/); // no consequence text, people, names or counts
+  });
+
+  it("the documented field list equals the input's real keys, and `changes` holds only role, key, before, after", async () => {
+    const src = readFileSync("supabase/migrations/0356_roles_review_authority.sql", "utf8");
+    const documented = /-- Fields: ([^\n]+)\./.exec(src)![1].split(", ").sort();
+    const st = await studio();
+    const input = (await adminQuery(`select public.perm_review_hash_input($1, 3, '[]'::jsonb, '[]'::jsonb, false, $2::jsonb) as i`, [st.studioId, JSON.stringify({ practitioner: [{ key: "k", before: "a", after: "b", sensitive: true }] })])).rows[0].i as Record<string, unknown>;
+    expect(Object.keys(input).sort()).toEqual(documented);
+    expect((input.changes as Record<string, unknown>[]).map((c) => Object.keys(c).sort())).toEqual([["after", "before", "key", "role"]]);
+  });
+
+  it("a mismatch returns only the fixed code (no hash, no changes, no people), and a refusal carries no diff", async () => {
+    const st = await seedStudio("review-authority-mismatch");
+    await inTx(async (q) => {
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const r = await call(q, "save_role_permissions_reviewed", [st.studioId, v, { practitioner: { [VIEW]: "off" } }, null, false, "0".repeat(64)]);
+        expect(r).toMatchObject({ ok: false, code: "review_changed" });
+        expect(Object.keys(r).sort()).toEqual(["code", "current_version", "message", "ok"].filter((k) => k in r).sort());
+        expect(JSON.stringify(r)).not.toMatch(/changes|affected|people|review_hash|consequence|before|after/);
+      });
+    });
+  });
+
+  it("nothing changed between preview and save: a request WITH dependents (and one on a key everything requires) saves with the preview's hash", async () => {
+    for (const requested of [{ [VIEW]: "off" }, { "appt.view_calendar": "off" }, { [VIEW]: "off", [EDIT]: "off" }, { [EDIT]: "off" }]) {
+      const st = await seedStudio("review-authority-nochange");
+      await inTx(async (q) => {
+        await asOwner(q, st.userId, async () => {
+          const v = await version(q, st.studioId);
+          const ch = { practitioner: requested };
+          const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+          if (!p.ok) return void expect(p.code, JSON.stringify(requested)).toBeDefined(); // a refusal the engine owns (for example nothing_changed); no hash to compare
+          const again = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+          expect(again.review_hash, "a second preview of the same request is the same review").toBe(p.review_hash);
+          const r = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash]);
+          expect(r.ok === true || r.code === "sensitive_unconfirmed" || r.code === "reason_required", JSON.stringify([requested, r])).toBe(true);
+          expect(r.code, JSON.stringify(requested)).not.toBe("review_changed");
+        });
+      });
+    }
+  });
+
   it("two sessions: a reviewed save of a requested key makes the release of its DEPENDENT wait (the share locks cover dependents)", async () => {
     const st = await seedStudio("review-authority-dependent-lock");
     const ch = { practitioner: { [VIEW]: "off" } };
