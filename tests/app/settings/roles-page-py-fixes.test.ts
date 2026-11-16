@@ -15,7 +15,8 @@ const fn = (name: string) => {
 describe("PY-2 no blanket or forbidden promises", () => {
   it("the next-request line is qualified to enforced settings", () => {
     expect(editor).toContain("only for settings the app already enforces");
-    expect(editor).toContain("Once activated, a saved change applies");
+    expect(editor).toContain("Once a saved change is in force, it applies to a person&rsquo;s next request");
+    expect(editor).not.toContain("Once activated, a saved change applies");
     expect(editor).not.toMatch(/Changes apply to each person&rsquo;s next request, including people who are signed in now\./);
   });
   it("the not-enforced line no longer promises the switch will apply when the area is wired", () => {
