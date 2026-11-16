@@ -462,8 +462,10 @@ describe("acceptance case 10 — superseded PR runs are cancelled", () => {
   it("the PR workflow declares a PR-scoped cancelling concurrency group", async () => {
     const { readFileSync } = await import("node:fs");
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-    expect(ci).toMatch(/group: hone-pr-ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/);
-    expect(ci).toMatch(/cancel-in-progress: true/);
+    // CI-PUSH-CONCURRENCY-01: the PR group is keyed on the PR number and cancels; push runs are keyed on the sha and never cancel
+    // (the behavioural proof, with a negative control, is in ci-config.test.ts).
+    expect(ci).toMatch(/group: \$\{\{ github\.event_name == 'pull_request' && format\('hone-pr-ci-\{0\}', github\.event\.pull_request\.number\)/);
+    expect(ci).toMatch(/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
   });
   it("nightly concurrency stays separate from PR concurrency", async () => {
     const { readFileSync } = await import("node:fs");
