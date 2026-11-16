@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { randomUUID } from "node:crypto";
+import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // An owner who changes the shown On to Off was dropped as unchanged (0287 perm_run_changes, the v_apply guard). Reproduction on the REAL 0287 chain, synthetic data.
 // A studio on the new_studio basis with no override: the catalog's new-studio default for a practitioner's avail.manage_own is 'studio' (On),
@@ -147,5 +148,124 @@ describe("grants are those of 0287", () => {
     expect(await priv(save, "authenticated")).toBe(true);
     expect(await priv(save, "anon")).toBe(false);
     expect(await priv("public.preview_role_changes(uuid, jsonb)", "authenticated")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Insurance N1 and N3.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+async function seedPeople(label: string) {
+  const s = await seedStudio(label);
+  const prac = await seedMember(s, `${label}-prac`);
+  const deskUser = randomUUID();
+  await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [deskUser, `${label}-desk-${deskUser.slice(0, 8)}@harness.local`]);
+  await adminQuery(`insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ($1, $2, 'Synthetic desk', true)`, [s.studioId, deskUser]);
+  return { s, prac, deskUser };
+}
+const asks = async (userId: string, studioId: string, key: string) =>
+  (await asUser(userId, (q) => q(`select public.has_studio_permission($1, $2) as ok`, [studioId, key]))).rows[0].ok as boolean;
+
+describe("N1: has_studio_permission (the function the app calls) is identical before and after the inert save, for every affected user", () => {
+  it("owner, practitioner and receptionist get the same answer for the saved key and for another key", async () => {
+    const { s, prac, deskUser } = await seedPeople("inert-denial-n1");
+    const who = { owner: s.userId, practitioner: prac.userId, receptionist: deskUser };
+    const keys = ["avail.manage_own", "appt.cancel"];
+    const snapshot = async () => {
+      const out: Record<string, boolean> = {};
+      for (const [name, uid] of Object.entries(who)) for (const k of keys) out[`${name}:${k}`] = await asks(uid, s.studioId, k);
+      return out;
+    };
+    const before = await snapshot();
+    const res = await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "avail.manage_own": "off" } }, null, false]);
+    expect(res.ok, res.raw).toBe(true);
+    expect(await storedRows(s.studioId)).toEqual([{ key: "avail.manage_own", scope: "off" }]);
+    expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe("N3: receptionist, and a request equal to the base while a stored choice is present", () => {
+  it("receptionist: a default that differs from the snapshot is compared with what the owner sees (appt.book: default studio, snapshot off)", async () => {
+    const c = (await adminQuery(`select new_receptionist, snapshot_receptionist, offered_receptionist from public.permission_catalog where key = 'appt.book'`)).rows[0];
+    expect(c).toEqual({ new_receptionist: "studio", snapshot_receptionist: "off", offered_receptionist: true });
+    const { s, deskUser } = await seedPeople("inert-denial-n3a");
+    const before = await asks(deskUser, s.studioId, "appt.book");
+    const res = await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { receptionist: { "appt.book": "off" } }, null, false]);
+    expect(res.ok, res.raw).toBe(true);
+    const row = (await adminQuery(`select scope from public.studio_role_permissions where studio_id = $1 and role = 'receptionist' and key = 'appt.book'`, [s.studioId])).rows[0];
+    expect(row.scope).toBe("off");
+    expect(await asks(deskUser, s.studioId, "appt.book")).toBe(before); // no access moved
+  });
+
+  it("a request equal to the base while a stored choice exists replaces the stored choice (the older condition still holds)", async () => {
+    const { s } = await seedPeople("inert-denial-n3b");
+    expect((await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "avail.manage_own": "studio" } }, null, false])).ok).toBe(true);
+    expect(await storedRows(s.studioId)).toEqual([{ key: "avail.manage_own", scope: "studio" }]);
+    const base = (await adminQuery(`select public.perm_base_scope($1, 'practitioner', 'avail.manage_own') as s`, [s.studioId])).rows[0].s;
+    expect(base).toBe("off"); // 'off' equals the base, and a stored 'studio' is present
+    const v = (await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].version;
+    const res = await callAs(s.userId, "save_role_permissions", [s.studioId, Number(v), { practitioner: { "avail.manage_own": "off" } }, null, false]);
+    expect(res.ok, res.raw).toBe(true);
+    expect(await storedRows(s.studioId)).toEqual([{ key: "avail.manage_own", scope: "off" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Insurance N2: a stored Off that is later RELEASED and ACTIVATED must hold. Everything below runs inside ONE transaction that is rolled back
+// (releasing is operator-only and must never persist on the shared stack). The release and activation are the real 0287 commands.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+class Rollback extends Error {}
+async function inReleasedTx(opts: { saveOff: boolean }): Promise<{ before: boolean; afterRelease: boolean; afterActivation: boolean; previewKeys: string[]; previewOk: boolean }> {
+  const s = await seedStudio(`inert-denial-n2-${opts.saveOff ? "off" : "control"}`);
+  const prac = await seedMember(s, "n2-prac");
+  if (opts.saveOff) {
+    expect((await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "avail.manage_own": "off" } }, null, false])).ok).toBe(true);
+  }
+  const out = { before: false, afterRelease: false, afterActivation: false, previewKeys: [] as string[], previewOk: false };
+  const asRoleTx = async (q: (t: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>, userId: string, fn: () => Promise<void>) => {
+    await q("set local role authenticated");
+    await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: userId, role: "authenticated" })]);
+    await fn();
+    await q("reset role");
+  };
+  const ask = async (q: (t: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>) => {
+    let ok = false;
+    await asRoleTx(q, prac.userId, async () => {
+      ok = (await q(`select public.has_studio_permission($1, 'avail.manage_own') as ok`, [s.studioId])).rows[0].ok as boolean;
+    });
+    return ok;
+  };
+  try {
+    await adminTx(async (q) => {
+      out.before = await ask(q);
+      await q(`select public.mark_permissions_released(array['avail.manage_own'], 'T-n2', 'full')`);
+      out.afterRelease = await ask(q);
+      let hash = "";
+      let version = 0;
+      await asRoleTx(q, s.userId, async () => {
+        const prev = (await q(`select public.preview_activation($1, array['avail.manage_own']) as r`, [s.studioId])).rows[0].r as { ok: boolean; keys: string[]; preview_hash: string; version: number };
+        out.previewOk = prev.ok;
+        out.previewKeys = prev.keys;
+        hash = prev.preview_hash;
+        version = prev.version;
+        const act = (await q(`select public.activate_released_permissions($1, array['avail.manage_own'], $2, $3, $4, true) as r`, [s.studioId, version, "Activating this key in a test", hash])).rows[0].r as { ok: boolean; code?: string };
+        expect(act.ok, JSON.stringify(act)).toBe(true);
+      });
+      out.afterActivation = await ask(q);
+      throw new Rollback();
+    });
+  } catch (e) {
+    if (!(e instanceof Rollback)) throw e;
+  }
+  return out;
+}
+
+describe("N2: a stored Off is not undone by release or activation (rolled-back transaction, real commands)", () => {
+  it("with the stored Off the practitioner never gains avail.manage_own; without it, activation applies the new-studio default (so the Off is what holds)", async () => {
+    const off = await inReleasedTx({ saveOff: true });
+    expect(off.previewOk).toBe(true);
+    expect(off.previewKeys).toEqual(["avail.manage_own"]); // the preview names the key; it is not silent about what is being activated
+    expect([off.before, off.afterRelease, off.afterActivation]).toEqual([false, false, false]);
+    const control = await inReleasedTx({ saveOff: false });
+    expect(control.afterActivation).toBe(true); // the default 'studio' takes effect on activation when the owner saved nothing
   });
 });

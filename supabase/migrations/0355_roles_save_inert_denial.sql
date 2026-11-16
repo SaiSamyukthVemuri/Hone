@@ -65,12 +65,12 @@ begin
   if not found or a.role <> 'owner' then return public.perm_fail('refused'); end if;
   if p_changes is null or jsonb_typeof(p_changes) <> 'object' then return public.perm_fail('invalid_changes'); end if;
   v_reason := nullif(btrim(coalesce(p_reason, '')), '');
-  select spp.basis into v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio;
-  v_basis := coalesce(v_basis, 'existing_snapshot');
 
   begin
     insert into public.studio_permission_policy (studio_id, basis, version) values (p_studio, 'existing_snapshot', 0) on conflict do nothing;
-    select spp.version into v_version from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
+    -- 0355: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
+    select spp.version, spp.basis into v_version, v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
+    v_basis := coalesce(v_basis, 'existing_snapshot');
     if p_expected_version is null and p_require_version then
       raise exception using errcode = 'PM001', message = public.perm_fail('version_required', null, null, v_version)::text;
     end if;
@@ -211,5 +211,8 @@ begin
   end;
 end;
 $$;
+
+-- Restated by name (the grants persist through create or replace; this makes the intent explicit): an internal function, no API role may execute it.
+revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean) from public, anon, authenticated, service_role;
 
 commit;

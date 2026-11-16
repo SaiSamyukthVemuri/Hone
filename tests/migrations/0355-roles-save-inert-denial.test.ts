@@ -37,12 +37,13 @@ describe("0355 source contract", () => {
     expect(headOf(UP)).toBe(headOf(OLD));
   });
 
-  it("changes the body in exactly these places: declarations, the basis read, the apply condition, and one comment", () => {
+  it("changes the body in exactly these places: declarations, the locked basis read, the apply condition, and one comment", () => {
     const before = bodyOf(OLD).split("\n");
     const after = bodyOf(UP).split("\n");
     const removed = before.filter((l) => !after.includes(l));
     const added = after.filter((l) => !before.includes(l));
     expect(removed.map((l) => l.trim())).toEqual([
+      "select spp.version into v_version from public.studio_permission_policy spp where spp.studio_id = p_studio for update;",
       "if v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) then",
       "v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', coalesce(v_stored_prev, v_base)));",
       "-- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.", // comment only: no review-lane reference in a migration
@@ -58,5 +59,18 @@ describe("0355 source contract", () => {
     const writes = (sql: string) => (sql.match(/(insert\s+into|update|delete\s+from)\s+(public\.)?(studio_role_permissions|permission_key_activation|permission_key_release)\b/g) ?? []).length;
     expect(writes(bodyOf(UP))).toBe(writes(bodyOf(OLD)));
     expect(writes(UP.replace(bodyOf(UP), ""))).toBe(0);
+  });
+
+  it("reads the basis under the same lock as the version (one select ... for update), not before it", () => {
+    const body = bodyOf(UP);
+    expect(body).toContain("select spp.version, spp.basis into v_version, v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio for update;");
+    // no separate, unlocked read of the basis anywhere in the body
+    expect(body.match(/select spp\.basis into/g)).toBeNull();
+  });
+
+  it("restates the revoke by name, from public, anon, authenticated and service_role, in the migration and the rollback", () => {
+    const re = /revoke all on function public\.perm_run_changes\(uuid, jsonb, text, boolean, bigint, boolean, boolean\) from public, anon, authenticated, service_role;/;
+    expect(UP).toMatch(re);
+    expect(DOWN).toMatch(re);
   });
 });

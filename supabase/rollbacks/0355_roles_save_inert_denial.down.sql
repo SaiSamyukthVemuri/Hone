@@ -187,4 +187,6 @@ begin
 end;
 $$;
 
+revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean) from public, anon, authenticated, service_role;
+
 commit;

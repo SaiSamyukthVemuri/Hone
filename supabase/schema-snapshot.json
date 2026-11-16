@@ -3,7 +3,7 @@
   "migrations": {
     "count": 271,
     "last": "0355_roles_save_inert_denial.sql",
-    "sha256": "04f30925eda3651144f9a82047ab988dbaf539b25017ee810bbda5ee04579c3d"
+    "sha256": "bcb1d32f0e2b34e32c05c5cc5bcc61699e1e3af23223d8ef5cb480e47664b881"
   },
   "public": {
     "tables": [
