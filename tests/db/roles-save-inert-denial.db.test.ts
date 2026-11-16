@@ -271,22 +271,23 @@ describe("N2: a stored Off is not undone by release or activation (rolled-back t
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-// Insurance R1: 0355 must never store BELOW the snapshot. The only rows its new condition adds are those where the request equals the base
-// (the snapshot while the key is unreleased) but differs from the value shown (the new-studio default). So across the WHOLE catalog, for every
-// key and role whose default differs from its snapshot, asking for the snapshot value stores exactly the snapshot (or is refused), never
-// anything else. Every row the studio ends with has scope = the snapshot for its key and role.
+// Insurance R1: 0355 never stores BELOW the snapshot. For each owner-configurable key and role whose new-studio default differs from its
+// snapshot, on a fresh new_studio studio with nothing stored, request EVERY allowed scope in turn (the stored rows are removed between requests,
+// so each starts from nothing). A request is "new" when 0287's original condition would NOT have applied it (nothing stored, so: the request
+// equals perm_base_scope). Any such request that got stored must be stored as exactly the snapshot, and at least one is exercised per key and role.
 // ---------------------------------------------------------------------------------------------------------------------------------------
-describe("R1: every row stored through the new condition equals the snapshot, across the whole catalog", () => {
-  it("asking for the snapshot value on a key whose default differs stores the snapshot value or nothing", async () => {
+describe("R1: whatever 0355 stores beyond 0287's condition equals the snapshot, across the whole catalog", () => {
+  it("every request 0287 would have dropped, if stored, is stored as the snapshot; at least one per key and role", async () => {
     const s = await seedStudio("inert-denial-r1");
+    expect((await adminQuery(`select basis from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].basis).toBe("new_studio");
     const cat = (
       await adminQuery(
-        `select key, offered_practitioner, offered_receptionist, owner_configurable,
-                new_practitioner, new_receptionist, snapshot_practitioner, snapshot_receptionist
+        `select key, scopes, offered_practitioner, offered_receptionist, new_practitioner, new_receptionist, snapshot_practitioner, snapshot_receptionist
            from public.permission_catalog where owner_configurable order by key`,
       )
     ).rows as {
       key: string;
+      scopes: string[];
       offered_practitioner: boolean;
       offered_receptionist: boolean;
       new_practitioner: string;
@@ -294,31 +295,40 @@ describe("R1: every row stored through the new condition equals the snapshot, ac
       snapshot_practitioner: string;
       snapshot_receptionist: string;
     }[];
-    let exercised = 0;
-    const refused: string[] = [];
+    const missing: string[] = [];
+    const wrong: string[] = [];
+    let pairs = 0;
+    let stored = 0;
     for (const c of cat) {
       for (const role of ["practitioner", "receptionist"] as const) {
         if (!(role === "practitioner" ? c.offered_practitioner : c.offered_receptionist)) continue;
         const def = role === "practitioner" ? c.new_practitioner : c.new_receptionist;
         const snap = role === "practitioner" ? c.snapshot_practitioner : c.snapshot_receptionist;
-        if (def === snap) continue; // the new condition cannot add a row where the default equals the snapshot
-        const v = Number((await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].version);
-        const r = await callAs(s.userId, "save_role_permissions", [s.studioId, v, { [role]: { [c.key]: snap } }, null, false]);
-        if (r.ok) exercised += 1;
-        else refused.push(`${role}:${c.key}:${r.code}`);
+        if (def === snap) continue;
+        pairs += 1;
+        let exercised = 0;
+        for (const scope of c.scopes) {
+          await adminQuery(`delete from public.studio_role_permissions where studio_id = $1`, [s.studioId]);
+          const base = (await adminQuery(`select public.perm_base_scope($1, $2, $3) as s`, [s.studioId, role, c.key])).rows[0].s as string;
+          const v = Number((await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].version);
+          const r = await callAs(s.userId, "save_role_permissions", [s.studioId, v, { [role]: { [c.key]: scope } }, null, false]);
+          const rows = (await adminQuery(`select scope from public.studio_role_permissions where studio_id = $1 and role = $2 and key = $3`, [s.studioId, role, c.key])).rows as { scope: string }[];
+          const droppedByOriginal = scope === base; // 0287: nothing stored, so it applies only when the request differs from the base
+          if (!droppedByOriginal) continue;
+          if (rows.length > 0) {
+            exercised += 1;
+            stored += 1;
+            if (rows[0].scope !== snap) wrong.push(`${role}:${c.key} requested ${scope} stored ${rows[0].scope} snapshot ${snap}`);
+          } else if (r.ok === false) {
+            // refused for another reason: not an exercise, and nothing was stored below the snapshot
+          }
+        }
+        if (exercised === 0) missing.push(`${role}:${c.key}`);
       }
     }
-    expect(exercised, `refused: ${refused.join(", ")}`).toBeGreaterThan(0);
-    const rows = (await adminQuery(`select role, key, scope from public.studio_role_permissions where studio_id = $1`, [s.studioId])).rows as {
-      role: "practitioner" | "receptionist";
-      key: string;
-      scope: string;
-    }[];
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows) {
-      const c = cat.find((x) => x.key === row.key)!;
-      const snap = row.role === "practitioner" ? c.snapshot_practitioner : c.snapshot_receptionist;
-      expect(row.scope, `${row.role}:${row.key}`).toBe(snap);
-    }
+    expect(pairs).toBeGreaterThan(0);
+    expect(stored).toBeGreaterThan(0);
+    expect(wrong, "stored below or away from the snapshot").toEqual([]);
+    expect(missing, "key/role pairs where no request beyond 0287's condition was stored").toEqual([]);
   });
 });
