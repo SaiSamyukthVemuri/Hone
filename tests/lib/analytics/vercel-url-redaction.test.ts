@@ -147,6 +147,11 @@ describe("every dynamic route under the analytics-mounted trees", () => {
       route.startsWith("book/") ? SLUG : CLIENT,
     );
     const out = redactVercelAnalyticsUrl(`${HOST}/${synthetic}`);
+    // A route in the token registry (G-26 Option B's print ticket is one) is DROPPED, which sends nothing at all.
+    if (TOKEN_ROUTE_PREFIXES.some((prefix) => `/${synthetic}`.startsWith(`${prefix}/`))) {
+      expect(out).toBeNull();
+      return;
+    }
     expect(out).not.toBeNull();
     expect(out).not.toContain(CLIENT);
     expect(out).not.toContain(SLUG);

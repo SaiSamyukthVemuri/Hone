@@ -26,6 +26,9 @@
 /** Path prefixes that precede a bearer credential segment. No trailing slash. */
 export const TOKEN_ROUTE_PREFIXES = [
   "/portal/verify",
+  // G-26 Option B. The one-use print ticket: opaque, owner-bound, five minutes. Not a public bearer credential, but its
+  // URL must not reach Referer, analytics or telemetry, and the same registry gives it all of that at once.
+  "/records/print/ticket",
   "/cancel",
   "/reschedule",
   "/manage",
