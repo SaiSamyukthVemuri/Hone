@@ -25,8 +25,10 @@ Every release PR whose merge will not be record-only adds **one** file,
 }
 ```
 
-- `pr`: the PR number. It must equal the number in GitHub's merge subject
-  (`Merge pull request #1234 from ...`) and the file name.
+- `pr`: the PR number. It must equal the number in the merge's subject, in
+  whichever of the two covered forms the merge takes (see *Covered merge
+  forms* below: `Merge pull request #1234 from ...` or a squash subject ending
+  `(#1234)`), and the file name.
 - `runtime`: `true` when the merge changes any runtime-bearing path, judged by
   the same rule A3 uses (`scripts/classify-changes.mjs` plus the non-shipping
   roots in the guard). CI-, test- and docs-only changes are `false`. If in
@@ -46,12 +48,38 @@ existed.
 A non-record merge after the recorded **Current Git branch HEAD** is covered
 only when:
 
-1. it is a two-parent GitHub pull-request merge;
+1. it is one of the two covered forms (see *Covered merge forms* below);
 2. its receipt was added **by that merge** (the file is absent from the merge's
    first parent), or the receipt names the merge's exact SHA;
 3. the receipt's `runtime` equals the recomputed decision for the merge's own
    first-parent diff;
 4. its `migrations` equal the migration paths that diff changes.
+
+### Covered merge forms
+
+Two forms are covered, and the guard (`tests/docs/canonical-production-facts.test.ts`,
+condition (a) of the pending-release rule and `receiptCoverage`) states them as
+follows. The wording below is quoted from it, not paraphrased.
+
+- **Two-parent merge.** "a two-parent merge whose subject is GitHub's
+  "Merge pull request #N from ..."". The subject is matched by
+  `/^Merge pull request #(\d+) from /`.
+- **Receipt-backed squash** (covered since #1482). "a one-parent squash merge made by
+  GitHub (committer `GitHub <noreply@github.com>`) whose subject ends "(#N)"
+  and is not a revert (the receipt is then bound the same way, and runtime and
+  migrations are recomputed against its parent)". The committer must be exactly
+  `GitHub <noreply@github.com>`: "a web or API squash carries this committer,
+  while a direct push carries its author's own address, so a local commit is
+  refused". The subject is matched by `/^(?!Revert\b).*\(#(\d+)\)\s*$/`: it must
+  end with `(#N)` and must not begin with `Revert`, because a revert's subject is
+  `Revert "<title> (#N)"` and would otherwise name the reverted PR.
+
+For a squash, "the receipt must be ADDED by the commit, name the same PR, and
+match its diff against its parent for runtime and migrations": the squash commit
+adds `docs/production/pending-releases/N.json`, the file's `pr` is N, and its
+`runtime` and `migrations` equal what the commit's diff against its single
+parent recomputes. Any other one-parent commit, a commit whose committer is not
+GitHub's, or a subject that does not end `(#N)` is refused, never skipped.
 
 A malformed receipt (unknown key, wrong type, wrong pointer) fails the guard
 and is never skipped. A receipt is read from the tree it was merged in (or, for
