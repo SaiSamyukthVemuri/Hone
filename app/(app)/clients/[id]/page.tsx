@@ -52,6 +52,7 @@ import {
   LaserEntryRow,
 } from "@/components/entry-row";
 import { AddPricingForm } from "@/components/add-pricing-form";
+import { findBlockingPriceConflicts, priceConflictNotice } from "@/lib/billing/client-pricing-conflicts";
 import { ClientPinnedNotesCard } from "@/components/client-pinned-notes-card";
 // ClientTagsCard import removed: Tags is hidden from the main profile
 // per pilot feedback (Chloe prefers Pinned notes as the practitioner
@@ -1512,6 +1513,16 @@ export default async function ClientCheatSheetPage({
                 ))}
               </ul>
             )}
+            {findBlockingPriceConflicts(pricing, today).map((c) => (
+              <p
+                key={`${c.serviceName}|${c.effectiveFrom}`}
+                role="alert"
+                data-testid="pricing-same-date-conflict"
+                className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+              >
+                {priceConflictNotice(c)}
+              </p>
+            ))}
             {practitioner.role === "owner" && (
               <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
                 <AddPricingForm
