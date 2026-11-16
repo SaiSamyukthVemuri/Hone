@@ -64,7 +64,7 @@ describe("the registry is the single source for both consumers", () => {
       "/invitation",
       "/manage",
       "/portal/verify",
-      "/records/print/ticket", // G-26 Option B: the one-use print ticket
+      "/records/print/ticket", // the one-use print ticket
       "/reschedule",
     ]);
   });

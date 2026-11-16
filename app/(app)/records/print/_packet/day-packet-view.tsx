@@ -11,11 +11,11 @@ import { NOT_RECORDED, PACKET_EXCLUSIONS, PACKET_INCLUDES_NOTE, type PacketVisit
 import { parseSelectedDay } from "@/lib/records/print/selected-day";
 import { AuditedPrintButton } from "../day/print-button";
 
-// HON-46 M2 — owner-authorized clinical print of ONE client's treatments on ONE
+// Owner-authorized clinical print of ONE client's treatments on ONE
 // studio-local day. Owner-only; audited BEFORE any record is read (migration
 // 0233); every refusal is explicit and shows no clinical content.
 //
-// URL PRIVACY (G-26, Option B). This view never reads the URL. The client id and the day arrive as arguments from
+// URL PRIVACY: print links carry no identifiers. This view never reads the URL. The client id and the day arrive as arguments from
 // the two routes that render it: /records/print/ticket/<ticket> (the ticket is resolved on the server; see
 // lib/records/print/ticket.ts) and /records/print/day, which no longer accepts either value and so always refuses.
 // Nothing about the client or the day is in any path, query string, Location header or Referer of the print flow.
@@ -26,7 +26,8 @@ import { AuditedPrintButton } from "../day/print-button";
 //   * has a generic title and loads no third-party resource;
 //   * logs, tags and attaches nothing containing the client id or day.
 // NOT closable here: Vercel's platform request log still records that an owner POSTed /records/print/open and, a moment
-// later, opened an opaque /records/print/ticket/<ticket> (see the G-26 Option B design note for the residuals).
+// later, opened an opaque /records/print/ticket/<ticket>.
+// The log can show that a session was viewed and a print opened, but not the day, and it holds no reusable link.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Hide the record in print media unless the audited Print button armed it

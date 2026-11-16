@@ -612,13 +612,14 @@ export default async function SessionDetailPage({
             startedAtIso={session.started_at}
           />
         </div>
-        {/* HON-46 / G-26 Option B: owner-only entry to the audited day packet for THIS client and THIS studio-local day.
+        {/* Owner-only entry to the audited day packet for THIS client and THIS studio-local day.
             A POST form, not a link: the client id and the day are in the BODY, and the answer is a redirect to an opaque
-            one-use ticket URL, so neither value is ever in a URL, a Location header or a Referer. rel="noreferrer" keeps
-            this page's own URL (which carries the client id and session id) out of the POST's Referer. Rendered only
+            one-use ticket URL, so neither the client id nor the day is in the print URL or its Location header. The form
+            deliberately has no rel="noreferrer": that makes older Safari send "Origin: null", which the route refuses, and the
+            POST's Referer goes only to this same server, which already sees this page's URL. Rendered only
             from dayPacketEntry (null for a non-owner, a future day or an unusable start). */}
         {printDayEntry !== null && (
-          <form method="post" action={DAY_PACKET_OPEN_PATH} rel="noreferrer" data-testid="print-day-record-form">
+          <form method="post" action={DAY_PACKET_OPEN_PATH} data-testid="print-day-record-form">
             <input type="hidden" name="clientId" value={printDayEntry.clientId} />
             <input type="hidden" name="day" value={printDayEntry.day} />
             <button

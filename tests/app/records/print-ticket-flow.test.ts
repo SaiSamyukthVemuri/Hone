@@ -6,7 +6,7 @@ import { buildTokenRoutePrivacyHeaders } from "@/lib/security/headers";
 import { redactVercelEvent } from "@/lib/analytics/vercel-url-redaction";
 import { resetInProcessTicketStore } from "@/lib/records/print/ticket-store";
 
-// G-26 Option B: the print flow from the POST to the page. Synthetic ids, a synthetic secret, no network, no database.
+// The print flow from the POST to the page. Synthetic ids, a synthetic secret, no network, no database.
 const SECRET = "synthetic-print-ticket-secret-0123456789abcdef";
 const STUDIO = "11111111-1111-4111-8111-111111111111";
 const OTHER_STUDIO = "33333333-3333-4333-8333-333333333333";
@@ -57,7 +57,7 @@ beforeEach(() => {
   resetInProcessTicketStore();
 });
 
-describe("the POST mints a ticket and redirects with no identifier anywhere", () => {
+describe("the POST mints a ticket and redirects with no identifier in the Location or any response header", () => {
   it("answers 303 to /records/print/ticket/<opaque>, and neither Location nor any header holds the client id or the day", async () => {
     const r = await post({ clientId: CLIENT, day: DAY });
     expect(r.status).toBe(303);
@@ -78,6 +78,48 @@ describe("the POST mints a ticket and redirects with no identifier anywhere", ()
   });
   it("only POST is exported, so a GET (which could carry the values in a URL) is a 405", () => {
     expect(Object.keys(routeModule).filter((k) => ["GET", "PUT", "PATCH", "DELETE", "HEAD"].includes(k))).toEqual([]);
+  });
+});
+
+describe("older browsers without Sec-Fetch-Site (older Safari): the same-host Origin decides", () => {
+  it("a real same-host Origin is accepted: the form has no rel=noreferrer, so Safari sends its real Origin", async () => {
+    const r = await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN });
+    expect(r.status).toBe(303);
+    expect(location(r)).toContain("/records/print/ticket/");
+  });
+  it("'Origin: null', another host, a look-alike host and a different port are refused", async () => {
+    for (const origin of ["null", "https://evil.test", "https://hone.test.evil.test", "https://hone.test:8443", "http://evil.test@hone.test", ""]) {
+      const r = await post({ clientId: CLIENT, day: DAY }, { origin });
+      expect(new URL(location(r)).pathname, origin).toBe("/records");
+    }
+  });
+});
+
+describe("the body is read only after identity and the owner gate (a stranger's form is never parsed)", () => {
+  const spy = () => {
+    const req = new Request(`${ORIGIN}/records/print/open`, {
+      method: "POST", body: new URLSearchParams({ clientId: CLIENT, day: DAY }),
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN },
+    });
+    return { req, formData: vi.spyOn(req, "formData") };
+  };
+  it("no identity, a non-owner and an inactive owner: formData is never called", async () => {
+    state.throwIdentity = true;
+    let s = spy(); await POST(s.req); expect(s.formData).not.toHaveBeenCalled();
+    state.throwIdentity = false;
+    for (const practitioner of [{ id: OWNER, role: "practitioner", active: true }, { id: OWNER, role: "owner", active: false }]) {
+      state.who = { ...state.who, practitioner };
+      s = spy(); await POST(s.req); expect(s.formData).not.toHaveBeenCalled();
+    }
+  });
+  it("a cross-origin request is refused before the body too", async () => {
+    const req = new Request(`${ORIGIN}/records/print/open`, { method: "POST", body: new URLSearchParams({ clientId: CLIENT }), headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://evil.test" } });
+    const formData = vi.spyOn(req, "formData");
+    await POST(req);
+    expect(formData).not.toHaveBeenCalled();
+  });
+  it("the owner's request does read it (anti-vacuity)", async () => {
+    const s = spy(); await POST(s.req); expect(s.formData).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -106,7 +148,7 @@ describe("the POST refuses without minting, and never says why", () => {
     await refused(await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN, "sec-fetch-site": "same-site" }));
     await refused(await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN, "sec-fetch-site": "none" }));
   });
-  it("the owner's own click is accepted even though rel=noreferrer makes the browser send 'Origin: null'", async () => {
+  it("a browser that sends Sec-Fetch-Site: same-origin is accepted even with 'Origin: null' (the header vouches for it)", async () => {
     const r = await post({ clientId: CLIENT, day: DAY }, { origin: "null", "sec-fetch-site": "same-origin" });
     expect(r.status).toBe(303);
     expect(location(r)).toContain("/records/print/ticket/");
@@ -171,7 +213,7 @@ describe("the ticket page resolves it on the server and renders the packet once"
   });
 });
 
-describe("no identifier can reach a URL, a Referer, analytics or telemetry on this route", () => {
+describe("no identifier is in a URL, a Referer or an analytics event on this route, and Sentry events are scrubbed", () => {
   it("the ticket route is in the token registry, so it gets no-referrer and noindex headers", () => {
     expect(TOKEN_ROUTE_PATTERNS).toContain("/records/print/ticket/:token*");
     const headers = Object.fromEntries(buildTokenRoutePrivacyHeaders().map((h) => [h.key, h.value]));

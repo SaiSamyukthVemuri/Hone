@@ -5,11 +5,11 @@ import { checkPrintableDay } from "@/lib/records/print/day-guard";
 import { parseSelectedDay } from "@/lib/records/print/selected-day";
 import { mintTicket } from "@/lib/records/print/ticket";
 
-// G-26 Option B. The owner presses Print on a session page; the browser POSTs a form here. The client id and the day
+// The owner presses Print on a session page; the browser POSTs a form here. The client id and the day
 // travel in the request BODY (never a URL), and the answer is a 303 to /records/print/ticket/<opaque ticket>, so no
 // identifier is in the URL, the Location header, or the Referer of the next request.
 //
-// The form that posts here carries rel="noreferrer", so this POST has no Referer either. Only POST is exported: a GET
+// This POST's Referer, when the browser sends one, is the session page and goes only to this server. Only POST is exported: a GET
 // is a 405 and cannot carry the values. The owner gate and the day check run HERE, so a non-owner or a bad day never
 // receives a ticket. Nothing is logged, and a refusal names no reason (a refusal's text would otherwise tell a prober
 // which of the checks failed).
@@ -24,16 +24,19 @@ const HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
 } as const;
 
-// A form with rel="noreferrer" has the no-referrer policy, and browsers then send "Origin: null" on a same-origin POST.
-// So Origin alone would refuse the owner's own click. Sec-Fetch-Site is sent regardless of the referrer policy and cannot
-// be set by page script, so it decides when present; Origin (same host) is the fallback for a browser without it.
+// Same-origin check. Sec-Fetch-Site decides when the browser sends it (a page cannot set it). A browser without it falls
+// back to Origin, which must be the same host: the session page's form does NOT carry rel="noreferrer", so such a
+// browser sends its real Origin on the same-origin POST and the owner's click passes. "Origin: null" is what a
+// no-referrer form or a sandboxed or cross-site context sends; with no Sec-Fetch-Site to vouch for it, it is refused.
 function sameOrigin(request: Request): boolean {
   const site = request.headers.get("sec-fetch-site");
   if (site !== null) return site === "same-origin";
   const origin = request.headers.get("origin");
   if (origin === null || origin === "null") return false;
   try {
-    return new URL(origin).host === new URL(request.url).host;
+    const parsed = new URL(origin);
+    // An Origin is exactly scheme://host[:port]: anything with userinfo, a path or a look-alike host is not one.
+    return parsed.origin === origin && parsed.host === new URL(request.url).host;
   } catch {
     return false;
   }
@@ -45,6 +48,16 @@ function back(request: Request): NextResponse {
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!sameOrigin(request)) return back(request);
+  // Identity and the owner gate come BEFORE the body is read: a stranger's, a non-owner's or an unauthenticated request
+  // never has its form parsed, so its values are never held by this handler.
+  let identity: Awaited<ReturnType<typeof requirePractitionerWithStudio>>;
+  try {
+    identity = await requirePractitionerWithStudio();
+  } catch {
+    return back(request); // not signed in, or no studio: the redirect helper throws; nothing is minted
+  }
+  const { practitioner, studio } = identity;
+  if (!canPrintClinicalPacket(practitioner)) return back(request);
   let form: FormData;
   try {
     form = await request.formData();
@@ -54,14 +67,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rawClient = form.get("clientId");
   const rawDay = form.get("day");
 
-  let identity: Awaited<ReturnType<typeof requirePractitionerWithStudio>>;
-  try {
-    identity = await requirePractitionerWithStudio();
-  } catch {
-    return back(request); // not signed in, or no studio: the redirect helper throws; nothing is minted
-  }
-  const { practitioner, studio } = identity;
-  if (!canPrintClinicalPacket(practitioner)) return back(request);
   const day = parseSelectedDay(typeof rawDay === "string" ? rawDay : undefined);
   if (!day.ok || !checkPrintableDay(day.day, studio.timezone).ok) return back(request);
   if (typeof rawClient !== "string") return back(request);

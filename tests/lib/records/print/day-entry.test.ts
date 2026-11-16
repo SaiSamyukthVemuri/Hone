@@ -63,10 +63,10 @@ describe("the session page wires the entry as a POST form without weakening it (
     expect(PAGE.match(/["'`]\/records\/print\//g) ?? []).toHaveLength(0); // no print path literal in the page
     expect(DAY_PACKET_OPEN_PATH).toBe("/records/print/open");
   });
-  it("is a POST form with rel=noreferrer: the values go in the body, never in a URL or a Referer", () => {
+  it("is a POST form: the values go in the body, never in a URL; it has no rel=noreferrer (older Safari would send Origin: null and be refused)", () => {
     expect(form).toContain('method="post"');
     expect(form).toContain("action={DAY_PACKET_OPEN_PATH}");
-    expect(form).toContain('rel="noreferrer"');
+    expect(form).not.toMatch(/rel=|referrerPolicy|referrerpolicy/i); // a same-origin POST whose Referer goes only to our own server
     expect(form).toContain('type="hidden" name="clientId"');
     expect(form).toContain('type="hidden" name="day"');
     expect(form).not.toMatch(/href=|<Link|router\.|window\.open|\?clientId|\?day/);

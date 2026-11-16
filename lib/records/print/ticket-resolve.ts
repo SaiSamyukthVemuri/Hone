@@ -1,4 +1,4 @@
-// G-26 Option B — open a print ticket for THIS signed-in owner, once. Pure orchestration: the secret, the clock and
+// Open a print ticket for THIS signed-in owner, once. Pure orchestration: the secret, the clock and
 // the single-use store are injected, so every refusal is unit-tested without Next, Redis or a database.
 //
 // The order matters: the ticket is authenticated and bound to this studio and owner BEFORE its use is recorded, so a

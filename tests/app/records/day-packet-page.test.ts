@@ -4,11 +4,10 @@ import { describe, expect, it } from "vitest";
 import { redactVercelEvent } from "@/lib/analytics/vercel-url-redaction";
 import { scrubBreadcrumb, scrubErrorEvent, scrubTransactionEvent } from "@/lib/observability/sentry-scrub";
 
-// HON-46 M2, Privacy route answer M-1..M-6 (G-26). A NEW file: it pins the URL
-// privacy of the day packet, using a synthetic id and date. Under Option B the packet is opened by an opaque
-// one-use ticket (lib/records/print/ticket.ts), so neither value is in any URL; the old ?clientId=&day= route
-// no longer reads them. G-26 is NOT fully satisfied: Vercel platform request logs still record that an owner POSTed
-// the open route and, shortly after, opened an opaque ticket URL (see the Option B design note).
+// Privacy route answer M-1..M-6. A NEW file: it pins the URL privacy of the day packet, using a synthetic id and
+// date. The packet is opened by an opaque one-use ticket (lib/records/print/ticket.ts), so neither value is in any URL;
+// the old ?clientId=&day= route no longer reads them. The platform's request log can show that a session was viewed
+// and a print opened, but not the day, and it holds no reusable link.
 
 const DIR = "app/(app)/records/print/day";
 const PACKET_DIR = "app/(app)/records/print/_packet";

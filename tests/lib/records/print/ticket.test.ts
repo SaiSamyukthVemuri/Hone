@@ -5,7 +5,7 @@ import {
 import { resolveTicket } from "@/lib/records/print/ticket-resolve";
 import { consumeInProcess, consumeTicketNonce, resetInProcessTicketStore, type ConsumeTicket } from "@/lib/records/print/ticket-store";
 
-// G-26 Option B. Synthetic ids and a synthetic secret only.
+// Synthetic ids and a synthetic secret only.
 const SECRET = "synthetic-print-ticket-secret-0123456789abcdef";
 const STUDIO = "11111111-1111-4111-8111-111111111111";
 const OWNER = "22222222-2222-4222-8222-222222222222";
@@ -67,6 +67,10 @@ describe("opening a ticket", () => {
       const swapped = t.slice(0, i) + (t[i] === "A" ? "B" : "A") + t.slice(i + 1);
       expect(openTicket({ secret: SECRET, binding, ticket: swapped, now: NOW }).ok, `char ${i}`).toBe(false);
     }
+    // The last character carries two spare bits: every other spelling of it is refused, only the minted one opens.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const opens = [...alphabet].filter((c) => openTicket({ secret: SECRET, binding, ticket: t.slice(0, -1) + c, now: NOW }).ok);
+    expect(opens).toEqual([t.at(-1)]);
   });
   it("is refused under another secret, and malformed strings are refused before any decrypt", () => {
     expect(open({ secret: "another-synthetic-secret-0123456789abcdefgh" })).toEqual({ ok: false, reason: "invalid" });

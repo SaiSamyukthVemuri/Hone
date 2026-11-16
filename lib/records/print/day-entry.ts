@@ -1,4 +1,4 @@
-// HON-46 / G-26 Option B — the ONE place the entry to the day packet is decided.
+// The ONE place the entry to the day packet is decided.
 //
 // The packet is opened by a POST form from the session page (action DAY_PACKET_OPEN_PATH), never by a link: the client
 // id and the studio-local day go in the request BODY and the server answers with an opaque one-use ticket URL. This

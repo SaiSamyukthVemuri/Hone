@@ -928,7 +928,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/records/print/day",
     reason:
-      "Retired entry for the per-client clinical print: it no longer reads clientId or day (G-26 Option B) and always refuses. Kept so an old bookmark lands on a clear refusal. Never a destination to search for.",
+      "Retired entry for the per-client clinical print: it no longer reads clientId or day and always refuses. Kept so an old bookmark lands on a clear refusal. Never a destination to search for.",
   },
   {
     route: "/records/print/ticket/[token]",

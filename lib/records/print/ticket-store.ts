@@ -1,4 +1,4 @@
-// G-26 Option B — the single-use marker of a print ticket (see ticket.ts).
+// The single-use marker of a print ticket (see ticket.ts).
 //
 // A ticket opens ONCE. The first open sets a marker with set-if-absent; a second open finds it and is refused. The
 // marker is keyed by a hash of the ticket's random nonce and holds the value "1": no client id, no day, no studio, no

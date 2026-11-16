@@ -5,7 +5,7 @@ import { resolveTicket } from "@/lib/records/print/ticket-resolve";
 import { consumeTicketNonce } from "@/lib/records/print/ticket-store";
 import { DayPacketView } from "../../_packet/day-packet-view";
 
-// G-26 Option B. The day packet, opened by an OPAQUE one-use ticket instead of ?clientId=&day=. The path holds only the
+// The day packet, opened by an OPAQUE one-use ticket instead of ?clientId=&day=. The path holds only the
 // ticket (no client id, no day). The route is in the token-route registry (lib/security/token-routes.ts), so it gets
 // Referrer-Policy: no-referrer and noindex headers, the Sentry path scrub, and Vercel Analytics / PostHog drop it
 // instead of sending the path. The ticket is bound to this studio and this owner, lives five minutes, and opens once.

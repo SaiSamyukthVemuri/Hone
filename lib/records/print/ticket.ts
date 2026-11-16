@@ -1,4 +1,4 @@
-// G-26 Option B — the print TICKET: how the owner opens the day packet WITHOUT a client id or a day in any URL.
+// The print TICKET: how the owner opens the day packet WITHOUT a client id or a day in any URL.
 //
 // The owner presses Print on a session page. A POST (body, not URL) carries the client id and the day to
 // /records/print/open, which mints a ticket and answers 303 to /records/print/ticket/<ticket>. The page resolves the
@@ -116,6 +116,9 @@ export function openTicket(args: {
   if (typeof args.ticket !== "string" || !TICKET_SHAPE.test(args.ticket)) return { ok: false, reason: "malformed" };
   const raw = Buffer.from(args.ticket, "base64url");
   if (raw.length !== IV_BYTES + PAYLOAD_BYTES + TAG_BYTES) return { ok: false, reason: "malformed" };
+  // 127 base64url characters carry two spare bits that decoding ignores, so a differently spelled string could decode to
+  // the same bytes. Only the canonical spelling is a ticket.
+  if (raw.toString("base64url") !== args.ticket) return { ok: false, reason: "malformed" };
   let payload: Buffer;
   try {
     const decipher = createDecipheriv("aes-256-gcm", key, raw.subarray(0, IV_BYTES));
