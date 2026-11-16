@@ -630,7 +630,7 @@ export function RolesEditor(props: RolesEditorProps) {
             </button>
             <SaveStatus state={feedback.state} />
           </div>
-          <p className="text-xs text-neutral-500">Once activated, a saved change applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
+          <p className="text-xs text-neutral-500">Once a saved change is in force, it applies to a person&rsquo;s next request, including people who are signed in now, but only for settings the app already enforces. Settings marked &ldquo;Not enforced yet&rdquo; do nothing today.</p>
         </div>
       )}
     </div>

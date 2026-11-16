@@ -91,6 +91,7 @@ describe("Roles copy does not imply a setting is enforced (Team matrix, 14 Nov)"
       expect(s).not.toMatch(/take effect only after they are released and you activate/);
       expect(s).not.toMatch(/do not change anyone.{1,12}s access until they are released and you activate/);
       expect(s).not.toContain("Until this setting is released and you activate it");
+      expect(s).not.toContain("Once activated, a saved change applies");
     }
     expect(m.NOT_ACTIVE_YET_LINE).toContain("raises access");
     expect(m.notActiveYetKeeps("practitioner", "Whole studio")).toContain("lowers access applies at once");
