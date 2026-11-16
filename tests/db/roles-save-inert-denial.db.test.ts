@@ -114,10 +114,12 @@ describe("the existing_snapshot basis behaves as before", () => {
   });
 });
 
-describe("reset and adopt are exercised once each and keep their contract", () => {
-  it("reset: removes the stored Off and reports it; the stored rows are gone and effective access is unchanged", async () => {
+describe("reset and adopt are exercised once each and keep their contract (same result on the hosted body and on 0355)", () => {
+  it("reset: removes a stored choice that 0287 and 0355 both store, reports ok, and effective access is unchanged", async () => {
     const s = await seedStudio("inert-denial-reset");
-    expect((await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "avail.manage_own": "off" } }, null, false])).ok).toBe(true);
+    // appt.cancel own differs from the base (studio), so both the hosted body and 0355 store it: this exercise does not depend on the fix
+    expect((await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "appt.cancel": "own" } }, null, false])).ok).toBe(true);
+    expect(await storedRows(s.studioId)).toEqual([{ key: "appt.cancel", scope: "own" }]);
     const before = await effectiveMaps(s.studioId);
     const v = (await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].version;
     const r = await callAs(s.userId, "reset_role_to_defaults", [s.studioId, "practitioner", Number(v), "Resetting this role to the studio defaults in a test", false]);
