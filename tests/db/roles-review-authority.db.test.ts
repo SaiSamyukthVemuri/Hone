@@ -511,6 +511,26 @@ describe("a state the timing function has no honest word for is a clean refusal 
     expect(Object.keys(JSON.parse(err!.message!)).sort()).toEqual(["code", "ok"]);
   });
 
+  it("in one transaction: a key whose released_at is LATER than now() makes a raise unlabellable, and the save is refused (review_changed) with no write, no version bump and no audit row", async () => {
+    const st = await seedStudio("review-authority-race2");
+    await inTx(async (q) => {
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-later', 'full')`);
+      await q(`update public.permission_key_release set released_at = now() + interval '1 hour' where key = 'appt.book'`);
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const ch = { receptionist: { "appt.book": "studio" } };
+        const r = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, "0".repeat(64)]);
+        expect(r).toMatchObject({ ok: false, code: "review_changed" });
+        expect(JSON.stringify(r)).not.toMatch(/perm_review_timing|sqlstate|P0001/i);
+        expect(Number((await adm(q, `select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+        expect(Number((await adm(q, `select count(*) n from public.permission_audit where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+        expect(await version(q, st.studioId)).toBe(v);
+        const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+        expect(p).toMatchObject({ ok: false, code: "review_changed" });
+      });
+    });
+  });
+
   it("save level: a release that committed AFTER this transaction started (its set_at would be earlier than released_at) is refused, with no write, no version bump and no audit row", async () => {
     const st = await seedStudio("review-authority-race");
     const key = "appt.book";
