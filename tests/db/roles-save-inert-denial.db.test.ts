@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// Codex 4582612231 on #1490 (0287 perm_run_changes, the v_apply guard). Reproduction on the REAL 0287 chain, synthetic data.
+// An owner who changes the shown On to Off was dropped as unchanged (0287 perm_run_changes, the v_apply guard). Reproduction on the REAL 0287 chain, synthetic data.
 // A studio on the new_studio basis with no override: the catalog's new-studio default for a practitioner's avail.manage_own is 'studio' (On),
 // but until the key is released perm_base_scope returns the existing snapshot ('off'). The owner changes On -> Off. The command compares the
 // request with the unreleased base, sees no difference, and DROPS it. These tests assert the CORRECT behaviour (the owner's Off is stored as an

@@ -1,6 +1,6 @@
 -- 0355: perm_run_changes stores an owner's choice that matches the unreleased base but differs from what the page shows.
 --
--- THE BUG (Codex 4582612231 on #1490). A studio on the new_studio basis with no override sees a practitioner's avail.manage_own as On (the catalog's
+-- THE BUG. An owner who changes the shown On to Off was dropped as unchanged. A studio on the new_studio basis with no override sees a practitioner's avail.manage_own as On (the catalog's
 -- new-studio default, 'studio'). Until the key is released perm_base_scope returns the existing snapshot ('off'). The owner changes On to Off. The
 -- command compared the request with perm_base_scope, saw off = off, and DROPPED it: the preview said nothing_changed, or the Off was silently omitted
 -- from a save that also carried other edits. The owner could not save an inert denial.
@@ -158,7 +158,7 @@ begin
       v_changes := v_changes || jsonb_build_object(v_role, public.perm_diff(v_before_eff -> v_role, v_after_eff -> v_role));
       v_affected := v_affected || jsonb_build_object(v_role, public.perm_affected_people(p_studio, v_role));
       -- A reason and a confirmation are required when a SENSITIVE key's EFFECTIVE scope rises for any affected role, whether the owner
-      -- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.
+      -- edited that key or only raised a prerequisite that had been capping it. Judged on the resulting maps.
       select v_sens || coalesce(jsonb_agg(e.key order by e.key), '[]'::jsonb) into v_sens
         from jsonb_each_text(v_after_eff -> v_role) e
         join public.permission_catalog pc on pc.key = e.key

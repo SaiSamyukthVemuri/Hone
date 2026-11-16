@@ -37,7 +37,7 @@ describe("0355 source contract", () => {
     expect(headOf(UP)).toBe(headOf(OLD));
   });
 
-  it("changes the body in exactly three places: declarations, the basis read, and the apply condition", () => {
+  it("changes the body in exactly these places: declarations, the basis read, the apply condition, and one comment", () => {
     const before = bodyOf(OLD).split("\n");
     const after = bodyOf(UP).split("\n");
     const removed = before.filter((l) => !after.includes(l));
@@ -45,6 +45,7 @@ describe("0355 source contract", () => {
     expect(removed.map((l) => l.trim())).toEqual([
       "if v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) then",
       "v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', coalesce(v_stored_prev, v_base)));",
+      "-- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.", // comment only: no review-lane reference in a migration
     ]);
     expect(added.some((l) => l.includes("or v_scope <> v_shown then"))).toBe(true);
     // the condition is ADDITIVE: the old test is still a disjunct
