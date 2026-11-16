@@ -24,9 +24,14 @@ const HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
 } as const;
 
+// A form with rel="noreferrer" has the no-referrer policy, and browsers then send "Origin: null" on a same-origin POST.
+// So Origin alone would refuse the owner's own click. Sec-Fetch-Site is sent regardless of the referrer policy and cannot
+// be set by page script, so it decides when present; Origin (same host) is the fallback for a browser without it.
 function sameOrigin(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin";
   const origin = request.headers.get("origin");
-  if (origin === null) return false; // a browser form POST always sends Origin; its absence is not a browser form
+  if (origin === null || origin === "null") return false;
   try {
     return new URL(origin).host === new URL(request.url).host;
   } catch {

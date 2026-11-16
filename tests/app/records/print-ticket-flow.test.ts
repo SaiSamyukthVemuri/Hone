@@ -98,9 +98,18 @@ describe("the POST refuses without minting, and never says why", () => {
     state.throwIdentity = true;
     await refused(await post({ clientId: CLIENT, day: DAY }));
   });
-  it("a cross-origin or origin-less POST", async () => {
+  it("a cross-origin, cross-site or origin-less POST", async () => {
     await refused(await post({ clientId: CLIENT, day: DAY }, { origin: "https://evil.test" }));
     await refused(await post({ clientId: CLIENT, day: DAY }, {}));
+    await refused(await post({ clientId: CLIENT, day: DAY }, { origin: "null" }));
+    await refused(await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN, "sec-fetch-site": "cross-site" })); // the browser's word wins
+    await refused(await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN, "sec-fetch-site": "same-site" }));
+    await refused(await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN, "sec-fetch-site": "none" }));
+  });
+  it("the owner's own click is accepted even though rel=noreferrer makes the browser send 'Origin: null'", async () => {
+    const r = await post({ clientId: CLIENT, day: DAY }, { origin: "null", "sec-fetch-site": "same-origin" });
+    expect(r.status).toBe(303);
+    expect(location(r)).toContain("/records/print/ticket/");
   });
   it("a bad client id, a missing or unreal day, a future day and a day outside 1900-2100", async () => {
     for (const fields of [
