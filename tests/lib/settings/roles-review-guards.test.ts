@@ -34,6 +34,23 @@ describe("the audit's `_review` bookkeeping key is never shown", () => {
   });
 });
 
+describe("Privacy: an unexpected database outcome shows the page's generic copy and never a raw message", () => {
+  it("a raw SQL error, a malformed refusal, or text in place of JSON all map to `unexpected` with the fixed message", async () => {
+    const { parseError, parseCommand, parsePreview } = await import("@/lib/settings/roles/core-parse");
+    const { roleErrorMessage } = await import("@/lib/settings/roles/api");
+    const raw = "perm_review_timing: P0001 something with private detail";
+    for (const r of [parseError(raw), parseError({ ok: false, code: raw }), parseError({ ok: false, message: raw }), parseCommand({ ok: false, code: "P0001", message: raw }), parsePreview(raw)]) {
+      const err = "error" in r ? r.error : r;
+      expect(err).toEqual({ code: "unexpected" });
+      expect(roleErrorMessage(err)).toBe("Something went wrong and we could not confirm the result. Reload the page to see what is saved.");
+      expect(roleErrorMessage(err)).not.toContain("P0001");
+    }
+  });
+  it("core.ts never forwards an error object's message or details to the caller", () => {
+    expect(code("lib/settings/roles/core.ts")).not.toMatch(/error\.(message|details|hint)/);
+  });
+});
+
 describe("G1/F6: the page saves and previews ONLY through the reviewed pair", () => {
   const core = code("lib/settings/roles/core.ts");
   it("core.ts calls preview_role_changes_at and save_role_permissions_reviewed, and never the old non-versioned pair", () => {
