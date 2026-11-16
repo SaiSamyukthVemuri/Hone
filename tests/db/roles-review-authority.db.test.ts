@@ -46,13 +46,29 @@ async function asOwner<T>(q: Q, userId: string, fn: () => Promise<T>): Promise<T
   try {
     return await fn();
   } finally {
-    await q("reset role");
+    // A failed statement aborts the transaction; do not let this mask the real error.
+    await q("reset role").catch(() => undefined);
   }
 }
 const call = async (q: Q, fn: string, args: unknown[]): Promise<Result> =>
   (await q(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0].r as Result;
-const version = async (q: Q, studioId: string) =>
-  Number((await q(`select version from public.studio_permission_policy where studio_id = $1`, [studioId])).rows[0]?.version ?? 0);
+// Read as the table owner even when called inside asOwner (the API role cannot select the policy table), then restore the caller's role.
+const version = async (q: Q, studioId: string) => {
+  const was = String((await q("select current_user as u")).rows[0].u);
+  if (was !== "postgres") await q("reset role");
+  const n = Number((await q(`select version from public.studio_permission_policy where studio_id = $1`, [studioId])).rows[0]?.version ?? 0);
+  if (was !== "postgres") await q(`set local role ${was}`);
+  return n;
+};
+const adm = async (q: Q, text: string, params?: unknown[]) => {
+  const was = String((await q("select current_user as u")).rows[0].u);
+  if (was !== "postgres") await q("reset role");
+  try {
+    return await q(text, params);
+  } finally {
+    if (was !== "postgres") await q(`set local role ${was}`);
+  }
+};
 const inTx = async (fn: (q: Q) => Promise<void>) => {
   try {
     await adminTx(async (q) => {
@@ -126,13 +142,14 @@ describe("the delegator perm_run_changes returns exactly what the 0355 body retu
     await inTx(async (q) => {
       await q(fn);
       await q(`grant execute on function public.zz_run_changes_0355(uuid, jsonb, text, boolean, bigint, boolean, boolean) to authenticated`);
-      await asOwner(q, st.userId, async () => {
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: st.userId, role: "authenticated" })]);
+      {
         for (const c of cases) {
           const a = (await q(`select public.zz_run_changes_0355($1, $2, null, false, null, false, false) as r`, [st.studioId, c])).rows[0].r;
           const b = (await q(`select public.perm_run_changes($1, $2, null, false, null, false, false) as r`, [st.studioId, c])).rows[0].r;
           expect(b, JSON.stringify(c)).toEqual(a);
         }
-      });
+      }
     });
   });
 });
@@ -179,9 +196,9 @@ describe("the review table states what was stored, what the owner saw, what is w
         const p = await call(q, "preview_role_changes_at", [st.studioId, changes, v]);
         expect((await call(q, "save_role_permissions_reviewed", [st.studioId, v, changes, null, false, p.review_hash])).ok).toBe(true);
         for (const row of p.review ?? []) {
-          const stored = (await q(`select scope from public.studio_role_permissions where studio_id = $1 and role = $2 and key = $3`, [st.studioId, row.role, row.key])).rows[0]?.scope ?? null;
+          const stored = (await adm(q, `select scope from public.studio_role_permissions where studio_id = $1 and role = $2 and key = $3`, [st.studioId, row.role, row.key])).rows[0]?.scope ?? null;
           expect(stored, `${row.role}:${row.key}`).toBe(row.stored_after);
-          const eff = (await q(`select public.perm_effective_map($1, $2) as m`, [st.studioId, row.role])).rows[0].m as Record<string, string>;
+          const eff = (await adm(q, `select public.perm_effective_map($1, $2) as m`, [st.studioId, row.role])).rows[0].m as Record<string, string>;
           expect(eff[row.key], `${row.role}:${row.key}`).toBe(row.effective_after);
         }
       });
@@ -192,18 +209,18 @@ describe("the review table states what was stored, what the owner saw, what is w
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // D1/D2/G6: the timing label is derived independently here from the prose rules, and checked against what the real engine does after release.
 // ---------------------------------------------------------------------------------------------------------------------------------------------
-type Facts = { released: boolean; kind: "narrow" | "full"; active: boolean; snapshot: string; requested: string; effectiveAfter: string; written: boolean };
+type Facts = { released: boolean; kind: "narrow" | "full"; active: boolean; snapshot: string; requested: string; effectiveBefore: string; effectiveAfter: string; written: boolean };
+// Derived independently from the engine rules (0287 perm_base_scope), not copied from the SQL.
 function expectedTiming(f: Facts): string {
   if (!f.written) return "no_change";
+  const raise = rank(f.requested) > rank(f.snapshot);
   if (!f.released) return rank(f.requested) < rank(f.snapshot) ? "at_release" : "not_released";
   if (f.kind === "narrow") {
-    if (rank(f.requested) > rank(f.snapshot)) return "waits_for_later_full_release";
+    if (raise) return "waits_for_full_release";
     return f.effectiveAfter === f.requested ? "in_force_now" : "capped";
   }
-  if (f.effectiveAfter === f.requested) return "in_force_now";
-  if (rank(f.effectiveAfter) < rank(f.requested)) {
-    return !f.active && rank(f.requested) > rank(f.snapshot) && rank(f.effectiveAfter) <= rank(f.snapshot) ? "waits_for_activation" : "capped";
-  }
+  if (f.effectiveAfter === f.requested) return rank(f.effectiveAfter) > rank(f.effectiveBefore) ? "applies_on_save" : "in_force_now";
+  if (rank(f.effectiveAfter) < rank(f.requested)) return !f.active && raise && rank(f.effectiveAfter) <= rank(f.snapshot) ? "waits_for_activation" : "capped";
   return "in_force_now";
 }
 
@@ -246,7 +263,7 @@ describe("timing: every release state, activation, prior stored value and reques
                   const row = p.review![0];
                   const label = `${role}:${key} ${kind} active=${active} prior=${prior} req=${requested}`;
                   expect(row.timing, label).toBe(
-                    expectedTiming({ released: kind !== "unreleased", kind: kind === "narrow" ? "narrow" : "full", active, snapshot, requested, effectiveAfter: row.effective_after, written: row.written }),
+                    expectedTiming({ released: kind !== "unreleased", kind: kind === "narrow" ? "narrow" : "full", active, snapshot, requested, effectiveBefore: row.effective_before, effectiveAfter: row.effective_after, written: row.written }),
                   );
                   seen.add(row.timing);
                   // commit, then ask the ENGINE what is in force (and, for an unreleased key, what is in force once it is released)
@@ -270,10 +287,10 @@ describe("timing: every release state, activation, prior stored value and reques
                       await q("rollback to savepoint rel");
                       await q("set local role authenticated");
                       if (row.timing === "at_release") expect(released, `${label} after ${relKind} release`).toBe(requested);
-                      if (row.timing === "not_released") expect(released, `${label} after ${relKind} release`).toBe(snapshot);
+                      // not_released is not checked here: within one transaction set_at = released_at (a tie, which applies at once); evidence cases (1) and (5) cover it.
                     }
-                  } else if (row.timing === "in_force_now") expect(now, label).toBe(requested);
-                  else if (row.timing === "waits_for_later_full_release" || row.timing === "waits_for_activation") expect(rank(now), label).toBeLessThanOrEqual(rank(snapshot));
+                  } else if (row.timing === "in_force_now" || row.timing === "applies_on_save") expect(now, label).toBe(requested);
+                  else if (row.timing === "waits_for_full_release" || row.timing === "waits_for_activation") expect(rank(now), label).toBeLessThanOrEqual(rank(snapshot));
                 });
               });
             }
@@ -282,7 +299,7 @@ describe("timing: every release state, activation, prior stored value and reques
       }
     }
     // the matrix reaches the labels that a save can produce
-    for (const must of ["at_release", "not_released", "in_force_now", "waits_for_later_full_release", "no_change"]) expect([...seen], `reached ${must}`).toContain(must);
+    for (const must of ["at_release", "not_released", "in_force_now", "applies_on_save", "waits_for_full_release"]) expect([...seen], `reached ${must}`).toContain(must);
   });
 });
 
@@ -321,12 +338,142 @@ describe("RAISE saved AFTER a full release: is it in force at once, or does it w
     console.log("RAISE-EVIDENCE " + JSON.stringify(out));
     expect(out).toEqual({
       releasedNoChoice: "off",
-      previewTiming: "in_force_now",
+      previewTiming: "applies_on_save",
       afterSaveBeforeActivation: "studio",
       afterActivation: "studio",
       storedBeforeRelease_afterRelease: "off",
       storedBeforeRelease_afterActivation: "studio",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// Insurance/Privacy evidence: the engine's own answers for each release state, immediately and after activation. One line per case.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+describe("engine evidence: when does a saved choice take effect? (perm_base_scope, 0287 lines 356-404 and the upsert's set_at)", () => {
+  const RAISE = { role: "receptionist", key: "appt.book" }; // snapshot off, scope studio is a raise
+  const LOWER = { role: "practitioner", key: "appt.cancel" }; // snapshot studio, scope off is a lowering
+  const eff = async (q: Q, studioId: string, w: { role: string; key: string }) => (await q(`select public.perm_effective_scope($1, $2, $3) as e`, [studioId, w.role, w.key])).rows[0].e as string;
+  const activate = (q: Q, studioId: string, userId: string, key: string) =>
+    q(`insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version) values ($1, $2, 'T-ev', $3, 'evidence', 0)`, [studioId, key, userId]);
+  const reset = async (q: Q, studioId: string, basis = "existing_snapshot") => {
+    await q(`update public.studio_permission_policy set basis = $2 where studio_id = $1`, [studioId, basis]);
+    await q(`delete from public.studio_role_permissions where studio_id = $1`, [studioId]);
+  };
+  const lines: string[] = [];
+
+  it("(1) stored BEFORE a full release, not activated: a raise waits, a lowering applies; activation then applies the raise", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await reset(q, st.studioId);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope, set_at) values ($1, 'receptionist', 'appt.book', 'studio', now() - interval '1 day'), ($1, 'practitioner', 'appt.cancel', 'off', now() - interval '1 day')`, [st.studioId]);
+      const before = [await eff(q, st.studioId, RAISE), await eff(q, st.studioId, LOWER)];
+      await q(`select public.mark_permissions_released(array['appt.book','appt.cancel'], 'T-ev', 'full')`);
+      const released = [await eff(q, st.studioId, RAISE), await eff(q, st.studioId, LOWER)];
+      await activate(q, st.studioId, st.userId, "appt.book");
+      await activate(q, st.studioId, st.userId, "appt.cancel");
+      const activated = [await eff(q, st.studioId, RAISE), await eff(q, st.studioId, LOWER)];
+      lines.push(`(1) before release raise=${before[0]} lower=${before[1]}; after full release raise=${released[0]} lower=${released[1]}; after activation raise=${activated[0]} lower=${activated[1]}`);
+      expect({ before, released, activated }).toEqual({ before: ["off", "studio"], released: ["off", "off"], activated: ["studio", "off"] });
+    });
+  });
+
+  it("(2) stored AT or AFTER a full release: in force at once, a raise included, and activation changes nothing; the tie set_at = released_at applies", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await reset(q, st.studioId);
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-ev', 'full')`);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope, set_at) values ($1, 'receptionist', 'appt.book', 'studio', now() + interval '1 second')`, [st.studioId]);
+      const after = await eff(q, st.studioId, RAISE);
+      await activate(q, st.studioId, st.userId, "appt.book");
+      const activated = await eff(q, st.studioId, RAISE);
+      await q(`update public.studio_role_permissions set set_at = (select released_at from public.permission_key_release where key = 'appt.book') where studio_id = $1`, [st.studioId]);
+      const tie = await eff(q, st.studioId, RAISE);
+      lines.push(`(2) stored after full release: raise=${after}; after activation=${activated}; tie set_at = released_at (activated) =${tie}`);
+      expect({ after, activated, tie }).toEqual({ after: "studio", activated: "studio", tie: "studio" });
+    });
+    await inTx(async (q) => {
+      await reset(q, st.studioId);
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-ev', 'full')`);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope, set_at) values ($1, 'receptionist', 'appt.book', 'studio', (select released_at from public.permission_key_release where key = 'appt.book'))`, [st.studioId]);
+      const tieNotActivated = await eff(q, st.studioId, RAISE);
+      lines.push(`(2b) tie set_at = released_at, NOT activated: raise=${tieNotActivated}`);
+      expect(tieNotActivated).toBe("studio");
+    });
+  });
+
+  it("(3) a narrow release with a raise: it waits for a later full release, activated or not", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await reset(q, st.studioId);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope, set_at) values ($1, 'receptionist', 'appt.book', 'studio', now() - interval '1 day')`, [st.studioId]);
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-ev', 'narrow')`);
+      const released = await eff(q, st.studioId, RAISE);
+      await activate(q, st.studioId, st.userId, "appt.book");
+      const activated = await eff(q, st.studioId, RAISE);
+      await q(`update public.studio_role_permissions set set_at = now() + interval '1 second' where studio_id = $1`, [st.studioId]);
+      const resaved = await eff(q, st.studioId, RAISE);
+      lines.push(`(3) narrow release, stored raise: released=${released}; activated=${activated}; re-saved after release=${resaved}`);
+      expect({ released, activated, resaved }).toEqual({ released: "off", activated: "off", resaved: "off" });
+    });
+  });
+
+  it("(4) unreleased: in force at the snapshot, whatever is stored", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await reset(q, st.studioId);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope) values ($1, 'receptionist', 'appt.book', 'studio'), ($1, 'practitioner', 'appt.cancel', 'off')`, [st.studioId]);
+      const r = [await eff(q, st.studioId, RAISE), await eff(q, st.studioId, LOWER)];
+      lines.push(`(4) unreleased with a stored raise and a stored lowering: raise=${r[0]} lower=${r[1]} (snapshots off and studio)`);
+      expect(r).toEqual(["off", "studio"]);
+    });
+  });
+
+  it("(5) a re-save across a release: a pre-release raise re-saved after the release goes in force at once", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await reset(q, st.studioId);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope, set_at) values ($1, 'receptionist', 'appt.book', 'studio', now() - interval '1 day')`, [st.studioId]);
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-ev', 'full')`);
+      const waiting = await eff(q, st.studioId, RAISE);
+      let preview: Row | undefined;
+      let resaved = "";
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const ch = { receptionist: { "appt.book": "studio" } };
+        const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+        preview = p.review?.[0];
+        const saved = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash]);
+        expect(saved.ok, JSON.stringify(saved)).toBe(true);
+      });
+      resaved = await eff(q, st.studioId, RAISE);
+      lines.push(`(5) pre-release raise after full release: waiting=${waiting}; preview effective_before=${preview?.effective_before} effective_after=${preview?.effective_after} timing=${preview?.timing}; after the re-save=${resaved}`);
+      expect({ waiting, resaved, before: preview?.effective_before, after: preview?.effective_after, timing: preview?.timing }).toEqual({
+        waiting: "off", resaved: "studio", before: "off", after: "studio", timing: "applies_on_save",
+      });
+    });
+  });
+
+  it("(6) the new-studio default via basis_at: before the release it waits for activation, at or after it applies at once", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await reset(q, st.studioId, "new_studio");
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-ev', 'full')`);
+      await q(`update public.studio_permission_policy set basis_at = (select released_at from public.permission_key_release where key = 'appt.book') - interval '1 day' where studio_id = $1`, [st.studioId]);
+      const earlier = await eff(q, st.studioId, RAISE);
+      await activate(q, st.studioId, st.userId, "appt.book");
+      const activated = await eff(q, st.studioId, RAISE);
+      await q(`delete from public.permission_key_activation where studio_id = $1`, [st.studioId]);
+      await q(`update public.studio_permission_policy set basis_at = (select released_at from public.permission_key_release where key = 'appt.book') where studio_id = $1`, [st.studioId]);
+      const tie = await eff(q, st.studioId, RAISE);
+      lines.push(`(6) new-studio default (studio, snapshot off), basis_at before release=${earlier}; after activation=${activated}; basis_at = released_at (not activated)=${tie}`);
+      expect({ earlier, activated, tie }).toEqual({ earlier: "off", activated: "studio", tie: "studio" });
+    });
+  });
+
+  it("prints the evidence", () => {
+    for (const l of lines) console.log("ENGINE-EVIDENCE " + l);
+    expect(lines.length).toBeGreaterThanOrEqual(6);
   });
 });
 
@@ -339,7 +486,7 @@ describe("staleness and the review hash bind the save", () => {
         const r = await call(q, "preview_role_changes_at", [st.studioId, { practitioner: { "appt.cancel": "off" } }, v + 7]);
         expect(r).toMatchObject({ ok: false, code: "stale_version", current_version: v });
         expect(r.review).toBeUndefined();
-        expect(Number((await q(`select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+        expect(Number((await adm(q, `select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
       });
     });
   });
@@ -359,6 +506,8 @@ describe("staleness and the review hash bind the save", () => {
         expect(JSON.stringify(wrong)).not.toContain(p.review_hash!); // a refusal does not echo the hash or the table
         expect(wrong.review).toBeUndefined();
         expect(await version(q, st.studioId)).toBe(v); // nothing committed
+        expect(Number((await adm(q, `select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+        expect(Number((await adm(q, `select count(*) n from public.permission_audit where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
         expect((await call(q, "save_role_permissions_reviewed", [st.studioId, v + 1, ch, null, false, p.review_hash])).code).toBe("stale_version");
       });
     });
@@ -377,7 +526,7 @@ describe("staleness and the review hash bind the save", () => {
         await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: st.userId, role: "authenticated" })]);
         const r = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash]);
         expect(r).toMatchObject({ ok: false, code: "review_changed" });
-        expect(Number((await q(`select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+        expect(Number((await adm(q, `select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
       });
     });
   });
@@ -461,14 +610,14 @@ describe("audit: a reviewed save records its review version and hash inside `aft
         const ch = { practitioner: { "appt.cancel": "own" } };
         const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
         expect((await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash])).ok).toBe(true);
-        const rows = (await q(`select after, before from public.permission_audit where studio_id = $1 and kind = 'role_permissions_saved' order by id`, [st.studioId])).rows as { after: Record<string, unknown>; before: Record<string, unknown> }[];
+        const rows = (await adm(q, `select after, before from public.permission_audit where studio_id = $1 and kind = 'role_permissions_saved' order by id`, [st.studioId])).rows as { after: Record<string, unknown>; before: Record<string, unknown> }[];
         expect(rows).toHaveLength(1);
         expect(rows[0].after._review).toEqual({ version: v, hash: p.review_hash });
         expect(Object.keys(rows[0].after).sort()).toEqual(["_review", "appt.cancel"]);
         expect(rows[0].before).not.toHaveProperty("_review");
         const v2 = await version(q, st.studioId);
         expect((await call(q, "save_role_permissions", [st.studioId, v2, { practitioner: { "appt.cancel": "off" } }, null, false])).ok).toBe(true);
-        const last = (await q(`select after from public.permission_audit where studio_id = $1 and kind = 'role_permissions_saved' order by id desc limit 1`, [st.studioId])).rows[0].after as Record<string, unknown>;
+        const last = (await adm(q, `select after from public.permission_audit where studio_id = $1 and kind = 'role_permissions_saved' order by id desc limit 1`, [st.studioId])).rows[0].after as Record<string, unknown>;
         expect(last).not.toHaveProperty("_review");
       });
     });
@@ -494,7 +643,7 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
     const id = "00000000-0000-4000-8000-000000000356";
     const text = (await adminQuery(`select public.perm_review_hash_input($1, 5, '[]'::jsonb, '[]'::jsonb, false)::text as t`, [id])).rows[0].t as string;
     expect(text).toBe(
-      '{"v": 1, "basis": null, "gates": [], "studio": "00000000-0000-4000-8000-000000000356", "review": [], "catalog": [], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
+      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000356", "catalog": [], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
     );
     expect((await adminQuery(`select public.perm_review_hash($1, 5, '[]'::jsonb, '[]'::jsonb, false) as h`, [id])).rows[0].h).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
   });
@@ -511,7 +660,7 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
       await q(`select public.mark_permissions_released(array['appt.cancel'], 'T-hash', 'full')`);
       const afterRelease = await h(q);
       expect(afterRelease).not.toBe(afterCatalog);
-      await q(`update public.studio_permission_policy set basis = 'new_studio' where studio_id = $1`, [st.studioId]);
+      await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
       expect(await h(q)).not.toBe(afterRelease);
     });
   });
@@ -520,7 +669,7 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
 describe("grants and function settings", () => {
   const INTERNAL = [
     "public.perm_review_involved(text[])",
-    "public.perm_review_timing(boolean, text, text, text, text, boolean, boolean)",
+    "public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean)",
     "public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean)",
     "public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean)",
     "public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text)",

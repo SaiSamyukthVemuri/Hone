@@ -50,10 +50,13 @@ as $$
   select coalesce(array_agg(distinct key order by key), '{}'::text[]) from k
 $$;
 
--- When a saved choice takes effect, from facts only: whether the key is released, its release kind, the snapshot, what was asked, what the engine says is
--- in force after the write, whether the call writes the row, and whether the owner activated this release.
+-- When a saved choice takes effect, from facts only: whether the key is released, its release kind, the snapshot, what was asked, what was in force before
+-- and after the write (the engine's own answers), whether the call writes the row, and whether the owner activated this release.
+-- Engine facts this encodes (0287 perm_base_scope): before release a stored choice is inert; at release a LOWERING applies at once; a stored value takes effect
+-- when it was set at or after the release (set_at resets on every save, and the test is >=), so a raise SAVED after a full release is in force at once and a
+-- re-save applies an old one; a raise on a NARROW release stays at the snapshot until a later full release, and activation does not help.
 create or replace function public.perm_review_timing(
-  p_released boolean, p_kind text, p_snapshot text, p_requested text, p_effective_after text, p_written boolean, p_active boolean
+  p_released boolean, p_kind text, p_snapshot text, p_requested text, p_effective_before text, p_effective_after text, p_written boolean, p_active boolean
 )
 returns text
 language sql
@@ -65,10 +68,11 @@ as $$
     when not coalesce(p_released, false) then
       case when public.perm_rank(p_requested) < public.perm_rank(p_snapshot) then 'at_release' else 'not_released' end
     when p_kind = 'narrow' then
-      case when public.perm_rank(p_requested) > public.perm_rank(p_snapshot) then 'waits_for_later_full_release'
+      case when public.perm_rank(p_requested) > public.perm_rank(p_snapshot) then 'waits_for_full_release'
            when p_effective_after = p_requested then 'in_force_now'
            else 'capped' end
-    when p_effective_after = p_requested then 'in_force_now'
+    when p_effective_after = p_requested then
+      case when public.perm_rank(p_effective_after) > public.perm_rank(p_effective_before) then 'applies_on_save' else 'in_force_now' end
     when public.perm_rank(p_effective_after) < public.perm_rank(p_requested) then
       case when not coalesce(p_active, false)
                 and public.perm_rank(p_requested) > public.perm_rank(p_snapshot)
@@ -102,9 +106,9 @@ as $$
     'releases', (select coalesce(jsonb_agg(jsonb_build_object(
                     'key', r.key, 'tag', r.release_tag, 'kind', r.release_kind,
                     'at', to_char(r.released_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) order by r.key), '[]'::jsonb)
-                   from public.permission_key_release r where r.key = any ((select keys from involved))),
+                   from public.permission_key_release r where r.key = any (coalesce((select i.keys from involved i), '{}'::text[]))),
     'activations', (select coalesce(jsonb_agg(jsonb_build_object('key', k.key, 'tag', k.release_tag) order by k.key, k.release_tag), '[]'::jsonb)
-                      from public.permission_key_activation k where k.studio_id = p_studio and k.key = any ((select keys from involved))),
+                      from public.permission_key_activation k where k.studio_id = p_studio and k.key = any (coalesce((select i.keys from involved i), '{}'::text[]))),
     'catalog', (select coalesce(jsonb_agg(jsonb_build_object(
                     'key', c.key,
                     'scopes', (select coalesce(jsonb_agg(s order by s), '[]'::jsonb) from unnest(c.scopes) s),
@@ -115,12 +119,12 @@ as $$
                     'requires', (select coalesce(jsonb_agg(q order by q), '[]'::jsonb) from unnest(c.requires) q),
                     'gate_practitioner', c.gate_practitioner, 'gate_receptionist', c.gate_receptionist,
                     'sensitive', c.sensitive) order by c.key), '[]'::jsonb)
-                  from public.permission_catalog c where c.key = any ((select keys from involved))),
+                  from public.permission_catalog c where c.key = any (coalesce((select i.keys from involved i), '{}'::text[]))),
     'gates', (select coalesce(jsonb_agg(jsonb_build_object('gate', g.gate, 'met', g.met) order by g.gate), '[]'::jsonb)
                 from public.permission_ship_gates g
                where g.studio_id = p_studio
                  and g.gate in (select x from public.permission_catalog c, unnest(array[c.gate_practitioner, c.gate_receptionist]) x
-                                 where c.key = any ((select keys from involved)) and x is not null))
+                                 where c.key = any (coalesce((select i.keys from involved i), '{}'::text[])) and x is not null))
   )
 $$;
 
@@ -306,6 +310,7 @@ begin
              'effective_after', v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
              'timing', public.perm_review_timing(
                          rel.released_at is not null, rel.release_kind, r.value ->> 'snapshot', r.value ->> 'requested',
+                         v_before_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
                          v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'), (r.value ->> 'written')::boolean,
                          exists (select 1 from public.permission_key_activation k
                                   where k.studio_id = p_studio and k.key = r.value ->> 'key' and k.release_tag = rel.release_tag))
@@ -428,7 +433,7 @@ end;
 $$;
 
 revoke all on function public.perm_review_involved(text[]) from public, anon, authenticated, service_role;
-revoke all on function public.perm_review_timing(boolean, text, text, text, text, boolean, boolean) from public, anon, authenticated, service_role;
+revoke all on function public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text) from public, anon, authenticated, service_role;

@@ -205,7 +205,7 @@ drop function public.preview_role_changes_at(uuid, jsonb, bigint);
 drop function public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text);
 drop function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean);
 drop function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean);
-drop function public.perm_review_timing(boolean, text, text, text, text, boolean, boolean);
+drop function public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean);
 drop function public.perm_review_involved(text[]);
 
 commit;

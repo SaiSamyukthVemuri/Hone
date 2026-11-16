@@ -23,7 +23,7 @@ const headOf = (sql: string, name: string) => {
 };
 const NEW_FUNCTIONS: [string, string][] = [
   ["perm_review_involved", "text[]"],
-  ["perm_review_timing", "boolean, text, text, text, text, boolean, boolean"],
+  ["perm_review_timing", "boolean, text, text, text, text, text, boolean, boolean"],
   ["perm_review_hash_input", "uuid, bigint, jsonb, jsonb, boolean"],
   ["perm_review_hash", "uuid, bigint, jsonb, jsonb, boolean"],
   ["perm_run_changes_reviewed", "uuid, jsonb, text, boolean, bigint, boolean, boolean, text"],
