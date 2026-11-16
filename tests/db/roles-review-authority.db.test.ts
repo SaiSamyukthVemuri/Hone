@@ -594,6 +594,20 @@ describe("Codex 4585180160: a studio with NO policy row yet can complete its fir
     await adminQuery(`delete from public.studio_role_permissions where studio_id = $1`, [st.studioId]);
   });
 
+  it("a newly created studio always has its policy row, on new_studio (0287's seed trigger); a missing row is only ever completed as existing_snapshot", async () => {
+    const st = await seedStudio("review-authority-seed");
+    const row = (await adminQuery(`select basis, version from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0];
+    expect(row).toEqual({ basis: "new_studio", version: 0 }); // so the no-row path cannot be a new studio
+    await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]);
+    await inTx(async (q) => {
+      await asOwner(q, st.userId, async () => {
+        const saved = await call(q, "save_role_permissions_reviewed", [st.studioId, 0, { practitioner: { "appt.cancel": "own" } }, null, false, "0".repeat(64)]);
+        expect(saved.code).toBe("review_changed"); // refused on the stamp, but the block already completed the row
+      });
+      expect((await adm(q, `select basis from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0].basis).toBe("existing_snapshot");
+    });
+  });
+
   it("two previews of the same request in different transactions give the same hash (no now()-derived value is in the input)", async () => {
     const st = await seedStudio("review-authority-stable");
     await adminQuery(`delete from public.studio_permission_policy where studio_id = $1`, [st.studioId]);
