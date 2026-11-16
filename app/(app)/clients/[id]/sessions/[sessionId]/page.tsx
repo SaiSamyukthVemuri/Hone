@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DAY_PACKET_OPEN_PATH, dayPacketEntry } from "@/lib/records/print/day-entry";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
@@ -585,6 +586,12 @@ export default async function SessionDetailPage({
   // Everything above is server work the practitioner waits on; the render
   // below is what they finally see.
   domainSpan.end();
+  const printDayEntry = dayPacketEntry({
+    viewer: practitioner,
+    clientId: id,
+    sessionStartedAt: session.started_at,
+    timezone: studio.timezone,
+  });
 
   return (
     <div className="flex flex-col gap-8">
@@ -605,6 +612,25 @@ export default async function SessionDetailPage({
             startedAtIso={session.started_at}
           />
         </div>
+        {/* Owner-only entry to the audited day packet for THIS client and THIS studio-local day.
+            A POST form, not a link: the client id and the day are in the BODY, and the answer is a redirect to an opaque
+            one-use ticket URL, so neither the client id nor the day is in the print URL or its Location header. The form
+            deliberately has no rel="noreferrer": that makes older Safari send "Origin: null", which the route refuses, and the
+            POST's Referer goes only to this same server, which already sees this page's URL. Rendered only
+            from dayPacketEntry (null for a non-owner, a future day or an unusable start). */}
+        {printDayEntry !== null && (
+          <form method="post" action={DAY_PACKET_OPEN_PATH} data-testid="print-day-record-form">
+            <input type="hidden" name="clientId" value={printDayEntry.clientId} />
+            <input type="hidden" name="day" value={printDayEntry.day} />
+            <button
+              type="submit"
+              data-testid="print-day-record-link"
+              className="inline-flex min-h-[44px] w-fit items-center text-sm text-neutral-600 underline hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+            >
+              Print this day&rsquo;s record
+            </button>
+          </form>
+        )}
         {/* PR #199 (Chloe iPad retest): the inline line under the
             title is the ONLY performer surface. The separate
             "Performed by" card/dropdown is gone; this line carries a
