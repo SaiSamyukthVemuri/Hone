@@ -286,6 +286,50 @@ describe("timing: every release state, activation, prior stored value and reques
   });
 });
 
+describe("RAISE saved AFTER a full release: is it in force at once, or does it wait for activation? (evidence for the page copy)", () => {
+  it("full-released key, no activation: a saved raise is in force immediately and activation changes nothing; a raise stored BEFORE the release waits", async () => {
+    const st = await studio();
+    const out: Record<string, string> = {};
+    await inTx(async (q) => {
+      await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
+      await q(`delete from public.studio_role_permissions where studio_id = $1`, [st.studioId]);
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-raise', 'full')`);
+      const eff = async () => (await q(`select public.perm_effective_scope($1, 'receptionist', 'appt.book') as e`, [st.studioId])).rows[0].e as string;
+      out.releasedNoChoice = await eff();
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const ch = { receptionist: { "appt.book": "studio" } };
+        const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
+        out.previewTiming = p.review?.[0]?.timing ?? "none";
+        const saved = await call(q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, p.review_hash]);
+        expect(saved.ok, JSON.stringify(saved)).toBe(true);
+      });
+      out.afterSaveBeforeActivation = await eff();
+      await q(`insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version) values ($1, 'appt.book', 'T-raise', $2, 'evidence', 0)`, [st.studioId, st.userId]);
+      out.afterActivation = await eff();
+    });
+    await inTx(async (q) => {
+      await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
+      await q(`delete from public.studio_role_permissions where studio_id = $1`, [st.studioId]);
+      await q(`insert into public.studio_role_permissions (studio_id, role, key, scope, set_at) values ($1, 'receptionist', 'appt.book', 'studio', now() - interval '1 day')`, [st.studioId]);
+      await q(`select public.mark_permissions_released(array['appt.book'], 'T-raise', 'full')`);
+      const eff = async () => (await q(`select public.perm_effective_scope($1, 'receptionist', 'appt.book') as e`, [st.studioId])).rows[0].e as string;
+      out.storedBeforeRelease_afterRelease = await eff();
+      await q(`insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version) values ($1, 'appt.book', 'T-raise', $2, 'evidence', 0)`, [st.studioId, st.userId]);
+      out.storedBeforeRelease_afterActivation = await eff();
+    });
+    console.log("RAISE-EVIDENCE " + JSON.stringify(out));
+    expect(out).toEqual({
+      releasedNoChoice: "off",
+      previewTiming: "in_force_now",
+      afterSaveBeforeActivation: "studio",
+      afterActivation: "studio",
+      storedBeforeRelease_afterRelease: "off",
+      storedBeforeRelease_afterActivation: "studio",
+    });
+  });
+});
+
 describe("staleness and the review hash bind the save", () => {
   it("a preview at a version other than the current one is refused stale_version, with nothing written", async () => {
     const st = await studio();
