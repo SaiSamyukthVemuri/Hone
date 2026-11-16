@@ -62,8 +62,7 @@ export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing to
 // either (lib/permissions/require-permission.ts and its callers are not here; tests/security/roles-page-only-boundary.test.ts pins that), so the
 // line must not say the app is wired to anything. Say only what is true: nothing reads these settings, nothing is released yet, and the
 // release rule of the permission core (0287): once a setting is released, a choice that LOWERS access applies at once, and one that RAISES
-// access waits for the owner's activation. Saying "they take effect only after they are released and you activate them" was false for a
-// lowering. If enforcement ships in the app, this wording changes in that same change (a source test fails until it does).
+// access waits for the owner's activation. Saying that every saved choice waits for a release and an activation was false for a lowering. If enforcement ships in the app, this wording changes in that same change (a source test fails until it does).
 export const RELEASE_RULE_SENTENCE = "After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.";
 export const ENFORCEMENT_SCOPE_LINE =
   "These settings are not in force yet. The app does not read them yet, and the database does not check them. Nothing is released yet, so none of them changes anyone's access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.";
