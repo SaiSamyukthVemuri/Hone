@@ -166,6 +166,7 @@ describe("the page", () => {
         initialView: "permissions",
         people: [],
         timezone: "America/Toronto",
+        version: 0,
         previewSave: noop,
         previewReset: noop,
         previewAdopt: noop,

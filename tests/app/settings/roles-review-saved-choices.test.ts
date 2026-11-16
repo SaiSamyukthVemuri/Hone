@@ -34,7 +34,15 @@ const effectivePreview = {
   ok: true as const,
   preview: { version: 7, roles: [{ role: "practitioner" as const, diff: { ...emptyDiff, narrowed: 1 }, people: [{ id: "p2", name: "Alex Practitioner", state: "active" as const }], count: 1, storedRemoved: [] }] },
 };
-const inertPreview = { ok: true as const, preview: { version: 7, roles: [{ role: "practitioner" as const, diff: emptyDiff, people: [], count: 0, storedRemoved: [] }] } };
+const HASH = "ab".repeat(32);
+// The table is the DATABASE's. It deliberately disagrees with the page's own saved state (saved: Whole studio; table says the owner was shown Own
+// assigned) to prove the page prints the table and derives nothing.
+const row = (timing: string) => ({ role: "practitioner" as const, key: KEY, label: "Cancel appointments", storedBefore: null, shownBefore: "own" as const, requested: "off" as const, storedAfter: "off" as const, written: true, effectiveBefore: "studio" as const, effectiveAfter: "studio" as const, timing });
+const withTable = (timing: string, roles: unknown[] = [{ role: "practitioner" as const, diff: emptyDiff, people: [], count: 0, storedRemoved: [] }]) => ({
+  ok: true as const,
+  preview: { version: 7, roles, review: { version: 7, hash: HASH, rows: [row(timing)] } },
+}) as never;
+const inertPreview = withTable("not_released");
 
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
@@ -61,6 +69,7 @@ async function mount(over: Record<string, unknown>) {
         initialView: "permissions",
         people,
         timezone: "America/Toronto",
+        version: 0,
         previewSave: failing,
         previewReset: previewOk,
         previewAdopt: previewOk,
@@ -97,13 +106,18 @@ describe("Codex 4582227072: the review lists the stored choices, separately from
     await review();
     const panel = q('[data-testid="review-saved-choices"]');
     expect(panel?.textContent ?? "").toContain("Saved choices");
-    expect(panel?.textContent ?? "").toContain("After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.");
+    expect(panel?.textContent ?? "").toContain("Each saved choice below says when it takes effect.");
     expect(panel?.textContent ?? "").not.toMatch(/until they are released and you activate/i);
-    expect(q(`[data-saved-choice="practitioner:${KEY}"]`)?.textContent ?? "").toMatch(/Whole studio to Off/);
+    // the table's own values, not the page's saved state (Whole studio)
+    const li = q(`[data-saved-choice="practitioner:${KEY}"]`)?.textContent ?? "";
+    expect(li).toMatch(/Own assigned to Off/);
+    expect(li).not.toMatch(/Whole studio to Off/);
+    expect(li).toContain("Saved. This setting is not released yet, so it changes nothing today.");
   });
 
   it("an effective-access change still shows in its own section, beside the saved choices", async () => {
-    await mount({ previewSave: async () => effectivePreview });
+    const eff = { ...effectivePreview, preview: { ...effectivePreview.preview, review: { version: 7, hash: HASH, rows: [row("at_release")] } } };
+    await mount({ previewSave: async () => eff as never });
     await chooseOff();
     await review();
     expect(q('[data-review-role="practitioner"]')?.textContent ?? "").toMatch(/1 lose access/);
@@ -182,5 +196,70 @@ describe("Codex 4582593018: change and revert is not an unsaved change", () => {
     await act(async () => radio("studio").click());
     expect(button(/^Review changes/)!.disabled).toBe(true);
     expect(previewSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("0356: the review is bound to the version the page was read at, and Save carries the reviewed hash", () => {
+  it("the preview is requested for the page's version (7 here is the state's; the prop is what is sent)", async () => {
+    const previewSave = vi.fn(async () => inertPreview);
+    await mount({ version: 7, previewSave });
+    await chooseOff();
+    await review();
+    expect(previewSave).toHaveBeenCalledWith({ practitioner: { [KEY]: "off" } }, 7);
+  });
+
+  it("Save sends the reviewed edits, the previewed version and the hash exactly as returned", async () => {
+    const save = vi.fn(async () => ({ ok: true as const, newVersion: 8 }));
+    const reload = vi.fn(async () => ({ ok: true as const, state: { ...state, version: 8 } }));
+    await mount({ version: 7, previewSave: async () => inertPreview, save, reload });
+    await chooseOff();
+    await review();
+    await act(async () => button(/Save changes/)!.click());
+    expect(save).toHaveBeenCalledWith({ practitioner: { [KEY]: "off" } }, 7, false, "", HASH);
+  });
+
+  it("a stale page gets no summary: the draft is kept, the current policy is read, and the next review is for the NEW version", async () => {
+    const previewSave = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false as const, error: { code: "stale_version" as const, currentVersion: 9 } })
+      .mockResolvedValueOnce(inertPreview);
+    const reload = vi.fn(async () => ({ ok: true as const, state: { ...state, version: 9 } }));
+    await mount({ version: 7, previewSave, reload });
+    await chooseOff();
+    await review();
+    expect(q('[data-testid="roles-review"]')).toBeNull();
+    expect(q('[role="alert"]')?.textContent ?? "").toMatch(/Someone changed these settings/);
+    expect((q(`input[type="radio"][name$="-practitioner-${KEY}"][value="off"]`) as HTMLInputElement).checked).toBe(true);
+    expect(reload).toHaveBeenCalled();
+    await review();
+    expect(previewSave).toHaveBeenLastCalledWith({ practitioner: { [KEY]: "off" } }, 9); // mutation: not rebasing the version leaves 7 here
+  });
+
+  it("review_changed at Save: nothing saved, back to the draft, a fresh review is required", async () => {
+    const save = vi.fn(async () => ({ ok: false as const, error: { code: "review_changed" as const } }));
+    await mount({ version: 7, previewSave: async () => inertPreview, save });
+    await chooseOff();
+    await review();
+    await act(async () => button(/Save changes/)!.click());
+    expect(q('[data-testid="roles-review"]')).toBeNull();
+    expect(q('[role="alert"]')?.textContent ?? "").toMatch(/Review the changes again/);
+    expect((q(`input[type="radio"][name$="-practitioner-${KEY}"][value="off"]`) as HTMLInputElement).checked).toBe(true);
+    expect(button(/^Review changes/)!.disabled).toBe(false);
+  });
+
+  it("the reviewed command missing (review_unavailable) fails closed with a clear message, nothing saved", async () => {
+    await mount({ version: 7, previewSave: async () => ({ ok: false as const, error: { code: "review_unavailable" as const } }) });
+    await chooseOff();
+    await review();
+    expect(q('[data-testid="roles-review"]')).toBeNull();
+    expect(q('[role="alert"]')?.textContent ?? "").toMatch(/Reviewing role changes is not available yet/);
+  });
+
+  it("each timing is worded from the table, and applies_on_save has its own wording", async () => {
+    await mount({ previewSave: async () => withTable("applies_on_save") });
+    await chooseOff();
+    await review();
+    expect(q(`[data-saved-choice="practitioner:${KEY}"]`)?.textContent ?? "").toContain("Takes effect as soon as you save it.");
+    expect(q('[data-testid="review-saved-choices"]')?.textContent ?? "").not.toMatch(/waits for you to activate/i);
   });
 });

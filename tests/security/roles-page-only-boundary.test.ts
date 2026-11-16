@@ -25,9 +25,9 @@ const ALLOWED_RPCS = [
   "preview_activation",
   "preview_adopt_new_defaults",
   "preview_reset",
-  "preview_role_changes",
+  "preview_role_changes_at", // 0356: the reviewed pair replaces preview_role_changes and save_role_permissions
   "reset_role_to_defaults",
-  "save_role_permissions",
+  "save_role_permissions_reviewed",
 ] as const;
 
 const walk = (dir: string, out: string[] = []): string[] => {
@@ -122,6 +122,8 @@ describe("NEGATIVE CONTROLS: the scanners catch what they are meant to catch", (
   });
   it("a new command outside the allowlist is detected, and an allowed one is not", () => {
     expect(rpcOutsideAllowlist(`await call("mark_permissions_released", {})`)).toEqual(["mark_permissions_released"]);
-    expect(rpcOutsideAllowlist(`await call("save_role_permissions", {})`)).toEqual([]);
+    expect(rpcOutsideAllowlist(`await call("save_role_permissions_reviewed", {})`)).toEqual([]);
+    // the old non-versioned pair is no longer sent by the page (0356)
+    expect(rpcOutsideAllowlist(`await call("save_role_permissions", {})`)).toEqual(["save_role_permissions"]);
   });
 });
