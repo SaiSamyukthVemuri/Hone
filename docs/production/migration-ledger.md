@@ -15,9 +15,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` and `0319` are MIGRATION-FIRST PENDING and NOT applied; the record of hosted below is current through `0354` for the migrations it names, apart from `0319` and the unhosted gaps)
+## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` is recorded as applied and `0319` is MIGRATION-FIRST PENDING and NOT applied; the record of hosted below is current through `0354` for the migrations it names, apart from `0319` and the unhosted gaps)
 
-> **CURRENT RELATIONSHIP: repo > hosted by the pending `0313` and `0319`, as this tree records hosted.** This tree's declared hosted max is `0300` (below, unchanged here), and it deliberately does NOT restate any later hosted fact: this tree's record of hosted lags the real hosted state for the versions carried by other held pull requests, so the structured lists are not a statement about them. The two pending files are sealed and unapplied: `0313_waitlist_booking_command.sql` (sha256 `cfd892618b95965403c9515a528f02cd039a139ce893004876a8299508010fb1`) and `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). Both flags (`WAITLIST_BOOKING_COMMAND`, `WAITLIST_TIMES_FEEDBACK`) are OFF. Applying either file is a separate approval of the exact bytes; this record applies nothing.
+> **CURRENT RELATIONSHIP: repo > hosted only by the pending `0319`, plus the file for `0353` arriving via #1489 (`0353` is already applied; see the table below).** The hosted max is the value in the table below, as declared in `docs/production/migration-state.json`. The one pending file is sealed and unapplied: `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). `0313` is recorded as applied below. Applying `0319` is a separate approval of the exact bytes; this record applies nothing.
 
 | Field | Value |
 |---|---|
