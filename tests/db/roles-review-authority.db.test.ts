@@ -215,13 +215,9 @@ function expectedTiming(f: Facts): string {
   if (!f.written) return "no_change";
   const raise = rank(f.requested) > rank(f.snapshot);
   if (!f.released) return rank(f.requested) < rank(f.snapshot) ? "at_release" : "not_released";
-  if (f.kind === "narrow") {
-    if (raise) return "waits_for_full_release";
-    return f.effectiveAfter === f.requested ? "in_force_now" : "capped";
-  }
-  if (f.effectiveAfter === f.requested) return rank(f.effectiveAfter) > rank(f.effectiveBefore) ? "applies_on_save" : "in_force_now";
-  if (rank(f.effectiveAfter) < rank(f.requested)) return !f.active && raise && rank(f.effectiveAfter) <= rank(f.snapshot) ? "waits_for_activation" : "capped";
-  return "in_force_now";
+  if (f.kind === "narrow" && raise) return "waits_for_full_release";
+  // in force at the moment of the save (a lowering always, a raise on a full release): the word says whether the effective value moves
+  return f.effectiveAfter !== f.effectiveBefore ? "applies_on_save" : "in_force_now";
 }
 
 const KEYS: { role: "practitioner" | "receptionist"; key: string }[] = [
@@ -299,7 +295,9 @@ describe("timing: every release state, activation, prior stored value and reques
       }
     }
     // the matrix reaches the labels that a save can produce
-    for (const must of ["at_release", "not_released", "in_force_now", "applies_on_save", "waits_for_full_release"]) expect([...seen], `reached ${must}`).toContain(must);
+    console.log("TIMING-SEEN " + JSON.stringify([...seen].sort()));
+    // T3: the review path can return exactly this set (no_change is covered by the mixed request test): waits_for_activation and capped are unreachable.
+    expect([...seen].sort()).toEqual(["applies_on_save", "at_release", "in_force_now", "not_released", "waits_for_full_release"]);
   });
 });
 
@@ -477,6 +475,22 @@ describe("engine evidence: when does a saved choice take effect? (perm_base_scop
   });
 });
 
+describe("T1: a lowering saved after a full release says it takes effect on save, not that it is in force now", () => {
+  it("full-released key, practitioner appt.cancel studio to off: applies_on_save, and after the save it is in force", async () => {
+    const st = await studio();
+    await inTx(async (q) => {
+      await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
+      await q(`delete from public.studio_role_permissions where studio_id = $1`, [st.studioId]);
+      await q(`select public.mark_permissions_released(array['appt.cancel'], 'T-t1', 'full')`);
+      await asOwner(q, st.userId, async () => {
+        const v = await version(q, st.studioId);
+        const p = await call(q, "preview_role_changes_at", [st.studioId, { practitioner: { "appt.cancel": "off" } }, v]);
+        expect(p.review?.[0]).toMatchObject({ effective_before: "studio", effective_after: "off", timing: "applies_on_save" });
+      });
+    });
+  });
+});
+
 describe("staleness and the review hash bind the save", () => {
   it("a preview at a version other than the current one is refused stale_version, with nothing written", async () => {
     const st = await studio();
@@ -605,9 +619,14 @@ describe("F1: a matching hash bypasses neither the reason nor the sensitive conf
   it("a sensitive raise saved after a full release is refused without confirmation, then without a reason, and accepted with both", async () => {
     const st = await seedStudio("review-authority-sens");
     const cands = (await adminQuery(
-      `select key, scopes, snapshot_practitioner s from public.permission_catalog where sensitive and owner_configurable and offered_practitioner and snapshot_practitioner <> 'studio' order by key`,
-    )).rows as { key: string; scopes: string[]; s: string }[];
-    expect(cands.length, "a sensitive practitioner key whose snapshot is below its maximum").toBeGreaterThan(0);
+      `select key, scopes, 'receptionist' as role, snapshot_receptionist s from public.permission_catalog pc
+        where sensitive and owner_configurable and offered_receptionist and snapshot_receptionist <> 'studio' and exists (select 1 from public.permission_key_release r where r.key = pc.key)
+       union all
+       select key, scopes, 'practitioner', snapshot_practitioner from public.permission_catalog pc
+        where sensitive and owner_configurable and offered_practitioner and snapshot_practitioner <> 'studio' and exists (select 1 from public.permission_key_release r where r.key = pc.key)
+       order by 1, 3`,
+    )).rows as { key: string; scopes: string[]; role: string; s: string }[];
+    expect(cands.length, "a sensitive key with a release row whose snapshot is below its maximum").toBeGreaterThan(0);
     let exercised = 0;
     for (const c of cands) {
       const up = c.scopes.filter((x) => rank(x) > rank(c.s)).sort((a, b) => rank(b) - rank(a))[0];
@@ -617,7 +636,7 @@ describe("F1: a matching hash bypasses neither the reason nor the sensitive conf
         await q(`select public.mark_permissions_released(array[$1::text], 'T-sens', 'full')`, [c.key]);
         await asOwner(q, st.userId, async () => {
           const v = await version(q, st.studioId);
-          const ch = { practitioner: { [c.key]: up } };
+          const ch = { [c.role]: { [c.key]: up } };
           const p = await call(q, "preview_role_changes_at", [st.studioId, ch, v]);
           if (!p.ok || !(p.sensitive_keys as string[]).includes(c.key)) return; // a prerequisite caps it: not a sensitive rise for this key
           exercised += 1;
@@ -815,7 +834,13 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
       const afterRelease = await h(q);
       expect(afterRelease).not.toBe(afterCatalog);
       await q(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [st.studioId]);
-      expect(await h(q)).not.toBe(afterRelease);
+      const afterBasis = await h(q);
+      expect(afterBasis).not.toBe(afterRelease);
+      await q(`insert into public.permission_key_activation (studio_id, key, release_tag, activated_by, reason, policy_version) values ($1, 'appt.cancel', 'T-hash', $2, 'hash', 0)`, [st.studioId, st.userId]);
+      expect(await h(q)).not.toBe(afterBasis); // an activation row changes the hash
+      const g = async (sens: string, widen: boolean) => (await q(`select public.perm_review_hash($1, 3, $2::jsonb, $3::jsonb, $4) as h`, [st.studioId, JSON.stringify(review), sens, widen])).rows[0].h as string;
+      expect(await g('["appt.cancel"]', false)).not.toBe(await g("[]", false)); // sensitive_keys
+      expect(await g("[]", true)).not.toBe(await g("[]", false)); // reason_required
     });
   });
 });

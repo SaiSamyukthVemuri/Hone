@@ -104,7 +104,8 @@ describe("0356 source contract", () => {
     const raises = [...UP.matchAll(/raise exception[^;]*;/g)].map((m) => m[0]);
     expect(raises.length).toBeGreaterThan(0);
     for (const r of raises) {
-      expect(r).toMatch(/message = public\.perm_fail\(|message = 'preview'|using errcode = 'PM00[12]'/);
+      // the one fixed-text exception: the timing function's refusal of a state it has no label for (no data in it)
+      expect(r).toMatch(/message = public\.perm_fail\(|message = 'preview'|using errcode = 'PM00[12]'|^raise exception 'perm_review_timing: no label for this state';$/);
       expect(r).not.toMatch(/v_review|v_hash|p_review_hash|v_rows|p_changes/);
     }
   });

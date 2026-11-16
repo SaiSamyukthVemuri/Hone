@@ -98,8 +98,9 @@ describe("Roles copy does not imply a setting is enforced (Team matrix, 14 Nov)"
     // exact strings (sent to Privacy)
     expect(m.EACH_CHOICE_LINE).toBe("Each saved choice below says when it takes effect.");
     expect(m.TIMING_TEXT.applies_on_save).toBe("Takes effect as soon as you save it.");
-    expect(m.TIMING_TEXT.waits_for_activation).toContain("Saving it again takes effect at once");
-    expect(m.TIMING_TEXT.waits_for_full_release).toContain("Activating does not change that");
+    // reachable on the review path only (waits_for_activation and capped are not offered: the database cannot return them)
+    expect(Object.keys(m.TIMING_TEXT).sort()).toEqual(["applies_on_save", "at_release", "in_force_now", "no_change", "not_released", "waits_for_full_release"]);
+    expect(m.TIMING_TEXT.waits_for_full_release).toBe("Waits for a later full release, then for you to activate it or save it again. Activating now does not change that.");
     expect(m.NOT_ACTIVE_YET_LINE).toBe("Saved, but not in force yet.");
     expect(m.ENFORCEMENT_SCOPE_LINE).toContain(m.EACH_CHOICE_LINE);
     expect(m.ENFORCEMENT_SCOPE_LINE).not.toMatch(/Nothing is released/);

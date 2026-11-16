@@ -71,11 +71,9 @@ export const TIMING_TEXT: Record<ReviewTiming, string> = {
   in_force_now: "In force now.",
   applies_on_save: "Takes effect as soon as you save it.",
   at_release: "Takes effect as soon as this setting is released.",
-  waits_for_activation: "Waits for you to activate it. Saving it again takes effect at once.",
-  waits_for_full_release: "Waits for a later full release. Activating does not change that.",
+  waits_for_full_release: "Waits for a later full release, then for you to activate it or save it again. Activating now does not change that.",
   not_released: "Saved. This setting is not released yet, so it changes nothing today.",
   no_change: "Nothing to save for this one.",
-  capped: "Not fully in force: another setting it needs is limiting it.",
 };
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {

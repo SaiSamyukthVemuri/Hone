@@ -56,7 +56,7 @@ export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; cou
 export type ServerPreview = { version: number; roles: RolePreview[]; review?: ReviewTable | null };
 
 /** When a saved choice takes effect, as the database states it (0356 perm_review_timing). The page chooses its words from this and from nothing else. */
-export const REVIEW_TIMINGS = ["in_force_now", "applies_on_save", "at_release", "waits_for_activation", "waits_for_full_release", "not_released", "no_change", "capped"] as const;
+export const REVIEW_TIMINGS = ["in_force_now", "applies_on_save", "at_release", "waits_for_full_release", "not_released", "no_change"] as const;
 export type ReviewTiming = (typeof REVIEW_TIMINGS)[number];
 
 /** One requested key of one role, as the database computed it for the policy version a save will check. The page renders these and derives nothing. */

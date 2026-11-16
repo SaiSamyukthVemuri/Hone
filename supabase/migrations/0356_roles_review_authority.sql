@@ -59,27 +59,29 @@ create or replace function public.perm_review_timing(
   p_released boolean, p_kind text, p_snapshot text, p_requested text, p_effective_before text, p_effective_after text, p_written boolean, p_active boolean
 )
 returns text
-language sql
+language plpgsql
 immutable
 set search_path = ''
 as $$
-  select case
-    when not p_written then 'no_change'
-    when not coalesce(p_released, false) then
-      case when public.perm_rank(p_requested) < public.perm_rank(p_snapshot) then 'at_release' else 'not_released' end
-    when p_kind = 'narrow' then
-      case when public.perm_rank(p_requested) > public.perm_rank(p_snapshot) then 'waits_for_full_release'
-           when p_effective_after = p_requested then 'in_force_now'
-           else 'capped' end
-    when p_effective_after = p_requested then
-      case when public.perm_rank(p_effective_after) > public.perm_rank(p_effective_before) then 'applies_on_save' else 'in_force_now' end
-    when public.perm_rank(p_effective_after) < public.perm_rank(p_requested) then
-      case when not coalesce(p_active, false)
-                and public.perm_rank(p_requested) > public.perm_rank(p_snapshot)
-                and public.perm_rank(p_effective_after) <= public.perm_rank(p_snapshot)
-           then 'waits_for_activation' else 'capped' end
-    else 'in_force_now'
-  end
+begin
+  if not p_written then
+    return 'no_change';
+  end if;
+  if not coalesce(p_released, false) then
+    return case when public.perm_rank(p_requested) < public.perm_rank(p_snapshot) then 'at_release' else 'not_released' end;
+  end if;
+  if p_kind = 'narrow' and public.perm_rank(p_requested) > public.perm_rank(p_snapshot) then
+    return 'waits_for_full_release';
+  end if;
+  -- A write that is in force the moment it is saved: a lowering always, and a raise on a full release (set_at >= released_at). Whether the
+  -- effective value MOVES decides the word: it moves, so the review says it takes effect on save; it does not, so it is already in force.
+  if p_effective_after = p_requested then
+    return case when p_effective_after <> p_effective_before then 'applies_on_save' else 'in_force_now' end;
+  end if;
+  -- Unreachable from the review path today: a failing prerequisite refuses the request before the table is built, and a full-release raise applies
+  -- at once. If the engine ever changes so that it is reachable, refuse rather than print a word that may be untrue.
+  raise exception 'perm_review_timing: no label for this state';
+end
 $$;
 
 -- The exact, fixed input of the review hash. PRIVACY: this is the covered field list; adding a name, a reason or any free text needs review.
