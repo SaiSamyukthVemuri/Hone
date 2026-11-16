@@ -126,7 +126,7 @@ describe("only enforced keys are editable (platform operator decision, 3 Nov)", 
   it("says at the top of Permissions what this release enforces", () => {
     const html = render({ initialView: "permissions" });
     expect(html).toContain('data-testid="enforcement-scope"');
-    expect(html).toContain("These settings are not in force yet. The app does not read them yet, and the database does not check them. They take effect only after they are released and you activate them.");
+    expect(html).toContain("These settings are not in force yet. The app does not read them yet, and the database does not check them. Nothing is released yet, so none of them changes anyone&#x27;s access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.");
   });
   it("fails SAFE: a key with no enforcement in the catalog reads Not enforced yet", () => {
     const r = row(withEnforcement({ "appt.move": undefined }, () => render({ initialView: "permissions" })), "appt.move");
@@ -208,7 +208,7 @@ describe("Codex P1 (r4468128665): a saved Off the core is not enforcing yet says
   it("a key not released yet: Off is saved, practitioners still have access, and the row says so", () => {
     const r = row(withServer("unreleased", "studio"), VIEW);
     expect(r).toContain('data-testid="inactive-because"');
-    expect(r).toMatch(/Saved, but not in force yet\. Until this setting is released and you activate it, practitioners keep: /);
+    expect(r).toMatch(/Saved, but not in force yet\. Once this setting is released, a choice that lowers access applies at once\. Until then, practitioners keep: /);
   });
   it("a released key awaiting the owner's activation says the same", () => {
     const r = row(withServer("inactive_until_activated", "studio"), VIEW);

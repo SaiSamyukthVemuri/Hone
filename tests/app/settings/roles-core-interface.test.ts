@@ -297,7 +297,7 @@ describe("the editor", () => {
   it("saves only changed keys at the version the preview returned", () => {
     expect(src).toMatch(/props\.save\(reviewedEdits\.current, boundVersion, confirmed, reason\.trim\(\)\)/);
     expect(src).toContain("const boundVersion = reviewData.version;");
-    expect(src).toContain("if (saved[r].values[k] !== v) e[k] = v");
+    expect(src).toContain("if (chosenScope(r, saved[r], k) !== v) e[k] = v");
   });
   it("returns to the draft with Review available after a stale version (found in the integrated run)", () => {
     const handler = src.slice(src.indexOf("function handleError"), src.indexOf("async function onReview"));
