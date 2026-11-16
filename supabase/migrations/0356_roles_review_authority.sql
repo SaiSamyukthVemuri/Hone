@@ -78,9 +78,11 @@ begin
   if p_effective_after = p_requested then
     return case when p_effective_after <> p_effective_before then 'applies_on_save' else 'in_force_now' end;
   end if;
-  -- Unreachable from the review path today: a failing prerequisite refuses the request before the table is built, and a full-release raise applies
-  -- at once. If the engine ever changes so that it is reachable, refuse rather than print a word that may be untrue.
-  raise exception 'perm_review_timing: no label for this state';
+  -- Reachable only through a race: a save whose transaction started BEFORE a release that committed before the save took its share lock stores a
+  -- set_at earlier than released_at, so a raise is not in force and no honest word exists. Refuse it as a changed review (a fresh transaction
+  -- sees the release and says the true thing) instead of printing a word that may be untrue. A perm_fail refusal, so the caller returns it
+  -- cleanly; no data in it.
+  raise exception using errcode = 'PM001', message = public.perm_fail('review_changed')::text;
 end
 $$;
 

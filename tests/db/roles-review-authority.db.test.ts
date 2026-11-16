@@ -498,6 +498,57 @@ describe("T1: a lowering saved after a full release says it takes effect on save
   });
 });
 
+describe("a state the timing function has no honest word for is a clean refusal (review_changed), never a raw SQL error", () => {
+  it("direct call: a released full-release written row whose effective value differs from the request raises PM001 carrying only a perm_fail code", async () => {
+    let err: { code?: string; message?: string } | null = null;
+    try {
+      await adminQuery(`select public.perm_review_timing(true, 'full', 'off', 'studio', 'off', 'off', true, false)`);
+    } catch (e) {
+      err = e as { code?: string; message?: string };
+    }
+    expect(err?.code).toBe("PM001");
+    expect(JSON.parse(err!.message!)).toMatchObject({ ok: false, code: "review_changed" });
+    expect(Object.keys(JSON.parse(err!.message!)).sort()).toEqual(["code", "ok"]);
+  });
+
+  it("save level: a release that committed AFTER this transaction started (its set_at would be earlier than released_at) is refused, with no write, no version bump and no audit row", async () => {
+    const st = await seedStudio("review-authority-race");
+    const key = "appt.book";
+    const ch = { receptionist: { [key]: "studio" } };
+    const before = (await adminQuery(`select released_at, release_tag, release_kind from public.permission_key_release where key = $1`, [key])).rows[0] as { released_at: unknown; release_tag: string; release_kind: string };
+    expect(before.released_at).toBeNull();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const open = new Promise<void>((r) => (started = r));
+    let result: Result | undefined;
+    const tx = adminTx(async (q) => {
+      await (q as Q)("select now()"); // the transaction's clock is fixed here
+      started();
+      await gate; // a release commits while this transaction is open
+      await asOwner(q as Q, st.userId, async () => {
+        const v = await version(q as Q, st.studioId);
+        result = await call(q as Q, "save_role_permissions_reviewed", [st.studioId, v, ch, null, false, "0".repeat(64)]);
+      });
+    });
+    await open;
+    try {
+      await adminQuery(`select public.mark_permissions_released(array[$1::text], 'T-race', 'full')`, [key]);
+      release();
+      await tx;
+      expect(result).toMatchObject({ ok: false, code: "review_changed" });
+      expect(JSON.stringify(result)).not.toMatch(/perm_review_timing|sqlstate|P0001/i);
+      expect(Number((await adminQuery(`select count(*) n from public.studio_role_permissions where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+      expect(Number((await adminQuery(`select count(*) n from public.permission_audit where studio_id = $1`, [st.studioId])).rows[0].n)).toBe(0);
+      expect(Number((await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [st.studioId])).rows[0].version)).toBe(0);
+    } finally {
+      release();
+      await tx.catch(() => undefined);
+      await adminQuery(`update public.permission_key_release set released_at = null, release_tag = $2, release_kind = $3 where key = $1`, [key, before.release_tag, before.release_kind]);
+    }
+  });
+});
+
 describe("staleness and the review hash bind the save", () => {
   it("a preview at a version other than the current one is refused stale_version, with nothing written", async () => {
     const st = await studio();
