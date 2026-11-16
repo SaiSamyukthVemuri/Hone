@@ -619,6 +619,16 @@ describe("rollback: the 0287 down SQL removes the engine and touches nothing els
         // the file opens its own begin/commit; run its body statements inside this test's transaction instead of committing
         const strip = (t: string) => t.replace(/^begin;\s*$/im, "").replace(/^commit;\s*$/im, "");
         // A stack that also carries a LATER migration (0289 depends on has_studio_permission) must unwind that first, newest first.
+        // The client tag write policies (a later migration) also depend on it: unwind them first, newest first, when they still do.
+        const tags = "supabase/rollbacks/0348_client_tags_edit_key_gate.down.sql";
+        if (
+          existsSync(tags) &&
+          (
+            await q(
+              "select exists (select 1 from pg_depend d join pg_proc f on f.oid = d.refobjid and f.proname = 'has_studio_permission' where d.classid = 'pg_policy'::regclass and d.objid in (select oid from pg_policy where polrelid = 'public.client_tags'::regclass)) as present",
+            )
+          ).rows[0].present
+        ) await q(strip(readFileSync(tags, "utf8")));
         const later = "supabase/rollbacks/0289_roles_edit_record_protections.down.sql";
         if (existsSync(later) && (await q("select to_regclass('public.chart_revisions') is not null as present")).rows[0].present) await q(strip(readFileSync(later, "utf8")));
         const body = strip(down);
