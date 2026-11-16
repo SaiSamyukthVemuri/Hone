@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
+import { SectionLabel } from "@/components/ui/section-label";
 import { updateStudioFeeAmountsAction } from "./fee-amounts-actions";
 import {
   setManualFeeEnabledAction,
@@ -89,7 +90,7 @@ function FeeTypeSection({
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-neutral-200 p-3 dark:border-neutral-800" data-testid={`${slug}-fee-section`}>
-      <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">{title}</span>
+      <SectionLabel>{title}</SectionLabel>
 
       <fieldset className="flex flex-col gap-1 text-sm" disabled={pending}>
         <legend className="sr-only">{title} calculation</legend>
