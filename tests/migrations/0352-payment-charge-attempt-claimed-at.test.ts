@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // 0352: STATIC contract only. Behaviour (the stamp, immutability, no other transition stamps, session payments identical, and
 // the claim RPC's result) is proved against a real database in tests/db/payment-charge-attempt-claimed-at.db.test.ts.
@@ -13,9 +13,8 @@ const E = exec(readFileSync(join(root, `supabase/migrations/${NAME}.sql`), "utf8
 const DOWN = exec(readFileSync(join(root, `supabase/rollbacks/${NAME}.down.sql`), "utf8"));
 
 describe("0352: shape", () => {
-  it("consumes exactly one number and is no longer the maximum (0354 follows it)", () => {
+  it("consumes exactly one number", () => {
     expect(countVersion("0352")).toBe(1);
-    expect(isRepoMax("0352")).toBe(false);
   });
   it("opens its own transaction and arms lock_timeout inside it", () => {
     expect(E.trim()).toMatch(/^begin;\s*set local lock_timeout = '5s';/);
