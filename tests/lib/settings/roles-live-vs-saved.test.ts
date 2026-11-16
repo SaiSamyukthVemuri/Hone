@@ -41,6 +41,29 @@ describe("S3 live vs saved", () => {
 });
 
 describe("Roles copy does not imply a setting is enforced (Team matrix, 14 Nov)", () => {
+  it("the scope line does not claim the app reads or is wired to these settings", async () => {
+    const { ENFORCEMENT_SCOPE_LINE } = await import("@/lib/settings/roles/model");
+    expect(ENFORCEMENT_SCOPE_LINE).not.toMatch(/\bwired\b|\breads\b|\bis reading\b/i);
+    expect(ENFORCEMENT_SCOPE_LINE).toMatch(/does not read them yet/);
+  });
+
+  it("source: while require-permission is absent AND no key is released, the scope line cannot say the app is wired or reads them; releasing any key means revisiting this wording", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    if (existsSync("lib/permissions/require-permission.ts")) return; // enforcement shipped: the wording is decided in that change
+    // The other condition behind "not in force yet": 0287 seeds every release row PENDING (released_at null). If a key is ever released (a seeded
+    // row with a time), the "not in force yet" wording has to be revisited with it, so this test fails until someone does.
+    const mig = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+    const seed = mig.slice(mig.indexOf("insert into public.permission_key_release"));
+    const rows = [...seed.slice(0, seed.indexOf(";")).matchAll(/\('([a-z_.]+)',\s*([^,]+),/g)];
+    expect(rows.length).toBeGreaterThan(10);
+    expect(rows.filter((r) => r[2].trim() !== "null").map((r) => r[1])).toEqual([]);
+    const src = readFileSync("lib/settings/roles/model.ts", "utf8");
+    const at = src.indexOf("export const ENFORCEMENT_SCOPE_LINE");
+    expect(at).toBeGreaterThan(-1);
+    const literal = src.slice(at, src.indexOf(";", at));
+    expect(literal).not.toMatch(/wired|\bwill read\b|\breads\b|app (reads|checks|enforces)/i);
+  });
+
   it("the page-level scope line says not in force yet and that the database does not check", async () => {
     const { ENFORCEMENT_SCOPE_LINE } = await import("@/lib/settings/roles/model");
     expect(ENFORCEMENT_SCOPE_LINE).toContain("not in force yet");
