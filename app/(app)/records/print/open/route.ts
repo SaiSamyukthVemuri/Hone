@@ -4,6 +4,7 @@ import { canPrintClinicalPacket } from "@/lib/records/print/day-audit";
 import { checkPrintableDay } from "@/lib/records/print/day-guard";
 import { parseSelectedDay } from "@/lib/records/print/selected-day";
 import { mintTicket } from "@/lib/records/print/ticket";
+import { isSameOriginPost } from "@/lib/records/print/same-origin";
 
 // The owner presses Print on a session page; the browser POSTs a form here. The client id and the day
 // travel in the request BODY (never a URL), and the answer is a 303 to /records/print/ticket/<opaque ticket>, so no
@@ -24,30 +25,12 @@ const HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
 } as const;
 
-// Same-origin check. Sec-Fetch-Site decides when the browser sends it (a page cannot set it). A browser without it falls
-// back to Origin, which must be the same host: the session page's form does NOT carry rel="noreferrer", so such a
-// browser sends its real Origin on the same-origin POST and the owner's click passes. "Origin: null" is what a
-// no-referrer form or a sandboxed or cross-site context sends; with no Sec-Fetch-Site to vouch for it, it is refused.
-function sameOrigin(request: Request): boolean {
-  const site = request.headers.get("sec-fetch-site");
-  if (site !== null) return site === "same-origin";
-  const origin = request.headers.get("origin");
-  if (origin === null || origin === "null") return false;
-  try {
-    const parsed = new URL(origin);
-    // An Origin is exactly scheme://host[:port]: anything with userinfo, a path or a look-alike host is not one.
-    return parsed.origin === origin && parsed.host === new URL(request.url).host;
-  } catch {
-    return false;
-  }
-}
-
 function back(request: Request): NextResponse {
   return new NextResponse(null, { status: 303, headers: { ...HEADERS, Location: new URL("/records", request.url).toString() } });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  if (!sameOrigin(request)) return back(request);
+  if (!isSameOriginPost(request.headers)) return back(request);
   // Identity and the owner gate come BEFORE the body is read: a stranger's, a non-owner's or an unauthenticated request
   // never has its form parsed, so its values are never held by this handler.
   let identity: Awaited<ReturnType<typeof requirePractitionerWithStudio>>;

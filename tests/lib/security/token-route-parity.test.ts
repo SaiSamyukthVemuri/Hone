@@ -48,7 +48,7 @@ describe("the registry is the single source for both consumers", () => {
     }
   });
 
-  it("the eight expected families are present — a removal must be deliberate", () => {
+  it("the nine expected families are present — a removal must be deliberate", () => {
     // Pinned explicitly so silently DELETING a family from the registry (which
     // would drop both protections at once) fails loudly.
     //
@@ -64,6 +64,7 @@ describe("the registry is the single source for both consumers", () => {
       "/invitation",
       "/manage",
       "/portal/verify",
+      "/records/print/open", // its minting POST: the 303 must carry no-referrer itself
       "/records/print/ticket", // the one-use print ticket
       "/reschedule",
     ]);

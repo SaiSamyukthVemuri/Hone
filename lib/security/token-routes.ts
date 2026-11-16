@@ -29,6 +29,9 @@ export const TOKEN_ROUTE_PREFIXES = [
   // The one-use print ticket: opaque, owner-bound, five minutes. Not a public bearer credential, but its
   // URL must not reach Referer, analytics or telemetry, and the same registry gives it all of that at once.
   "/records/print/ticket",
+  // The POST that mints the ticket. Its own 303 must carry no-referrer, or the redirected GET sends the session page URL
+  // as Referer (a global header rule otherwise wins). The route holds no credential in its path.
+  "/records/print/open",
   "/cancel",
   "/reschedule",
   "/manage",

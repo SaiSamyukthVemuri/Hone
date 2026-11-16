@@ -42,7 +42,7 @@ const TicketPage = pageModule.default;
 
 function post(fields: Record<string, string>, headers: Record<string, string> = { origin: ORIGIN }) {
   const body = new URLSearchParams(fields);
-  return POST(new Request(`${ORIGIN}/records/print/open`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", ...headers } }));
+  return POST(new Request(`${ORIGIN}/records/print/open`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", host: "hone.test", ...headers } }));
 }
 const location = (r: Response) => r.headers.get("location") ?? "";
 const ticketOf = (r: Response) => new URL(location(r)).pathname.split("/").pop()!;
@@ -81,6 +81,26 @@ describe("the POST mints a ticket and redirects with no identifier in the Locati
   });
 });
 
+describe("the 303 itself carries no-referrer, so the redirected GET sends no Referer", () => {
+  it("a minted ticket's 303 response has Referrer-Policy: no-referrer, no-store and noindex", async () => {
+    const r = await post({ clientId: CLIENT, day: DAY });
+    expect(r.status).toBe(303);
+    expect(location(r)).toContain("/records/print/ticket/");
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(r.headers.get("x-robots-tag")).toContain("noindex");
+  });
+  it("so does every refusal 303", async () => {
+    const r = await post({ clientId: CLIENT, day: DAY }, { origin: "https://evil.test" });
+    expect(r.status).toBe(303);
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+  it("the route is in the registry, so the global header rule also gives its path no-referrer (not the platform default)", async () => {
+    const { TOKEN_ROUTE_PATTERNS } = await import("@/lib/security/token-routes");
+    expect(TOKEN_ROUTE_PATTERNS).toContain("/records/print/open/:token*");
+  });
+});
+
 describe("older browsers without Sec-Fetch-Site (older Safari): the same-host Origin decides", () => {
   it("a real same-host Origin is accepted: the form has no rel=noreferrer, so Safari sends its real Origin", async () => {
     const r = await post({ clientId: CLIENT, day: DAY }, { origin: ORIGIN });
@@ -99,7 +119,7 @@ describe("the body is read only after identity and the owner gate (a stranger's 
   const spy = () => {
     const req = new Request(`${ORIGIN}/records/print/open`, {
       method: "POST", body: new URLSearchParams({ clientId: CLIENT, day: DAY }),
-      headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN },
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN, host: "hone.test" },
     });
     return { req, formData: vi.spyOn(req, "formData") };
   };
