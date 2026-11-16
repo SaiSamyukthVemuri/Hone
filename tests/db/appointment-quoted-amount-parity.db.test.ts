@@ -259,10 +259,12 @@ describe("the DB snapshot and the pure resolver agree on the price law", () => {
     await addPricing(s, "Newest Zero", 6000, isoDaysFromToday(today, -30));
     await addPricing(s, "Newest Zero", 0, isoDaysFromToday(today, -2));
     await bothAgree(s.studioId, a.appointmentId, 0);
-    const b = await seedAppointment(s, { servicePriceCents: 9000, serviceName: "Newest Positive" });
-    await addPricing(s, "Newest Positive", 0, isoDaysFromToday(today, -30));
-    await addPricing(s, "Newest Positive", 8000, isoDaysFromToday(today, -2));
-    await bothAgree(s.studioId, b.appointmentId, 8000);
+    // A second studio: one client cannot hold two overlapping appointments.
+    const s2 = await studio("zero-newest-2");
+    const b = await seedAppointment(s2, { servicePriceCents: 9000, serviceName: "Newest Positive" });
+    await addPricing(s2, "Newest Positive", 0, isoDaysFromToday(today, -30));
+    await addPricing(s2, "Newest Positive", 8000, isoDaysFromToday(today, -2));
+    await bothAgree(s2.studioId, b.appointmentId, 8000);
   });
 
   it("a $0 row and a positive row EQUALLY current DISAGREE: NULL in both, never by row order (0354)", async () => {
