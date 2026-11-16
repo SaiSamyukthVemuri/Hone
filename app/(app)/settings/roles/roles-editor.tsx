@@ -256,7 +256,6 @@ export function RolesEditor(props: RolesEditorProps) {
     setReviewing(false);
     setReviewData(null);
     setReviewChoices([]);
-    setReviewChoices([]);
     setConfirmed(false);
   }
 

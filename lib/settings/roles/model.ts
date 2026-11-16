@@ -58,10 +58,12 @@ export const scopeLabel = (d: PermissionDef, scope: Scope): string =>
 export type Enforcement = EnforcementState;
 export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
-// Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet, so this page must not say a setting is
-// enforced. The app is wired for these areas; the database does not check them yet, and nothing is in force until released and activated.
+// Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet. On THIS branch the app does not read them
+// either (lib/permissions/require-permission.ts and its callers are not here; tests/security/roles-page-only-boundary.test.ts pins that), so the
+// line must not say the app is wired to anything. Say only what is true: nothing reads these settings, and they take effect only once
+// released and activated. If enforcement ships in the app, this wording changes in that same change (a source test fails until it does).
 export const ENFORCEMENT_SCOPE_LINE =
-  "These settings are not in force yet. The app is wired to read them for appointments, clinical viewing, photos and availability, and they take effect only once released and you activate them. The database does not check them yet. Other areas are shown for planning.";
+  "These settings are not in force yet. The app does not read them yet, and the database does not check them. They take effect only after they are released and you activate them.";
 const KNOWN_ENFORCEMENT: readonly string[] = ["enforced", "deny_only", "observe", "not_yet"];
 const enforcementState = (key: string): Enforcement => {
   const v = catalogEnforcementOf(key);
