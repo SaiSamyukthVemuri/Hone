@@ -109,9 +109,9 @@ describe("0287 activation rule: source contract", () => {
     const walk = (d: string) => { for (const n of readdirSync(d)) { const f = `${d}/${n}`; if (n === "node_modules" || n === ".next" || n === ".git") continue; statSync(f).isDirectory() ? walk(f) : /\.(ts|tsx|sql|mjs)$/.test(n) && files.push(f); } };
     for (const d of ["app", "lib", "components", "scripts", "supabase/migrations"]) walk(d);
     const re = /(insert\s+into|update|delete\s+from)\s+(public\.)?(studio_role_permissions|permission_key_activation|permission_key_release)\b|\.from\(\s*["'](studio_role_permissions|permission_key_activation|permission_key_release)["']\s*\)/;
-    // 0355 is the one sanctioned forward redefinition of the writer (perm_run_changes); its own contract test pins that it adds no other write.
-    const SANCTIONED_REDEFINITION = "0355_roles_save_inert_denial.sql";
-    const hits = files.filter((f) => !f.endsWith(FILE) && !f.endsWith(SANCTIONED_REDEFINITION) && re.test(readFileSync(f, "utf8")));
+    // 0355 and 0356 are the sanctioned forward redefinitions of the writer (perm_run_changes, now the internal perm_run_changes_reviewed); their own contract tests pin that they add no other write.
+    const SANCTIONED_REDEFINITIONS = ["0355_roles_save_inert_denial.sql", "0356_roles_review_authority.sql"];
+    const hits = files.filter((f) => !f.endsWith(FILE) && !SANCTIONED_REDEFINITIONS.some((s) => f.endsWith(s)) && re.test(readFileSync(f, "utf8")));
     expect(hits).toEqual([]);
   });
 

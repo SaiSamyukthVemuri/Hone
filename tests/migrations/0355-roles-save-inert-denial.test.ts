@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { isRepoMax } from "./helpers/migration-state";
+import { existsSync } from "node:fs";
 
 // 0355 is a forward redefinition of perm_run_changes (0287 is applied and frozen). Source contract: the rollback restores the HOSTED body byte for
 // byte, the up body differs from it only in the listed lines, and the migration carries its own transaction and lock timeout.
@@ -19,8 +19,8 @@ const bodyOf = (sql: string) => {
 const headOf = (sql: string) => sql.slice(sql.indexOf("create or replace function public.perm_run_changes("), sql.indexOf("as $$", sql.indexOf("create or replace function public.perm_run_changes(")));
 
 describe("0355 source contract", () => {
-  it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0355")).toBe(true);
+  it("exists (an older migration's test does not assert it is the maximum)", () => {
+    expect(existsSync("supabase/migrations/0355_roles_save_inert_denial.sql")).toBe(true);
   });
 
   it("opens its own transaction with a lock timeout inside it", () => {
