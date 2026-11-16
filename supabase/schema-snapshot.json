@@ -3,7 +3,7 @@
   "migrations": {
     "count": 272,
     "last": "0354_quoted_amount_explicit_zero_custom_price.sql",
-    "sha256": "2afbd3dafbf1027aa672ed5de3a290ae85e629672ce76418c74542416b335a37"
+    "sha256": "2d52b0063f413677fc1fe288218e10206ca3c009b6c210f129005390ab26a8b0"
   },
   "public": {
     "tables": [

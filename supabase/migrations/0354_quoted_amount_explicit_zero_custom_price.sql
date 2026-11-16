@@ -1,29 +1,27 @@
--- 0354: the service-value snapshot (appointment_quoted_amount_cents) now agrees with the TypeScript resolver on an explicitly
--- recorded $0 client-specific price. NOT APPLIED. Hosted apply needs the platform operator's per-change approval and its
--- own package. Order: 0351, then 0352, then 0354, then the application merge. Number reserved in MIGRATION-NUMBER-CLAIMS.
+-- 0354: the service-value snapshot (appointment_quoted_amount_cents) agrees with the TypeScript resolver on an explicitly
+-- recorded $0 client-specific price.
 --
--- WHY. Decision (platform operator): an explicitly recorded client-specific $0 price takes precedence over a positive menu
--- price and produces a zero fee/charge; missing pricing remains a refusal. resolveAuthoritativeSessionPaymentAmount now
--- returns `free` for a current $0 custom row. Migration 0187's helper still read a zero custom row as "no custom price
--- recorded" and fell through to the menu price, so the settlement snapshot (quoted_amount_cents) would have recorded the
--- menu price for a client the application treats as free. Two implementations of one pricing rule must not disagree
--- (tests/db/appointment-quoted-amount-parity.db.test.ts).
+-- WHY. An explicitly recorded client-specific $0 price takes precedence over a positive menu price and gives a zero fee or
+-- charge; missing pricing remains a refusal. resolveAuthoritativeSessionPaymentAmount returns `free` for a current $0 custom
+-- row. Migration 0187's helper read a zero custom row as "no custom price recorded" and fell through to the menu price, so the
+-- settlement snapshot (quoted_amount_cents) would have recorded the menu price for a client the application treats as free.
+-- Two implementations of one pricing rule must not disagree (tests/db/appointment-quoted-amount-parity.db.test.ts).
 --
 -- WHAT. CREATE OR REPLACE of ONE function with the SAME signature, return type, security definer and search_path. Only the
 -- custom-price rule changes:
 --   * a current custom row of exactly 0 gives 0 (was: ignored, the menu price won);
 --   * a negative current custom price gives NULL (was: ignored). The column CHECK (price_cents >= 0) forbids it, so this is
---     defence for a hand-built row; it must agree with the resolver's invalid_custom_pricing refusal;
+--     defence for a hand-built row; it agrees with the resolver's invalid_custom_pricing refusal;
 --   * a 0 and a positive row equally current DISAGREE: NULL (was: the 0 row was ignored and the positive one won);
 --   * everything else (date rule, newest wins, name normalisation, missing -> NULL, menu 0 -> 0) is the 0187 body unchanged.
--- Grants are re-stated by name for public, anon, authenticated and service_role (granted to nobody), as in 0187.
 --
--- EFFECT ON EXISTING DATA. None directly: the function derives a value at the moment a settlement is RECORDED. Stored
+-- EFFECT ON DATA. None directly: the function derives a value at the moment a settlement is RECORDED. Stored
 -- appointment_settlements.quoted_amount_cents values are never rewritten (that table is append-only). A visit settled before
--- this migration keeps the snapshot it was recorded with. Callers: record_appointment_settlement, waive_appointment_fee and
--- supersede_appointment_settlement (0187, 0254). A quoted 0 is already a legal, already-stored value (an explicit $0 menu price
--- gives 0; the column CHECK allows 0), and every reader tolerates it: settlementCoverage compares with >=, unpaid-attention
--- keeps any value >= 0. No reader divides by it.
+-- this migration keeps the snapshot it was recorded with. A quoted 0 is already a legal, already-stored value (an explicit $0
+-- menu price gives 0; the column CHECK allows 0), and no reader divides by it.
+--
+-- GRANTS. Unchanged: EXECUTE is re-revoked by name from public, anon, authenticated and service_role (granted to nobody), as in
+-- 0187.
 
 begin;
 
