@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { seedE2eStudio, seedE2eDraftElectrolysisSession, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { fetchUpstreamOnce, totalRetries } from "./helpers/upstream-fetch";
 import { APILUS_3G_NATIVE_FIXTURES, APILUS_3G_TEXT_FIXTURES } from "../lib/machines/apilus-3g-fixtures";
 import { modeFields } from "../lib/machines/profile-contract";
 import { planContractPublication } from "../lib/machines/contract-publication";
@@ -1245,7 +1246,7 @@ for (const device of [
         let blockId = "";
         // Existing initial-save-retry pattern: the first request must COMMIT
         // before losing its response. An aborted unsent request proves nothing.
-        const lost = { arm: false, fired: 0, upstreamCompleted: false };
+        const lost = { arm: false, fired: 0, upstreamCompleted: false, retriesPerFetch: [] as number[] };
         await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async route => {
           if (route.request().method() !== "POST" || !lost.arm) {
             await route.continue();
@@ -1253,7 +1254,8 @@ for (const device of [
           }
           lost.arm = false;
           lost.fired += 1;
-          const response = await route.fetch();
+          // A driver-side ECONNRESET is retried ONCE here and counted; see helpers/upstream-fetch.ts.
+          const response = await fetchUpstreamOnce(route, lost);
           expect(response.ok(), "the original server action did not complete successfully").toBe(true);
           lost.upstreamCompleted = true;
           await route.abort("failed");
@@ -1452,6 +1454,17 @@ for (const device of [
         await page.getByTestId("machine-reading-save").click({ timeout: T });
         await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
         expect(lost.fired).toBe(2);
+        // Every upstream fetch went through fetchUpstreamOnce, none needed more than ONE
+        // retry, and a reset-then-replay is named in the report instead of passing silently.
+        expect(lost.retriesPerFetch, "each armed upstream fetch is counted").toHaveLength(lost.fired);
+        expect(lost.retriesPerFetch.every((n) => n === 0 || n === 1), "at most one upstream retry per fetch").toBe(true);
+        expect(totalRetries(lost)).toBeLessThanOrEqual(1 * lost.fired);
+        if (totalRetries(lost) > 0) {
+          test.info().annotations.push({
+            type: "upstream-econnreset-retry",
+            description: `${totalRetries(lost)} driver-side ECONNRESET retried once (${lost.retriesPerFetch.join(",")})`,
+          });
+        }
         expect(await readIdentities()).toEqual(revisedIdentities);
         expect(await readStored()).toEqual(revisedSaved);
         expect(await capturesFor(blockId)).toEqual(revisedCaptures);
