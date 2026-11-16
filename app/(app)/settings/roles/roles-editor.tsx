@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, chosenScope, liveStatusLine, sameChoices, EACH_CHOICE_LINE, TIMING_TEXT, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, chosenScope, liveStatusLine, sameChoices, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
@@ -69,12 +69,10 @@ export type RolesEditorProps = {
   // The studio's IANA timezone, for the history timestamps.
   timezone: string;
   // Every preview and every write is the permission core's. The page sends only changed keys and the version a preview returned.
-  // The policy version the page's values were read at; the database builds the review for exactly that version.
-  version: number;
-  previewSave: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number) => Promise<PreviewResult>;
+  previewSave: (edits: Partial<Record<Role, Record<string, Scope>>>) => Promise<PreviewResult>;
   previewReset: (role: Role) => Promise<PreviewResult>;
   previewAdopt: () => Promise<PreviewResult>;
-  save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string, reviewHash: string) => Promise<CommandResult>;
+  save: (edits: Partial<Record<Role, Record<string, Scope>>>, expectedVersion: number, sensitiveConfirmed: boolean, reason: string) => Promise<CommandResult>;
   // The authoritative policy as the core holds it now; read after a save so the page never assumes its draft became the saved state.
   reload: () => Promise<{ ok: true; state: StudioPolicyState } | { ok: false; error: RoleError }>;
   reset: (role: Role, expectedVersion: number, reason: string, sensitiveConfirmed: boolean) => Promise<CommandResult>;
@@ -106,7 +104,9 @@ export function RolesEditor(props: RolesEditorProps) {
   const [previewConfirmed, setPreviewConfirmed] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [reviewData, setReviewData] = useState<ServerPreview | null>(null);
-  const [version, setVersion] = useState(props.version);
+  // The stored choices this review would save, taken from the very edits that were previewed. The server's diff covers effective access only,
+  // and nothing is released yet, so a choice can change here while no one's access does: the owner must still see what they are confirming.
+  const [reviewChoices, setReviewChoices] = useState<StoredChoice[]>([]);
   const [reason, setReason] = useState("");
   const router = useRouter();
   // router.refresh() returns void, not a promise, so awaiting it would not hold anything. A transition is pending until the refreshed server
@@ -168,6 +168,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     dropPreview();
     setDrafts((d) => ({ ...d, [role]: result.policy }));
   }
@@ -188,6 +189,7 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     dropPreview();
     setDrafts((d) => ({ ...d, [forRole]: result.policy }));
   }
@@ -204,31 +206,20 @@ export function RolesEditor(props: RolesEditorProps) {
 
   // A refusal never touches the draft. A per-key code opens that role and puts the message on the row; a stale version keeps every
   // choice and asks for a fresh review against the version the core now holds.
-  async function rebaseToCurrent() {
-    const fresh = await readBack();
-    if (!fresh.ok) return;
-    setDrafts((current) => rebaseDrafts(current, saved, fresh.state.policies));
-    setSaved(fresh.state.policies);
-    setVersion(fresh.state.version);
-    setReviewed(fresh.state.reviewed);
-  }
-
   function handleError(err: RoleError) {
     if (isRowError(err)) {
       if (err.role) setRole(err.role);
       setView("permissions");
       setRowError({ key: err.key, message: roleErrorMessage(err) });
     }
-    if (err.code === "stale_version" || err.code === "review_changed" || err.code === "review_hash_required" || err.code === "review_unavailable") {
-      // Back to the draft, every choice kept, with the Review button available again for a fresh review. Nothing was saved.
+    if (err.code === "stale_version") {
+      // Back to the draft, every choice kept, with the Review button available again for a fresh preview.
       setReviewing(false);
       setReviewData(null);
+      setReviewChoices([]);
       setConfirmed(false);
       setPreview(null);
     }
-    // The page's values are out of date: read the current policy, keep only what THIS owner changed on top of it, and take its version, so the
-    // next review is built for the version the database now holds (and is not refused again for the same reason).
-    if (err.code === "stale_version") void rebaseToCurrent();
     feedback.failed(roleErrorMessage(err));
   }
 
@@ -238,10 +229,11 @@ export function RolesEditor(props: RolesEditorProps) {
     reviewedEdits.current = null;
     setReviewing(true);
     setReviewData(null);
+    setReviewChoices([]);
     setConfirmed(false);
     let r: Awaited<ReturnType<typeof props.previewSave>>;
     try {
-      r = await props.previewSave(edits, version);
+      r = await props.previewSave(edits);
     } catch {
       // A rejected server action (network drop, thrown error) must not leave the panel on "checking" with Save disabled for good.
       if (seq !== reviewSeq.current) return;
@@ -252,6 +244,7 @@ export function RolesEditor(props: RolesEditorProps) {
     if (seq !== reviewSeq.current) return; // the draft changed (or the review was closed) while the core was answering
     if (r.ok) {
       reviewedEdits.current = edits;
+      setReviewChoices(storedChoices(saved, edits));
       setReviewData(r.preview);
     } else {
       // A refused preview (unexpected, unavailable, a per-key refusal): leave the review, KEEP the draft, say why, and let the owner try again.
@@ -262,6 +255,7 @@ export function RolesEditor(props: RolesEditorProps) {
   function leaveReview() {
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     setConfirmed(false);
   }
 
@@ -285,7 +279,7 @@ export function RolesEditor(props: RolesEditorProps) {
     try {
       let result: Awaited<ReturnType<typeof props.save>>;
       try {
-        result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim(), reviewData.review?.hash ?? "");
+        result = await props.save(reviewedEdits.current, boundVersion, confirmed, reason.trim());
       } catch {
         // The request may or may not have committed: read it back and say which, exactly as for an unexpected core answer.
         await resolveUnexpected(boundVersion, reviewedEdits.current);
@@ -296,7 +290,6 @@ export function RolesEditor(props: RolesEditorProps) {
         const fresh = await readBack();
         if (fresh.ok) {
           setSaved(fresh.state.policies);
-          setVersion(fresh.state.version);
           setDrafts(fresh.state.policies);
           setReviewed(fresh.state.reviewed);
         } else {
@@ -305,7 +298,8 @@ export function RolesEditor(props: RolesEditorProps) {
         }
         setReviewing(false);
         setReviewData(null);
-          setConfirmed(false);
+        setReviewChoices([]);
+        setConfirmed(false);
         setReason("");
         feedback.saved();
       } else if (result.error.code === "unexpected") {
@@ -338,10 +332,10 @@ export function RolesEditor(props: RolesEditorProps) {
       return;
     }
     setSaved(fresh.state.policies);
-    setVersion(fresh.state.version);
     setReviewed(fresh.state.reviewed);
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     setPreview(null);
     setConfirmed(false);
     if (outcome === "landed") {
@@ -362,6 +356,7 @@ export function RolesEditor(props: RolesEditorProps) {
     setDrafts(saved);
     setReviewing(false);
     setReviewData(null);
+    setReviewChoices([]);
     setConfirmed(false);
     setReason("");
     setRowError(null);
@@ -593,6 +588,7 @@ export function RolesEditor(props: RolesEditorProps) {
           {reviewing && (
             <ReviewPanel
               data={reviewData}
+              choices={reviewChoices}
               sensitiveCount={sensitiveCount}
               confirmed={confirmed}
               onConfirmed={setConfirmed}
@@ -1216,8 +1212,21 @@ function ReasonField({ id, value, onChange, required }: { id: string; value: str
   );
 }
 
+type StoredChoice = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
+const CHOICE_LABEL = new Map<string, string>((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d.label]));
+function storedChoices(saved: Record<Role, StudioPolicy>, edits: Partial<Record<Role, Record<string, Scope>>>): StoredChoice[] {
+  const out: StoredChoice[] = [];
+  for (const r of ROLES) {
+    for (const [key, to] of Object.entries(edits[r] ?? {})) {
+      out.push({ role: r, key, label: CHOICE_LABEL.get(key) ?? key, from: saved[r].values[key] ?? null, to });
+    }
+  }
+  return out;
+}
+
 function ReviewPanel({
   data,
+  choices,
   sensitiveCount,
   confirmed,
   onConfirmed,
@@ -1226,6 +1235,7 @@ function ReviewPanel({
   onReason,
 }: {
   data: ServerPreview | null;
+  choices: StoredChoice[];
   sensitiveCount: number;
   confirmed: boolean;
   onConfirmed: (v: boolean) => void;
@@ -1244,14 +1254,14 @@ function ReviewPanel({
           <DiffList item={item} testPrefix="review" />
         </div>
       ))}
-      {data?.review && (
+      {data && choices.length > 0 && (
         <div data-testid="review-saved-choices" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
           <h4 className="font-medium">Saved choices</h4>
-          <p className="text-xs text-neutral-600 dark:text-neutral-400">{EACH_CHOICE_LINE}</p>
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">These are stored with your settings. Nothing is released yet, so none of them changes anyone&rsquo;s access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.</p>
           <ul className="mt-1 list-disc pl-5">
-            {data.review.rows.map((c) => (
-              <li key={`${c.role}:${c.key}`} data-saved-choice={`${c.role}:${c.key}`} data-timing={c.timing} className="break-words">
-                {ROLE_LABELS[c.role]}s, {c.label}: {scopeText(c.shownBefore)} to {scopeText(c.requested)}. {TIMING_TEXT[c.timing]}
+            {choices.map((c) => (
+              <li key={`${c.role}:${c.key}`} data-saved-choice={`${c.role}:${c.key}`} className="break-words">
+                {ROLE_LABELS[c.role]}s, {c.label}: {c.from ? `${scopeText(c.from)} to ${scopeText(c.to)}` : `set to ${scopeText(c.to)}`}
               </li>
             ))}
           </ul>

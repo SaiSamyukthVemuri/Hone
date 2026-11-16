@@ -88,10 +88,10 @@ describe("the actions hand the core only what the owner changed, after re-checki
   it("refuse a non-owner everywhere without calling the core", async () => {
     owner.role = "practitioner";
     for (const r of [
-      await actions.previewRoleChangesAction({}, 0),
+      await actions.previewRoleChangesAction({}),
       await actions.previewResetAction("practitioner"),
       await actions.previewAdoptAction(),
-      await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 0, false, "", "a".repeat(64)),
+      await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 0, false, ""),
       await actions.resetRolePolicyAction("practitioner", 0, "a reason", false),
       await actions.adoptNewDefaultsAction(0, "a reason", false),
       await actions.listPermissionAuditAction(null),
@@ -102,14 +102,14 @@ describe("the actions hand the core only what the owner changed, after re-checki
   });
   it("send the version, the changed keys, the confirmation and the trimmed reason to the core", async () => {
     const edits = { practitioner: { "appt.cancel": "off" } }; // an enforced key
-    expect(await actions.saveRolePolicyAction(edits, 3, true, "  needed for cover  ", "a".repeat(64))).toEqual({ ok: true, newVersion: 5 });
-    expect(core.coreSave).toHaveBeenCalledWith("studio-1", 3, edits, "needed for cover", true, "a".repeat(64));
+    expect(await actions.saveRolePolicyAction(edits, 3, true, "  needed for cover  ")).toEqual({ ok: true, newVersion: 5 });
+    expect(core.coreSave).toHaveBeenCalledWith("studio-1", 3, edits, "needed for cover", true);
   });
   it("refuse a malformed body, a missing version or a placeholder reason before the core", async () => {
-    expect((await actions.saveRolePolicyAction({ owner: { x: "studio" } }, 0, false, "", "a".repeat(64))).ok).toBe(false);
-    expect(await actions.saveRolePolicyAction({ practitioner: { a: 1 } }, 0, false, "", "a".repeat(64))).toEqual({ ok: false, error: { code: "invalid_changes" } });
-    expect(await actions.saveRolePolicyAction({ practitioner: { a: "off" } }, "3", false, "", "a".repeat(64))).toEqual({ ok: false, error: { code: "version_required" } });
-    expect(await actions.saveRolePolicyAction({ practitioner: { a: "off" } }, 3, false, "n/a", "a".repeat(64))).toEqual({ ok: false, error: { code: "reason_invalid" } });
+    expect((await actions.saveRolePolicyAction({ owner: { x: "studio" } }, 0, false, "")).ok).toBe(false);
+    expect(await actions.saveRolePolicyAction({ practitioner: { a: 1 } }, 0, false, "")).toEqual({ ok: false, error: { code: "invalid_changes" } });
+    expect(await actions.saveRolePolicyAction({ practitioner: { a: "off" } }, "3", false, "")).toEqual({ ok: false, error: { code: "version_required" } });
+    expect(await actions.saveRolePolicyAction({ practitioner: { a: "off" } }, 3, false, "n/a")).toEqual({ ok: false, error: { code: "reason_invalid" } });
     expect(core.coreSave).not.toHaveBeenCalled();
   });
   it("require a meaningful reason for adopt and reset", async () => {
@@ -127,10 +127,10 @@ describe("the actions hand the core only what the owner changed, after re-checki
 });
 
 describe("the migration's functions and parameter names are the ones the page calls", () => {
-  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8") + readFileSync("supabase/migrations/0356_roles_review_authority.sql", "utf8");
+  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
   const src = readFileSync("lib/settings/roles/core.ts", "utf8");
   it("matches every rpc name and p_ argument", () => {
-    const calls = [...src.matchAll(/call\(\s*"([a-z_]+)",\s*\{([^}]*)\}(?:,\s*REVIEW_MISSING)?,?\s*\)/g)];
+    const calls = [...src.matchAll(/call\("([a-z_]+)", \{([^}]*)\}\)/g)];
     expect(calls.length).toBe(12);
     for (const [, fn, args] of calls) {
       const sig = sql.match(new RegExp(`function public\\.${fn}\\(([^)]*)\\)`));
@@ -289,13 +289,13 @@ describe("the editor", () => {
     expect(src).not.toMatch(/diffPolicies|defaultsPolicy/);
   });
   it("runs every preview through the core's preview calls", () => {
-    expect(src).toContain("props.previewSave(edits, version)");
+    expect(src).toContain("props.previewSave(edits)");
     expect(src).toContain("const edits = changedEdits();");
     expect(src).toContain("props.previewAdopt()");
     expect(src).toContain("props.previewReset(forRole)");
   });
   it("saves only changed keys at the version the preview returned", () => {
-    expect(src).toMatch(/props\.save\(reviewedEdits\.current, boundVersion, confirmed, reason\.trim\(\), reviewData\.review\?\.hash \?\? \"\"\)/);
+    expect(src).toMatch(/props\.save\(reviewedEdits\.current, boundVersion, confirmed, reason\.trim\(\)\)/);
     expect(src).toContain("const boundVersion = reviewData.version;");
     expect(src).toContain("if (chosenScope(r, saved[r], k) !== v) e[k] = v");
   });
@@ -334,7 +334,7 @@ describe("the server-side wiring guard (platform operator, 3 Nov): enforcement i
     for (const mode of ["not_yet", "observe", undefined, "nonsense"]) {
       hold("appt.cancel", mode);
       const edits = { practitioner: { "appt.cancel": snapshotOf("appt.cancel") === "off" ? "studio" : "off" } };
-      for (const r of [await actions.saveRolePolicyAction(edits, 3, true, "", "a".repeat(64)), await actions.previewRoleChangesAction(edits, 0)]) {
+      for (const r of [await actions.saveRolePolicyAction(edits, 3, true, ""), await actions.previewRoleChangesAction(edits)]) {
         expect(r, String(mode)).toEqual({ ok: false, error: { code: "not_enforced", key: "appt.cancel", role: "practitioner" } });
       }
     }
@@ -345,38 +345,38 @@ describe("the server-side wiring guard (platform operator, 3 Nov): enforcement i
     hold("appt.move", "deny_only");
     const base = snapshotOf("appt.move");
     expect(base).toBe("own");
-    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 3, true, "", "a".repeat(64))).toEqual({
+    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 3, true, "")).toEqual({
       ok: false,
       error: { code: "widening_not_yet", key: "appt.move", role: "practitioner" },
     });
     expect(core.coreSave).not.toHaveBeenCalled();
-    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.move": "off" } }, 3, true, "", "a".repeat(64))).ok).toBe(true);
+    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.move": "off" } }, 3, true, "")).ok).toBe(true);
     expect(core.coreSave).toHaveBeenCalledTimes(1);
   });
   it("lets an enforced key move both ways, and treats a value already in force as no change", async () => {
     hold("appt.move", "enforced");
-    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 3, true, "", "a".repeat(64))).ok).toBe(true);
+    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.move": "studio" } }, 3, true, "")).ok).toBe(true);
     hold("appt.cancel", "not_yet");
-    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": snapshotOf("appt.cancel") } }, 3, true, "", "a".repeat(64))).ok).toBe(true);
+    expect((await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": snapshotOf("appt.cancel") } }, 3, true, "")).ok).toBe(true);
   });
   it("one refused key refuses the whole submission before the core (atomic)", async () => {
     hold("appt.cancel", "enforced");
     hold("appt.move", "not_yet");
-    const r = await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off", "appt.move": "off" } }, 3, true, "", "a".repeat(64));
+    const r = await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off", "appt.move": "off" } }, 3, true, "");
     expect(r).toMatchObject({ ok: false, error: { code: "not_enforced" } });
     expect(core.coreSave).not.toHaveBeenCalled();
   });
   it("is unavailable, not open, when the core's state cannot be read", async () => {
     core.coreGetState.mockResolvedValueOnce(null as never);
-    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "", "a".repeat(64))).toEqual({ ok: false, error: { code: "unavailable" } });
+    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "")).toEqual({ ok: false, error: { code: "unavailable" } });
     expect(core.coreSave).not.toHaveBeenCalled();
   });
   it("leaves unknown keys to the core, and a non-owner is refused before any of this", async () => {
-    await actions.saveRolePolicyAction({ practitioner: { "no.such_key": "off" } }, 3, true, "", "a".repeat(64));
+    await actions.saveRolePolicyAction({ practitioner: { "no.such_key": "off" } }, 3, true, "");
     expect(core.coreSave).toHaveBeenCalledTimes(1);
     owner.role = "practitioner";
     core.coreGetState.mockClear();
-    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "", "a".repeat(64))).toEqual({ ok: false, error: { code: "refused" } });
+    expect(await actions.saveRolePolicyAction({ practitioner: { "appt.cancel": "off" } }, 3, true, "")).toEqual({ ok: false, error: { code: "refused" } });
     expect(core.coreGetState).not.toHaveBeenCalled();
   });
   it("reset and adopt carry no per-key input: the core receives only a role, a version, a reason and the sensitive confirmation", async () => {

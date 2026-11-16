@@ -11,24 +11,18 @@ import { UNEXPECTED, parseAccess, parseActivationPreview, parseChangeRole, parse
 
 export const HISTORY_PAGE = 50;
 
-// A command that is not installed yet (PostgREST PGRST202, Postgres 42883) answers `missing` instead of null, so the page can say plainly that
-// reviewing is not available and fail closed. Only the two reviewed commands ask for this; every other failure stays "unexpected".
-async function call(fn: string, args: Record<string, unknown>, missing?: unknown): Promise<unknown> {
+async function call(fn: string, args: Record<string, unknown>): Promise<unknown> {
   const supabase = await createClient();
   const { data, error } = await supabase.rpc(fn, args);
-  if (error) return missing !== undefined && (error.code === "PGRST202" || error.code === "42883") ? missing : null;
-  return data;
+  return error ? null : data;
 }
-const REVIEW_MISSING = { ok: false, code: "review_unavailable" };
 
 export async function coreGetState(studioId: string): Promise<CoreState | null> {
   return parseState(await call("get_role_permissions", { p_studio: studioId }));
 }
 
-/** The review table for a save, built by the database for the version the page was read at (0356). A reply without the table is refused. */
-export async function corePreviewChanges(studioId: string, changes: unknown, expectedVersion: number): Promise<PreviewResult> {
-  const r = parsePreview(await call("preview_role_changes_at", { p_studio: studioId, p_changes: changes, p_expected_version: expectedVersion }, REVIEW_MISSING));
-  return r.ok && r.preview.review === null ? { ok: false, error: UNEXPECTED } : r;
+export async function corePreviewChanges(studioId: string, changes: unknown): Promise<PreviewResult> {
+  return parsePreview(await call("preview_role_changes", { p_studio: studioId, p_changes: changes }));
 }
 
 export async function corePreviewReset(studioId: string, role: Role): Promise<PreviewResult> {
@@ -45,21 +39,15 @@ export async function coreSave(
   changes: unknown,
   reason: string,
   sensitiveConfirmed: boolean,
-  reviewHash: string,
 ): Promise<CommandResult> {
   return parseCommand(
-    await call(
-      "save_role_permissions_reviewed",
-      {
-        p_studio: studioId,
-        p_expected_version: version,
-        p_changes: changes,
-        p_reason: reason === "" ? null : reason,
-        p_sensitive_confirmed: sensitiveConfirmed,
-        p_review_hash: reviewHash,
-      },
-      REVIEW_MISSING,
-    ),
+    await call("save_role_permissions", {
+      p_studio: studioId,
+      p_expected_version: version,
+      p_changes: changes,
+      p_reason: reason === "" ? null : reason,
+      p_sensitive_confirmed: sensitiveConfirmed,
+    }),
   );
 }
 

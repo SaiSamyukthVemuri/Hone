@@ -81,14 +81,12 @@ export async function reloadPolicyAction(): Promise<{ ok: true; state: StudioPol
 }
 
 /** Pure preview of a draft's changed keys; returns the version it was computed against. Writes nothing. */
-export async function previewRoleChangesAction(edits: unknown, expectedVersion: unknown): Promise<PreviewResult> {
+export async function previewRoleChangesAction(edits: unknown): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   const changes = changesShape(edits);
   if (!changes) return refuse({ code: "invalid_changes" });
-  // The version the page's values were read at: the database refuses the review when it is not the current one (stale_version).
-  if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
-  return (await wiringRefusal(owner.studioId, changes)) ?? corePreviewChanges(owner.studioId, changes, expectedVersion);
+  return (await wiringRefusal(owner.studioId, changes)) ?? corePreviewChanges(owner.studioId, changes);
 }
 
 export async function previewResetAction(role: unknown): Promise<PreviewResult> {
@@ -110,19 +108,16 @@ export async function saveRolePolicyAction(
   expectedVersion: unknown,
   sensitiveConfirmed: unknown,
   reason: unknown,
-  reviewHash: unknown,
 ): Promise<CommandResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   const changes = changesShape(edits);
   if (!changes) return refuse({ code: "invalid_changes" });
   if (!isVersion(expectedVersion)) return refuse({ code: "version_required" });
-  // Sent exactly as the review returned it. A missing or altered token is refused by the database; it is a consistency check, not an authorization.
-  if (typeof reviewHash !== "string" || reviewHash === "") return refuse({ code: "review_hash_required" });
   const text = reasonText(reason);
   // Optional here; the core requires it when the save widens sensitive access. Placeholder-only text is never entered.
   if (!reasonAcceptable("save", false, text)) return refuse({ code: "reason_invalid" });
-  return (await wiringRefusal(owner.studioId, changes)) ?? coreSave(owner.studioId, expectedVersion, changes, text.trim(), sensitiveConfirmed === true, reviewHash);
+  return (await wiringRefusal(owner.studioId, changes)) ?? coreSave(owner.studioId, expectedVersion, changes, text.trim(), sensitiveConfirmed === true);
 }
 
 /** Reset one role to the studio's own basis. Separate from Save; it has its own preview. */

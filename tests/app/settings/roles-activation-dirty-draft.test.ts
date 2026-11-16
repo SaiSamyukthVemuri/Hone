@@ -53,7 +53,6 @@ async function mount(over: Record<string, unknown>) {
         initialView: "permissions",
         people,
         timezone: "America/Toronto",
-        version: 0,
         previewSave: failing,
         previewReset: previewOk,
         previewAdopt: previewOk,

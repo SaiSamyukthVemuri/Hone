@@ -98,7 +98,6 @@ export default async function RolesSettingsPage() {
         notWritableReason={state.notWritableReason}
         people={people}
         timezone={studio.timezone}
-        version={state.version}
         previewSave={previewRoleChangesAction}
         previewReset={previewResetAction}
         previewAdopt={previewAdoptAction}

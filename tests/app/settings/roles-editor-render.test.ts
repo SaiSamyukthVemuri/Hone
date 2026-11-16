@@ -40,7 +40,6 @@ const render = (over: Record<string, unknown> = {}) =>
       staffRoleChange: false,
       people,
       timezone: "America/Toronto",
-      version: 0,
       previewSave: noop,
       previewReset: noop,
       previewAdopt: noop,
@@ -127,7 +126,7 @@ describe("only enforced keys are editable (platform operator decision, 3 Nov)", 
   it("says at the top of Permissions what this release enforces", () => {
     const html = render({ initialView: "permissions" });
     expect(html).toContain('data-testid="enforcement-scope"');
-    expect(html).toContain("These settings are not in force yet. The app does not read them yet, and the database does not check them. Each saved choice below says when it takes effect.");
+    expect(html).toContain("These settings are not in force yet. The app does not read them yet, and the database does not check them. Nothing is released yet, so none of them changes anyone&#x27;s access today. After a setting is released, a choice that lowers access applies at once, and one that raises access waits for you to activate it.");
   });
   it("fails SAFE: a key with no enforcement in the catalog reads Not enforced yet", () => {
     const r = row(withEnforcement({ "appt.move": undefined }, () => render({ initialView: "permissions" })), "appt.move");

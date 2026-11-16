@@ -126,7 +126,7 @@ const render = (gate: boolean) =>
   renderToStaticMarkup(
     createElement(RolesEditor, {
       policies: { practitioner: policy, receptionist: policy }, reviewed: false, writable: true, notWritableReason: null, staffRoleChange: gate, people,
-      timezone: "America/Toronto", version: 0, previewSave: noop, previewReset: noop, previewAdopt: noop, save: noop, reset: noop, adopt: noop,
+      timezone: "America/Toronto", previewSave: noop, previewReset: noop, previewAdopt: noop, save: noop, reset: noop, adopt: noop,
       previewActivation: noop, activate: noop, loadHistory: noop, loadAccess: noop, reload: noop, changeRole: noop,
     }),
   );

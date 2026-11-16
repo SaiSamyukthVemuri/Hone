@@ -16,9 +16,7 @@ describe("the Roles page shows only names and addresses, never tokens or hashes"
   });
   it("never mentions a feed token, hash, or Google account field", () => {
     for (const re of [/token/i, /hash/i, /feed/i, /google/i, /ics/i]) expect(page, String(re)).not.toMatch(re);
-    // The Roles review's consistency stamp (0356) is the one sanctioned use of the word, as a prop/field name that is passed to the Server Action and never
-    // rendered; feed tokens and hashes stay out.
-    expect(editor.replace(/reviewHash|review\??\.hash|hash: string|review_hash_required/g, "")).not.toMatch(/token|hash/i);
+    expect(editor).not.toMatch(/token|hash/i);
   });
 });
 
