@@ -120,7 +120,7 @@ describe("reset and adopt are exercised once each and keep their contract", () =
     expect((await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "avail.manage_own": "off" } }, null, false])).ok).toBe(true);
     const before = await effectiveMaps(s.studioId);
     const v = (await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].version;
-    const r = await callAs(s.userId, "reset_role_to_defaults", [s.studioId, "practitioner", Number(v), null, false]);
+    const r = await callAs(s.userId, "reset_role_to_defaults", [s.studioId, "practitioner", Number(v), "Resetting this role to the studio defaults in a test", false]);
     expect(r.ok, r.raw).toBe(true);
     expect(await storedRows(s.studioId)).toEqual([]);
     expect(await effectiveMaps(s.studioId)).toBe(before);
@@ -129,7 +129,7 @@ describe("reset and adopt are exercised once each and keep their contract", () =
   it("adopt: an existing studio moves to the new-studio basis and the command reports ok", async () => {
     const s = await seedStudio("inert-denial-adopt");
     await adminQuery(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [s.studioId]);
-    const r = await callAs(s.userId, "adopt_new_defaults", [s.studioId, 0, null, false]);
+    const r = await callAs(s.userId, "adopt_new_defaults", [s.studioId, 0, "Adopting the new defaults in a test", false]);
     expect(r.ok, r.raw).toBe(true);
     expect((await adminQuery(`select basis from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].basis).toBe("new_studio");
   });
