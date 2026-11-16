@@ -13,9 +13,9 @@ const E = exec(readFileSync(join(root, `supabase/migrations/${NAME}.sql`), "utf8
 const DOWN = exec(readFileSync(join(root, `supabase/rollbacks/${NAME}.down.sql`), "utf8"));
 
 describe("0352: shape", () => {
-  it("consumes exactly one number and is the current maximum", () => {
+  it("consumes exactly one number and is no longer the maximum (0354 follows it)", () => {
     expect(countVersion("0352")).toBe(1);
-    expect(isRepoMax("0352")).toBe(true);
+    expect(isRepoMax("0352")).toBe(false);
   });
   it("opens its own transaction and arms lock_timeout inside it", () => {
     expect(E.trim()).toMatch(/^begin;\s*set local lock_timeout = '5s';/);

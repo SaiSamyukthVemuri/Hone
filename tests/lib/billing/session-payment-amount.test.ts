@@ -86,12 +86,43 @@ describe("5-6. service matching", () => {
   });
 });
 
-describe("7. non-positive custom prices", () => {
-  it("zero and negative custom prices do not become the charge", () => {
-    for (const price of [0, -500]) {
+describe("7. zero and negative custom prices", () => {
+  // Decision (platform operator, #1483): an explicitly recorded $0 client price is a decided price and beats a positive
+  // menu price; it resolves to `free`, never to a chargeable row.
+  it("a current $0 custom price is FREE, not the menu price", () => {
+    const r = run({ customPricing: [cp({ price_cents: 0 })] });
+    expect(r).toEqual({ kind: "free", serviceName: "Electrolysis 60", durationMinutes: 60 });
+  });
+  it("a $0 custom price is free even when the service has no menu price (a recorded price is a price)", () => {
+    expect(run({ service: svc({ price_cents: null }), customPricing: [cp({ price_cents: 0 })] }).kind).toBe("free");
+  });
+  it("a future-dated $0 row is ignored; a newer positive row beats an older $0 row; a newer $0 row beats an older positive row", () => {
+    expect(run({ customPricing: [cp({ price_cents: 0, effective_from: "2026-08-01" })] })).toMatchObject({ source: "service_price" });
+    expect(run({ customPricing: [cp({ price_cents: 0, effective_from: "2026-01-01" }), cp({ price_cents: 9000, effective_from: "2026-03-01" })] }))
+      .toMatchObject({ kind: "resolved", amountCents: 9000, source: "custom_pricing" });
+    expect(run({ customPricing: [cp({ price_cents: 9000, effective_from: "2026-01-01" }), cp({ price_cents: 0, effective_from: "2026-03-01" })] }).kind).toBe("free");
+  });
+  it("a $0 row and a positive row equally current DISAGREE: ambiguous, never free and never charged", () => {
+    const r = run({ customPricing: [cp({ price_cents: 0 }), cp({ price_cents: 9000 })] });
+    expect(r).toMatchObject({ kind: "ambiguous_custom_pricing", candidateCents: [0, 9000] });
+  });
+  it("two equally current $0 rows agree: free", () => {
+    expect(run({ customPricing: [cp({ price_cents: 0 }), cp({ price_cents: 0 })] }).kind).toBe("free");
+  });
+  it("a NEGATIVE (or non-finite) current custom price is invalid_custom_pricing: not free, and NOT a fall-through to the menu price", () => {
+    for (const price of [-500, 12.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       const r = run({ customPricing: [cp({ price_cents: price })] });
-      expect(r, `price ${price}`).toMatchObject({ amountCents: 14500, source: "service_price" });
+      expect(r, `price ${price}`).toEqual({ kind: "invalid_custom_pricing", serviceName: "Electrolysis 60" });
     }
+    expect(run({ customPricing: [cp({ price_cents: -500 }), cp({ price_cents: 9000 })] }).kind).toBe("invalid_custom_pricing");
+  });
+  it("an invalid row that a NEWER valid row supersedes does not matter; a future-dated invalid row is ignored", () => {
+    expect(run({ customPricing: [cp({ price_cents: -500, effective_from: "2026-01-01" }), cp({ price_cents: 9000, effective_from: "2026-03-01" })] }))
+      .toMatchObject({ kind: "resolved", amountCents: 9000 });
+    expect(run({ customPricing: [cp({ price_cents: -500, effective_from: "2026-08-01" })] })).toMatchObject({ source: "service_price" });
+  });
+  it("the invalid-price message names the service and says to correct the client's pricing", () => {
+    expect(unresolvedAmountMessage({ kind: "invalid_custom_pricing", serviceName: "Electrolysis 60" })).toMatch(/Electrolysis 60.*not a usable price/);
   });
 });
 

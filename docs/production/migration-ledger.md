@@ -22,10 +22,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0350**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14 and 2026-11-15, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341` and `0350` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341 and 0350 read-backs were each one row above the read before them). |
-| **Repo migration max** | **0352** (`0352_payment_charge_attempt_claimed_at.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
+| **Repo migration max** | **0354** (`0354_quoted_amount_explicit_zero_custom_price.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
 | **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338`, `0339`, `0340`, `0341` and `0350` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. |
-| **Next free number** | Next free number is **0353** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
+| **Next free number** | Next free number is **0355** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### What the two pending migrations are (no hosted claim)

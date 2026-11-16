@@ -402,14 +402,16 @@ export async function getManualFeeChargeEligibility(
           if (price.reason === "read_failed") pushReadFailure(reasons);
           else reasons.push("Appointment not found for this studio.");
         } else if (price.result.kind === "free") {
-          // An explicit $0 menu price (FREE-01) is a decided price: the fee is $0.00 and nothing is prepared.
+          // An explicit $0 price, menu (FREE-01) or this client's custom price, is a decided price: the fee is $0.00 and nothing is prepared.
           noFeeOwed = true;
           reasons.push(noFeeOwedMessage(0, bp));
         } else if (price.result.kind !== "resolved") {
-          // missing_service / missing_price / ambiguous_custom_pricing: refusals, each with its own message, no fallback.
+          // missing_service / missing_price / ambiguous_ / invalid_custom_pricing: refusals, each with its own message, no fallback.
           reasons.push(
             price.result.kind === "ambiguous_custom_pricing"
               ? "This client has conflicting current custom prices for this service, so a percentage fee cannot be calculated."
+              : price.result.kind === "invalid_custom_pricing"
+                ? "This client's recorded price for this service is not a usable price, so a percentage fee cannot be calculated."
               : price.result.kind === "missing_service"
                 ? "This appointment has no booked service, so a percentage fee cannot be calculated."
                 : "No price is configured for this appointment's service, so a percentage fee cannot be calculated.",

@@ -427,6 +427,7 @@ describe("execute hold: the owner's settings now versus what was frozen at prepa
       { kind: "missing_price", serviceName: "S" },
       { kind: "missing_service" },
       { kind: "ambiguous_custom_pricing", serviceName: "S", candidateCents: [1, 2] },
+      { kind: "invalid_custom_pricing", serviceName: "S" },
     ]) {
       priceMock.load.mockResolvedValue({ ok: true, result });
       expect(await loadManualFeeExecuteHold(mk(pct, frozen), FIXED)).toBe(MANUAL_FEE_PRICE_CHANGED_MESSAGE);
@@ -446,6 +447,26 @@ describe("execute hold: the owner's settings now versus what was frozen at prepa
   it("session payments and unknown reasons are not governed by it", async () => {
     expect(await loadManualFeeExecuteHold(mk(null, null, true), { ...FIXED, charge_reason: "session_payment" })).toBeNull();
   });
+});
+
+describe("runner: a percent fee whose price became $0 or invalid after prepare is refused with ZERO claims and ZERO Stripe calls", () => {
+  const PCT_STUDIO = { ...BOTH_ON, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: 7500, timezone: "America/Toronto" };
+  const PCT_ATTEMPT = () => attemptRow({ calc_mode: "percent", basis_cents: 12000, percent_bp: 7500, amount_cents: 9000 });
+  for (const [label, result] of [
+    ["the client's custom price became an explicit $0 (free)", { kind: "free", serviceName: "S", durationMinutes: null }],
+    ["the client's custom price became invalid", { kind: "invalid_custom_pricing", serviceName: "S" }],
+    ["the client's custom rows now conflict", { kind: "ambiguous_custom_pricing", serviceName: "S", candidateCents: [0, 5000] }],
+  ] as const) {
+    it(`${label}: refused before the claim, the attempt stays ready`, async () => {
+      h.studioRow = PCT_STUDIO; h.attempt = PCT_ATTEMPT();
+      priceMock.load.mockResolvedValue({ ok: true, result });
+      const r = await run();
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.message).toBe(MANUAL_FEE_PRICE_CHANGED_MESSAGE);
+      expect(h.rpcs).toEqual([]);
+      expect(h.stripeCalls).toEqual([]);
+    });
+  }
 });
 
 describe("runner: the three reads (behaviour)", () => {
