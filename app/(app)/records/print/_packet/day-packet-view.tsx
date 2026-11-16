@@ -27,7 +27,8 @@ import { AuditedPrintButton } from "../day/print-button";
 //   * logs, tags and attaches nothing containing the client id or day.
 // NOT closable here: Vercel's platform request log still records that an owner POSTed /records/print/open and, a moment
 // later, opened an opaque /records/print/ticket/<ticket>.
-// The log can show that a session was viewed and a print opened, but not the day, and it holds no reusable link.
+// The log can show that a session was viewed and a print opened. It does not state the day (the day can still be
+// inferred from the session's date), and it holds no reusable link.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Hide the record in print media unless the audited Print button armed it
