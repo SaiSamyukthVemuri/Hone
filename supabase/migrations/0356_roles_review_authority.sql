@@ -21,7 +21,7 @@
 --
 -- THE HASH IS A CONSISTENCY TOKEN, NOT AUTHORIZATION. The owner and studio checks run first; the hash is recomputed on the server and only compared;
 -- the version check stays. The studio id is part of the hash input (never returned), so another studio's hash cannot validate. The input is
--- the fixed field list in perm_review_hash_input: any name, reason or free text added to it needs Privacy review. Encoding: sha256 over the UTF-8 of
+-- the fixed field list in perm_review_hash_input: any name, reason or free text added to it needs a privacy review. Encoding: sha256 over the UTF-8 of
 -- the canonical jsonb text (jsonb orders object keys deterministically; every array is built with an explicit order by; timestamps are UTC ISO text).
 --
 -- LOCKING. The save takes the policy row lock (select ... for update) first, then `for share` on the involved keys' permission_key_release rows, so a
@@ -105,7 +105,7 @@ as $$
     'basis', (select spp.basis from public.studio_permission_policy spp where spp.studio_id = p_studio),
     -- basis_at matters to the engine only on the new_studio basis (a default counts for a key released at or before it). On existing_snapshot it is the
     -- column's now() default, which differs between the preview's transient row (rolled back) and the save's real one for a studio with no policy
-    -- row yet: hashing it would make the first reviewed save of every such studio return review_changed (Codex 4585180160). Hash the stored state.
+    -- row yet: hashing it would make the first reviewed save of every such studio return review_changed (the first reviewed save of such a studio could never succeed). Hash the stored state.
     'basis_at', (select case when spp.basis = 'new_studio' then to_char(spp.basis_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') end
                    from public.studio_permission_policy spp where spp.studio_id = p_studio),
     'review', p_review,
@@ -429,6 +429,9 @@ begin
   if p_changes is null or jsonb_typeof(p_changes) <> 'object' then return public.perm_fail('invalid_changes'); end if;
   if p_expected_version is null then return public.perm_fail('version_required'); end if;
   if p_review_hash is null or btrim(p_review_hash) = '' then return public.perm_fail('review_hash_required'); end if;
+  -- WHAT A REFUSAL LEAVES BEHIND: this default policy row (basis existing_snapshot, version 0) is written before the checks below, for a studio that has
+  -- none yet, and it stays when the save is then refused (review_changed, stale_version, a validation code). It is the row any later save or read would
+  -- create, changes no one's access, and is the only write a refused save can make: no role rows, no audit row, no version bump.
   insert into public.studio_permission_policy (studio_id, basis, version) values (p_studio, 'existing_snapshot', 0) on conflict do nothing;
   select spp.version into v_version from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
   if p_expected_version <> v_version then return public.perm_fail('stale_version', null, null, v_version); end if;
