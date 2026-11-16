@@ -269,3 +269,56 @@ describe("N2: a stored Off is not undone by release or activation (rolled-back t
     expect(control.afterActivation).toBe(true); // the default 'studio' takes effect on activation when the owner saved nothing
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Insurance R1: 0355 must never store BELOW the snapshot. The only rows its new condition adds are those where the request equals the base
+// (the snapshot while the key is unreleased) but differs from the value shown (the new-studio default). So across the WHOLE catalog, for every
+// key and role whose default differs from its snapshot, asking for the snapshot value stores exactly the snapshot (or is refused), never
+// anything else. Every row the studio ends with has scope = the snapshot for its key and role.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+describe("R1: every row stored through the new condition equals the snapshot, across the whole catalog", () => {
+  it("asking for the snapshot value on a key whose default differs stores the snapshot value or nothing", async () => {
+    const s = await seedStudio("inert-denial-r1");
+    const cat = (
+      await adminQuery(
+        `select key, offered_practitioner, offered_receptionist, owner_configurable,
+                new_practitioner, new_receptionist, snapshot_practitioner, snapshot_receptionist
+           from public.permission_catalog where owner_configurable order by key`,
+      )
+    ).rows as {
+      key: string;
+      offered_practitioner: boolean;
+      offered_receptionist: boolean;
+      new_practitioner: string;
+      new_receptionist: string;
+      snapshot_practitioner: string;
+      snapshot_receptionist: string;
+    }[];
+    let exercised = 0;
+    const refused: string[] = [];
+    for (const c of cat) {
+      for (const role of ["practitioner", "receptionist"] as const) {
+        if (!(role === "practitioner" ? c.offered_practitioner : c.offered_receptionist)) continue;
+        const def = role === "practitioner" ? c.new_practitioner : c.new_receptionist;
+        const snap = role === "practitioner" ? c.snapshot_practitioner : c.snapshot_receptionist;
+        if (def === snap) continue; // the new condition cannot add a row where the default equals the snapshot
+        const v = Number((await adminQuery(`select version from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].version);
+        const r = await callAs(s.userId, "save_role_permissions", [s.studioId, v, { [role]: { [c.key]: snap } }, null, false]);
+        if (r.ok) exercised += 1;
+        else refused.push(`${role}:${c.key}:${r.code}`);
+      }
+    }
+    expect(exercised, `refused: ${refused.join(", ")}`).toBeGreaterThan(0);
+    const rows = (await adminQuery(`select role, key, scope from public.studio_role_permissions where studio_id = $1`, [s.studioId])).rows as {
+      role: "practitioner" | "receptionist";
+      key: string;
+      scope: string;
+    }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const c = cat.find((x) => x.key === row.key)!;
+      const snap = row.role === "practitioner" ? c.snapshot_practitioner : c.snapshot_receptionist;
+      expect(row.scope, `${row.role}:${row.key}`).toBe(snap);
+    }
+  });
+});
