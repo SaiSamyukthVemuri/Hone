@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CATALOG } from "@/lib/permissions/catalog";
+import { CATALOG, basisValue } from "@/lib/permissions/catalog";
 import {
   isRowError,
   reasonAcceptable,
@@ -238,7 +238,11 @@ describe("parsing what the core returns (shapes taken from 0287)", () => {
     expect(parseState(raw(null))!.reviewed).toBe(false);
     expect(parseState(raw("studio"))!.reviewed).toBe(true);
     expect(parseState(raw(null, "new_studio"))!.reviewed).toBe(true);
-    expect(parseState(raw("studio"))!.policies.practitioner.values).toEqual({ "appt.move": "studio" });
+    // `values` is the SHOWN map: the stored choice, else the studio basis value, for EVERY catalog key (Codex 4585249966)
+    const shown = parseState(raw("studio"))!.policies.practitioner.values;
+    expect(shown["appt.move"]).toBe("studio");
+    expect(Object.keys(shown).length).toBeGreaterThan(20);
+    expect(parseState(raw(null))!.policies.practitioner.values["appt.move"]).toBe(basisValue(CATALOG.find((d) => d.key === "appt.move")!, "practitioner", "existing_snapshot"));
     expect(parseState({ ok: false })).toBeNull();
   });
   it("reads history with resolved names and no email, and a page cursor only when the page is full", () => {
@@ -297,7 +301,7 @@ describe("the editor", () => {
   it("saves only changed keys at the version the preview returned", () => {
     expect(src).toMatch(/props\.save\(reviewedEdits\.current, boundVersion, confirmed, reason\.trim\(\), reviewData\.review\?\.hash \?\? \"\"\)/);
     expect(src).toContain("const boundVersion = reviewData.version;");
-    expect(src).toContain("if (chosenScope(r, saved[r], k) !== v) e[k] = v");
+    expect(src).toContain("if (saved[r].values[k] !== v) e[k] = v");
   });
   it("returns to the draft with Review available after a stale version (found in the integrated run)", () => {
     const handler = src.slice(src.indexOf("function handleError"), src.indexOf("async function onReview"));

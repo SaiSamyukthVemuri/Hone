@@ -278,25 +278,6 @@ export function applyEdit(
   return { ok: true, policy: { ...policy, values: { ...policy.values, [key]: next } } };
 }
 
-/**
- * The value a role is on for a key as the OWNER chose it: the stored value, else the studio basis. A draft that picks a value and then picks the
- * original back holds an explicit basis value where the saved policy holds none; they are the same choice (Codex P2 4582593018).
- */
-export function chosenScope(role: Role, policy: StudioPolicy, key: string): Scope | undefined {
-  const stored = policy.values[key];
-  if (stored !== undefined) return stored;
-  const def = catalogByKey.get(key);
-  return def ? baselineScope(def, role, policy) : undefined;
-}
-
-/** Whether two policies make the same choices for a role, key by key over both key sets. */
-export function sameChoices(role: Role, a: StudioPolicy, b: StudioPolicy): boolean {
-  for (const key of new Set([...Object.keys(a.values), ...Object.keys(b.values)])) {
-    if (chosenScope(role, a, key) !== chosenScope(role, b, key)) return false;
-  }
-  return true;
-}
-
 export type RoleSectionModel = { id: SectionId; label: string; common: RoleRow[]; advanced: RoleRow[] };
 
 /** The eight sections for a role, common actions first and finer controls under Advanced. Presentation only: every row is one key. */

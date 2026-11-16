@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { CATALOG, ROLES, type PermissionDef, type Role, type Scope, type StudioPolicy } from "@/lib/permissions/catalog";
-import { applyEdit, buildRoleSections, chosenScope, liveStatusLine, sameChoices, EACH_CHOICE_LINE, TIMING_TEXT, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
+import { applyEdit, buildRoleSections, liveStatusLine, EACH_CHOICE_LINE, TIMING_TEXT, ENFORCEMENT_SCOPE_LINE, NOT_ENFORCED_LINE, ROLE_LABELS, WIDENING_LATER_LINE, type RoleRow } from "@/lib/settings/roles/model";
 import { CONSEQUENCE_LABEL } from "@/lib/settings/roles/sections";
 import { releaseNarrowings } from "@/lib/settings/roles/diff";
 import { classifyUnexpected, rebaseDrafts, UNCERTAIN_SAVE_MESSAGE, type AttemptedEdits } from "@/lib/settings/roles/unexpected";
@@ -93,6 +93,12 @@ type View = "people" | "permissions" | "history";
 // `role` is the role that was PREVIEWED: a reset is confirmed for that role, whatever tab is showing when the owner clicks.
 type Preview = { kind: "reset" | "adopt"; role: Role; data: ServerPreview };
 
+/** Plain equality of two shown-value maps. Both start from the server's normalised map, so a change that is reverted is equal by construction. */
+const samePolicyValues = (a: StudioPolicy, b: StudioPolicy): boolean => {
+  const ka = Object.keys(a.values);
+  return ka.length === Object.keys(b.values).length && ka.every((k) => a.values[k as keyof typeof a.values] === b.values[k as keyof typeof b.values]);
+};
+
 const scopeText = (s: Scope) => (s === "off" ? "Off" : s === "own" ? "Own assigned" : "Whole studio");
 
 export function RolesEditor(props: RolesEditorProps) {
@@ -131,7 +137,7 @@ export function RolesEditor(props: RolesEditorProps) {
   const reviewSeq = useRef(0);
   const reviewedEdits = useRef<Partial<Record<Role, Record<string, Scope>>> | null>(null);
 
-  const dirtyRoles = ROLES.filter((r) => !sameChoices(r, drafts[r], saved[r]));
+  const dirtyRoles = ROLES.filter((r) => !samePolicyValues(drafts[r], saved[r]));
   const dirty = dirtyRoles.length > 0;
   useUnsavedChangesGuard("roles-draft", dirty);
   // Codex P2 4477378035: while a save, reset, adopt or the read-back after it is in flight, the draft must not change: the read-back replaces
@@ -196,7 +202,7 @@ export function RolesEditor(props: RolesEditorProps) {
     const edits: Partial<Record<Role, Record<string, Scope>>> = {};
     for (const r of dirtyRoles) {
       const e: Record<string, Scope> = {};
-      for (const [k, v] of Object.entries(drafts[r].values)) if (chosenScope(r, saved[r], k) !== v) e[k] = v;
+      for (const [k, v] of Object.entries(drafts[r].values)) if (saved[r].values[k] !== v) e[k] = v;
       edits[r] = e;
     }
     return edits;

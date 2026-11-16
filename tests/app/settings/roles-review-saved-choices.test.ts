@@ -263,3 +263,51 @@ describe("0356: the review is bound to the version the page was read at, and Sav
     expect(q('[data-testid="review-saved-choices"]')?.textContent ?? "").not.toMatch(/waits for you to activate/i);
   });
 });
+
+// Codex 4585249966: change an unset key and change it back, then recover from a stale version. The draft must carry nothing for that key, so the
+// other session's fresh choice survives; a genuine edit still rides on top. Both start from the server's one shown map, so this is plain equality.
+describe("Codex 4585249966: stale-version recovery carries only genuine edits", () => {
+  const B = "appt.mark_no_show";
+  const unset = parseState({
+    ok: true,
+    version: 7,
+    basis: "existing_snapshot",
+    gates: {},
+    roles: { practitioner: {}, receptionist: {} },
+  })!;
+  const fresh = parseState({
+    ok: true,
+    version: 9,
+    basis: "existing_snapshot",
+    gates: {},
+    roles: { practitioner: { [KEY]: { stored: "own", effective: "own", source: "stored" } }, receptionist: {} },
+  })!;
+  const radio = (k: string, v: string) => q(`input[type="radio"][name$="-practitioner-${k}"][value="${v}"]`) as HTMLInputElement;
+
+  it("change and revert, plus one genuine edit: after recovery the other session's value survives and the genuine edit is kept", async () => {
+    const previewSave = vi.fn().mockResolvedValueOnce({ ok: false as const, error: { code: "stale_version" as const, currentVersion: 9 } });
+    const reload = vi.fn(async () => ({ ok: true as const, state: { ...fresh, writable: true, notWritableReason: null } }));
+    await mount({ policies: unset.policies, version: 7, previewSave, reload });
+    await act(async () => radio(KEY, "off").click());
+    await act(async () => radio(KEY, "studio").click()); // reverted: the shown value again
+    await act(async () => radio(B, "off").click()); // a genuine edit
+    expect(host!.textContent).toContain("(unsaved)");
+    await review();
+    expect(reload).toHaveBeenCalled();
+    expect(radio(KEY, "own").checked).toBe(true); // the other session's choice was NOT overwritten by the reverted edit
+    expect(radio(B, "off").checked).toBe(true); // the genuine edit rode on top
+  });
+
+  it("with no genuine edit at all, a reverted change is clean: Review stays disabled and nothing is carried", async () => {
+    await mount({ policies: unset.policies, version: 7, previewSave: vi.fn() });
+    await act(async () => radio(KEY, "off").click());
+    await act(async () => radio(KEY, "studio").click());
+    expect(button(/^Review changes/)!.disabled).toBe(true);
+  });
+
+  it("the saved policy is ONE normalised map: every catalog key has its shown value and the draft starts equal to it", () => {
+    const v = unset.policies.practitioner.values as Record<string, string>;
+    expect(v[KEY]).toBe("studio");
+    expect(Object.keys(v).length).toBeGreaterThan(20);
+  });
+});

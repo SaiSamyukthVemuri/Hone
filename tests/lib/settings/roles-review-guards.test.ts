@@ -38,9 +38,10 @@ describe("Privacy: an unexpected database outcome shows the page's generic copy 
   it("a raw SQL error, a malformed refusal, or text in place of JSON all map to `unexpected` with the fixed message", async () => {
     const { parseError, parseCommand, parsePreview } = await import("@/lib/settings/roles/core-parse");
     const { roleErrorMessage } = await import("@/lib/settings/roles/api");
+    type RoleError = Parameters<typeof roleErrorMessage>[0];
     const raw = "perm_review_timing: P0001 something with private detail";
     for (const r of [parseError(raw), parseError({ ok: false, code: raw }), parseError({ ok: false, message: raw }), parseCommand({ ok: false, code: "P0001", message: raw }), parsePreview(raw)]) {
-      const err = "error" in r ? r.error : r;
+      const err = ("error" in r ? r.error : r) as RoleError;
       expect(err).toEqual({ code: "unexpected" });
       expect(roleErrorMessage(err)).toBe("Something went wrong and we could not confirm the result. Reload the page to see what is saved.");
       expect(roleErrorMessage(err)).not.toContain("P0001");

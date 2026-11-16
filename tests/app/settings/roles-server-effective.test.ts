@@ -86,7 +86,9 @@ describe("parseState carries the core's effective and source", () => {
     expect(srv.effective[KEY]).toBe("own");
     expect(srv.source[KEY]).toBe("inactive_until_activated");
     expect(srv.stored[KEY]).toBe("studio");
-    expect((s.policies.receptionist as PolicyWithServer).server!.stored[KEY]).toBeUndefined();
+    // an unstored key carries the shown (basis) value in both places: the baseline a draft is compared with
+    const rec = s.policies.receptionist as PolicyWithServer;
+    expect(rec.server!.stored[KEY]).toBe(rec.values[KEY]);
   });
 });
 

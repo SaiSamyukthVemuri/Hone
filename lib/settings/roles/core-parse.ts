@@ -1,5 +1,6 @@
 import {
   CATALOG,
+  basisValue,
   scopeRank,
   type PermissionDef,
   type Role,
@@ -329,7 +330,13 @@ export function parseState(raw: unknown): CoreState | null {
         customised = true;
       }
     }
-    policies[role] = { basis, values, gates, server: { stored: { ...values }, effective, source } } as StudioPolicy;
+    // ONE normalised map, built here and nowhere else: what the owner is SHOWN for every key (the stored choice, else the studio basis value).
+    // The page's saved policy and its draft both start as this map, so "is it dirty", "what changed" and "rebase after a stale save" are plain
+    // equality, and no client code derives a before-value (Codex 4582593018, 4585249966; Insurance N3). `server.stored` is the same baseline:
+    // the effective-value logic asks whether a draft differs from what was SHOWN, not from what happens to be a row.
+    const shown: Record<string, Scope> = { ...values };
+    for (const d of CATALOG as readonly PermissionDef[]) if (shown[d.key] === undefined) shown[d.key] = basisValue(d, role, basis);
+    policies[role] = { basis, values: shown, gates, server: { stored: { ...shown }, effective, source } } as StudioPolicy;
   }
   return { version, basis, policies, reviewed: basis === "new_studio" || customised, staffRoleChange: gates.staff_role_change === true };
 }
