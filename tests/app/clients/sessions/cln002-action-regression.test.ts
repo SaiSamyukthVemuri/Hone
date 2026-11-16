@@ -15,7 +15,7 @@ const runtime = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT:${url}`); } }));
 vi.mock("next/cache", () => ({ revalidatePath: runtime.revalidate }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: runtime.from, rpc: runtime.rpc }) }));
-vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "practitioner" }, studio: { id: "studio" } }) }));
+vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "practitioner", role: "practitioner" }, studio: { id: "studio" } }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: runtime.adminRpc }) }));
 vi.mock("@/app/(app)/calendar/postcare-auto-send", () => ({ autoSendPostcareOnComplete: runtime.postcare }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: runtime.analytics }));
@@ -160,5 +160,16 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
     expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
     expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", expect.objectContaining({ p_appointment_id: B }));
     expect(runtime.analytics).toHaveBeenCalledWith(expect.objectContaining({ properties: expect.objectContaining({ is_new_session: true }) }));
+  });
+});
+
+// Decision 3: starting a chart on an UNASSIGNED appointment is still allowed (unchanged), but it
+// no longer completes the appointment, because a practitioner may complete only their own.
+describe("session start does not complete an appointment the actor may not complete", () => {
+  it("an unassigned, confirmed, ended appointment is charted but NOT auto-completed", async () => {
+    appointment = { ...appointment, practitioner_id: null, status: "confirmed", ends_at: "2020-01-01T00:00:00Z" };
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    expect(runtime.rpc).toHaveBeenCalledWith("start_session", expect.anything());
+    expect(runtime.rpc).not.toHaveBeenCalledWith("mark_appointment_complete", expect.anything());
   });
 });

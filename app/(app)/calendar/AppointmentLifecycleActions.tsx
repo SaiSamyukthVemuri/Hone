@@ -45,6 +45,9 @@ export type AppointmentLifecycleActionsProps = {
   // fully elapsed rather than a practitioner asserting treatment finished.
   startsAt: string;
   endsAt: string;
+  // Decision 3: false hides the completion control for a practitioner on an appointment not
+  // assigned to them. A hint only; markAppointmentCompleteAction is the gate.
+  canComplete: boolean;
 };
 
 // Confirmation copy for the consequential mark-no-show terminal outcome. A
@@ -60,6 +63,7 @@ export function AppointmentLifecycleActions({
   status,
   startsAt,
   endsAt,
+  canComplete,
 }: AppointmentLifecycleActionsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -122,11 +126,17 @@ export function AppointmentLifecycleActions({
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start gap-2">
         {/* THE shared completion control: identical here and in charting. */}
-        <MarkAppointmentCompleteControl
-          appointmentId={appointmentId}
-          startsAt={startsAt}
-          notStartedHint="Available once the appointment has started."
-        />
+        {canComplete ? (
+          <MarkAppointmentCompleteControl
+            appointmentId={appointmentId}
+            startsAt={startsAt}
+            notStartedHint="Available once the appointment has started."
+          />
+        ) : (
+          <span className="self-center text-xs text-neutral-500" data-testid="completion-not-assigned">
+            Only the assigned practitioner or the studio owner can mark this appointment completed.
+          </span>
+        )}
         <button
           type="button"
           disabled={pending || !hasEnded}

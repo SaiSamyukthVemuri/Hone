@@ -9,7 +9,7 @@ const runtime = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT:${url}`); } }));
 vi.mock("next/cache", () => ({ revalidatePath: runtime.revalidate }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: runtime.from, rpc: runtime.rpc }) }));
-vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "practitioner" }, studio: { id: "studio" } }) }));
+vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "practitioner", role: "practitioner" }, studio: { id: "studio" } }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: runtime.adminRpc }) }));
 vi.mock("@/app/(app)/calendar/postcare-auto-send", () => ({ autoSendPostcareOnComplete: runtime.postcare }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: runtime.analytics }));
