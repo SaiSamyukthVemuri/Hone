@@ -1075,27 +1075,38 @@ function ChangeRole({ person, changeRole, onChanged }: { person: PersonView & { 
 const CAP_TEXT = (c: string): string =>
   c === "deactivated" ? "person is deactivated" : c === "not_offered" ? "not offered to this role" : c.startsWith("gate:") ? "not available yet" : c.startsWith("requires:") ? "needs another permission first" : c;
 
-function AccessSummary({ person, load }: { person: PersonView; load: RolesEditorProps["loadAccess"] }) {
-  const [state, setState] = useState<{ kind: "loading" } | { kind: "error"; message: string } | Extract<AccessResult, { ok: true }>>({ kind: "loading" });
-  const fixed = person.state !== "active" || person.role === "owner";
-  useEffect(() => {
-    if (fixed) return;
-    let live = true;
-    load(person.id).then((r) => {
-      if (live) setState(r.ok ? r : { kind: "error", message: roleErrorMessage(r.error) });
-    });
-    return () => {
-      live = false;
-    };
-  }, [fixed, load, person.id]);
+export type AccessViewState = { kind: "loading" } | { kind: "error"; message: string } | Extract<AccessResult, { ok: true }>;
+export const ACCESS_EMPTY_LINE = "No access details were returned for this person. Nothing is shown here rather than guessed.";
+
+// Presentational only: the states a "View access" load can be in. Zero rows is NOT "no access": it says nothing came back.
+export function AccessStateView({ state, onRetry }: { state: AccessViewState; onRetry?: () => void }) {
   const note = "mt-2 text-sm text-neutral-600 dark:text-neutral-400";
-  if (person.state === "invited") return <p data-testid="access-summary" className={note}>An invitation has no access to the studio until it is accepted.</p>;
-  if (person.state === "deactivated") return <p data-testid="access-summary" className={note}>This person is deactivated and has no access to the studio.</p>;
-  if (person.role === "owner") return <p data-testid="access-summary" className={note}>Owners have every permission. Owner access is protected and cannot be changed here.</p>;
-  if ("kind" in state) {
+  if ("kind" in state && state.kind === "loading") {
     return (
-      <p data-testid="access-summary" className={note}>
-        {state.kind === "loading" ? "Loading what this person can do now…" : state.message}
+      <p data-testid="access-summary" data-access-state="loading" role="status" className={note}>
+        Loading what this person can do now…
+      </p>
+    );
+  }
+  if ("kind" in state && state.kind === "error") {
+    return (
+      <div data-testid="access-summary" data-access-state="error" className={note}>
+        <p role="alert" data-testid="access-error" className="break-words">
+          {state.message}
+        </p>
+        {onRetry && (
+          <button type="button" data-testid="access-retry" onClick={onRetry} className="mt-1 min-h-[44px] text-sm font-medium underline underline-offset-2">
+            Try again
+          </button>
+        )}
+      </div>
+    );
+  }
+  if ("kind" in state) return null;
+  if (state.rows.length === 0) {
+    return (
+      <p data-testid="access-summary" data-access-state="empty" className={note}>
+        {ACCESS_EMPTY_LINE}
       </p>
     );
   }
@@ -1114,6 +1125,35 @@ function AccessSummary({ person, load }: { person: PersonView; load: RolesEditor
       </ul>
     </div>
   );
+}
+
+function AccessSummary({ person, load }: { person: PersonView; load: RolesEditorProps["loadAccess"] }) {
+  const [state, setState] = useState<AccessViewState>({ kind: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const fixed = person.state !== "active" || person.role === "owner";
+  useEffect(() => {
+    if (fixed) return;
+    let live = true;
+    load(person.id)
+      .then((r) => {
+        if (live) setState(r.ok ? r : { kind: "error", message: roleErrorMessage(r.error) });
+      })
+      .catch(() => {
+        if (live) setState({ kind: "error", message: roleErrorMessage({ code: "unexpected" }) });
+      });
+    return () => {
+      live = false;
+    };
+  }, [fixed, load, person.id, attempt]);
+  const retry = () => {
+    setState({ kind: "loading" });
+    setAttempt((n) => n + 1);
+  };
+  const note = "mt-2 text-sm text-neutral-600 dark:text-neutral-400";
+  if (person.state === "invited") return <p data-testid="access-summary" className={note}>An invitation has no access to the studio until it is accepted.</p>;
+  if (person.state === "deactivated") return <p data-testid="access-summary" className={note}>This person is deactivated and has no access to the studio.</p>;
+  if (person.role === "owner") return <p data-testid="access-summary" className={note}>Owners have every permission. Owner access is protected and cannot be changed here.</p>;
+  return <AccessStateView state={state} onRetry={retry} />;
 }
 
 function DiffList({ item, testPrefix }: { item: RolePreview; testPrefix: "review" | "preview" }): ReactNode {
