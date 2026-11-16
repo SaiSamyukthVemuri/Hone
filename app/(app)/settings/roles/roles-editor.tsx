@@ -1127,13 +1127,15 @@ export function AccessStateView({ state, onRetry }: { state: AccessViewState; on
   );
 }
 
-function AccessSummary({ person, load }: { person: PersonView; load: RolesEditorProps["loadAccess"] }) {
+export function AccessSummary({ person, load }: { person: PersonView; load: RolesEditorProps["loadAccess"] }) {
   const [state, setState] = useState<AccessViewState>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const fixed = person.state !== "active" || person.role === "owner";
   useEffect(() => {
     if (fixed) return;
     let live = true;
+    // A new person, a new role or a retry: never keep showing the previous answer as the current one.
+    setState({ kind: "loading" });
     load(person.id)
       .then((r) => {
         if (live) setState(r.ok ? r : { kind: "error", message: roleErrorMessage(r.error) });
@@ -1144,7 +1146,7 @@ function AccessSummary({ person, load }: { person: PersonView; load: RolesEditor
     return () => {
       live = false;
     };
-  }, [fixed, load, person.id, attempt]);
+  }, [fixed, load, person.id, person.role, attempt]);
   const retry = () => {
     setState({ kind: "loading" });
     setAttempt((n) => n + 1);
