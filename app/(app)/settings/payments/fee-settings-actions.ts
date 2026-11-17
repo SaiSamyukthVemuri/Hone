@@ -5,14 +5,15 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { manualFeeConfigIssue, parsePercentTextToBp, isValidPercentBp } from "@/lib/billing/manual-fee-percent";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { isManualFeeRule, parseManualFeeRuleValue, type ManualFeeRule } from "@/lib/billing/manual-fee-rule";
 
-// Owner-only manual-fee settings, ONE server action per setting (migration 0351). Each action writes exactly one column and is
+// Owner-only manual-fee settings (migration 0351). Each legacy set action writes exactly one column and is
 // a COMPARE-AND-SET against the value the page loaded: the UPDATE carries `where <column> = <value the owner saw>`, so a tab
 // that went stale cannot silently overwrite a newer choice (a stale tab can no longer flip a fee back ON, or switch its
 // mode). Zero rows updated means "changed elsewhere": the owner is told to refresh, and nothing was written.
 //
-// None of these actions can charge anyone, and none changes an amount: the fixed amount is saved by
-// updateStudioFeeAmountsAction, which writes only the two amount columns.
+// None of these actions can charge anyone. saveManualFeeRuleAction saves one rule atomically without touching
+// its enabled switch or the other fee. The older single-setting actions remain compatible with existing callers.
 //
 // WHO. getCurrentPractitionerWithStudio gives the practitioner and studio from the session; role must be owner. The write
 // uses the owner's own session (RLS policy "studios: owners update", 0001), not the service role. Every change is recorded by
@@ -90,6 +91,7 @@ export async function setManualFeeEnabledAction(input: {
   feeType: FeeType;
   enabled: boolean;
   expectedEnabled: boolean;
+  expectedRule?: ManualFeeRule;
 }): Promise<FeeSettingResult> {
   const studioId = await owner();
   if (!studioId) return { ok: false, error: OWNER_ONLY };
@@ -98,6 +100,11 @@ export async function setManualFeeEnabledAction(input: {
   }
   const row = await loadRow(studioId);
   if (!row) return { ok: false, error: SAVE_FAILED };
+  // The redesigned confirmation names the rule the owner saw, not a newer rule from another tab.
+  if (input.enabled && input.expectedRule !== undefined &&
+    (!isManualFeeRule(input.expectedRule) || input.expectedRule.enabled !== input.expectedEnabled)) {
+    return { ok: false, error: SAVE_FAILED };
+  }
   if (input.enabled) {
     // Same validator prepare uses: ON only when the saved amount (fixed) or percentage (percent) can produce a fee.
     const issue = manualFeeConfigIssue(reason(input.feeType), row);
@@ -111,7 +118,46 @@ export async function setManualFeeEnabledAction(input: {
   }
   // Turning ON was validated against the mode, percentage and amount just read: they must still be those values at the write.
   return casWrite(studioId, col(input.feeType, "enabled"), input.expectedEnabled, input.enabled,
-    input.enabled ? guardsFor(row, input.feeType, ["mode", "percent_bp", "cents"]) : []);
+    input.enabled ? (input.expectedRule ? ruleGuards(input.feeType, input.expectedRule) : guardsFor(row, input.feeType, ["mode", "percent_bp", "cents"])) : []);
+}
+
+function ruleGuards(type: FeeType, rule: ManualFeeRule): Guard[] {
+  return [[col(type, "enabled"), rule.enabled], [col(type, "mode"), rule.mode],
+    [col(type, "cents"), rule.cents], [col(type, "percent_bp"), rule.percentBp]];
+}
+
+/** One Save rule: one UPDATE, one fee, owner session/RLS/audit, with all four saved values as CAS guards. */
+export async function saveManualFeeRuleAction(input: {
+  feeType: FeeType;
+  mode: "fixed" | "percent";
+  valueText: string;
+  expected: ManualFeeRule;
+}): Promise<FeeSettingResult> {
+  const studioId = await owner();
+  if (!studioId) return { ok: false, error: OWNER_ONLY };
+  if (!isFeeType(input?.feeType) || (input.mode !== "fixed" && input.mode !== "percent") ||
+    typeof input.valueText !== "string" || !isManualFeeRule(input.expected)) {
+    return { ok: false, error: SAVE_FAILED };
+  }
+  const parsed = parseManualFeeRuleValue(input.mode, input.valueText);
+  if (!parsed.ok) return parsed;
+  if (input.expected.enabled && (parsed.value === null || parsed.value === 0)) {
+    return { ok: false, error: `Turn ${NAME[input.feeType]} fees off before clearing or zeroing the rule.` };
+  }
+  const valueColumn = col(input.feeType, input.mode === "fixed" ? "cents" : "percent_bp");
+  const supabase = await createClient();
+  let q = supabase.from("studios").update({ [col(input.feeType, "mode")]: input.mode, [valueColumn]: parsed.value }).eq("id", studioId);
+  for (const [column, value] of ruleGuards(input.feeType, input.expected)) {
+    q = value === null ? q.is(column, null) : q.eq(column, value as string | number | boolean);
+  }
+  const { data, error } = await q.select("id");
+  if (error) {
+    console.error(JSON.stringify({ event: "update_studio_fee_rule_failed", code: dbErrorCode(error), timestamp: new Date().toISOString() }));
+    return { ok: false, error: SAVE_FAILED };
+  }
+  if (!data?.length) return { ok: false, error: STALE };
+  revalidatePath("/settings/payments", "layout");
+  return { ok: true };
 }
 
 /** Choose fixed or percent for one fee type. `expectedMode` is the saved value the page showed. */

@@ -86,7 +86,7 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
           title="Cancellation & no-show fees"
           scope={STUDIO_WIDE_SCOPE}
         >
-          The dollar amounts used by the manual fee preview. Money is not
+          Choose a fixed amount or a percentage for each fee. Money is not
           charged here.
         </SettingsViewHeading>
         {/* PR #145. Owner-only fee amount settings. */}
