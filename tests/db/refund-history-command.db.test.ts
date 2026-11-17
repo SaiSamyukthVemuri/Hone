@@ -4,8 +4,7 @@ import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 import { cleanupPaymentScenario, seedEligibleQuickCheckoutScenario, type PaymentScenario } from "./helpers/payment-seed";
 
 // HON-49 / 0358: the BEHAVIOURAL half of the refund-history command. The static half is tests/migrations/0358-payment-charge-refund-history.test.ts.
-// WRITTEN, NOT YET RUN: it needs a local stack carrying 0358 (one fresh reset on the production-equivalent base, under an OPS GRANT, with the
-// run-scoped E2E_SUPABASE_URL + HONE_LOCAL_DB_URL pair). Synthetic rows only; no provider call.
+// Needs a local stack carrying 0358. Synthetic rows only; no provider call.
 
 const created: string[] = [];
 afterAll(async () => {
