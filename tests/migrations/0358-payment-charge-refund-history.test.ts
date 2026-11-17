@@ -93,7 +93,9 @@ describe("0358: the command", () => {
   });
   it("accepts only signed-event evidence of the four refund event types and binds every stored identity field", () => {
     expect(E).toMatch(/p_event_type not in \('charge\.refunded','refund\.created','refund\.updated','refund\.failed'\)/);
-    expect(E).toMatch(/p_object->>'evidence_kind' is distinct from 'signed_event'/);
+    // Two kinds only: the signed event's own list, and the same signed event whose complete list the server read from the provider.
+    expect(E).toMatch(/p_object->>'evidence_kind' is distinct from all \(array\['signed_event','signed_event_with_authenticated_list'\]\)/);
+    expect(E.match(/signed_event_with_authenticated_list/g)!.length).toBeGreaterThanOrEqual(2);
     for (const f of ["p_studio_id", "p_stripe_account_id", "p_livemode", "'customer_id'", "'payment_intent_id'", "'amount_cents'", "'currency'", "v_charge"]) {
       expect(E).toContain(f);
     }
@@ -116,6 +118,14 @@ describe("0358: the command", () => {
     expect(E).toMatch(/v_merged_succeeded > v_row\.amount_cents/);
     expect(E).toMatch(/v_charge_refunded < v_event_succeeded/);
     expect(E).toMatch(/v_charge_refunded > v_event_succeeded \+ v_event_inflight_amount/);
+  });
+  it("a list the server read may be AHEAD of the signed total but never BEHIND it; the authenticated kind is for a complete charge.refunded list only", () => {
+    // Ahead (succeeded sum above the signed total) is refused only for the in-event kind.
+    expect(E).toMatch(/\(v_charge_refunded < v_event_succeeded and p_object->>'evidence_kind' = 'signed_event'\)/);
+    // Behind (the total counts money the list lacks) is refused for both kinds, with no kind condition.
+    expect(E).toMatch(/or v_charge_refunded > v_event_succeeded \+ v_event_inflight_amount/);
+    // The authenticated kind is accepted only for charge.refunded and only with the complete-list claim.
+    expect(E).toMatch(/p_object->>'evidence_kind' = 'signed_event_with_authenticated_list'\s+and \(p_event_type <> 'charge\.refunded' or p_object->'charge_refund_list_complete' is distinct from 'true'::jsonb\)/);
   });
   it("recomputes the summary from the rows, never from the event, and marks the history established only from a complete list", () => {
     expect(E).toMatch(/if v_complete and not v_established then/);
