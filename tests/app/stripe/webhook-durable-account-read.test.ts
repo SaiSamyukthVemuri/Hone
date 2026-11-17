@@ -1582,7 +1582,7 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
 // charge.refunded for less than the whole charge raised a critical alert and changed nothing. They failed on purpose when the webhook began
 // calling record_charge_refund_history; they are rewritten here with the new rule, not loosened. What is asserted now: a signed partial refund
 // with a COMPLETE refund list is written through that one command (and only that command, beside claim and mark), the evidence is built from the
-// signed event's own charge (N2: never from the stored attempt), the event is acknowledged, the attempt row's older refund columns are untouched,
+// signed event's own charge (the identity fields never come from the stored attempt), the event is acknowledged, the attempt row's older refund columns are untouched,
 // the alert is a WARNING; and when the command refuses, or the list is incomplete, today's critical alert and no-write behaviour are kept.
 // ===========================================================================
 describe("HON-49: a partial refund signed by Stripe is recorded in the refund history", () => {

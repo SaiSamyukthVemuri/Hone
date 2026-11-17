@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type Stripe from "stripe";
 import { buildChargeRefundHistoryEvidence } from "@/lib/billing/refund-history";
 
-// HON-49 (0358): the evidence the webhook sends to record_charge_refund_history is built from the SIGNED charge only (N2).
+// HON-49 (0358): the evidence the webhook sends to record_charge_refund_history is built from the SIGNED charge only: the identity fields come from the signed event's own charge, never from the stored attempt.
 
 const refund = (over: Record<string, unknown> = {}) => ({ object: "refund", id: "re_1", amount: 2000, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: "succeeded", ...over });
 const charge = (over: Record<string, unknown> = {}) => ({
@@ -21,7 +21,7 @@ describe("buildChargeRefundHistoryEvidence", () => {
     });
   });
 
-  it("N2: takes every identity field from the event's own objects (expanded customer / payment intent / charge objects are read by id)", () => {
+  it("takes every identity field from the event's own objects (expanded customer / payment intent / charge objects are read by id)", () => {
     const e = buildChargeRefundHistoryEvidence(EVENT, charge({ customer: { id: "cus_x" }, payment_intent: { id: "pi_x" } }));
     expect(e).toMatchObject({ customer_id: "cus_x", payment_intent_id: "pi_x" });
   });
@@ -50,7 +50,7 @@ describe("buildChargeRefundHistoryEvidence", () => {
   });
 });
 
-describe("N2 source guard: the builder cannot read the stored attempt", () => {
+describe("source guard: the identity fields never come from the stored attempt, so the builder cannot read it", () => {
   // Comments explain the rule in words; the guard reads the CODE only.
   const src = readFileSync("lib/billing/refund-history.ts", "utf8").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
   it("takes no attempt argument and names no attempt column", () => {

@@ -1,6 +1,6 @@
 // HON-49 (migration 0358). Builds the evidence object for record_charge_refund_history from ONE signed charge.refunded event.
 //
-// N2 (recorded in the 0358 design): EVERY identity field in the object comes from the signed event's own charge, never from the stored
+// The rule: EVERY identity field in the object comes from the signed event's own charge, never from the stored
 // attempt. The database command compares them with what Hone stored when the charge was made; filling them from the stored attempt
 // would make that comparison compare Hone with itself and prove nothing. So this builder takes NO attempt argument, by design: a refund
 // event whose charge object cannot supply a field (customer, amount, currency, payment intent, charge) is refused by the command.
@@ -8,7 +8,7 @@
 // Only a COMPLETE refund list is sent (refunds.object === "list", has_more === false, at least one refund). A list that may be truncated says
 // nothing about the refunds it does not show, so it is not recorded and the event keeps today's loud, critical alert. refund.created /
 // refund.updated / refund.failed events are NOT recorded by this change either: they carry one refund and a charge id but not the customer or
-// the charge amount, so the command could only be satisfied by filling those from the stored attempt (N2 forbids it). Recording them needs a
+// the charge amount, so the command could only be satisfied by filling those from the stored attempt (the rule above forbids it). Recording them needs a
 // reviewed command change, a separate decision.
 
 import type Stripe from "stripe";

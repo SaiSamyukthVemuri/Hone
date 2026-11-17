@@ -535,7 +535,7 @@ function cumulativeChargeRefundEvidence(event: Stripe.Event, ctx: WebhookCtx, at
 }
 
 // HON-49 (0358): record the refunds a signed charge.refunded event lists, through the ONE command that writes them. The evidence comes from
-// the signed event's charge only (lib/billing/refund-history.ts; N2: nothing is filled from the stored attempt). A database error is
+// the signed event's charge only (lib/billing/refund-history.ts; the identity fields come from the signed event's own charge, never from the stored attempt). A database error is
 // thrown so the event is retried; a refusal or an incomplete list is returned for the caller to alert on, and nothing is written.
 async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, attemptId: string, charge: Stripe.Charge):
   Promise<{ sent: boolean; result: string | null }> {
