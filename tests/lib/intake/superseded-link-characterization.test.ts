@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 // HON-75 (CHARACTERIZATION, not a requirement): what a REISSUED intake link does to the EARLIER link, today. These tests pin current behaviour so that the product
-// ruling (Sam's 5h: should a reissue invalidate earlier links?) flips them deliberately. If the answer is yes, replace the "still verifies" cases with
+// ruling on replaced links flips them deliberately. If the answer is yes, replace the "still verifies" cases with
 // "is refused as replaced" and add the replaced-link screen; do not delete them silently.
 const INTAKE = "11111111-1111-4111-8111-111111111111";
 let prevSecret: string | undefined;
