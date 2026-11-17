@@ -32,6 +32,7 @@ export function ConsentSignaturesCard({
   clientName,
   activeTemplates,
   latestSignatures,
+  unavailable = false,
 }: {
   clientName: string;
   activeTemplates: Pick<
@@ -39,6 +40,8 @@ export function ConsentSignaturesCard({
     "id" | "title" | "form_type" | "version"
   >[];
   latestSignatures: PractitionerSignatureSummary[];
+  // The template read FAILED: say so; never render the empty state or a summary.
+  unavailable?: boolean;
 }) {
   const latestByTemplateId = new Map<string, PractitionerSignatureSummary>();
   for (const s of latestSignatures) {
@@ -49,7 +52,7 @@ export function ConsentSignaturesCard({
 
   // Pre-treatment summary across the studio's non-card consent forms, so a
   // missing / out-of-date required form is obvious before charting a session.
-  const summary = summarizeConsent(activeTemplates, latestByTemplateId);
+  const summary = summarizeConsent(unavailable ? [] : activeTemplates, latestByTemplateId);
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -94,7 +97,11 @@ export function ConsentSignaturesCard({
           </p>
         ))}
 
-      {activeTemplates.length === 0 ? (
+      {unavailable ? (
+        <p role="status" data-testid="consent-forms-unavailable" className="rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          Couldn’t check consent forms. Reload to try again.
+        </p>
+      ) : activeTemplates.length === 0 ? (
         <p className="text-xs italic text-neutral-500">
           No active consent forms configured for this studio.
         </p>
