@@ -60,6 +60,11 @@ describe("the profile header name", () => {
   });
   it("the layout comment states where the contact card sits on phones", () => {
     expect(page).not.toContain("stacked above the content on phones");
-    expect(page).toContain("order-last md:order-none");
+    expect(page).toContain("the tab's content comes first and the contact card follows it");
+  });
+  it("the contact card's real class string puts it last on phones and in DOM order from md up", () => {
+    const aside = readFileSync("app/(app)/clients/[id]/_profile/ContactSidebar.tsx", "utf8").match(/<aside[\s\S]*?>/)?.[0] ?? "";
+    expect(aside).toMatch(/className="[^"]*\border-last\b[^"]*"/);
+    expect(aside).toMatch(/className="[^"]*\bmd:order-none\b[^"]*"/);
   });
 });
