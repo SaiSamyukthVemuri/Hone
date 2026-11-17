@@ -170,3 +170,11 @@ describe("a malformed appointment id is answered as missing, before any lookup, 
     expect(PAGE).not.toMatch(/\/clients\/\$\{id\}/);
   });
 });
+
+describe("the pre-check's failure log carries a class, never a raw database error", () => {
+  it("the check_failed log goes through dbErrorCode and reads no field off the error", () => {
+    expect(PAGE).toMatch(/event: "session_new_appointment_precheck_failed", code: dbErrorCode\(apptErr\)/);
+    expect(PAGE).not.toMatch(/apptErr\.(code|message|details|hint|stack)/);
+  });
+  // The repository-wide contract (tests/lib/logging/raw-error-log-contract.test.ts) walks this page too; it was the CI check that caught the raw `.code`.
+});

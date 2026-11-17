@@ -19,6 +19,7 @@ import {
   FromLastVisitForToday,
 } from "@/components/last-session-summary";
 import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import {
   type SessionStartRefusal,
   sessionStartRefusalCopy,
@@ -87,7 +88,7 @@ export default async function NewSessionPage({
       // appointment, and never treat a failed CHECK as a missing appointment:
       // that would offer an unlinked session for a booking that may well exist.
       // The action would still refuse or accept on its own.
-      console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: apptErr.code ?? null }));
+      console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: dbErrorCode(apptErr) }));
       refusal = "check_failed";
     } else {
       const decided = classifyAppointmentForStart(appt as StartAppointmentLookup | null, { studioId: studio.id, clientId: id, practitionerId: practitioner.id });
