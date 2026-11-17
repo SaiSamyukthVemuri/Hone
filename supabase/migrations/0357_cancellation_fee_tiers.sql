@@ -1,5 +1,4 @@
--- Owner-configured cancellation tiers. NOT APPLIED. No studio is enrolled or enabled here.
--- 0355/0356 remain reserved for the existing Roles work; never include them in this package's push.
+-- Owner-configured cancellation tiers. No studio is enrolled or enabled here.
 -- Old app + new DB keeps its existing release hold. New app + old DB refuses tier reads.
 -- Once a studio adopts tiers, old prepared attempts cannot bypass its rules.
 begin;

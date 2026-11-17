@@ -13,14 +13,14 @@ The owner requested configurable cancellation notice and same-day rates, with se
 
 ## Database boundary and deployment order
 
-Migration `supabase/migrations/0357_cancellation_fee_tiers.sql` is new and **NOT APPLIED**. It adds two tables (owner-readable rules and history), two owner-only commands and an immutable attempt snapshot guarded at prepare/claim. No studio row is inserted and no fee is enabled by the migration. Runtime roles cannot directly write the new tables. Session-payment and no-show attempts retain their existing path.
+Migration `supabase/migrations/0357_cancellation_fee_tiers.sql` is new. Whether it is applied is recorded only in `docs/production/migration-state.json` and `docs/production/migration-ledger.md`. It adds two tables (owner-readable rules and history), two owner-only commands and an immutable attempt snapshot guarded at prepare/claim. No studio row is inserted and no fee is enabled by the migration. Runtime roles cannot directly write the new tables. Session-payment and no-show attempts retain their existing path.
 
-0355 and 0356 are reserved for the already rehearsed Roles packages. This release does not include those migrations, the older pending 0319, or any schema unrelated to cancellation tiers.
+This release includes no schema unrelated to cancellation tiers.
 
 1. Complete required CI, the real fresh-chain database lane, browser/payment lanes and an independent review at the final application/migration head.
 2. Prepare the isolated **0357-only** reviewed migration package and hashes. Run a read-only production preflight: verify current migration history/catalog, 0357 absent, new objects absent, existing payment attempts and outstanding work, and that only 0357 would be pushed. Record exact results; this document is not evidence that the preflight ran.
 3. Obtain explicit authorization naming that package. Old 0351–0354 approvals do not cover 0357. Do not push the entire checkout or use `--include-all`.
-4. Apply/read back/reconcile **0357 only**. Verify grants, trigger, empty enrollment and unchanged pre-existing settings/policy evidence. Record the actual hosted result in the canonical record. If hosted max advances past reserved numbers, move 0355/0356 from above-hosted markers into the explicit unhosted-below declaration; do not claim they were applied.
+4. Apply/read back/reconcile **0357 only**. Verify grants, trigger, empty enrollment and unchanged pre-existing settings/policy evidence. Record the actual hosted result in the canonical record.
 5. Release the application only after schema read-back. With a new app on the old schema, cancellation configuration is unavailable and charging refuses; no session payment query depends on the new table. With an old app on the new schema, the original live-release gate remains. Once a studio adopts tiers, its old prepared attempts cannot bypass the new claim guard.
 6. Each studio owner reviews the published policy, saves the two rates, then turns the cancellation switch on. Confirm server-derived **Active** only when payment readiness also passes. Existing legacy ON flags do not make this Active. After a studio adopts tiers, obsolete single-rate settings writes refuse rather than falsely reporting that an older tab disabled or changed the active rules. This step is not performed by a migration or deployment.
 
