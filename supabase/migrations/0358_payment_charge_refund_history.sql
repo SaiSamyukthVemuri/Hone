@@ -207,7 +207,8 @@ begin
      or p_event_type is null
      or p_event_type not in ('charge.refunded','refund.created','refund.updated','refund.failed')
      or jsonb_typeof(p_object) is distinct from 'object'
-     or p_object->>'evidence_kind' is distinct from all (array['signed_event','signed_event_with_authenticated_list'])
+     or (p_object->>'evidence_kind') is null
+     or (p_object->>'evidence_kind') <> all (array['signed_event','signed_event_with_authenticated_list'])
      -- The authenticated-list kind exists for one case: a signed charge.refunded whose payload carries no refund list (the provider stopped
      -- expanding it), so the server read the COMPLETE list itself. It is accepted only for that event type and only as a complete list.
      or (p_object->>'evidence_kind' = 'signed_event_with_authenticated_list'
