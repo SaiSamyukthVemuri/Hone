@@ -117,6 +117,10 @@ describe("the real Team page", () => {
     expect(html).toContain("Removed Person");
     expect(html).toContain("Restore");
   });
+  it("an owner row is never listed as removable-or-restorable, even if one is somehow inactive", async () => {
+    const html = await load("owner", [{ ...gone[0], id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", display_name: "Inactive Owner", role: "owner" }]);
+    expect(html).not.toContain("Inactive Owner");
+  });
   it("no removed people and no notice: the section is absent", async () => {
     expect(await load("owner", [])).not.toContain('data-testid="team-removed"');
   });
