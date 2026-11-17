@@ -285,7 +285,7 @@ function AssistedBanner({ clientName }: { clientName: string }) {
       <p className="text-xs font-semibold uppercase tracking-wider">
         Completing with client
       </p>
-      <p className="mt-1 leading-relaxed">
+      <p className="min-w-0 [overflow-wrap:anywhere] mt-1 leading-relaxed">
         You&rsquo;re recording {clientName}&rsquo;s answers while they are with
         you. {clientName} will complete their acknowledgements and submit at the
         end.
@@ -363,13 +363,13 @@ function HandoffPanel({
         <h2 className="text-lg font-semibold tracking-tight">
           Client confirmation required
         </h2>
-        <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+        <p className="min-w-0 [overflow-wrap:anywhere] text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
           The questionnaire is recorded. The final step is {clientName}&rsquo;s
           own: a short set of confirmations they read and tick themselves,
           followed by submitting the intake. You cannot complete that part for
           them.
         </p>
-        <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+        <p className="min-w-0 [overflow-wrap:anywhere] text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
           Hand your device to {clientName}, or send them their link to finish on
           their own phone.
         </p>
