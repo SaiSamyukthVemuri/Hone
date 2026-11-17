@@ -116,11 +116,18 @@ describe("confirmImportAction on partial failure (today's behaviour)", () => {
     expect(db.batches).toHaveLength(1); // the retry never even opened a batch
   });
 
-  it("when only the final completed_at update fails: the import is reported as a success while the batch stays incomplete and unvoided", async () => {
+  it("when only the final completed_at update fails: the import is reported as NOT complete (with a do-not-rerun sentence), the data stays, and the batch is neither completed nor voided", async () => {
     db.batchCompleteFails = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const { confirmImportAction } = await import("@/app/(app)/settings/import/actions");
     const r = await confirmImportAction(CSV, "other");
-    expect(r.ok).toBe(true);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toMatch(/could not be marked complete\. Do not run it again/);
+    const line = String(log.mock.calls.at(-1)?.[0]);
+    expect(line).toContain("import_batch_completion_mark_failed");
+    expect(line).not.toMatch(/one@example|Synthetic/);
+    log.mockRestore();
+    expect(db.clients).toHaveLength(2);
     expect(db.memories).toHaveLength(2);
     expect(db.batches[0].completed_at).toBeUndefined();
     expect(db.batches[0].voided_at).toBeUndefined();

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   buildImportPlan,
@@ -335,12 +336,30 @@ export async function confirmImportAction(
   }
 
   // Mark the batch completed only now that everything succeeded.
-  await supabase
+  const { error: completeErr } = await supabase
     .from("import_batches")
     .update({ completed_at: new Date().toISOString() })
     .eq("id", batchId);
 
   revalidatePath("/clients");
+
+  if (completeErr) {
+    // The clients and their history ARE saved, so the batch is NOT voided; only the completion mark failed. Say so, and tell the operator not to run it
+    // again (a rerun would skip the created clients as duplicates). Code only in the log: never an error message, which could echo pasted data.
+    console.error(
+      JSON.stringify({
+        event: "import_batch_completion_mark_failed",
+        code: dbErrorCode(completeErr),
+        studioId: ctx.studioId,
+        batchId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return {
+      ok: false,
+      error: `${createdClients.length} client(s) and their treatment history were imported, but the import could not be marked complete. Do not run it again; tell Hone support.`,
+    };
+  }
 
   return {
     ok: true,
