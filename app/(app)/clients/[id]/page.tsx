@@ -88,7 +88,7 @@ import { getPortalMessagesForPractitionerView } from "@/lib/portal-messages/quer
 import { getPortalMessageRepliesForPractitionerView } from "@/lib/portal-messages/replies-queries";
 import { PortalMessagesCard } from "@/components/portal-messages-card";
 import {
-  getConsentTemplatesForStudio,
+  checkConsentTemplatesForStudio,
   getLatestSignaturesForPractitionerView,
 } from "@/lib/consent/queries";
 import { ConsentSignaturesCard } from "@/components/consent-signatures-card";
@@ -370,7 +370,7 @@ export default async function ClientCheatSheetPage({
     personalNotes,
     portalMessages,
     portalMessageReplies,
-    consentTemplatesAll,
+    consentTemplatesCheck,
     consentLatestSignatures,
     activeCard,
     importedMemory,
@@ -436,8 +436,8 @@ export default async function ClientCheatSheetPage({
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
     // both feed computePortalPendingTasks.
     needsConsent
-      ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
-      : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
+      ? checkConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
+      : Promise.resolve({ status: "ok", templates: [] } as Awaited<ReturnType<typeof checkConsentTemplatesForStudio>>),
     needsConsent
       ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner })
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
@@ -480,6 +480,10 @@ export default async function ClientCheatSheetPage({
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
+
+  // A failed template read is UNAVAILABLE, never "no forms" (see ConsentSignaturesCard).
+  const consentTemplatesUnavailable = consentTemplatesCheck.status === "unavailable";
+  const consentTemplatesAll = consentTemplatesCheck.status === "ok" ? consentTemplatesCheck.templates : [];
 
   // Portal Access PR 3: outstanding portal tasks, from already-loaded data —
   // no new queries.
@@ -1230,6 +1234,7 @@ export default async function ClientCheatSheetPage({
                 version: t.version,
               }))}
             latestSignatures={consentLatestSignatures}
+            unavailable={consentTemplatesUnavailable}
           />
 
           {/* PR #194: allergies moved to the top of Overview (under
