@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FeeAmountsCard } from "@/app/(app)/settings/payments/FeeAmountsCard";

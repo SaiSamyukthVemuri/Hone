@@ -334,7 +334,10 @@ describe("PREPARE and the owner-only write use the same gate (source pins)", () 
   it("each setting has its own owner-only compare-and-set action", () => {
     const src = read("app/(app)/settings/payments/fee-settings-actions.ts");
     expect(src.match(/export async function set\w+Action/g)).toHaveLength(3);
-    expect(src.match(/await owner\(\)/g)).toHaveLength(3);
+    // Three legacy single-setting actions plus the atomic per-fee rule save.
+    expect(src.match(/await owner\(\)/g)).toHaveLength(4);
+    expect(src).toMatch(/export async function saveManualFeeRuleAction/);
+    expect(src).toMatch(/ruleGuards\(input\.feeType, input\.expected\)/);
     expect(src).toMatch(/expected === null \? q\.is\(column, null\) : q\.eq\(column, expected/);
     expect(src).toMatch(/data\.length === 0\) return \{ ok: false, error: STALE \}/);
     // never the service role: the owner's own session and RLS
