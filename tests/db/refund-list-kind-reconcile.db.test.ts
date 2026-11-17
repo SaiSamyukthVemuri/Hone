@@ -124,3 +124,63 @@ describe("0359: the new kind is for charge.refunded only; nothing else about the
     for (const role of ["anon", "authenticated", "public"]) expect(await priv(role)).toBe(false);
   });
 });
+
+// ---- Both commands on one event: replay, ordering and late events ----------------------------------------------------------------------
+// The webhook records the refund history first and then completes a full refund; either step may need to be retried. These replay ONE event
+// through both commands and send a late partial event after a completed full refund.
+async function history(p: P, evt: string, comps: Array<{ id: string; amount: number; status?: string }>, created: number, refundedCents: number) {
+  const r = await adminQuery(`select * from public.record_charge_refund_history($1,$2,'charge.refunded',$3,$4,$5,$6::jsonb)`, [
+    p.row.id, evt, p.row.studio_id, p.row.stripe_account_id, p.row.stripe_livemode,
+    JSON.stringify({ customer_id: p.row.stripe_customer_id, payment_intent_id: p.object.payment_intent_id, charge_id: p.object.charge_id, amount_cents: p.row.amount_cents,
+      currency: p.row.currency, evidence_kind: AUTH, event_created: created, charge_amount_refunded: refundedCents, charge_refund_list_complete: true,
+      components: comps.map((c) => ({ refund_id: c.id, amount_cents: c.amount, currency: p.row.currency, refund_status: c.status ?? "succeeded", charge_id: p.object.charge_id, payment_intent_id: p.object.payment_intent_id })) })]);
+  return r.rows[0] as { result: string; out_succeeded_cents: number | null };
+}
+const refundRows = async (p: P) => (await adminQuery(`select count(*)::int n from public.payment_charge_refunds where attempt_id=$1`, [p.row.id])).rows[0].n as number;
+const histSummary = async (p: P) => (await adminQuery(`select refunds_succeeded_cents s from public.payment_charge_attempts where id=$1`, [p.row.id])).rows[0].s as number | null;
+
+describe("0359 + 0358: one event through both commands", () => {
+  it("history recorded, the full-refund step fails and is retried: the retry sees already_recorded from the history and still completes the refund, once", async () => {
+    const p = await prepared();
+    const half = Math.floor(p.row.amount_cents / 2);
+    const comps = [{ id: "re_x1", amount: half }, { id: "re_x2", amount: p.row.amount_cents - half }];
+    const evt = `evt_both_${randomUUID()}`;
+    expect((await history(p, evt, comps, 600, p.row.amount_cents)).result).toBe("recorded");
+    // (the full-refund step fails here: the webhook answers 500 and the provider redelivers the same event)
+    expect((await read(p)).refund_status).toBeNull();
+    expect((await history(p, evt, comps, 600, p.row.amount_cents)).result).toBe("already_recorded");
+    expect((await bound(p, cumulative(p, AUTH, comps.map((c) => c.amount), { event_created: 600 }), "charge.refunded", evt)).rows[0].result).toBe("reconciled");
+    expect((await bound(p, cumulative(p, AUTH, comps.map((c) => c.amount), { event_created: 600 }), "charge.refunded", evt)).rows[0].result).toBe("already_refunded");
+    expect(await read(p)).toMatchObject({ refund_status: "succeeded", refund_amount_cents: p.row.amount_cents });
+    expect(await refundRows(p)).toBe(2);
+    expect(await histSummary(p)).toBe(p.row.amount_cents);
+  });
+  it("a completed full refund, then a LATE event listing only the first partial: nothing is lowered or undone", async () => {
+    const p = await prepared();
+    const half = Math.floor(p.row.amount_cents / 2);
+    const both = [{ id: "re_l1", amount: half }, { id: "re_l2", amount: p.row.amount_cents - half }];
+    await history(p, `evt_new_${randomUUID()}`, both, 700, p.row.amount_cents);
+    expect((await bound(p, cumulative(p, AUTH, both.map((c) => c.amount), { event_created: 700 }))).rows[0].result).toBe("reconciled");
+    const late = await history(p, `evt_late_${randomUUID()}`, [both[0]], 650, half);
+    expect(["recorded", "already_recorded", "refund_evidence_refused"]).toContain(late.result);
+    expect(await histSummary(p)).toBe(p.row.amount_cents);
+    expect(await refundRows(p)).toBe(2);
+    // the full-refund command refuses a late partial total and leaves the completed refund as it is
+    const lateFull = await bound(p, cumulative(p, AUTH, [half], { event_created: 650, charge_amount_refunded: half, charge_refunded: false }));
+    expect(["refund_evidence_refused", "already_refunded", "stale_observation"]).toContain(lateFull.rows[0].result);
+    expect(await read(p)).toMatchObject({ refund_status: "succeeded", refund_amount_cents: p.row.amount_cents });
+  });
+  it("a refund that FAILS replaces a pending one (nothing was refunded); a later success for that refund is a conflict and changes nothing", async () => {
+    const p = await prepared();
+    await history(p, `evt_pend_${randomUUID()}`, [{ id: "re_f1", amount: 2000, status: "pending" }], 800, 0);
+    expect(await histSummary(p)).toBe(0);
+    const failed = await history(p, `evt_fail_${randomUUID()}`, [{ id: "re_f1", amount: 2000, status: "failed" }], 801, 0);
+    expect(failed.result).toBe("recorded");
+    expect(await histSummary(p)).toBe(0);
+    const inflight = (await adminQuery(`select refunds_inflight_count f from public.payment_charge_attempts where id=$1`, [p.row.id])).rows[0].f;
+    expect(inflight).toBe(0);
+    const flip = await history(p, `evt_flip_${randomUUID()}`, [{ id: "re_f1", amount: 2000, status: "succeeded" }], 802, 2000);
+    expect(flip.result).toBe("terminal_refund_mismatch");
+    expect(await histSummary(p)).toBe(0);
+  });
+});
