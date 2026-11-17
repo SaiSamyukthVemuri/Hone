@@ -22,8 +22,10 @@ const HELPERS = [
   "studio_named_stripe_accounts(uuid)",
 ];
 const ROLES = ["public", "anon", "authenticated", "service_role"];
-// exemption-db-pair: tests/db/studio-payment-jurisdiction-history-init.db.test.ts | initialize_studio_payment_jurisdiction_from_history | stripe_events
-const EXEMPT = ["stripe_events"];
+// exemption-db-pair: tests/db/studio-payment-jurisdiction-history-init.db.test.ts | initialize_studio_payment_jurisdiction_from_history | stripe_events, payment_charge_refunds
+// payment_charge_refunds (0358) is a child record of payment_charge_attempts: every row's currency is its attempt's (the recording command
+// enforces it) and the attempts themselves are checked, so the table needs no separate check.
+const EXEMPT = ["stripe_events", "payment_charge_refunds"];
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const body = (fn: string) => {
@@ -106,8 +108,15 @@ describe("G2/G3 the money-table universe is pinned (F5)", () => {
     return [...cols].filter(([, cs]) => [...cs].some((c) => c === "currency" || c === "stripe_account_id" || c.endsWith("_cents")))
       .map(([t]) => t).sort();
   }
+  // The universe is read from the LATEST migration that pins it (0358 added a table to it by re-creating the commands), so a later
+  // reviewed extension is honoured and a table added without one still fails here.
   const pinned = () => {
-    const m = /c_money_universe constant text\[\] := array\[([\s\S]*?)\];/.exec(CODE);
+    let latest = CODE;
+    for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) {
+      const c = readFileSync(path.join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "");
+      if (/c_money_universe constant text\[\] := array\[/.test(c)) latest = c;
+    }
+    const m = /c_money_universe constant text\[\] := array\[([\s\S]*?)\];/.exec(latest);
     expect(m, "c_money_universe").not.toBeNull();
     return [...m![1].matchAll(/'(\w+)'/g)].map((x) => x[1]).sort();
   };
