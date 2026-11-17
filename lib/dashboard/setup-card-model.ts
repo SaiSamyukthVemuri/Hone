@@ -25,7 +25,7 @@ import { isLaunchComplete, type LaunchStudioFacts } from "@/lib/settings/launch-
 // Non-owners get `hidden`: setup is owner-only.
 
 // Blockers that are a deliberate admission CHOICE, not a missing setup step.
-const OWNER_CHOICE_KEYS: ReadonlySet<NewClientBlockerKey> = new Set([
+export const OWNER_CHOICE_KEYS: ReadonlySet<NewClientBlockerKey> = new Set([
   "admission_closed",
   "wait_admission",
 ]);

@@ -292,7 +292,7 @@ export function OnboardingWizard({
           </ul>
         )}
 
-        {active.key === "booking" && model.publicBookingUrl && (
+        {active.key === "booking" && active.status === "done" && model.publicBookingUrl && (
           <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900">
             <span className="break-all text-neutral-700 dark:text-neutral-200">
               {model.publicBookingUrl}

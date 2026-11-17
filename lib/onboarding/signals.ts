@@ -4,14 +4,12 @@ import {
   getActiveServices,
   getAvailabilityDefaults,
 } from "@/lib/booking/queries";
-import {
-  computeBookingReadiness,
-  isPubliclyBookable,
-} from "@/lib/booking/readiness";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { deriveConnectCapability } from "@/lib/payments/payment-status-presenter";
 import type { Studio } from "@/lib/types/database";
+import { getNewClientReadiness } from "@/lib/booking/new-client-readiness";
+import { deriveBookingSignals } from "./booking-signals";
 import type { OnboardingSignals } from "./steps";
 
 // Derived onboarding signals from REAL data. Reuses the exact same sources the
@@ -45,34 +43,25 @@ export async function getOnboardingSignals(
 ): Promise<OnboardingSignals> {
   const supabase = await createClient();
 
-  const [services, availabilityDefaults, payment] = await Promise.all([
+  const [services, availabilityDefaults, payment, readiness] = await Promise.all([
     getActiveServices(studio.id),
     getAvailabilityDefaults(studio.id),
     supabase.rpc("get_studio_payment_settings_display", {
       p_studio_id: studio.id,
       p_stripe_livemode: inferStripeLivemode(),
     }),
+    // The canonical answer to "can this studio accept a NEW client", the same one the setup card and /settings/launch use.
+    // A throw becomes null, which deriveBookingSignals turns into unknown, never ready.
+    getNewClientReadiness(studio).catch(() => null),
   ]);
 
-  const activeServicesCount = services.length;
-  const openAvailabilityDaysCount = availabilityDefaults.filter(
-    (d) =>
-      d.is_open === true &&
-      typeof d.open_time === "string" &&
-      typeof d.close_time === "string",
-  ).length;
-
-  const readiness = computeBookingReadiness({
+  const booking = deriveBookingSignals({
     studio,
-    activeServicesCount,
-    openAvailabilityDaysCount,
+    activeServicesCount: services.length,
+    availabilityDefaults,
+    readiness,
     appOrigin: getRequiredAppOrigin(),
   });
-
-  const hasSlug =
-    typeof studio.slug === "string" && studio.slug.trim().length > 0;
-  const bookable =
-    hasSlug && isPubliclyBookable({ activeServicesCount, openAvailabilityDaysCount });
 
   // Real Stripe-ready state (never the faked done:true). Read error -> unknown
   // -> not ready (never a false all-clear); no row for this mode -> not_connected.
@@ -98,11 +87,7 @@ export async function getOnboardingSignals(
 
   return {
     studioName: studio.name,
-    hasSlug,
-    hasService: activeServicesCount >= 1,
-    hasAvailability: openAvailabilityDaysCount >= 1,
-    isPubliclyBookable: bookable,
+    ...booking,
     paymentsReady: capability === "ready",
-    publicBookingUrl: readiness.publicBookingUrl,
   };
 }

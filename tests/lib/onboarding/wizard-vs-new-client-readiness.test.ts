@@ -1,19 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildOnboardingModel, type OnboardingPersisted, type OnboardingSignals } from "@/lib/onboarding/steps";
-import { isPubliclyBookable } from "@/lib/booking/readiness";
+import { deriveBookingSignals } from "@/lib/onboarding/booking-signals";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
-import { computeNewClientReadiness, isOpenDay, type NewClientReadinessEvidence } from "@/lib/booking/new-client-readiness";
+import { computeNewClientReadiness, type NewClientReadinessEvidence } from "@/lib/booking/new-client-readiness";
 
-// HON-77 (onboarding readiness). TODAY'S BEHAVIOUR, pinned as a known gap: the onboarding wizard reports a studio ready when a
-// new client cannot book.
+// HON-77 (onboarding readiness). The wizard agrees with the canonical new-client readiness: it is never ready while a new client
+// cannot book. The booking step is done only when `isPubliclyBookable` AND the canonical readiness (the answer the dashboard
+// setup card and /settings/launch give) is ready. An admission the owner chose to pause is not unfinished setup, and an
+// authority that could not answer is never green and never called missing.
 //
-// The wizard's required steps come from `isPubliclyBookable` (one active service, one open day). The booking action refuses a
-// new client unless the service is an active consultation, and the canonical new-client readiness (the owner's primary answer
-// on the dashboard card and /settings/launch) also asks for a live treatment consent form. The wizard consumes none of that.
-//
-// Every case below runs the REAL pure functions over real-shaped evidence. The two "known gap" cases are written to be GREEN
-// today and to go RED when the wizard starts agreeing with the canonical authority; whoever fixes it flips them on purpose.
+// Every case runs the REAL pure functions over real-shaped evidence. The agreement controls from the reproduction are kept.
 
 const STUDIO = {
   name: "Synthetic Studio",
@@ -42,47 +39,45 @@ function evidence(over: Partial<NewClientReadinessEvidence>): NewClientReadiness
   };
 }
 
-// Mirrors lib/onboarding/signals.ts (server-only, so it cannot be imported here); the source test below pins that mirror.
+// The SAME pure function signals.ts calls, over the same evidence: no mirror to drift. Only the two reads signals.ts performs
+// (the services count and the availability rows) are supplied by the fixture; the verdict is the real canonical compute.
 function wizardSignals(e: NewClientReadinessEvidence): OnboardingSignals {
-  const services = e.services.ok ? e.services.services : [];
-  const days = e.availability.ok ? e.availability.days : [];
-  const activeServicesCount = services.length;
-  const openAvailabilityDaysCount = days.filter((d) => isOpenDay(d)).length;
   return {
     studioName: STUDIO.name,
-    hasSlug: true,
-    hasService: activeServicesCount >= 1,
-    hasAvailability: openAvailabilityDaysCount >= 1,
-    isPubliclyBookable: isPubliclyBookable({ activeServicesCount, openAvailabilityDaysCount }),
+    ...deriveBookingSignals({
+      studio: { ...STUDIO, address: null },
+      activeServicesCount: e.services.ok ? e.services.services.length : 0,
+      availabilityDefaults: e.availability.ok ? e.availability.days : [],
+      readiness: computeNewClientReadiness(e),
+      appOrigin: "https://example.test",
+    }),
     paymentsReady: false,
-    publicBookingUrl: "https://example.test/book/synthetic-studio",
   };
 }
 const FRESH: OnboardingPersisted = {
   currentStep: "service", completedSteps: ["welcome"], skippedSteps: [], dismissedAt: null, completedAt: null, celebratedAt: null,
 };
 
-describe("the wizard reports ready when a new client cannot book (known gap, pinned as today's behaviour)", () => {
-  it("one ordinary treatment and one open day: the wizard is ready and celebrates, the booking rule refuses a new client", () => {
+const bookingStep = (e: NewClientReadinessEvidence) =>
+  buildOnboardingModel(wizardSignals(e), FRESH).steps.find((x) => x.key === "booking")!;
+
+describe("the wizard is ready only when a new client can book", () => {
+  it("one ordinary treatment and one open day: the wizard is NOT ready, does not celebrate, and names the missing consultation", () => {
     const e = evidence({ services: { ok: true, services: [ORDINARY_TREATMENT] } });
     const model = buildOnboardingModel(wizardSignals(e), FRESH);
-    expect(model.requiredComplete).toBe(true);
-    expect(model.shouldCelebrate).toBe(true);
+    expect(model.requiredComplete).toBe(false);
+    expect(model.shouldCelebrate).toBe(false);
     expect(isBookableByNewClient(ORDINARY_TREATMENT as never)).toBe(false);
-    const canonical = computeNewClientReadiness(e);
-    expect(canonical.status).toBe("not_ready");
-    if (canonical.status !== "not_ready") throw new Error("unreachable");
-    expect(canonical.blockers.map((b) => b.key)).toContain("consultation_service");
+    const step = bookingStep(e);
+    expect(step.status).toBe("todo");
+    expect(step.blurb).toMatch(/consultation service/i);
+    expect(step.cta?.label).toBe("Open setup");
   });
 
-  it("a consultation and an open day but no live treatment consent form: the wizard is ready, the canonical readiness is not", () => {
+  it("a consultation and an open day but no live treatment consent form: the wizard is NOT ready and names the consent form", () => {
     const e = evidence({ treatmentConsent: { ok: true, ready: false } });
-    const model = buildOnboardingModel(wizardSignals(e), FRESH);
-    expect(model.requiredComplete).toBe(true);
-    const canonical = computeNewClientReadiness(e);
-    expect(canonical.status).toBe("not_ready");
-    if (canonical.status !== "not_ready") throw new Error("unreachable");
-    expect(canonical.blockers.map((b) => b.key)).toEqual(["treatment_consent"]);
+    expect(buildOnboardingModel(wizardSignals(e), FRESH).requiredComplete).toBe(false);
+    expect(bookingStep(e).blurb).toMatch(/consent/i);
   });
 
   it("control: with a consultation, an open day and a live consent form, both agree the studio is ready", () => {
@@ -97,14 +92,69 @@ describe("the wizard reports ready when a new client cannot book (known gap, pin
     expect(computeNewClientReadiness(e).status).toBe("not_ready");
   });
 
-  it("the wizard's signals and its completion action do not consult the canonical readiness (the flip point)", () => {
+  it("an authority that could not answer is never green and is not called missing", () => {
+    const e = evidence({ treatmentConsent: { ok: false } });
+    const model = buildOnboardingModel(wizardSignals(e), FRESH);
+    expect(model.requiredComplete).toBe(false);
+    const step = model.steps.find((x) => x.key === "booking")!;
+    expect(step.status).toBe("todo");
+    expect(step.blurb).toMatch(/could not check/i);
+    expect(step.blurb).not.toMatch(/consent/i);
+    expect(step.cta).toBeNull();
+  });
+
+  it("an admission the owner chose to pause (waitlist or closed) does not hold the wizard back", () => {
+    for (const mode of ["waitlist", "closed"] as const) {
+      const e = evidence({ admission: { ok: true, mode, source: "persisted" } });
+      expect(computeNewClientReadiness(e).status).toBe("not_ready");
+      expect(buildOnboardingModel(wizardSignals(e), FRESH).requiredComplete).toBe(true);
+    }
+  });
+
+  it("a paused admission AND a missing consultation is still blocked: the choice never masks a structural blocker", () => {
+    const e = evidence({
+      services: { ok: true, services: [ORDINARY_TREATMENT] },
+      admission: { ok: true, mode: "waitlist", source: "persisted" },
+    });
+    expect(buildOnboardingModel(wizardSignals(e), FRESH).requiredComplete).toBe(false);
+  });
+
+  it("the completion gate and the signals read the canonical readiness (the wiring the behaviour above depends on)", () => {
     const code = (p: string) =>
       readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
     const signals = code("lib/onboarding/signals.ts");
     const actions = code("app/(app)/dashboard/onboarding-actions.ts");
-    // The mirror above is only honest while signals.ts builds the booking step this way.
-    expect(signals).toMatch(/isPubliclyBookable\(\{ activeServicesCount, openAvailabilityDaysCount \}\)/);
-    expect(signals).not.toMatch(/new-client-readiness/);
-    expect(actions).not.toMatch(/new-client-readiness/);
+    // signals.ts hands the canonical verdict to the one pure function and spreads its result; it computes none of it itself.
+    expect(signals).toMatch(/getNewClientReadiness\(studio\)/);
+    expect(signals).toMatch(/deriveBookingSignals\(\{[\s\S]*?readiness,/);
+    expect(signals).toMatch(/\.\.\.booking,/);
+    expect(signals).not.toMatch(/isPubliclyBookable|computeBookingReadiness|is_open/);
+    // Both the completion and the celebration gates read the live model, so they inherit the rule; neither restates it.
+    expect(actions.match(/model\.requiredComplete/g)?.length).toBe(2);
+    expect(actions).not.toMatch(/isPubliclyBookable/);
+  });
+});
+
+describe("deriveBookingSignals (the one function the page and these tests share)", () => {
+  const base = { studio: { ...STUDIO, address: null }, appOrigin: "https://example.test" };
+  const ready = computeNewClientReadiness(evidence({}));
+
+  it("a failed readiness read is unknown, never ready", () => {
+    const s = deriveBookingSignals({ ...base, activeServicesCount: 1, availabilityDefaults: [OPEN_DAY], readiness: null });
+    expect(s.bookingReadiness).toEqual({ state: "unknown" });
+  });
+  it("an open day needs open and close times, the same predicate the canonical readiness applies", () => {
+    const closedByMissingTime = { is_open: true, open_time: "", close_time: "17:00:00" };
+    const s = deriveBookingSignals({ ...base, activeServicesCount: 1, availabilityDefaults: [closedByMissingTime], readiness: ready });
+    expect(s.hasAvailability).toBe(false);
+    expect(s.isPubliclyBookable).toBe(false);
+  });
+  it("no slug means no public URL and not bookable, whatever the services say", () => {
+    const s = deriveBookingSignals({
+      ...base, studio: { ...STUDIO, slug: "  ", address: null }, activeServicesCount: 1, availabilityDefaults: [OPEN_DAY], readiness: ready,
+    });
+    expect(s.hasSlug).toBe(false);
+    expect(s.isPubliclyBookable).toBe(false);
+    expect(s.publicBookingUrl).toBe("");
   });
 });

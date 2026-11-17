@@ -115,6 +115,16 @@ export const ONBOARDING_STEPS: Record<OnboardingStepKey, OnboardingStepDef> = {
 // Derived signals (from real data) + persisted state -> the wizard model.
 // ---------------------------------------------------------------------------
 
+// The canonical new-client readiness, reduced to what the wizard needs. Produced by `onboardingBookingReadiness`
+// (lib/onboarding/booking-readiness.ts); this module stays pure and only consumes the verdict.
+//   ready    every structural requirement is met (an admission the owner chose to pause is not unfinished setup)
+//   blocked  at least one requirement is PROVEN missing; `next` is the first one, in the canonical order
+//   unknown  an authority could not answer and nothing is proven missing: never green, and never called missing
+export type OnboardingBookingReadiness =
+  | { state: "ready" }
+  | { state: "blocked"; next: { label: string; href: string } | null }
+  | { state: "unknown" };
+
 export type OnboardingSignals = {
   studioName: string;
   hasSlug: boolean;
@@ -124,6 +134,9 @@ export type OnboardingSignals = {
   // visible service + at least one open day). This is stricter than hasSlug and
   // is what makes the "booking page is live" step honest.
   isPubliclyBookable: boolean;
+  // The same answer the dashboard setup card and /settings/launch give. The booking step is done only when this is
+  // `ready`, so the wizard can never say "your studio can take its first booking" while the booking action refuses one.
+  bookingReadiness: OnboardingBookingReadiness;
   // Stripe Connect is genuinely ready to charge (charges + payouts + enabled).
   paymentsReady: boolean;
   // '' when there is no slug to address.
@@ -176,10 +189,35 @@ function isDataStepDone(
     case "availability":
       return s.hasAvailability;
     case "booking":
-      return s.isPubliclyBookable;
+      return s.isPubliclyBookable && s.bookingReadiness.state === "ready";
     default:
       return false;
   }
+}
+
+// The booking step while it is NOT done: say what is missing (a proven fact, as the canonical readiness words it) and point
+// at it, or say plainly that the check could not be made. A step that is not done never keeps the "your page is live" CTA.
+function unfinishedBookingStep(
+  def: OnboardingStepDef,
+  s: OnboardingSignals,
+): Pick<OnboardingStepState, "blurb" | "cta" | "resolvedHref"> {
+  const r = s.bookingReadiness;
+  if (r.state === "blocked") {
+    return {
+      blurb: `Your booking page is not ready for new clients yet. ${r.next?.label ?? ""}`.trim(),
+      cta: r.next ? { label: "Open setup", href: r.next.href } : def.cta,
+      resolvedHref: r.next?.href ?? def.cta?.href ?? null,
+    };
+  }
+  if (r.state === "unknown") {
+    return {
+      blurb: "We could not check your booking setup just now. Reload to try again.",
+      cta: null,
+      resolvedHref: null,
+    };
+  }
+  // ready by the canonical check but the page itself is not yet addressable (no slug, no service or no open day)
+  return { blurb: def.blurb, cta: def.cta, resolvedHref: def.cta?.href ?? null };
 }
 
 function stepStatus(
@@ -222,6 +260,7 @@ export function buildOnboardingModel(
       key === "booking" && signals.publicBookingUrl
         ? signals.publicBookingUrl
         : (def.cta?.href ?? null);
+    if (key === "booking" && status !== "done") return { ...def, ...unfinishedBookingStep(def, signals), status };
     return { ...def, status, resolvedHref };
   });
 
