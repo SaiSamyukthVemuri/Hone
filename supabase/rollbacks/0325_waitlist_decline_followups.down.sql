@@ -1,6 +1,8 @@
 -- Down for 0325: restore 0324's admit and 0208's entry transition guard exactly, then remove what 0325 added EXCEPT waitlist_erase_records.
 -- Rollback only; never run against a hosted database without approval. DESTROYS follow-up, answer and outbox data; REFUSES while any
 -- follow-up is open or any answer text exists.
+-- NOT REVERSIBLE FOR 0326 ON ANY STACK: a 0325 down then up drops and recreates the tables 0326 indexed and puts back 0325's two reads, so 0326's two
+-- indexes and two function bodies are gone afterwards. Re-apply 0326 (it is idempotent) after any 0325 down/up, then compare the catalog.
 begin;
 set local lock_timeout = '5s';
 
