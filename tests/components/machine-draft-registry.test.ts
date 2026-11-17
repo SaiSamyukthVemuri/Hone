@@ -66,7 +66,7 @@ const DEVICE: StudioDevice = {
 };
 const SCOPE = { studioId: "studio-synthetic", practitionerId: "pract-synthetic" };
 
-// THE LEVEL-BASED DRAFT REGISTRY, MOUNTED (#1369, Codex 4505408578, Insurance final423). The sibling suites render with react-dom/server,
+// THE LEVEL-BASED DRAFT REGISTRY, MOUNTED. The sibling suites render with react-dom/server,
 // which never runs effects; this mounts the real components in jsdom under a host stand-in that owns a registry the way block-setup-form
 // does (draft-registry.tsx) and reads what the HOST derives: `anyDraft` (the leave guard / "Unsaved" label) and `anyUnresolved` (the
 // host's Cancel and the identity controls). (a)-(e) are the regression tests, red on the edge-triggered model; T1-T6 follow.
@@ -358,7 +358,7 @@ describe("T6 randomized oracle", () => {
       });
 });
 
-// C1 (Insurance final424): the provider is what makes every report count. Without it useReportDraft silently does nothing and the leave guard
+// The provider is what makes every report count. Without it useReportDraft silently does nothing and the leave guard
 // and the Cancel gate fail open while every other test stays green.
 describe("C1 the host provides the registry", () => {
   it("block-setup-form wraps its ONLY MachineFirstSetupConnected in DraftRegistryProvider, api and view from the same useDraftRegistryState", async () => {

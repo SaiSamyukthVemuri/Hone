@@ -17,7 +17,7 @@ import { isLeavingNavigation } from "@/components/settings/unsaved-changes";
 // bar, bookmarks beyond beforeunload).
 //
 // BACK AND FORWARD ARE BOTH GUARDED, and put back by the distance actually travelled
-// (Codex, #1369 4478075121): popstate carries no direction, and a fixed `history.go(1)`
+//: popstate carries no direction, and a fixed `history.go(1)`
 // is wrong for Forward (and a no-op at the end of the stack). The direction comes from
 // the history entry's INDEX: the Navigation API's `currentEntry.index` where the browser
 // has it, otherwise an index this guard stamps into `history.state` as it goes. Where
@@ -89,7 +89,7 @@ export function shouldInterceptClick(
 type Registered = { attempt: { current: (proceed: () => void, dirtyCount: number) => void } };
 
 /**
- * ONE COORDINATOR FOR EVERY DIRTY FORM (Codex, #1369 4505287597, after four rounds on per-form listeners).
+ * ONE COORDINATOR FOR EVERY DIRTY FORM.
  * Each form used to mount its own beforeunload, click, popstate and Navigation-API listeners, so with two dirty
  * forms a Back opened two dialogs and confirming one armed only that form's replay flag while the other form
  * cancelled the replay. The listeners now exist ONCE, at module level, while at least one form is registered
@@ -111,7 +111,7 @@ function askFirst(proceed: () => void) {
 
 function installCoordinator(): () => void {
   // A DEPARTURE THE PRACTITIONER ALREADY CONFIRMED in the app's dialog must not be asked about again by the
-  // browser (Codex, #1369 4475784173): the confirmed navigation is a full document load, which fires
+  // browser: the confirmed navigation is a full document load, which fires
   // beforeunload. The flag is set only by the confirmed callbacks below and lapses on its own.
   let confirmed = false;
   let confirmedTimer: ReturnType<typeof setTimeout> | undefined;

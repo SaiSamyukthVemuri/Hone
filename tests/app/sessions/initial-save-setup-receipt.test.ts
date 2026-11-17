@@ -284,7 +284,7 @@ it("initial save preserves exact text in the governed atomic payload", async () 
 });
 
 // ===========================================================================
-// MIGRATION-FIRST ORDER CAN SLIP (0301; Privacy EH-1/EH-2)
+// MIGRATION-FIRST ORDER CAN SLIP (0301)
 // ===========================================================================
 //
 // The app now calls an identity-recording wrapper that exists only after 0301.
@@ -322,7 +322,7 @@ describe("0301 not applied yet: the app degrades safely", () => {
     expect(fallbackArgs.p_setup_idempotency_key).toBe(input.initialSetup.idempotencyKey);
   });
 
-  // Insurance LB-1b: a keyed BARE create (no settings) takes the same fallback with its retry key and empty groups intact.
+  // A keyed BARE create (no settings) takes the same fallback with its retry key and empty groups intact.
   it("a keyed bare create falls back to create_block_with_initial_setup carrying p_setup_idempotency_key and no groups", async () => {
     rpc.mockImplementation(async (name: string) =>
       name === "create_block_with_initial_setup_and_identity"
@@ -366,7 +366,7 @@ describe("0301 not applied yet: the app degrades safely", () => {
     expect(rpc.mock.calls.map((c) => c[0])).toEqual(["create_block_with_initial_setup_and_identity"]);
   });
 
-  // Codex, #1369 4498767101: the identity command only checks the unit is this studio's and not retired, so the action applies
+  // The identity command only checks the unit is this studio's and not retired, so the action applies
   // the remembered-choice contract first. A refusal here has sent nothing.
   it("an identity-only save with a mode the unit's model does not offer is REFUSED before any command, with clear copy", async () => {
     rpc.mockResolvedValue({ data: GOOD, error: null });
@@ -383,7 +383,7 @@ describe("0301 not applied yet: the app degrades safely", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  // Codex, #1369 4499083273: a unit that is merely unavailable NOW is left to the receipt-aware command, so a same-key retry of a
+  // A unit that is merely unavailable NOW is left to the receipt-aware command, so a same-key retry of a
   // create whose answer was lost still recovers after the unit is retired; a NEW write to it is refused by the command.
   it("a unit retired since: the command answers the repeated key from its receipt and the save recovers", async () => {
     rpc.mockResolvedValue({ data: GOOD, error: null });

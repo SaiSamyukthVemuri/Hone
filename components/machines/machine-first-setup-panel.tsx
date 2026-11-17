@@ -186,7 +186,7 @@ export type MachineFirstSetupPanelProps = {
    */
   recordedSetupUnavailable?: boolean;
   /**
-   * The host holds further saves (#1369 RC-1): the recorded settings shown are STALE because the refresh after a confirmed save failed,
+   * The host holds further saves: the recorded settings shown are STALE because the refresh after a confirmed save failed,
    * and a later save would be a revision made against a baseline she is not looking at. The server compares only the SET of group keys
    * (`recordedGroupsMoved`), which a same-group revision does not change, so it cannot refuse this; the panel blocks until a reload.
    */
@@ -216,8 +216,8 @@ export type MachineFirstSetupPanelProps = {
     reverted?: boolean;
     /**
      * A refusal that FOLLOWED an adoption: an earlier unconfirmed pick was settled (the database holds it) before this one was refused,
-     * so "the previous machine" this panel remembers is no longer the stored one. The panel moves to THIS machine instead (Codex #1369
-     * 4493827101); without it the picker and the readings form disagreed with the confirmed identity.
+     * so "the previous machine" this panel remembers is no longer the stored one. The panel moves to THIS machine instead;
+     * without it the picker and the readings form disagreed with the confirmed identity.
      */
     fallback?: { deviceId: string | null; modeKey: string | null; legacy: boolean };
   }>;
@@ -233,7 +233,7 @@ export type MachineFirstSetupPanelProps = {
   nativeLocked?: boolean;
   /**
    * The unit stored on the area's own record (its studio_machine_id), or null. This, not the panel's current pick, decides that a saved
-   * area is native when its unit is no longer selectable (Codex #1369 4485874041; Insurance W-1).
+   * area is native when its unit is no longer selectable.
    */
   savedDeviceId?: string | null;
   /** The mode stored on the area's own record, or null when it holds a unit without one (migration 0301 allows that). */
@@ -435,12 +435,12 @@ function MachineFirstSetupPanelImpl({
    * behaviour look like it had worked.
    */
   const chooseDevice = async (next: string | null, legacy = false) => {
-    // A SAVED AREA'S PICK IS WRITTEN FIRST AND APPLIED AFTER (Codex, #1369 4480035425). The record can refuse it (a clear,
+    // A SAVED AREA'S PICK IS WRITTEN FIRST AND APPLIED AFTER. The record can refuse it (a clear,
     // a stale tab), and moving the panel first unmounts the reading entry, so a refusal remounted it EMPTY and the typed
     // readings were gone. Nothing a refusal could undo is changed, cleared or unmounted until the write settles. A new
     // area writes nothing here, so its pick stays immediate.
     const writeFirst = Boolean(blockId && onSelectMachine);
-    // What was in force before this pick, for a refusal that leaves the stored machine unchanged (Codex, #1369 4479490071).
+    // What was in force before this pick, for a refusal that leaves the stored machine unchanged.
     const before = { deviceId, legacy: legacyChosen, modeKey };
     // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
     // previous one over would persist a key from a different profile, which
@@ -492,7 +492,7 @@ function MachineFirstSetupPanelImpl({
         ok: false,
         error: "That did not save.",
         // A saved area's pick is applied only after its write: a THROWN write (a server failure, not a refusal) left
-        // the record unchanged as far as this panel knows, so the panel must not move (Privacy FH-2).
+        // the record unchanged as far as this panel knows, so the panel must not move.
         ...(writeFirst ? { reverted: true } : {}),
       };
     } finally {
@@ -504,7 +504,7 @@ function MachineFirstSetupPanelImpl({
     if (write && write.ok === false && write.reverted) {
       // The record still holds the previous machine: the panel stays on it (or goes back to it), with the reason said.
       // A saved area's pick is written BEFORE anything moves (writeFirst), so a refusal has cleared nothing and there is
-      // nothing to give back; restoring typed values here would put hidden legacy fields under a native machine (Insurance K-1).
+      // nothing to give back; restoring typed values here would put hidden legacy fields under a native machine.
       if (write.fallback) {
         setLegacyChosen(write.fallback.legacy);
         setModeKey(write.fallback.modeKey);
@@ -534,7 +534,7 @@ function MachineFirstSetupPanelImpl({
    * block either way, but it will not survive a reload.
    */
   const chooseMode = async (key: string) => {
-    // WRITE FIRST, APPLY AFTER, as for the device (Codex, #1369 4480784741): the mode is part of the entry's key, so moving
+    // WRITE FIRST, APPLY AFTER, as for the device: the mode is part of the entry's key, so moving
     // it before the write settles remounts the reading entry and a refusal then throws the typed readings away.
     const writeFirst = Boolean(blockId && onSelectMachine);
     if (!writeFirst) {
@@ -597,7 +597,7 @@ function MachineFirstSetupPanelImpl({
   // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
   // panel showed a mode the record does not hold. Only "no key at all" defaults to the first mode; a key that is set but not offered is an
   // explicit UNRESOLVED state with no mode selected, so no reading for that mode can be recorded until a mode is chosen on purpose.
-  // A NULL CHECK, NOT TRUTHINESS (Insurance PEER-1369-UI-MODE-UNRESOLVED F2): an empty-string key is a key that is set and not offered.
+  // A NULL CHECK, NOT TRUTHINESS: an empty-string key is a key that is set and not offered.
   const modeKeySet = modeKey !== null && modeKey !== undefined;
   const modeFound = modeKeySet ? (modes.find((m) => m.key === modeKey) ?? null) : null;
   const modeUnresolved = Boolean(chosen) && modeKeySet && modes.length > 0 && modeFound === null;
@@ -609,7 +609,7 @@ function MachineFirstSetupPanelImpl({
   // overlapping legacy fields; nothing chosen, or the existing workflow, keeps
   // them exactly as they were.
   //
-  // THE KIND COMES FROM THE SAVED IDENTITY, NOT FROM SELECTABILITY (Codex, #1369 4485874041). A saved area whose native unit has since
+  // THE KIND COMES FROM THE SAVED IDENTITY, NOT FROM SELECTABILITY. A saved area whose native unit has since
   // been retired (or is otherwise no longer selectable) has no `chosen`, but it is still a native area: reporting "none" exposed the
   // existing legacy fields on it, and a Save could write legacy values onto an area that holds a native identity. The unit stays
   // shown, read-only, as the saved machine, and the legacy fields stay hidden.
@@ -739,7 +739,7 @@ function MachineFirstSetupPanelImpl({
             // key is bound to. A freeze that covers the readings and not
             // the identity is not a freeze.
             // The legacy option is a choice too: a studio with xCell Pur history and no registered native unit still
-            // has something to select (Codex, #1369 4471593277).
+            // has something to select.
             disabled={
               (selectable.length === 0 && !legacyMachine) ||
               selectionPending ||
@@ -929,7 +929,7 @@ function MachineFirstSetupPanelImpl({
             because the field contract - the labels, units and precision below
             - is per MODE, not per machine.
           */}
-          {/* The picker also renders when the stored mode is unresolved, even on a single-mode unit: the notice says "choose a mode", so a control must exist (Insurance F1). */}
+          {/* The picker also renders when the stored mode is unresolved, even on a single-mode unit: the notice says "choose a mode", so a control must exist. */}
           {(modes.length > 1 || modeUnresolved) && (
             <div className="flex flex-col gap-1.5" data-testid="machine-mode-picker">
               <SectionLabel size="caption">Mode</SectionLabel>
@@ -1061,7 +1061,7 @@ function MachineFirstSetupPanelImpl({
               // key are out here.
               onRecord={recordAndCount!}
               // The host's own save (`settingDraftFrozen`) holds the same block version this save would send: if both went out, the host save
-              // wins, this one is rejected as stale, and the editor closes with the typed readings discarded (#1369 Codex 4505116958).
+              // wins, this one is rejected as stale, and the editor closes with the typed readings discarded.
               submissionHeld={selectionPending || submissionBlocked || settingDraftFrozen}
             />
           ) : (

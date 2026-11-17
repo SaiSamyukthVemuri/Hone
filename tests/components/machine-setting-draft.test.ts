@@ -857,7 +857,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // save path, or a second mirror of an existing one, fails here with the
     // list in front of you. It pins WHAT the owners are, not how many, and
     // it fails with the diff rather than a bare number.
-    // THE SINGLE-OWNER REFACTOR HAS LANDED (#1369, Insurance final423): no component keeps a `useState` for "unresolved" any more. The
+    // THE SINGLE-OWNER REFACTOR HAS LANDED: no component keeps a `useState` for "unresolved" any more. The
     // host's create-mode save is the only local flag; the revision hold is a registry entry, derived by `anyUnresolved`.
     const OWNERS: Array<[string, string]> = [[FORM_SRC, "saveUnresolved"]];
 
@@ -937,7 +937,7 @@ describe("switching machine or mode clears the collected draft", () => {
   });
 
   it("the revision hold is RELEASED when the unavailable record unmounts the entry", () => {
-    // CODEX #1205 4400713832, now structural: the entry removes its OWN registry key on unmount, so nothing has to reset it. Mounted
+    // The entry removes its OWN registry key on unmount, so nothing has to reset it. Mounted
     // coverage: machine-first-setup-panel-mounted.test.ts ("the hold is RELEASED ...").
     const panel = read(PANEL_SRC);
     expect(panel, "the entry is unmounted by recordedSetupUnavailable (the premise of this guard)").toMatch(
@@ -1186,7 +1186,7 @@ describe("switching machine or mode clears the collected draft", () => {
     "resumedNeedsSettings",
     "resumedUnconfirmed",
     "revisionUnresolved",
-    // A saved area's machine write in flight (Codex, #1369 4477716784). Not a create-mode flag: it is released in a
+    // A saved area's machine write in flight. Not a create-mode flag: it is released in a
     // `finally` the moment the write settles, success or refusal, so it can never strand Save.
     "identityWritePending",
   ];
@@ -1435,7 +1435,7 @@ describe("switching machine or mode clears the collected draft", () => {
       "the freeze must come from EITHER save path",
     ).toMatch(/const identityFrozen = settingDraftFrozen \|\| revisionUnresolved/);
     // The selector is dead only when NOTHING can be chosen (no native unit AND no existing-workflow option), or while a write or an
-    // unresolved save holds it (Codex #1369 4471593277: it used to be dead whenever no native unit was registered).
+    // unresolved save holds it.
     expect(src).toMatch(/\(selectable\.length === 0 && !legacyMachine\) \|\|\s*selectionPending \|\|\s*identityFrozen/);
     expect(src).toMatch(/disabled=\{selectionPending \|\| identityFrozen\}/);
   });
@@ -1519,7 +1519,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // guard reported the protection as present (Codex, #860 4300759932).
     // Asserting the FAILURE BRANCH is what the claim actually needs.
     const src = read(CONN_SRC);
-    // (OPS, after #1369 shard 1 at 6dc30fdd3: the failure no longer marks the surface unavailable, which replaced the saved entry; the
+    // (The failure no longer marks the surface unavailable, which replaced the saved entry; the
     // snapshot is kept as it was and a "Saved. The latest readings couldn't be refreshed" note is shown. The mounted tests in
     // machine-saved-identity-mounted.test.ts prove that behaviour.)
     expect(src).toMatch(/: prev\s*: prev,\s*\);[\s\S]{0,900}?setRefreshFailedAfterSave\(!fresh\.ok && !fresh\.refused\);/);
@@ -1925,7 +1925,7 @@ describe("every block/capture consumer is bound to the authorized route", () => 
   });
 });
 
-describe("Codex 4488516837: a lost create answer keeps its key AND its identity", () => {
+describe("a lost create answer keeps its key AND its identity", () => {
   const src = readFileSync(
     nodePath.join(process.cwd(), "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"),
     "utf8",

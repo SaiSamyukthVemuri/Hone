@@ -1074,7 +1074,7 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // the form while the panel keeps its original snapshot — the one path
     // where the seed source is stale rather than absent.
     //
-    // WHAT THIS STEP COVERS NOW, stated plainly (Insurance T1, #1369 9febb15ca). Since HON-8 a saved native area refuses a clear and its saved
+    // WHAT THIS STEP COVERS NOW, stated plainly. Since HON-8 a saved native area refuses a clear and its saved
     // view has no `machine-reading-entry`, so the "switch away and back" below can no longer remount the form through the UI on the panel's
     // OWN in-memory snapshot. This step therefore reloads and reopens the area, which re-reads the context from the server: the same path as
     // step 10, on a fresh area with two groups. It does NOT cover the in-session remount. THAT half is pinned in a component test:
@@ -1138,7 +1138,7 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await page.reload();
     await page.getByTestId(`edit-area-${thirdBlock}`).click({ timeout: T });
     // HON-8: A SAVED CHOICE OPENS THE PANEL BY ITSELF. Asserted with NO click, because `openMachinePanel` below accepts either an open panel
-    // or a clickable trigger and would pass whether or not this happens (Insurance, #1369 9febb15ca).
+    // or a clickable trigger and would pass whether or not this happens.
     await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
     await expect(page.getByTestId("machine-first-open")).toHaveCount(0);
     expect(await openMachinePanel(page)).toBe(true);
@@ -1211,7 +1211,7 @@ test("create mode: choose the machine, save the block, record one save, retrieve
   });
 });
 
-// RECURRENCE WATCH for the native 3G cases (Insurance R3-1 closure, #1369). The shard-1 red at 6dc30fdd3 came from a post-save refresh
+// RECURRENCE WATCH for the native 3G cases. The shard-1 red at 6dc30fdd3 came from a post-save refresh
 // read that failed. A save whose refresh fails now keeps "Saved" and shows `machine-saved-refresh-note`, so a case could go green
 // through that path and hide the cause. Each native 3G run therefore asserts the note NEVER appeared, at any point, even if a later
 // save cleared it: a run where it appeared counts as a RECURRENCE although every other assertion passed. The flag is held in

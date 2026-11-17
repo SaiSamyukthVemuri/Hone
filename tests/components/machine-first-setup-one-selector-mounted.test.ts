@@ -155,7 +155,7 @@ describe("one selector for the units and the existing workflow", () => {
   });
 });
 
-// Codex #1369 4485874041: the kind comes from the SAVED identity, not from selectability.
+// The kind comes from the SAVED identity, not from selectability.
 describe("a saved area whose native unit is no longer selectable is still a native area", () => {
   const RETIRED = { ...DEVICE, retiredAt: "2026-10-01T00:00:00Z" };
 
@@ -171,7 +171,7 @@ describe("a saved area whose native unit is no longer selectable is still a nati
     expect(sel.value).toBe("room-9");
   });
 
-  it("NEGATIVE CONTROL (Insurance W-1): an identity-less SAVED legacy area with a retired REMEMBERED unit keeps its legacy form: kind none, no unavailable note", () => {
+  it("NEGATIVE CONTROL: an identity-less SAVED legacy area with a retired REMEMBERED unit keeps its legacy form: kind none, no unavailable note", () => {
     const kinds: string[] = [];
     // A pre-0301 saved area: blockId set, NO saved unit on its record, while the practitioner's remembered preference names a retired unit.
     mount({ devices: [RETIRED], blockId: "b1", savedDeviceId: null, initialDeviceId: "room-9", initialModeKey: "galvanic", legacyMachine: null, onKindChange: (k: string) => kinds.push(k) });

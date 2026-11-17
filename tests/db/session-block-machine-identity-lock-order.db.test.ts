@@ -12,7 +12,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// 0301: LOCK ORDER OF THE SETUP-SAVE WRAPPER (Insurance Z-3).
+// 0301: LOCK ORDER OF THE SETUP-SAVE WRAPPER.
 //
 // 0223 fixes the order SESSION, then BLOCK (assert_setup_scope). copy_session_setup
 // (0157) and correct_finalized_session (0120) hold the SESSION FOR UPDATE and then
@@ -101,7 +101,7 @@ async function seedSource(studio: SeededStudio, finalized: boolean, startedAt = 
     );
     await c.query(
       // NO LEGACY READINGS on the block: this file saves a NATIVE setup on it, and 0301 refuses a native identity on an area that holds
-      // xCell Pur readings (Codex 4471593271). The lock order is what is under test here, not that refusal.
+      // xCell Pur readings. The lock order is what is under test here, not that refusal.
       `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side)
        values ($1,$2,$3,1,'Chin','left')`,
       [blockId, studio.studioId, sessionId],
@@ -129,7 +129,7 @@ const deadlocked = (r: PromiseSettledResult<unknown>) =>
 
 const jitter = () => new Promise((res) => setTimeout(res, Math.floor(Math.random() * 25)));
 
-describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)", () => {
+describe("0301: the setup-save wrapper takes SESSION then BLOCK", () => {
   it("(1) copy_session_setup FROM the session vs a setup save on one of its blocks: no deadlock, round after round", async () => {
     const studio = await seedStudio("lockorder-copy");
     const machine = await register(studio);
@@ -318,7 +318,7 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK (Insurance Z-3)"
     expect(r, JSON.stringify(r)).toEqual({ writerDeadlocked: false, saverDeadlocked: false });
   }, 60_000);
 
-  // Insurance LM-2 / Y2-4: the source-order pin is not evidence of behaviour. This is the real thing on two connections: copy_session_setup
+  // The source-order pin is not evidence of behaviour. This is the real thing on two connections: copy_session_setup
   // RUNS INSIDE AN OPEN TRANSACTION and so holds the source session FOR UPDATE; an identity command on one of that session's blocks is
   // started while it is held, must WAIT (not fail, not skip the lock), and completes once the copy commits, with no deadlock.
   const waitsBehindCopy = async (

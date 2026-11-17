@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { legacySettingsEntered } from "@/lib/machines/pending-setup";
 
-// Codex, #1369 4479490063 (auto-resolution must not erase entered legacy values) and 4479490071 (a refused clear must not stick).
+// Auto-resolution must not erase entered legacy values, and a refused clear must not stick.
 const blank = { mode: "", apilusModality: "", energyLevel: "", machineFrequency: "", thermolysisIntensityPercent: "", thermolysisDurationSeconds: "", galvanicMa: "", galvanicDurationSeconds: "", unitsOfLye: "" };
 
 describe("legacySettingsEntered", () => {
@@ -76,9 +76,9 @@ describe("auto-resolution is held while legacy values are entered", () => {
 
 describe("a refused identity write puts the panel back on the stored machine", () => {
   it("every refusal of the area's own identity write is marked reverted", () => {
-    // The clear refusal (twice), the legacy-readings refusal (#1369 4471593271), the record's own refusal, and a pick whose EARLIER
-    // unconfirmed write could not be settled first (0301 receipts, Codex 4488743493). Three call sites now share `revertedTo`, which also
-    // hands the panel a machine this call already adopted (Codex 4493827101), so there is ONE place that builds a refusal after a write.
+    // The clear refusal (twice), the legacy-readings refusal, the record's own refusal, and a pick whose EARLIER
+    // unconfirmed write could not be settled first (0301 receipts). Three call sites now share `revertedTo`, which also
+    // hands the panel a machine this call already adopted, so there is ONE place that builds a refusal after a write.
     expect(conn.match(/reverted: true/g)?.length).toBe(4);
     expect(conn.match(/revertedTo\(/g)?.length).toBe(3);
   });
@@ -91,7 +91,7 @@ describe("a refused identity write puts the panel back on the stored machine", (
     expect(body).toContain("write.fallback ? write.fallback.deviceId : before.deviceId");
     expect(body).toContain("return;");
   });
-  it("Codex 4480035425: a saved area's pick is written first and applied after, so nothing a refusal could undo is unmounted", () => {
+  it("a saved area's pick is written first and applied after, so nothing a refusal could undo is unmounted", () => {
     const at = panel.indexOf("const chooseDevice = async");
     const fn = panel.slice(at, panel.indexOf("const chooseMode = async"));
     expect(fn).toContain("const writeFirst = Boolean(blockId && onSelectMachine);");
@@ -103,7 +103,7 @@ describe("a refused identity write puts the panel back on the stored machine", (
   });
 });
 
-describe("Insurance K-1: a refusal on a saved area clears nothing and restores nothing", () => {
+describe("a refusal on a saved area clears nothing and restores nothing", () => {
   it("there is no restore path left: no kept snapshot, no revert callback, no write outcome plumbing", () => {
     for (const src of [form, conn, panel]) {
       expect(src).not.toContain("clearedLegacyRef");

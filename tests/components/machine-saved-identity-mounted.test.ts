@@ -233,9 +233,9 @@ describe("a saved machine identity, through the connected wrapper", () => {
 });
 
 // ===========================================================================
-// THE PANEL TRACKS ITS OWN SUCCESSFUL IDENTITY WRITES (Codex, #1369 4475581937; Photos R2)
+// THE PANEL TRACKS ITS OWN SUCCESSFUL IDENTITY WRITES
 // ===========================================================================
-// WHICH UNIT AND MODE OPEN (Codex #1369 4505565741): saved, restored and remembered are three sources of one decision, and a saved unit wins.
+// WHICH UNIT AND MODE OPEN: saved, restored and remembered are three sources of one decision, and a saved unit wins.
 // Sources: connected `restoredSelection` (saved identity > loader's restored > none), `initialDeviceId`/`initialModeKey` (remembered; they
 // only seed the PERSISTED preference once a restored selection exists) and the panel's seed (restored, else unusable, else initial).
 describe("which unit opens: a saved unit always wins", () => {
@@ -278,7 +278,7 @@ describe("which unit opens: a saved unit always wins", () => {
   });
 });
 
-// C1/C2 (Insurance final429): what follows the unset-mode state, and the legacy-only saved area now that restoredSelection is null there.
+// What follows the unset-mode state, and the legacy-only saved area now that restoredSelection is null there.
 describe("a saved unit with a null mode: the click, the write, and the retired unit", () => {
   const DEVICE_B: StudioDevice = { ...DEVICE, deviceId: "room-7", displayName: "Room 7 unit" };
   const ONE_MODE: MachineProfile = { ...PROFILE, profileId: "fixture:single", modes: [PROFILE.modes[0]] };
@@ -425,7 +425,7 @@ describe("the component follows its own identity writes", () => {
   });
 });
 
-// Photos R2 finding 2 (#1369): a NEW area starts on THIS CLIENT's last machine, ahead of the practitioner's remembered preference.
+// A NEW area starts on THIS CLIENT's last machine, ahead of the practitioner's remembered preference.
 describe("a new area starts on the client's own last machine", () => {
   it("the client's last machine outranks the remembered preference; the existing workflow is pre-chosen when that was the client's last", async () => {
     await mount({
@@ -465,7 +465,7 @@ describe("a new area starts on the client's own last machine", () => {
   });
 });
 
-describe("Insurance N-7: an existing area without a saved identity opens exactly as before", () => {
+describe("an existing area without a saved identity opens exactly as before", () => {
   it("the client's last machine is NOT pre-chosen on an existing (pre-0301) area", async () => {
     await mount({
       blockId: "b-old",
@@ -480,7 +480,7 @@ describe("Insurance N-7: an existing area without a saved identity opens exactly
   });
 });
 
-// Codex P2 4476240831 (#1369): an EXISTING area's reading entry reports its unsaved values to the host, so the status stops saying Saved and the leave guard arms.
+// An EXISTING area's reading entry reports its unsaved values to the host, so the status stops saying Saved and the leave guard arms.
 describe("an existing area's reading entry reports its unsaved draft to the host", () => {
   const type = async (el: HTMLInputElement, value: string) => {
     const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -511,7 +511,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(view.current.anyDraft).toBe(false);
   });
 
-  // Codex 4480035425: a refused pick on a saved native area must not unmount the reading entry (its typed readings would be lost).
+  // A refused pick on a saved native area must not unmount the reading entry (its typed readings would be lost).
   it("a REFUSED 'Choose machine…' leaves the typed readings in place (no unmount, no remount)", async () => {
     await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
@@ -531,9 +531,9 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(host!.textContent).toMatch(/cannot be cleared/i);
   });
 
-  // Privacy FH-2: a write that THROWS (server failure), not one that is refused, must not move the panel either.
+  // A write that THROWS (server failure), not one that is refused, must not move the panel either.
   it("a THROWN identity write leaves the panel on the saved machine, keeps the typed readings, and says so", async () => {
-    // EVERY attempt throws: the first write and both same-key replays, so the pick is unconfirmed (Codex 4488743493).
+    // EVERY attempt throws: the first write and both same-key replays, so the pick is unconfirmed.
     for (let i = 0; i < 3; i += 1) actions.recordBlockMachineIdentityAction.mockRejectedValueOnce(new Error("network") as never);
     await mountExisting();
     const input = host!.querySelector<HTMLInputElement>('input[inputmode="decimal"], input[type="text"], input[type="number"]')!;
@@ -554,7 +554,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(host!.textContent).toMatch(/could not confirm/i);
   });
 
-  // Codex 4480784741: a MODE change on a saved area is written first too. A refusal leaves the mode and the readings alone.
+  // A MODE change on a saved area is written first too. A refusal leaves the mode and the readings alone.
   const clickMode = async (label: string) => {
     const btn = [...host!.querySelectorAll<HTMLButtonElement>('[data-testid="machine-mode-picker"] button')].find((b) => b.textContent === label)!;
     await act(async () => btn.click());
@@ -616,7 +616,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
       host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!.click();
     });
 
-  it("Codex P2 4477412918: after an ACKNOWLEDGED save the draft is released, so the page stops saying Unsaved", async () => {
+  it("after an ACKNOWLEDGED save the draft is released, so the page stops saying Unsaved", async () => {
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     await mountExisting();
     for (const [i, el] of fields().entries()) await type(el, String(10 + i));
@@ -626,7 +626,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(view.current.anyDraft).toBe(false);
   });
 
-  it("OPS (shard 1): after a CONFIRMED save a FAILED refresh keeps 'Saved', adds the plain note, and repeats nothing", async () => {
+  it("after a CONFIRMED save a FAILED refresh keeps 'Saved', adds the plain note, and repeats nothing", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     actions.readingsForBlockAction.mockResolvedValueOnce({ ok: false } as never);
@@ -653,10 +653,10 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(actions.recordSetupSubmissionAction).toHaveBeenCalledTimes(1);
   });
 
-  // Codex 4487911008: write-first on a saved area leaves the OLD machine's entry mounted while the change is pending. If the identity
+  // Write-first on a saved area leaves the OLD machine's entry mounted while the change is pending. If the identity
   // write has landed (A -> B) and the preference request is still pending, "Save these settings" would submit A's readings under B.
   const saveButton = () => host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!;
-  it("Codex 4487911008: while an identity change is pending (identity landed, preference not yet) the old entry cannot submit; it works again once the change settles", async () => {
+  it("while an identity change is pending (identity landed, preference not yet) the old entry cannot submit; it works again once the change settles", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true } as never);
     let settlePreference!: (v: unknown) => void;
@@ -681,7 +681,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(fields().every((el) => el.value === ""), "the new mode's entry starts empty, not carrying the old mode's draft").toBe(true);
   });
 
-  it("Codex 4487911008 NEGATIVE CONTROL: with no change pending the entry submits as before", async () => {
+  it("NEGATIVE CONTROL: with no change pending the entry submits as before", async () => {
     actions.recordSetupSubmissionAction.mockClear();
     actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: true, submissionId: "sub-1", captures: 1, written: 2, reused: false } as never);
     await mountExisting();
@@ -706,10 +706,10 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(actions.recordSetupSubmissionAction, "the save was not repeated").toHaveBeenCalledTimes(1);
   });
 
-  // Codex 4488223260: a save that succeeded but whose refresh was REFUSED unmounts the panel; every hold it reported to the host
+  // A save that succeeded but whose refresh was REFUSED unmounts the panel; every hold it reported to the host
   // (revision unresolved, draft) must be cleared, or "Save settings block" and Cancel stay disabled for ever.
   for (const refused of ["unavailable", "access"] as const) {
-    it(`Codex 4488223260: a ${refused} refresh after a save that first LOST its answer clears every hold the host was given`, async () => {
+    it(`a ${refused} refresh after a save that first LOST its answer clears every hold the host was given`, async () => {
       actions.recordSetupSubmissionAction.mockClear();
       actions.recordSetupSubmissionAction
         .mockRejectedValueOnce(new Error("lost") as never)
@@ -731,7 +731,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     });
   }
 
-  it("Codex 4488223260: unmounting the wrapper by ANY path releases the holds", async () => {
+  it("unmounting the wrapper by ANY path releases the holds", async () => {
     actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("lost") as never);
     await mount({
       blockId: "b1",
@@ -749,7 +749,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   // THE HOST'S REAL CONTRACT, mounted: block-setup-form disables "Save settings block" and Cancel while `revisionUnresolved` is set (pinned
   // against its source below) and passes setRevisionUnresolved to this wrapper. A harness with the same wiring proves that a refused refresh
   // after a successful save leaves BOTH enabled.
-  it("Codex 4488223260 REGRESSION: a refused refresh after a successful save leaves the host's Save and Cancel ENABLED", async () => {
+  it("REGRESSION: a refused refresh after a successful save leaves the host's Save and Cancel ENABLED", async () => {
     const form = readFileSync(path.resolve(__dirname, "../../app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx"), "utf8");
     expect(form).toMatch(/const revisionUnresolved = draftRegistry\.view\.anyUnresolved;/);
     for (const testid of ["save-treatment-area", "cancel-treatment-area"]) {
@@ -803,7 +803,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
     expect(btn("cancel-treatment-area").disabled, "Cancel is enabled").toBe(false);
   });
 
-  it("Codex 4488223260 NEGATIVE CONTROL: with no refusal the holds follow the entry (a lost answer still holds)", async () => {
+  it("NEGATIVE CONTROL: with no refusal the holds follow the entry (a lost answer still holds)", async () => {
     actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("lost") as never);
     await mount({
       blockId: "b1",
@@ -903,7 +903,7 @@ describe("an existing area's reading entry reports its unsaved draft to the host
   });
 });
 
-// Codex P2 4477716784 (#1369): while a SAVED area's machine choice is being written, the host's Save is held, so a block save cannot commit first
+// While a SAVED area's machine choice is being written, the host's Save is held, so a block save cannot commit first
 // and turn the choice into a silent stale refusal.
 describe("a saved area's machine write holds the host's Save while it is pending", () => {
   const pickValue = async (value: string) => {
@@ -948,7 +948,6 @@ describe("a saved area's machine write holds the host's Save while it is pending
 });
 
 // ---------------------------------------------------------------------------
-// Codex #1369 4471593271 (P1) and 4471593277 (P2).
 // ---------------------------------------------------------------------------
 describe("a saved area that already holds xCell Pur readings takes no native machine", () => {
   const SAVED_LEGACY = { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null };
@@ -1003,7 +1002,7 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     );
   });
 
-  it("Insurance LK-3: a DATABASE refusal (readings the page did not know about) is a reverted pick: the selector stays, nothing is remembered", async () => {
+  it("a DATABASE refusal (readings the page did not know about) is a reverted pick: the selector stays, nothing is remembered", async () => {
     actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({
       ok: false,
       error: "This area already holds xCell Pur readings; add a new area for another machine.",
@@ -1016,7 +1015,7 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     expect(host!.textContent).toContain("already holds xCell Pur readings");
   });
 
-  it("Insurance V-3: when the PREFERENCE write fails after the RECORD was written, the record stands and the panel keeps the pick, saying so", async () => {
+  it("when the PREFERENCE write fails after the RECORD was written, the record stands and the panel keeps the pick, saying so", async () => {
     actions.rememberMachineSelectionAction.mockResolvedValueOnce({ ok: false, error: "The preference did not save." } as never);
     await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
     const sel = await choose("room-9");
@@ -1025,7 +1024,7 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     expect(host!.textContent).toContain("The preference did not save.");
   });
 
-  it("Codex 4487384231: a preference request that THROWS after the record was committed keeps the committed choice and shows a quiet note", async () => {
+  it("a preference request that THROWS after the record was committed keeps the committed choice and shows a quiet note", async () => {
     actions.rememberMachineSelectionAction.mockRejectedValueOnce(new Error("network down") as never);
     await mount({ blockId: "b1", savedIdentity: SAVED_LEGACY, legacyReadingsLocked: false });
     const sel = await choose("room-9");
@@ -1070,7 +1069,7 @@ describe("a studio with xCell Pur history and no registered native unit can stil
   });
 });
 
-describe("Codex 4488516837: the panel cannot be opened while a create is unresolved", () => {
+describe("the panel cannot be opened while a create is unresolved", () => {
   it("'Choose machine' is disabled while the host's draft is frozen, and enabled otherwise (negative control)", async () => {
     await mount({ blockId: null, settingDraftFrozen: true, onIdentityDraft: vi.fn(), onSettingDraft: vi.fn() });
     expect(host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.disabled).toBe(true);
@@ -1080,7 +1079,7 @@ describe("Codex 4488516837: the panel cannot be opened while a create is unresol
     expect(host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')!.disabled).toBe(false);
   });
 
-  // Codex 4492927325: a DIFFERENT identity under the same create key is refused by the database. Here is the app's half: while the
+  // A DIFFERENT identity under the same create key is refused by the database. Here is the app's half: while the
   // create is unresolved nothing can change the identity the retry will send, so the same key can only ever carry the same identity.
   it("a click on a disabled 'Choose machine' neither loads the panel nor reports any identity draft (the retry keeps its identity)", async () => {
     const onIdentityDraft = vi.fn();
@@ -1099,10 +1098,10 @@ describe("Codex 4488516837: the panel cannot be opened while a create is unresol
 });
 
 // ===========================================================================
-// A LOST ANSWER IS SETTLED BY THE PICK'S KEY (Codex 4488743493 and 4488743496, Sam 6 Nov 2026).
+// A LOST ANSWER IS SETTLED BY THE PICK'S KEY.
 // The identity write committed and its reply was lost: the editor asks again with the SAME key, is answered with the version
 // THAT write produced and the identity it stored, keeps unrelated typed edits, and can save again. A different version than the
-// write's own is never adopted (Insurance N-8): the host only ever receives what the receipt returns.
+// write's own is never adopted: the host only ever receives what the receipt returns.
 // ===========================================================================
 describe("a lost identity-write answer is recovered by its key", () => {
   // An earlier test's replay timer may still be pending; let it fire (and fail) before this file's mocks are reset.
@@ -1210,7 +1209,7 @@ describe("a lost identity-write answer is recovered by its key", () => {
     expect(calls[4].expectedUpdatedAt, "the new pick goes against the version the earlier write produced").toBe("v2-own");
   });
 
-  // Codex #1369 4493827101: A->B committed with every reply lost; C is picked; B is recovered and adopted; C is then REFUSED. The
+  // A->B committed with every reply lost; C is picked; B is recovered and adopted; C is then REFUSED. The
   // panel used to go back to A (the machine from before the call) while the database and the host's version held B.
   const XCELL = { profileId: "dectro-apilus:xcell", deviceId: null, modeKey: null };
   const settledB = { ok: true, reused: true, updatedAt: "v2-own", identity: XCELL } as never;
@@ -1256,7 +1255,7 @@ describe("a lost identity-write answer is recovered by its key", () => {
     expect(shown()).toBe("legacy:xcell");
   });
 
-  // Codex #1369 4494175930: the FAKES MUST ANSWER AS THE PRODUCTION RPC DOES. A native pick carries no profile id (the unit's profile is derived
+  // The FAKES MUST ANSWER AS THE PRODUCTION RPC DOES. A native pick carries no profile id (the unit's profile is derived
   // server-side) and the record's reply names the unit's REAL profile id, so a comparison that included the profile read every successful
   // native change as "a different machine" and returned before the remembered preference was written.
   const REAL_NATIVE = (modeKey: string) => ({ profileId: "fixture:mounted", deviceId: "room-9", modeKey });
@@ -1334,7 +1333,7 @@ describe("a lost identity-write answer is recovered by its key", () => {
     expect(shown()).toBe("room-9");
   });
 
-  // Codex, #1369 4498767101: the action now refuses a unit/mode pair the model does not offer, before anything is written.
+  // The action now refuses a unit/mode pair the model does not offer, before anything is written.
   it("a refused unit/mode pick shows the action's clear copy and leaves the panel on the saved machine, never on the refused one", async () => {
     const COPY = "That machine does not offer that mode. Choose the machine and mode again. Nothing was saved.";
     actions.recordBlockMachineIdentityAction.mockReset();
@@ -1496,7 +1495,7 @@ describe("an unrelated draft field survives each lost-answer recovery, and the n
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// INSURANCE T1/T2 (#1369 9febb15ca, PEER-1369-9FEBB15CA): THE IN-SESSION HALF OF THE STALE-SNAPSHOT PROPERTY.
+// THE IN-SESSION HALF OF THE STALE-SNAPSHOT PROPERTY.
 //
 // create-mode step 11 used to prove this in a browser by clearing the machine and re-picking it. Since HON-8 a saved native area refuses a
 // clear and the saved view has no entry element, so that step now reloads (a server-fresh snapshot, step 10's path) and can no longer reach a
@@ -1505,7 +1504,7 @@ describe("an unrelated draft field survives each lost-answer recovery, and the n
 // snapshot the post-save refresh installed. If the refresh stopped updating `ctx.recordedSetup`, the entry would offer ONE fresh g1 while the
 // screen showed two probes' captures, and a change to the former g2 would be filed as a revision of g1.
 // ---------------------------------------------------------------------------------------------------------------------------------
-describe("an in-session remount of the entry is seeded from the snapshot the post-save refresh installed (Insurance T1, T2)", () => {
+describe("an in-session remount of the entry is seeded from the snapshot the post-save refresh installed", () => {
   const GROUPS_PROFILE: MachineProfile = {
     ...PROFILE,
     profileId: "fixture:groups",

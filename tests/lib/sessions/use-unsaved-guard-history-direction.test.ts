@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { currentHistoryIndex, historyDelta, useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 
-// Codex, #1369 4478075121: popstate carries no direction. The guard put the entry back with a fixed history.go(1), which is
+// Popstate carries no direction. The guard put the entry back with a fixed history.go(1), which is
 // wrong for Forward (it must go back by one) and a NO-OP at the end of the stack, so Stay left the browser on the destination,
 // Leave went the wrong way, and the "own move" flag stayed set so the next navigation slipped past the guard.
 const { createElement } = await import("react");
@@ -207,7 +207,7 @@ describe("where the Navigation API exists the traversal is cancelled before it h
     expect(nav.traverseTo).not.toHaveBeenCalled();
     proceed!();
     expect(nav.traverseTo).toHaveBeenCalledWith("k4");
-    // The replay raises popstate too: it is the guard's own move, so it is NOT asked about a second time (Insurance H-1).
+    // The replay raises popstate too: it is the guard's own move, so it is NOT asked about a second time.
     nav.currentEntry.index = 4; // the replayed traversal landed
     await act(async () => {
       window.dispatchEvent(new PopStateEvent("popstate"));

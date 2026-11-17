@@ -141,14 +141,14 @@ export type MachineOutcome<T> =
       unresolved?: boolean;
       /**
        * The database DEFINITIVELY refused the request (the block is not this practitioner's / not in this session). Set only by
-       * `readingsForBlock`, so the post-save refresh can fail closed for access (#1369 R3-2) and stay gentle for a transient error.
+       * `readingsForBlock`, so the post-save refresh can fail closed for access and stay gentle for a transient error.
        */
       refused?: "access" | "unavailable";
     };
 
 /**
  * A FAILED READ OF A BLOCK'S RECORDED SETTINGS IS SILENT TO THE PRACTITIONER BY DESIGN ("could not be read just now"), which left a CI
- * failure with no cause on record (#1369, shard 1 at 6dc30fdd3). The server now logs the failure's CLASS: the validated database code
+ * failure with no cause on record. The server now logs the failure's CLASS: the validated database code
  * (a SQLSTATE or PostgREST code, or "fetch_failed" for a transport failure, or "unknown"). Not the message: the repository's log
  * contract (MSG-LOG-RAW-ERROR-2) forbids free text from a database in a log line, and the code is what names the cause. No block,
  * session or client id and no reading value.
@@ -162,7 +162,7 @@ function logReadingsReadFailure(
       JSON.stringify({
         event: extra.event ?? "machine_readings_read_failed",
         code,
-        // The HTTP status NUMBER and a CLOSED class (#1369, shard 1 at d298c8b92 logged only code "unknown"): enough to tell a gateway
+        // The HTTP status NUMBER and a CLOSED class: enough to tell a gateway
         // or transport reply from a database answer, with no free text from the error.
         ...(extra.status !== undefined ? { status: extra.status } : {}),
         ...(extra.errorClass ? { errorClass: extra.errorClass } : {}),
@@ -1053,7 +1053,7 @@ export async function readingsForBlock(
       p_session_id: sessionId,
     });
   let { data, error, status } = await callRead();
-  // ONE RETRY, ONLY FOR A CODE-LESS ERROR (OPS decision after #1369 shard 1 at d298c8b92). An error with no SQLSTATE and no PostgREST
+  // ONE RETRY, ONLY FOR A CODE-LESS ERROR. An error with no SQLSTATE and no PostgREST
   // code is not the database answering: it is a reply or a connection that did not complete (class logged below). This read is a STABLE
   // function with no side effects, so repeating it is safe. A coded error is a definite database answer and is never retried; a second
   // failure is reported exactly as a first one was.
@@ -1186,7 +1186,7 @@ export async function recordBlockMachineIdentity(
     modeKey: string | null;
     profileId: string | null;
     /**
-     * THE RETRY KEY of this pick, reused by every retry of it (0301 receipts, Codex 4488743493). A write that committed and whose
+     * THE RETRY KEY of this pick, reused by every retry of it (0301 receipts). A write that committed and whose
      * answer was lost is answered again, with the version that write produced and the identity it recorded, when the same key comes back.
      */
     idempotencyKey: string;
@@ -1220,7 +1220,7 @@ export async function recordBlockMachineIdentity(
       error: { code: dbErrorCode(error) },
       // The held version no longer matched inside the transaction; only the fact, never the message.
       stale: /stale_block_version/.test(error.message ?? ""),
-      // A TRANSPORT FAILURE IS NOT A REFUSAL: with no database answer the write may have committed (Codex 4488743493).
+      // A TRANSPORT FAILURE IS NOT A REFUSAL: with no database answer the write may have committed.
       unresolved: !isDefinitiveDatabaseAnswer(error),
     };
   }

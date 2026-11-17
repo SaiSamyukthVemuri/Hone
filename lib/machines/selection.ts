@@ -243,7 +243,7 @@ export type SelectOutcome =
 /**
  * The checks `selectDevice` makes, WITHOUT the write. A choice that is only being RECORDED (the saved treatment identity) must
  * pass the same contract as one being REMEMBERED: an impossible unit/mode pair is refused before anything is stored
- * (Codex, #1369 4498767101). Pure: it reads nothing and writes nothing.
+ *. Pure: it reads nothing and writes nothing.
  */
 export function checkDeviceChoice(
   scope: SelectionScope,

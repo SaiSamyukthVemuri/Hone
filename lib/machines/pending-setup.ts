@@ -374,7 +374,7 @@ export function pinToBlock(pending: PendingSetup, blockId: string): PendingSetup
 }
 
 /**
- * WHETHER THE PANEL'S REPORTED DRAFT HOLDS ANYTHING THE PRACTITIONER DID (Codex, #1369 4477716790).
+ * WHETHER THE PANEL'S REPORTED DRAFT HOLDS ANYTHING THE PRACTITIONER DID.
  *
  * The panel reports `{ groups: [], blocking: null }` the moment it opens on a machine it chose by itself (the
  * client's last machine, or the remembered preference). That is the panel being ready, not a draft: counting it made
@@ -389,7 +389,7 @@ export function machineDraftHasEntries(
 }
 
 /**
- * WHETHER "Copy settings from another area" may use this source for the draft's machine (Codex, #1369 4478497428).
+ * WHETHER "Copy settings from another area" may use this source for the draft's machine.
  *
  * The copy patch fills the LEGACY charting fields (mode, modality, energy, readings). With a native machine selected
  * those fields are hidden but still submitted, so a legacy source would silently record legacy settings against a
@@ -432,7 +432,7 @@ export function copyPatchForMachine<P extends Record<string, unknown>>(
 }
 
 /**
- * WHETHER THE DRAFT ALREADY HOLDS LEGACY CHARTING VALUES the practitioner typed (Codex, #1369 4479490063).
+ * WHETHER THE DRAFT ALREADY HOLDS LEGACY CHARTING VALUES the practitioner typed.
  *
  * Choosing a native machine clears these (settings are never mixed). That is right for a pick she made, and wrong for
  * a machine the panel resolved ON ITS OWN when it opened: it would erase work she had already entered. While this is
@@ -463,9 +463,9 @@ export function legacySettingsEntered(draft: {
 }
 
 /**
- * WHETHER AUTOMATIC MACHINE SELECTION IS HELD (Codex #1369 4479490063, 4506474412): the draft carries legacy settings the practitioner entered
+ * WHETHER AUTOMATIC MACHINE SELECTION IS HELD: the draft carries legacy settings the practitioner entered
  * or the area already persists, and a native machine selected on her behalf would clear them. A studio-default frequency that was merely
- * PREFILLED is not entered work, but a frequency the area PERSISTS always counts, even when it equals the default (Insurance final448 F2):
+ * PREFILLED is not entered work, but a frequency the area PERSISTS always counts, even when it equals the default:
  * otherwise an existing area's saved frequency is ignored, the remembered native machine is seeded, and the host refuses it.
  */
 export function autoSelectHeld(

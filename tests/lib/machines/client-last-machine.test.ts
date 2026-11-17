@@ -6,7 +6,7 @@ import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import type { StudioDevice } from "@/lib/machines/selection";
 
-// Privacy EL-2 (a, b), Insurance N-5, N-6, N-7 (#1369): the client's last machine is read per client, from live visits only, and is
+// The client's last machine is read per client, from live visits only, and is
 // validated like any other choice before it is offered.
 const mode = (key: string, availability: "active" | "blocked" = "active") => ({
   key, nativeLabel: key, family: "galvanic", availability, verification: "device-confirmed", evidence: ["p"], stages: [], fields: [],
@@ -55,7 +55,7 @@ describe("the reads and the use are scoped", () => {
     expect(READ).toMatch(/\.is\("deleted_at", null\)/);
   });
   it("N-7: only a NEW area (no block yet) takes the client's last machine; an existing identity-less area opens as before", () => {
-    // Still new-area-only; it is also withheld while she has typed legacy values (Codex, #1369 4479490063).
+    // Still new-area-only; it is also withheld while she has typed legacy values.
     expect(CONNECTED).toMatch(/const newAreaLast = !hasSaved && !blockId && !hold \?/);
   });
 });
