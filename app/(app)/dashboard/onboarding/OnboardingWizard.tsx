@@ -342,7 +342,7 @@ export function OnboardingWizard({
                 </Link>
               )
             )}
-            {active.key === "booking" && model.publicBookingUrl && (
+            {active.key === "booking" && active.status === "done" && model.publicBookingUrl && (
               <>
                 <Link
                   href={model.publicBookingUrl}
