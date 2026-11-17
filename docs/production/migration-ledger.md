@@ -184,7 +184,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Read-back (2026-11-16, 23:25:39Z to 23:25:42Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
 - **Scope on hosted.** One flag (default off) and its check on waitlist entries, and a second completion function for the service role only; no row is flagged, nothing is backfilled, and no studio's behaviour changes. Offering a single name is a separate reviewed change made after the apply.
 - **Hosted at that read-back:** 276 rows, max `0353`. By the row count (275 before, plus `0353` once, equals 276), `0328` to `0337` remain not hosted, and so do `0342` to `0349`.
-- **Declared hosted maximum.** Advanced to `0353` in `migration-state.json` by the record of 2026-11-16, from the receipt only; it is `0354` after the next apply.
+- **Declared hosted maximum.** Advanced to `0353` on 2026-11-16, from the receipt only, and to `0354` by the 0354 apply recorded below.
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
