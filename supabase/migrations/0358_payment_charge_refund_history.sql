@@ -1,7 +1,5 @@
 -- 0358: a per-refund history for a card charge, keyed by the provider's refund id, and the one command that records it from a
--- signed provider event. NOT APPLIED. Hosted apply needs the platform operator's per-change approval and its own sealed package.
--- Number proposed from `npm run migration:state` (next free 0355) PLUS the numbers open pull requests already claim (0355, 0356,
--- 0357); it needs an OPS reservation before it is final.
+-- signed provider event.
 --
 -- WHY. Today a refund that is not the whole charge is not recorded anywhere: the webhook raises an alert and changes nothing, so
 -- the panel and the owner's balance keep reading the charge as fully kept. This records every refund the provider tells us about,
@@ -21,7 +19,7 @@
 --
 -- WHAT THIS DOES NOT DO. It changes no existing column or value, backfills nothing, writes nothing for a charge until a signed event
 -- for that charge arrives, calls no provider, and does not change reconcile_bound_payment_event (0240), the refund action, the
--- webhook route, the panel or the balance, and it changes the two jurisdiction initialisers only by that one list entry. Those follow in application code once this is applied.
+-- webhook route, the panel or the balance, and it changes the two jurisdiction initialisers only by that one list entry.
 --
 -- RULES THE COMMAND ENFORCES (each is a result string, never a silent write):
 --   * identity: studio, connected account, mode, customer, payment intent, charge, amount and currency must equal the stored
