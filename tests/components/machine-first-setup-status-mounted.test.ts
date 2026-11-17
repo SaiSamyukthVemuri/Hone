@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import type { StudioDevice } from "@/lib/machines/selection";
 
-// The panel's status block says two separate things (Privacy record-accuracy note on #1369): whether the BLOCK holds a saved machine
+// The panel's status block says two separate things (the rule: a status must be accurate about what is saved): whether the BLOCK holds a saved machine
 // and mode, and how many readings are saved for the BLOCK. It used to say "Recorded: nothing from this panel yet" whenever THIS VISIT's
 // save count was 0, which was wrong after a machine is chosen (the block saves the identity) and on reopen beside the saved list.
 // Mounted in jsdom; synthetic records only.
