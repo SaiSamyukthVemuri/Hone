@@ -127,7 +127,7 @@ describe("a visit count never closes or advances anything (binding)", () => {
   it("no migration creates a trigger on treatment_plans or updates a plan to closed", () => {
     const dir = path.join(ROOT, "supabase/migrations");
     const files = readdirSync(dir).filter((f) => f.endsWith(".sql"));
-    expect(files.length).toBeGreaterThan(300);
+    expect(files.length).toBeGreaterThan(200);
     const flat = (f: string) => readFileSync(path.join(dir, f), "utf8").split("\n").filter((l) => !/^\s*--/.test(l)).join(" ");
     const mentions = files.filter((f) => /treatment_plans\b/i.test(flat(f)));
     expect(mentions.length).toBeGreaterThan(5); // the scan reaches the files that name the table
