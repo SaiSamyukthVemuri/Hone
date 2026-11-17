@@ -490,6 +490,21 @@ describe("the key never leaves the process", () => {
     expect(out).not.toContain(KEY);
     expect(out).toContain("[redacted-url]");
   });
+  it("a client error that carries the bare project ref and the URL reaches no message, output line or receipt with either", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract() { return null; },
+      async rpc() { throw new Error(`upstream said project ${REF} at https://${REF}.supabase.co/rest/v1/rpc failed`); },
+    });
+    const e = await runHosted(x.d).then(() => null, (err: Error) => err);
+    expect(e, "the run stops on the client error").toBeInstanceOf(Error);
+    const receiptRaw = [...x.files.entries()].filter(([k]) => k.endsWith(".receipt.json")).map(([, v]) => v).join("\n");
+    const everything = [e!.message, ...x.calls.filter((c) => c.startsWith("stdout:")), receiptRaw].join("\n");
+    expect(everything).not.toContain(REF);
+    expect(everything).not.toContain("supabase.co");
+    expect(receiptRaw, "the failure is recorded, redacted").toContain("[redacted-");
+  });
   it("redact removes a hosted-looking URL or host even when the target was not passed in", () => {
     const other = "zyxwvutsrqponmlkjihg";
     const out = redact(`error at https://${other}.supabase.co/rest/v1/y and ${other}.supabase.co`, KEY);
