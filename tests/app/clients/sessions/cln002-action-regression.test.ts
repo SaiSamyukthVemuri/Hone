@@ -104,13 +104,16 @@ describe("a refused or empty command never reaches the lineage readback or a sid
 });
 
 describe("appointment lineage is refused before the command runs", () => {
+  // HON-54: each refusal is EXPECTED, so it is answered by redirecting to the new-session page with a refusal code (which renders the sentence)
+  // instead of being thrown into the generic error boundary. Nothing is written and the command is never called.
+  const refusedHref = (code: string) => `REDIRECT:/clients/client/sessions/new?appointment_id=${B}&refused=${code}`;
   it.each([
-    ["another studio", { studio_id: "other-studio" }, "Appointment is not in your studio."],
-    ["another client", { client_id: "other-client" }, "Appointment is for a different client."],
-    ["another practitioner", { practitioner_id: "other-practitioner" }, "Appointment is assigned to a different practitioner."],
-  ] as const)("an appointment for %s", async (_name, patch, message) => {
+    ["another studio", { studio_id: "other-studio" }, "other_studio"],
+    ["another client", { client_id: "other-client" }, "other_client"],
+    ["another practitioner", { practitioner_id: "other-practitioner" }, "assigned_elsewhere"],
+  ] as const)("an appointment for %s", async (_name, patch, code) => {
     appointment = { ...appointment, ...patch };
-    await expect(startSessionAction(form())).rejects.toThrow(message);
+    await expect(startSessionAction(form())).rejects.toThrow(refusedHref(code));
     expect(runtime.rpc).not.toHaveBeenCalled();
     expectNoSideEffects();
   });
@@ -120,8 +123,24 @@ describe("appointment lineage is refused before the command runs", () => {
       const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
       return chain;
     });
-    await expect(startSessionAction(form())).rejects.toThrow("Appointment not found.");
+    await expect(startSessionAction(form())).rejects.toThrow(refusedHref("appointment_missing"));
     expect(runtime.rpc).not.toHaveBeenCalled();
+    expectNoSideEffects();
+  });
+
+  it("a failed lookup is NOT a refusal: it still throws, so an unreadable appointment is never turned into an unlinked chart", async () => {
+    runtime.from.mockImplementation(() => {
+      const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: { code: "XX000", message: "boom" } })) };
+      return chain;
+    });
+    await expect(startSessionAction(form())).rejects.toThrow("Failed to verify appointment");
+    expect(runtime.rpc).not.toHaveBeenCalled();
+    expectNoSideEffects();
+  });
+
+  it("the command re-checks lineage: an assignment that changed after the check answers the same expected refusal", async () => {
+    runtime.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "Appointment is assigned to a different practitioner." } });
+    await expect(startSessionAction(form())).rejects.toThrow(refusedHref("assigned_elsewhere"));
     expectNoSideEffects();
   });
 
