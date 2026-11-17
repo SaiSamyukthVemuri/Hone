@@ -9,6 +9,8 @@ import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { redirect } from "next/navigation";
+import { restoreHref, restoreOutcomeFromRpc } from "@/lib/team/restore-outcome";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -260,4 +262,30 @@ export async function removePractitionerAction(formData: FormData): Promise<void
     throw new Error("Could not remove the practitioner. Please try again.");
   }
   revalidatePath("/settings/team");
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Restores a removed practitioner through the SAME locked command removal uses, with p_active = true: the same row, the same role, history kept
+// (removal only ever set active = false). The owner gate is re-proved inside the command; this action also stops a non-owner first. Every outcome,
+// including a refusal, redirects back with a code the page shows as a sentence.
+export async function restorePractitionerAction(formData: FormData): Promise<void> {
+  const id = formData.get("id");
+  const { studioId, practitionerId } = await assertOwner();
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    redirect(restoreHref("not_found"));
+  }
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("set_practitioner_active_locked", {
+    p_studio_id: studioId,
+    p_actor_practitioner_id: practitionerId,
+    p_target_practitioner_id: id,
+    p_active: true,
+  });
+  const outcome = restoreOutcomeFromRpc(data, error);
+  if (outcome !== "restored") {
+    console.error(`team_action_db_error:restore_practitioner:${error ? dbErrorCode(error) : failureCode(null, data)}`);
+  }
+  revalidatePath("/settings/team");
+  redirect(restoreHref(outcome));
 }

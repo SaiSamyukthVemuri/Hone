@@ -65,7 +65,7 @@ describe("behaviour of the real Team page, by role (queries mocked, page and com
       createClient: async () => ({ from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }) }) }),
     }));
     vi.doMock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink }));
-    vi.doMock("../../../app/(app)/settings/team/actions", () => ({ removePractitionerAction: vi.fn(), revokeInvitationAction: vi.fn() }));
+    vi.doMock("../../../app/(app)/settings/team/actions", () => ({ removePractitionerAction: vi.fn(), restorePractitionerAction: vi.fn(), revokeInvitationAction: vi.fn() }));
     const { default: Page } = await import("../../../app/(app)/settings/team/page");
     return { html: renderToStaticMarkup(await Page()), getPractitionersForStudio, shouldShowReviewLink };
   };

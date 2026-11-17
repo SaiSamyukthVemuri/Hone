@@ -11,8 +11,10 @@ import type {
 import { InviteForm } from "./InviteForm";
 import {
   removePractitionerAction,
+  restorePractitionerAction,
   revokeInvitationAction,
 } from "./actions";
+import { parseRestoreOutcome, restoreOutcomeCopy } from "@/lib/team/restore-outcome";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { shouldShowReviewLink } from "@/lib/appointments/review-link";
@@ -49,17 +51,37 @@ async function getPendingInvitations(
   return (data ?? []) as PendingInvitation[];
 }
 
-export default async function TeamSettingsPage() {
+// Removed practitioners. Removal only sets active = false, so these rows are still the studio's own; an owner reads them through the same
+// studio-member read policy as the active roster (RLS, not an admin read). Owners are never listed: they cannot be removed.
+async function getRemovedPractitioners(studioId: string): Promise<Practitioner[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*")
+    .eq("studio_id", studioId)
+    .eq("active", false)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load removed practitioners: ${dbErrorCode(error)}`);
+  return ((data ?? []) as Practitioner[]).filter((p) => p.role !== "owner");
+}
+
+export default async function TeamSettingsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ restore?: string }>;
+} = {}) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return <OwnerOnlyNotice>Only studio owners can manage the team.</OwnerOnlyNotice>;
   }
 
-  const [practitioners, invitations] = await Promise.all([
+  const [practitioners, invitations, removed] = await Promise.all([
     getPractitionersForStudio(studio.id),
     getPendingInvitations(studio.id),
+    getRemovedPractitioners(studio.id),
   ]);
+  const restoreOutcome = parseRestoreOutcome(((await searchParams) ?? {}).restore);
 
   const showReviewLink = await shouldShowReviewLink(studio.id);
 
@@ -86,6 +108,8 @@ export default async function TeamSettingsPage() {
       </section>
 
       <PendingInvitations invitations={invitations} />
+
+      <RemovedPractitioners removed={removed} outcome={restoreOutcome} />
     </div>
   );
 }
@@ -245,5 +269,67 @@ function RoleBadge({ role }: { role: "owner" | "practitioner" }) {
     >
       {role}
     </span>
+  );
+}
+
+function RemovedPractitioners({
+  removed,
+  outcome,
+}: {
+  removed: Practitioner[];
+  outcome: ReturnType<typeof parseRestoreOutcome>;
+}) {
+  const notice = outcome ? restoreOutcomeCopy(outcome) : null;
+  if (removed.length === 0 && !notice) return null;
+  return (
+    <section className="flex flex-col gap-4" data-testid="team-removed">
+      <div>
+        <h2 id="removed-practitioners" className="scroll-mt-24 text-xl font-medium">
+          Removed
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          {removed.length === 0
+            ? "Nobody is removed."
+            : "People you removed. Restoring brings back their access with the same role; their appointments and records were never deleted."}
+        </p>
+      </div>
+      {notice && (
+        <p
+          role="status"
+          data-testid="team-restore-notice"
+          className={`rounded-md border px-3 py-2 text-sm ${
+            notice.tone === "ok"
+              ? "border-neutral-300 dark:border-neutral-700"
+              : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+          }`}
+        >
+          {notice.text}
+        </p>
+      )}
+      {removed.length > 0 && (
+        <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          {removed.map((p) => (
+            <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-medium">{p.display_name}</span>
+                  <RoleBadge role={p.role} />
+                </div>
+                <div className="truncate text-xs text-neutral-500">{p.email}</div>
+              </div>
+              <form action={restorePractitionerAction}>
+                <input type="hidden" name="id" value={p.id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                >
+                  Restore
+                </button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
