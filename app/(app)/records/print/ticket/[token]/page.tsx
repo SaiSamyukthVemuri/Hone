@@ -33,7 +33,7 @@ export default async function TicketedDayPacketPage({ params }: { params: Promis
         <p className="text-base font-medium">This print link is no longer valid.</p>
         <p>Open Print again from the client&rsquo;s session. A print link works once and for five minutes.</p>
         <p className="text-neutral-600">No clinical record is shown.</p>
-        <ReopenButton ticket={token} />
+        <ReopenButton ticket={token} isOwner={practitioner.role === "owner" && practitioner.active === true} />
         <Link href="/records" prefetch={false} referrerPolicy="no-referrer" className="text-neutral-600 underline print:hidden">
           Back to Record Keeping
         </Link>

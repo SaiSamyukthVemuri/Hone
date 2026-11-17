@@ -3,12 +3,15 @@
 import { useState, useTransition } from "react";
 import { reopenDayPacketAction } from "./reopen-action";
 
-// "Open again" on the refusal page. It is shown to everyone who lands here, so the page itself reveals nothing about
-// who could reopen. The server decides; a refusal here says one plain thing. On success the server action redirects to
-// a fresh opaque ticket (no client id or day anywhere).
-export function ReopenButton({ ticket }: { ticket: string }) {
+// "Open again" on the refusal page. Owners get the button; anyone else is told only the viewer's own role requirement,
+// which says nothing about the ticket or the client. The server decides either way, and a refusal says one plain thing.
+// On success the server action redirects to a fresh opaque ticket (no client id or day anywhere).
+export const NOT_OWNER_MESSAGE = "Only the studio owner can open this record again.";
+
+export function ReopenButton({ ticket, isOwner }: { ticket: string; isOwner: boolean }) {
   const [pending, startTransition] = useTransition();
   const [refused, setRefused] = useState(false);
+  if (!isOwner) return <p className="text-sm text-neutral-700 print:hidden">{NOT_OWNER_MESSAGE}</p>;
   return (
     <div className="flex flex-col gap-1 print:hidden">
       <button
@@ -22,7 +25,7 @@ export function ReopenButton({ ticket }: { ticket: string }) {
             if (res && res.ok === false) setRefused(true);
           });
         }}
-        className="w-fit rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+        className="min-h-[44px] w-fit rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
       >
         {pending ? "Opening…" : "Open again"}
       </button>
