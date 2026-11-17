@@ -446,8 +446,10 @@ describe("the manifest describes itself honestly", () => {
     ).toEqual(pendingResources().map((e) => e.resource).sort());
     for (const row of manifest.not_exported) {
       expect(String(row.reason).length).toBeGreaterThan(0);
-      expect(String(row.ticket)).toMatch(/^TRUTH-01/);
+      // The internal ticket stays in the registry for the guards; the archive prints only the plain reason.
+      expect(Object.keys(row).sort()).toEqual(["reason", "resource", "tier"]);
     }
+    for (const e of pendingResources()) expect(e.disposition.ticket).toMatch(/^TRUTH-01/);
   });
 
   it("names the real remaining omissions, and no longer the service menu", async () => {
