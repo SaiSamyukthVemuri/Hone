@@ -134,7 +134,9 @@ describe("fee attempt carries only the derived cumulative-refund boolean", () =>
   const elig = __rf(__join(__dirname, "../../../lib/billing/manual-fee-eligibility.ts"), "utf8");
   const types = __rf(__join(__dirname, "../../../lib/billing/manual-fee-types.ts"), "utf8");
   it("selects the receipt column and derives the boolean from it", () => {
-    expect(elig).toMatch(/stripe_refund_id, stripe_charge_refund_event_id, refunded_at/);
+    expect(elig).toMatch(/stripe_refund_id, stripe_charge_refund_event_id, /);
+    // HON-49 (0358): the refund history summary is selected beside the receipt column and mapped as numbers or null (never zero).
+    expect(elig).toMatch(/refunds_succeeded_cents, refunds_inflight_count, refunded_at/);
     expect(elig).toMatch(/cumulative_full_refund_verified:\s*typeof row\.stripe_charge_refund_event_id === "string" && row\.stripe_charge_refund_event_id\.length > 0/);
   });
   it("the event id itself is never a field of the attempt type or of the mapped row", () => {

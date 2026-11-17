@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
+  historyObjects: [] as Array<Record<string, unknown>>,
   boundObjects: [] as Array<Record<string, unknown>>,
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
@@ -225,6 +226,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         Object.assign(row, payload);
         return { data: [{ result: "reconciled", status_before: statusBefore }], error: null };
       }
+      if (name === "record_charge_refund_history") {
+        // HON-49 (0358): called by the webhook for every signed charge.refunded; the older refund commands above are unaffected by it.
+        h.historyObjects.push(args.p_object as Record<string, unknown>);
+        return { data: [{ result: "recorded", out_attempt_id: args.p_attempt_id }], error: null };
+      }
       if (name === "reconcile_card_payment_succeeded") {
         return { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null };
       }
@@ -342,6 +348,7 @@ beforeEach(() => {
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
+  h.historyObjects = [];
   h.boundObjects = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;

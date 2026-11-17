@@ -330,6 +330,8 @@ export function SessionPaymentPrepareCard({
           providerRefundStatus: activeAttempt.stripeRefundStatus,
           stripeRefundId: activeAttempt.stripeRefundId,
           cumulativeFullRefundVerified: activeAttempt.cumulativeFullRefundVerified,
+          refundsSucceededCents: activeAttempt.refundsSucceededCents,
+          refundsInflightCount: activeAttempt.refundsInflightCount,
         })
       : null;
   const fullyRefunded =
@@ -1225,6 +1227,8 @@ function RefundSubPanel({
     providerRefundStatus: attempt.stripeRefundStatus,
     stripeRefundId: attempt.stripeRefundId,
     cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
+    refundsSucceededCents: attempt.refundsSucceededCents,
+    refundsInflightCount: attempt.refundsInflightCount,
   });
   const persistedNeedsReview = display.kind === "needs_review";
   const persistedSucceeded = display.kind === "refunded";
@@ -1247,16 +1251,24 @@ function RefundSubPanel({
 
       {(persistedSucceeded || localRefunded) && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          <p className="font-medium">Refund succeeded.</p>
+          <p className="font-medium">
+            {!localRefunded && (display.remainingRefundableCents ?? 0) > 0 ? "Partly refunded." : "Refund succeeded."}
+          </p>
           <p className="mt-1">
             Amount refunded:{" "}
             {formatMoney(
               localRefunded?.refundAmountCents ??
+                display.refundedCents ??
                 attempt.refundAmountCents ??
                 attempt.amountCents,
               attempt.currency,
             )}
           </p>
+          {!localRefunded && (display.remainingRefundableCents ?? 0) > 0 && (
+            <p className="mt-1">
+              Still on the card: {formatMoney(display.remainingRefundableCents ?? 0, attempt.currency)}
+            </p>
+          )}
           {(localRefunded?.refundedAt ?? attempt.refundedAt) && (
             <p className="mt-1">
               Refunded:{" "}

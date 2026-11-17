@@ -113,6 +113,8 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
         return { data: [{ out_result: "recorded", out_account_country: args.p_country,
           out_payment_country: args.p_country, out_matches: true }], error: null };
       }
+      // HON-49: the refund-history command, called for every signed charge.refunded. A healthy default so existing refund tests keep their meaning.
+      if (name === "record_charge_refund_history") return { data: [{ result: "recorded", out_attempt_id: args.p_attempt_id }], error: null };
       if (name === "reconcile_bound_payment_event") {
         const row = observedAttempt;
         const object = args.p_object as Record<string, unknown>;
@@ -1576,12 +1578,14 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
 });
 
 // ===========================================================================
-// A SIGNED PARTIAL REFUND IS NOT RECORDED TODAY (HON-49). These pin TODAY'S behaviour, named as such, so that
-// the day partial refunds are recorded (HON-49) they fail on purpose and are REWRITTEN with the new rule, never loosened.
-// What is pinned: a signed charge.refunded for less than the whole charge raises a critical alert, changes NO row, is
-// acknowledged as processed (200), and leaves the panel and the balance reading "not refunded".
+// A SIGNED PARTIAL REFUND IS RECORDED (HON-49, migration 0358). This REPLACES the "PINNED TODAY" tests of #1531, which pinned that a signed
+// charge.refunded for less than the whole charge raised a critical alert and changed nothing. They failed on purpose when the webhook began
+// calling record_charge_refund_history; they are rewritten here with the new rule, not loosened. What is asserted now: a signed partial refund
+// with a COMPLETE refund list is written through that one command (and only that command, beside claim and mark), the evidence is built from the
+// signed event's own charge (N2: never from the stored attempt), the event is acknowledged, the attempt row's older refund columns are untouched,
+// the alert is a WARNING; and when the command refuses, or the list is incomplete, today's critical alert and no-write behaviour are kept.
 // ===========================================================================
-describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not recorded in Hone", () => {
+describe("HON-49: a partial refund signed by Stripe is recorded in the refund history", () => {
   const attemptRow = () => ({
     id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
     status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
@@ -1589,24 +1593,25 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     amount_cents: 5000, currency: "cad", charged_at: null, refund_status: null,
     refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
   });
+  const RECORDED = { data: [{ result: "recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 2000, out_inflight_count: 0 }], error: null };
   // One fake database for a whole test, with enough queued reads for `deliveries` webhook calls, so everything the route did is
   // visible together (a fresh fake per call would hide the earlier calls).
-  function startDatabase(deliveries: number) {
+  function startDatabase(deliveries: number, history: ReadResult | Error = RECORDED) {
     ADMIN.current = makeAdmin({
       studio_payment_settings: Array.from({ length: deliveries }, () => ({ data: { studio_id: "studio-1" }, error: null })),
       payment_charge_attempts: Array.from({ length: deliveries }, () => ({ data: attemptRow(), error: null })),
-    }, { claim_stripe_event: CLAIM_OK });
+    }, { claim_stripe_event: CLAIM_OK, record_charge_refund_history: history });
   }
-  function partial(eventId: string, refunds: Array<{ id: string; amount: number }>) {
-    const refunded = refunds.reduce((n, r) => n + r.amount, 0);
+  function partial(eventId: string, refunds: Array<{ id: string; amount: number; status?: string }>, over: { has_more?: boolean; omitList?: boolean; customer?: string } = {}) {
+    const refunded = refunds.filter((r) => (r.status ?? "succeeded") === "succeeded").reduce((n, r) => n + r.amount, 0);
     const event = {
       id: eventId, object: "event", created: 1770000000, type: "charge.refunded", account: "acct_test_1", livemode: false,
       data: { object: {
         object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: false,
         payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
         refunded: false, amount_refunded: refunded, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
-        refunds: { object: "list", has_more: false, data: refunds.map((r) => ({ object: "refund", id: r.id, amount: r.amount,
-          currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: "succeeded" })) },
+        ...(over.omitList ? {} : { refunds: { object: "list", has_more: over.has_more ?? false, data: refunds.map((r) => ({ object: "refund", id: r.id, amount: r.amount,
+          currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: r.status ?? "succeeded" })) } }),
       } },
     };
     const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
@@ -1614,47 +1619,98 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     const payload = JSON.stringify(event);
     return post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }));
   }
-  const alerts = () => ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_partial_out_of_band");
-  // The only database commands a partial refund may run: claim the event, then mark it processed. Any other command (a different
-  // one that writes the row, for example) fails the exact-list checks below.
-  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "mark_stripe_event_processed"];
+  const alerts = (event: string) => ADMIN.current!.opsRows.filter((r) => r.event === event);
+  const HISTORY = ["claim_stripe_event", "record_charge_refund_history", "mark_stripe_event_processed"];
+  const historyCalls = () => ADMIN.current!.rpcCalls.filter((c) => c.name === "record_charge_refund_history");
 
-  it("one signed partial refund (2000 of 5000): critical alert, no row change, only claim and mark commands, acknowledged", async () => {
+  it("one signed partial refund (2000 of 5000): recorded through the history command only, a WARNING alert, no row change, acknowledged", async () => {
     startDatabase(1);
     const res = await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
-    expect(alerts()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(names(ADMIN.current!.rpcCalls)).toEqual(HISTORY);
     expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(names(ADMIN.current!.rpcCalls)).toEqual(ONLY_CLAIM_AND_MARK);
+    expect(alerts("charge_refunded_partial_recorded")).toEqual([expect.objectContaining({ severity: "warning" })]);
+    expect(alerts("charge_refunded_partial_out_of_band")).toEqual([]);
+    expect(historyCalls()[0].args).toMatchObject({
+      p_attempt_id: "attempt-1", p_event_id: "evt_partial_1", p_event_type: "charge.refunded", p_studio_id: "studio-1",
+      p_stripe_account_id: "acct_test_1", p_livemode: false,
+      p_object: {
+        customer_id: "cus_1", payment_intent_id: "pi_1", charge_id: "ch_1", amount_cents: 5000, currency: "cad", event_created: 1770000000,
+        evidence_kind: "signed_event", charge_amount_refunded: 2000, charge_refund_list_complete: true,
+        components: [{ refund_id: "re_1", amount_cents: 2000, currency: "cad", refund_status: "succeeded", charge_id: "ch_1", payment_intent_id: "pi_1" }],
+      },
+    });
   });
 
-  it("a second partial (3000 of 5000 in all) is treated the same: no row change, two critical alerts in all, only claim and mark commands each time", async () => {
+  it("a second partial (3000 of 5000 in all) is recorded the same way: the command receives BOTH refunds of the signed list", async () => {
     startDatabase(2);
     expect((await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]))).status).toBe(200);
-    expect(alerts()).toHaveLength(1);
     const res = await callRoute(partial("evt_partial_2", [{ id: "re_1", amount: 2000 }, { id: "re_2", amount: 1000 }]));
     expect(res.status).toBe(200);
-    expect(alerts()).toEqual([
-      expect.objectContaining({ severity: "critical", stripe_event_id: "evt_partial_1" }),
-      expect.objectContaining({ severity: "critical", stripe_event_id: "evt_partial_2" }),
-    ]);
+    expect(alerts("charge_refunded_partial_recorded")).toHaveLength(2);
+    expect(alerts("charge_refunded_partial_out_of_band")).toEqual([]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(names(ADMIN.current!.rpcCalls)).toEqual([...ONLY_CLAIM_AND_MARK, ...ONLY_CLAIM_AND_MARK]);
+    expect(names(ADMIN.current!.rpcCalls)).toEqual([...HISTORY, ...HISTORY]);
+    expect((historyCalls()[1].args.p_object as { components: unknown[]; charge_amount_refunded: number }).components).toHaveLength(2);
+    expect((historyCalls()[1].args.p_object as { charge_amount_refunded: number }).charge_amount_refunded).toBe(3000);
   });
 
-  it("with the row untouched, the panel and the balance both still say the whole charge is refundable and kept", async () => {
+  it("a pending refund beside a succeeded one is sent with its own status (the command counts it in flight)", async () => {
+    startDatabase(1);
+    await callRoute(partial("evt_partial_pending", [{ id: "re_1", amount: 2000 }, { id: "re_2", amount: 1000, status: "pending" }]));
+    const components = (historyCalls()[0].args.p_object as { components: Array<{ refund_id: string; refund_status: string }> }).components;
+    expect(components.map((c) => `${c.refund_id}:${c.refund_status}`)).toEqual(["re_1:succeeded", "re_2:pending"]);
+  });
+
+  for (const result of ["identity_mismatch", "refund_evidence_refused", "terminal_refund_mismatch", "invalid_input", "not_found"]) {
+    it(`the command refuses (${result}): today's critical alert, no row change, still acknowledged (a refusal must not cause a retry loop)`, async () => {
+      startDatabase(1, { data: [{ result }], error: null });
+      const res = await callRoute(partial("evt_partial_refused", [{ id: "re_1", amount: 2000 }]));
+      expect(res.status).toBe(200);
+      expect(alerts("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+  }
+
+  it("an incomplete refund list (has_more) is NOT sent to the command: critical alert, no row change", async () => {
+    startDatabase(1);
+    const res = await callRoute(partial("evt_partial_more", [{ id: "re_1", amount: 2000 }], { has_more: true }));
+    expect(res.status).toBe(200);
+    expect(historyCalls()).toEqual([]);
+    expect(alerts("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("a charge with no refund list at all is NOT sent to the command: critical alert, no row change", async () => {
+    startDatabase(1);
+    const res = await callRoute(partial("evt_partial_nolist", [{ id: "re_1", amount: 2000 }], { omitList: true }));
+    expect(res.status).toBe(200);
+    expect(historyCalls()).toEqual([]);
+    expect(alerts("charge_refunded_partial_out_of_band")).toHaveLength(1);
+  });
+
+  it("a database error from the command is not acknowledged: the event is retried, and nothing is claimed as recorded", async () => {
+    startDatabase(1, { data: null, error: { code: "XX000", message: "boom" } as never });
+    const res = await callRoute(partial("evt_partial_dberr", [{ id: "re_1", amount: 2000 }]));
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("with the summary recorded (2000 of 5000 back), the panel says 3000 is still refundable and the balance says 3000 is kept (so 2000 of a 5000 quote is owed)", async () => {
     const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
     const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
     const row = attemptRow();
     expect(refundDisplayState({
       chargeStatus: row.status, amountCents: row.amount_cents, refundStatus: row.refund_status,
       refundAmountCents: row.refund_amount_cents, providerRefundStatus: null, stripeRefundId: row.stripe_refund_id,
-      cumulativeFullRefundVerified: false,
-    })).toEqual({ kind: "not_refunded", remainingRefundableCents: 5000, mayStartRefund: true });
+      cumulativeFullRefundVerified: false, refundsSucceededCents: 2000, refundsInflightCount: 0,
+    })).toEqual({ kind: "refunded", remainingRefundableCents: 3000, mayStartRefund: false, refundedCents: 2000 });
     expect(outstandingForAppointment({
       status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
-      settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad" }],
-    })).toEqual({ kind: "paid" });
+      settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad", refundsSucceededCents: 2000, refundsInflightCount: 0 }],
+    })).toMatchObject({ kind: "owed", outstandingCents: 2000, cardKeptCents: 3000 });
   });
 });

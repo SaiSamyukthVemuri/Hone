@@ -8,6 +8,7 @@ import {
   providerMoneyMismatchDetails,
 } from "@/lib/billing/provider-money-facts";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { buildChargeRefundHistoryEvidence, REFUND_HISTORY_RECORDED } from "@/lib/billing/refund-history";
 
 // ---------------------------------------------------------------------------
 // PR #179. Stripe webhook reconciliation for payment_charge_attempts.
@@ -531,6 +532,27 @@ function cumulativeChargeRefundEvidence(event: Stripe.Event, ctx: WebhookCtx, at
     charge_livemode: charge.livemode, charge_refunded: charge.refunded,
     charge_amount_refunded: charge.amount_refunded, charge_refund_list_complete: true,
     charge_refund_components: components };
+}
+
+// HON-49 (0358): record the refunds a signed charge.refunded event lists, through the ONE command that writes them. The evidence comes from
+// the signed event's charge only (lib/billing/refund-history.ts; N2: nothing is filled from the stored attempt). A database error is
+// thrown so the event is retried; a refusal or an incomplete list is returned for the caller to alert on, and nothing is written.
+async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, attemptId: string, charge: Stripe.Charge):
+  Promise<{ sent: boolean; result: string | null }> {
+  const evidence = buildChargeRefundHistoryEvidence({ id: event.id, created: event.created }, charge);
+  if (!evidence) return { sent: false, result: null };
+  const { data, error } = await createAdminClient().rpc("record_charge_refund_history", {
+    p_attempt_id: attemptId,
+    p_event_id: event.id,
+    p_event_type: event.type,
+    p_studio_id: ctx.studioId,
+    p_stripe_account_id: ctx.stripeAccountId,
+    p_livemode: ctx.livemode,
+    p_object: evidence,
+  });
+  if (error) throw new Error(`charge_refunded_history_failed:${dbErrorCode(error) ?? ""}`);
+  const row = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
+  return { sent: true, result: typeof row?.result === "string" ? row.result : null };
 }
 
 async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt: AttemptRow) {
@@ -1276,8 +1298,47 @@ export async function handleChargeRefunded(
   const isFullRefund =
     charge.refunded === true && amountRefunded === amountCaptured;
 
+  // HON-49: the refund list is recorded for EVERY signed charge.refunded (partial or full), before the older decision below. The older full-refund
+  // receipt path (0240) is untouched and still runs for a full refund; the two must agree (refundDisplayState reads both and says "unclear" if not).
+  const history = await recordChargeRefundHistory(event, ctx, attempt.id, charge);
+  const historyRecorded = history.sent && (REFUND_HISTORY_RECORDED as readonly string[]).includes(history.result ?? "");
+  if (isFullRefund && history.sent && !historyRecorded) {
+    // A full refund is still reconciled by the receipt path below; the refusal of the history write needs an operator and is kept durably.
+    const kept = await recordOpsAlertDurably({
+      severity: "critical", event: "charge_refunded_history_refused",
+      message: "The refund history command refused the signed charge.refunded evidence. The older full-refund receipt path still ran; the history was NOT recorded.",
+      studioId: attempt.studio_id, clientId: attempt.client_id, stripeEventId: event.id, route: ROUTE,
+      safeDetails: { attempt_id: attempt.id, stripe_charge_id: charge.id, history_result: history.result },
+    });
+    if (kept !== true) throw new PaymentRefundRefusalUnrecordedError();
+  }
+
+  if (!isFullRefund && historyRecorded) {
+    // HON-49: the partial refund IS recorded (payment_charge_refunds and the summary on the attempt). Not an incident: a warning, so an
+    // operator can still see it happened. The row's own refund_status / refund_amount_cents are untouched; the panel and the balance read
+    // the summary through refundDisplayState / the balance's card-kept rule.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "charge_refunded_partial_recorded",
+      message: "Stripe charge.refunded with a partial amount was recorded in the refund history.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      route: ROUTE,
+      safeDetails: { attempt_id: attempt.id, stripe_charge_id: charge.id, amount_captured: amountCaptured, amount_refunded: amountRefunded, currency: charge.currency, history_result: history.result },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      partialRefundRecorded: true,
+      amountRefunded,
+      amountCaptured,
+    };
+  }
+
   if (!isFullRefund) {
-    // Partial refund. v1 schema does not have a column to
+    // Partial refund that could NOT be recorded (the refund list is incomplete, or the command refused the evidence). Nothing is written
+    // to the row, and the alert is critical, exactly as before HON-49. v1 schema does not have a column to
     // truthfully represent "Stripe refunded X but only Y of Z".
     // Record a critical ops_alert; do NOT touch the row. The
     // operator must reconcile via Stripe Dashboard.
@@ -1285,7 +1346,7 @@ export async function handleChargeRefunded(
       severity: "critical",
       event: "charge_refunded_partial_out_of_band",
       message:
-        "Stripe charge.refunded with a partial amount. v1 Hone schema does not represent partial refunds; row was NOT mutated. Reconcile via Stripe Dashboard.",
+        "Stripe charge.refunded with a partial amount that could NOT be recorded in the refund history (incomplete refund list, or the command refused the evidence); row was NOT mutated. Reconcile via Stripe Dashboard.",
       studioId: attempt.studio_id,
       clientId: attempt.client_id,
       stripeEventId: event.id,
@@ -1296,6 +1357,8 @@ export async function handleChargeRefunded(
         amount_captured: amountCaptured,
         amount_refunded: amountRefunded,
         currency: charge.currency,
+        history_sent: history.sent,
+        history_result: history.result,
       },
     });
     return {

@@ -24,6 +24,13 @@ export type OutstandingCard = {
   /** The provider's own refund state (payment_charge_attempts.stripe_refund_status), when recorded. */
   providerRefundStatus?: string | null;
   currency: string | null;
+  /**
+   * HON-49 (0358) refund history summary, the same two inputs refundDisplayState reads. `refundsSucceededCents` null/omitted = the
+   * history was never established (the older columns decide, as before); a number is the money that went back. `refundsInflightCount`
+   * counts refunds still pending: any makes the kept money unprovable.
+   */
+  refundsSucceededCents?: number | null;
+  refundsInflightCount?: number | null;
 };
 
 export type OutstandingSettlement = {
@@ -85,7 +92,7 @@ const COLLECTED: ReadonlySet<SettlementMethod> = new Set([
  * refund": a succeeded refund with no readable amount, or one still pending / needing action at the provider, makes the figure
  * unprovable (the visit could read as fully paid, or as owing more, on a guess).
  */
-function cardKept(c: OutstandingCard): number | null {
+function legacyCardKept(c: OutstandingCard): number | null {
   if (c.status === "pending_stripe") return null; // money may or may not have moved
   if (c.status !== "succeeded") return 0;
   if (typeof c.amountCents !== "number") return null;
@@ -109,6 +116,31 @@ function cardKept(c: OutstandingCard): number | null {
   }
   if (provider !== null && provider !== "failed" && provider !== "canceled") return null;
   return Math.max(0, c.amountCents); // no refund, or one that failed: the money stayed
+}
+
+/**
+ * The money of one charge that stayed on the card. The refund history (0358) is laid over the older columns' reading by the SAME rules
+ * refundDisplayState applies (lib/billing/refund-display-state.ts), so the panel's remaining amount and this figure cannot drift:
+ * not established = the older reading; established with a refund still in flight = unprovable; established = amount - refunded, and
+ * only when the older columns, if they also name a refund, name the same money.
+ */
+function cardKept(c: OutstandingCard): number | null {
+  const older = legacyCardKept(c);
+  const s = c.refundsSucceededCents ?? null;
+  const f = c.refundsInflightCount ?? 0;
+  if (c.status !== "succeeded") return older;
+  if (s === null) return f !== 0 ? null : older; // an in-flight count with no established history is not a readable state
+  if (older === null) return null;
+  if (typeof c.amountCents !== "number" || !Number.isInteger(s) || s < 0 || s > c.amountCents || !Number.isInteger(f) || f < 0) return null;
+  if (f > 0) return null; // a pending refund may or may not move money
+  if (s === 0) return older; // only failed or canceled refunds are recorded: nothing went back, the older reading stands
+  const ours = c.refundStatus ?? null;
+  if (ours === "succeeded") {
+    if (c.refundAmountCents !== s) return null; // the older columns and the history name different money: not stated
+  } else if (typeof c.refundAmountCents === "number" && c.refundAmountCents !== 0) {
+    return null;
+  }
+  return c.amountCents - s;
 }
 
 export function outstandingForAppointment(input: OutstandingInput): Outstanding {

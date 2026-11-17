@@ -357,6 +357,12 @@ describe("charge.refunded: full vs partial discrimination", () => {
     expect(HELPER).toMatch(/partialRefundIgnored:\s*true/);
   });
 
+  it("HON-49: a partial refund whose list is recorded is a WARNING (charge_refunded_partial_recorded) and returns partialRefundRecorded; the row's older refund columns are not touched", () => {
+    expect(HELPER).toMatch(/severity:\s*"warning",\s*event:\s*"charge_refunded_partial_recorded"/);
+    expect(HELPER).toMatch(/partialRefundRecorded:\s*true/);
+    expect(HELPER).toMatch(/if \(!isFullRefund && historyRecorded\)/);
+  });
+
   it("the partial-refund safeDetails carries the amount captured + amount refunded", () => {
     expect(HELPER).toMatch(/amount_captured:\s*amountCaptured/);
     expect(HELPER).toMatch(/amount_refunded:\s*amountRefunded/);

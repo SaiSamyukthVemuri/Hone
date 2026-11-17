@@ -133,6 +133,9 @@ export type SessionPaymentExistingAttemptSummary = {
   // TRUE when the signed cumulative full-refund receipt (0240 stripe_charge_refund_event_id) exists. Derived on the
   // server; the event id itself is never sent to the client.
   cumulativeFullRefundVerified: boolean;
+  // HON-49 (0358) refund history summary, read through refundDisplayState. null = the history was never established (NOT zero).
+  refundsSucceededCents: number | null;
+  refundsInflightCount: number;
   refundFailureCode: string | null;
   refundFailureMessageSafe: string | null;
 };
