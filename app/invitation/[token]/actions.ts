@@ -1239,8 +1239,11 @@ export async function noTimesWorkAction(
   // CONTACT CHOICE, VALIDATION ONLY (HON-7). Nothing here stores, sends or keeps a number: no screen sends this argument yet, and the
   // command below receives only the two answers. A choice that IS sent is checked by the same rules the stored column will hold, and a
   // refusal names a class only. The entry's own number is not read here, so confirming "the number on file" is refused until the
-  // storage that holds a number is applied and read back (0328); only a typed number can pass.
-  if (contact !== undefined && !resolveContactChoice(contact, null).ok) {
+  // storage that holds a number is applied and read back; only a typed number can pass. The argument comes from the browser, so anything
+  // that is not a plain object (null, a string, a number, an array) is refused the same way and never reaches the rules.
+  const sent: unknown = contact;
+  const plain = typeof sent === "object" && sent !== null && !Array.isArray(sent);
+  if (sent !== undefined && (!plain || !resolveContactChoice(sent as ContactChoiceInput, null).ok)) {
     return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "contact_invalid");
   }
   const out = await declineWithAnswers({

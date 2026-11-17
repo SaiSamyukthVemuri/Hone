@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: h.rpc }) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
 
+import { resolveContactChoice, type ContactChoiceInput } from "@/lib/waitlist/decline-contact-phone";
 import { declineWithAnswers, requestWithdrawal } from "@/lib/booking/waitlist-invitation";
 import { ANSWER_PROBLEM_COPY, DECLINE_ANSWER_MAX, NO_TIMES_WORK_LABELS, validateNoTimesWork } from "@/lib/waitlist/decline-responses";
 import { DECLINE_CONFIRMATION, NO_TIMES_WORK_NOTICE, WITHDRAWAL_CONFIRMATION } from "@/lib/waitlist/decline-copy";
@@ -117,7 +118,7 @@ describe("the command wrappers", () => {
 describe("the contact choice on the answers action (validation only, HON-7)", () => {
   it("is optional, checked before the command, and never reaches it", () => {
     expect(answers).toMatch(/contact\?: ContactChoiceInput/);
-    const check = answers.indexOf("resolveContactChoice(contact, null)");
+    const check = answers.indexOf("resolveContactChoice(sent as ContactChoiceInput, null)");
     const command = answers.indexOf("declineWithAnswers({");
     expect(check).toBeGreaterThan(answers.indexOf("validateNoTimesWork"));
     expect(check).toBeGreaterThan(-1);
@@ -125,6 +126,13 @@ describe("the contact choice on the answers action (validation only, HON-7)", ()
     // The command receives the two answers and the capability only: no number of any kind.
     const call = answers.slice(command, answers.indexOf("});", command));
     expect(call).not.toMatch(/contact|phone|e164/i);
+  });
+  it("treats a contact that is not a plain object (null, a string, a number, an array) as refused, never a TypeError", () => {
+    // The argument crosses the network, so the type is not trusted: the guard runs before the rules read a property.
+    const guard = answers.indexOf("const plain = typeof sent");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(answers.indexOf("resolveContactChoice(sent"));
+    expect(answers).toMatch(/sent !== undefined && \(!plain \|\| !resolveContactChoice\(sent as ContactChoiceInput, null\)\.ok\)/);
   });
   it("refuses with a class-only notice and echoes no number", () => {
     expect(answers).toMatch(/"contact_invalid"/);
@@ -195,5 +203,29 @@ describe("the server actions", () => {
   });
   it("the confirmation text is the contract's", () => {
     expect(DECLINE_CONFIRMATION).toBe("Nothing is booked. You're still on the waitlist in your original place. The studio will contact you to arrange a suitable time.");
+  });
+});
+
+describe("the contact check behaves for every shape the browser could send", () => {
+  // The same expression as the action, run on real values: the source pins above prove it is the one in the action.
+  const refused = (sent: unknown) => {
+    const plain = typeof sent === "object" && sent !== null && !Array.isArray(sent);
+    return sent !== undefined && (!plain || !resolveContactChoice(sent as ContactChoiceInput, null).ok);
+  };
+  it("does not throw and refuses null and a string", () => {
+    expect(() => refused(null)).not.toThrow();
+    expect(refused(null)).toBe(true);
+    expect(() => refused("+16475550142")).not.toThrow();
+    expect(refused("+16475550142")).toBe(true);
+  });
+  it("refuses a number, an array and a boolean; passes only an absent argument or a valid typed number", () => {
+    expect(refused(5)).toBe(true);
+    expect(refused([])).toBe(true);
+    expect(refused(true)).toBe(true);
+    expect(refused({ useOnFile: true })).toBe(true);
+    expect(refused({})).toBe(true);
+    expect(refused({ contactPhone: "abc" })).toBe(true);
+    expect(refused(undefined)).toBe(false);
+    expect(refused({ contactPhone: "+16475550142" })).toBe(false);
   });
 });
