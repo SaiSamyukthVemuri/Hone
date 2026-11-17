@@ -3,7 +3,7 @@
   "migrations": {
     "count": 274,
     "last": "0358_payment_charge_refund_history.sql",
-    "sha256": "d06f3b5e2cf06e84b6beb0e8313b79b6c0caf16efaecdd7c82c2fb44f146b614"
+    "sha256": "c473bfea2339eb5a5b8c7239dac5356978920733dc5b5d863c144d4c1cf4755c"
   },
   "public": {
     "tables": [
