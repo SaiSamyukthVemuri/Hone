@@ -8,7 +8,7 @@ import { adminQuery, resolveLocalDbUrl } from "./harness";
 // the tables 0326 indexed and puts back 0325's two reads, so 0326's two indexes and two function bodies are gone and nothing reports it. CI
 // starts from a fresh stack, so it never noticed; a long-lived local stack silently stops matching the hosted catalog.
 //
-// WHAT. `captureCatalog()` takes a fingerprint of the `public` schema: relations (kind, owner, RLS enabled and forced flags, privileges), columns
+// WHAT. `captureCatalog()` takes a fingerprint of the `public` schema: relations (kind, owner, RLS enabled and forced flags, storage options such as a view's security_invoker, privileges), columns
 // (type, nullability, default, generation, column privileges), view and materialized-view definitions, indexes, constraints, triggers (definition
 // and enabled state), policies, and functions (full definition, owner, security and settings) with their privileges.
 // `restoreCatalog(before)` re-creates what it can from the captured definitions, in dependency order: functions (with their privileges) first,
@@ -16,7 +16,7 @@ import { adminQuery, resolveLocalDbUrl } from "./harness";
 // future cases.
 //
 // WHAT IT DOES NOT DO (stated so nobody reads it as more than it is).
-//  - REPORTED, NOT RESTORED: relation and column privileges, policies, constraints, columns, views, RLS flags, owners and trigger enabled state.
+//  - REPORTED, NOT RESTORED: relation and column privileges, policies, constraints, columns, views, RLS flags, storage options, owners and trigger enabled state.
 //    If a suite changes one of these the assertion fails and names it; nothing here puts it back.
 //  - Constraint-backed indexes (primary key, unique constraint) are NOT restored as plain indexes: they come back with their constraint, if at all.
 //  - NOT IN THE FINGERPRINT: types and enums, extensions, default privileges, comments, sequences' state, and DATA. A 0325 down then up also loses the
@@ -49,9 +49,9 @@ export async function captureCatalog(): Promise<CatalogSnapshot> {
 
   for (const r of await q(`
     select c.relname, c.relkind::text as kind, coalesce(c.relacl::text, '') as acl, c.relowner::regrole::text as owner,
-           c.relrowsecurity::text as rls, c.relforcerowsecurity::text as forced
+           c.relrowsecurity::text as rls, c.relforcerowsecurity::text as forced, coalesce(c.reloptions::text, '') as opts
       from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p','v','m','S')
-      order by c.relname`)) add(`rel|${r.relname}|${r.kind}`, `acl=${r.acl}|owner=${r.owner}|rls=${r.rls}|forced=${r.forced}`);
+      order by c.relname`)) add(`rel|${r.relname}|${r.kind}`, `acl=${r.acl}|owner=${r.owner}|rls=${r.rls}|forced=${r.forced}|options=${r.opts}`);
 
   for (const r of await q(`
     select c.relname, a.attname, format_type(a.atttypid, a.atttypmod) as type, a.attnotnull::text as nn,
