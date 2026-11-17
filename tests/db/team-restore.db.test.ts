@@ -34,6 +34,10 @@ let A: SeededStudio;
 let B: SeededStudio;
 let pract: { userId: string; practitionerId: string };
 let sessionId: string;
+// Studio B's whole practitioners table, as rows, so "B is untouched" is literal: the same rows before and after the restore.
+const snapshotOf = async (studioId: string) =>
+  (await adminQuery(`select to_jsonb(p) as r from public.practitioners p where studio_id = $1 order by id`, [studioId])).rows.map((x) => JSON.stringify(x.r));
+let bBefore: string[];
 
 describe("Team: restore a removed practitioner", () => {
   it("setup: studio A (owner, practitioner, client), studio B (owner, client); the practitioner charts a session", async () => {
@@ -88,7 +92,10 @@ describe("Team: restore a removed practitioner", () => {
 
   it("restore: the SAME row, role, name and email come back active; access returns; records and studio B are untouched (V6, V7)", async () => {
     const before = await rowOf(pract.practitionerId);
+    bBefore = await snapshotOf(B.studioId);
+    expect(bBefore.length).toBeGreaterThan(0);
     expect(await setActive(A.studioId, A.practitionerId, pract.practitionerId, true)).toBe("ok");
+    expect(await snapshotOf(B.studioId), "studio B's practitioner rows are identical before and after the restore").toEqual(bBefore);
     const after = await rowOf(pract.practitionerId);
     expect({ ...after, active: undefined }).toEqual({ ...before, active: undefined });
     expect(after.active).toBe(true);
