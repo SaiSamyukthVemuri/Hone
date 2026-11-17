@@ -73,9 +73,9 @@ describe("every paragraph, heading and link that prints the client's name breaks
   // Photos measured the Overview and Billing tabs scrolling sideways at 390 with a 105-character single word. The same name is printed by many elements:
   // the tab cards (components/), and the pages under clients/[id] (images, intake, assisted intake, new session, edit, clinical-notes print). The scan reads
   // every .tsx file under components/ (all sub-folders) and app/(app)/clients/[id]/, so a NEW element that prints the name unwrapped fails here with no list
-  // to remember. Stated bound: the scan matches <p>, <h1>-<h3>, <Link> and <PendingLink> whose OWN text (no nested tag) contains one of the name expressions below, comment lines ignored; a name
+  // to remember. Stated bound: the scan matches <p>, <h1>-<h3>, <Link> and <PendingLink> whose OWN text (no nested tag) contains one of the name expressions below (including a clientDisplayName(...) call, which is what the edit page's back link prints), comment lines ignored; a name
   // printed inside a <span>/<div>, or through a differently named variable, would escape it.
-  const NAME = String.raw`\{(?:clientName|clientDisplay|client\.name|data\.client\.name|c\.name)\}`;
+  const NAME = String.raw`\{(?:clientName|clientDisplay|client\.name|data\.client\.name|c\.name|d\.clientName|clientDisplayName\((?:[^{}]|\{[^{}]*\})*\))\}`;
   const ELEMENT = new RegExp(String.raw`<(p|h1|h2|h3|Link|PendingLink)\b([^>]*)>([^<]*?${NAME}[^<]*)<\/\1>`, "g");
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of readdirSync(dir)) {
@@ -90,7 +90,7 @@ describe("every paragraph, heading and link that prints the client's name breaks
 
   it("the scan reaches the pinned files (not vacuous)", () => {
     const files = new Set(hits.map((h) => h.f));
-    for (const f of ["components/consent-signatures-card.tsx", "components/payment-method-card.tsx", "components/portal-messages-card.tsx", "app/(app)/clients/[id]/page.tsx", "app/(app)/clients/[id]/intake/page.tsx", "app/(app)/clients/[id]/sessions/new/page.tsx"]) {
+    for (const f of ["components/consent-signatures-card.tsx", "components/payment-method-card.tsx", "components/portal-messages-card.tsx", "app/(app)/clients/[id]/page.tsx", "app/(app)/clients/[id]/intake/page.tsx", "app/(app)/clients/[id]/sessions/new/page.tsx", "app/(app)/clients/[id]/edit/page.tsx", "components/client-form.tsx"]) {
       expect(files.has(f), f).toBe(true);
     }
     expect(hits.length).toBeGreaterThanOrEqual(12);
