@@ -48,3 +48,51 @@ describe("the page puts the contact column beside every tab and the header keeps
     expect(header).toContain("client-profile-avatar");
   });
 });
+
+describe("the profile header name", () => {
+  const page = readFileSync("app/(app)/clients/[id]/page.tsx", "utf8");
+  it("breaks an unbroken long word anywhere, so it never widens the page (HON-69)", () => {
+    const h1 = page.match(/<h1 className="([^"]*)"/)?.[1] ?? "";
+    expect(h1).toContain("[overflow-wrap:anywhere]");
+    expect(h1).toContain("min-w-0");
+    // break-words alone (overflow-wrap: break-word) does not shrink a flex item's minimum width
+    expect(h1).not.toMatch(/(^|\s)break-words(\s|$)/);
+  });
+  it("the layout comment states where the contact card sits on phones", () => {
+    expect(page).not.toContain("stacked above the content on phones");
+    expect(page).toContain("the tab's content comes first and the contact card follows it");
+  });
+  it("the contact card's real class string puts it last on phones and in DOM order from md up", () => {
+    const aside = readFileSync("app/(app)/clients/[id]/_profile/ContactSidebar.tsx", "utf8").match(/<aside[\s\S]*?>/)?.[0] ?? "";
+    expect(aside).toMatch(/className="[^"]*\border-last\b[^"]*"/);
+    expect(aside).toMatch(/className="[^"]*\bmd:order-none\b[^"]*"/);
+  });
+});
+
+describe("every paragraph on a profile tab that prints the client's name breaks an unbroken long word (HON-69)", () => {
+  // Photos measured the Overview and Billing tabs scrolling sideways at 390 with a 105-character single word: the consent paragraph ("Forms <name> has
+  // signed...") ran 684px. The same name is printed by the payment-card (Billing) and portal-messages paragraphs. Each must carry the rule the header has.
+  const ON_PROFILE_TABS = ["components/consent-signatures-card.tsx", "components/payment-method-card.tsx", "components/portal-messages-card.tsx"];
+  // Components that print {clientName} but are dialogs or other pages, not profile tabs (they are not in the page this PR measures).
+  const NOT_A_PROFILE_TAB = ["components/quick-checkout-modal.tsx", "components/waitlist/decline-follow-up-section.tsx", "components/appointment/postcare-section.tsx", "components/client-form.tsx"];
+  const paragraphsPrintingName = (src: string) => [...src.matchAll(/<p\b[^>]*>(?:(?!<\/p>)[\s\S])*?\{clientName\}(?:(?!<\/p>)[\s\S])*?<\/p>/g)].map((m) => m[0]);
+
+  it("the scan sees paragraphs in each pinned component (not vacuous)", () => {
+    for (const f of ON_PROFILE_TABS) expect(paragraphsPrintingName(readFileSync(f, "utf8")).length, f).toBeGreaterThan(0);
+  });
+  it("each such paragraph has min-w-0 and [overflow-wrap:anywhere]", () => {
+    for (const f of ON_PROFILE_TABS) {
+      for (const p of paragraphsPrintingName(readFileSync(f, "utf8"))) {
+        expect(p, f).toContain("[overflow-wrap:anywhere]");
+        expect(p, f).toContain("min-w-0");
+      }
+    }
+  });
+  it("no OTHER component prints {clientName} in a paragraph without being listed, so a new one cannot slip in unwrapped", async () => {
+    const { readdirSync } = await import("node:fs");
+    const all = ["components", "components/appointment", "components/waitlist"].flatMap((d) => readdirSync(d).filter((x) => x.endsWith(".tsx")).map((x) => `${d}/${x}`));
+    const printing = all.filter((f) => paragraphsPrintingName(readFileSync(f, "utf8")).length > 0);
+    const unlisted = printing.filter((f) => !ON_PROFILE_TABS.includes(f) && !NOT_A_PROFILE_TAB.includes(f));
+    expect(unlisted).toEqual([]);
+  });
+});
