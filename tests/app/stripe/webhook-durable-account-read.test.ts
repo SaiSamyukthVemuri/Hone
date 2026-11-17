@@ -1574,3 +1574,88 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     expect(ADMIN.current!.updateCalls).toEqual([]);
   });
 });
+
+// ===========================================================================
+// RECEIPT ORIGIN (#1503 premise). The cumulative full-refund receipt
+// (payment_charge_attempts.stripe_charge_refund_event_id, migration 0240) is
+// written ONLY by reconcile_bound_payment_event for a charge.refunded event, and
+// that command is reached ONLY after the route's constructEvent has verified the
+// signature. These drive the REAL Stripe SDK verifier (not a mock) with a genuine
+// full-refund event: a forged, tampered or unsigned copy must reach no database
+// command at all, and the genuine signed copy must reach the receipt command.
+// ===========================================================================
+describe("cumulative refund receipt: only a verified signature reaches the receipt command", () => {
+  function fullRefundEvent() {
+    return {
+      id: "evt_cumulative_receipt", object: "event", created: 1770000000, type: "charge.refunded",
+      account: "acct_test_1", livemode: false,
+      data: { object: {
+        object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: false,
+        payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
+        refunded: true, amount_refunded: 5000, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
+        // Two refunds summing to the whole charge: a SINGLE refund of the full amount takes the single-refund
+        // path and never writes the receipt; only a cumulative list (more than one refund, or one that is not the
+        // whole charge) builds charge_refund_components.
+        refunds: { object: "list", has_more: false, data: [
+          { object: "refund", id: "re_1", amount: 2000, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: "succeeded" },
+          { object: "refund", id: "re_2", amount: 3000, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: "succeeded" },
+        ] },
+      } },
+    };
+  }
+  function prepare() {
+    const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
+    CONSTRUCT_EVENT.mockImplementation((body, header, secret) => webhooks.constructEvent(body, header, secret));
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: {
+        id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+        status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+        stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+        amount_cents: 5000, currency: "cad", charged_at: null, refund_status: null,
+        refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
+      }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK });
+    const payload = JSON.stringify(fullRefundEvent());
+    return { webhooks, payload, signature: webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }) };
+  }
+
+  it("a payload altered after signing is refused (400) and reaches no database command", async () => {
+    const { payload, signature } = prepare();
+    const tampered = payload.replace('"amount_refunded":5000', '"amount_refunded":4999');
+    expect(tampered).not.toBe(payload);
+    expect((await callRoute(post(tampered, signature))).status).toBe(400);
+    expect(ADMIN.current!.rpcCalls).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("a payload signed with a different secret is refused (400) and reaches no database command", async () => {
+    const { webhooks, payload } = prepare();
+    const forged = webhooks.generateTestHeaderString({ payload, secret: "whsec_not_ours" });
+    expect((await callRoute(post(payload, forged))).status).toBe(400);
+    expect(ADMIN.current!.rpcCalls).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("a request with no Stripe-Signature header is refused (400) and reaches no database command", async () => {
+    const { payload } = prepare();
+    const unsigned = new Request("https://hone.test/api/stripe/webhook", { method: "POST", body: payload });
+    expect((await callRoute(unsigned)).status).toBe(400);
+    expect(ADMIN.current!.rpcCalls).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("CONTROL: the genuinely signed copy claims the event first, then reaches the receipt command as signed evidence", async () => {
+    const { payload, signature } = prepare();
+    await callRoute(post(payload, signature));
+    const order = names(ADMIN.current!.rpcCalls);
+    expect(order[0]).toBe("claim_stripe_event");
+    const receipt = ADMIN.current!.rpcCalls.find((c) => c.name === "reconcile_bound_payment_event");
+    expect(receipt).toBeDefined();
+    expect(order.indexOf("claim_stripe_event")).toBeLessThan(order.indexOf("reconcile_bound_payment_event"));
+    expect(receipt!.args).toMatchObject({ p_event_id: "evt_cumulative_receipt", p_event_type: "charge.refunded" });
+    expect(receipt!.args.p_object).toMatchObject({ evidence_kind: "signed_event", charge_refunded: true,
+      charge_amount_refunded: 5000, charge_refund_list_complete: true });
+    expect((receipt!.args.p_object as { charge_refund_components: unknown[] }).charge_refund_components).toHaveLength(2);
+  });
+});
