@@ -5,6 +5,8 @@ import {
   SESSION_START_REFUSALS,
   parseSessionStartRefusal,
   classifyAppointmentForStart,
+  isAppointmentUuid,
+  appointmentPath,
   sessionStartRefusalCopy,
   sessionStartRefusalHref,
 } from "@/lib/sessions/session-start-refusal";
@@ -54,8 +56,8 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
   });
 
   it("redirects back to the SAME client's new-session page, keeping the appointment", () => {
-    const href = sessionStartRefusalHref("c-1", "a-2", "assigned_elsewhere");
-    expect(href).toBe("/clients/c-1/sessions/new?appointment_id=a-2&refused=assigned_elsewhere");
+    const href = sessionStartRefusalHref("c-1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "assigned_elsewhere");
+    expect(href).toBe("/clients/c-1/sessions/new?appointment_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&refused=assigned_elsewhere");
   });
 
   it("the page never offers the modality picker while a refusal is shown", () => {
@@ -86,7 +88,7 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(failed.body).not.toMatch(/without/i);
     // The page offers a link to the appointment (where Move appears only when
     // usable) and no predicate of its own about reassignment.
-    expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appointmentId\}`\}/);
+    expect(PAGE).toMatch(/href=\{appointmentPath\(appointmentId\)\}/);
     expect(PAGE).not.toMatch(/canReassign/);
     // EVERY lineage failure is shown before the picker, matching the action's refusals.
     // (decided by the ONE shared classifier; its unit tests above prove each code)
@@ -95,9 +97,9 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(PAGE).toMatch(
       /const appointmentLinkable =\s*!!appointmentId && refusal !== "appointment_missing";/,
     );
-    expect(PAGE).toMatch(/\{appointmentLinkable \? \(\s*<Link href=\{`\/calendar\/\$\{appointmentId\}`\}/);
+    expect(PAGE).toMatch(/\{appointmentLinkable \? \(\s*<Link href=\{appointmentPath\(appointmentId\)\}/);
     // The copy's "start a session without an appointment" recovery is a real link.
-    expect(PAGE).toMatch(/offerUnlinkedStart && \([\s\S]{0,300}href=\{`\/clients\/\$\{id\}\/sessions\/new`\}/);
+    expect(PAGE).toMatch(/offerUnlinkedStart && \([\s\S]{0,300}href=\{`\/clients\/\$\{encodeURIComponent\(id\)\}\/sessions\/new`\}/);
   });
 });
 
@@ -140,5 +142,31 @@ describe("no existence oracle: another studio's or an unseen appointment answers
   it("'other_studio' no longer exists as a code or a copy branch", () => {
     expect((SESSION_START_REFUSALS as readonly string[]).includes("other_studio")).toBe(false);
     expect(parseSessionStartRefusal("other_studio")).toBeNull();
+  });
+});
+
+describe("a malformed appointment id is answered as missing, before any lookup, and never reaches a path", () => {
+  const BAD = ["not-a-uuid", "../../etc/passwd", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/../x", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?x=1", "%2e%2e", "<script>", ""];
+  it("isAppointmentUuid accepts only a UUID", () => {
+    expect(isAppointmentUuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toBe(true);
+    for (const b of BAD) expect(isAppointmentUuid(b)).toBe(false);
+    expect(isAppointmentUuid(undefined)).toBe(false);
+    expect(isAppointmentUuid(["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"])).toBe(false);
+  });
+  it("appointmentPath never builds a path from a malformed id", () => {
+    for (const b of BAD) expect(appointmentPath(b)).toBe("/calendar");
+    expect(appointmentPath("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toBe("/calendar/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  });
+  it("the refusal redirect never echoes a malformed id", () => {
+    for (const b of BAD) {
+      const href = sessionStartRefusalHref("client", b, "appointment_missing");
+      expect(href).toBe("/clients/client/sessions/new?appointment_id=invalid&refused=appointment_missing");
+    }
+  });
+  it("the page treats a malformed id as missing without a lookup, and links only through appointmentPath", () => {
+    expect(PAGE).toMatch(/malformedAppointmentId \? "appointment_missing" : null/);
+    expect(PAGE).not.toMatch(/\/calendar\/\$\{appointmentId\}/);
+    expect(PAGE).toMatch(/href=\{appointmentPath\(appointmentId\)\}/);
+    expect(PAGE).not.toMatch(/\/clients\/\$\{id\}/);
   });
 });

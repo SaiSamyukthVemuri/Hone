@@ -269,8 +269,8 @@ describe("new-session page carries appointment_id from search params", () => {
   });
 
   it("guards the search-param value with a UUID match", () => {
-    expect(PAGE_SOURCE).toMatch(/UUID_RE/);
-    expect(PAGE_SOURCE).toMatch(/UUID_RE\.test\(/);
+    expect(PAGE_SOURCE).toMatch(/isAppointmentUuid\(sp\.appointment_id\)/);
+    expect(REFUSAL_SRC).toMatch(/APPOINTMENT_UUID_RE\.test\(/);
   });
 
   it("renders a hidden appointment_id input in the modality picker", () => {

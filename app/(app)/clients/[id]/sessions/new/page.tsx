@@ -23,6 +23,8 @@ import {
   type SessionStartRefusal,
   sessionStartRefusalCopy,
   classifyAppointmentForStart,
+  isAppointmentUuid,
+  appointmentPath,
   type StartAppointmentLookup,
 } from "@/lib/sessions/session-start-refusal";
 import { ModalityPicker } from "./ModalityPicker";
@@ -32,9 +34,6 @@ import { SectionLabel } from "@/components/ui/section-label";
 // missing, or malformed values fall through to "no appointment in
 // scope"; the action layer re-validates the value against the
 // authenticated studio and the route's client id.
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export default async function NewSessionPage({
   params,
   searchParams,
@@ -52,10 +51,9 @@ export default async function NewSessionPage({
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 
-  const appointmentId =
-    typeof sp.appointment_id === "string" && UUID_RE.test(sp.appointment_id)
-      ? sp.appointment_id
-      : null;
+  const appointmentId = isAppointmentUuid(sp.appointment_id) ? sp.appointment_id : null;
+  // A present but malformed id is answered as a MISSING appointment before any lookup (and is never placed in a path).
+  const malformedAppointmentId = typeof sp.appointment_id === "string" && sp.appointment_id.length > 0 && !appointmentId;
 
   // An expected refusal, shown BEFORE the picker is offered (and again when
   // startSessionAction redirects back here). A booking assigned to a colleague
@@ -70,7 +68,7 @@ export default async function NewSessionPage({
   // the action makes (RLS-scoped to the practitioner's memberships, NOT
   // pre-filtered to the selected studio), so an appointment in the person's
   // OTHER studio is answered exactly like a missing one (see classifyAppointmentForStart: no existence oracle).
-  let refusal: SessionStartRefusal | null = null;
+  let refusal: SessionStartRefusal | null = malformedAppointmentId ? "appointment_missing" : null;
   let assignedName: string | null = null;
   let assigneeInactive = false;
   if (appointmentId) {
@@ -175,7 +173,7 @@ export default async function NewSessionPage({
     <div className="mx-auto flex max-w-2xl flex-col gap-8">
       <div>
         <Link
-          href={`/clients/${id}?tab=sessions`}
+          href={`/clients/${encodeURIComponent(id)}?tab=sessions`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {data.client.name}
@@ -204,7 +202,7 @@ export default async function NewSessionPage({
           <p>{refusalCopy.body}</p>
           <div className="flex flex-wrap gap-4 pt-1">
             {appointmentLinkable ? (
-              <Link href={`/calendar/${appointmentId}`} className="font-medium hover:underline">
+              <Link href={appointmentPath(appointmentId)} className="font-medium hover:underline">
                 Open the appointment
               </Link>
             ) : (
@@ -214,7 +212,7 @@ export default async function NewSessionPage({
             )}
             {refusal === "check_failed" && appointmentId && (
               <Link
-                href={`/clients/${id}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`}
+                href={`/clients/${encodeURIComponent(id)}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`}
                 className="font-medium hover:underline"
               >
                 Try again
@@ -223,11 +221,11 @@ export default async function NewSessionPage({
             {offerUnlinkedStart && (
               // The copy offers starting WITHOUT the appointment; this is that path
               // (no appointment_id, so nothing is linked to a missing booking).
-              <Link href={`/clients/${id}/sessions/new`} className="font-medium hover:underline">
+              <Link href={`/clients/${encodeURIComponent(id)}/sessions/new`} className="font-medium hover:underline">
                 Start a session without an appointment
               </Link>
             )}
-            <Link href={`/clients/${id}`} className="font-medium hover:underline">
+            <Link href={`/clients/${encodeURIComponent(id)}`} className="font-medium hover:underline">
               Back to {data.client.name}
             </Link>
           </div>
@@ -241,7 +239,7 @@ export default async function NewSessionPage({
           </SectionLabel>
           <p>
             <Link
-              href={`/clients/${id}/sessions/${previousMeta.sessionId}`}
+              href={`/clients/${encodeURIComponent(id)}/sessions/${previousMeta.sessionId}`}
               className="font-medium hover:underline"
             >
               {localLongDate(new Date(previousMeta.startedAt), studio.timezone)}
@@ -263,7 +261,7 @@ export default async function NewSessionPage({
                 {blocklessNote}
               </p>
               <Link
-                href={`/clients/${id}/sessions/${previousMeta.sessionId}`}
+                href={`/clients/${encodeURIComponent(id)}/sessions/${previousMeta.sessionId}`}
                 className="self-start text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 Open full chart →

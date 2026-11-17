@@ -196,3 +196,12 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
     expect(runtime.analytics).toHaveBeenCalledWith(expect.objectContaining({ properties: expect.objectContaining({ is_new_session: true }) }));
   });
 });
+
+describe("a malformed appointment id", () => {
+  it("is answered as a missing appointment before any lookup, and the id is not echoed", async () => {
+    await expect(startSessionAction(form("../../x?y=1"))).rejects.toThrow("REDIRECT:/clients/client/sessions/new?appointment_id=invalid&refused=appointment_missing");
+    expect(runtime.from).not.toHaveBeenCalled();
+    expect(runtime.rpc).not.toHaveBeenCalled();
+    expectNoSideEffects();
+  });
+});

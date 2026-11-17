@@ -141,7 +141,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   let appointmentEndsAt: string | null = null;
   if (typeof appointmentIdRaw === "string" && appointmentIdRaw.length > 0) {
     if (!UUID_RE.test(appointmentIdRaw)) {
-      throw new Error("Invalid appointment id.");
+      // Malformed: answered as a missing appointment, before any lookup.
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "appointment_missing"));
     }
     const { data: appt, error: apptErr } = await timed(
       "session-start.lineage",

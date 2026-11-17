@@ -85,12 +85,25 @@ export function sessionStartRefusalCopy(
   }
 }
 
+const APPOINTMENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An appointment id is only ever a UUID. Anything else is answered as a missing appointment BEFORE any lookup, and is never put into a path. */
+export function isAppointmentUuid(value: unknown): value is string {
+  return typeof value === "string" && APPOINTMENT_UUID_RE.test(value);
+}
+
+/** A path to an appointment. The id is validated AND encoded; a malformed id yields the calendar root, never a path built from it. */
+export function appointmentPath(appointmentId: unknown): string {
+  return isAppointmentUuid(appointmentId) ? `/calendar/${encodeURIComponent(appointmentId)}` : "/calendar";
+}
+
 export function sessionStartRefusalHref(
   clientId: string,
   appointmentId: string,
   code: SessionStartRefusal,
 ): string {
-  const q = new URLSearchParams({ appointment_id: appointmentId, refused: code });
+  // A malformed id is never echoed back into the URL.
+  const q = new URLSearchParams({ appointment_id: isAppointmentUuid(appointmentId) ? appointmentId : "invalid", refused: code });
   return `/clients/${encodeURIComponent(clientId)}/sessions/new?${q.toString()}`;
 }
 
