@@ -309,6 +309,7 @@ export default async function PortalHomePage() {
   const hasNeedsYou =
     hasIntakeAction
     || hasUnsignedForms
+    || consentFormsUnavailable
     || hasUnreviewedMessages
     || showAddCardInNeedsYou
     || showCardAuthorizationNeeded

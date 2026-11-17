@@ -117,3 +117,27 @@ describe("portal and page wiring (source pins)", () => {
     expect(profile).toContain("unavailable={consentTemplatesUnavailable}");
   });
 });
+
+describe("staff profile: pending portal tasks never read as 'nothing pending' when consent is unknown (Insurance N3)", () => {
+  it("computePortalPendingTasks flags consentUnknown, and keeps the old shape otherwise", async () => {
+    const { computePortalPendingTasks } = await import("@/lib/portal/pending-tasks");
+    const base = { intakeStatus: null, activeConsentTemplates: [], latestSignatures: [], portalMessages: [] };
+    expect(computePortalPendingTasks({ ...base, consentUnavailable: true }).consentUnknown).toBe(true);
+    expect(computePortalPendingTasks(base).consentUnknown).toBe(false);
+  });
+  it("the Portal access card says it could not check, and does not say 'No pending portal tasks'", async () => {
+    const { PortalAccessCard } = await import("@/app/(app)/clients/[id]/PortalAccessCard");
+    const { computePortalPendingTasks } = await import("@/lib/portal/pending-tasks");
+    const mk = (unavail: boolean) => {
+      const pendingTasks = computePortalPendingTasks({ intakeStatus: null, activeConsentTemplates: [], latestSignatures: [], portalMessages: [], consentUnavailable: unavail });
+      return renderToStaticMarkup(createElement(PortalAccessCard as never, { clientId: "c", portalLoginUrl: "/portal/login?studio=s", clientHasEmail: true, lastLinkSentAt: null, lastSeenAt: null, recentEvents: [], pendingTasks } as never));
+    };
+    const bad = mk(true);
+    expect(bad).toContain("portal-tasks-consent-unavailable");
+    expect(bad).toContain(STAFF);
+    expect(bad).not.toContain("No pending portal tasks");
+    const ok = mk(false);
+    expect(ok).toContain("No pending portal tasks");
+    expect(ok).not.toContain("portal-tasks-consent-unavailable");
+  });
+});

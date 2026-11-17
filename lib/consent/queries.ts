@@ -505,8 +505,8 @@ export async function getPortalPhotoConsentsForPractitionerView(
 // cannot drift. It is an EXISTENCE question, so the projection is `id` with
 // `limit(1)`; template bodies are never loaded to answer it.
 //
-// `getActiveConsentTemplatesForPortal` is deliberately left byte-unchanged:
-// its existing callers keep their current behaviour.
+// `getActiveConsentTemplatesForPortal` remains as a list-returning wrapper over
+// `checkActiveConsentTemplatesForPortal`, which reports a failed read as unavailable.
 export type CardAuthorizationCapability =
   | { ok: true; enabled: boolean }
   | { ok: false };

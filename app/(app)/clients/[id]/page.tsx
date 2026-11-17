@@ -492,6 +492,7 @@ export default async function ClientCheatSheetPage({
     activeConsentTemplates: consentTemplatesAll,
     latestSignatures: consentLatestSignatures,
     portalMessages,
+    consentUnavailable: consentTemplatesUnavailable,
   });
 
   // Migration 0126: dated consultation + skin/hair analysis clinical notes.
