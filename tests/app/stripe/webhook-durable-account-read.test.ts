@@ -1750,3 +1750,64 @@ describe("HON-49: a partial refund signed by Stripe is recorded in the refund hi
     })).toMatchObject({ kind: "owed", outstandingCents: 2000, cardKeptCents: 3000 });
   });
 });
+
+// ===========================================================================
+// HON-49 EVIDENCE ("today"): a REAL-SHAPED charge.refunded at the pinned API version, with Charge.refunds ABSENT or null.
+// Stripe stopped expanding refunds on a Charge by default (API 2022-11-15) and expand never applies to webhook payloads, so a live
+// endpoint's charge.refunded probably carries no refund list. These tests pin what the webhook does with such an event TODAY, for a
+// FULL and a PARTIAL refund, signed for real (fake secret, no network). They are pins of an inadequate behaviour: when the
+// authenticated refund read lands they are rewritten to the new rule on purpose, never loosened.
+// Observed: nothing is recorded and nothing is completed in either case; a critical alert is kept; the event is acknowledged.
+// ===========================================================================
+describe("HON-49 evidence: charge.refunded with Charge.refunds absent (pinned API version), today's behaviour", () => {
+  const PINNED_API_VERSION = "2026-04-22.dahlia";
+  const row = (refundStatus: string | null) => ({
+    id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+    status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+    stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+    amount_cents: 5000, currency: "cad", charged_at: null, refund_status: refundStatus,
+    refund_amount_cents: refundStatus ? 5000 : null, refunded_at: null, stripe_refund_id: null,
+  });
+  // The shape Stripe sends: a Charge WITHOUT `refunds` (or with it null), api_version stamped on the event.
+  async function deliver(opts: { full: boolean; refunds: "absent" | "null"; refundStatus?: string | null }) {
+    const charge = {
+      object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: false,
+      payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
+      refunded: opts.full, amount_refunded: opts.full ? 5000 : 2000, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
+      ...(opts.refunds === "null" ? { refunds: null } : {}),
+    };
+    const event = { id: `evt_absent_${opts.full ? "full" : "partial"}_${opts.refunds}`, object: "event", api_version: PINNED_API_VERSION,
+      created: 1770000000, type: "charge.refunded", account: "acct_test_1", livemode: false, data: { object: charge } };
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: row(opts.refundStatus ?? null), error: null }],
+    }, { claim_stripe_event: CLAIM_OK });
+    const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
+    CONSTRUCT_EVENT.mockImplementation((body, header, secret) => webhooks.constructEvent(body, header, secret));
+    const payload = JSON.stringify(event);
+    return callRoute(post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" })));
+  }
+  const alertsOf = (e: string) => ADMIN.current!.opsRows.filter((r) => r.event === e);
+  const nothingCompleted = () => ADMIN.current!.updateCalls.filter((u) => u.payload.refund_status === "succeeded");
+
+  for (const refunds of ["absent", "null"] as const) {
+    it(`FULL refund, refunds ${refunds}, a refund made in the provider dashboard (our row has no refund): refused with a critical alert, NOTHING completed, acknowledged`, async () => {
+      expect((await deliver({ full: true, refunds })).status).toBe(200);
+      expect(nothingCompleted()).toEqual([]);
+      expect(alertsOf("charge_refunded_cumulative_evidence_refused")).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("record_charge_refund_history");
+    });
+    it(`FULL refund, refunds ${refunds}, a refund Hone itself started (row pending): the same: refused, critical, NOTHING completed`, async () => {
+      expect((await deliver({ full: true, refunds, refundStatus: "pending_stripe" })).status).toBe(200);
+      expect(nothingCompleted()).toEqual([]);
+      expect(alertsOf("charge_refunded_cumulative_evidence_refused")).toEqual([expect.objectContaining({ severity: "critical" })]);
+    });
+    it(`PARTIAL refund, refunds ${refunds}: NOT recorded (no history is sent), the critical partial-refund alert, the row unchanged, acknowledged`, async () => {
+      expect((await deliver({ full: false, refunds })).status).toBe(200);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("record_charge_refund_history");
+      expect(alertsOf("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(alertsOf("charge_refunded_partial_recorded")).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+  }
+});
