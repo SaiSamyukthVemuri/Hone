@@ -1574,3 +1574,76 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     expect(ADMIN.current!.updateCalls).toEqual([]);
   });
 });
+
+// ===========================================================================
+// M12 / M14 (refund test matrix): PARTIAL REFUNDS ARE NOT RECORDED TODAY. These pin TODAY'S behaviour, named as such, so that
+// the day partial refunds are recorded (HON-49 G1/G2) they fail on purpose and are REWRITTEN with the new rule, never loosened.
+// What is pinned: a signed charge.refunded for less than the whole charge raises a critical alert, changes NO row, is
+// acknowledged as processed (200), and leaves the panel and the balance reading "not refunded".
+// ===========================================================================
+describe("PINNED TODAY (HON-49 G1): a partial refund recorded in Stripe is not recorded in Hone", () => {
+  const attemptRow = () => ({
+    id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+    status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+    stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+    amount_cents: 5000, currency: "cad", charged_at: null, refund_status: null,
+    refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
+  });
+  function partial(eventId: string, refunds: Array<{ id: string; amount: number }>) {
+    const refunded = refunds.reduce((n, r) => n + r.amount, 0);
+    const event = {
+      id: eventId, object: "event", created: 1770000000, type: "charge.refunded", account: "acct_test_1", livemode: false,
+      data: { object: {
+        object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: false,
+        payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
+        refunded: false, amount_refunded: refunded, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
+        refunds: { object: "list", has_more: false, data: refunds.map((r) => ({ object: "refund", id: r.id, amount: r.amount,
+          currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: "succeeded" })) },
+      } },
+    };
+    const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
+    CONSTRUCT_EVENT.mockImplementation((body, header, secret) => webhooks.constructEvent(body, header, secret));
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: attemptRow(), error: null }],
+    }, { claim_stripe_event: CLAIM_OK });
+    const payload = JSON.stringify(event);
+    return post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }));
+  }
+  const alerts = () => ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_partial_out_of_band");
+
+  it("M12: one signed partial refund (2000 of 5000): critical alert, no row change, no reconcile command, acknowledged", async () => {
+    const res = await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+    expect(alerts()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+
+  it("M14: a second partial (3000 of 5000 in all) is treated the same: still no row change, a second alert", async () => {
+    await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]));
+    const first = alerts().length;
+    const res = await callRoute(partial("evt_partial_2", [{ id: "re_1", amount: 2000 }, { id: "re_2", amount: 1000 }]));
+    expect(res.status).toBe(200);
+    expect(first).toBe(1);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+  });
+
+  it("M14 (reading): with the row untouched, the panel and the balance both still say the whole charge is refundable and kept", async () => {
+    const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
+    const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
+    const row = attemptRow();
+    expect(refundDisplayState({
+      chargeStatus: row.status, amountCents: row.amount_cents, refundStatus: row.refund_status,
+      refundAmountCents: row.refund_amount_cents, providerRefundStatus: null, stripeRefundId: row.stripe_refund_id,
+      cumulativeFullRefundVerified: false,
+    })).toEqual({ kind: "not_refunded", remainingRefundableCents: 5000, mayStartRefund: true });
+    expect(outstandingForAppointment({
+      status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
+      settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad" }],
+    })).toEqual({ kind: "paid" });
+  });
+});
