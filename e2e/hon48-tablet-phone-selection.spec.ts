@@ -8,7 +8,7 @@ import { clientNameOf, TZ } from "./hon48-support/five-user-team";
 
 // HON-48 tablet and phone appointment selection. Chromium EMULATION of an iPad Pro 11 (landscape and portrait) and an
 // iPhone 13: touch input, a coarse pointer, the device viewport. It is NOT a physical iPad and NOT the WebKit engine; the
-// human recheck of Chloe's report on a real device stays open.
+// human recheck on a real device stays open.
 //
 // Opt-in: HON48_FIVE_USER_E2E=1.
 //
