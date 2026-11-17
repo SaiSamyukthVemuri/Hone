@@ -198,7 +198,7 @@ describe("the owner email, as rendered", () => {
     expect(mail.text).toContain("https://app.example.test/settings/waitlist?followup=1#follow-up");
     expect(mail.html).toContain('href="https://app.example.test/settings/waitlist?followup=1#follow-up"');
     expect(readable(mail.html)).not.toMatch(/Synthetic|@|\d{3}[-. ]?\d{4}/);
-    // Privacy: no answer text and no test-fixture wording in either body, raw or rendered (the template takes no answer input at all).
+    // No answer text and no test-fixture wording in either body, raw or rendered (the template takes no answer input at all).
     for (const body of [mail.text, mail.html, readable(mail.html)]) expect(body).not.toMatch(/Synthetic|mornings/);
   });
 });
