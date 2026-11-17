@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { FormattedDateTime } from "@/components/formatted-date-time";
 import { FromLastVisitBand } from "@/components/from-last-visit-band";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
