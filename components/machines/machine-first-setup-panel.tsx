@@ -1,5 +1,6 @@
 "use client";
 
+import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
@@ -235,6 +236,8 @@ export type MachineFirstSetupPanelProps = {
    * area is native when its unit is no longer selectable.
    */
   savedDeviceId?: string | null;
+  /** The mode stored on the area's own record, or null when it holds a unit without one (migration 0301 allows that). */
+  savedModeKey?: string | null;
   /**
    * What kind of machine is in force, so the host form can show ONLY that
    * machine's fields: the existing fields for `legacy` and `none`, none of the
@@ -344,6 +347,7 @@ function MachineFirstSetupPanelImpl({
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
+  savedModeKey = null,
   onKindChange,
   onResolvedChoice,
   onRecord,
@@ -415,8 +419,10 @@ function MachineFirstSetupPanelImpl({
     restored ? restored.modeKey : initialModeKey,
   );
   // How many readings this panel has actually saved in this mount. Drives the
-  // "Recorded:" line, which previously claimed "nothing" even after a save.
+  // "Readings from this panel" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
+  // The recorded list as it stood when this visit last saved: while the host still passes THAT array, its refresh has not landed.
+  const [savedAgainst, setSavedAgainst] = useState<{ list: typeof recordedSetup } | null>(null);
   const selectRef = useRef<HTMLSelectElement | null>(null);
   const [legacyChosen, setLegacyChosen] = useState(
     initialLegacyChosen && legacyMachine !== null,
@@ -651,6 +657,7 @@ function MachineFirstSetupPanelImpl({
             out.written ??
             input.groups.reduce((n, g) => n + g.readings.length, 0);
           setSavedCount((n) => n + written);
+          setSavedAgainst({ list: recordedSetup });
         }
         return out;
       }
@@ -1171,7 +1178,25 @@ function MachineFirstSetupPanelImpl({
       <PersistenceStatus
         hasScope={scope != null}
         persistence={persistence}
-        savedCount={savedCount}
+        // WHAT THE BLOCK HOLDS, not what this visit did: the saved identity comes from the area's own record, and the readings are
+        // the ones recorded for the block (this visit's own saves are the floor until the page refreshes them).
+        identitySaved={
+          Boolean(blockId) && (savedDeviceId !== null || (initialLegacyChosen && legacyMachine !== null))
+        }
+        modeSaved={Boolean(blockId) && savedDeviceId !== null && savedModeKey !== null && savedModeKey !== ""}
+        // CURRENT settings (the highest revision of each group, absences not counted), never the row count: the list holds every
+        // revision. A number is shown ONLY while the list is known current. After a save of this visit the list is the old snapshot
+        // until the host's refresh replaces it, and when that refresh failed it stays old; the old count is not even a floor (a later
+        // revision can have fewer fields, or absences), so then NO number is shown.
+        readingsSaved={recordedSetupUnavailable ? null : recordedSummary(recordedSetup).current}
+        earlierVersions={recordedSummary(recordedSetup).earlierVersions}
+        absenceOnly={recordedSummary(recordedSetup).absenceOnly}
+        readingsExact={
+          !recordedSetupUnavailable &&
+          !submissionBlocked &&
+          !(savedAgainst !== null && savedAgainst.list === recordedSetup)
+        }
+        savedThisVisit={savedCount > 0}
         rememberedDeviceId={selection.persisted}
       />
     </section>
@@ -1202,13 +1227,31 @@ export function MachineFirstSetupPanel(props: MachineFirstSetupPanelProps) {
 function PersistenceStatus({
   hasScope,
   persistence,
-  savedCount,
+  identitySaved,
+  modeSaved,
+  readingsSaved,
+  readingsExact,
+  savedThisVisit,
+  earlierVersions,
+  absenceOnly,
   rememberedDeviceId,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
-  /** Readings this panel has actually saved, so the line below is derived. */
-  savedCount: number;
+  /** The block has a saved machine (a unit, or the existing workflow). */
+  identitySaved: boolean;
+  /** ...and that unit has a saved mode. A unit can be saved without one, and the line must not claim it. */
+  modeSaved: boolean;
+  /** Readings saved for this block, or null when that could not be read. */
+  readingsSaved: number | null;
+  /** False while the list is known stale (saved this visit, refresh not landed or failed): no number is shown then. */
+  readingsExact: boolean;
+  /** Some rows are superseded revisions. */
+  earlierVersions: boolean;
+  /** Rows exist and every current one is an absence. */
+  absenceOnly: boolean;
+  /** This visit saved readings (so "could not be read" is not "nothing"). */
+  savedThisVisit: boolean;
   /**
    * The machine ACTUALLY remembered right now, or null.
    *
@@ -1246,19 +1289,30 @@ function PersistenceStatus({
           </dd>
         )}
       </div>
-      <div className="flex gap-1.5">
-        <dt className="font-medium">Recorded:</dt>
+      {identitySaved && (
+        <div className="flex gap-1.5" data-testid="machine-first-status-identity">
+          <dt className="font-medium">Machine:</dt>
+          <dd>saved to this block.{modeSaved ? " Mode: saved." : ""}</dd>
+        </div>
+      )}
+      <div className="flex gap-1.5" data-testid="machine-first-status-readings">
+        <dt className="font-medium">Readings from this panel:</dt>
         <dd>
           {/*
-            This line used to say "nothing from this panel" unconditionally,
-            which stopped being true the moment reading entry shipped: after a
-            successful save it contradicted both the success message and the
-            rows actually inserted, leaving a practitioner unsure whether the
-            settings were stored (Codex, 9c6fbbe5).
+            Two facts, said separately. "Nothing from this panel" used to cover both, and it was wrong twice: after a machine is chosen
+            (the block saves the machine and mode) and on reopen beside the saved list (it counted only this visit's saves).
           */}
-          {savedCount > 0
-            ? `${savedCount} setting${savedCount === 1 ? "" : "s"} saved to this block's machine record. The treatment fields below are separate and unchanged.`
-            : "nothing from this panel yet. The treatment fields below are unchanged and remain the record."}
+          {readingsSaved === null
+            ? savedThisVisit
+              ? "saved this visit. The count could not be read just now. The treatment fields below are separate and unchanged."
+              : "could not be checked just now. The treatment fields below are unchanged and remain the record."
+            : !readingsExact
+              ? "saved this visit. The count will update when the list refreshes. The treatment fields below are separate and unchanged."
+              : readingsSaved > 0
+                ? `${readingsSaved} setting${readingsSaved === 1 ? "" : "s"} saved to this block's machine record${earlierVersions ? " (earlier versions kept)" : ""}. The treatment fields below are separate and unchanged.`
+                : absenceOnly
+                  ? "no values yet. The treatment fields below are unchanged and remain the record."
+                  : "none yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>
     </dl>

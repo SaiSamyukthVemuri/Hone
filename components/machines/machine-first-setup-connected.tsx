@@ -660,6 +660,7 @@ export function MachineFirstSetupConnected({
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered
       // preference on an area that never saved an identity.
       savedDeviceId={blockId ? (savedIdentity?.deviceId ?? null) : null}
+      savedModeKey={blockId ? (savedIdentity?.modeKey ?? null) : null}
       initialLegacyChosen={
         (savedIdentity?.deviceId == null && savedIdentity?.profileId != null) ||
         Boolean(newAreaLast?.legacy)
