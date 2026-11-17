@@ -1749,6 +1749,8 @@ describe("HON-49: a partial refund signed by Stripe is recorded in the refund hi
 // ===========================================================================
 describe("HON-49: the authenticated refund-list read when the signed payload has no complete list", () => {
   const PINNED_API_VERSION = "2026-04-22.dahlia";
+  // The version the live endpoint is set to (a dashboard setting, newer than the SDK pin; recorded in docs/production/stripe-webhook-endpoint-facts.md).
+  const LIVE_API_VERSION = "2026-06-24.dahlia";
   const row = (refundStatus: string | null) => ({
     id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
     status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
@@ -1770,21 +1772,25 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     }, { claim_stripe_event: CLAIM_OK, record_charge_refund_history: opts.history ?? RECORDED });
   }
   // A Charge WITHOUT `refunds` (or with it null / cut short), signed for real, api_version stamped on the event.
-  function send(o: { id: string; refundedCents: number; full?: boolean; list?: "absent" | "null" | "has_more" | "complete"; charge?: Refund; livemode?: boolean; forge?: boolean }) {
+  function send(o: { id: string; refundedCents: number; full?: boolean; list?: "absent" | "null" | "empty" | "has_more" | "complete"; charge?: Refund; livemode?: boolean; forge?: boolean; apiVersion?: string }) {
     const full = o.full ?? o.refundedCents === 5000;
     const listField = o.list === "null" ? { refunds: null }
+      : o.list === "empty" ? { refunds: page([]) }
       : o.list === "has_more" ? { refunds: page([fr("re_payload", 100)], true) }
       : o.list === "complete" ? { refunds: page([fr("re_1", o.refundedCents)]) } : {};
-    const event = { id: o.id, object: "event", api_version: PINNED_API_VERSION, created: 1770000000, type: "charge.refunded",
+    const event = { id: o.id, object: "event", api_version: o.apiVersion ?? PINNED_API_VERSION, created: 1770000000, type: "charge.refunded",
       account: "acct_test_1", livemode: o.livemode ?? false, data: { object: {
         object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: o.livemode ?? false,
         payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
         refunded: full, amount_refunded: o.refundedCents, metadata: { hone_payment_charge_attempt_id: "attempt-1" }, ...listField, ...(o.charge ?? {}),
       } } };
+    return signAndSend(event, o.forge);
+  }
+  function signAndSend(event: Record<string, unknown>, forge?: boolean) {
     const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
     CONSTRUCT_EVENT.mockImplementation((body, header, secret) => webhooks.constructEvent(body, header, secret));
     const payload = JSON.stringify(event);
-    const header = webhooks.generateTestHeaderString({ payload, secret: o.forge ? "whsec_wrong" : "whsec_test" });
+    const header = webhooks.generateTestHeaderString({ payload, secret: forge ? "whsec_wrong" : "whsec_test" });
     return callRoute(post(payload, header));
   }
   const alertsOf = (e: string) => ADMIN.current!.opsRows.filter((r) => r.event === e);
@@ -1984,5 +1990,74 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect((await send({ id: "evt_full_err", refundedCents: 5000 })).status).toBeGreaterThanOrEqual(500);
     expect(reconcileCalls()).toEqual([]);
     expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+  });
+
+  // The live endpoint is set to a NEWER API version than the SDK pin, and charge.refunded WITHOUT an embedded list is the only refund signal
+  // it delivers. Every refund shape runs at both versions and with the list absent, null and empty: the read is used and the right command
+  // and kind are sent.
+  describe.each([["the pinned version", PINNED_API_VERSION], ["the live endpoint version", LIVE_API_VERSION]])("at %s", (_label, apiVersion) => {
+    describe.each(["absent", "null", "empty"] as const)("with the refund list %s", (list) => {
+      it("a PARTIAL refund is read once and recorded through the history command with the authenticated kind", async () => {
+        REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+        setup();
+        expect((await send({ id: `evt_v_p_${apiVersion}_${list}`, refundedCents: 2000, list, apiVersion })).status).toBe(200);
+        expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+        expect(historyCalls()).toHaveLength(1);
+        expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, charge_amount_refunded: 2000 });
+        expect(reconcileCalls()).toEqual([]);
+      });
+      it("a FULL refund made outside Hone is read once; the full-refund command gets the authenticated kind", async () => {
+        REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 5000)]));
+        setup();
+        expect((await send({ id: `evt_v_f_${apiVersion}_${list}`, refundedCents: 5000, list, apiVersion })).status).toBe(200);
+        expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+        expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list" });
+        expect(reconcileCalls()).toHaveLength(1);
+        expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, refund_id: "re_1", refund_amount_cents: 5000 });
+      });
+      it("a CUMULATIVE full refund (2000 + 3000) on a refund Hone started is read once; the command gets both components", async () => {
+        REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 3000)]));
+        setup(1, { refundStatus: "pending_stripe" });
+        expect((await send({ id: `evt_v_c_${apiVersion}_${list}`, refundedCents: 5000, list, apiVersion })).status).toBe(200);
+        expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+        expect(reconcileCalls()).toHaveLength(1);
+        expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true });
+        expect((obj(reconcileCalls()[0]).charge_refund_components as unknown[])).toHaveLength(2);
+      });
+    });
+  });
+
+  // The event shape at the live endpoint version. BUILT FROM STRIPE'S DOCUMENTED Charge shape for that version (not a captured event; an
+  // optional redacted test-mode event can replace it): the customer, payment intent, amount, currency and amount_refunded are present and there
+  // is NO refunds list, exactly what the route must cope with.
+  it("the live-version charge.refunded (built from the documented shape) carries the identity fields and amount_refunded but no refunds list", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup();
+    await send({ id: "evt_shape_live", refundedCents: 2000, list: "absent", apiVersion: LIVE_API_VERSION });
+    const body = JSON.parse(CONSTRUCT_EVENT.mock.calls[0][0] as string);
+    expect(body.api_version).toBe(LIVE_API_VERSION);
+    expect(body.type).toBe("charge.refunded");
+    expect(body.account).toBe("acct_test_1");
+    expect(body.data.object).toMatchObject({ object: "charge", customer: "cus_1", payment_intent: "pi_1", amount: 5000, currency: "cad", amount_refunded: 2000 });
+    expect("refunds" in body.data.object).toBe(false);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+  });
+
+  // refund.* events are NOT subscribed on the live endpoint, so they should never arrive. If one ever does (a changed subscription), it must stay
+  // safe: handled as before from the Refund object inside the event, with NO list read and the signed-event kind.
+  it("a refund.updated that arrives anyway (live endpoint version) behaves as before: signed-event kind, no provider read", async () => {
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { ...row("pending_stripe"), stripe_refund_id: "re_1" }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: "refund_pending" }], error: null } });
+    const res = await signAndSend({ id: "evt_refund_updated_live", object: "event", api_version: LIVE_API_VERSION, created: 1770000000, type: "refund.updated",
+      account: "acct_test_1", livemode: false, data: { object: { object: "refund", id: "re_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000,
+        currency: "cad", status: "pending", metadata: { hone_payment_charge_attempt_id: "attempt-1" } } } });
+    expect(res.status).toBe(200);
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(historyCalls()).toEqual([]);
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event", refund_id: "re_1", refund_status: "pending" });
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
   });
 });
