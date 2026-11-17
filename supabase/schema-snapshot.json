@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 270,
-    "last": "0353_waitlist_single_legal_name.sql",
-    "sha256": "8afb37419a9bc9e1098bf91c138a2ff43f08969780a270739294014300362180"
+    "count": 273,
+    "last": "0354_quoted_amount_explicit_zero_custom_price.sql",
+    "sha256": "764db8467ebed8b10fbb31326d7f3675f252f375bc2d3ac13b155ccdbfc74f4a"
   },
   "public": {
     "tables": [
@@ -103,6 +103,7 @@
       "studio_calendar_reservations",
       "studio_legal_name_access",
       "studio_machines",
+      "studio_manual_fee_setting_changes",
       "studio_onboarding",
       "studio_payment_jurisdiction_changes",
       "studio_payment_jurisdictions",
@@ -392,6 +393,8 @@
       "own_practitioner_in_studio",
       "owner_delivery_concerns",
       "owner_delivery_incidents",
+      "payment_charge_attempts_calc_basis_immutable",
+      "payment_charge_attempts_claimed_at_guard",
       "payment_charge_attempts_jurisdiction_guard",
       "payment_charge_attempts_money_immutable",
       "payment_charge_attempts_touch_updated_at",
@@ -570,6 +573,7 @@
       "studio_sms_senders_server_timestamps",
       "studio_sms_senders_transition_guard",
       "studios_admission_mode_guard",
+      "studios_manual_fee_setting_audit",
       "supersede_appointment_settlement",
       "support_delivery_concerns",
       "support_delivery_incidents",

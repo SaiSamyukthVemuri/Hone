@@ -20,8 +20,8 @@ const block = (sql: string, name: string): string[] => {
 };
 
 describe("0353 source contract", () => {
-  it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0353")).toBe(true);
+  it("is no longer the current maximum migration (only the max may assert it)", () => {
+    expect(isRepoMax("0353")).toBe(false);
   });
 
   it("opens its own transaction, arms lock_timeout inside it, and ends with commit", () => {

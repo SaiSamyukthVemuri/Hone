@@ -161,6 +161,13 @@ export type Studio = {
   // is enforced by CHECK (0..20000) at the column level.
   late_cancel_fee_cents: number | null;
   no_show_fee_cents: number | null;
+  // Migration 0351: the owner's per-studio switch for each manual fee. Default false (off).
+  late_cancel_fee_enabled: boolean;
+  late_cancel_fee_mode: "fixed" | "percent";
+  no_show_fee_mode: "fixed" | "percent";
+  late_cancel_fee_percent_bp: number | null;
+  no_show_fee_percent_bp: number | null;
+  no_show_fee_enabled: boolean;
   // Migration 0049: per-studio SMS toggles. All default false. SMS
   // only goes out when the matching toggle is on AND the client has
   // explicit consent AND the client is not opted out AND Twilio is
