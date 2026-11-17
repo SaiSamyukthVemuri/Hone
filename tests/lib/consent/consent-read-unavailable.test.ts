@@ -118,7 +118,7 @@ describe("portal and page wiring (source pins)", () => {
   });
 });
 
-describe("staff profile: pending portal tasks never read as 'nothing pending' when consent is unknown (Insurance N3)", () => {
+describe("staff profile: pending portal tasks never read as 'nothing pending' when consent is unknown", () => {
   it("computePortalPendingTasks flags consentUnknown, and keeps the old shape otherwise", async () => {
     const { computePortalPendingTasks } = await import("@/lib/portal/pending-tasks");
     const base = { intakeStatus: null, activeConsentTemplates: [], latestSignatures: [], portalMessages: [] };

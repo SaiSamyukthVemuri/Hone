@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Insurance B1 (#1519): the portal home, RENDERED, for a client with nothing else pending. A failed consent read must show the notice and must NOT say
+// The portal home, RENDERED, for a client with nothing else pending. A failed consent read must show the notice and must NOT say
 // "You're all caught up."; a successful empty read must still say it.
 const state = vi.hoisted(() => ({ consent: { status: "ok", templates: [] } as unknown }));
 vi.mock("server-only", () => ({}));
