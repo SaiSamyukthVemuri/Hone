@@ -69,7 +69,7 @@ export default async function TeamSettingsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ restore?: string }>;
-} = {}) {
+}) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
