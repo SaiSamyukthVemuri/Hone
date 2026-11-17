@@ -5,17 +5,15 @@ import { EXPORT_RESOURCE_REGISTRY, pendingColumns, pendingResources } from "@/li
 
 // The registry's reasons and column notes are printed on the Data settings page and written into the export's own README and manifest
 // (settings/data/page.tsx and actions.ts read `disposition.reason`). They are customer-visible text, so they state the rule and never carry
-// a review thread id, a review label, an internal ticket id or a person's first name.
+// a review thread id, a review label or an internal ticket id.
 // SCOPE: this guards every string in the export registry (reasons, column notes, count-check notes), the README line and manifest row the
 // export action builds, and the page and action source. It does not scan other screens or other files of the export.
-// The names below are plain test data (the people this project's review threads and notes have named); they are never rendered.
-const KNOWN_FIRST_NAMES = ["Sam", "Sabrina", "Chloe"];
-const NAME = new RegExp(`\\b(?:${KNOWN_FIRST_NAMES.join("|")})\\b`);
+// People's names are NOT machine-checked here: a name list would itself put names in the repository. They are covered by review.
 const TICKET_IDS = /\bHON-\d|\bTRUTH-/;
-const REVIEW_MARKERS = new RegExp(`\\bCodex\\b|\\bInsurance\\b|\\bPrivacy [A-Z]|\\bOPS\\b|\\bPhotos R\\d|\\d{9,}|${NAME.source}`);
+const REVIEW_MARKERS = new RegExp(`\\bCodex\\b|\\bInsurance\\b|\\bPrivacy [A-Z]|\\bOPS\\b|\\bPhotos R\\d|\\d{9,}`);
 
 describe("the export registry's customer-visible text carries no review ids", () => {
-  it("no reason or column note in the whole registry names a review thread, label, id (any run of nine digits) or a person's first name", () => {
+  it("no reason or column note in the whole registry names a review thread, label or id (any run of nine digits)", () => {
     const strings: Array<[string, string]> = [];
     const walk = (path: string, v: unknown) => {
       if (typeof v === "string") strings.push([path, v]);
