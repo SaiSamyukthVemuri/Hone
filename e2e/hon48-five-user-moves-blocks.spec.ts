@@ -4,6 +4,7 @@ import {
   closeTeam, clientNameOf, openDrawerForColumn, prepareBooking, reservationCount, rows, setupFiveUserTeam,
   DRAWER, SLOT, TZ, type Team, type User,
 } from "./hon48-support/five-user-team";
+import { contestedWindowFailures } from "./hon48-support/contested-window";
 
 // HON-48 five-user proof, part 2: MOVE, REASSIGN, BLOCK and BUFFER with conflicts.
 //
@@ -243,14 +244,25 @@ test("K2: a REPEATING break and a booking contend for the same practitioner and 
   );
   // Every appointment has exactly one reservation: no orphan and no duplicate.
   for (const b of bookings) expect(await reservationCount(b.id)).toBe(1);
+  // THIS rule's occurrence reservation on the contested day: an occurrence is mirrored into the reservation table by source_id.
   const [occ] = await sql<{ n: number }>(
-    "select count(*)::int as n from public.studio_calendar_reservations where studio_id=$1 and resource_key::text=$2 " +
-      "and source_kind='recurring_break_occurrence' and (starts_at at time zone $4)::date=$3::date",
-    [t.seed.studioId, di.practitionerId, t.day, TZ],
+    "select count(*)::int as n from public.studio_calendar_reservations x " +
+      "join public.studio_recurring_break_occurrences o on o.id = x.source_id " +
+      "join public.studio_recurring_break_rules r on r.id = o.rule_id " +
+      "where x.source_kind='recurring_break_occurrence' and r.studio_id=$1 and r.practitioner_id=$2 and r.label=$3 " +
+      "and (o.starts_at at time zone $5)::date = $4::date",
+    [t.seed.studioId, di.practitionerId, label, t.day, TZ],
   );
   console.log(`HON48_K2_OCC occurrence_on_contested_day=${occ.n}`);
-  test.info().annotations.push({ type: "K2-outcome", description: `bookings=${bookings.length} rules=${rules.length} overlapping-reservations=${overlap.n}` });
-  console.log(`HON48_K2 bookings=${bookings.length} rules=${rules.length} overlapping_reservations=${overlap.n}`);
-  expect(bookings.length + rules.length, "at least one of the two commits").toBeGreaterThanOrEqual(1);
-  expect(overlap.n, "the window is never held twice").toBe(0);
+  test.info().annotations.push({ type: "K2-outcome", description: `bookings=${bookings.length} rules=${rules.length} occurrences=${occ.n} overlapping-reservations=${overlap.n}` });
+  console.log(`HON48_K2 bookings=${bookings.length} rules=${rules.length} occurrences=${occ.n} overlapping_reservations=${overlap.n}`);
+  // Exactly one of the booking and the break holds the window, and a saved rule has its occurrence reservation.
+  expect(
+    contestedWindowFailures({
+      bookings: bookings.length,
+      rules: rules.length,
+      occurrenceReservations: occ.n,
+      overlappingReservations: overlap.n,
+    }),
+  ).toEqual([]);
 });
