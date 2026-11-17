@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { adminQuery } from "./harness";
+import { E2E_DB_URL, E2E_SUPABASE_URL, assertSameStackPair } from "../../../e2e/helpers/local-env";
+import { adminQuery, resolveLocalDbUrl } from "./harness";
 
 // CATALOG GUARD for DB tests that change the schema (a migration's down file, then its up file) on the stack they run against.
 //
@@ -13,6 +14,15 @@ import { adminQuery } from "./harness";
 // with the first differences, and is the check that also catches future cases. Data is not part of the fingerprint.
 // Use it in the suite's own hooks: capture after any deliberate setup, restore in the test's `finally`, assert in `afterAll` before the pool closes.
 
+// restoreCatalog DROPS and CREATES objects on whatever stack the pool points at, so every entry point first re-proves the run-scoped target:
+// importing local-env already ran the paired API/SQL guard (#879); this repeats it and requires the pool to be the validated SQL endpoint.
+function requireOwnedTarget(): void {
+  assertSameStackPair(E2E_SUPABASE_URL, E2E_DB_URL);
+  if (resolveLocalDbUrl() !== E2E_DB_URL) {
+    throw new Error("catalog guard refuses to run: the database pool is not the validated HONE_LOCAL_DB_URL of this run.");
+  }
+}
+
 export type CatalogEntry = { key: string; hash: string; restore?: string };
 export type CatalogSnapshot = { entries: CatalogEntry[]; fingerprint: string };
 
@@ -21,6 +31,7 @@ const q = async (text: string) => (await adminQuery(text, [])).rows as Array<Rec
 const digest = (s: string) => createHash("md5").update(s).digest("hex");
 
 export async function captureCatalog(): Promise<CatalogSnapshot> {
+  requireOwnedTarget();
   const entries: CatalogEntry[] = [];
   const add = (key: string, body: string, restore?: string) => entries.push({ key, hash: digest(body), restore });
 
@@ -89,6 +100,7 @@ export function catalogDiff(before: CatalogSnapshot, after: CatalogSnapshot): st
 // Re-create what a schema-changing test removed or altered, from the definitions captured before it ran. Only functions (with their
 // privileges), indexes and triggers can be put back this way; anything else it changed is reported by `assertCatalogUnchanged`.
 export async function restoreCatalog(before: CatalogSnapshot): Promise<void> {
+  requireOwnedTarget();
   const now = await captureCatalog();
   const had = new Map(now.entries.map((e) => [e.key, e.hash]));
   for (const e of before.entries) {
