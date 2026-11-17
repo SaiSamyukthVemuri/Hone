@@ -2043,6 +2043,126 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
   });
 
+  // ---- Sam's coverage list: multiple refunds, duplicates and order, account isolation (route level; fake provider, no network) ----
+  describe.each([["the pinned version", PINNED_API_VERSION], ["the live endpoint version", LIVE_API_VERSION]])("multiple refunds at %s", (_l, apiVersion) => {
+    it("a SECOND partial (3000 in all, list absent): the read returns both refunds, the history command gets both, nothing is completed", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000)]));
+      setup();
+      expect((await send({ id: `evt_second_${apiVersion}`, refundedCents: 3000, list: "absent", apiVersion })).status).toBe(200);
+      expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+      expect((obj(historyCalls()[0]).components as Array<{ refund_id: string }>).map((c) => c.refund_id)).toEqual(["re_1", "re_2"]);
+      expect(obj(historyCalls()[0])).toMatchObject({ charge_amount_refunded: 3000, evidence_kind: "signed_event_with_authenticated_list" });
+      expect(reconcileCalls()).toEqual([]);
+      expect(completed()).toEqual([]);
+    });
+    it("a partial THEN the remainder made outside Hone (row has no refund): the last event reads both refunds and completes through the full-refund command", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 3000)]));
+      setup();
+      expect((await send({ id: `evt_remainder_${apiVersion}`, refundedCents: 5000, list: "absent", apiVersion })).status).toBe(200);
+      expect(historyCalls()).toHaveLength(1);
+      expect(reconcileCalls()).toHaveLength(1);
+      expect((obj(reconcileCalls()[0]).charge_refund_components as unknown[])).toHaveLength(2);
+      expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true });
+    });
+  });
+
+  it("the SAME event delivered twice: the second delivery is recognised as processed, makes no read and calls no command", async () => {
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: row(null), error: null }],
+    }, { claim_stripe_event: { data: [{ already_processed: true, currently_processing_elsewhere: false, claimed_by_this_request: false, claim_token: null }], error: null } });
+    expect((await send({ id: "evt_dup", refundedCents: 2000, list: "absent" })).status).toBe(200);
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(historyCalls()).toEqual([]);
+    expect(reconcileCalls()).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+  it("an OLDER charge.refunded after a newer one: the command answers already_recorded; acknowledged, no critical alert, no row change", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup(1, { history: { data: [{ result: "already_recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 3000, out_inflight_count: 0 }], error: null } });
+    expect((await send({ id: "evt_older", refundedCents: 2000, list: "absent" })).status).toBe(200);
+    expect(historyCalls()).toHaveLength(1);
+    expect(ADMIN.current!.opsRows.filter((r) => r.severity === "critical")).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  describe("connected-account isolation", () => {
+    it("the read uses the event's connected account, never one named inside the charge", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+      setup();
+      await send({ id: "evt_iso_read", refundedCents: 2000, list: "absent", charge: { on_behalf_of: "acct_other_B", application: "ca_other", metadata: { hone_payment_charge_attempt_id: "attempt-1", stripe_account: "acct_other_B" } } });
+      expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+      expect(REFUNDS_LIST.mock.calls[0][1]).toMatchObject({ stripeAccount: "acct_test_1" });
+      expect(JSON.stringify(REFUNDS_LIST.mock.calls)).not.toContain("acct_other_B");
+    });
+    it("the stored attempt is looked up only inside the studio bound to the event's account, in the event's mode", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+      setup();
+      await send({ id: "evt_iso_eq", refundedCents: 2000, list: "absent" });
+      expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
+        { table: "payment_charge_attempts", column: "studio_id", value: "studio-1" },
+        { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_1" },
+        { table: "payment_charge_attempts", column: "stripe_livemode", value: false },
+      ]));
+    });
+    it("an attempt that does not exist in that studio and account: no read, nothing recorded, nothing written", async () => {
+      ADMIN.current = makeAdmin({
+        studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+        payment_charge_attempts: [{ data: null, error: null }],
+      }, { claim_stripe_event: CLAIM_OK });
+      expect((await send({ id: "evt_iso_none", refundedCents: 2000, list: "absent" })).status).toBe(200);
+      expect(REFUNDS_LIST).not.toHaveBeenCalled();
+      expect(historyCalls()).toEqual([]);
+      expect(reconcileCalls()).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+    it.each([["a different charge id", { stripe_charge_id: "ch_other" }], ["a different payment intent", { stripe_payment_intent_id: "pi_other" }], ["a different connected account", { stripe_account_id: "acct_other" }], ["a different customer", { stripe_customer_id: "cus_other" }]])(
+      "a stored attempt with %s than the signed charge is refused: no read, no history, nothing written", async (_label, override) => {
+        ADMIN.current = makeAdmin({
+          studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+          payment_charge_attempts: [{ data: { ...row(null), ...override }, error: null }],
+        }, { claim_stripe_event: CLAIM_OK, record_charge_refund_history: RECORDED });
+        const res = await send({ id: `evt_iso_${Object.keys(override)[0]}`, refundedCents: 2000, list: "absent" });
+        expect(res.status).toBeLessThan(500);
+        expect(REFUNDS_LIST).not.toHaveBeenCalled();
+        expect(historyCalls()).toEqual([]);
+        expect(ADMIN.current!.updateCalls).toEqual([]);
+      });
+  });
+
+  // What the owner and the staff see after each recorded history: the panel, the balance (kept AND outstanding) and the remaining refundable
+  // amount all come from the same recorded figures. (The history rows themselves are proved in the database tests.)
+  describe("truthful panel and balance for each recorded history (charge 5000, quote 5000)", () => {
+    it.each([
+      ["no refund recorded", null, 0, { kind: "refunded" }, null, 0, 5000],
+      ["a partial of 2000", 2000, 0, { kind: "refunded", remainingRefundableCents: 3000, refundedCents: 2000 }, "owed", 2000, 3000],
+      ["two partials (2000 + 1000)", 3000, 0, { kind: "refunded", remainingRefundableCents: 2000, refundedCents: 3000 }, "owed", 3000, 2000],
+      ["a partial then the remainder (5000 in all)", 5000, 0, { kind: "refunded", remainingRefundableCents: 0, refundedCents: 5000 }, "owed", 5000, 0],
+    ] as const)("%s", async (_label, succeeded, inflight, panel, balanceKind, owedCents, keptCents) => {
+      const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
+      const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
+      const state = refundDisplayState({ chargeStatus: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, providerRefundStatus: null,
+        stripeRefundId: null, cumulativeFullRefundVerified: false, refundsSucceededCents: succeeded, refundsInflightCount: inflight });
+      if (succeeded === null) {
+        expect(state.kind).not.toBe("refunded");
+      } else {
+        expect(state).toMatchObject(panel);
+      }
+      const balance = outstandingForAppointment({ status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
+        settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad", refundsSucceededCents: succeeded, refundsInflightCount: inflight }] });
+      if (balanceKind === null) expect(balance.kind).toBe("paid");
+      else expect(balance).toMatchObject({ kind: "owed", outstandingCents: owedCents, cardKeptCents: keptCents });
+    });
+    it("a pending refund in flight: the panel says pending and the balance says it cannot state a figure (never a guess)", async () => {
+      const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
+      const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
+      expect(refundDisplayState({ chargeStatus: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, providerRefundStatus: null,
+        stripeRefundId: null, cumulativeFullRefundVerified: false, refundsSucceededCents: 2000, refundsInflightCount: 1 })).toMatchObject({ mayStartRefund: false });
+      expect(outstandingForAppointment({ status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
+        settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad", refundsSucceededCents: 2000, refundsInflightCount: 1 }] })).toEqual({ kind: "amount_unavailable" });
+    });
+  });
+
   // refund.* events are NOT subscribed on the live endpoint, so they should never arrive. If one ever does (a changed subscription), it must stay
   // safe: handled as before from the Refund object inside the event, with NO list read and the signed-event kind.
   it("a refund.updated that arrives anyway (live endpoint version) behaves as before: signed-event kind, no provider read", async () => {
