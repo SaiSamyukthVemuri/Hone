@@ -17,14 +17,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` is recorded as applied and `0319` is MIGRATION-FIRST PENDING and NOT applied; the record of hosted below is current through `0354` for the migrations it names, apart from `0319` and the unhosted gaps)
 
-> **CURRENT RELATIONSHIP: repo > hosted only by the pending `0319`, plus the file for `0353` arriving via #1489 (`0353` is already applied; see the table below).** The hosted max is the value in the table below, as declared in `docs/production/migration-state.json`. The one pending file is sealed and unapplied: `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). `0313` is recorded as applied below. Applying `0319` is a separate approval of the exact bytes; this record applies nothing.
+> **CURRENT RELATIONSHIP: repo > hosted only by the pending `0319`.** The hosted max is the value in the table below, as declared in `docs/production/migration-state.json`. The one pending file is sealed and unapplied: `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). `0313` is recorded as applied below. Applying `0319` is a separate approval of the exact bytes; this record applies nothing.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0354**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14, 2026-11-15 and 2026-11-16, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353` and `0354` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341, 0350, 0351, 0352, 0353 and 0354 read-backs were each one row above the read before them). |
 | **Repo migration max** | **0354** (`0354_quoted_amount_explicit_zero_custom_price.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
-| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353` and `0354` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. The files for `0351`, `0352` and `0354` are on this tree; the file for `0353` is carried by #1489 and is not on this tree, so `0353` is declared in `hosted_without_repo_file` until it lands. |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353` and `0354` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. The files for `0351` to `0354` are all on this tree. |
 | **Next free number** | Next free number is **0355** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
@@ -175,10 +175,18 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
-### The 0353 apply (recorded here in brief; apply receipt `01-ops/0353-apply-receipt-20261116.json`)
+### The 0353 apply (facts as recorded by the operator, 2026-11-16; apply receipt `01-ops/0353-apply-receipt-20261116.json`)
 
-- **Applied between 0352 and 0354, 2026-11-16.** Read-back 23:25:39Z to 23:25:42Z, client side: **OVERALL PASS**, 276 rows, max `0353` present once (by the row count, 275 before plus `0353` once). Sealed package SEAL-SHA256SUMS `f562f999…`; the owner's approval is `01-ops/SAM-AUTHORIZATION-0353-b00-20261116T232243Z.txt`.
-- **Its file is carried by #1489 and is not on this tree.** It is declared in `hosted_without_repo_file` here until that file lands; the full apply record is made on #1489.
+- **What it is.** `0353_waitlist_single_legal_name.sql`: adds a flag (default off) and its check on waitlist entries, and a second completion function, so that a waitlist entry can later carry a single legal name. The existing completion function is unchanged and the join path is unchanged. The file is carried by #1489; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-16 (`01-ops/SAM-AUTHORIZATION-0353-b00-20261116T232243Z.txt`), for this exact sealed package: apply 0353 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `f562f999…`.
+- **Pre-apply read (Part A, 2026-11-16, client side).** PASS: 275 history rows, max `0352`, `0353` absent.
+- **Read-back (2026-11-16, 23:25:39Z to 23:25:42Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
+- **Scope on hosted.** One flag (default off) and its check on waitlist entries, and a second completion function for the service role only; no row is flagged, nothing is backfilled, and no studio's behaviour changes. Offering a single name is a separate reviewed change made after the apply.
+- **Hosted at that read-back:** 276 rows, max `0353`. By the row count (275 before, plus `0353` once, equals 276), `0328` to `0337` remain not hosted, and so do `0342` to `0349`.
+- **Declared hosted maximum.** Advanced to `0353` on 2026-11-16, from the receipt only, and to `0354` by the 0354 apply recorded below.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
 
 ### The 0354 apply (facts as recorded by the operator, 2026-11-16; apply receipt `01-ops/0354-apply-receipt-20261116.json`)
 

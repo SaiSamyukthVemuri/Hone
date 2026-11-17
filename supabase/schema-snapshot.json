@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 272,
+    "count": 273,
     "last": "0354_quoted_amount_explicit_zero_custom_price.sql",
-    "sha256": "2d52b0063f413677fc1fe288218e10206ca3c009b6c210f129005390ab26a8b0"
+    "sha256": "764db8467ebed8b10fbb31326d7f3675f252f375bc2d3ac13b155ccdbfc74f4a"
   },
   "public": {
     "tables": [
@@ -241,6 +241,7 @@
       "complete_stripe_customer_provisioning",
       "complete_waitlist_invitation_proof",
       "complete_waitlist_profile_by_grant",
+      "complete_waitlist_profile_by_grant_v2",
       "consume_payment_recovery_tokens_for_charge_attempt",
       "copy_session_setup",
       "correct_finalized_session",
