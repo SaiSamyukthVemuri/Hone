@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
@@ -52,7 +52,9 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
   const [percentText, setPercentText] = useState(percentInput(saved.percentBp));
   const [expanded, setExpanded] = useState(feeType === "late_cancel" || saved.enabled || usable(saved));
   const [pending, startTransition] = useTransition();
+  const [savingRule, setSavingRule] = useState(false);
   const inFlight = useRef(false);
+  const observedServerRule = useRef(serverRule);
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [message, setMessage] = useState<Message>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -63,15 +65,34 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
   const canEnable = !dirty && usable(saved) && (saved.mode !== "fixed" || currencyLabel !== null);
   useUnsavedChangesGuard(`payment-fees-${slug}`, dirty);
 
+  useEffect(() => {
+    const incoming: ManualFeeRule = { enabled: initial.enabled, mode: initial.mode, cents: initialCents, percentBp: initial.percentBp };
+    // Ignore the old props while our acknowledgement is waiting for refresh. Apply an actual new server snapshot
+    // after pending settles, keeping the other fee's unsaved draft (and any edits in this card) intact.
+    if (pending || sameRule(observedServerRule.current, incoming)) return;
+    observedServerRule.current = incoming;
+    if (!dirty) {
+      setMode(incoming.mode);
+      setFixedText(dollarsInput(incoming.cents));
+      setPercentText(percentInput(incoming.percentBp));
+    }
+    if (incoming.enabled || usable(incoming)) setExpanded(true);
+    if (!sameRule(saved, incoming)) {
+      setSaved(incoming);
+      setMessage({ kind: "ok", text: dirty ? "The saved rule changed elsewhere. Your unsaved edits are preserved; review them before saving." : "Updated to the latest saved rule." });
+    }
+  }, [initial.enabled, initial.mode, initial.percentBp, initialCents, pending, dirty, saved]);
+
   const summary = usable(saved)
     ? saved.mode === "percent"
       ? `${formatBasisPoints(saved.percentBp!)} of the session price`
       : `$${dollarsInput(saved.cents)} ${currencyLabel ?? "(currency unconfirmed)"}`
     : "No rule saved yet";
 
-  function run(action: () => Promise<FeeSettingResult>, onSuccess: () => void) {
+  function run(action: () => Promise<FeeSettingResult>, onSuccess: () => void, isRuleSave = false) {
     if (inFlight.current) return;
     inFlight.current = true;
+    setSavingRule(isRuleSave);
     setMessage(null);
     startTransition(async () => {
       try {
@@ -86,6 +107,7 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
         setMessage({ kind: "error", text: FAILURE });
       } finally {
         inFlight.current = false;
+        setSavingRule(false);
       }
     });
   }
@@ -111,7 +133,7 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
       if (mode === "fixed") setFixedText(dollarsInput(next.cents));
       else setPercentText(percentInput(next.percentBp));
       setMessage({ kind: "ok", text: saved.enabled ? "Rule saved. The fee remains on." : "Rule saved. The fee is still off." });
-    });
+    }, true);
   }
 
   function changeEnabled(intended: boolean) {
@@ -132,7 +154,7 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
           <p className="mt-1 text-sm text-fg-muted">{description}</p>
         </div>
         <label className={cx("relative inline-flex min-h-[44px] shrink-0 cursor-pointer items-center gap-2 rounded-md", pending && "cursor-wait")}>
-          <span className="text-xs text-fg-muted">{saved.enabled ? "On" : "Off"}</span>
+          <span className="text-xs text-fg-muted">{pending && !savingRule ? "Updating…" : saved.enabled ? "On" : "Off"}</span>
           <input
             type="checkbox"
             role="switch"
@@ -198,7 +220,7 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
           {fieldError && <p id={`${slug}-error`} role="alert" className="text-sm text-danger-fg">{fieldError}</p>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
             <p className="text-xs text-fg-muted">{dirty ? "Unsaved changes" : usable(saved) ? `Saved · ${summary}` : "Save a rule before turning this fee on."}</p>
-            <Button type="submit" variant="primary" pending={pending && !confirmEnable} disabled={pending || !dirty} data-testid={`${slug}-fee-save`}>Save rule</Button>
+            <Button type="submit" variant="primary" pending={pending && savingRule} disabled={pending || !dirty} data-testid={`${slug}-fee-save`}>Save rule</Button>
           </div>
         </form>
       )}

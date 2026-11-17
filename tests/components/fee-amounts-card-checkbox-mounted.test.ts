@@ -122,3 +122,29 @@ it("saving a rule does not optimistically claim charging is active while server 
   expect(get("late-cancel-fee-enabled-status").textContent).toContain("Checking availability");
   expect(get("late-cancel-fee-enabled-status").textContent).not.toContain("Active.");
 });
+
+it("a new server snapshot updates the saved switch and keeps the owner's unfinished draft", async () => {
+  const { root, props, get, box, host } = await mount();
+  await typeValue(get("late-cancel-fee-amount"), "30");
+  await act(async () => root.render(createElement(FeeAmountsCard, {
+    ...props, initialLateCancelCents: 2500,
+    lateCancel: { ...props.lateCancel, enabled: true, status: { saved: "Saved as on", effective: "Not active: payments are not ready" } },
+  })));
+  expect(box().checked).toBe(true);
+  expect(get<HTMLInputElement>("late-cancel-fee-amount").value).toBe("30");
+  expect(host.textContent).toContain("Your unsaved edits are preserved");
+  expect(get("late-cancel-fee-enabled-status").textContent).toContain("payments are not ready");
+  await act(async () => get("late-cancel-fee-save").click());
+  expect(h.save).toHaveBeenLastCalledWith({ feeType: "late_cancel", mode: "fixed", valueText: "30", expected: { ...saved, enabled: true, cents: 2500 } });
+  expect(h.enabled).not.toHaveBeenCalled();
+});
+
+it("a new server rule replaces a clean draft instead of leaving an out-of-date saved value", async () => {
+  const { root, props, get, box } = await mount();
+  await act(async () => root.render(createElement(FeeAmountsCard, {
+    ...props, initialLateCancelCents: 2500, lateCancel: { ...props.lateCancel, enabled: true },
+  })));
+  expect(box().checked).toBe(true);
+  expect(get<HTMLInputElement>("late-cancel-fee-amount").value).toBe("25.00");
+  expect(get<HTMLButtonElement>("late-cancel-fee-save").disabled).toBe(true);
+});
