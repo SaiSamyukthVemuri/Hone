@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { computeOverdueDisinfectantAlerts, loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { checkOverdueDisinfectantAlerts, computeOverdueDisinfectantAlerts, loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { DUE_SOON_DAYS, disinfectantDueStatus } from "@/lib/record-keeping/disinfectant-status";
 import { localDateString } from "@/lib/booking/tz";
 
@@ -94,7 +95,7 @@ describe("the notice is derived, deduplicated by record, and ordered determinist
   });
 });
 
-describe("KNOWN LIMIT (recorded, not changed here): a failed read is indistinguishable from 'nothing overdue'", () => {
+describe("a failed read is 'unavailable', never 'nothing overdue'", () => {
   const supa = (result: { data: unknown; error: unknown } | "throw") => {
     const b: Record<string, unknown> = {};
     for (const m of ["from", "select", "eq", "is", "not", "order"]) b[m] = () => b;
@@ -104,9 +105,27 @@ describe("KNOWN LIMIT (recorded, not changed here): a failed read is indistingui
     };
     return b as never;
   };
-  it("characterization: a read error returns [] (the same as no overdue records)", async () => {
-    expect(await loadOverdueDisinfectantAlerts(supa({ data: null, error: { code: "57014" } }), "studio", "2026-03-10")).toEqual([]);
+  it("a read error is unavailable", async () => {
+    expect(await checkOverdueDisinfectantAlerts(supa({ data: null, error: { code: "57014" } }), "studio", "2026-03-10")).toEqual({ status: "unavailable" });
+  });
+  it("a thrown read is unavailable", async () => {
+    expect(await checkOverdueDisinfectantAlerts(supa("throw"), "studio", "2026-03-10")).toEqual({ status: "unavailable" });
+  });
+  it("an empty successful read is ok with no alerts (distinct from unavailable)", async () => {
+    expect(await checkOverdueDisinfectantAlerts(supa({ data: [], error: null }), "studio", "2026-03-10")).toEqual({ status: "ok", alerts: [] });
+  });
+  it("a successful read returns the overdue alerts", async () => {
+    const r = await checkOverdueDisinfectantAlerts(supa({ data: [{ id: "a", disinfectant_name: "X", discard_due_date: "2026-03-01", date_discarded: null }], error: null }), "studio", "2026-03-10");
+    expect(r.status === "ok" && r.alerts.map((a) => a.recordId)).toEqual(["a"]);
+  });
+  it("the count-only wrapper (header badge) still degrades to [] and never throws", async () => {
     expect(await loadOverdueDisinfectantAlerts(supa("throw"), "studio", "2026-03-10")).toEqual([]);
-    vi.restoreAllMocks();
+  });
+  it("the Notification Centre uses the checking loader and says it could not check", () => {
+    const page = readFileSync("app/(app)/notifications/page.tsx", "utf8");
+    expect(page).toContain("checkOverdueDisinfectantAlerts(");
+    expect(page).not.toMatch(/\bloadOverdueDisinfectantAlerts\(/);
+    expect(page).toContain("Couldn&apos;t check disinfectant dates. Reload to try again.");
+    expect(page).toMatch(/disinfectantUnavailable\s*&&/);
   });
 });

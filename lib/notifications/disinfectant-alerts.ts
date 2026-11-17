@@ -98,12 +98,19 @@ export function computeOverdueDisinfectantAlerts(
 // carry a replace-by date (a naturally small set), capped for safety; the overdue
 // decision + display are then applied by the pure helper above. One query, no
 // per-record / per-practitioner lookups.
-export async function loadOverdueDisinfectantAlerts(
+
+export type OverdueDisinfectantCheck =
+  | { status: "ok"; alerts: OverdueDisinfectantAlert[] }
+  // The read FAILED. This is not "nothing overdue": a safety reminder must not go
+  // quiet because a query errored, so callers say the dates could not be checked.
+  | { status: "unavailable" };
+
+export async function checkOverdueDisinfectantAlerts(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
   todayYmd: string,
   limit = 500,
-): Promise<OverdueDisinfectantAlert[]> {
+): Promise<OverdueDisinfectantCheck> {
   try {
     const { data, error } = await supabase
       .from("record_keeping_disinfectants")
@@ -113,9 +120,21 @@ export async function loadOverdueDisinfectantAlerts(
       .not("discard_due_date", "is", null) // has a replace-by date
       .order("discard_due_date", { ascending: true })
       .limit(limit);
-    if (error) return [];
-    return computeOverdueDisinfectantAlerts((data ?? []) as DisinfectantRow[], todayYmd);
+    if (error) return { status: "unavailable" };
+    return { status: "ok", alerts: computeOverdueDisinfectantAlerts((data ?? []) as DisinfectantRow[], todayYmd) };
   } catch {
-    return [];
+    return { status: "unavailable" };
   }
+}
+
+// Count-style callers (the header badge) that can only show a number keep this
+// shape; the Notification Centre uses checkOverdueDisinfectantAlerts and says so.
+export async function loadOverdueDisinfectantAlerts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  todayYmd: string,
+  limit = 500,
+): Promise<OverdueDisinfectantAlert[]> {
+  const r = await checkOverdueDisinfectantAlerts(supabase, studioId, todayYmd, limit);
+  return r.status === "ok" ? r.alerts : [];
 }
