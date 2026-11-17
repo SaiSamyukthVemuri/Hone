@@ -3,6 +3,7 @@ import type Stripe from "stripe";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
+  readFakeRefundsForCharge,
 } from "@/lib/stripe/e2e-fake-ledger";
 
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
@@ -28,7 +29,8 @@ export type FakeStripeMethod =
   | "pi_create"
   | "pi_retrieve"
   | "pi_cancel"
-  | "refund_create";
+  | "refund_create"
+  | "refund_list";
 
 export type FakeStripeCall = {
   method: FakeStripeMethod;
@@ -312,6 +314,27 @@ export function createFakeStripe(): Stripe {
       },
     },
     refunds: {
+      // Read-only: the refunds the runner seeded for a charge (an external refund). One page; never any side effect.
+      list: async (params: { charge?: string | null; limit?: number }, opts?: RequestOpts) => {
+        const run = runId();
+        const charge = params?.charge ?? "";
+        const seeded = readFakeRefundsForCharge(run, charge);
+        record(run, {
+          method: "refund_list",
+          idempotencyKey: null,
+          stripeAccount: opts?.stripeAccount ?? null,
+          amountCents: null,
+          currency: null,
+          resultId: charge,
+          replay: false,
+        });
+        return {
+          object: "list",
+          url: "/v1/refunds",
+          has_more: false,
+          data: seeded.map((r) => ({ object: "refund", id: r.id, amount: r.amount, currency: r.currency, status: r.status, charge, payment_intent: r.payment_intent })),
+        };
+      },
       create: async (
         params: {
           charge?: string | null;

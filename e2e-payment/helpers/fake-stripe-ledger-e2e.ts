@@ -37,7 +37,7 @@ const PREFIX = "hone-e2e-stripe-";
 // server FakeStripeCall by the ledger append format; extra fields are ignored.
 export type FakeStripeCall = {
   runId?: string;
-  method: "pi_create" | "pi_retrieve" | "pi_cancel" | "refund_create";
+  method: "pi_create" | "pi_retrieve" | "pi_cancel" | "refund_create" | "refund_list";
   idempotencyKey: string | null;
   stripeAccount: string | null;
   amountCents: number | null;
@@ -70,6 +70,9 @@ export function activeRunId(): string {
 
 function ledgerPath(runId: string): string {
   return join(tmpdir(), `${PREFIX}${assertValidRunId(runId)}.jsonl`);
+}
+function refundsPath(runId: string): string {
+  return join(tmpdir(), `${PREFIX}${assertValidRunId(runId)}.refunds.json`);
 }
 function configPath(runId: string): string {
   return join(tmpdir(), `${PREFIX}${assertValidRunId(runId)}.config.json`);
@@ -192,6 +195,26 @@ export function configureFakeStripeOutcome(
   renameSync(tmp, p);
 }
 
+// ----- External refunds (the runner writes; the fake refunds.list reads) ---------
+// Seeds the refunds the fake provider will report for ONE charge, as if they were made in the provider's dashboard. Replaces that
+// charge's list. Atomic, like the outcome config.
+export type SeededRefund = { id: string; amount: number; currency: string; status: string; payment_intent: string };
+export function seedFakeRefunds(chargeId: string, refunds: SeededRefund[], runId: string = activeRunId()): void {
+  const p = refundsPath(runId);
+  let all: Record<string, SeededRefund[]> = {};
+  if (existsSync(p)) {
+    try {
+      all = JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      all = {};
+    }
+  }
+  all[chargeId] = refunds;
+  const tmp = `${p}.e2e.tmp`;
+  writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
 export function clearFakeStripeOutcome(runId: string = activeRunId()): void {
   const p = configPath(runId);
   if (existsSync(p)) rmSync(p, { force: true });
@@ -204,7 +227,7 @@ export function resetFakeStripeLedger(runId: string = activeRunId()): void {
 }
 
 export function cleanupFakeStripeLedger(runId: string = activeRunId()): void {
-  for (const p of [ledgerPath(runId), configPath(runId)]) {
+  for (const p of [ledgerPath(runId), configPath(runId), refundsPath(runId)]) {
     if (existsSync(p)) rmSync(p, { force: true });
   }
 }

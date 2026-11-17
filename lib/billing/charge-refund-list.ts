@@ -1,6 +1,8 @@
 import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/server";
+import { isE2eFakeStripeEnabled } from "@/lib/stripe/e2e-fake-guard";
+import { createFakeStripe } from "@/lib/stripe/e2e-fake-stripe";
 
 // HON-49: the ONE place Hone reads a charge's refunds from the payment provider.
 //
@@ -39,7 +41,9 @@ export async function readCompleteChargeRefundList(args: { chargeId: string; str
   if (typeof chargeId !== "string" || !chargeId.trim() || typeof stripeAccount !== "string" || !stripeAccount.trim()) {
     return { ok: false, reason: "provider_refused" };
   }
-  const stripe = getStripe();
+  // The payment browser E2E lane serves this read from its fake processor (read-only, seeded by the runner); everywhere else, and in every
+  // deployed runtime, it is the real client (the guard is false there).
+  const stripe = isE2eFakeStripeEnabled() ? createFakeStripe() : getStripe();
   const refunds: Stripe.Refund[] = [];
   let startingAfter: string | undefined;
   for (let page = 0; page < REFUND_LIST_MAX_PAGES; page += 1) {

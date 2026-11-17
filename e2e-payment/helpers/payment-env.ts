@@ -32,4 +32,6 @@ export const PAYMENT_WEB_SERVER_ENV: Record<string, string> = {
   ...E2E_WEB_SERVER_ENV,
   HONE_E2E_FAKE_STRIPE: "1",
   HONE_E2E_RUN_ID: PAYMENT_E2E_RUN_ID,
+  // The refund E2E reads the owner's balance from the dashboard "still owed" list, which is gated; no other spec in this lane depends on it being off.
+  HONE_DASHBOARD_UNPAID_ENABLED: "true",
 };
