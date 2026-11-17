@@ -116,9 +116,26 @@ describe("a visit count never closes or advances anything (binding)", () => {
 
   it("the close action, the stage actions and the goal action never read a visit count", () => {
     const actions = code(path.join(ROOT, ACTIONS));
-    for (const fn of ["closeTreatmentPlanAction", "updateTreatmentPlanStageAction", "createTreatmentPlanStageAction"]) {
+    for (const fn of ["closeTreatmentPlanAction", "updateTreatmentPlanStageAction", "createTreatmentPlanStageAction", "deleteTreatmentPlanStageAction", "attachChartEntryToPlanAction", "detachChartEntryFromPlanAction"]) {
       expect(fnBody(actions, fn), fn).not.toMatch(/suggested_visit_count|visit_count|sessionCount|\{\s*count:\s*"exact"/);
     }
     expect(code(path.join(ROOT, "app/(app)/clients/[id]/treatment-time-actions.ts"))).not.toMatch(/suggested_visit_count|visit_count|sessionCount/);
   });
+
+  // The database side. Today NO migration puts a trigger on treatment_plans and none updates a plan to closed, so no database object can close a plan from
+  // a count. A future one has to be added to this list deliberately. (The scan strips comment lines and joins statements, so formatting cannot hide a match.)
+  it("no migration creates a trigger on treatment_plans or updates a plan to closed", () => {
+    const dir = path.join(ROOT, "supabase/migrations");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".sql"));
+    expect(files.length).toBeGreaterThan(300);
+    const flat = (f: string) => readFileSync(path.join(dir, f), "utf8").split("\n").filter((l) => !/^\s*--/.test(l)).join(" ");
+    const mentions = files.filter((f) => /treatment_plans\b/i.test(flat(f)));
+    expect(mentions.length).toBeGreaterThan(5); // the scan reaches the files that name the table
+    const triggers = files.filter((f) => /create\s+(or\s+replace\s+)?trigger\s+[\w"]+[^;]{0,200}\bon\s+(public\.)?treatment_plans\b/i.test(flat(f)));
+    const closers = files.filter((f) => /update\s+(public\.)?treatment_plans\b[^;]{0,300}['"]closed['"]/i.test(flat(f)));
+    expect({ triggers, closers }).toEqual({ triggers: [], closers: [] });
+  });
+
+  // Stated bound: the source scans above match the double-quote spelling `status: "closed"` and the `from("table")` call shape. A different spelling (single
+  // quotes, a helper that hides the table name) would escape them, which is why the action-body checks and the migration scan also exist.
 });
