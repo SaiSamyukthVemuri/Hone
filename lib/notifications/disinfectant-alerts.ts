@@ -1,4 +1,6 @@
 import "server-only";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
+import { safeLog } from "@/lib/logging/safe-log";
 import type { createClient } from "@/lib/supabase/server";
 import {
   disinfectantDueStatus,
@@ -120,9 +122,14 @@ export async function checkOverdueDisinfectantAlerts(
       .not("discard_due_date", "is", null) // has a replace-by date
       .order("discard_due_date", { ascending: true })
       .limit(limit);
-    if (error) return { status: "unavailable" };
+    if (error) {
+      // A fixed event and a classified code only: a silent failure leaves a trace, no raw error text.
+      safeLog.warn("[disinfectant-check]", { event: "disinfectant_check_unavailable", code: dbErrorCode(error) });
+      return { status: "unavailable" };
+    }
     return { status: "ok", alerts: computeOverdueDisinfectantAlerts((data ?? []) as DisinfectantRow[], todayYmd) };
-  } catch {
+  } catch (thrown) {
+    safeLog.warn("[disinfectant-check]", { event: "disinfectant_check_unavailable", code: thrownErrorClass(thrown) });
     return { status: "unavailable" };
   }
 }
