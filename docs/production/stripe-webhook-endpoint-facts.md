@@ -21,7 +21,7 @@ These are dashboard settings; they can change without a code change, so re-read 
 Without the read in the application change (#1533) and the migrations it depends on (0358, 0359):
 - A refund made in the provider's dashboard for the WHOLE charge is not completed: the event has no list, so the full-refund path refuses it and raises a critical alert.
 - A refund Hone started that stays pending is never completed: its later status arrives only as `refund.*` events, which are not subscribed.
-- A refund of less than the whole charge, or a second refund, is not recorded: the visit keeps reading as fully paid and the owner's balance is too low by the refunded part.
+- A refund of less than the whole charge, or a second refund, is not recorded: the visit keeps reading as fully paid. The card money shown as KEPT is overstated by the refunded part, so the amount shown as still OUTSTANDING (quote minus card money kept minus collected settlements) is understated by the same amount.
 All of these fail safe (an alert, no wrong money), not correct. Alerts to watch meanwhile: `charge_refunded_partial_out_of_band` and `charge_refunded_cumulative_evidence_refused`. Close none on assumption.
 
 ## Limit that remains after the read ships
