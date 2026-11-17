@@ -89,6 +89,7 @@ describe("confirmImportAction on partial failure (today's behaviour)", () => {
     const { confirmImportAction } = await import("@/app/(app)/settings/import/actions");
     const r = await confirmImportAction(CSV, "other");
     expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toContain("2 client(s) were created, but their imported treatment history could not be saved");
     expect(db.batches[0].voided_at).toBeTruthy();
     expect(db.batches[0].completed_at).toBeUndefined();
     expect(db.clients).toHaveLength(2);
@@ -109,6 +110,7 @@ describe("confirmImportAction on partial failure (today's behaviour)", () => {
     await confirmImportAction(CSV, "other");
     const again = await confirmImportAction(CSV, "other");
     expect(again.ok).toBe(false);
+    expect(again.ok === false && again.error).toContain("Every row matched an existing client");
     expect(db.clients).toHaveLength(2);
     expect(db.memories).toHaveLength(0);
     expect(db.batches).toHaveLength(1); // the retry never even opened a batch
