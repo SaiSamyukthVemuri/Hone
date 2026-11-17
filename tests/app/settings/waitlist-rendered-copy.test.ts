@@ -81,7 +81,7 @@ describe("the owner's Waitlist page: the allowance", () => {
     const page = await ownerPage();
     expect(page).toContain("5 consultation appointments available. You can invite 3 more people.");
     expect(page).toContain(
-      "Next 14 days, any day or time. These are minimums: the count never over-promises but may under-count. Availability can change; invitations don't reserve appointments.",
+      "Next 14 days, any day or time. These are minimums: the count never over-promises but may under-count. Availability can change; invitations don’t reserve appointments.",
     );
   });
   it("says the counts include every live invitation when the estimate is the conservative one (all scope)", async () => {
@@ -198,6 +198,8 @@ describe("the owner email, as rendered", () => {
     expect(mail.text).toContain("https://app.example.test/settings/waitlist?followup=1#follow-up");
     expect(mail.html).toContain('href="https://app.example.test/settings/waitlist?followup=1#follow-up"');
     expect(readable(mail.html)).not.toMatch(/Synthetic|@|\d{3}[-. ]?\d{4}/);
+    // Privacy: no answer text and no test-fixture wording in either body, raw or rendered (the template takes no answer input at all).
+    for (const body of [mail.text, mail.html, readable(mail.html)]) expect(body).not.toMatch(/Synthetic|mornings/);
   });
 });
 
