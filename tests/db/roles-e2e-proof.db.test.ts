@@ -365,10 +365,14 @@ describe("a receptionist: invite, accept, work, removal", () => {
     const bookB = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, now() + interval '51 days')`, [B.studioId, B.practitionerId, B.clientId, serviceB])));
     const bookBVal = bookB.ok ? ((bookB.value as { rows: Record<string, unknown>[] }).rows[0]) : null;
     note("RC10", "the receptionist books in studio B", "receptionist (authenticated)", bookB.ok ? bookBVal : bookB.error, !bookB.ok || !Object.values(bookBVal ?? {}).includes("created"));
-    const opts = await attempt(() => as(rec.userId, (q) => q(`select public.receptionist_booking_options($1) as r`, [A.studioId])));
-    const optsText = opts.ok ? JSON.stringify((opts.value as { rows: { r: unknown }[] }).rows[0].r) : opts.error;
-    const priceKeys = [...new Set([...optsText.matchAll(/"([a-z_]*(?:price|fee|amount|paid)[a-z_]*)"/g)].map((m) => m[1]))];
-    note("RC6b", "RECORDED: what the booking-options command returns to a receptionist; price-like keys in it are listed", "receptionist (authenticated)", { returned: opts.ok, price_like_keys: priceKeys, sample: optsText.slice(0, 160) }, true);
+    // the declared return type of the command, read from the catalog, and the columns of a real call as the receptionist
+    const declared = String((await adminQuery(`select pg_get_function_result('public.receptionist_booking_options(uuid)'::regprocedure) as t`)).rows[0].t);
+    const declaredCols = [...declared.matchAll(/(?:^TABLE\(|, )([a-z_]+) [a-z ]+/g)].map((m) => m[1]);
+    const opts = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_booking_options($1)`, [A.studioId])));
+    const optRows = opts.ok ? (opts.value as { rows: Record<string, unknown>[] }).rows : [];
+    const returnedCols = [...new Set(optRows.flatMap((r) => Object.keys(r)))].sort();
+    const priceLike = [...declaredCols, ...returnedCols].filter((c) => /price|paid|fee|amount|cost|cents|deposit/i.test(c));
+    note("RC6b", "receptionist_booking_options: the DECLARED return columns (from the catalog) and the columns of a real call; any price, paid, fee, amount or cost column is listed", "receptionist (authenticated)", { declared, declared_columns: declaredCols, rows: optRows.length, returned_columns: returnedCols, price_like_columns: priceLike }, opts.ok && declaredCols.length >= 4 && priceLike.length === 0);
     const ownerSees = await as(A.userId, (q) => q(`select count(*) n from public.appointments where studio_id = $1 and created_by_receptionist_id = $2`, [A.studioId, rec.receptionistId]));
     note("RC11", "the owner sees the appointment the receptionist booked, attributed to the receptionist", "owner A (authenticated)", { appointments: n(ownerSees) }, n(ownerSees) === 1);
   });
