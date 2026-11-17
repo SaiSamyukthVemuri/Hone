@@ -175,7 +175,7 @@ export default async function NewSessionPage({
       <div>
         <Link
           href={`/clients/${encodeURIComponent(id)}?tab=sessions`}
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {data.client.name}
         </Link>
@@ -226,7 +226,7 @@ export default async function NewSessionPage({
                 Start a session without an appointment
               </Link>
             )}
-            <Link href={`/clients/${encodeURIComponent(id)}`} className="font-medium hover:underline">
+            <Link href={`/clients/${encodeURIComponent(id)}`} className="min-w-0 [overflow-wrap:anywhere] font-medium hover:underline">
               Back to {data.client.name}
             </Link>
           </div>
