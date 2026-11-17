@@ -133,8 +133,15 @@ describe("startSessionAction — reverse-skew floor (new app, old database)", ()
   });
 
   it("still throws on every non-PGRST202 error rather than swallowing it", () => {
-    expect(CODE).toMatch(
-      /if \(startErr\) \{[\s\S]{0,120}Failed to start session/,
+    // The ONLY command outcome answered without a throw is the expected
+    // assigned-elsewhere refusal (redirected to the new-session page, which
+    // says so). Every other error still throws "Failed to start session".
+    const block = CODE.match(/if \(startErr\) \{[\s\S]*?\n  \}/)?.[0] ?? "";
+    expect(block).toMatch(/throw new Error\(`Failed to start session: \$\{mapSessionCommandError\(startErr\)\}`\)/);
+    expect(block).toMatch(
+      /if \(appointmentId && mapSessionCommandError\(startErr\) === ASSIGNED_ELSEWHERE_RAISED\) \{\s*redirect\(sessionStartRefusalHref\(clientId, appointmentId, "assigned_elsewhere"\)\);\s*\}/,
     );
+    // No other early exit inside the error branch.
+    expect((block.match(/redirect\(/g) ?? []).length).toBe(1);
   });
 });
