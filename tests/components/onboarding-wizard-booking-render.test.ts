@@ -33,7 +33,7 @@ function signals(over: Partial<OnboardingSignals>): OnboardingSignals {
   };
 }
 
-function renderBooking(over: Partial<OnboardingSignals>): string {
+function renderStep(over: Partial<OnboardingSignals>, step: "booking" | "done"): string {
   const persisted: OnboardingPersisted = {
     currentStep: "booking",
     completedSteps: ["welcome"],
@@ -43,11 +43,13 @@ function renderBooking(over: Partial<OnboardingSignals>): string {
     celebratedAt: null,
   };
   const base = buildOnboardingModel(signals(over), persisted);
-  const model = { ...base, currentStep: "booking" as const };
+  const model = { ...base, currentStep: step };
   return renderToStaticMarkup(
     createElement(OnboardingWizard, { model, open: true, onDismiss: () => undefined, onComplete: () => undefined }),
   );
 }
+
+const renderBooking = (over: Partial<OnboardingSignals>) => renderStep(over, "booking");
 
 describe("the wizard's booking step offers the page link only when it is done", () => {
   it("done: the link and the copy control are offered", () => {
@@ -68,6 +70,35 @@ describe("the wizard's booking step offers the page link only when it is done", 
   it("unknown: no link and no URL either", () => {
     const html = renderBooking({ bookingReadiness: { state: "unknown" } });
     expect(html).not.toContain("Open booking page");
+    expect(html).not.toContain(URL_);
+  });
+});
+
+describe("the final step offers the page link only when the studio is really ready", () => {
+  // A saved position can be "done" while the live facts have regressed (a consent form removed), so the step is reached
+  // with requiredComplete false. The step is forced active here, exactly as a persisted pointer would.
+  const BLOCKED = {
+    bookingReadiness: { state: "blocked", next: { label: "Add a treatment consent form", href: "/settings/consent" } },
+  } as Partial<OnboardingSignals>;
+
+  it("ready: the copy control is offered", () => {
+    const html = renderStep({}, "done");
+    expect(html).toContain("Go to dashboard");
+    expect(html).toContain("Copy link");
+  });
+  it("active step done but requiredComplete false: no link is copied or shown", () => {
+    const base = buildOnboardingModel(signals(BLOCKED), {
+      currentStep: "done",
+      completedSteps: ["welcome"],
+      skippedSteps: [],
+      dismissedAt: null,
+      completedAt: null,
+      celebratedAt: null,
+    });
+    expect(base.requiredComplete).toBe(false);
+    const html = renderStep(BLOCKED, "done");
+    expect(html).toContain("Go to dashboard");
+    expect(html).not.toContain("Copy link");
     expect(html).not.toContain(URL_);
   });
 });

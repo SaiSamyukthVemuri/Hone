@@ -409,7 +409,8 @@ export function OnboardingWizard({
             >
               Go to dashboard
             </button>
-            {model.publicBookingUrl && (
+            {/* A saved position can reach this step after a readiness regression, so the link needs the live gate too. */}
+            {model.requiredComplete && model.publicBookingUrl && (
               <CopyLinkButton url={model.publicBookingUrl} />
             )}
           </>
