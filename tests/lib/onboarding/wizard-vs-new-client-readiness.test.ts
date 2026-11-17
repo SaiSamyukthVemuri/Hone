@@ -111,6 +111,21 @@ describe("the wizard is ready only when a new client can book", () => {
     }
   });
 
+  it("a paused admission while another authority cannot answer is unknown: a choice proves nothing about the unread part", () => {
+    const e = evidence({
+      admission: { ok: true, mode: "waitlist", source: "persisted" },
+      treatmentConsent: { ok: false },
+    });
+    const canonical = computeNewClientReadiness(e);
+    expect(canonical.status).toBe("not_ready");
+    if (canonical.status !== "not_ready") throw new Error("unreachable");
+    expect(canonical.blockers.map((b) => b.key)).toEqual(["wait_admission"]);
+    expect(canonical.unavailable).toEqual(["treatment_consent"]);
+    const model = buildOnboardingModel(wizardSignals(e), FRESH);
+    expect(model.requiredComplete).toBe(false);
+    expect(model.steps.find((x) => x.key === "booking")!.blurb).toMatch(/could not check/i);
+  });
+
   it("a paused admission AND a missing consultation is still blocked: the choice never masks a structural blocker", () => {
     const e = evidence({
       services: { ok: true, services: [ORDINARY_TREATMENT] },
