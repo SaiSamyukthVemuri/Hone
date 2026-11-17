@@ -117,6 +117,28 @@ describe("0358 record_charge_refund_history: recording", () => {
   });
 });
 
+describe("0358 studio and account isolation", () => {
+  it("evidence naming one studio's attempt but another studio's account, studio or mode never writes either studio's history", async () => {
+    const a = await prepared();
+    const b = await prepared();
+    const ev = evidence(a, [{ id: "re_iso", amount: 2000 }]);
+    expect((await record(a, ev, { studio: b.row.studio_id })).result).toBe("identity_mismatch");
+    expect((await record(a, ev, { account: b.row.stripe_account_id === a.row.stripe_account_id ? "acct_other_b" : b.row.stripe_account_id })).result).toBe("identity_mismatch");
+    expect((await record(a, ev, { mode: !a.row.stripe_livemode })).result).toBe("identity_mismatch");
+    expect(await rows(a)).toEqual([]);
+    expect(await rows(b)).toEqual([]);
+    expect((await summary(a)).s).toBeNull();
+    expect((await summary(b)).s).toBeNull();
+  });
+  it("a recorded refund on one studio's charge leaves another studio's summary untouched", async () => {
+    const a = await prepared();
+    const b = await prepared();
+    await record(a, evidence(a, [{ id: "re_a_only", amount: 2000 }]));
+    expect((await summary(b)).s).toBeNull();
+    expect(await rows(b)).toEqual([]);
+  });
+});
+
 describe("0358 evidence kinds", () => {
   it("the authenticated kind is accepted only for charge.refunded with a complete list", async () => {
     const p = await prepared();
