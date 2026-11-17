@@ -101,3 +101,23 @@ describe("one provider account, one studio (schema)", () => {
     expect(sql).toMatch(/foreign key \(studio_id, stripe_account_id, stripe_livemode\)\s+references public\.studio_payment_settings \(studio_id, stripe_account_id, stripe_livemode\)/);
   });
 });
+
+// The fake provider is reachable from this read ONLY through the guard, and the real client is the default.
+describe("the fake provider is chosen only through the guard", () => {
+  const src = readFileSync("lib/billing/charge-refund-list.ts", "utf8").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  it("reads the fake flag only through isE2eFakeStripeEnabled(), never HONE_E2E_FAKE_STRIPE or HONE_E2E_RUN_ID itself", () => {
+    expect(src).not.toMatch(/HONE_E2E_/);
+    expect(src).not.toMatch(/process\.env/);
+    expect(src).toMatch(/isE2eFakeStripeEnabled\(\)\s*\?\s*createFakeStripe\(\)\s*:\s*getStripe\(\)/);
+  });
+  it("calls assertFakeStripeNotRequestedInDeployment() before the fake branch, as the charge seam does", () => {
+    const assertAt = src.indexOf("assertFakeStripeNotRequestedInDeployment()");
+    const branchAt = src.indexOf("isE2eFakeStripeEnabled() ?");
+    expect(assertAt).toBeGreaterThan(-1);
+    expect(branchAt).toBeGreaterThan(assertAt);
+  });
+  it("is the only module besides the charge seam that selects the fake client", () => {
+    const out = execSync("grep -rln 'createFakeStripe' lib app --include=*.ts --include=*.tsx || true", { encoding: "utf8" }).split("\n").filter(Boolean).sort();
+    expect(out).toEqual(["lib/billing/charge-refund-list.ts", "lib/stripe/e2e-fake-stripe.ts", "lib/stripe/session-payment-stripe.ts"]);
+  });
+});

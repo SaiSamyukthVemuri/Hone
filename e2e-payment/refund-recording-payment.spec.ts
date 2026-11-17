@@ -14,7 +14,12 @@ import { postSignedStripeEvent } from "./helpers/signed-webhook";
 //
 // Setup shortcut: the charge is seeded as a succeeded attempt and bound to its original provider identity directly in the database (the
 // charge journey itself is proved by quick-checkout-payment.spec.ts); the refund journey below is the real route, command and screens.
-// Needs HONE_DASHBOARD_UNPAID_ENABLED=true on the server (payment-env.ts sets it for this lane): the owner's "still owed" list is gated.
+// WHAT THE OWNER SEES TODAY is asserted unconditionally: the appointment's payment panel (/calendar/<id>) and the session payment card on the
+// client's visit (/clients/<id>/sessions/<id>), which also states the amount still on the card. (The client's Billing tab shows only the card on
+// file and pricing, no charges, so the visit's payment card is the client-level surface.) The dashboard "still owed" balance is OFF for owners in
+// production (HON-65, gated by HONE_DASHBOARD_UNPAID_ENABLED), so it is NOT relied on: those extra assertions run only when the server was started with
+// that flag (export HONE_DASHBOARD_UNPAID_ENABLED=true before the run; the lane's own env does not set it, so other specs are unaffected).
+// Dependency recorded: the unconditional surfaces above depend on the payment card reading the recorded history (refund-display-state).
 
 const LIVE_API_VERSION = "2026-06-24.dahlia";
 const AMOUNT = 22500;
@@ -116,9 +121,19 @@ async function panel(page: Page, b: Bound) {
   await page.goto(`/calendar/${b.seed.appointmentId}`);
   return page.getByTestId("payment-summary");
 }
-async function owedOnDashboard(page: Page) {
+const DASHBOARD_BALANCE_ON = process.env.HONE_DASHBOARD_UNPAID_ENABLED === "true";
+// The visit's payment card on the client's session page: headline plus, for a partial refund, what is still on the card.
+async function sessionCard(page: Page, b: Bound) {
+  await page.goto(`/clients/${b.seed.clientId}/sessions/${b.seed.sessionId}`);
+  return page.getByTestId("payment-summary");
+}
+// Extra proof, only where the (production-gated) dashboard balance list is on. `expected` null = nothing owed.
+async function expectDashboardOwed(page: Page, expected: number | null) {
+  if (!DASHBOARD_BALANCE_ON) return;
   await page.goto("/dashboard");
-  return page.getByText(/Hone can see \$[\d,.]+ still owed/);
+  const line = page.getByText(/Hone can see \$[\d,.]+ still owed/);
+  if (expected === null) await expect(line).toHaveCount(0);
+  else await expect(line).toContainText(money(expected));
 }
 
 test("an old charge whose history was never recorded reads as paid in full: never established, not zero refunded", async ({ page }) => {
@@ -127,7 +142,9 @@ test("an old charge whose history was never recorded reads as paid in full: neve
   const p = await panel(page, b);
   await expect(p.getByTestId("payment-summary-paid")).toContainText(`Paid · ${money(AMOUNT)}`);
   await expect(p).not.toContainText(/refund/i);
-  await expect(await owedOnDashboard(page)).toHaveCount(0);
+  await expect((await sessionCard(page, b)).getByTestId("payment-summary-paid")).toContainText(`Paid · ${money(AMOUNT)}`);
+  await expect(page.getByText(/Still on the card|Partly refunded/)).toHaveCount(0);
+  await expectDashboardOwed(page, null);
   expect((await summary(b)).s).toBeNull();
 });
 
@@ -142,7 +159,8 @@ test("a Dashboard FULL refund with no Hone refund and no list in the event: reco
   await loginAsOwner(page, b.seed);
   const p = await panel(page, b);
   await expect(p.getByTestId("payment-summary-refunded")).toContainText(`Refunded · ${money(AMOUNT)}`);
-  await expect(await owedOnDashboard(page)).toContainText(money(AMOUNT));
+  await expect((await sessionCard(page, b)).getByTestId("payment-summary-refunded")).toContainText(`Refunded · ${money(AMOUNT)}`);
+  await expectDashboardOwed(page, AMOUNT);
 });
 
 test("a PARTIAL refund: the visit reads Partly refunded, the amount still on the card is stated, and only the refunded part is owed", async ({ page }) => {
@@ -153,8 +171,9 @@ test("a PARTIAL refund: the visit reads Partly refunded, the amount still on the
   await loginAsOwner(page, b.seed);
   const p = await panel(page, b);
   await expect(p.getByTestId("payment-summary-refunded")).toContainText(`Partly refunded · ${money(5000)}`);
+  await expect((await sessionCard(page, b)).getByTestId("payment-summary-refunded")).toContainText(`Partly refunded · ${money(5000)}`);
   await expect(page.getByText(`Still on the card: ${money(AMOUNT - 5000)}`)).toBeVisible();
-  await expect(await owedOnDashboard(page)).toContainText(money(5000));
+  await expectDashboardOwed(page, 5000);
 });
 
 test("a partial THEN the remainder: after each event the screens match the money, and the last reads Refunded with the whole amount owed", async ({ page }) => {
@@ -164,12 +183,14 @@ test("a partial THEN the remainder: after each event the screens match the money
   await deliver(b, `evt_rem1_${b.seed.runId}`, 5000, [r1]);
   await loginAsOwner(page, b.seed);
   await expect((await panel(page, b)).getByTestId("payment-summary-refunded")).toContainText(`Partly refunded · ${money(5000)}`);
-  await expect(await owedOnDashboard(page)).toContainText(money(5000));
+  await expect((await sessionCard(page, b)).getByTestId("payment-summary-refunded")).toContainText(`Partly refunded · ${money(5000)}`);
+  await expectDashboardOwed(page, 5000);
   await deliver(b, `evt_rem2_${b.seed.runId}`, AMOUNT, [r1, r2]);
   expect(await summary(b)).toEqual({ s: AMOUNT, f: 0 });
   expect(await history(b)).toHaveLength(2);
   await expect((await panel(page, b)).getByTestId("payment-summary-refunded")).toContainText(`Refunded · ${money(AMOUNT)}`);
-  await expect(await owedOnDashboard(page)).toContainText(money(AMOUNT));
+  await expect((await sessionCard(page, b)).getByTestId("payment-summary-refunded")).toContainText(`Refunded · ${money(AMOUNT)}`);
+  await expectDashboardOwed(page, AMOUNT);
 });
 
 // KNOWN GAP, declared out of scope in the change: the calendar and dashboard ROSTER badge (appointment-payment-state) still reads only the older
