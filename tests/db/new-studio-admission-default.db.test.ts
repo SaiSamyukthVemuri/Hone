@@ -250,12 +250,24 @@ describe("the shipped column comments are what the catalog actually holds", () =
       "3b8c4165432a7fd5927868371a95ecfa97371e7a72872ba00e82f8ff79156d93",
     clinical_finalization_enabled:
       "a2d9e5b5b61f58a366b26f995d73b1983a1be23dc204019b8ccee24c6ca75d2b",
+    late_cancel_fee_enabled:
+      "407e596381a30c1531e878b536a44f70a8a22fd21f2e4d6ff70322a294184d49",
+    late_cancel_fee_mode:
+      "15c2c388bab018d01204903f7ec5d2ee83cef2bc6815e397031894e83dba8f93",
+    late_cancel_fee_percent_bp:
+      "45b13b7c387ce1077559d53d9416bf9c21ee3abd22ef97722e1469df88c70683",
     new_client_admission_mode:
       "5c1b48c3cc5f16135eb06e5467dc206210462bf397a73359e83c9a8ddf04ccc7",
     new_client_admission_mode_set_at:
       "29446438ca37fd699cb4236db723dff886af71ea7a9664f0f8fcf43ae657ff36",
     new_client_admission_mode_set_by:
       "513cea62d9707129b193abd53dd819ec7c61230a2542313b9bbd6f4c94a8c69e",
+    no_show_fee_enabled:
+      "11e6f8e0542811dfb67891ee80b7096213498171ca12a89892b7920a47a34a54",
+    no_show_fee_mode:
+      "9e8c3a75baa97239ad974fc539dc25f3b4f8ac3305f5e3c7281cefa37c9a145b",
+    no_show_fee_percent_bp:
+      "5e70664789cc588e33701109d5207987be65b259fb353def5be192f6340f5f6f",
     postcare_delivery_mode:
       "d857913bed26e5c61ec91162bf59d1a8680edd88605ba179861df3bcf0e0af56",
     send_intake_reminders:

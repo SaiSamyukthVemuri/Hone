@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 271,
-    "last": "0350_setup_option_check_null_element.sql",
-    "sha256": "cc1c2f585fdd5dbddb55145fa8c999131343e550215d17d3be569afa34256abd"
+    "count": 275,
+    "last": "0354_quoted_amount_explicit_zero_custom_price.sql",
+    "sha256": "e6bdc246ded3f6086d608422f2ffe985e858cc01324eb24cdeeeb1afa1b335b8"
   },
   "public": {
     "tables": [
@@ -104,6 +104,7 @@
       "studio_calendar_reservations",
       "studio_legal_name_access",
       "studio_machines",
+      "studio_manual_fee_setting_changes",
       "studio_onboarding",
       "studio_payment_jurisdiction_changes",
       "studio_payment_jurisdictions",
@@ -242,6 +243,7 @@
       "complete_stripe_customer_provisioning",
       "complete_waitlist_invitation_proof",
       "complete_waitlist_profile_by_grant",
+      "complete_waitlist_profile_by_grant_v2",
       "consume_payment_recovery_tokens_for_charge_attempt",
       "copy_session_setup",
       "correct_finalized_session",
@@ -394,6 +396,8 @@
       "own_practitioner_in_studio",
       "owner_delivery_concerns",
       "owner_delivery_incidents",
+      "payment_charge_attempts_calc_basis_immutable",
+      "payment_charge_attempts_claimed_at_guard",
       "payment_charge_attempts_jurisdiction_guard",
       "payment_charge_attempts_money_immutable",
       "payment_charge_attempts_touch_updated_at",
@@ -574,6 +578,7 @@
       "studio_sms_senders_server_timestamps",
       "studio_sms_senders_transition_guard",
       "studios_admission_mode_guard",
+      "studios_manual_fee_setting_audit",
       "supersede_appointment_settlement",
       "support_delivery_concerns",
       "support_delivery_incidents",

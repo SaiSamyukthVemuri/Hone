@@ -49,6 +49,40 @@ for (const vp of VIEWPORTS) {
   test.describe(`client save paths, ${vp.label}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
+    test("the preferred name is cleared only by pressing Remove, and the clear survives a reload", async ({ page }) => {
+      test.setTimeout(120_000);
+      const seed = await seedE2eStudio();
+      const id = await openEdit(page, seed);
+      await sql(`update public.clients set preferred_name = 'Synthetic Fern' where id = $1`, [id]);
+      await page.reload();
+      const preferred = page.getByRole("textbox", { name: "Preferred name" });
+      await expect(preferred).toHaveValue("Synthetic Fern", { timeout: T });
+
+      // Blanking the field alone is refused with an explanation, and nothing is written.
+      await preferred.fill("");
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await expect(page.getByText("To remove the preferred name, press Remove preferred name.")).toBeVisible({ timeout: T });
+      const [kept] = await sql<{ preferred_name: string | null }>(`select preferred_name from public.clients where id = $1`, [id]);
+      expect(kept.preferred_name).toBe("Synthetic Fern");
+
+      // Pressing Remove, then saving, clears it, and only it.
+      await page.getByTestId("remove-preferred-name").click();
+      await expect(preferred).toHaveValue("");
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+      const [row] = await sql<{ name: string; preferred_name: string | null }>(
+        `select name, preferred_name from public.clients where id = $1`,
+        [id],
+      );
+      expect(row.preferred_name).toBeNull();
+      expect(row.name).toBe(seed.clientName);
+
+      // After a reload of the edit page it is still cleared, and the Remove control is gone.
+      await page.goto(`/clients/${id}/edit`);
+      await expect(page.getByRole("textbox", { name: "Preferred name" })).toHaveValue("", { timeout: T });
+      await expect(page.getByTestId("remove-preferred-name")).toHaveCount(0);
+    });
+
     test("profile edit saves and records the name revision and audit row", async ({ page }) => {
       test.setTimeout(120_000);
       const seed = await seedE2eStudio();

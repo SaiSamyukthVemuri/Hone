@@ -5,6 +5,7 @@ import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdicti
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { manualFeeSettingBlockMessage } from "@/lib/billing/manual-fee-studio-setting";
 import {
   MANUAL_FEE_AMOUNT_CEILING_CENTS,
   type EligibilityAppointmentSummary,
@@ -13,9 +14,12 @@ import {
   type EligibilityClientSummary,
   type EligibilityExistingAttemptSummary,
   type EligibilityPolicyAckSummary,
+  type ManualFeeBasis,
   type ManualFeeChargeType,
   type ManualFeeEligibility,
 } from "./manual-fee-types";
+import { loadAppointmentSessionPrice } from "@/lib/billing/authoritative-appointment-price";
+import { computePercentFee, fixedFeeCentsIssue, isValidPercentBp, noFeeOwedMessage, percentFeeRefusalMessage } from "@/lib/billing/manual-fee-percent";
 // Re-export the symbols server-side code already imports from this
 // module so existing call sites keep working without touching them.
 export {
@@ -359,10 +363,14 @@ export async function getManualFeeChargeEligibility(
   //    rewrite a prepared row's amount (the prepare action snapshots it
   //    onto the row).
   let amountCents: number | null = null;
+  let feeBasis: ManualFeeBasis | null = null;
+  let noFeeOwed = false;
   let currency: string | null = null;
   const { data: studioRow, error: studioErr } = await admin
     .from("studios")
-    .select("late_cancel_fee_cents, no_show_fee_cents")
+    .select(
+      "late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode, no_show_fee_mode, late_cancel_fee_percent_bp, no_show_fee_percent_bp, timezone",
+    )
     .eq("id", args.studioId)
     .maybeSingle();
   if (studioErr) {
@@ -370,30 +378,87 @@ export async function getManualFeeChargeEligibility(
   } else if (!studioRow) {
     reasons.push("Studio not found.");
   } else {
-    const cents =
-      serverChargeType === "late_cancel"
-        ? studioRow.late_cancel_fee_cents
-        : studioRow.no_show_fee_cents;
-    // NULL and 0 both block. The DB CHECK on
-    // studios.<type>_fee_cents permits 0 for settings/test clearing
-    // semantics, but a $0.00 fee must never become a 'ready' attempt
-    // because the future Stripe-charge PR would either reject the
-    // PaymentIntent or create a confusing zero-dollar charge. Treat
-    // NULL and 0 as the same "not configured" block reason so the
-    // practitioner sees one calm message.
-    if (cents == null || cents === 0) {
-      reasons.push(
-        serverChargeType === "late_cancel"
-          ? "Late cancellation fee amount is not configured."
-          : "No-show fee amount is not configured.",
-      );
-    } else if (
-      cents < 0 ||
-      cents > MANUAL_FEE_AMOUNT_CEILING_CENTS
-    ) {
-      reasons.push("Configured fee amount is outside the allowed range.");
+    // The studio's own setting for this fee (0351). Both the setting and, in LIVE mode, the release list above must
+    // allow it. Fails closed: anything but `true` is OFF.
+    const settingHold = manualFeeSettingBlockMessage(feeChargeReason, studioRow);
+    if (settingHold) reasons.push(settingHold);
+    const configuredMode =
+      serverChargeType === "late_cancel" ? studioRow.late_cancel_fee_mode : studioRow.no_show_fee_mode;
+    if (configuredMode === "percent") {
+      // PERCENT MODE: the amount is computed here, once, on the server, from the appointment's session price, and
+      // frozen onto the attempt by the prepare action. No fallback to the fixed amount on any refusal.
+      const bp =
+        serverChargeType === "late_cancel" ? studioRow.late_cancel_fee_percent_bp : studioRow.no_show_fee_percent_bp;
+      if (!isValidPercentBp(bp)) {
+        reasons.push(percentFeeRefusalMessage("invalid_percent"));
+      } else if (clientId) {
+        const price = await loadAppointmentSessionPrice({
+          admin,
+          studioId: args.studioId,
+          appointmentId: args.appointmentId,
+          studioTimezone: studioRow.timezone,
+        });
+        if (!price.ok) {
+          if (price.reason === "read_failed") pushReadFailure(reasons);
+          else reasons.push("Appointment not found for this studio.");
+        } else if (price.result.kind === "free") {
+          // An explicit $0 price, menu (FREE-01) or this client's custom price, is a decided price: the fee is $0.00 and nothing is prepared.
+          noFeeOwed = true;
+          reasons.push(noFeeOwedMessage(0, bp));
+        } else if (price.result.kind !== "resolved") {
+          // missing_service / missing_price / ambiguous_ / invalid_custom_pricing: refusals, each with its own message, no fallback.
+          reasons.push(
+            price.result.kind === "ambiguous_custom_pricing"
+              ? "This client has conflicting current custom prices for this service, so a percentage fee cannot be calculated."
+              : price.result.kind === "invalid_custom_pricing"
+                ? "This client's recorded price for this service is not a usable price, so a percentage fee cannot be calculated."
+              : price.result.kind === "missing_service"
+                ? "This appointment has no booked service, so a percentage fee cannot be calculated."
+                : "No price is configured for this appointment's service, so a percentage fee cannot be calculated.",
+          );
+        } else {
+          const computed = computePercentFee(price.result.amountCents, bp);
+          if (!computed.ok) {
+            if (computed.reason === "no_fee_owed") {
+              noFeeOwed = true;
+              reasons.push(noFeeOwedMessage(computed.basisCents, computed.percentBp));
+            } else {
+              reasons.push(percentFeeRefusalMessage(computed.reason));
+            }
+          } else {
+            amountCents = computed.amountCents;
+            feeBasis = { calcMode: "percent", basisCents: computed.basisCents, percentBp: computed.percentBp };
+          }
+        }
+      }
+    } else if (configuredMode !== "fixed") {
+      // Anything but a known mode fails closed.
+      reasons.push("The fee mode for this studio could not be read.");
     } else {
-      amountCents = cents;
+      const cents =
+        serverChargeType === "late_cancel"
+          ? studioRow.late_cancel_fee_cents
+          : studioRow.no_show_fee_cents;
+      // NULL and 0 both block. The DB CHECK on
+      // studios.<type>_fee_cents permits 0 for settings/test clearing
+      // semantics, but a $0.00 fee must never become a 'ready' attempt
+      // because the future Stripe-charge PR would either reject the
+      // PaymentIntent or create a confusing zero-dollar charge. Treat
+      // NULL and 0 as the same "not configured" block reason so the
+      // practitioner sees one calm message.
+      const centsIssue = fixedFeeCentsIssue(cents);
+      if (centsIssue === "not_configured") {
+        reasons.push(
+          serverChargeType === "late_cancel"
+            ? "Late cancellation fee amount is not configured."
+            : "No-show fee amount is not configured.",
+        );
+      } else if (centsIssue === "out_of_range" || typeof cents !== "number") {
+        reasons.push("Configured fee amount is outside the allowed range.");
+      } else {
+        amountCents = cents;
+        feeBasis = { calcMode: "fixed", basisCents: null, percentBp: null };
+      }
     }
   }
 
@@ -434,7 +499,7 @@ export async function getManualFeeChargeEligibility(
     admin
       .from("payment_charge_attempts")
       .select(
-        "id, charge_reason, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, stripe_status, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, refunded_at, receipt_sent_at, updated_at",
+        "id, charge_reason, status, amount_cents, currency, calc_mode, basis_cents, percent_bp, created_at, stripe_payment_intent_id, stripe_charge_id, stripe_status, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, refunded_at, receipt_sent_at, updated_at",
       )
       .eq("studio_id", args.studioId)
       .eq("appointment_id", args.appointmentId)
@@ -464,6 +529,9 @@ export async function getManualFeeChargeEligibility(
       charge_type: reasonToType(row.charge_reason as string),
       status: row.status as string,
       amount_cents: row.amount_cents as number,
+      calc_mode: (row.calc_mode as "fixed" | "percent" | null) ?? null,
+      basis_cents: (row.basis_cents as number | null) ?? null,
+      percent_bp: (row.percent_bp as number | null) ?? null,
       currency: row.currency as string,
       created_at: row.created_at as string,
       stripe_payment_intent_id:
@@ -521,6 +589,7 @@ export async function getManualFeeChargeEligibility(
     policyAckId &&
     policySnapshotHash &&
     amountCents != null &&
+    feeBasis &&
     currency
   ) {
     return {
@@ -530,6 +599,7 @@ export async function getManualFeeChargeEligibility(
       policyAcknowledgementId: policyAckId,
       policySnapshotHash,
       amountCents,
+      feeBasis,
       currency,
       timingClassification: "practitioner_asserted",
       appointment: appointmentSummary,
@@ -549,6 +619,8 @@ export async function getManualFeeChargeEligibility(
     cardAuthorization: cardAuthorizationSummary,
     policyAcknowledgement: policyAckSummary,
     amountCents,
+    feeBasis,
+    noFeeOwed,
     currency,
     timingClassification: "practitioner_asserted",
     existingAttempts,

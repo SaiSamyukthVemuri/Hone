@@ -75,7 +75,7 @@ describe("allowanceHeadline", () => {
     expect(h.headline).toBe("4 consultation appointments available. You can invite 3 more people.");
     expect(h.short).toBe("You can invite 3 more people");
     expect(h.note).toMatch(/minimums/);
-    expect(h.note).toMatch(/Availability can change; invitations don't reserve appointments\./);
+    expect(h.note).toMatch(/Availability can change; invitations don’t reserve appointments\./);
   });
   it("says the studio-wide count over-counts when 0323 is absent", () => {
     expect(allowanceHeadline({ fit: 4, outstanding: 1, open: 3 }, "all").note).toMatch(/whatever dates they cover/);
