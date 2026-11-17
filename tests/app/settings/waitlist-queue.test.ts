@@ -1177,7 +1177,7 @@ describe("rendered rows", () => {
     const panel = /<section[^>]*data-testid="invitation-allowance"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
     expect(panel, "the allowance panel did not render").not.toBe("");
     expect(panel).toContain(esc("5 consultation appointments available. You can invite 3 more people."));
-    expect(panel).toContain(esc("Availability can change; invitations don't reserve appointments."));
+    expect(panel).toContain(esc("Availability can change; invitations don’t reserve appointments."));
     // Chloe never types a capacity, and never sees a round.
     expect(panel).not.toMatch(/<input/);
     expect(html).not.toContain("Start inviting");
