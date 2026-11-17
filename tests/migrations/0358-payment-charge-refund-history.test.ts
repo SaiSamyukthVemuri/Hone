@@ -119,6 +119,13 @@ describe("0358: the command", () => {
     expect(E).toMatch(/v_charge_refunded < v_event_succeeded/);
     expect(E).toMatch(/v_charge_refunded > v_event_succeeded \+ v_event_inflight_amount/);
   });
+  it("each refund row records how it was established (a closed set, never null) and the guard makes it immutable", () => {
+    expect(E).toMatch(/evidence_kind text not null check \(evidence_kind in \('signed_event', 'signed_event_with_authenticated_list'\)\)/);
+    expect(E).toMatch(/or new\.evidence_kind is distinct from old\.evidence_kind/);
+    // The insert writes the kind of the evidence that first established the refund; no update statement ever sets it.
+    expect(E).toMatch(/last_event_created, evidence_kind\)\s+values \(.*p_object->>'evidence_kind'\)/);
+    expect(E).not.toMatch(/set\s+[^;]*evidence_kind\s*=/);
+  });
   it("a list the server read may be AHEAD of the signed total but never BEHIND it; the authenticated kind is for a complete charge.refunded list only", () => {
     // Ahead (succeeded sum above the signed total) is refused only for the in-event kind.
     expect(E).toMatch(/\(v_charge_refunded < v_event_succeeded and p_object->>'evidence_kind' = 'signed_event'\)/);
