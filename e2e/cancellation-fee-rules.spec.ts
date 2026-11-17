@@ -31,7 +31,9 @@ test("owner configures 48-hour and same-day fees, enables separately, and cannot
   });
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await expect(toggle).toBeDisabled();
-  await card.getByLabel("Notice window").fill("48");
+  // getByLabel is a substring match and the policy-review checkbox's label also
+  // says "this notice window"; the spinbutton role is the one notice-hours input.
+  await card.getByRole("spinbutton", { name: "Notice window" }).fill("48");
   await card.locator("#notice-rate-value").fill("50");
   await card.locator("#same-rate-value").fill("100");
   await card
