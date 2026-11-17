@@ -1794,7 +1794,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
   const completed = () => ADMIN.current!.updateCalls.filter((u) => u.payload.refund_status === "succeeded");
   const obj = (c: { args: Record<string, unknown> }) => c.args.p_object as Record<string, unknown>;
 
-  it("RD1 partial, payload has no list: ONE read for the signed charge and account, recorded with the authenticated kind, warning, 200", async () => {
+  it("partial, payload has no list: ONE read for the signed charge and account, recorded with the authenticated kind, warning, 200", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
     setup();
     expect((await send({ id: "evt_rd1", refundedCents: 2000 })).status).toBe(200);
@@ -1806,14 +1806,14 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(alertsOf("charge_refunded_partial_recorded")).toEqual([expect.objectContaining({ severity: "warning" })]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
   });
-  it("RD1b the same with Charge.refunds null", async () => {
+  it("the same with Charge.refunds null", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
     setup();
     expect((await send({ id: "evt_rd1b", refundedCents: 2000, list: "null" })).status).toBe(200);
     expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
     expect(historyCalls()).toHaveLength(1);
   });
-  it("RD2 two pages: both read in order through the cursor, ONE evidence object with both refunds, one command call", async () => {
+  it("two pages: both read in order through the cursor, ONE evidence object with both refunds, one command call", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)], true)).mockResolvedValueOnce(page([fr("re_2", 1000)]));
     setup();
     expect((await send({ id: "evt_rd2", refundedCents: 3000 })).status).toBe(200);
@@ -1822,7 +1822,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(historyCalls()).toHaveLength(1);
     expect((obj(historyCalls()[0]).components as Array<{ refund_id: string }>).map((c) => c.refund_id)).toEqual(["re_1", "re_2"]);
   });
-  it("RD3 a list that never ends stops at the page cap: not complete, critical alert, nothing written, acknowledged", async () => {
+  it("a list that never ends stops at the page cap: not complete, critical alert, nothing written, acknowledged", async () => {
     let n = 0;
     REFUNDS_LIST.mockImplementation(async () => page([fr(`re_${n++}`, 100)], true));
     setup();
@@ -1832,13 +1832,13 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
   });
-  it("RD4 the payload already carries a complete list: NO read, the signed-event kind", async () => {
+  it("the payload already carries a complete list: NO read, the signed-event kind", async () => {
     setup();
     expect((await send({ id: "evt_rd4", refundedCents: 2000, list: "complete" })).status).toBe(200);
     expect(REFUNDS_LIST).not.toHaveBeenCalled();
     expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event" });
   });
-  it("RD5 the payload's list is marked cut short (has_more): it is not trusted, the read runs, the authenticated kind is used", async () => {
+  it("the payload's list is marked cut short (has_more): it is not trusted, the read runs, the authenticated kind is used", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
     setup();
     expect((await send({ id: "evt_rd5", refundedCents: 2000, list: "has_more" })).status).toBe(200);
@@ -1846,7 +1846,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list" });
   });
   for (const [label, err] of [["a connection error", providerError("StripeConnectionError")], ["a rate limit", providerError("StripeRateLimitError", { statusCode: 429 })], ["a provider error", providerError("StripeAPIError", { statusCode: 503 })], ["a timeout", providerError("StripeConnectionError", { code: "ETIMEDOUT" })]] as const) {
-    it(`RD6-9 ${label}: 500, claim released, the command is NOT called, nothing claimed as recorded (the event is retried)`, async () => {
+    it(`${label}: 500, claim released, the command is NOT called, nothing claimed as recorded (the event is retried)`, async () => {
       REFUNDS_LIST.mockRejectedValueOnce(err);
       setup();
       expect((await send({ id: "evt_rd6", refundedCents: 2000 })).status).toBeGreaterThanOrEqual(500);
@@ -1857,7 +1857,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     });
   }
   for (const [label, err] of [["no such charge", providerError("StripeInvalidRequestError", { code: "resource_missing", statusCode: 404 })], ["access to the account revoked", providerError("StripePermissionError", { statusCode: 403 })]] as const) {
-    it(`RD8 ${label}: a refusal, not a retry loop: critical alert kept, acknowledged, nothing written`, async () => {
+    it(`${label}: a refusal, not a retry loop: critical alert kept, acknowledged, nothing written`, async () => {
       REFUNDS_LIST.mockRejectedValueOnce(err);
       setup();
       expect((await send({ id: "evt_rd8", refundedCents: 2000 })).status).toBe(200);
@@ -1865,7 +1865,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
       expect(historyCalls()).toEqual([]);
     });
   }
-  it("RD8b a refusal whose alert CANNOT be kept: 500 and the claim released (retried), as every other refusal", async () => {
+  it("a refusal whose alert CANNOT be kept: 500 and the claim released (retried), as every other refusal", async () => {
     REFUNDS_LIST.mockRejectedValueOnce(providerError("StripePermissionError"));
     setup();
     OPS_INSERT_ERROR.current = { code: "XX000", message: "synthetic ops_alerts insert failure" };
@@ -1873,7 +1873,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
   });
   for (const [label, bad] of [["another charge", fr("re_1", 2000, "succeeded", { charge: "ch_other" })], ["another payment intent", fr("re_1", 2000, "succeeded", { payment_intent: "pi_other" })], ["another currency", fr("re_1", 2000, "succeeded", { currency: "usd" })]] as const) {
-    it(`RD10-12 a read refund naming ${label} is refused BEFORE the command: critical alert, no command call`, async () => {
+    it(`a read refund naming ${label} is refused BEFORE the command: critical alert, no command call`, async () => {
       REFUNDS_LIST.mockResolvedValueOnce(page([bad]));
       setup();
       expect((await send({ id: "evt_rd10", refundedCents: 2000 })).status).toBe(200);
@@ -1881,14 +1881,14 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
       expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
     });
   }
-  it("RD13 a read list BEHIND the signed total (3000 went back, the list shows 2000) is refused: critical alert, no write", async () => {
+  it("a read list BEHIND the signed total (3000 went back, the list shows 2000) is refused: critical alert, no write", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
     setup();
     expect((await send({ id: "evt_rd13", refundedCents: 3000 })).status).toBe(200);
     expect(historyCalls()).toEqual([]);
     expect(unavailable()).toHaveLength(1);
   });
-  it("RD14 a read list AHEAD of the signed total (a later refund) is accepted and recorded with the whole list", async () => {
+  it("a read list AHEAD of the signed total (a later refund) is accepted and recorded with the whole list", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000)]));
     setup();
     expect((await send({ id: "evt_rd14", refundedCents: 2000 })).status).toBe(200);
@@ -1897,33 +1897,33 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(obj(historyCalls()[0])).toMatchObject({ charge_amount_refunded: 2000 });
     expect(alertsOf("charge_refunded_partial_recorded")).toHaveLength(1);
   });
-  it("RD15 duplicate refund ids in the read list are refused", async () => {
+  it("duplicate refund ids in the read list are refused", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 1000), fr("re_1", 1000)]));
     setup();
     expect((await send({ id: "evt_rd15", refundedCents: 2000 })).status).toBe(200);
     expect(historyCalls()).toEqual([]);
     expect(unavailable()).toHaveLength(1);
   });
-  it("RD16 zero refunds returned although the signed total is above 0: refused", async () => {
+  it("zero refunds returned although the signed total is above 0: refused", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([]));
     setup();
     expect((await send({ id: "evt_rd16", refundedCents: 2000 })).status).toBe(200);
     expect(historyCalls()).toEqual([]);
     expect(unavailable()).toHaveLength(1);
   });
-  it("RD17 a pending refund beside a succeeded one is sent with both statuses (the command counts the pending as in flight)", async () => {
+  it("a pending refund beside a succeeded one is sent with both statuses (the command counts the pending as in flight)", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000, "pending")]));
     setup();
     expect((await send({ id: "evt_rd17", refundedCents: 2000 })).status).toBe(200);
     expect((obj(historyCalls()[0]).components as Array<{ refund_status: string }>).map((c) => c.refund_status)).toEqual(["succeeded", "pending"]);
   });
-  it("RD18 the history command is missing (42883) after a successful read: the earlier critical alert, no write, acknowledged", async () => {
+  it("the history command is missing (42883) after a successful read: the earlier critical alert, no write, acknowledged", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
     setup(1, { history: { data: null, error: { code: "42883", message: "function does not exist" } as never } });
     expect((await send({ id: "evt_rd18", refundedCents: 2000 })).status).toBe(200);
     expect(alertsOf("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
   });
-  it("RD19 a failed read is retried: the redelivery reads again and records exactly once", async () => {
+  it("a failed read is retried: the redelivery reads again and records exactly once", async () => {
     REFUNDS_LIST.mockRejectedValueOnce(providerError("StripeConnectionError")).mockResolvedValueOnce(page([fr("re_1", 2000)]));
     setup(2);
     expect((await send({ id: "evt_rd19", refundedCents: 2000 })).status).toBeGreaterThanOrEqual(500);
@@ -1932,20 +1932,20 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(REFUNDS_LIST).toHaveBeenCalledTimes(2);
     expect(historyCalls()).toHaveLength(1);
   });
-  it("RD20 a forged or wrong-secret event is refused with 400 before ANY read", async () => {
+  it("a forged or wrong-secret event is refused with 400 before ANY read", async () => {
     setup();
     expect((await send({ id: "evt_rd20", refundedCents: 2000, forge: true })).status).toBe(400);
     expect(REFUNDS_LIST).not.toHaveBeenCalled();
     expect(ADMIN.current!.rpcCalls).toEqual([]);
   });
-  it("RD21 a live-mode event on a test deployment is ignored: no read, no write", async () => {
+  it("a live-mode event on a test deployment is ignored: no read, no write", async () => {
     setup();
     await send({ id: "evt_rd21", refundedCents: 2000, livemode: true });
     expect(REFUNDS_LIST).not.toHaveBeenCalled();
     expect(historyCalls()).toEqual([]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
   });
-  it("RD22 an event for an account bound to no studio makes no read", async () => {
+  it("an event for an account bound to no studio makes no read", async () => {
     setup(1, { studio: { data: null, error: null } });
     await send({ id: "evt_rd22", refundedCents: 2000 });
     expect(REFUNDS_LIST).not.toHaveBeenCalled();
