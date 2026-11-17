@@ -52,7 +52,7 @@ function setCaller(role: "owner" | "practitioner", flagOn: boolean): void {
   });
 }
 
-// requiredComplete = hasService && hasAvailability && isPubliclyBookable.
+// requiredComplete = hasService && hasAvailability && isPubliclyBookable && the canonical booking readiness is `ready`.
 function setSignals(requiredComplete: boolean): void {
   const s: OnboardingSignals = {
     studioName: "Rivera",
@@ -60,6 +60,7 @@ function setSignals(requiredComplete: boolean): void {
     hasService: requiredComplete,
     hasAvailability: requiredComplete,
     isPubliclyBookable: requiredComplete,
+    bookingReadiness: requiredComplete ? { state: "ready" } : { state: "blocked", next: null },
     paymentsReady: false,
     publicBookingUrl: requiredComplete ? "https://hone.care/book/rivera" : "",
   };
