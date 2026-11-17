@@ -12,9 +12,14 @@ import { SessionLineageError } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
 import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
-import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
+import {
+  isDefinitiveDatabaseAnswer,
+  isMissingCommand,
+  MACHINE_CHOICE_NOT_STORABLE_YET,
+} from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { checkIdentityChoice } from "@/lib/machines/identity-choice";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -1113,6 +1118,8 @@ export type CreateAreaWithEntryInput = {
   // 0156: optional free-text numbing note (kept only when status is 'used').
   numbingNotes?: string | null;
   probeLotConfirmed?: boolean;
+  /** Retry key of a settings-free create (see `bareKey` in the action). */
+  createKey?: string | null;
 };
 
 // L18 Phase 2: the block/entry atomicity exception that used to sit here is
@@ -1165,8 +1172,25 @@ export type InitialSetupInput = {
   }>;
 };
 
+/**
+ * The machine the practitioner chose for this treatment area, saved WITH the
+ * area (migration 0301) so reopening it restores the choice even when no value
+ * was entered. `machineId` names a registered unit (the mode then belongs to
+ * it); without one, `profileId` names a model with no registered unit (the
+ * existing xCell Pur workflow), and no mode is recorded. Studio and actor are
+ * never supplied: the database derives them.
+ */
+export type MachineIdentityInput = {
+  machineId: string | null;
+  modeKey: string | null;
+  profileId: string | null;
+};
+
 export async function createTreatmentAreaWithEntryAction(
-  input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
+  input: CreateAreaWithEntryInput & {
+    initialSetup?: InitialSetupInput | null;
+    machineIdentity?: MachineIdentityInput | null;
+  },
 ): Promise<BlockResult & { setup?: unknown }> {
   // AN IDENTITY REFUSAL IS A REFUSAL TOO (Codex, #860 4308620484). This call
   // THROWS on a removed membership or an invalid studio selection, before any
@@ -1398,6 +1422,12 @@ export async function createTreatmentAreaWithEntryAction(
   // and nothing reaches here without settings.
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
+  // A SETTINGS-FREE CREATE CARRIES A KEY TOO. 0223's command takes a key with no groups (its settings half is nullable
+  // and it still writes the claim), so a retry of a bare save whose answer was lost is answered with the original area.
+  const bareKey =
+    !withSetup && typeof input.createKey === "string" && input.createKey.trim().length >= 8
+      ? input.createKey.trim()
+      : null;
 
   // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
   // validator the other two recording paths use.
@@ -1455,12 +1485,43 @@ export async function createTreatmentAreaWithEntryAction(
     }
   }
 
-  const { data: createdRows, error: cmdErr } = withSetup
-    ? await supabase.rpc("create_block_with_initial_setup", {
+  // THE IDENTITY RIDES THE SAME TRANSACTION (0301). With settings, the unit and
+  // mode already arrive below, so the command derives the identity from them.
+  // Without settings, a chosen machine (or an xCell Pur model) is still saved
+  // with the area, which is what lets a reopened area restore a choice that
+  // wrote no reading. No identity chosen: the unchanged commands.
+  const identity = input.machineIdentity ?? null;
+  const identityOnly =
+    !withSetup &&
+    identity !== null &&
+    (identity.machineId !== null || identity.profileId !== null);
+  // THE SAME CONTRACT A REMEMBERED CHOICE PASSES, BEFORE ANYTHING IS SENT (Codex, #1369 4498767101). The command only checks that
+  // the unit is this studio's and not retired, so an impossible unit/mode pair would otherwise be stored with the new area.
+  if (identityOnly) {
+    const allowed = await checkIdentityChoice(supabase as unknown as MachineDb, { studioId: studio.id, practitionerId: practitioner.id }, {
+      deviceId: identity.machineId,
+      modeKey: identity.modeKey,
+      profileId: identity.profileId,
+    });
+    // Codex, #1369 4499083273: a unit that is merely not available NOW (retired since) is left to the receipt-aware command, which
+    // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
+    if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
+    if (!allowed.ok && allowed.reason !== "availability") return { ok: false, error: allowed.error, unresolved: false };
+  }
+  // Built once so the older command can be called with the same arguments when
+  // 0301 is not applied yet (see the fallback below).
+  const identityArgs = {
         ...blockArgs,
-        p_studio_machine_id: input.initialSetup!.machineId,
-        p_setup_mode_key: input.initialSetup!.modeKey,
-        p_setup_idempotency_key: input.initialSetup!.idempotencyKey,
+        p_machine_profile_id: withSetup ? null : (identity?.profileId ?? null),
+        p_studio_machine_id: withSetup
+          ? input.initialSetup!.machineId
+          : (identity?.machineId ?? null),
+        p_setup_mode_key: withSetup
+          ? input.initialSetup!.modeKey
+          : (identity?.modeKey ?? null),
+        p_setup_idempotency_key: withSetup
+          ? input.initialSetup!.idempotencyKey
+          : bareKey,
         // THE DERIVED ROWS, never the caller's: unit and precision come from
         // the contract the validator resolved.
         p_setup_groups: setupGroups.map((g) => ({
@@ -1497,8 +1558,33 @@ export async function createTreatmentAreaWithEntryAction(
             observation_source: r.observationSource,
           })),
         })),
-      })
-    : await supabase.rpc("create_block_with_entry", blockArgs);
+      };
+  let createdRows: unknown;
+  let cmdErr: { code?: string | null; message?: string } | null;
+  if (withSetup || identityOnly || bareKey) {
+    ({ data: createdRows, error: cmdErr } = await supabase.rpc(
+      "create_block_with_initial_setup_and_identity",
+      identityArgs,
+    ));
+    // MIGRATION-FIRST ORDER CAN SLIP (0301). PGRST202 / 42883 means the
+    // wrapper does not exist, so nothing ran and nothing was written.
+    if (isMissingCommand(cmdErr)) {
+      if (identityOnly) {
+        // Nothing but a machine choice to store: never report it as saved.
+        return { ok: false, error: MACHINE_CHOICE_NOT_STORABLE_YET };
+      }
+      // Settings save: the 0223 command writes the area and the settings
+      // exactly as before; the identity simply is not stamped yet.
+      const { p_machine_profile_id: _omit, ...legacyArgs } = identityArgs;
+      void _omit;
+      ({ data: createdRows, error: cmdErr } = await supabase.rpc(
+        "create_block_with_initial_setup",
+        legacyArgs,
+      ));
+    }
+  } else {
+    ({ data: createdRows, error: cmdErr } = await supabase.rpc("create_block_with_entry", blockArgs));
+  }
   if (cmdErr) {
     // A TRANSPORT FAILURE HERE IS A LOST ANSWER TOO (Codex, #860 4301722740).
     //
@@ -1514,7 +1600,7 @@ export async function createTreatmentAreaWithEntryAction(
     // binds a retry key, so pressing Save again unchanged is answered with
     // the original result. `create_block_with_entry` binds none, so there is
     // no safe retry to offer.
-    if (withSetup && !isDefinitiveDatabaseAnswer(cmdErr)) {
+    if ((withSetup || bareKey) && !isDefinitiveDatabaseAnswer(cmdErr)) {
       return {
         ok: false as const,
         error: INITIAL_SAVE_UNRESOLVED,
@@ -1546,7 +1632,7 @@ export async function createTreatmentAreaWithEntryAction(
    * and it keeps the plain failure it had.
    */
   const unresolvableResponse = (): BlockResult =>
-    withSetup
+    withSetup || bareKey
       ? {
           ok: false as const,
           error: INITIAL_SAVE_UNRESOLVED,

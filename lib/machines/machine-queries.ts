@@ -1,4 +1,5 @@
-import { isDefinitiveDatabaseAnswer } from "./save-attempt";
+import { isDefinitiveDatabaseAnswer, isMissingCommand } from "./save-attempt";
+import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
 import type { ReadingValue } from "./profile-contract";
 import type { StudioDevice } from "./selection";
 
@@ -41,7 +42,7 @@ export type MachineDb = {
   rpc: (
     fn: string,
     args: Record<string, unknown>,
-  ) => Promise<{ data: unknown; error: MachineDbError }>;
+  ) => Promise<{ data: unknown; error: MachineDbError; status?: number }>;
   from: (table: string) => {
     select: (columns: string) => {
       eq: (
@@ -138,7 +139,61 @@ export type MachineOutcome<T> =
        * WAS definitive.
        */
       unresolved?: boolean;
+      /**
+       * The database DEFINITIVELY refused the request (the block is not this practitioner's / not in this session). Set only by
+       * `readingsForBlock`, so the post-save refresh can fail closed for access (#1369 R3-2) and stay gentle for a transient error.
+       */
+      refused?: "access" | "unavailable";
     };
+
+/**
+ * A FAILED READ OF A BLOCK'S RECORDED SETTINGS IS SILENT TO THE PRACTITIONER BY DESIGN ("could not be read just now"), which left a CI
+ * failure with no cause on record (#1369, shard 1 at 6dc30fdd3). The server now logs the failure's CLASS: the validated database code
+ * (a SQLSTATE or PostgREST code, or "fetch_failed" for a transport failure, or "unknown"). Not the message: the repository's log
+ * contract (MSG-LOG-RAW-ERROR-2) forbids free text from a database in a log line, and the code is what names the cause. No block,
+ * session or client id and no reading value.
+ */
+function logReadingsReadFailure(
+  code: string,
+  extra: { status?: number | null; errorClass?: ReadErrorClass; attempt?: number; event?: string } = {},
+): void {
+  try {
+    console.error(
+      JSON.stringify({
+        event: extra.event ?? "machine_readings_read_failed",
+        code,
+        // The HTTP status NUMBER and a CLOSED class (#1369, shard 1 at d298c8b92 logged only code "unknown"): enough to tell a gateway
+        // or transport reply from a database answer, with no free text from the error.
+        ...(extra.status !== undefined ? { status: extra.status } : {}),
+        ...(extra.errorClass ? { errorClass: extra.errorClass } : {}),
+        ...(extra.attempt ? { attempt: extra.attempt } : {}),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    // Logging must never change the outcome of the read.
+  }
+}
+
+type ReadErrorClass = "fetch_failed" | "json_parse" | "other";
+
+/**
+ * A CLOSED class for an error that carries no database code. The message is only MATCHED here and never logged: a reply that is not
+ * JSON (a gateway page) surfaces from supabase-js as a JSON parse message; a dropped connection as "TypeError: fetch failed".
+ */
+function readErrorClass(error: unknown): ReadErrorClass {
+  const message = typeof error === "object" && error !== null ? (error as { message?: unknown }).message : undefined;
+  if (typeof message !== "string") return "other";
+  if (message === "TypeError: fetch failed") return "fetch_failed";
+  if (/JSON|Unexpected (token|end)/i.test(message)) return "json_parse";
+  return "other";
+}
+
+const readStatus = (status: unknown): number | null =>
+  typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+
+/** Pause before the single retry of a code-less read failure. */
+const READ_RETRY_DELAY_MS = 300;
 
 function fail(error: MachineDbError, fallback: string): string {
   return error?.message?.trim() || fallback;
@@ -497,6 +552,7 @@ export type SetupSubmissionResult = {
    * because "saved" and "already saved" are different facts about the record.
    */
   reused: boolean;
+  blockUpdatedAt: string | null;
 };
 
 /**
@@ -533,9 +589,11 @@ export async function recordSetupSubmission(
    */
   sessionId: string;
   clientId: string;
+  /** The block version the host form holds, checked inside the command's transaction (0301). */
+  expectedUpdatedAt?: string | null;
   },
 ): Promise<MachineOutcome<SetupSubmissionResult>> {
-  const { data, error } = await db.rpc("record_treatment_setup_submission", {
+  const submissionArgs = {
     p_block_id: input.blockId,
     p_studio_machine_id: input.machineId,
     p_mode_key: input.modeKey,
@@ -563,7 +621,18 @@ export async function recordSetupSubmission(
     })),
     p_session_id: input.sessionId,
     p_client_id: input.clientId,
+  };
+  // MIGRATION-FIRST ORDER CAN SLIP (0301). The identity-recording wrapper is
+  // tried first; if the database does not have it yet (PGRST202 / 42883, so
+  // nothing ran), the SAME arguments go to the 0223 command, which records the
+  // readings exactly as before and simply does not stamp the identity.
+  let { data, error } = await db.rpc("record_setup_submission_with_identity", {
+    ...submissionArgs,
+    p_expected_updated_at: input.expectedUpdatedAt ?? null,
   });
+  if (isMissingCommand(error)) {
+    ({ data, error } = await db.rpc("record_treatment_setup_submission", submissionArgs));
+  }
   if (error) {
     // A TRANSPORT FAILURE IS NOT A REFUSAL (Codex, #860 4301722737).
     //
@@ -609,6 +678,8 @@ export async function recordSetupSubmission(
       groups: Number(row?.groups ?? 0),
       readings: Number(row?.readings ?? 0),
       reused: row?.reused === true,
+      // The block's new updated_at, from the same UPDATE ... RETURNING inside the command (none on a replay).
+      blockUpdatedAt: typeof row?.block_updated_at === "string" ? row.block_updated_at : null,
     },
   };
 }
@@ -951,6 +1022,8 @@ export async function readingsForBlock(
    * follows.
    */
   sessionId: string,
+  /** Test seam: the pause before the one retry. */
+  opts: { retryDelayMs?: number } = {},
 ): Promise<MachineOutcome<RecordedReading[]>> {
   // ONE STATEMENT, ONE SNAPSHOT (Codex, #860 4305555264).
   //
@@ -974,11 +1047,31 @@ export async function readingsForBlock(
   // binding is a predicate on the read itself and needs no such argument
   // (Codex, #860 4298457378 closed the hole; this removes the reasoning the
   // fix depended on).
-  const { data, error } = await db.rpc("setup_readings_for_block", {
-    p_block_id: blockId,
-    p_session_id: sessionId,
-  });
+  const callRead = () =>
+    db.rpc("setup_readings_for_block", {
+      p_block_id: blockId,
+      p_session_id: sessionId,
+    });
+  let { data, error, status } = await callRead();
+  // ONE RETRY, ONLY FOR A CODE-LESS ERROR (OPS decision after #1369 shard 1 at d298c8b92). An error with no SQLSTATE and no PostgREST
+  // code is not the database answering: it is a reply or a connection that did not complete (class logged below). This read is a STABLE
+  // function with no side effects, so repeating it is safe. A coded error is a definite database answer and is never retried; a second
+  // failure is reported exactly as a first one was.
+  if (error && dbErrorCode(error) === "unknown") {
+    logReadingsReadFailure(dbFailureCode(error), {
+      event: "machine_readings_read_retried",
+      status: readStatus(status),
+      errorClass: readErrorClass(error),
+      attempt: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? READ_RETRY_DELAY_MS));
+    ({ data, error, status } = await callRead());
+  }
   if (error) {
+    logReadingsReadFailure(dbFailureCode(error), {
+      status: readStatus(status),
+      errorClass: dbErrorCode(error) === "unknown" ? readErrorClass(error) : undefined,
+    });
     // A BLOCK WE WILL NOT SHOW GETS THE SAME SENTENCE AS A FAILED READ, and
     // that is a deliberate choice rather than laziness: the practitioner
     // cannot tell "not yours" from "the database is unhappy", so neither can
@@ -994,11 +1087,16 @@ export async function readingsForBlock(
     // migrations, and this read calls exactly one function - so a P0002 here
     // is that refusal and nothing else.
     if (error.code === "P0002") {
-      return { ok: false, error: "Could not read settings." };
+      // NOT-FOUND: the block is not in this session any more (deleted in another tab) or never was. Not an accusation of access.
+      return { ok: false, error: "Could not read settings.", refused: "unavailable" };
+    }
+    if (error.code === "42501") {
+      return { ok: false, error: "Could not read settings.", refused: "access" };
     }
     return { ok: false, error: fail(error, "Could not read settings.") };
   }
   if (!Array.isArray(data)) {
+    logReadingsReadFailure("shape");
     // A SHAPE THE CLIENT SHOULD NEVER PRODUCE, so it fails closed rather than
     // being coerced. It is NOT the not-yours case: the function RAISES for a
     // block it cannot see or that is not in the given session, so that arrives
@@ -1069,4 +1167,78 @@ export async function latestRecordedSetup(
   }
   const rows = ((data ?? []) as ReadingRow[]).map(toReading);
   return { ok: true, value: rows };
+}
+
+
+/**
+ * Save the machine chosen for ONE existing treatment area (migration 0301).
+ * Studio and actor are derived by the command; the route's own client and
+ * session bind the block. Either a registered unit with its mode, or a model
+ * with no unit and no mode (the existing workflow).
+ */
+export async function recordBlockMachineIdentity(
+  db: MachineDb,
+  input: {
+    blockId: string;
+    sessionId: string;
+    clientId: string;
+    deviceId: string | null;
+    modeKey: string | null;
+    profileId: string | null;
+    /**
+     * THE RETRY KEY of this pick, reused by every retry of it (0301 receipts, Codex 4488743493). A write that committed and whose
+     * answer was lost is answered again, with the version that write produced and the identity it recorded, when the same key comes back.
+     */
+    idempotencyKey: string;
+    /** The block version the form holds; checked inside the command (stale_block_version on a mismatch). */
+    expectedUpdatedAt?: string | null;
+  },
+): Promise<
+  | {
+      ok: true;
+      updatedAt: string | null;
+      /** True when the key matched an EARLIER write: nothing was written by this call. */
+      reused: boolean;
+      /** The identity the database holds for that write, so the caller adopts what was stored, not what it sent. */
+      identity: { profileId: string | null; deviceId: string | null; modeKey: string | null } | null;
+    }
+  | { ok: false; error: { code: string }; stale: boolean; unresolved: boolean }
+> {
+  const { data, error } = await db.rpc("record_block_machine_identity", {
+    p_block_id: input.blockId,
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+    p_profile_id: input.deviceId === null ? input.profileId : null,
+    p_studio_machine_id: input.deviceId,
+    p_mode_key: input.deviceId === null ? null : input.modeKey,
+    p_idempotency_key: input.idempotencyKey,
+    p_expected_updated_at: input.expectedUpdatedAt ?? null,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: { code: dbErrorCode(error) },
+      // The held version no longer matched inside the transaction; only the fact, never the message.
+      stale: /stale_block_version/.test(error.message ?? ""),
+      // A TRANSPORT FAILURE IS NOT A REFUSAL: with no database answer the write may have committed (Codex 4488743493).
+      unresolved: !isDefinitiveDatabaseAnswer(error),
+    };
+  }
+  // SHAPE-CHECKED. A reply that is not the object the command returns (a stale function still resolving) cannot be
+  // taken as "saved": the write may have committed, so it is unresolved and the same key will settle it.
+  const row = data as Partial<Record<string, unknown>> | null;
+  if (row === null || typeof row !== "object" || typeof row.updated_at !== "string") {
+    return { ok: false, error: { code: "unknown" }, stale: false, unresolved: true };
+  }
+  const text = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    ok: true,
+    updatedAt: row.updated_at,
+    reused: row.reused === true,
+    identity: {
+      profileId: text(row.machine_profile_id),
+      deviceId: text(row.studio_machine_id),
+      modeKey: text(row.machine_mode_key),
+    },
+  };
 }

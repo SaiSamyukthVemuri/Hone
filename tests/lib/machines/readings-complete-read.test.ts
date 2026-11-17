@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import nodePath from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { readingsForBlock, type MachineDb } from "@/lib/machines/machine-queries";
 
@@ -168,6 +168,51 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     expect(out.error).toContain("connection reset");
   });
 
+  it("LOGS only the validated database CODE on a failed read (no message, no ids, no values)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { db } = fakeDb([], { error: { code: "57014", message: "canceling statement due to statement timeout" } });
+      await readingsForBlock(db, "block-secret-1", "session-secret-1");
+      expect(spy).toHaveBeenCalledTimes(1);
+      const line = String(spy.mock.calls[0][0]);
+      const logged = JSON.parse(line);
+      expect(logged).toMatchObject({ event: "machine_readings_read_failed", code: "57014" });
+      expect(line, "free text from the database never reaches the log").not.toContain("statement timeout");
+      expect(line).not.toContain("block-secret-1");
+      expect(line).not.toContain("session-secret-1");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a failure with no usable code logs 'unknown', or 'fetch_failed' for a transport failure", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await readingsForBlock(fakeDb([], { error: { message: "connection reset by peer 10.0.0.7" } }).db, "b", "s", { retryDelayMs: 0 });
+      await readingsForBlock(fakeDb([], { error: { message: "TypeError: fetch failed" } }).db, "b", "s", { retryDelayMs: 0 });
+      // The FINAL failure of each read (a code-less error is first logged as a retry).
+      const codes = spy.mock.calls
+        .map((c) => JSON.parse(String(c[0])))
+        .filter((l) => l.event === "machine_readings_read_failed")
+        .map((l) => l.code);
+      expect(codes).toEqual(["unknown", "fetch_failed"]);
+      expect(spy.mock.calls.map((c) => String(c[0])).join("")).not.toContain("10.0.0.7");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("NEGATIVE CONTROL: a successful read logs nothing", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { db } = fakeDb([]);
+      await readingsForBlock(db, "block-1", "session-1");
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("uses the fallback sentence when the failure carries no message", async () => {
     const { db } = fakeDb([], { error: { message: "" } });
 
@@ -232,6 +277,107 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
       out.error,
       "the database's precise sentence reached the practitioner",
     ).not.toContain("Unknown treatment block");
+  });
+
+  it("R3-2: only the not-found refusal carries the definitive `refused` flag; any other failure does not", async () => {
+    const refused = await readingsForBlock(
+      fakeDb([], { error: { message: "Unknown treatment block for this session.", code: "P0002" } }).db,
+      "b",
+      "s",
+    );
+    expect(refused.ok === false && refused.refused).toBe("unavailable");
+    const denied = await readingsForBlock(fakeDb([], { error: { message: "permission denied", code: "42501" } }).db, "b", "s");
+    expect(denied.ok === false && denied.refused).toBe("access");
+    const transient = await readingsForBlock(fakeDb([], { error: { message: "connection reset", code: "08006" } }).db, "b", "s");
+    expect(transient.ok).toBe(false);
+    expect(transient.ok === false && transient.refused).toBeUndefined();
+  });
+
+  describe("one retry for a code-less error, with the status and a closed class logged (shard 1 at d298c8b92)", () => {
+    const seq = (outcomes: Array<{ error: { message: string; code?: string } | null; status?: number }>) => {
+      const calls: string[] = [];
+      let i = 0;
+      const db = {
+        rpc: (fn: string) => {
+          calls.push(fn);
+          const o = outcomes[Math.min(i++, outcomes.length - 1)]!;
+          return Promise.resolve({ data: o.error ? null : [], error: o.error, status: o.status });
+        },
+        from: () => {
+          throw new Error("no table access");
+        },
+      } as unknown as MachineDb;
+      return { db, calls };
+    };
+    const captured = () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      return { spy, lines: () => spy.mock.calls.map((c) => JSON.parse(String(c[0]))) };
+    };
+
+    it("code-less error then success: ok, two reads, the first attempt logged as RETRIED (not failed) with status and class", async () => {
+      const { spy, lines } = captured();
+      const { db, calls } = seq([{ error: { message: "Unexpected token < in JSON at position 0" }, status: 502 }, { error: null }]);
+      const out = await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });
+      expect(out.ok).toBe(true);
+      expect(calls).toHaveLength(2);
+      const logged = lines();
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatchObject({ event: "machine_readings_read_retried", code: "unknown", status: 502, errorClass: "json_parse", attempt: 1 });
+      expect(JSON.stringify(logged)).not.toContain("Unexpected token");
+      spy.mockRestore();
+    });
+
+    it("two code-less failures: reported as a failure, two reads, the final failure logged with its class and no message", async () => {
+      const { spy, lines } = captured();
+      const { db, calls } = seq([{ error: { message: "TypeError: fetch failed" } }]);
+      const out = await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });
+      expect(out.ok).toBe(false);
+      expect(calls).toHaveLength(2);
+      const logged = lines();
+      expect(logged.map((l) => l.event)).toEqual(["machine_readings_read_retried", "machine_readings_read_failed"]);
+      expect(logged[1]).toMatchObject({ code: "fetch_failed", errorClass: "fetch_failed" });
+      spy.mockRestore();
+    });
+
+    it("NEGATIVE CONTROL: a coded error is not retried and logs its code without a class", async () => {
+      const { spy, lines } = captured();
+      const { db, calls } = seq([{ error: { message: "x", code: "57014" }, status: 500 }, { error: null }]);
+      const out = await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });
+      expect(out.ok).toBe(false);
+      expect(calls).toHaveLength(1);
+      expect(lines()).toEqual([expect.objectContaining({ event: "machine_readings_read_failed", code: "57014", status: 500 })]);
+      expect(lines()[0]).not.toHaveProperty("errorClass");
+      spy.mockRestore();
+    });
+
+    it("INSURANCE: P0002 and 42501 are each read ONCE (a coded refusal is never retried)", async () => {
+      for (const code of ["P0002", "42501", "PGRST116"]) {
+        const { spy } = captured();
+        const { db, calls } = seq([{ error: { message: "x", code } }, { error: null }]);
+        const out = await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });
+        expect(out.ok, code).toBe(false);
+        expect(calls, code).toHaveLength(1);
+        spy.mockRestore();
+      }
+    });
+
+    it("INSURANCE: an unknown message maps to errorClass 'other' and the text is never logged", async () => {
+      const { spy, lines } = captured();
+      const { db } = seq([{ error: { message: "the flux capacitor is unhappy 10.0.0.7" } }]);
+      await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });
+      const logged = lines();
+      expect(logged.map((l) => l.errorClass)).toEqual(["other", "other"]);
+      expect(JSON.stringify(logged)).not.toContain("flux");
+      spy.mockRestore();
+    });
+
+    it("a status that is not an HTTP status is not logged as a number", async () => {
+      const { spy, lines } = captured();
+      const { db } = seq([{ error: { message: "x" }, status: 0 }]);
+      await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });
+      expect(lines().every((l) => l.status === null)).toBe(true);
+      spy.mockRestore();
+    });
   });
 
   it("CONTROL: a failure with ANOTHER code still passes its words through", async () => {

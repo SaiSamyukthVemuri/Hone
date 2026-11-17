@@ -1,3 +1,4 @@
+import { PULSE_COUNT_DEFAULT, PULSE_DELAY_DEFAULT } from "@/lib/constants";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 
 /**
@@ -370,4 +371,109 @@ export function decideHandoff(
 export function pinToBlock(pending: PendingSetup, blockId: string): PendingSetup {
   if (pending.appliedToBlockId === blockId) return pending;
   return { ...pending, appliedToBlockId: blockId };
+}
+
+/**
+ * WHETHER THE PANEL'S REPORTED DRAFT HOLDS ANYTHING THE PRACTITIONER DID (Codex, #1369 4477716790).
+ *
+ * The panel reports `{ groups: [], blocking: null }` the moment it opens on a machine it chose by itself (the
+ * client's last machine, or the remembered preference). That is the panel being ready, not a draft: counting it made
+ * a brand-new area say Unsaved and prompt on leave with nothing entered. A draft is values entered (groups) or a
+ * half-finished entry (a blocking reason, which only exists once something was typed). An EXPLICIT machine pick is
+ * tracked separately by the host (`identityDirty`), so it still counts there.
+ */
+export function machineDraftHasEntries(
+  draft: { groups: readonly unknown[]; blocking: string | null } | null,
+): boolean {
+  return draft !== null && (draft.groups.length > 0 || draft.blocking !== null);
+}
+
+/**
+ * WHETHER "Copy settings from another area" may use this source for the draft's machine (Codex, #1369 4478497428).
+ *
+ * The copy patch fills the LEGACY charting fields (mode, modality, energy, readings). With a native machine selected
+ * those fields are hidden but still submitted, so a legacy source would silently record legacy settings against a
+ * native machine. A native source copied onto a legacy draft would instead blank what was typed. Copying across the
+ * two kinds is therefore refused; "none" (no machine chosen yet) takes either.
+ */
+export function copySourceMatchesMachine(
+  kind: "none" | "legacy" | "native",
+  source: { studio_machine_id?: string | null },
+): boolean {
+  const sourceNative = Boolean(source.studio_machine_id);
+  if (kind === "native") return sourceNative;
+  if (kind === "legacy") return !sourceNative;
+  return true;
+}
+
+/**
+ * The copy patch as it may be applied under `kind`. With a native machine in force only the shared fields (probe and
+ * lot) survive: the hidden legacy fields are forced back to blank, so nothing legacy is ever submitted.
+ */
+export function copyPatchForMachine<P extends Record<string, unknown>>(
+  kind: "none" | "legacy" | "native",
+  patch: P,
+): P {
+  if (kind !== "native") return patch;
+  return {
+    ...patch,
+    mode: "",
+    apilusModality: "",
+    energyLevel: "",
+    machineFrequency: "",
+    thermolysisIntensityPercent: "",
+    thermolysisDurationSeconds: "",
+    galvanicMa: "",
+    galvanicDurationSeconds: "",
+    unitsOfLye: "",
+    pulseCount: String(PULSE_COUNT_DEFAULT),
+    pulseDelay: String(PULSE_DELAY_DEFAULT),
+  };
+}
+
+/**
+ * WHETHER THE DRAFT ALREADY HOLDS LEGACY CHARTING VALUES the practitioner typed (Codex, #1369 4479490063).
+ *
+ * Choosing a native machine clears these (settings are never mixed). That is right for a pick she made, and wrong for
+ * a machine the panel resolved ON ITS OWN when it opened: it would erase work she had already entered. While this is
+ * true, the host keeps the panel from auto-selecting anything; an explicit pick still applies and clears as before.
+ */
+export function legacySettingsEntered(draft: {
+  mode: string;
+  apilusModality: string;
+  energyLevel: string;
+  machineFrequency: string;
+  thermolysisIntensityPercent: string;
+  thermolysisDurationSeconds: string;
+  galvanicMa: string;
+  galvanicDurationSeconds: string;
+  unitsOfLye: string;
+}): boolean {
+  return [
+    draft.mode,
+    draft.apilusModality,
+    draft.energyLevel,
+    draft.machineFrequency,
+    draft.thermolysisIntensityPercent,
+    draft.thermolysisDurationSeconds,
+    draft.galvanicMa,
+    draft.galvanicDurationSeconds,
+    draft.unitsOfLye,
+  ].some((v) => v.trim() !== "");
+}
+
+/**
+ * WHETHER AUTOMATIC MACHINE SELECTION IS HELD (Codex #1369 4479490063, 4506474412): the draft carries legacy settings the practitioner entered
+ * or the area already persists, and a native machine selected on her behalf would clear them. A studio-default frequency that was merely
+ * PREFILLED is not entered work, but a frequency the area PERSISTS always counts, even when it equals the default (Insurance final448 F2):
+ * otherwise an existing area's saved frequency is ignored, the remembered native machine is seeded, and the host refuses it.
+ */
+export function autoSelectHeld(
+  draft: Parameters<typeof legacySettingsEntered>[0],
+  defaultMachineFrequency: string | null | undefined,
+  persistedMachineFrequency: string | null | undefined,
+): boolean {
+  const prefilledOnly =
+    !(persistedMachineFrequency ?? "").trim() && draft.machineFrequency.trim() === (defaultMachineFrequency?.trim() ?? "");
+  return legacySettingsEntered({ ...draft, machineFrequency: prefilledOnly ? "" : draft.machineFrequency });
 }
