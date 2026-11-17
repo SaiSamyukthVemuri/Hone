@@ -239,6 +239,8 @@ describe("withdrawal", () => {
     const before = await queue();
     expect(before).toHaveLength(3);
     expect(new Set(before)).toEqual(new Set([e1.id, e2.id, e3.id]));
+    // e2 must NOT be last, so a reset to the back of the queue cannot go unseen.
+    expect(before.indexOf(e2.id)).toBeLessThan(before.length - 1);
     const joinedBefore = (await entryRow(e2.id)).joined_at;
 
     const t = await invite(f, e2.id);

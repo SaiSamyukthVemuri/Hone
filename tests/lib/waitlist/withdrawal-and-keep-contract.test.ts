@@ -20,17 +20,15 @@ const ROOT = join(__dirname, "..", "..", "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 const MIGRATIONS = readdirSync(join(ROOT, "supabase", "migrations")).filter((f) => f.endsWith(".sql")).sort();
 
-/** The body of the LAST `create or replace function public.<name>(` in the migration chain, up to its closing `$$;`. */
+/** The body of the LAST `create [or replace] function public.<name>(` in the migration chain (a plain `create function` after a drop counts), up to its closing `$$;`. */
 function lastBody(name: string): string {
   let found = "";
+  const head = new RegExp(`create (?:or replace )?function public\\.${name}\\(`, "g");
   for (const f of MIGRATIONS) {
     const sql = read(`supabase/migrations/${f}`);
-    const head = `create or replace function public.${name}(`;
-    let at = sql.indexOf(head);
-    while (at !== -1) {
-      const end = sql.indexOf("\n$$;", at);
-      found = sql.slice(at, end === -1 ? undefined : end);
-      at = sql.indexOf(head, at + head.length);
+    for (const m of sql.matchAll(head)) {
+      const end = sql.indexOf("\n$$;", m.index);
+      found = sql.slice(m.index, end === -1 ? undefined : end);
     }
   }
   return found;
@@ -47,13 +45,15 @@ describe("a withdrawal sends no owner email", () => {
     expect(body).not.toMatch(/waitlist_decline_owner_emails/);
   });
 
+  // Stated bound: this reads literal `insert into public.waitlist_decline_owner_emails` text. A write built as dynamic SQL (execute format(...)) or
+  // through a view would not be seen here; the DB suite's 0-row assertion after a withdrawal is what covers that case.
   it("the outbox is written in exactly one place in the whole chain: the decline-with-answers command", () => {
     const hits: string[] = [];
     for (const f of MIGRATIONS) {
       const sql = strip(read(`supabase/migrations/${f}`));
       let at = sql.indexOf("insert into public.waitlist_decline_owner_emails");
       while (at !== -1) {
-        const fn = [...sql.slice(0, at).matchAll(/create or replace function public\.(\w+)\(/g)].pop()?.[1] ?? "(none)";
+        const fn = [...sql.slice(0, at).matchAll(/create (?:or replace )?function public\.(\w+)\(/g)].pop()?.[1] ?? "(none)";
         hits.push(`${f}:${fn}`);
         at = sql.indexOf("insert into public.waitlist_decline_owner_emails", at + 10);
       }
