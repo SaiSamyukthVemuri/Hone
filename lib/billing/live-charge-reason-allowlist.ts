@@ -18,19 +18,40 @@ export const LIVE_MANUAL_FEE_HOLD_MESSAGE =
 // session_payment is allowed; the manual-fee reasons are held.
 const LIVE_ALLOWED_CHARGE_REASONS = new Set<string>(["session_payment"]);
 
-// The two manual-fee reasons. They are held in LIVE mode EXCEPT for studios named
-// in the server-side allowlist below. Nothing else (a future reason) is ever opened
-// by it.
+// The two manual-fee reasons. They are held in LIVE mode EXCEPT for studios named in
+// the per-reason server-side allowlist for THAT reason. Nothing else (a future
+// reason) is ever opened by either list.
 const MANUAL_FEE_CHARGE_REASONS = new Set<string>(["no_show_fee", "late_cancellation_fee"]);
 
-// Per-studio live enablement for the two manual fees (route (a): no migration).
-// A server-side environment variable holding a comma-separated list of studio ids.
-// The DEFAULT IS EMPTY, so with the variable unset, blank or malformed every fee
-// stays held, exactly as before. It is read at call time, on the server only, and
-// is never exposed to the browser (the name has no NEXT_PUBLIC_ prefix). A studio id
-// is never written in a repo file: it lives only in the deployment environment, and
-// only on the operator's per-studio written approval.
-export const MANUAL_FEE_LIVE_STUDIOS_ENV = "HONE_MANUAL_FEE_LIVE_STUDIO_IDS";
+// Per-studio, PER-REASON live enablement (route (a): no migration). Each list is a
+// server-side environment variable holding comma-separated studio ids, and each opens
+// ONLY its own reason:
+//   HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS -> late_cancellation_fee only
+//   HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS     -> no_show_fee only
+// The DEFAULT IS EMPTY, so with a variable unset, blank or malformed that fee stays
+// held. Read at call time, on the server only, never exposed to the browser (no
+// NEXT_PUBLIC_ prefix). A studio id is never written in a repo file: it lives only in
+// the deployment environment, on the operator's per-studio written approval.
+//
+// TEMPORARY RELEASE CONTROL, not the studio-facing feature. The studio-facing switch is the owner's own setting
+// (studios.late_cancel_fee_enabled / no_show_fee_enabled, 0351, lib/billing/manual-fee-studio-setting.ts). In LIVE mode a
+// fee needs BOTH that setting ON and the studio in that reason's list here; in TEST mode only the setting applies.
+// For EACH fee type separately, its list is removed only when ALL of these hold (set by the platform operator, 15 Nov 2026):
+//   (a) the settings migration (0351) is applied and read back;
+//   (b) the readiness of that type has been reviewed (payment-safety review, and a wording review);
+//   (c) its tests pass, including the test-mode smoke for that type;
+//   (d) monitoring is in place for stuck or unclear fee attempts;
+//   (e) the platform operator gives explicit rollout approval.
+// There is NO minimum number of days or of real charged fees: a real fee is never created to satisfy a testing count.
+// Removal is a PR that deletes that type's release check here, after which the owner's setting plus payment readiness
+// alone govern. First responder for a stuck or unclear attempt: the on-call operator; Stripe investigation escalates to the platform operator.
+export const LATE_CANCEL_FEE_LIVE_STUDIOS_ENV = "HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS";
+export const NO_SHOW_FEE_LIVE_STUDIOS_ENV = "HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS";
+
+// The earlier single variable opened BOTH fees at once. It is no longer read by
+// anything: a stale value left in a deployment opens NOTHING. The name is kept here
+// only so a test can prove that.
+export const LEGACY_MANUAL_FEE_LIVE_STUDIOS_ENV = "HONE_MANUAL_FEE_LIVE_STUDIO_IDS";
 
 const STUDIO_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -48,24 +69,37 @@ export function parseManualFeeLiveStudios(raw: string | undefined | null): Reado
   return out;
 }
 
+// The variable that governs one reason, or null for a reason with no list.
+function liveStudiosEnvNameFor(chargeReason: string): string | null {
+  if (chargeReason === "late_cancellation_fee") return LATE_CANCEL_FEE_LIVE_STUDIOS_ENV;
+  if (chargeReason === "no_show_fee") return NO_SHOW_FEE_LIVE_STUDIOS_ENV;
+  return null;
+}
+
+// True only when THIS reason's own list names the studio. `rawEnv` is for tests; in
+// production it is the reason's own variable, read now.
 export function isManualFeeLiveEnabledForStudio(
+  chargeReason: string,
   studioId: string | null | undefined,
-  rawEnv: string | undefined | null = process.env[MANUAL_FEE_LIVE_STUDIOS_ENV],
+  rawEnv?: string | undefined | null,
 ): boolean {
   if (typeof studioId !== "string") return false;
-  return parseManualFeeLiveStudios(rawEnv).has(studioId.trim().toLowerCase());
+  const name = liveStudiosEnvNameFor(chargeReason);
+  if (name === null) return false;
+  const raw = rawEnv === undefined ? process.env[name] : rawEnv;
+  return parseManualFeeLiveStudios(raw).has(studioId.trim().toLowerCase());
 }
 
 export function isChargeReasonAllowedInLive(chargeReason: string, studioId?: string | null): boolean {
   if (LIVE_ALLOWED_CHARGE_REASONS.has(chargeReason)) return true;
   if (!MANUAL_FEE_CHARGE_REASONS.has(chargeReason)) return false;
-  return isManualFeeLiveEnabledForStudio(studioId);
+  return isManualFeeLiveEnabledForStudio(chargeReason, studioId);
 }
 
 // Returns the user-facing hold message if this (reason, mode, studio) is blocked,
 // or null if it is allowed. In TEST mode nothing is blocked (returns null); in LIVE
-// mode session_payment is allowed, a manual fee is allowed ONLY for an allowlisted
-// studio, and every other reason returns the hold message. Called with no studio
+// mode session_payment is allowed, a manual fee is allowed ONLY for a studio on
+// THAT reason's own allowlist, and every other reason returns the hold message. Called with no studio
 // id (the old two-argument form) a manual fee is blocked, so an old call site can
 // only be stricter, never looser.
 export function liveChargeReasonBlockMessage(

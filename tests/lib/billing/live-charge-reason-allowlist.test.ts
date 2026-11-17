@@ -101,12 +101,14 @@ describe("session payments remain allowed (not gated by the hold)", () => {
   });
 });
 
-describe("UI — fee settings reflect the hold and stay configurable", () => {
+describe("UI — fee settings say what is saved, never charge, and stay configurable", () => {
   const src = read("app/(app)/settings/payments/FeeAmountsCard.tsx");
-  it("says live manual fee charging is on hold, money not charged, session payments unaffected", () => {
-    expect(src).toMatch(/Live manual fee charging is currently on hold for this launch/);
-    expect(src).toMatch(/Money is not charged here\./);
-    expect(src).toMatch(/Session payments are\s*\n?\s*unaffected\./);
+  it("says both fees are off until turned on, nothing is charged automatically, saving charges no one, session payments unaffected", () => {
+    expect(src).toMatch(/Both fees are off until you turn them on/);
+    expect(src).toMatch(/Nothing is ever charged automatically/);
+    expect(src).toMatch(/saving\s+here never charges anyone/);
+    expect(src).toMatch(/Session payments are unaffected\./);
+    expect(src).not.toMatch(/on hold for this launch/);
   });
   it("fee amounts remain configurable (inputs + save action intact)", () => {
     expect(src).toMatch(/late_cancel_fee_cents|no_show_fee_cents|type="number"|inputMode/);

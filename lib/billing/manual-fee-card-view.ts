@@ -24,6 +24,8 @@ export type FeeCardAttempt = {
   charge_type: ManualFeeChargeType;
   amount_cents: number;
   currency: string;
+  /** Frozen at prepare (0351); null for older attempts. */
+  calc: { mode: "fixed" | "percent"; basisCents: number | null; percentBp: number | null } | null;
   created_at: string;
   /** Server-computed through feeAttemptState. */
   state: {
@@ -50,6 +52,8 @@ export type FeeCardEligibility = {
   eligible: boolean;
   blockingReasons: string[];
   amountCents: number | null;
+  /** How amountCents was derived (0351); null when not eligible. */
+  feeBasis: { calcMode: "fixed" | "percent"; basisCents: number | null; percentBp: number | null } | null;
   currency: string | null;
   clientName: string | null;
   serviceName: string | null;
@@ -83,6 +87,7 @@ export function projectFeeAttempt(
     charge_type: a.charge_type,
     amount_cents: a.amount_cents,
     currency: a.currency,
+    calc: a.calc_mode === "percent" || a.calc_mode === "fixed" ? { mode: a.calc_mode, basisCents: a.basis_cents ?? null, percentBp: a.percent_bp ?? null } : null,
     created_at: a.created_at,
     state: {
       kind: state.kind,
@@ -114,6 +119,7 @@ export function projectFeeEligibility(
     eligible: e.eligible,
     blockingReasons: e.eligible ? [] : e.blockingReasons,
     amountCents: e.amountCents,
+    feeBasis: e.feeBasis,
     currency: e.currency,
     clientName: e.client?.name ?? null,
     serviceName: e.appointment?.service_name ?? null,

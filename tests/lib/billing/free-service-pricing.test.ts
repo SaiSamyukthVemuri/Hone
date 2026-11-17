@@ -87,9 +87,8 @@ describe("FREE-01 price matrix", () => {
     expect(r.kind).toBe("free");
   });
 
-  // The model has never accepted a zero custom price as "charge nothing"; such
-  // rows read as "no custom price recorded". No support is invented here.
-  it("a zero custom price is not a pricing authority; the menu price decides", () => {
+  // Decision (platform operator, #1483): an explicitly recorded $0 custom price is a decided price and beats the menu price.
+  it("a zero custom price on a positive menu service is FREE (explicit client $0 beats the menu)", () => {
     const r = resolve({
       ...base,
       service: svc(14500),
@@ -97,8 +96,7 @@ describe("FREE-01 price matrix", () => {
         { service_name: "Consultation", price_cents: 0, notes: null, effective_from: "2026-01-01" },
       ],
     });
-    expect(r.kind).toBe("resolved");
-    if (r.kind === "resolved") expect(r.amountCents).toBe(14500);
+    expect(r.kind).toBe("free");
   });
 
   it("missing service is still missing_service, not free", () => {
