@@ -970,7 +970,7 @@ export default async function ClientCheatSheetPage({
               >
                 {clientAvatarInitials(clientDisplay)}
               </span>
-              <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
+              <h1 className="min-w-0 [overflow-wrap:anywhere] text-2xl font-semibold tracking-tight md:text-3xl">
                 {clientDisplay}
               </h1>
               {/* PR Willow launch fixes: when the client is archived
@@ -1050,7 +1050,7 @@ export default async function ClientCheatSheetPage({
 
       <ProfileTabBar active={activeTab} tabs={profileTabsFor({ isOwner })} />
 
-      {/* Contact column beside every tab (stacked above the content on phones). */}
+      {/* Contact column beside every tab on desktop; on phones the tab's content comes first and the contact card follows it (ContactSidebar: order-last md:order-none). */}
       <div data-testid="profile-layout" className="grid gap-6 md:grid-cols-[206px_minmax(0,1fr)]">
         <ContactSidebar
           clientId={client.id}

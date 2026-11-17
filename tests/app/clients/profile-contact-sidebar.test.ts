@@ -48,3 +48,18 @@ describe("the page puts the contact column beside every tab and the header keeps
     expect(header).toContain("client-profile-avatar");
   });
 });
+
+describe("the profile header name", () => {
+  const page = readFileSync("app/(app)/clients/[id]/page.tsx", "utf8");
+  it("breaks an unbroken long word anywhere, so it never widens the page (HON-69)", () => {
+    const h1 = page.match(/<h1 className="([^"]*)"/)?.[1] ?? "";
+    expect(h1).toContain("[overflow-wrap:anywhere]");
+    expect(h1).toContain("min-w-0");
+    // break-words alone (overflow-wrap: break-word) does not shrink a flex item's minimum width
+    expect(h1).not.toMatch(/(^|\s)break-words(\s|$)/);
+  });
+  it("the layout comment states where the contact card sits on phones", () => {
+    expect(page).not.toContain("stacked above the content on phones");
+    expect(page).toContain("order-last md:order-none");
+  });
+});
