@@ -10,8 +10,8 @@
 //
 // A PRINT cites its preview's audit id; 0233 enforces in the database that the
 // cited row is the caller's own preview of the SAME client and scope created in
-// the last 30 minutes. There is deliberately no client-side token (OPS ruling
-// 7 Nov): a forged preview_audit_id can only point at the caller's own preview.
+// the last 30 minutes. There is deliberately no client-side token:
+// a forged preview_audit_id can only point at the caller's own preview.
 
 export type DayAuditAction = "clinical_records_previewed" | "clinical_records_printed";
 

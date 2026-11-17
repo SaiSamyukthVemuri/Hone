@@ -1,5 +1,5 @@
 /**
- * HON-46: machine-native settings for the day packet (Codex P1 #4500315781).
+ * HON-46: machine-native settings for the day packet.
  *
  * A block charted through the machine-first flow stores its settings in
  * `treatment_setup_readings`, not in the legacy `session_blocks` /

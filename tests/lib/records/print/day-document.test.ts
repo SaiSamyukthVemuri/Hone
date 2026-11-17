@@ -33,7 +33,7 @@ describe("loadDayDocument: every failure is a distinct, non-empty state", () => 
     expect(await loadDayDocument(args(deps({ readClient: async () => "error" })))).toEqual({ ok: false, reason: "read_failed" });
     expect(await loadDayDocument(args(deps({ readClient: () => Promise.reject(new Error("x")) })))).toEqual({ ok: false, reason: "read_failed" });
   });
-  it("Privacy Q-4: a failed read is read_failed and NEVER an empty packet", async () => {
+  it("a failed read is read_failed and NEVER an empty packet", async () => {
     for (const reason of ["read_failed", "unresolvable_day"] as const) {
       const r = await loadDayDocument(args(deps({ loadDay: async () => ({ ok: false, reason }) })));
       expect(r).toEqual({ ok: false, reason });

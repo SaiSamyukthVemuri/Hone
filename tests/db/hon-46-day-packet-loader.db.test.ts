@@ -5,7 +5,7 @@ import { loadDayPacket, type PacketQuery, type PacketReader } from "@/lib/record
 import { buildDayPacket } from "@/lib/records/print/day-packet";
 import { NATIVE_SETTINGS_UNREADABLE } from "@/lib/records/print/machine-settings";
 
-// HON-46 E-5. The day-packet LOADER against the REAL schema. The unit tests prove
+// HON-46. The day-packet LOADER against the REAL schema. The unit tests prove
 // its filters against a recording fake; this proves the column lists exist, the
 // studio / client / day / soft-delete scoping holds on real rows under RLS as the
 // signed-in owner, paging completes past one page, and a foreign studio sees nothing.
@@ -15,8 +15,8 @@ import { NATIVE_SETTINGS_UNREADABLE } from "@/lib/records/print/machine-settings
 // semantics and RLS; it does NOT exercise PostgREST itself (max_rows, URL length).
 // Synthetic ids throughout; no real catalogue profile is activated.
 //
-// STATUS: 6/6 pass on an owned stack at 7913ae84b + this test (OPS grant 13:25:39Z), with the
-// readings read through setup_readings_for_block (Codex P1 #4500529393).
+// STATUS: 6/6 pass on an owned stack at 7913ae84b + this test, with the
+// readings read through setup_readings_for_block.
 
 afterAll(() => closePool());
 

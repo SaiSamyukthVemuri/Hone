@@ -18,6 +18,13 @@
 // store in ticket-store.ts (a set-if-absent marker keyed by a hash of the nonce, expiring with the ticket). This
 // module returns the nonce so the caller can consume it; it never decides single use by itself.
 //
+// WHAT THE TICKET HOLDS, AND FOR HOW LONG. The encrypted payload holds the studio, the owner, the client, the day, an
+// expiry and a nonce, and nothing else. It is valid to open for five minutes and opens once (the single-use marker below
+// holds only "1" under a hash of the nonce). For 25 minutes after its expiry, an active owner of the SAME studio may
+// exchange it for a fresh one-use ticket ("Open again", ticket-reopen.ts); after that it is inert. No server-side record
+// of the studio, client or day exists anywhere: minting writes nothing, and the only thing the store ever holds for a
+// ticket is the single-use marker.
+//
 // The secret is PRINT_TICKET_SECRET (>= 32 bytes). There is no fallback to any other secret: when it is missing or
 // short, nothing is minted and nothing opens (fail closed). Pure apart from the clock and the random source, both
 // injectable. Nothing here logs, and no error carries a payload byte.
@@ -25,6 +32,11 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 
 export const TICKET_TTL_MS = 5 * 60 * 1000;
+// "Open again" window: a ticket (used, expired or never opened) may be exchanged for a fresh one until 25 minutes after
+// its own expiry, 30 minutes from minting in all. Nothing is stored for this: the ticket itself carries the studio,
+// client and day, and its own expiry time says when the window ends.
+export const REOPEN_GRACE_MS = 25 * 60 * 1000;
+export const REOPEN_WINDOW_MS = TICKET_TTL_MS + REOPEN_GRACE_MS;
 const VERSION = 1;
 const AAD = Buffer.from("hone/print-ticket/v1");
 const PAYLOAD_BYTES = 67;
@@ -153,16 +165,18 @@ export const ticketUseKey = (nonce: string): string =>
   `print-ticket:${createHash("sha256").update(`hone/print-ticket/use/v1:${nonce}`).digest("hex")}`;
 
 /**
- * Recovery path only (ticket-reopen.ts): authenticate a ticket and read its studio and nonce EVEN WHEN it has expired,
- * so a used or expired link can be offered "Open again". It checks authenticity (AES-GCM), the version and the
- * "no more than one TTL of life" bound, and nothing else: it does NOT check expiry, the owner or the studio, and it
- * never returns the client or the day. The caller must compare `studioId` with the signed-in owner's studio before it
- * does anything, and must treat every failure as the one plain refusal.
+ * Recovery path only (ticket-reopen.ts): authenticate a ticket and read what it holds, EVEN WHEN it has expired or been
+ * used, so the same studio's owner can be offered "Open again". It checks authenticity (AES-GCM), the version, and that
+ * the ticket does not claim more than one TTL of life (a ticket this code could not have minted), and nothing else: it
+ * does NOT check the owner, the studio or the reopen window. The caller (reopenTicket) must compare `studioId` with the
+ * signed-in owner's studio and apply the window BEFORE it uses `clientId` or `day`, and must treat every failure as the
+ * one plain refusal.
  */
 export function inspectTicket(args: {
   secret: string | undefined;
   ticket: unknown;
-}): { ok: true; studioId: string; nonce: string } | { ok: false } {
+  now?: Date;
+}): { ok: true; studioId: string; clientId: string; day: string; nonce: string; expiresAtMs: number } | { ok: false } {
   const key = keyFrom(args.secret);
   if (key === null) return { ok: false };
   if (typeof args.ticket !== "string" || !TICKET_SHAPE.test(args.ticket)) return { ok: false };
@@ -175,7 +189,17 @@ export function inspectTicket(args: {
     decipher.setAuthTag(raw.subarray(raw.length - TAG_BYTES));
     const payload = Buffer.concat([decipher.update(raw.subarray(IV_BYTES, raw.length - TAG_BYTES)), decipher.final()]);
     if (payload.length !== PAYLOAD_BYTES || payload.readUInt8(0) !== VERSION) return { ok: false };
-    return { ok: true, studioId: bytesUuid(payload.subarray(7, 23)), nonce: payload.subarray(59, 67).toString("hex") };
+    const expiresAtMs = payload.readUIntBE(1, 6);
+    const now = (args.now ?? new Date()).getTime();
+    if (expiresAtMs - now > TICKET_TTL_MS) return { ok: false }; // claims more life than this code can mint
+    return {
+      ok: true,
+      studioId: bytesUuid(payload.subarray(7, 23)),
+      clientId: bytesUuid(payload.subarray(39, 55)),
+      day: intToDay(payload.readUInt32BE(55)),
+      nonce: payload.subarray(59, 67).toString("hex"),
+      expiresAtMs,
+    };
   } catch {
     return { ok: false };
   }

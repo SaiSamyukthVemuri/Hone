@@ -3,11 +3,11 @@
 // Orders and maps the outcomes so the page cannot confuse them:
 //   * the client must be in this studio (else client_not_found, no records read);
 //   * a read that fails, stalls or saturates is read_failed, NEVER an empty day
-//     (Privacy Q-4);
+//     (a failed read must never look like a day with no treatments);
 //   * an unresolvable day is unresolvable_day, NEVER an empty day;
 //   * only a successful read with no visits is an empty day.
 // The name on the packet is the LEGAL name with the preferred name in
-// parentheses (OPS Q2, HON-58). If the legal name could not be read the stored
+// parentheses. If the legal name could not be read the stored
 // name is used and the packet SAYS so; a legal name is never claimed unread.
 
 import { clinicalPacketName } from "@/lib/clients/identity";

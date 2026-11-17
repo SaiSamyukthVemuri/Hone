@@ -101,7 +101,7 @@ describe("buildDayPacket", () => {
     });
     expect(p.visits[0].areas[0].label.split(" · ")).toHaveLength(2);
   });
-  it("Privacy B-3: laser prints only fluence, pulse width and spot size; extra keys and nested values never print", () => {
+  it("laser prints only fluence, pulse width and spot size; extra keys and nested values never print", () => {
     const laser = { id: "l1", session_id: "s1", zone: "Chin", session_number: 2, ejection_results: null, observation_notes: null, created_at: "2026-05-11T02:40:00.000Z" };
     const p = buildDayPacket({
       ...base, sessions: [session()], blocks: [], entries: [],
@@ -113,7 +113,7 @@ describe("buildDayPacket", () => {
     expect(out).toContain("spot size 18mm");
     for (const leak of ["SECRET-KEY", "internal flag", "NESTED-VALUE", "[object Object]"]) expect(out).not.toContain(leak);
   });
-  it("E-4: the footer names the session-level planning note and says per-area caution notes ARE included", () => {
+  it("the footer names the session-level planning note and says per-area caution notes ARE included", () => {
     expect(PACKET_EXCLUSIONS.join("|")).toContain("session-level next-session planning note");
     expect(PACKET_INCLUDES_NOTE).toMatch(/caution notes recorded on this day are included/);
   });

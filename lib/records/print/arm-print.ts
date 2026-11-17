@@ -5,10 +5,10 @@
 // ONE-SHOT: the arm is removed on `afterprint`, with a timeout fallback for
 // browsers that do not fire it, and on every failure path. So a second
 // Ctrl/Cmd+P or Save as PDF in the same view prints only the notice, and the
-// owner must press Print again, which audits again (Insurance E-1, Privacy B-1).
+// owner must press Print again, which audits again.
 //
 // This GATES the browser's own print; it does not prevent copying, a screenshot
-// or a browser that ignores print CSS (Privacy F-4). It is never "every print is
+// or a browser that ignores print CSS. It is never "every print is
 // audited". Pure, with every side effect injected, so it is unit-tested directly.
 
 export const ARM_FALLBACK_MS = 60_000;
@@ -28,7 +28,7 @@ export type ArmDeps = {
 /**
  * `reason` tells the caller WHICH step failed, so the message is true: a refused
  * audit means nothing was recorded; a print failure means the print WAS recorded
- * and only the browser dialog could not open (Insurance F-5).
+ * and only the browser dialog could not open.
  */
 export type PrintOutcome = { ok: true } | { ok: false; reason: "audit_failed" | "print_failed" };
 

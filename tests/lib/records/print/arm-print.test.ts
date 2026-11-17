@@ -45,7 +45,7 @@ describe("printWithAudit: one print per audited click", () => {
     b.afterprint();
     expect(b.browserPrintShowsRecord()).toBe(false);
   });
-  it("B-1: a SECOND Ctrl/Cmd+P after afterprint is not armed, and it takes a new audited click to arm again", async () => {
+  it("a SECOND Ctrl/Cmd+P after afterprint is not armed, and it takes a new audited click to arm again", async () => {
     const b = browser();
     await printWithAudit(b.deps);
     b.afterprint();
@@ -88,7 +88,7 @@ describe("printWithAudit: every failure path leaves the document unarmed", () =>
   });
   it("if window.print throws, the arm is removed at once", async () => {
     const b = browser({ printThrows: true });
-    // F-5: the audit SUCCEEDED, so the reason must not say it did not.
+    // The audit SUCCEEDED, so the reason must not say it did not.
     expect(await printWithAudit(b.deps)).toEqual({ ok: false, reason: "print_failed" });
     expect(b.log).toContain("record");
     expect(b.browserPrintShowsRecord()).toBe(false);

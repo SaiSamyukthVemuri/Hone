@@ -4,7 +4,6 @@ import { canPrintClinicalPacket } from "@/lib/records/print/day-audit";
 import { checkPrintableDay } from "@/lib/records/print/day-guard";
 import { parseSelectedDay } from "@/lib/records/print/selected-day";
 import { mintTicket } from "@/lib/records/print/ticket";
-import { rememberTicketContext } from "@/lib/records/print/ticket-store";
 import { isSameOriginPost } from "@/lib/records/print/same-origin";
 
 // The owner presses Print on a session page; the browser POSTs a form here. The client id and the day
@@ -63,13 +62,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     subject: { clientId: rawClient.toLowerCase(), day: day.day },
   });
   if (!minted.ok) return back(request);
-  // Server-side only, 30 minutes: lets the same studio's owner reopen THIS link after it is used or expired
-  // (ticket-reopen.ts). Not remembering never blocks the print: the ticket itself still works, only "Open again" refuses.
-  await rememberTicketContext(minted.nonce, {
-    studioId: studio.id,
-    clientId: rawClient.toLowerCase(),
-    day: day.day,
-  }).catch(() => false);
   return new NextResponse(null, {
     status: 303,
     headers: { ...HEADERS, Location: `/records/print/ticket/${minted.ticket}` },

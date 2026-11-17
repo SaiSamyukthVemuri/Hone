@@ -193,7 +193,7 @@ export async function loadDayPacket(args: {
   if (blocks === null || entries === null || laserEntries === null) return { ok: false, reason: "read_failed" };
 
   // Machine-native settings, ONE block at a time through `setup_readings_for_block`
-  // (Codex P1 #4500529393). One STABLE function call is one snapshot per block: a
+  // One STABLE function call is one snapshot per block: a
   // capture committed while we read is wholly in or wholly out. (Not "one statement":
   // the body runs a visibility check and then the read; STABLE pins both to the same
   // snapshot.) A keyset page loop over random-uuid ids could straddle a capture and

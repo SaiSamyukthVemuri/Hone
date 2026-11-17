@@ -11,9 +11,9 @@
 // and times are therefore always present as a line, with that text when absent.
 //
 // NEVER IN THE PACKET (and said so on the page, see PACKET_EXCLUSIONS):
-//   * phone, email, address (OPS ruling 7 Nov, HON-46 "unrelated admin data");
+//   * phone, email, address (unrelated admin data);
 //   * date of birth: a clearly marked PENDING field until the format review
-//     decides it (OPS ruling 7 Nov), never silently printed;
+//     decides it, never silently printed;
 //   * private warnings and personal notes (client_personal_notes is never read);
 //   * payments, the next-session planning note, photos, intake and consent;
 //   * soft-deleted sessions, blocks and entries.
@@ -222,8 +222,7 @@ function entryReadings(e: PacketEntrySource): Reading[] {
 }
 
 // The live writer sets only these three keys. Anything else in the jsonb (an
-// imported or legacy row) is NOT printed, and a nested value never renders
-// (Privacy B-3).
+// imported or legacy row) is NOT printed, and a nested value never renders.
 const LASER_SETTING_KEYS: ReadonlyArray<[string, string]> = [
   ["fluence", "fluence"],
   ["pulse_width", "pulse width"],

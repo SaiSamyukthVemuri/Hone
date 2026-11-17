@@ -175,8 +175,7 @@ export async function DayPacketView({ clientId: rawClientId, day: rawDay }: { cl
   //    the preview is recorded (the database derives the studio and the owner).
   const supabase = await createClient();
   // The instant the packet is generated FROM: taken before the audit and the
-  // first read, so "as of" never claims a treatment charted during the read
-  // (Insurance E-3).
+  // first read, so "as of" never claims a treatment charted during the read.
   const generatedFrom = new Date();
   const outcome = await auditThenLoad<Extract<DayDocument, { ok: true }>>(
     () =>

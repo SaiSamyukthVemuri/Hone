@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { redactVercelEvent } from "@/lib/analytics/vercel-url-redaction";
 import { scrubBreadcrumb, scrubErrorEvent, scrubTransactionEvent } from "@/lib/observability/sentry-scrub";
 
-// Privacy route answer M-1..M-6. A NEW file: it pins the URL privacy of the day packet, using a synthetic id and
+// A NEW file: it pins the URL privacy of the day packet, using a synthetic id and
 // date. The packet is opened by an opaque one-use ticket (lib/records/print/ticket.ts), so neither value is in any URL;
 // the old ?clientId=&day= route no longer reads them. The platform's request log can show that a session was viewed
 // and a print opened. It does not state the day (the day can still be inferred from the session's date), and it holds
@@ -48,8 +48,8 @@ describe("analytics and Sentry never see the client id or the day (ticket shape)
   });
 });
 
-describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
-  it("M-1: no-referrer, noindex, force-dynamic, no revalidate", () => {
+describe("page-local privacy", () => {
+  it("no-referrer, noindex, force-dynamic, no revalidate", () => {
     for (const route of [DAY_ROUTE, TICKET_ROUTE]) {
       expect(route).toMatch(/export const dynamic = "force-dynamic"/);
       expect(route).toMatch(/referrer: "no-referrer"/);
@@ -57,7 +57,7 @@ describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
       expect(route).not.toMatch(/revalidate/);
     }
   });
-  it("M-2: every link is prefetch={false} with no referrer, and none is a bare <a> to an app page", () => {
+  it("every link is prefetch={false} with no referrer, and none is a bare <a> to an app page", () => {
     const links = PAGE.match(/<Link\b[\s\S]*?>/g) ?? [];
     expect(links.length).toBeGreaterThan(0);
     for (const l of links) {
@@ -65,23 +65,23 @@ describe("page-local privacy (M-1, M-2, M-3, M-4, M-6)", () => {
       expect(l, l).toMatch(/referrerPolicy="no-referrer"/);
     }
   });
-  it("M-3: the only dynamic segment is the opaque ticket; no client id or day segment exists anywhere in the print routes", () => {
+  it("the only dynamic segment is the opaque ticket; no client id or day segment exists anywhere in the print routes", () => {
     expect(readdirSync(join(process.cwd(), DIR)).sort()).toEqual(["actions.ts", "page.tsx", "print-button.tsx"]);
     expect(readdirSync(join(process.cwd(), "app/(app)/records/print/ticket"))).toEqual(["[token]"]);
     expect(TICKET_ROUTE).toMatch(/params: Promise<\{ token: string \}>/);
     expect(PAGE).not.toMatch(/searchParams|useSearchParams/);
   });
-  it("M-3: validation and refusal come before any audit or read, in this order: owner, day, day bounds, client, audit, load", () => {
+  it("validation and refusal come before any audit or read, in this order: owner, day, day bounds, client, audit, load", () => {
     const order = ["canPrintClinicalPacket(practitioner)", "parseSelectedDay(typeof rawDay", "checkPrintableDay(day.day", "UUID.test(rawClientId)", "recordDayAudit(", "loadDayDocument("].map((s) => PAGE.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
-  it("M-4: no console, Sentry, analytics or logger call anywhere in the page, action or button", () => {
+  it("no console, Sentry, analytics or logger call anywhere in the page, action or button", () => {
     for (const [name, src] of Object.entries(SOURCES)) {
       expect(code(src), name).not.toMatch(/console\.|@sentry|Sentry\.|captureException|captureMessage|setTag|setContext|setExtra|track\(|posthog|safeLog|logger/i);
     }
   });
-  it("M-6: generic title, no third-party resource, @page margin 0, and an unarmed print shows only a notice", () => {
+  it("generic title, no third-party resource, @page margin 0, and an unarmed print shows only a notice", () => {
     for (const route of [DAY_ROUTE, TICKET_ROUTE]) expect(route).toMatch(/title: "Clinical record"/);
     expect(PAGE).not.toMatch(/https?:\/\//);
     expect(PAGE).toMatch(/@page \{ margin: 0; \}/);

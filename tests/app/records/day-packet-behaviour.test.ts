@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { previewAuditMetadata, printAuditMetadata } from "@/lib/records/print/day-audit";
 
-// HON-46 M2 (Insurance E-2). BEHAVIOUR, not source patterns: the real page and
+// HON-46 M2. BEHAVIOUR, not source patterns: the real page and
 // the real print action run with fakes for auth and the database, and we assert
 // what they do. A gate that is present but wrong (the wrong object, a different
 // spelling) fails here; a regex test would not notice.
@@ -110,7 +110,7 @@ describe("validation refuses before the audit (page)", () => {
   it.each([
     ["missing day", { clientId: CLIENT }],
     ["malformed day", { clientId: CLIENT, day: "2026-13-01" }],
-    ["B-2: year 9999", { clientId: CLIENT, day: "9999-12-31" }],
+    ["year 9999 is outside the allowed days", { clientId: CLIENT, day: "9999-12-31" }],
     ["year 0001", { clientId: CLIENT, day: "0001-01-01" }],
     ["a future day", { clientId: CLIENT, day: "2099-01-01" }],
     ["missing client", { day: DAY }],
@@ -157,7 +157,7 @@ describe("what the page shows once audited", () => {
     expect(html).toContain("Per-area numbing, tolerance, reaction and caution notes");
     expect(html).toMatch(/starting at May 10, 2026|starting at [A-Z][a-z]{2} \d{1,2}, \d{4}/);
   });
-  it("Insurance E-3/F-4: 'starting at' is the instant BEFORE the audit and read, with date, time and zone", async () => {
+  it("'starting at' is the instant BEFORE the audit and read, with date, time and zone", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       vi.setSystemTime(new Date("2026-05-11T15:00:00.000Z")); // 11:00 AM on 11 May in Toronto
@@ -173,7 +173,7 @@ describe("what the page shows once audited", () => {
       vi.useRealTimers();
     }
   });
-  it("E-4/F-1: the footer names the next-session caution flag as excluded and the caution note as included", async () => {
+  it("the footer names the next-session caution flag as excluded and the caution note as included", async () => {
     const html = await render({ clientId: CLIENT, day: DAY });
     expect(html).toContain("caution for next session");
     expect(html).toContain("the area&#x27;s caution note itself is included");

@@ -35,7 +35,7 @@ const packet = (setupReadings: PacketSetupReadingSource[], blockOver: Partial<Pa
   buildDayPacket({ day: "2026-05-10", timezone: "America/Toronto", studioName: "S", clientName: "C", sessions: [session], blocks: [block(blockOver)], entries: [], laserEntries: [], setupReadings, practitionerNameById: new Map() });
 const settingsOf = (p: ReturnType<typeof packet>) => p.visits[0].areas[0].settings;
 
-describe("machine-native settings (Codex P1 #4500315781)", () => {
+describe("machine-native settings", () => {
   it("a machine-first block prints its native settings under the contract's own label and unit", () => {
     const s = settingsOf(packet([reading()]));
     expect(s.some((r) => r.label === found.f.nativeLabel && r.value.startsWith("1.25"))).toBe(true);
@@ -83,7 +83,7 @@ describe("machine-native settings (Codex P1 #4500315781)", () => {
   });
 });
 
-describe("probe identity and lot are kept whichever source supplies the settings (Codex P2 #4500489752)", () => {
+describe("probe identity and lot are kept whichever source supplies the settings", () => {
   const probe = { probe_label: "Probe-X", probe_type: "insulated", probe_size: "002", probe_lot_number: "LOT-77" };
   it("a native block prints its probe and lot after the native settings", () => {
     const s = settingsOf(packet([reading()], probe));
@@ -127,7 +127,7 @@ describe("loadDayPacket reads the native readings", () => {
     const rpcCalls: Array<[string, Record<string, string>]> = [];
     const reader: PacketReader = {
       // One block's readings in ONE call (the DB function is a single STABLE statement). RLS is
-      // modelled by dropping other studios' rows; the real behaviour is proven in the E-5 DB test.
+      // modelled by dropping other studios' rows; the real behaviour is proven in the day-packet loader DB test.
       rpc(fn, args) {
         rpcCalls.push([fn, args]);
         if (fail === "rpc") return Promise.resolve({ data: null, error: { message: "x" } });
@@ -204,7 +204,7 @@ describe("loadDayPacket reads the native readings", () => {
   });
 });
 
-// Codex P1 #4500529393. A capture committed WHILE the readings are being read must never
+// A capture committed WHILE the readings are being read must never
 // come back half-read. The store below commits a two-field capture right after the first
 // request that touches the readings returns, with one row sorting before the keyset cursor
 // and one after - the exact straddle. rpc() answers from the store at the instant of the

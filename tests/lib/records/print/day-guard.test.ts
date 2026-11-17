@@ -4,7 +4,7 @@ import { checkPrintableDay } from "@/lib/records/print/day-guard";
 const NOW = new Date("2026-11-07T15:00:00.000Z"); // 10:00 on 7 Nov in Toronto
 const TZ = "America/Toronto";
 
-describe("checkPrintableDay (Privacy B-2: bound the day BEFORE the audit)", () => {
+describe("checkPrintableDay (bound the day BEFORE the audit)", () => {
   it("accepts today and past days inside 1900-2100", () => {
     for (const d of ["2026-11-07", "2026-11-06", "2000-01-01", "1900-01-01"]) expect(checkPrintableDay(d, TZ, NOW), d).toEqual({ ok: true });
   });

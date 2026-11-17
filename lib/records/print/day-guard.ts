@@ -5,7 +5,7 @@
 // 9999-12-31 would write a "previewed" audit row and then fail at the day-bounds
 // step. Same 1900-2100 window as the records filter (#1381). A day after the
 // studio's today cannot hold treatments and would only create audit rows, so it
-// is refused too. Runs BEFORE the audit call (Privacy B-2).
+// is refused too. Runs BEFORE the audit call.
 
 import { localDateString } from "@/lib/booking/tz";
 
