@@ -97,6 +97,24 @@ revoke execute on function public.set_cancellation_fee_rules_enabled(uuid, bigin
 grant execute on function public.save_cancellation_fee_rules(uuid, bigint, integer, text, integer, text, integer, text) to authenticated;
 grant execute on function public.set_cancellation_fee_rules_enabled(uuid, bigint, boolean) to authenticated;
 
+-- An older settings tab must not report that it turned fees OFF by changing an
+-- obsolete flag while the new governed configuration remains ON. Close those
+-- writers as soon as a studio adopts tiers; ask that tab to refresh instead.
+create function public.cancellation_fee_legacy_setting_guard() returns trigger
+language plpgsql security definer set search_path = pg_catalog, public, pg_temp as $$
+begin
+  if exists (select 1 from public.studio_cancellation_fee_rules where studio_id = new.id) then
+    raise exception 'This studio uses cancellation fee rules. Refresh Settings, Payments before changing fees'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function public.cancellation_fee_legacy_setting_guard() from public, anon, authenticated, service_role;
+create trigger cancellation_fee_legacy_setting_guard
+  before update of late_cancel_fee_enabled, late_cancel_fee_mode, late_cancel_fee_cents, late_cancel_fee_percent_bp
+  on public.studios for each row execute function public.cancellation_fee_legacy_setting_guard();
+
 alter table public.payment_charge_attempts add column cancellation_fee_snapshot jsonb;
 
 -- At prepare, freeze timing + selected tier; at claim, require the same rule revision and appointment.

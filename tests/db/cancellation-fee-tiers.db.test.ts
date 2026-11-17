@@ -210,6 +210,24 @@ describe("owner-configured cancellation fees on the full migrated chain", () => 
       ),
     ).rejects.toMatchObject({ code: "23514" });
   });
+  it("an older settings tab cannot report OFF or change the obsolete rate after tier adoption", async () => {
+    for (const patch of [
+      "late_cancel_fee_enabled = late_cancel_fee_enabled",
+      "late_cancel_fee_enabled = not late_cancel_fee_enabled",
+      "late_cancel_fee_mode = 'percent'",
+      "late_cancel_fee_cents = 9999",
+      "late_cancel_fee_percent_bp = 7500",
+    ]) {
+      await expect(
+        asUser(studio.userId, (q) =>
+          q(`update public.studios set ${patch} where id=$1`, [
+            studio.studioId,
+          ]),
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    }
+    expect((await current()).enabled).toBe(true);
+  });
   it("a policy change blocks activation without rewriting any acknowledgement", async () => {
     const before = (
       await adminQuery(

@@ -3,7 +3,7 @@
   "migrations": {
     "count": 274,
     "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "473730c0d194912b045488c782f5d41c050fe069863c49707aad7b71b25a2745"
+    "sha256": "086e54285cbd49daf7f12183af8ba6e5e8517433147a7d4022e4c45daebfa1fe"
   },
   "public": {
     "tables": [
@@ -202,6 +202,7 @@
       "can_use_client_legal_identity",
       "cancel_appointment_core",
       "cancellation_fee_attempt_guard",
+      "cancellation_fee_legacy_setting_guard",
       "capture_treatment_reading_change",
       "check_claimed_payment_method_cleanup_safety",
       "claim_calendar_sync_op",

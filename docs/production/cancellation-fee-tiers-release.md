@@ -22,7 +22,7 @@ Migration `supabase/migrations/0357_cancellation_fee_tiers.sql` is new and **NOT
 3. Obtain explicit authorization naming that package. Old 0351–0354 approvals do not cover 0357. Do not push the entire checkout or use `--include-all`.
 4. Apply/read back/reconcile **0357 only**. Verify grants, trigger, empty enrollment and unchanged pre-existing settings/policy evidence. Record the actual hosted result in the canonical record. If hosted max advances past reserved numbers, move 0355/0356 from above-hosted markers into the explicit unhosted-below declaration; do not claim they were applied.
 5. Release the application only after schema read-back. With a new app on the old schema, cancellation configuration is unavailable and charging refuses; no session payment query depends on the new table. With an old app on the new schema, the original live-release gate remains. Once a studio adopts tiers, its old prepared attempts cannot bypass the new claim guard.
-6. Each studio owner reviews the published policy, saves the two rates, then turns the cancellation switch on. Confirm server-derived **Active** only when payment readiness also passes. Existing legacy ON flags do not make this Active. This step is not performed by a migration or deployment.
+6. Each studio owner reviews the published policy, saves the two rates, then turns the cancellation switch on. Confirm server-derived **Active** only when payment readiness also passes. Existing legacy ON flags do not make this Active. After a studio adopts tiers, obsolete single-rate settings writes refuse rather than falsely reporting that an older tab disabled or changed the active rules. This step is not performed by a migration or deployment.
 
 ## Verification and rollback
 
