@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ enabled: vi.fn(), save: vi.fn(), refresh: vi.fn() }));
+const h = vi.hoisted(() => ({ enabled: vi.fn(), save: vi.fn(), refresh: vi.fn(), guard: vi.fn() }));
 vi.mock("@/app/(app)/settings/payments/fee-settings-actions", () => ({
   setManualFeeEnabledAction: (...a: unknown[]) => h.enabled(...a),
   saveManualFeeRuleAction: (...a: unknown[]) => h.save(...a),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: h.refresh }) }));
-vi.mock("@/components/settings/unsaved-changes", () => ({ useUnsavedChangesGuard: () => {} }));
+vi.mock("@/components/settings/unsaved-changes", () => ({ useUnsavedChangesGuard: (...a: unknown[]) => h.guard(...a) }));
 
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -147,4 +147,41 @@ it("a new server rule replaces a clean draft instead of leaving an out-of-date s
   expect(box().checked).toBe(true);
   expect(get<HTMLInputElement>("late-cancel-fee-amount").value).toBe("25.00");
   expect(get<HTMLButtonElement>("late-cancel-fee-save").disabled).toBe(true);
+});
+
+it.each(["fixed", "percent"] as const)("saving the other calculation preserves an edited %s draft through the server refresh", async (draftMode) => {
+  const { root, props, get, box, host } = await mount();
+  const startProps = { ...props, lateCancel: { ...props.lateCancel, mode: draftMode, percentBp: 7500 } };
+  await act(async () => root.render(createElement(FeeAmountsCard, startProps)));
+  const draftTestId = `late-cancel-fee-${draftMode === "fixed" ? "amount" : "percent"}`;
+  const draftText = draftMode === "fixed" ? "30" : "60";
+  const saveMode: "fixed" | "percent" = draftMode === "fixed" ? "percent" : "fixed";
+  await typeValue(get(draftTestId), draftText);
+  await act(async () => get(`late-cancel-fee-mode-${saveMode}`).click());
+  await typeValue(get(`late-cancel-fee-${saveMode === "fixed" ? "amount" : "percent"}`), saveMode === "fixed" ? "25" : "80");
+  await act(async () => get("late-cancel-fee-save").click());
+  expect(h.save).toHaveBeenCalledTimes(1);
+  expect(box().checked).toBe(false);
+  expect(h.enabled).not.toHaveBeenCalled();
+  // The successful save refreshes only the submitted mode/value. The hidden draft was never submitted.
+  const newProps = { ...startProps, initialLateCancelCents: saveMode === "fixed" ? 2500 : 5000,
+    lateCancel: { ...startProps.lateCancel, mode: saveMode, percentBp: saveMode === "percent" ? 8000 : 7500 } };
+  await act(async () => root.render(createElement(FeeAmountsCard, newProps)));
+  const lateGuardCalls = h.guard.mock.calls.filter(([key]) => key === "payment-fees-late-cancel");
+  const refreshedText = host.textContent;
+  expect(get<HTMLButtonElement>("late-cancel-fee-save").disabled).toBe(true);
+  await act(async () => get(`late-cancel-fee-mode-${draftMode}`).click());
+  expect(get<HTMLInputElement>(draftTestId).value).toBe(draftText);
+  expect(lateGuardCalls.at(-1)).toEqual(["payment-fees-late-cancel", true]);
+  expect(refreshedText).toContain(`Your ${draftMode === "fixed" ? "fixed amount" : "percentage"} draft is unsaved.`);
+  expect(get<HTMLButtonElement>("late-cancel-fee-save").disabled).toBe(false);
+  expect(h.save).toHaveBeenCalledTimes(1);
+});
+
+it("formatting an unchanged amount does not leave a navigation warning with no saveable change", async () => {
+  const { get } = await mount();
+  await typeValue(get("late-cancel-fee-amount"), "50.0");
+  expect(get<HTMLButtonElement>("late-cancel-fee-save").disabled).toBe(true);
+  const lateGuardCalls = h.guard.mock.calls.filter(([key]) => key === "payment-fees-late-cancel");
+  expect(lateGuardCalls.at(-1)).toEqual(["payment-fees-late-cancel", false]);
 });

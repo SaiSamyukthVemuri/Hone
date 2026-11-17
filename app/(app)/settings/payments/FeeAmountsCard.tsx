@@ -62,8 +62,14 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
   const parsedDraft = parseManualFeeRuleValue(mode, valueText);
   const savedValue = saved.mode === "fixed" ? saved.cents : saved.percentBp;
   const dirty = mode !== saved.mode || !parsedDraft.ok || parsedDraft.value !== savedValue;
+  const fixedDraft = parseManualFeeRuleValue("fixed", fixedText);
+  const percentDraft = parseManualFeeRuleValue("percent", percentText);
+  const fixedDraftChanged = !fixedDraft.ok || fixedDraft.value !== saved.cents;
+  const percentDraftChanged = !percentDraft.ok || percentDraft.value !== saved.percentBp;
+  const hasUnsavedDraft = dirty || fixedDraftChanged || percentDraftChanged;
+  const inactiveDraftChanged = mode === "fixed" ? percentDraftChanged : fixedDraftChanged;
   const canEnable = !dirty && usable(saved) && (saved.mode !== "fixed" || currencyLabel !== null);
-  useUnsavedChangesGuard(`payment-fees-${slug}`, dirty);
+  useUnsavedChangesGuard(`payment-fees-${slug}`, hasUnsavedDraft);
 
   useEffect(() => {
     const incoming: ManualFeeRule = { enabled: initial.enabled, mode: initial.mode, cents: initialCents, percentBp: initial.percentBp };
@@ -71,17 +77,17 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
     // after pending settles, keeping the other fee's unsaved draft (and any edits in this card) intact.
     if (pending || sameRule(observedServerRule.current, incoming)) return;
     observedServerRule.current = incoming;
-    if (!dirty) {
-      setMode(incoming.mode);
-      setFixedText(dollarsInput(incoming.cents));
-      setPercentText(percentInput(incoming.percentBp));
-    }
+    if (!dirty) setMode(incoming.mode);
+    // Each value has its own draft. A successful save makes only the submitted value clean;
+    // the inactive value may still contain an edit that must survive this refresh.
+    if (!fixedDraftChanged) setFixedText(dollarsInput(incoming.cents));
+    if (!percentDraftChanged) setPercentText(percentInput(incoming.percentBp));
     if (incoming.enabled || usable(incoming)) setExpanded(true);
     if (!sameRule(saved, incoming)) {
       setSaved(incoming);
-      setMessage({ kind: "ok", text: dirty ? "The saved rule changed elsewhere. Your unsaved edits are preserved; review them before saving." : "Updated to the latest saved rule." });
+      setMessage({ kind: "ok", text: hasUnsavedDraft ? "The saved rule changed elsewhere. Your unsaved edits are preserved; review them before saving." : "Updated to the latest saved rule." });
     }
-  }, [initial.enabled, initial.mode, initial.percentBp, initialCents, pending, dirty, saved]);
+  }, [initial.enabled, initial.mode, initial.percentBp, initialCents, pending, dirty, fixedDraftChanged, percentDraftChanged, hasUnsavedDraft, saved]);
 
   const summary = usable(saved)
     ? saved.mode === "percent"
@@ -219,7 +225,7 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
           </p>
           {fieldError && <p id={`${slug}-error`} role="alert" className="text-sm text-danger-fg">{fieldError}</p>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-            <p className="text-xs text-fg-muted">{dirty ? "Unsaved changes" : usable(saved) ? `Saved · ${summary}` : "Save a rule before turning this fee on."}</p>
+            <p className="text-xs text-fg-muted">{dirty ? "Unsaved changes" : usable(saved) ? `Saved · ${summary}` : "Save a rule before turning this fee on."}{!dirty && inactiveDraftChanged && ` Your ${mode === "fixed" ? "percentage" : "fixed amount"} draft is unsaved.`}</p>
             <Button type="submit" variant="primary" pending={pending && savingRule} disabled={pending || !dirty} data-testid={`${slug}-fee-save`}>Save rule</Button>
           </div>
         </form>
