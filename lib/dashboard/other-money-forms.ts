@@ -41,6 +41,7 @@ export const MONEY_FORMS: ReadonlyArray<{ table: string; form: string; handling:
   { table: "stripe_refund_attempts", form: "appointment-level refund attempt", handling: "not_checked", note: "RLS on, no policy" },
   { table: "stripe_refunds", form: "appointment-level refund", handling: "not_checked", note: "RLS on, no policy" },
   { table: "stripe_disputes", form: "dispute or chargeback", handling: "not_checked", note: "RLS on, no policy; the label does not claim a final balance" },
+  { table: "payment_charge_refunds", form: "per-refund history of a card charge (0358)", handling: "not_money", note: "a history read through the attempt's summary columns, not a separate money form: the balance never sums these rows, so a refund is never counted twice" },
   { table: "stripe_payment_audit", form: "audit copy of the four above", handling: "not_money", note: "no independent amount" },
   { table: "pending_booking_payment_sessions", form: "quoted price snapshot, card setup", handling: "not_money", note: "a card on file and a quote; no charge" },
   { table: "studios", form: "late_cancel_fee_cents / no_show_fee_cents", handling: "not_money", note: "policy amounts, not payments" },

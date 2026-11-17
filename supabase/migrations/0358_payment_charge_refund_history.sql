@@ -50,17 +50,24 @@ alter table public.payment_charge_attempts
   add column if not exists refunds_succeeded_cents integer,
   add column if not exists refunds_inflight_count integer not null default 0;
 
+-- NOT VALID first, then VALIDATE in a separate statement: adding a CHECK validates every existing row while holding the table's
+-- exclusive lock; NOT VALID takes the lock only briefly and VALIDATE scans under a weaker lock. The new columns are all NULL or zero
+-- on existing rows, so validation cannot fail on existing data.
 alter table public.payment_charge_attempts
   add constraint payment_charge_attempts_refund_history_check check (
     (refund_history_event_id is null and refund_history_event_created is null and refunds_succeeded_cents is null)
     or (refund_history_event_id is not null and length(refund_history_event_id) > 0
         and refund_history_event_created is not null and refund_history_event_created >= 0
         and refunds_succeeded_cents is not null and refunds_succeeded_cents >= 0)
-  ),
+  ) not valid,
   add constraint payment_charge_attempts_refunds_succeeded_bound_check check (
     refunds_succeeded_cents is null or amount_cents is null or refunds_succeeded_cents <= amount_cents
-  ),
-  add constraint payment_charge_attempts_refunds_inflight_check check (refunds_inflight_count >= 0);
+  ) not valid,
+  add constraint payment_charge_attempts_refunds_inflight_check check (refunds_inflight_count >= 0) not valid;
+
+alter table public.payment_charge_attempts validate constraint payment_charge_attempts_refund_history_check;
+alter table public.payment_charge_attempts validate constraint payment_charge_attempts_refunds_succeeded_bound_check;
+alter table public.payment_charge_attempts validate constraint payment_charge_attempts_refunds_inflight_check;
 
 comment on column public.payment_charge_attempts.refunds_succeeded_cents is
   '0358. Total the provider has returned on this charge, summed from payment_charge_refunds. NULL means the refund history was never established for this charge (a complete signed refund list has not been recorded); it is never "nothing refunded".';

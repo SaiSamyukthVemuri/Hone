@@ -33,6 +33,13 @@ describe("0358: shape", () => {
     expect(E).toMatch(/payment_charge_attempts_refund_history_check/);
     expect(E).toMatch(/refunds_succeeded_cents <= amount_cents/);
   });
+  it("adds each new CHECK as NOT VALID and validates it in a separate statement", () => {
+    for (const c of ["refund_history_check", "refunds_succeeded_bound_check", "refunds_inflight_check"]) {
+      expect(E).toMatch(new RegExp(`validate constraint payment_charge_attempts_${c};`));
+    }
+    expect(E.match(/\) not valid/g) ?? []).toHaveLength(3);
+    expect(E).toMatch(/refunds_inflight_count >= 0\) not valid/);
+  });
   it("changes no existing value: no update of old columns, no backfill, no insert outside the command", () => {
     expect(E).not.toMatch(/update\s+public\.payment_charge_attempts\s+set\s+(refund_status|refund_amount_cents|stripe_)/);
     expect(E).not.toMatch(/ops_alerts/);
