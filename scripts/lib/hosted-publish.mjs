@@ -292,6 +292,22 @@ export async function runHosted(d) {
       try {
         const out = await client.rpc(RPC, row);
         receipt.results.push({ id, result: String(out) });
+        // The sync returns the number of field rows it inserted: the planned field count for a new mode, 0 for an identical existing one.
+        // Anything else means the function on the target is not the one this plan was written for. Rows are immutable, so stop before the next mode.
+        const expected = had ? 0 : row.p_fields.length;
+        if (out !== expected) {
+          failure = `the sync returned ${String(out)} for ${id}, expected ${expected}; stopped before the next mode`;
+          receipt.attempted_uncertain.push({ id, error: failure, read_back: await readBack(row) });
+          continue;
+        }
+        // Read the row back NOW, not only after every write: an older sync function could store the row without some fields, and a published
+        // row cannot be changed, so the run must stop at the first row that does not read back equal to the plan.
+        const rb = await readBack(row);
+        if (rb !== "equal") {
+          failure = `read-back of ${id} right after its sync was ${rb}; stopped before the next mode`;
+          receipt.attempted_uncertain.push({ id, error: failure, read_back: rb });
+          continue;
+        }
         (had ? receipt.unchanged : receipt.published).push(id);
       } catch (e) {
         failure = redactErr(e);

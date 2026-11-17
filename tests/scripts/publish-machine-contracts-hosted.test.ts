@@ -60,7 +60,7 @@ function deps(over: Record<string, unknown> = {}, tokenOver: Record<string, unkn
     client: () => ({
       async fingerprint() { calls.push("fingerprint"); return { rpcExists: true }; },
       async readContract(row: any) { calls.push(`read:${row.p_mode_key}`); return stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { calls.push(`rpc:${row.p_mode_key}`); stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
+      async rpc(_n: string, row: any) { calls.push(`rpc:${row.p_mode_key}`); const had = stored.has(row.p_mode_key); stored.set(row.p_mode_key, projectPlanRow(row)); return had ? 0 : row.p_fields.length; },
     }),
     ...over,
   };
@@ -231,7 +231,7 @@ describe("single use, write-ahead intent, and partial runs", () => {
     x.d.client = () => ({
       async fingerprint() { return { rpcExists: true }; },
       async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); if (++n === 2) throw new Error(`process died ${KEY}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); if (++n === 2) throw new Error(`process died ${KEY}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return row.p_fields.length; },
     });
     const first = await runHosted(x.d).then(() => null, (e: Error) => e);
     expect(first!.message, "the failure is reported and redacted").not.toContain(KEY);
@@ -277,12 +277,12 @@ describe("single use, write-ahead intent, and partial runs", () => {
     expect(r.published).toEqual(["fixture:p@3:blend", "fixture:p@3:electrolysis"]);
   });
 
-  it("a read-back mismatch is reported and the receipt says so", async () => {
+  it("a row that reads back equal at its own sync but differs by the end is still reported in the final read-back", async () => {
     const x = deps();
     x.d.client = () => ({
       async fingerprint() { return { rpcExists: true }; },
       async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, { channels_max: 1, requires_installed_option: null, fields: [] }); return 1; },
+      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") x.stored.set("flash", { channels_max: 1, requires_installed_option: null, fields: [] }); return row.p_fields.length; },
     });
     await expect(runHosted(x.d)).rejects.toThrow(/read-back mismatch/);
     const receipt = JSON.parse([...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1]);
@@ -342,10 +342,16 @@ describe("exclusive intent claim and uncertain outcomes", () => {
   it("a read-back REQUEST that fails still finalizes the receipt, names the rows, and exits non-zero with the token burned", async () => {
     const x = deps();
     let after = false;
+    let lastSynced = false;
     x.d.client = () => ({
       async fingerprint() { return { rpcExists: true }; },
-      async readContract(row: any) { if (after) throw new Error(`503 ${KEY}`); return x.stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") after = true; return 1; },
+      async readContract(row: any) {
+        if (after) throw new Error(`503 ${KEY}`);
+        const v = x.stored.get(row.p_mode_key) ?? null;
+        if (lastSynced && row.p_mode_key === "electrolysis") after = true; // the last row's own immediate read-back succeeds; the final pass fails
+        return v;
+      },
+      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") lastSynced = true; return row.p_fields.length; },
     });
     await expect(runHosted(x.d)).rejects.toThrow(/read-back could not be completed/);
     const raw = [...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1];
@@ -354,6 +360,67 @@ describe("exclusive intent claim and uncertain outcomes", () => {
     expect(receipt.read_back_unreadable).toHaveLength(3);
     expect(raw).not.toContain(KEY);
     expect(receipt.published).toHaveLength(3);
+  });
+});
+
+describe("each row is checked right after its own sync, and the run stops at the first bad one", () => {
+  const stopped = async (x: any) => {
+    const e = await runHosted(x.d).then(() => null, (err: Error) => err);
+    const receipt = JSON.parse([...x.files.entries()].find(([k]: [string, string]) => k.endsWith(".receipt.json"))![1]);
+    return { e, receipt, rpcs: x.calls.filter((c: string) => c.startsWith("rpc:")) };
+  };
+  it("a sync that stores a row with fields missing stops the run at that row: the next mode is never sent", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) {
+        x.calls.push(`rpc:${row.p_mode_key}`);
+        const p: any = projectPlanRow(row);
+        x.stored.set(row.p_mode_key, row.p_mode_key === "blend" ? { ...p, fields: p.fields.map((f: any) => ({ ...f, value_kind: undefined, choices: undefined })) } : p);
+        return row.p_fields.length;
+      },
+    });
+    const { e, receipt, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/read-back of .*blend.* right after its sync/);
+    expect(rpcs).toEqual(["rpc:flash", "rpc:blend"]);
+    expect(receipt.not_attempted).toEqual(["fixture:p@3:electrolysis"]);
+    expect(receipt.status).toBe("partial_or_failed_token_burned");
+  });
+  it("a sync that returns the wrong field count for a new mode stops the run", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return row.p_mode_key === "flash" ? 0 : row.p_fields.length; },
+    });
+    const { e, receipt, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/the sync returned 0 for .*flash.*, expected 1/);
+    expect(rpcs).toEqual(["rpc:flash"]);
+    expect(receipt.not_attempted).toEqual(["fixture:p@3:blend", "fixture:p@3:electrolysis"]);
+  });
+  it("a sync that reports inserted fields for an identical existing mode stops the run", async () => {
+    const x = deps({}, { expected_existing_rows: 1 });
+    x.stored.set("flash", projectPlanRow(ROW("flash")));
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
+    });
+    const { e, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/the sync returned 1 for .*flash.*, expected 0/);
+    expect(rpcs).toEqual(["rpc:flash"]);
+  });
+  it("a non-numeric or missing result also stops the run", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return "1"; },
+    });
+    const { e, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/the sync returned 1 for/);
+    expect(rpcs).toHaveLength(1);
   });
 });
 

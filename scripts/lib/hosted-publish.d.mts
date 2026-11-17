@@ -6,7 +6,7 @@ export const KEY_VAR: string;
 export const URL_VAR: string;
 export function sha256(s: string): string;
 export function shortFingerprint(s: string): string;
-export function redact(text: unknown, key?: string): string;
+export function redact(text: unknown, key?: string, target?: { url?: string; ref?: string }): string;
 export function startupRefusals(a: { env: Record<string, string | undefined>; execArgv: string[]; stdinTTY: boolean; stdoutTTY: boolean; vpsMarker: string | null }): string[];
 export function parseHostedUrl(url: unknown): string;
 export function keyRefClaim(key: string): string | null;
