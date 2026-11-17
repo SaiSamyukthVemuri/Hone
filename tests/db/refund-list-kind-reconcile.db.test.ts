@@ -4,8 +4,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { cleanupPaymentScenario, seedEligibleQuickCheckoutScenario } from "./helpers/payment-seed";
 
 // 0359: the BEHAVIOURAL half. reconcile_bound_payment_event accepts signed_event_with_authenticated_list for charge.refunded only.
-// WRITTEN, NOT YET RUN: needs a local stack carrying 0358 and 0359 (one fresh reset on the production-equivalent base, under an OPS GRANT,
-// with the run-scoped E2E_SUPABASE_URL + HONE_LOCAL_DB_URL pair). Synthetic rows only; no provider call.
+// Needs a local stack carrying 0358 and 0359. Synthetic rows only; no provider call.
 
 const created: string[] = [];
 afterAll(async () => {
