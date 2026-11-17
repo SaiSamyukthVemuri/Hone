@@ -1,5 +1,6 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { assertCatalogUnchanged, captureCatalog, type CatalogSnapshot } from "./helpers/catalog-guard";
 import { AUTO_ROUND_ALLOWANCE } from "@/lib/waitlist/auto-round";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -13,8 +14,12 @@ const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> =>
 // Synthetic markers prove NO name/email/answer text reaches the bell or the outbox.
 // ===========================================================================
 
+let catalogBefore: CatalogSnapshot;
+beforeAll(async () => {
+  catalogBefore = await captureCatalog();
+});
 afterAll(async () => {
-  await closePool();
+  await assertCatalogUnchanged(catalogBefore, "the 0325 decline follow-up suite").finally(closePool);
 });
 
 const NAME_MARK = "NameMarkQ7";

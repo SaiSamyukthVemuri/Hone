@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, closePool, seedStudio } from "./helpers/harness";
+import { assertCatalogUnchanged, captureCatalog, restoreCatalog, type CatalogSnapshot } from "./helpers/catalog-guard";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -11,12 +12,15 @@ const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> =>
 // ===========================================================================
 
 // The 0325 round-trip suite re-applies 0325 and, depending on file order, leaves 0325's two reads live. 0326 is idempotent, so restore it.
+let catalogBefore: CatalogSnapshot;
 beforeAll(async () => {
   await adminQuery(readFileSync(join(__dirname, "..", "..", "supabase", "migrations", "0326_waitlist_retention_cleanup.sql"), "utf8"));
+  // After the deliberate restore above: the suite must leave the catalog exactly as this point.
+  catalogBefore = await captureCatalog();
 });
 
 afterAll(async () => {
-  await closePool();
+  await assertCatalogUnchanged(catalogBefore, "the 0326 retention suite").finally(closePool);
 });
 
 const NAME_MARK = "NameMarkQ7";
@@ -438,6 +442,7 @@ describe("the down file", () => {
       expect((await q(`select to_regclass('public.waitlist_retention_runs') is not null as t`))[0].t).toBe(true);
     } finally {
       await q(up);
+      await restoreCatalog(catalogBefore);
     }
     expect(await bodyMd5("read_waitlist_followups")).toBe(readNew);
     expect(await bodyMd5("run_waitlist_retention_cleanup")).toBeDefined();
