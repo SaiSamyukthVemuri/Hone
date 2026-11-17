@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, closePool, seedMember, seedStudio, type SeededStudio, type UserQuery } from "./helpers/harness";
 
-// HON-58 G1 (Privacy C3): the calendar quick-create action checks only `practitioner.active` in the app, so whether a
+// HON-58: the calendar quick-create action checks only `practitioner.active` in the app, so whether a
 // receptionist can add a client through it rests on the row-level policy "clients: members insert" (0087), which is
 // is_studio_member(studio_id), true only for an ACTIVE practitioners row. A receptionist is a studio_receptionists row, never
 // a practitioners row. This file proves the consequence with a real login: the receptionist's INSERT into clients is refused

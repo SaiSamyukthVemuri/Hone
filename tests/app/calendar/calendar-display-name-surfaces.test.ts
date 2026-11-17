@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-// HON-58 G1 (Privacy C2): the appointment page computes the display name on the server and passes ONE string on, and the
+// HON-58: the appointment page computes the display name on the server and passes ONE string on, and the
 // client components that draw the calendar never see a second name field.
 
 const read = (p: string) => readFileSync(p, "utf8");

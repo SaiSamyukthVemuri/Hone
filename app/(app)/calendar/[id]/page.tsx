@@ -114,7 +114,7 @@ export default async function AppointmentDetailPage({
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
-  // HON-58 (G1): the page shows the DISPLAY name (preferred, else stored), computed here on the server. The embed names
+  // HON-58: the page shows the DISPLAY name (preferred, else stored), computed here on the server. The embed names
   // its columns (never `*`, never the legal identity table); `preferred_name` is read with the shared missing-column fallback.
   const { data, error } = await readWithPreferredName((includePreferred) =>
     supabase

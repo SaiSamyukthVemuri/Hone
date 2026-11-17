@@ -239,7 +239,7 @@ export async function getAppointmentsForRange(
   endIso: string,
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
-  // HON-58 (G1): the calendar shows the DISPLAY name (preferred, else stored), computed HERE on the server. The client
+  // HON-58: the calendar shows the DISPLAY name (preferred, else stored), computed HERE on the server. The client
   // embed names its columns (never `*`, never the legal identity table), and `preferred_name` is read with the same
   // missing-column fallback as the other surfaces, so a database without the column behaves exactly as before.
   const baseFor = (withPreferred: boolean) =>

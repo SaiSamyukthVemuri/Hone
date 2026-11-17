@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-// HON-58 G1 (Privacy C2, C4): the calendar loader computes the DISPLAY name on the server and hands on ONE string.
+// HON-58: the calendar loader computes the DISPLAY name on the server and hands on ONE string.
 // Two sentinels make the proof exact: the STORED name and the PREFERRED name are different, distinctive strings, so a surface
 // that leaks the wrong one is visible. Synthetic names only.
 
@@ -64,13 +64,13 @@ beforeEach(() => {
 });
 
 describe("the calendar loader hands on one display string", () => {
-  it("a preferred name is the display name, and the stored name does not leave the loader (C4)", async () => {
+  it("a preferred name is the display name, and the stored name does not leave the loader", async () => {
     const rows = await getAppointmentsForRange("S", START, END);
     expect(rows[0].client).toEqual({ id: "C1", name: PREFERRED });
     const wire = JSON.stringify(rows);
     expect(wire).toContain(PREFERRED);
     expect(wire, "the stored name must be absent when a preferred name is set").not.toContain(STORED);
-    expect(Object.keys(rows[0].client ?? {}).sort(), "C2: only id and the display name, never both name fields").toEqual(["id", "name"]);
+    expect(Object.keys(rows[0].client ?? {}).sort(), "only id and the display name, never both name fields").toEqual(["id", "name"]);
   });
   it("a blank or whitespace preferred name falls back to the stored name", async () => {
     for (const blank of [null, "", "   "]) {
@@ -85,7 +85,7 @@ describe("the calendar loader hands on one display string", () => {
     expect(fake.selects[0]).toContain("preferred_name");
     expect(fake.selects[1]).not.toContain("preferred_name");
   });
-  it("the client embed names its columns: no star, no legal identity (C1, runtime capture)", async () => {
+  it("the client embed names its columns: no star, no legal identity (runtime capture)", async () => {
     await getAppointmentsForRange("S", START, END);
     for (const select of fake.selects) {
       const embed = /client:clients\(([^)]*)\)/.exec(select)?.[1] ?? "";
@@ -97,7 +97,7 @@ describe("the calendar loader hands on one display string", () => {
 });
 
 describe("the calendar card summary shows the display name only", () => {
-  it("renders the preferred name and never the stored name (C4)", async () => {
+  it("renders the preferred name and never the stored name", async () => {
     const [a] = await getAppointmentsForRange("S", START, END);
     const html = renderToStaticMarkup(createElement(OverlapAppointmentSummary, { appointment: a, tz: "America/Toronto", timeFormat: "12h" }));
     expect(html).toContain(PREFERRED);

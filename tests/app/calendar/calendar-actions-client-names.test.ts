@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
-// HON-58 G1 (Privacy C3): the calendar server ACTIONS that touch a client's name, per role. The page tests prove what the
+// HON-58: the calendar server ACTIONS that touch a client's name, per role. The page tests prove what the
 // grid shows; these prove the actions around actions.ts (the booking lookup, the cancellation lookup and the quick-create) read
 // and return only what they should, and that a receptionist or an inactive practitioner reaches none of them. Synthetic ids only.
 // The row policy behind the quick-create (0087) is proved in tests/db/receptionist-client-insert.db.test.ts.
@@ -87,7 +87,7 @@ describe("the other calendar actions that read a client's name", () => {
     }
   });
   it("the booking and cancellation lookups use the stored name only for the client's own email, never for a staff screen", () => {
-    // They feed dispatchBookingEmails / sendCancellationEmail (client-facing communications, tracked as G4), not a page.
+    // They feed dispatchBookingEmails / sendCancellationEmail (client-facing communications, a separate change), not a page.
     const bookLookup = src.indexOf('.select("id, name, email, phone, sms_consent_at, sms_opted_out_at")');
     const cancelLookup = src.indexOf('.select("name, email")');
     expect(bookLookup).toBeGreaterThan(0);

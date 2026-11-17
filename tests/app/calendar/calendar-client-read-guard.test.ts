@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 
-// HON-58 G1 (Privacy C1): the guard BINDS to what the calendar reads, it does not spell-check.
+// HON-58: the guard BINDS to what the calendar reads, it does not spell-check.
 //
 // It scans, as text, (a) every file under app/(app)/calendar and (b) every helper those files import BY NAME from lib/**
 // (the exported function or constant's own body, with the string constants it references substituted in). In that text it
@@ -122,7 +122,7 @@ function scannedTexts(): Array<{ label: string; text: string }> {
   return texts;
 }
 
-describe("the calendar's reads of the clients table bind (Privacy C1)", () => {
+describe("the calendar's reads of the clients table bind", () => {
   const texts = scannedTexts();
 
   it("scans the calendar files AND the helpers they import by name, not an empty set", () => {
