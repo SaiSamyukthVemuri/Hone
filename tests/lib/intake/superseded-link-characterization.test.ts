@@ -31,7 +31,7 @@ describe("a superseded intake link still verifies (current behaviour)", () => {
     }
   });
 
-  it("only the token's OWN signed expiry ends it: an expired token is refused, a later-expiring earlier one is not", async () => {
+  it("an expired token is refused and a future-expiring one verifies", async () => {
     const { generateIntakeToken, verifyIntakeToken } = await import("@/lib/intake/tokens");
     expect(verifyIntakeToken(generateIntakeToken(INTAKE, new Date(Date.now() - 1000)))).toEqual({ ok: false, error: "expired" });
     expect(verifyIntakeToken(generateIntakeToken(INTAKE, new Date(Date.now() + 60_000))).ok).toBe(true);
@@ -53,6 +53,24 @@ describe("a superseded intake link still verifies (current behaviour)", () => {
     expect(patches.length).toBe(1);
     expect(Object.keys(patches[0]).sort()).toEqual(["intake_link_expires_at", "intake_link_last_sent_at", "intake_link_send_count"]);
     expect(patches[0].intake_link_send_count).toBe(2);
+  });
+
+  it("the copy-link (not emailed) stamp writes exactly two keys and no revocation field", async () => {
+    const { stampIntakeLinkIssued } = await import("@/lib/intake/queries");
+    const patches: Record<string, unknown>[] = [];
+    const admin = {
+      from: () => ({
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { intake_link_send_count: 4 } }) }) }),
+        update: (p: Record<string, unknown>) => {
+          patches.push(p);
+          return { eq: async () => ({ error: null }) };
+        },
+      }),
+    };
+    await stampIntakeLinkIssued(admin as never, INTAKE, { emailed: false });
+    expect(patches.length).toBe(1);
+    expect(Object.keys(patches[0]).sort()).toEqual(["intake_link_expires_at", "intake_link_send_count"]);
+    expect(patches[0].intake_link_send_count).toBe(5);
   });
 
   it("the public page and actions decide by the signed token, never by the stored expiry or a 'latest link' check", () => {
