@@ -24,7 +24,14 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 // takes the few newest non-null notes and the first with text wins; a window of
 // nothing but blanks proves nothing about the older history, so it is
 // `unavailable`, never "no note".
-export type PreviousVisitNote = { note: string | null; unavailable: boolean };
+//
+// HON-10 identity: the note carries the identity of the session it was WRITTEN on (that session's id and start time), because the "Last treatment" card
+// follows a different rule (the newest CHARTED session) and the two can come from different visits. `session` is null exactly when `note` is null.
+export type PreviousVisitNote = {
+  note: string | null;
+  unavailable: boolean;
+  session: { id: string; startedAt: string } | null;
+};
 
 const NOTE_WINDOW = 10;
 
@@ -51,19 +58,25 @@ export async function loadPreviousVisitNote(input: {
       .limit(NOTE_WINDOW);
     if (error) {
       logFailure(input.studioId, dbErrorCode(error));
-      return { note: null, unavailable: true };
+      return { note: null, unavailable: true, session: null };
     }
     const rows = (Array.isArray(data) ? data : []) as Array<{
+      id?: string | null;
+      started_at?: string | null;
       next_session_note?: string | null;
     }>;
     for (const r of rows) {
       const text = r.next_session_note?.trim();
-      if (text) return { note: text, unavailable: false };
+      if (text) {
+        // A note is only ever shown with the visit it came from; a row that lost its identity is not shown as a note.
+        if (!r.id || !r.started_at) return { note: null, unavailable: true, session: null };
+        return { note: text, unavailable: false, session: { id: r.id, startedAt: r.started_at } };
+      }
     }
-    return { note: null, unavailable: rows.length >= NOTE_WINDOW };
+    return { note: null, unavailable: rows.length >= NOTE_WINDOW, session: null };
   } catch {
     logFailure(input.studioId, null);
-    return { note: null, unavailable: true };
+    return { note: null, unavailable: true, session: null };
   }
 }
 
