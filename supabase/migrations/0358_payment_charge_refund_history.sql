@@ -92,6 +92,9 @@ create table if not exists public.payment_charge_refunds (
   first_event_id text not null check (length(first_event_id) > 0),
   last_event_id text not null check (length(last_event_id) > 0),
   last_event_created bigint not null check (last_event_created >= 0),
+  -- How this refund was first established: from the signed event's own list, or from the complete list the server read from the provider
+  -- for that signed event. A money record says how it was established; it never changes afterwards.
+  evidence_kind text not null check (evidence_kind in ('signed_event', 'signed_event_with_authenticated_list')),
   recorded_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint payment_charge_refunds_attempt_refund_key unique (attempt_id, stripe_refund_id)
@@ -134,8 +137,9 @@ begin
      or new.amount_cents is distinct from old.amount_cents
      or new.currency is distinct from old.currency
      or new.first_event_id is distinct from old.first_event_id
+     or new.evidence_kind is distinct from old.evidence_kind
      or new.recorded_at is distinct from old.recorded_at then
-    raise exception 'payment_charge_refunds: identity, amount and currency of a refund never change'
+    raise exception 'payment_charge_refunds: identity, amount, currency and evidence kind of a refund never change'
       using errcode = 'check_violation';
   end if;
   if old.status in ('succeeded', 'failed', 'canceled') and new.status is distinct from old.status then
@@ -349,8 +353,8 @@ begin
       where r.attempt_id = v_row.id and r.stripe_refund_id = v_refund for update;
     if not found then
       insert into public.payment_charge_refunds
-        (attempt_id, studio_id, stripe_refund_id, amount_cents, currency, status, first_event_id, last_event_id, last_event_created)
-      values (v_row.id, v_row.studio_id, v_refund, v_amount::integer, v_row.currency, v_status, p_event_id, p_event_id, v_event_created);
+        (attempt_id, studio_id, stripe_refund_id, amount_cents, currency, status, first_event_id, last_event_id, last_event_created, evidence_kind)
+      values (v_row.id, v_row.studio_id, v_refund, v_amount::integer, v_row.currency, v_status, p_event_id, p_event_id, v_event_created, p_object->>'evidence_kind');
       v_changed := true;
     elsif v_existing.status not in ('succeeded','failed','canceled')
           and v_status is distinct from v_existing.status
