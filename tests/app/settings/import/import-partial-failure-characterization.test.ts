@@ -9,6 +9,7 @@ const db = vi.hoisted(() => ({
   memories: [] as Row[],
   memoryFailures: 0,
   batchCompleteFails: false,
+  batchCompleteZeroRows: false,
   next: 1,
 }));
 
@@ -31,7 +32,10 @@ vi.mock("@/lib/supabase/server", () => ({
       const chain: Record<string, unknown> = {
         select: () => chain,
         eq: (_c: string, v: unknown) => {
-          if (op === "update") for (const r of rows) if (r.id === v) Object.assign(r, patch);
+          if (op === "update") {
+            inserted = rows.filter((r) => r.id === v && !(db.batchCompleteZeroRows && "completed_at" in patch));
+            for (const r of inserted) Object.assign(r, patch);
+          }
           return chain;
         },
         insert: (v: Row | Row[]) => {
@@ -70,7 +74,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 const CSV = "client_name,email,treatment_area\nSynthetic One,one@example.test,Upper lip\nSynthetic Two,two@example.test,Chin";
-const reset = () => Object.assign(db, { clients: [], batches: [], memories: [], memoryFailures: 0, batchCompleteFails: false, next: 1 });
+const reset = () => Object.assign(db, { clients: [], batches: [], memories: [], memoryFailures: 0, batchCompleteFails: false, batchCompleteZeroRows: false, next: 1 });
 beforeEach(() => reset());
 
 describe("confirmImportAction on partial failure (today's behaviour)", () => {
@@ -116,12 +120,34 @@ describe("confirmImportAction on partial failure (today's behaviour)", () => {
     expect(db.batches).toHaveLength(1); // the retry never even opened a batch
   });
 
-  it("when only the final completed_at update fails: the import is reported as a success while the batch stays incomplete and unvoided", async () => {
+  it("when only the final completed_at update fails: the import is reported as NOT complete (with a do-not-rerun sentence), the data stays, and the batch is neither completed nor voided", async () => {
     db.batchCompleteFails = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const { confirmImportAction } = await import("@/app/(app)/settings/import/actions");
     const r = await confirmImportAction(CSV, "other");
-    expect(r.ok).toBe(true);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toMatch(/could not be marked complete\. Do not run it again/);
+    const line = String(log.mock.calls.at(-1)?.[0]);
+    expect(line).toContain("import_batch_completion_mark_failed");
+    expect(line).not.toMatch(/one@example|Synthetic/);
+    log.mockRestore();
+    expect(db.clients).toHaveLength(2);
     expect(db.memories).toHaveLength(2);
+    expect(db.batches[0].completed_at).toBeUndefined();
+    expect(db.batches[0].voided_at).toBeUndefined();
+  });
+
+  it("when the completed_at update matches ZERO rows (no error): treated as a failed completion mark, with the same sentence and a distinct 'no_rows' code in the log", async () => {
+    db.batchCompleteZeroRows = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { confirmImportAction } = await import("@/app/(app)/settings/import/actions");
+    const r = await confirmImportAction(CSV, "other");
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toMatch(/could not be marked complete\. Do not run it again/);
+    const line = String(log.mock.calls.at(-1)?.[0]);
+    expect(line).toContain("import_batch_completion_mark_failed");
+    expect(line).toContain("no_rows");
+    log.mockRestore();
     expect(db.batches[0].completed_at).toBeUndefined();
     expect(db.batches[0].voided_at).toBeUndefined();
   });
