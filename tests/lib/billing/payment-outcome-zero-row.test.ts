@@ -132,7 +132,7 @@ describe("webhook reconcile outcome writes detect zero rows (payment-webhook-rec
     // 0239 moved all event writes under bound identity + row locks. No
     // discarded direct UPDATE filter can now masquerade as a proven outcome.
     expect(RECON).not.toMatch(/\.update\(/);
-    expect(count(RECON, /await reconcileBoundEvent\(event, ctx, attempt\)/g)).toBeGreaterThanOrEqual(4);
+    expect(count(RECON, /await reconcileBoundEvent\((?:event|refundEvent), ctx, attempt(?:, evidenceKind)?\)/g)).toBeGreaterThanOrEqual(4);
     expect(count(RECON, /commandResult === "reconciled" \? \[\{ id: attempt.id \}\] : \[\]/g)).toBe(3);
   });
 

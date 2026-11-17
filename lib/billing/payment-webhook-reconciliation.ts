@@ -8,7 +8,8 @@ import {
   providerMoneyMismatchDetails,
 } from "@/lib/billing/provider-money-facts";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { buildChargeRefundHistoryEvidence, REFUND_HISTORY_RECORDED } from "@/lib/billing/refund-history";
+import { buildChargeRefundHistoryEvidence, REFUND_HISTORY_RECORDED, type ChargeRefundEvidenceKind } from "@/lib/billing/refund-history";
+import { chargeWithRefundList, payloadHasCompleteRefundList, readCompleteChargeRefundList, refundListDescribesCharge } from "@/lib/billing/charge-refund-list";
 
 // ---------------------------------------------------------------------------
 // PR #179. Stripe webhook reconciliation for payment_charge_attempts.
@@ -537,9 +538,9 @@ function cumulativeChargeRefundEvidence(event: Stripe.Event, ctx: WebhookCtx, at
 // HON-49 (0358): record the refunds a signed charge.refunded event lists, through the ONE command that writes them. The evidence comes from
 // the signed event's charge only (lib/billing/refund-history.ts; the identity fields come from the signed event's own charge, never from the stored attempt). A database error is
 // thrown so the event is retried, except a missing command (42883 / PGRST202), which reads as not sent; a refusal or an incomplete list is returned for the caller to alert on, and nothing is written.
-async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, attemptId: string, charge: Stripe.Charge):
+async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, attemptId: string, charge: Stripe.Charge, kind: ChargeRefundEvidenceKind):
   Promise<{ sent: boolean; result: string | null }> {
-  const evidence = buildChargeRefundHistoryEvidence({ id: event.id, created: event.created }, charge);
+  const evidence = buildChargeRefundHistoryEvidence({ id: event.id, created: event.created }, charge, kind);
   if (!evidence) return { sent: false, result: null };
   const { data, error } = await createAdminClient().rpc("record_charge_refund_history", {
     p_attempt_id: attemptId,
@@ -561,7 +562,7 @@ async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, a
   return { sent: true, result: typeof row?.result === "string" ? row.result : null };
 }
 
-async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt: AttemptRow) {
+async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt: AttemptRow, evidenceKind: ChargeRefundEvidenceKind = "signed_event") {
   const isRefund = event.type === "charge.refunded";
   const isStandaloneRefund = event.type.startsWith("refund.");
   const pi = event.data.object as Stripe.PaymentIntent;
@@ -596,7 +597,7 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
       failure_message_safe: event.type === "payment_intent.payment_failed"
         ? "Stripe could not charge the saved card." : null,
       event_created: event.created,
-      evidence_kind: "signed_event",
+      evidence_kind: evidenceKind,
     },
   });
   const outcome = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
@@ -1306,7 +1307,33 @@ export async function handleChargeRefunded(
 
   // HON-49: the refund list is recorded for EVERY signed charge.refunded (partial or full), before the older decision below. The older full-refund
   // receipt path (0240) is untouched and still runs for a full refund; the two must agree (refundDisplayState reads both and says "unclear" if not).
-  const history = await recordChargeRefundHistory(event, ctx, attempt.id, charge);
+  // HON-49: a signed charge.refunded usually carries NO refund list (the provider stopped expanding it on a Charge, and expand never applies to a
+  // webhook payload). When the payload has no complete list, the server reads the list itself: authenticated, read-only, for the charge and the
+  // connected account named by THIS signed event. A provider error throws (the event is retried); an incomplete or unreadable result is a critical
+  // alert and nothing is written. The identity fields still come from the signed charge; only the refund list comes from the read.
+  let refundEvent: Stripe.Event = event;
+  let refundCharge: Stripe.Charge = charge;
+  let evidenceKind: ChargeRefundEvidenceKind = "signed_event";
+  if (!payloadHasCompleteRefundList(charge)) {
+    const read = await readCompleteChargeRefundList({ chargeId: charge.id, stripeAccount: ctx.stripeAccountId ?? "" });
+    const usable = read.ok && refundListDescribesCharge(charge, read.refunds);
+    if (!read.ok || !usable) {
+      const kept = await recordOpsAlertDurably({
+        severity: "critical", event: "charge_refunded_refund_list_unavailable",
+        message: "Stripe charge.refunded carried no complete refund list and the authenticated read did not return a complete, matching one. Nothing was recorded and no payment row was mutated. Reconcile via the Stripe Dashboard.",
+        studioId: attempt.studio_id, clientId: attempt.client_id, stripeEventId: event.id, route: ROUTE,
+        safeDetails: { attempt_id: attempt.id, stripe_charge_id: charge.id, amount_captured: amountCaptured, amount_refunded: amountRefunded,
+          reason: !read.ok ? read.reason : "list_does_not_describe_the_charge" },
+      });
+      if (kept !== true) throw new PaymentRefundRefusalUnrecordedError();
+      return { eventType: event.type, attemptId: attempt.id, refundListUnavailable: true, amountRefunded, amountCaptured };
+    }
+    refundCharge = chargeWithRefundList(charge, read.refunds);
+    refundEvent = { ...event, data: { ...event.data, object: refundCharge } } as Stripe.Event;
+    evidenceKind = "signed_event_with_authenticated_list";
+  }
+
+  const history = await recordChargeRefundHistory(refundEvent, ctx, attempt.id, refundCharge, evidenceKind);
   const historyRecorded = history.sent && (REFUND_HISTORY_RECORDED as readonly string[]).includes(history.result ?? "");
   if (isFullRefund && history.sent && !historyRecorded) {
     // A full refund is still reconciled by the receipt path below; the refusal of the history write needs an operator and is kept durably.
@@ -1376,8 +1403,8 @@ export async function handleChargeRefunded(
     };
   }
 
-  const cumulative = isCumulativeChargeRefund(charge);
-  if (cumulative && !cumulativeChargeRefundEvidence(event, ctx, attempt)) {
+  const cumulative = isCumulativeChargeRefund(refundCharge);
+  if (cumulative && !cumulativeChargeRefundEvidence(refundEvent, ctx, attempt)) {
     const recorded = await recordOpsAlertDurably({ severity: "critical", event: "charge_refunded_cumulative_evidence_refused",
       message: "Charge-level full refund lacks complete, distinct, bound successful refund evidence. No payment row was mutated.",
       studioId: attempt.studio_id, clientId: attempt.client_id, stripeEventId: event.id, route: ROUTE,
@@ -1389,14 +1416,14 @@ export async function handleChargeRefunded(
   // Resolve the Stripe refund id. Prefer the most recent refund
   // object on the charge (refunds.data is ordered newest-first by
   // Stripe in the standard payload).
-  const latestRefund = charge.refunds?.data?.[0];
+  const latestRefund = refundCharge.refunds?.data?.[0];
   const stripeRefundId = cumulative ? null : latestRefund?.id ?? null;
 
   if (attempt.refund_status === "pending_stripe") {
     // PR #178 helper claimed the row but the action either lost
     // the writeOk leg or the webhook beat the helper's UPDATE.
     // Either way: reconcile to succeeded.
-    const { data: commandRows, error: updateErr } = await reconcileBoundEvent(event, ctx, attempt);
+    const { data: commandRows, error: updateErr } = await reconcileBoundEvent(refundEvent, ctx, attempt, evidenceKind);
     const commandResult = (Array.isArray(commandRows) ? commandRows[0] : commandRows)?.result;
     const updatedRows = commandResult === "reconciled" ? [{ id: attempt.id }] : [];
     if (commandResult === "already_refunded") return { eventType: event.type, attemptId: attempt.id, alreadyRefunded: true };
@@ -1442,7 +1469,7 @@ export async function handleChargeRefunded(
   // truthfully reflects state, but flag the origin via a warning
   // ops_alert so the operator knows.
   const refundAmountCents = attempt.amount_cents;
-  const { data: commandRows, error: updateErr } = await reconcileBoundEvent(event, ctx, attempt);
+  const { data: commandRows, error: updateErr } = await reconcileBoundEvent(refundEvent, ctx, attempt, evidenceKind);
   const commandResult = (Array.isArray(commandRows) ? commandRows[0] : commandRows)?.result;
   const updatedRows = commandResult === "reconciled" ? [{ id: attempt.id }] : [];
   if (commandResult === "already_refunded") return { eventType: event.type, attemptId: attempt.id, alreadyRefunded: true };

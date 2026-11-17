@@ -59,7 +59,7 @@ describe("source guard: the identity fields never come from the stored attempt, 
   });
   it("is the only place that builds the history evidence, and the webhook passes it the signed charge", () => {
     const hook = readFileSync("lib/billing/payment-webhook-reconciliation.ts", "utf8");
-    expect(hook).toMatch(/buildChargeRefundHistoryEvidence\(\{ id: event\.id, created: event\.created \}, charge\)/);
+    expect(hook).toMatch(/buildChargeRefundHistoryEvidence\(\{ id: event\.id, created: event\.created \}, charge, kind\)/);
     expect(hook).toMatch(/rpc\("record_charge_refund_history"/);
   });
 });

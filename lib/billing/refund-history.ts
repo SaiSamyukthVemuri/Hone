@@ -17,10 +17,13 @@ type IdOrObject = string | { id?: string | null } | null | undefined;
 const idOf = (v: IdOrObject): string | null => (typeof v === "string" ? v : v && typeof v === "object" && typeof v.id === "string" ? v.id : null);
 
 export type RefundHistoryEvidence = Record<string, unknown>;
+/** Where the refund list came from: the signed event's own payload, or the same signed event's charge whose complete list the server read from the provider. */
+export type ChargeRefundEvidenceKind = "signed_event" | "signed_event_with_authenticated_list";
 
 export function buildChargeRefundHistoryEvidence(
   event: { id: string; created: number },
   charge: Stripe.Charge,
+  evidenceKind: ChargeRefundEvidenceKind = "signed_event",
 ): RefundHistoryEvidence | null {
   const list = charge.refunds;
   if (charge.object !== "charge" || !list || list.object !== "list" || list.has_more !== false || !Array.isArray(list.data)
@@ -34,7 +37,7 @@ export function buildChargeRefundHistoryEvidence(
     amount_cents: charge.amount,
     currency: charge.currency,
     event_created: event.created,
-    evidence_kind: "signed_event",
+    evidence_kind: evidenceKind,
     charge_amount_refunded: charge.amount_refunded,
     charge_refund_list_complete: true,
     components: list.data.map((refund) => ({
