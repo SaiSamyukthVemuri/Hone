@@ -128,7 +128,10 @@ export default async function AppointmentDetailPage({
   );
   if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   if (!data) notFound();
-  // ONE string leaves this block: the preferred and stored names are not both passed on to the rest of the page.
+  // Client communications keep the STORED name until the studio decides whether they use the preferred name: the send action
+  // greets with the stored name, so every preview on this page must too. Captured before the display name replaces it.
+  const storedClientName = data.client?.name ?? "";
+  // ONE string leaves this block for the screen: the preferred and stored names are not both passed on to the rest of the page.
   if (data.client) {
     const { preferred_name: preferredName, ...rest } = data.client as typeof data.client & { preferred_name?: string | null };
     data.client = { ...rest, name: clientDisplayName({ name: rest.name, preferred_name: preferredName }) };
@@ -604,7 +607,7 @@ export default async function AppointmentDetailPage({
           }
           reviewUrl={studio.postcare_review_url}
           reviewPromptText={studio.postcare_review_prompt_text}
-          clientName={data.client.name}
+          clientName={storedClientName}
           serviceName={data.service?.name ?? null}
           serviceModality={data.service?.modality ?? null}
           startsAt={data.starts_at}
