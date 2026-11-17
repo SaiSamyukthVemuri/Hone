@@ -46,3 +46,68 @@ export const consumeTicketNonce: ConsumeTicket = async (nonce) => {
     return "unavailable"; // never logs: the error text of a transport failure is not ours to forward
   }
 };
+
+// ---------------------------------------------------------------------------------------------------------------
+// The REOPEN context: what a "used or expired link" may be reopened to. Server-side only, 30 minutes, keyed by a
+// hash of the ticket nonce (never by the ticket). It holds the studio, the client and the day: identifiers, held
+// the same way the single-use marker is held, never sent to a browser, never in a URL, never logged. The ticket
+// itself still lives five minutes and opens once; this record only lets the SAME studio's owner mint a FRESH
+// one-use ticket (ticket-reopen.ts), which writes its own "previewed" audit row when it opens.
+// ---------------------------------------------------------------------------------------------------------------
+
+export const REOPEN_WINDOW_MS = 30 * 60 * 1000;
+const CONTEXT_TTL_SECONDS = Math.ceil(REOPEN_WINDOW_MS / 1000);
+export type TicketContext = { studioId: string; clientId: string; day: string };
+export type RememberTicket = (nonce: string, ctx: TicketContext) => Promise<boolean>;
+export type RecallTicket = (nonce: string) => Promise<TicketContext | null>;
+
+const contextKey = (nonce: string): string => ticketUseKey(nonce).replace("print-ticket:", "print-ticket-ctx:");
+const localContext = new Map<string, { ctx: TicketContext; expires: number }>();
+
+export function rememberInProcess(nonce: string, ctx: TicketContext, now: number = Date.now()): boolean {
+  localContext.set(contextKey(nonce), { ctx, expires: now + REOPEN_WINDOW_MS });
+  return true;
+}
+export function recallInProcess(nonce: string, now: number = Date.now()): TicketContext | null {
+  const hit = localContext.get(contextKey(nonce));
+  if (!hit) return null;
+  if (hit.expires <= now) {
+    localContext.delete(contextKey(nonce));
+    return null;
+  }
+  return hit.ctx;
+}
+export function resetInProcessContextStore(): void {
+  localContext.clear();
+}
+
+function redisFromEnv(): Redis | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  return url && token ? new Redis({ url, token }) : null;
+}
+
+/** Fails closed: false means "not remembered", so the reopen button will simply refuse later. Never throws. */
+export const rememberTicketContext: RememberTicket = async (nonce, ctx) => {
+  const redis = redisFromEnv();
+  if (redis === null) return process.env.NODE_ENV === "production" ? false : rememberInProcess(nonce, ctx);
+  try {
+    const set = await redis.set(contextKey(nonce), JSON.stringify(ctx), { ex: CONTEXT_TTL_SECONDS });
+    return set === "OK";
+  } catch {
+    return false;
+  }
+};
+
+export const recallTicketContext: RecallTicket = async (nonce) => {
+  const redis = redisFromEnv();
+  if (redis === null) return process.env.NODE_ENV === "production" ? null : recallInProcess(nonce);
+  try {
+    const raw = await redis.get<unknown>(contextKey(nonce));
+    const v = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (v && typeof v === "object" && typeof (v as TicketContext).studioId === "string" && typeof (v as TicketContext).clientId === "string" && typeof (v as TicketContext).day === "string") return v as TicketContext;
+    return null;
+  } catch {
+    return null;
+  }
+};

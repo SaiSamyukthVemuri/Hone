@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { printWithAudit } from "@/lib/records/print/arm-print";
+import { MENU_PRINT_POLICY, MENU_PRINT_UNRECORDED_MESSAGE, newMenuPrintState, onBeforePrint } from "@/lib/records/print/menu-print";
 import { recordDayPacketPrintAction } from "./actions";
 
 // HON-46. The ONLY thing that arms the packet for print, and only for ONE print:
@@ -18,6 +19,30 @@ function packetDocument(): Element | null {
 export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId: string; day: string; previewAuditId: string }) {
   const [pending, startTransition] = useTransition();
   const [failed, setFailed] = useState<null | "audit_failed" | "print_failed">(null);
+  const [menuUnrecorded, setMenuUnrecorded] = useState(false);
+  const menuState = useRef(newMenuPrintState());
+
+  // Ctrl/Cmd+P and the browser menu: see lib/records/print/menu-print.ts (one named policy constant).
+  useEffect(() => {
+    const handler = () =>
+      onBeforePrint(
+        {
+          policy: MENU_PRINT_POLICY,
+          isArmed: () => packetDocument()?.hasAttribute("data-print-armed") ?? false,
+          arm: () => packetDocument()?.setAttribute("data-print-armed", "true"),
+          disarm: () => packetDocument()?.removeAttribute("data-print-armed"),
+          record: () => recordDayPacketPrintAction({ clientId, day, previewAuditId }),
+          onAfterPrint: (cb) => {
+            window.addEventListener("afterprint", cb, { once: true });
+            return () => window.removeEventListener("afterprint", cb);
+          },
+          report: (recorded) => setMenuUnrecorded(!recorded),
+        },
+        menuState.current,
+      );
+    window.addEventListener("beforeprint", handler);
+    return () => window.removeEventListener("beforeprint", handler);
+  }, [clientId, day, previewAuditId]);
 
   function onPrint() {
     setFailed(null);
@@ -52,6 +77,11 @@ export function AuditedPrintButton({ clientId, day, previewAuditId }: { clientId
       {failed === "audit_failed" && (
         <p role="alert" className="text-xs text-red-700">
           Could not record this print in the audit log, so nothing was printed. Reload the page and try again.
+        </p>
+      )}
+      {menuUnrecorded && (
+        <p role="alert" className="text-xs text-red-700">
+          {MENU_PRINT_UNRECORDED_MESSAGE}
         </p>
       )}
       {failed === "print_failed" && (

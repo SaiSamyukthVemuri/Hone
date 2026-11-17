@@ -40,7 +40,7 @@ export type TicketBinding = { studioId: string; ownerId: string };
 export type TicketSubject = { clientId: string; day: string };
 
 export type TicketRefusal = "unavailable" | "malformed" | "invalid" | "expired" | "foreign";
-export type MintResult = { ok: true; ticket: string } | { ok: false; reason: "unavailable" | "invalid" };
+export type MintResult = { ok: true; ticket: string; nonce: string } | { ok: false; reason: "unavailable" | "invalid" };
 export type OpenResult =
   | { ok: true; clientId: string; day: string; nonce: string }
   | { ok: false; reason: TicketRefusal };
@@ -90,6 +90,7 @@ export function mintTicket(args: {
   }
   const random = args.random ?? randomBytes;
   const expires = (args.now ?? new Date()).getTime() + TICKET_TTL_MS;
+  const nonceBytes = random(8);
   const payload = Buffer.alloc(PAYLOAD_BYTES);
   payload.writeUInt8(VERSION, 0);
   payload.writeUIntBE(expires, 1, 6);
@@ -97,12 +98,12 @@ export function mintTicket(args: {
   uuidBytes(ownerId).copy(payload, 23);
   uuidBytes(clientId).copy(payload, 39);
   payload.writeUInt32BE(dayInt, 55);
-  random(8).copy(payload, 59);
+  nonceBytes.copy(payload, 59);
   const iv = random(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(AAD);
   const sealed = Buffer.concat([cipher.update(payload), cipher.final()]);
-  return { ok: true, ticket: Buffer.concat([iv, sealed, cipher.getAuthTag()]).toString("base64url") };
+  return { ok: true, ticket: Buffer.concat([iv, sealed, cipher.getAuthTag()]).toString("base64url"), nonce: nonceBytes.toString("hex") };
 }
 
 export function openTicket(args: {
@@ -150,3 +151,32 @@ export function openTicket(args: {
 /** The key under which a ticket's single use is recorded: a hash of the nonce, never an identifier. */
 export const ticketUseKey = (nonce: string): string =>
   `print-ticket:${createHash("sha256").update(`hone/print-ticket/use/v1:${nonce}`).digest("hex")}`;
+
+/**
+ * Recovery path only (ticket-reopen.ts): authenticate a ticket and read its studio and nonce EVEN WHEN it has expired,
+ * so a used or expired link can be offered "Open again". It checks authenticity (AES-GCM), the version and the
+ * "no more than one TTL of life" bound, and nothing else: it does NOT check expiry, the owner or the studio, and it
+ * never returns the client or the day. The caller must compare `studioId` with the signed-in owner's studio before it
+ * does anything, and must treat every failure as the one plain refusal.
+ */
+export function inspectTicket(args: {
+  secret: string | undefined;
+  ticket: unknown;
+}): { ok: true; studioId: string; nonce: string } | { ok: false } {
+  const key = keyFrom(args.secret);
+  if (key === null) return { ok: false };
+  if (typeof args.ticket !== "string" || !TICKET_SHAPE.test(args.ticket)) return { ok: false };
+  const raw = Buffer.from(args.ticket, "base64url");
+  if (raw.length !== IV_BYTES + PAYLOAD_BYTES + TAG_BYTES) return { ok: false };
+  if (raw.toString("base64url") !== args.ticket) return { ok: false };
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, raw.subarray(0, IV_BYTES));
+    decipher.setAAD(AAD);
+    decipher.setAuthTag(raw.subarray(raw.length - TAG_BYTES));
+    const payload = Buffer.concat([decipher.update(raw.subarray(IV_BYTES, raw.length - TAG_BYTES)), decipher.final()]);
+    if (payload.length !== PAYLOAD_BYTES || payload.readUInt8(0) !== VERSION) return { ok: false };
+    return { ok: true, studioId: bytesUuid(payload.subarray(7, 23)), nonce: payload.subarray(59, 67).toString("hex") };
+  } catch {
+    return { ok: false };
+  }
+}

@@ -4,6 +4,7 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { resolveTicket } from "@/lib/records/print/ticket-resolve";
 import { consumeTicketNonce } from "@/lib/records/print/ticket-store";
 import { DayPacketView } from "../../_packet/day-packet-view";
+import { ReopenButton } from "./reopen-button";
 
 // The day packet, opened by an OPAQUE one-use ticket instead of ?clientId=&day=. The path holds only the
 // ticket (no client id, no day). The route is in the token-route registry (lib/security/token-routes.ts), so it gets
@@ -32,6 +33,7 @@ export default async function TicketedDayPacketPage({ params }: { params: Promis
         <p className="text-base font-medium">This print link is no longer valid.</p>
         <p>Open Print again from the client&rsquo;s session. A print link works once and for five minutes.</p>
         <p className="text-neutral-600">No clinical record is shown.</p>
+        <ReopenButton ticket={token} />
         <Link href="/records" prefetch={false} referrerPolicy="no-referrer" className="text-neutral-600 underline print:hidden">
           Back to Record Keeping
         </Link>
