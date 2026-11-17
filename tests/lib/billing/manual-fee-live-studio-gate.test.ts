@@ -41,97 +41,35 @@ describe("parseManualFeeLiveStudios", () => {
 
 const HELD = LIVE_MANUAL_FEE_HOLD_MESSAGE;
 
-describe("per-reason live gate (LIVE mode)", () => {
-  it("with both variables unset every fee is held for every studio, as before", () => {
-    for (const r of FEES) {
-      expect(liveChargeReasonBlockMessage(r, true, A)).toBe(HELD);
-      expect(liveChargeReasonBlockMessage(r, true)).toBe(HELD);
-    }
+describe("self-service cancellations and independent no-show release", () => {
+  it("all studios may configure cancellation fees without an operator list", () => {
+    for (const studio of [A, B, undefined]) expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, studio)).toBeNull();
   });
-  it("the late-cancel list opens late_cancellation_fee for a listed studio ONLY, and holds no_show_fee", () => {
+  it("stale late-cancellation and combined env values cannot open no-show fees", () => {
     vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBeNull();
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, B)).toBe(HELD);
+    vi.stubEnv(LEGACY_MANUAL_FEE_LIVE_STUDIOS_ENV, A);
     expect(liveChargeReasonBlockMessage("no_show_fee", true, A)).toBe(HELD);
-    expect(isChargeReasonAllowedInLive("no_show_fee", A)).toBe(false);
   });
-  it("the no-show list opens no_show_fee for a listed studio ONLY, and holds late_cancellation_fee", () => {
+  it("no-show requires its own exact studio list and can be rolled back independently", () => {
     vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, A);
     expect(liveChargeReasonBlockMessage("no_show_fee", true, A)).toBeNull();
     expect(liveChargeReasonBlockMessage("no_show_fee", true, B)).toBe(HELD);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBe(HELD);
-  });
-  it("both lists set: each studio gets exactly its own reason, nothing is shared", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, B);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBeNull();
+    expect(liveChargeReasonBlockMessage("no_show_fee", true)).toBe(HELD);
+    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, "");
     expect(liveChargeReasonBlockMessage("no_show_fee", true, A)).toBe(HELD);
-    expect(liveChargeReasonBlockMessage("no_show_fee", true, B)).toBeNull();
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, B)).toBe(HELD);
   });
-  it("the same studio in both lists opens both reasons", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, A);
-    for (const r of FEES) expect(liveChargeReasonBlockMessage(r, true, A)).toBeNull();
-  });
-  it("the LEGACY single variable opens NOTHING, alone or beside the new ones", () => {
-    vi.stubEnv(LEGACY_MANUAL_FEE_LIVE_STUDIOS_ENV, `${A},${B}`);
-    for (const r of FEES) {
-      expect(liveChargeReasonBlockMessage(r, true, A)).toBe(HELD);
-      expect(liveChargeReasonBlockMessage(r, true, B)).toBe(HELD);
-    }
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBeNull();
-    expect(liveChargeReasonBlockMessage("no_show_fee", true, A)).toBe(HELD);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, B)).toBe(HELD);
-  });
-  it("malformed values open nothing for that reason (and never the other one)", () => {
-    for (const bad of ["*", "all", "true", "1", "11111111", `${A}x`, `x${A}`, ` , ,`, "{}", `${A};${B}`]) {
-      vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, bad);
+  it("malformed no-show lists fail closed", () => {
+    for (const bad of ["*", "all", "true", `${A}x`, `${A};${B}`]) {
       vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, bad);
-      for (const r of FEES) expect(liveChargeReasonBlockMessage(r, true, A)).toBe(HELD);
+      expect(liveChargeReasonBlockMessage("no_show_fee", true, A)).toBe(HELD);
     }
   });
-  it("a mixed list keeps the valid ids and drops the rest", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, `junk, ${B.toUpperCase()} ,*`);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, B)).toBeNull();
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBe(HELD);
-  });
-  it("no studio id (an old two-argument call) is held even when a studio is listed", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, A);
-    for (const r of FEES) expect(liveChargeReasonBlockMessage(r, true)).toBe(HELD);
-    expect(liveChargeReasonBlockMessage(r0(), true, null)).toBe(HELD);
-    expect(liveChargeReasonBlockMessage(r0(), true, "")).toBe(HELD);
-  });
-  it("session_payment is unaffected either way, and an unknown reason is never opened by a list", () => {
-    for (const env of ["", A]) {
-      vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, env);
-      vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, env);
-      expect(liveChargeReasonBlockMessage("session_payment", true, A)).toBeNull();
-      expect(liveChargeReasonBlockMessage("session_payment", true, B)).toBeNull();
-      expect(liveChargeReasonBlockMessage("some_future_reason", true, A)).toBe(HELD);
-      expect(isChargeReasonAllowedInLive("some_future_reason", A)).toBe(false);
-    }
-  });
-  it("TEST mode blocks nothing whatever the lists say", () => {
+  it("session payments stay available; unknown live reasons stay closed; test mode is unchanged", () => {
+    expect(isChargeReasonAllowedInLive("session_payment", A)).toBe(true);
+    expect(isChargeReasonAllowedInLive("unknown", A)).toBe(false);
     for (const r of FEES) expect(liveChargeReasonBlockMessage(r, false, B)).toBeNull();
   });
-  it("a late-cancel-only studio sees the no-show card held with the SAME hold message", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    expect(liveChargeReasonBlockMessage("no_show_fee", true, A)).toBe(liveChargeReasonBlockMessage("late_cancellation_fee", true, B));
-  });
-  it("the lists are read at call time, so removing a studio disables it at once (rollback)", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, A);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBeNull();
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, "");
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true, A)).toBe(HELD);
-  });
 });
-
-function r0() {
-  return "late_cancellation_fee";
-}
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");

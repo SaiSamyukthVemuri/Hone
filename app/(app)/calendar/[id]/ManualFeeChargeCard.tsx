@@ -345,9 +345,9 @@ function PreparePanel({
         </p>
       )}
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-        Timing classification is manual for this version. Confirm this
-        appointment qualifies under the policy before preparing the
-        charge.
+        {eligibility.timingClassification === "system_derived"
+          ? "The rate is selected from the recorded cancellation time and the studio’s local date. Confirm this appointment qualifies under the acknowledged policy before preparing the charge."
+          : "Timing classification is manual for this version. Confirm this appointment qualifies under the policy before preparing the charge."}
       </p>
 
       <label className="flex flex-col gap-1.5 text-xs">

@@ -277,6 +277,7 @@ export const BROWSER_GROUPS = {
   owner_admin: {
     description: "owner/admin, onboarding, studio setup and capacity",
     specs: [
+      "cancellation-fee-rules.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
