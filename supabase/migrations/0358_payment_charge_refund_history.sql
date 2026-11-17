@@ -24,7 +24,7 @@
 -- RULES THE COMMAND ENFORCES (each is a result string, never a silent write):
 --   * identity: studio, connected account, mode, customer, payment intent, charge, amount and currency must equal the stored
 --     attempt, exactly as reconcile_bound_payment_event requires (metadata is not authority);
---   * the evidence must be a signed event (evidence_kind = signed_event) of type charge.refunded, refund.created, refund.updated or
+--   * the evidence must be a signed event (evidence_kind = signed_event, or signed_event_with_authenticated_list: the same signed event whose complete refund list the server read from the provider) of type charge.refunded, refund.created, refund.updated or
 --     refund.failed;
 --   * every component: a distinct non-blank refund id, an integer amount above zero and not above the charge, the attempt's currency,
 --     the attempt's charge and payment intent, and a status of pending, requires_action, succeeded, failed or canceled;
@@ -203,7 +203,11 @@ begin
      or p_event_type is null
      or p_event_type not in ('charge.refunded','refund.created','refund.updated','refund.failed')
      or jsonb_typeof(p_object) is distinct from 'object'
-     or p_object->>'evidence_kind' is distinct from 'signed_event'
+     or p_object->>'evidence_kind' is distinct from all (array['signed_event','signed_event_with_authenticated_list'])
+     -- The authenticated-list kind exists for one case: a signed charge.refunded whose payload carries no refund list (the provider stopped
+     -- expanding it), so the server read the COMPLETE list itself. It is accepted only for that event type and only as a complete list.
+     or (p_object->>'evidence_kind' = 'signed_event_with_authenticated_list'
+         and (p_event_type <> 'charge.refunded' or p_object->'charge_refund_list_complete' is distinct from 'true'::jsonb))
      or coalesce(p_object->>'event_created','') !~ '^[0-9]{1,12}$'
      or jsonb_typeof(p_object->'components') is distinct from 'array'
      or jsonb_array_length(p_object->'components') = 0
@@ -325,7 +329,10 @@ begin
     v_charge_refunded := (p_object->>'charge_amount_refunded')::bigint;
     -- The charge's own refunded total must be accounted for by the components: at least the succeeded money, at most the succeeded
     -- plus the in-flight refunds that the event lists. Anything else means the list and the total do not describe the same charge.
-    if v_charge_refunded < v_event_succeeded
+    -- A list the server READ after the event was signed may be AHEAD of the event's own total (a refund made in between): that is newer truth,
+    -- accepted, and only advances the history. It may never be BEHIND (a refund the total counts but the list lacks): that is refused. A list
+    -- that came inside the signed event itself must match the event's own total from both sides.
+    if (v_charge_refunded < v_event_succeeded and p_object->>'evidence_kind' = 'signed_event')
        or v_charge_refunded > v_event_succeeded + v_event_inflight_amount
        or v_charge_refunded > v_row.amount_cents then
       return query select 'refund_evidence_refused'::text, v_row.id, v_row.studio_id, null::integer, null::integer;
