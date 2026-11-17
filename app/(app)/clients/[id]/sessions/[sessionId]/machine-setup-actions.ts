@@ -211,7 +211,7 @@ export type MachineSetupContext = {
    * THIS CLIENT's most recent machine (their last treatment area's saved identity),
    * validated against the inventory: a unit the picker would refuse, or a model that
    * is not the existing workflow, is dropped. It outranks the practitioner's
-   * remembered preference for a NEW area (Photos R2, #1369): the previous machine
+   * remembered preference for a NEW area: the previous machine
    * means this client's last machine, not the practitioner's last pick anywhere.
    */
   clientLastMachine: { deviceId: string | null; modeKey: string | null; legacy: boolean } | null;
@@ -454,7 +454,7 @@ export async function loadMachineSetupContext(input: {
     legacyMachine = null;
   }
 
-  // THE CLIENT'S OWN LAST MACHINE (Photos R2, #1369), validated like any other choice.
+  // THE CLIENT'S OWN LAST MACHINE, validated like any other choice.
   let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
   try {
     clientLastMachine = validateClientLastMachine({
@@ -625,10 +625,10 @@ export async function recordBlockMachineIdentityAction(input: {
     return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
   }
   const db = await machineDb();
-  // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces (Codex, #1369 4498767101).
+  // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces.
   const choice = { deviceId: input.deviceId, modeKey: input.modeKey, profileId: input.profileId };
   const allowed = await checkIdentityChoice(db, scope, choice);
-  // A REFUSAL MUST NOT STOP THE RETRY OF A WRITE THAT ALREADY COMMITTED (Codex, #1369 4499083273). The command answers a repeated
+  // A REFUSAL MUST NOT STOP THE RETRY OF A WRITE THAT ALREADY COMMITTED. The command answers a repeated
   // key from its receipt BEFORE it looks at the unit, but this preflight runs first: a unit retired since, or an inventory read that
   // fails, would otherwise refuse the retry and the caller would drop the key. So the receipt-aware command decides when
   //   * the unit is merely not available now (retired/unknown/foreign): the command itself refuses those for a NEW write; or
@@ -651,7 +651,7 @@ export async function recordBlockMachineIdentityAction(input: {
       modeKey: input.modeKey,
       profileId: input.profileId,
       // CHECKED INSIDE THE COMMAND'S TRANSACTION, and the new version comes back from
-      // the same UPDATE ... RETURNING (Codex 4476240827): no separate read can race it.
+      // the same UPDATE ... RETURNING: no separate read can race it.
       expectedUpdatedAt: input.expectedUpdatedAt ?? null,
       idempotencyKey: input.idempotencyKey,
     });
@@ -667,7 +667,7 @@ export async function recordBlockMachineIdentityAction(input: {
       if (deferredRefusal !== null && !out.unresolved) {
         return { ok: false, code: "rejected", error: deferredRefusal };
       }
-      // UNKNOWN IS NOT REJECTED (Codex 4488743493). With no database answer the write may have committed; "unknown" keeps the
+      // UNKNOWN IS NOT REJECTED. With no database answer the write may have committed; "unknown" keeps the
       // key so the caller can ask again and be answered from the receipt, instead of treating the pick as reverted.
       return out.unresolved
         ? { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." }
@@ -1198,7 +1198,7 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
-  // Like the identity write and Save (Codex 4481814168): the submission bumped the block, and a reopened editor must not hold the old version.
+  // Like the identity write and Save: the submission bumped the block, and a reopened editor must not hold the old version.
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   return {
     ok: true,
@@ -1206,7 +1206,7 @@ export async function recordSetupSubmissionAction(input: {
     captures: out.value.groups,
     written: out.value.readings,
     reused: out.value.reused,
-    // From the command's own UPDATE ... RETURNING; none on a replay (Insurance N-8).
+    // From the command's own UPDATE ... RETURNING; none on a replay.
     ...(out.value.blockUpdatedAt ? { updatedAt: out.value.blockUpdatedAt } : {}),
   };
 }
@@ -1233,7 +1233,7 @@ export async function readingsForBlockAction(input: {
   // nothing about the block, which is exactly the mistake round 8 made here -
   // the check was added, the hole was reported closed, and the read still
   // filtered on an unbound block id (Codex, #860 4298457378).
-  // A refused route is a DEFINITIVE refusal (#1369 R3-2): the caller must not keep showing the old readings. A database error inside
+  // A refused route is a DEFINITIVE refusal: the caller must not keep showing the old readings. A database error inside
   // the lineage lookup throws the same error, so this fails closed for access in that rare case too.
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);

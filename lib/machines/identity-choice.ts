@@ -21,7 +21,7 @@ export function machineChoiceRefusal(code: string, message: string): string {
 
 export type IdentityChoice = { deviceId: string | null; modeKey: string | null; profileId: string | null };
 /**
- * Why a choice was refused, because the CALLER treats the three differently (Codex, #1369 4499083273):
+ * Why a choice was refused, because the CALLER treats the three differently:
  *  - "contract": the pair is impossible (a mode the model does not offer, a missing option, a mismatched profile). Never stored.
  *  - "availability": the unit is retired, unknown or another studio's. The identity COMMAND refuses those for a NEW write itself,
  *    so the caller may let the receipt-aware command decide, which is what lets a lost-answer retry recover after a unit is retired.
@@ -31,7 +31,7 @@ export type IdentityRefusalReason = "contract" | "availability" | "unreadable";
 export type IdentityCheck = { ok: true } | { ok: false; error: string; reason: IdentityRefusalReason };
 
 /**
- * A MACHINE IDENTITY BEING SAVED ON A TREATMENT AREA MUST PASS THE CONTRACT A REMEMBERED CHOICE PASSES (Codex, #1369 4498767101).
+ * A MACHINE IDENTITY BEING SAVED ON A TREATMENT AREA MUST PASS THE CONTRACT A REMEMBERED CHOICE PASSES.
  *
  * The database commands only check that the unit is the studio's and not retired (and that a given model matches the unit's), so
  * a stale panel or a crafted request could store a mode the model does not offer, or one that needs an option the unit lacks, and

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// AUTOMATIC SELECTION vs THE USER'S ENTERED LEGACY SETTINGS (Codex #1369 4506474412, Insurance final448; census CENSUS-AUTO-SELECT-1369.md).
+// AUTOMATIC SELECTION vs THE USER'S ENTERED LEGACY SETTINGS.
 // The REAL form, the real connected wrapper and panel, one mocked loader. Synthetic records.
 const nav = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -212,7 +212,7 @@ describe("an EXISTING area with no saved unit: automatic selection yields to ent
 });
 
 describe("a NEW area", () => {
-  it("entered values hold the remembered machine too (regression of 4479490063)", async () => {
+  it("entered values hold the remembered machine too (regression)", async () => {
     await mount({ existing: false });
     await clickText("13.56 MHz");
     await openPanel();

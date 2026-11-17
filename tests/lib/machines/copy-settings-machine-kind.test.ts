@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 
 import { copyPatchForMachine, copySourceMatchesMachine } from "@/lib/machines/pending-setup";
 
-// Codex, #1369 4478497428 (P1) and 4478497436 (P2).
 const native = { studio_machine_id: "m1" };
 const legacy = { studio_machine_id: null };
 
@@ -52,7 +51,7 @@ describe("a valid client-last machine wins over an unavailable remembered prefer
   it("the unavailable-selection notice is dropped when client-last was applied", () => {
     expect(conn).toContain("unavailableSelection={newAreaLast || hold || (hasSaved && !savedIdentity?.deviceId) ? null : ctx.rememberedUnavailable}");
   });
-  // Codex 4478497436: the client-last machine is only applied on a NEW area with no hold, and it comes from the server-validated
+  // The client-last machine is only applied on a NEW area with no hold, and it comes from the server-validated
   // `clientLastMachine`; with the notice rule above, an unavailable remembered preference cannot override it. Source pin, not a mounted proof.
   it("client-last applies only on a new area, from the validated clientLastMachine, and the first-pick order puts it ahead of the remembered one", () => {
     expect(conn).toContain("const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;");

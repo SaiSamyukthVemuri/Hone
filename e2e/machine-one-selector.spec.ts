@@ -5,7 +5,7 @@ import { seedE2eStudio, seedE2eMember, sql } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
 import { planContractPublication } from "../lib/machines/contract-publication";
 
-// HON-8 ONE MACHINE SELECTOR (Sam's preview feedback, 4 Nov 2026), for the three machines the practitioner works on: the existing
+// HON-8 ONE MACHINE SELECTOR for the three machines the practitioner works on: the existing
 // workflow (the studio's xCell), Senior 3G and Junior 3G. Per machine, at 1280 and 390, as a PRACTITIONER who is not the owner:
 //   * one selector; only the chosen machine's settings show, shared treatment fields once;
 //   * save -> refresh -> reopen restores machine, mode, values and areas, read back from the database, including a machine and mode
@@ -208,7 +208,7 @@ for (const device of [
       await expect(page.getByText("Leave without saving?")).toHaveCount(0);
     });
 
-    // Codex #1369 4478075121 / Insurance FE-1 / Privacy FD-1: the browser's own Back and Forward, not a click. popstate carries no direction;
+    // The browser's own Back and Forward, not a click. popstate carries no direction;
     // the guard reads the history entry index, puts the entry back by the distance travelled, and asks. Entries are made with the app's own
     // router so they are SAME-DOCUMENT (the only kind that raises popstate); a hard page load would raise beforeunload instead.
     test("Back and Forward with unsaved work: the prompt appears, Stay keeps the page, URL and typed data, and Leave arrives", async ({ page }) => {
@@ -264,13 +264,13 @@ for (const device of [
       await expect(page.getByText("Leave without saving?")).toBeVisible({ timeout: T });
       await page.getByRole("button", { name: "Leave" }).click();
       await at("/dashboard");
-      // Leave replays the traversal, which raises popstate again: it must not ask a second time (Insurance H-1).
+      // Leave replays the traversal, which raises popstate again: it must not ask a second time.
       await page.waitForTimeout(1500);
       await expect(page.getByText("Leave without saving?")).toHaveCount(0);
       await at("/dashboard");
     });
 
-    // Codex #1369 4479490063: values typed BEFORE the panel opens are never erased by a machine the panel resolves on its own.
+    // Values typed BEFORE the panel opens are never erased by a machine the panel resolves on its own.
     test("legacy values typed before opening the panel survive an auto-resolved native machine", async ({ page }) => {
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
@@ -290,7 +290,7 @@ for (const device of [
       await expect(page.getByTestId("machine-select")).toHaveValue("");
     });
 
-    // Codex #1369 4479490071: a refused "Choose machine…" on a saved native area leaves the panel on the stored machine.
+    // A refused "Choose machine…" on a saved native area leaves the panel on the stored machine.
     test("clearing a saved native area's machine is refused and the panel stays on it", async ({ page }) => {
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
@@ -310,7 +310,7 @@ for (const device of [
       expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: s.senior });
     });
 
-    // Insurance J-1 / Privacy FG-1 (K-1): a refused native pick on a saved area clears nothing, so the typed values are simply still there.
+    // A refused native pick on a saved area clears nothing, so the typed values are simply still there.
     test("a refused native pick on a saved area keeps the typed legacy values", async ({ page }) => {
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
@@ -333,7 +333,7 @@ for (const device of [
       expect((await blocksOf(sessionId))[0]).toMatchObject({ studio_machine_id: null });
     });
 
-    // Insurance K-2 / L-1 / L-2: a successful native pick, a REFUSED clear, a REAL save, then a REFUSED second native pick from a stale tab:
+    // A successful native pick, a REFUSED clear, a REAL save, then a REFUSED second native pick from a stale tab:
     // no legacy value is ever submitted or stored under the native machine.
     test("native pick succeeds, a clear is refused, the area is saved, a stale second pick is refused: nothing legacy is submitted or stored", async ({ page }) => {
       const MARK = "9.87";
@@ -394,7 +394,7 @@ for (const device of [
       for (const body of posts) expect(body).not.toContain(MARK);
     });
 
-    // Codex 4482278089: an AUTOMATICALLY resolved native machine clears a prefilled studio-default frequency; that is not the practitioner's edit.
+    // An AUTOMATICALLY resolved native machine clears a prefilled studio-default frequency; that is not the practitioner's edit.
     test("an automatically resolved machine clears the prefilled default frequency without calling the untouched form Unsaved", async ({ page }) => {
       const s = await seedStudio();
       await sql("update public.practitioners set default_machine_frequency='13.56 MHz' where studio_id=(select studio_id from public.clients where id=$1)", [s.clientId]);
@@ -419,7 +419,7 @@ for (const device of [
       expect((await blocksOf(next)).length).toBe(0);
     });
 
-    // Photos R2 (data integrity, also on production before #1369): a lost answer to a BARE area save, then Save again, was a SECOND area.
+    // A lost answer to a BARE area save, then Save again, was a SECOND area.
     for (const variant of ["bare (nothing chosen)", "xCell Pur chosen, no values"] as const) {
       test(`${variant}: the answer to the area save is lost, Save again gives exactly ONE area`, async ({ page }) => {
         const s = await seedStudio();
@@ -457,7 +457,7 @@ for (const device of [
       });
     }
 
-    // OPS/Photos R2: a client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.
+    // A client last charted on xCell Pur is offered xCell Pur for a new session, whether or not that area saved an identity.
     test("a client last charted on xCell Pur starts the next session on xCell Pur (saved identity, and the older no-identity record)", async ({ page }) => {
       const s = await seedStudio();
       await loginByMagicLink(page, s.member.email);
@@ -483,7 +483,7 @@ for (const device of [
       expect((await blocksOf(next)).length).toBe(0);
     });
 
-    // Codex #1369 4471593271 (P1): a SAVED xCell Pur area that holds readings never gets a native machine. Refused in the app before
+    // A SAVED xCell Pur area that holds readings never gets a native machine. Refused in the app before
     // the selector moves or anything is written (and in the database, 0301); the existing record and readings are untouched.
     test("a SAVED xCell area with readings takes no native machine: the unit cannot be chosen, a forced pick writes nothing, the record is untouched", async ({ page }) => {
       const s = await seedStudio();
@@ -527,7 +527,7 @@ for (const device of [
       expect((await blocksOf(old[0]!.session_id))[0]).toMatchObject({ mode: "thermo", energy_level: "7", studio_machine_id: null });
     });
 
-    // Codex #1369 4471593277 (P2): xCell history and NO registered native unit: the selector is usable, and xCell Pur saves as before.
+    // xCell history and NO registered native unit: the selector is usable, and xCell Pur saves as before.
     test("a studio with xCell history and no registered native unit can choose and save xCell Pur", async ({ page }) => {
       const s = await seedStudio();
       await sql(`delete from public.studio_machines where studio_id=$1`, [s.seed.studioId]);
@@ -551,7 +551,7 @@ for (const device of [
       await noOverflow(page);
     });
 
-    // Codex #1369 4485874041: the kind comes from the SAVED identity. A saved native area whose unit has since been retired stays a native
+    // The kind comes from the SAVED identity. A saved native area whose unit has since been retired stays a native
     // area: the unit shows read-only as the saved machine, the legacy fields stay hidden, and a Save writes no legacy value onto it.
     test("a saved native area whose unit was later retired keeps the legacy fields hidden and takes no legacy value on Save", async ({ page }) => {
       const s = await seedStudio();

@@ -85,7 +85,7 @@ describe("0301: wording", () => {
   });
 });
 
-describe("0301: the write receipts table (Codex 4488743493 and 4488743496)", () => {
+describe("0301: the write receipts table", () => {
   it("is created once, with RLS on, no policy, and direct privileges revoked from every API role by name", () => {
     expect(code.match(/create table if not exists public\.block_write_receipts/g)).toHaveLength(1);
     expect(code).toMatch(/alter table public\.block_write_receipts enable row level security;/);
@@ -114,7 +114,7 @@ describe("0301: the write receipts table (Codex 4488743493 and 4488743496)", () 
   });
 });
 
-describe("0301: a create replay must ask for the identity the original save recorded (Codex 4492927325)", () => {
+describe("0301: a create replay must ask for the identity the original save recorded", () => {
   const wrap = code.slice(
     code.indexOf("create or replace function public.create_block_with_initial_setup_and_identity"),
     code.indexOf("create or replace function public.record_setup_submission_with_identity"),

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Privacy EH-4. The export reads session_blocks through an EXPLICIT column list
+// The export reads session_blocks through an EXPLICIT column list
 // (app/(app)/settings/data/actions.ts). Migration 0301 adds three columns, so
 // the decision must be written down: they are NOT in that list, and the
 // registry says so by name, so a later reader finds the gap rather than

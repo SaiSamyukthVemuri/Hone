@@ -130,7 +130,7 @@ describe("the revision save hold, mounted", () => {
   });
 });
 
-describe("a stored mode the unit does not offer is never re-sent, mounted (#1369 E-2)", () => {
+describe("a stored mode the unit does not offer is never re-sent, mounted", () => {
   it("shows the unresolved state, mounts no entry form, reports NO resolved choice, and writes nothing", () => {
     const onRecord = vi.fn(async () => ({ ok: true }));
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
@@ -147,7 +147,7 @@ describe("a stored mode the unit does not offer is never re-sent, mounted (#1369
     for (const call of onResolvedChoice.mock.calls) expect(JSON.stringify(call)).not.toContain("not-offered");
   });
 
-  // Insurance PEER-1369-UI-MODE-UNRESOLVED F1: the notice says "choose a mode", so on a single-mode unit a picker must exist.
+  // The notice says "choose a mode", so on a single-mode unit a picker must exist.
   it("F1: a single-mode unit with an unoffered stored key renders the picker, with nothing pressed, and choosing the offered mode resolves it", async () => {
     const onRecord = vi.fn(async () => ({ ok: true }));
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
@@ -178,7 +178,7 @@ describe("a stored mode the unit does not offer is never re-sent, mounted (#1369
   });
 });
 
-describe("the host save and the reading save never overlap, mounted (#1369 Codex 4505116958)", () => {
+describe("the host save and the reading save never overlap, mounted", () => {
   it("readings typed while the host save is pending: Save is disabled, nothing is sent, and the typed readings are kept and usable afterwards", () => {
     host = document.createElement("div");
     document.body.appendChild(host);

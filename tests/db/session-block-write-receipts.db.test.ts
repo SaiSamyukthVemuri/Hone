@@ -4,11 +4,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // ===========================================================================
-// 0301 WRITE RECEIPTS (Codex #1369 4488743493 and 4488743496, Sam 6 Nov 2026).
+// 0301 WRITE RECEIPTS.
 //
 // A write that COMMITTED and whose answer was lost is answered again, from its receipt, with the block
 // version THAT write produced and the identity it recorded. The replay never hands back the block's CURRENT
-// version: a colleague's edit made after the commit must still make the next save conflict (Insurance N-8).
+// version: a colleague's edit made after the commit must still make the next save conflict.
 // SYNTHETIC PROFILE ONLY.
 // ===========================================================================
 

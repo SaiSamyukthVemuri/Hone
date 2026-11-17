@@ -2,11 +2,11 @@
 
 import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 
-// ONE REGISTRY OF UNSAVED MACHINE STATE PER BlockSetupForm (#1369, design note DESIGN-NOTE-UNSAVED-STATE-1369.md, Insurance final423).
+// ONE REGISTRY OF UNSAVED MACHINE STATE PER BlockSetupForm.
 //
 // WHY: "unsaved" used to be the OR of five flags in four components, set by EDGE events with a "last sent" cache, and cleared by effect
-// cleanups that also ran when a dependency (not the component) changed. Three consecutive Codex rounds lived there (4505116958 hold,
-// 4505287597 guard, 4505408578 draft cleared by a saved-identity flip).
+// cleanups that also ran when a dependency (not the component) changed. Three consecutive review rounds lived there (the hold, the
+// guard, and the draft cleared by a saved-identity flip).
 //
 // THE MODEL: LEVEL, NOT EDGE.
 //   * Every owner has its OWN id per instance (useId), never derived from content.

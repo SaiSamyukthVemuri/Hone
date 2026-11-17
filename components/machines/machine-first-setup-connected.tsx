@@ -40,7 +40,7 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // client in scope the prior-setup read fell back to the whole studio and could
 // show another client's settings (Codex, 9c6fbbe5).
 
-/** ONE refusal text for clearing a saved machine, wherever it is reached (Insurance N-3). */
+/** ONE refusal text for clearing a saved machine, wherever it is reached. */
 export const RECORD_UNAVAILABLE_AFTER_SAVE_NOTICE =
   "Saved. This treatment record could not be loaded just now; reload to try again.";
 export const ACCESS_REFUSED_AFTER_SAVE_NOTICE =
@@ -50,7 +50,7 @@ export const PREFERENCE_NOT_REMEMBERED = "That machine was not remembered for yo
 export const SAVED_MACHINE_CANNOT_BE_CLEARED =
   "Choose another machine to change this one. A saved machine cannot be cleared.";
 
-/** ONE refusal text for a native machine on an area that already holds xCell Pur readings (Codex, #1369 4471593271). */
+/** ONE refusal text for a native machine on an area that already holds xCell Pur readings. */
 export const LEGACY_AREA_NATIVE_MACHINE_REFUSED =
   "This area already has xCell Pur readings. Add a new area to chart another machine.";
 
@@ -87,14 +87,14 @@ export type MachineFirstSetupConnectedProps = {
   /** Forwarded to the panel: the host's save is unresolved. */
   settingDraftFrozen?: boolean;
   /**
-   * True while a SAVED area's machine choice is being written (Codex, #1369 4477716784). The host holds its
+   * True while a SAVED area's machine choice is being written. The host holds its
    * own Save for that long: if the block save committed first, the identity write would be refused as stale
    * and the machine choice lost without a word.
    */
   onIdentityWritePending?: (pending: boolean) => void;
   /**
    * The practitioner already typed charting values on this NEW area. The panel then selects nothing by itself (no client-last,
-   * remembered or restored machine), because a native pick clears those values (Codex, #1369 4479490063).
+   * remembered or restored machine), because a native pick clears those values.
    */
   holdAutoSelect?: boolean;
   onSettingDraft?: NonNullable<
@@ -147,7 +147,7 @@ export const IDENTITY_REPLAY_DELAY_MS = 300;
 /**
  * Is the machine the database holds the one that was asked for? A registered unit is identified by DEVICE + MODE: the pick carries no
  * profile id (the unit's profile is derived on the server), so the record's reply always names one the pick did not, and comparing it
- * read every successful native change as a different choice (Codex #1369 4494175930). Only the existing workflow (no unit) is
+ * read every successful native change as a different choice. Only the existing workflow (no unit) is
  * identified by its profile.
  */
 export function sameIdentityChoice(stored: IdentityChoice, asked: IdentityChoice): boolean {
@@ -219,7 +219,7 @@ export function MachineFirstSetupConnected({
   legacyReadingsLocked = false,
 }: MachineFirstSetupConnectedProps) {
   // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
-  // identity writes (Codex, #1369 4475581937). The prop is the identity the page
+  // identity writes. The prop is the identity the page
   // loaded; an area that started with none and then recorded one here kept
   // reporting "none", so a later clear took the preference-only branch, said it
   // had worked, and left the saved identity in place.
@@ -261,7 +261,7 @@ export function MachineFirstSetupConnected({
   );
   // THE WRAPPER'S ONE EFFECT OPENS A SAVED MACHINE AND HAS NO CLEANUP. It used to also report "no draft, no unresolved save" to the host in its
   // cleanup, which ran whenever `hasSavedIdentity` changed (an identity write confirming) while the reading entry was still mounted, so the
-  // host showed Saved and the leave guard went off over typed readings (Codex #1369 4505408578). The holds now live in the host's registry,
+  // host showed Saved and the leave guard went off over typed readings. The holds now live in the host's registry,
   // are written by their owners and removed only when the owner unmounts (draft-registry.tsx).
   useEffect(() => {
     if (hasSavedIdentity && state === "idle" && ctx === null) void open();
@@ -422,11 +422,11 @@ export function MachineFirstSetupConnected({
               : prev
             : prev,
         );
-        // A CONFIRMED SAVE KEEPS ITS "SAVED" (OPS decision after #1369 shard 1 at 6dc30fdd3). The refresh runs only after the
+        // A CONFIRMED SAVE KEEPS ITS "SAVED". The refresh runs only after the
         // save was confirmed, so a failed refresh used to replace the whole entry, the saved confirmation included, with "could not
         // be read just now", which is the notice for a failure when the panel OPENS and still is. Here the snapshot is kept
         // (still true, one capture out of date) and a plain note says so. Nothing is re-sent: the entry stays on its saved view.
-        // FAIL CLOSED FOR ACCESS, GENTLE ONLY FOR A TRANSIENT ERROR (#1369 R3-2). A definitive refusal (not signed in, or the record is no
+        // FAIL CLOSED FOR ACCESS, GENTLE ONLY FOR A TRANSIENT ERROR. A definitive refusal (not signed in, or the record is no
         // longer this practitioner's) must not leave the old readings on screen, so the entry is replaced by the access notice.
         // NO HOLD IS RELEASED BY HAND HERE: a refused refresh replaces the panel, which unmounts the reading entry, and the entry removes its own
         // draft and unresolved flags from the host's registry (the save was confirmed, so neither is true any more).
@@ -470,17 +470,17 @@ export function MachineFirstSetupConnected({
       choice.deviceId !== null || legacyProfile !== null
         ? { deviceId: choice.deviceId, modeKey: choice.modeKey, profileId: legacyProfile }
         : null;
-    // THE RECORD FIRST, FOR A SAVED AREA (Insurance LK-3): this area's own machine is written now, and a refusal (the database
+    // THE RECORD FIRST, FOR A SAVED AREA: this area's own machine is written now, and a refusal (the database
     // refuses a native machine on an area with xCell Pur readings the page did not know about, or a stale tab) must leave the
     // remembered preference where it was, not move it to a machine this area cannot take. A new area carries the choice into
     // the host's Save instead (one transaction).
     if (blockId && chosen !== null) {
-      // A WRITE WHOSE ANSWER WAS LOST IS SETTLED BY ITS KEY, NOT REPORTED AS REVERTED (Codex 4488743493). Each pick has ONE key,
+      // A WRITE WHOSE ANSWER WAS LOST IS SETTLED BY ITS KEY, NOT REPORTED AS REVERTED. Each pick has ONE key,
       // reused by every retry of it; the database answers a same-key retry from its receipt with the version THAT write produced
       // and the identity it recorded (never the block's current version: a colleague's later edit must still conflict, N-8).
       let version = blockVersion ?? null;
       // WHAT THIS CALL HAS ADOPTED: the machine the database now holds because of a write settled here. Any refusal that follows it must
-      // hand it to the panel as the fallback, or the panel keeps showing the machine from BEFORE the call (Codex #1369 4493827101).
+      // hand it to the panel as the fallback, or the panel keeps showing the machine from BEFORE the call.
       let adopted: IdentityChoice | null = null;
       const revertedTo = (error: string) => ({
         ok: false as const,
@@ -556,7 +556,7 @@ export function MachineFirstSetupConnected({
     // native unit; choosing the existing workflow leaves it alone.
     let pref: { ok: boolean; error?: string } = { ok: true };
     if (!choice.legacy) {
-      // A THROW IS NOT A REVERT (Codex 4487384231). For a saved area the record was committed above; a preference request that
+      // A THROW IS NOT A REVERT. For a saved area the record was committed above; a preference request that
       // throws (a transport error) says nothing about it, so the committed choice stays and only a quiet note is shown.
       try {
         const out =
@@ -595,12 +595,12 @@ export function MachineFirstSetupConnected({
     }
   };
 
-  // A NEW AREA STARTS ON THIS CLIENT's LAST MACHINE when there is one (Photos R2): the previous machine is
+  // A NEW AREA STARTS ON THIS CLIENT's LAST MACHINE when there is one: the previous machine is
   // the client's, not the practitioner's last pick anywhere. The remembered preference is the fallback, and
   // an area that already has a saved identity is never touched.
   const hasSaved = Boolean(savedIdentity && (savedIdentity.deviceId || savedIdentity.profileId));
-  // EVERY AREA WITHOUT A SAVED UNIT (Insurance final448 retired the N-7 new-area-only carve-out): an area with no entered or persisted legacy settings opens as before.
-  // ONE PREDICATE FOR EVERY AUTOMATIC SOURCE (Codex #1369 4506474412, Insurance final448): client-last, the remembered preference, the loader's
+  // EVERY AREA WITHOUT A SAVED UNIT: an area with no entered or persisted legacy settings opens as before.
+  // ONE PREDICATE FOR EVERY AUTOMATIC SOURCE: client-last, the remembered preference, the loader's
   // restored selection and the remembered-unavailable note are read ONLY through `hold`, on EVERY area. It used to be new areas only
   // (`&& !blockId`), so an existing area with legacy settings entered auto-selected the remembered native machine and the kind switch
   // cleared them. A SAVED unit still wins first (below), and an EXPLICIT pick is not a source: it clears, and panel and host agree.
@@ -629,9 +629,9 @@ export function MachineFirstSetupConnected({
       // The server resolved the stored selection; when it is not usable the
       // panel shows nothing chosen and states the reason, rather than an
       // empty picker beside a claim that a machine is remembered.
-      // A valid client-last machine WINS over an unavailable remembered preference (Codex, #1369 4478497436):
+      // A valid client-last machine WINS over an unavailable remembered preference:
       // the stale preference is only stated when nothing better was chosen for this new area.
-      // An area SAVED AS THE EXISTING WORKFLOW states no remembered-unavailable note either (Insurance final429 C2): the note is about the
+      // An area SAVED AS THE EXISTING WORKFLOW states no remembered-unavailable note either: the note is about the
       // practitioner's preference, not this area, and beside the legacy option it reads as if the area's machine were retired.
       unavailableSelection={newAreaLast || hold || (hasSaved && !savedIdentity?.deviceId) ? null : ctx.rememberedUnavailable}
       // The unit this client's last setup used, offered (not selected) when
@@ -639,7 +639,7 @@ export function MachineFirstSetupConnected({
       suggestedMachine={ctx.suggestedMachine}
       // A reopened visit's last saved unit and mode. Forwarded here or it is
       // inert in the real route.
-      // WHICH UNIT AND MODE OPEN, ONE PRECEDENCE (Codex #1369 4505565741). Three sources decide it: the area's SAVED identity (this prop),
+      // WHICH UNIT AND MODE OPEN, ONE PRECEDENCE. Three sources decide it: the area's SAVED identity (this prop),
       // the loader's restored selection (the client's last saved unit) and the practitioner's remembered preference (initialDeviceId /
       // initialModeKey above). A SAVED UNIT ALWAYS WINS, and it is never replaced by another machine: a saved unit with a NULL mode (a
       // supported state: checkDeviceChoice and both identity RPCs allow it) used to fall through to the restored or remembered machine,
@@ -657,7 +657,7 @@ export function MachineFirstSetupConnected({
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
-      // THE SAVED UNIT, from the area's own record (Insurance W-1): not from the panel's current pick, which can be a remembered
+      // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered
       // preference on an area that never saved an identity.
       savedDeviceId={blockId ? (savedIdentity?.deviceId ?? null) : null}
       initialLegacyChosen={

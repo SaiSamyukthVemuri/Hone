@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // ===========================================================================
-// THE xCell CHOICE SURVIVES A FAILING HISTORY QUERY (Privacy EH-2).
+// THE xCell CHOICE SURVIVES A FAILING HISTORY QUERY.
 //
 // studioHasLegacyMachineHistory asks the 0301 columns first. Without 0301 that
 // query fails as a whole; it then asks the older schema's question, and if even

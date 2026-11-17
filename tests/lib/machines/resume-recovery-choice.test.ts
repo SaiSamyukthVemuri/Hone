@@ -312,7 +312,7 @@ describe("5 · a SETTLED close clears only its own key", () => {
 });
 
 // ===========================================================================
-// EVERY CALLER OF submit() IS INSIDE THE RECOVERY GATES (Codex, #1369 4475351367, P1)
+// EVERY CALLER OF submit() IS INSIDE THE RECOVERY GATES
 // ===========================================================================
 //
 // The gates were on the Save button only. The save-status "Try again" button is

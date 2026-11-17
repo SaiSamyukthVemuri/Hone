@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 
-// Codex, #1369 4475784173: after the practitioner confirms Leave in the app's own dialog, the confirmed navigation is a full document load, which
+// After the practitioner confirms Leave in the app's own dialog, the confirmed navigation is a full document load, which
 // fires beforeunload, and the browser asked a SECOND time. A confirmed departure must pass; an unconfirmed one must still be held.
 const { createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");

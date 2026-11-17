@@ -293,7 +293,7 @@ describe("once chosen, the panel shows that model's native fields", () => {
     // control would be a second way to do what this one already does
     // (Sam, 19:16; #860 6156583955).
     expect(html).toContain('data-testid="machine-select"');
-    // HON-8 (Sam, 4 Nov preview feedback): an EXPLICIT "Change machine" control
+    // HON-8: an EXPLICIT "Change machine" control
     // is wanted again. It is deliberately NOT a second picker: it only moves
     // focus to this one selector, so there is still one control for one decision.
     expect(html).toContain('data-testid="machine-change"');
@@ -427,7 +427,7 @@ describe("the connected wrapper makes NO request until asked", () => {
     expect((code.match(/useEffect\(/g) ?? []).length).toBe(1);
     expect(code).toMatch(/if \(hasSavedIdentity && state === "idle" && ctx === null\) void open\(\)/);
     expect(code).toContain("useCallback");
-    // ...and that one effect has NO CLEANUP and reports nothing to the host (Codex #1369 4505408578): a cleanup keyed on
+    // ...and that one effect has NO CLEANUP and reports nothing to the host: a cleanup keyed on
     // [hasSavedIdentity] runs when the identity is WRITTEN, while the reading entry is still mounted, and used to clear the host's
     // draft and hold. Unsaved state is the owners' registry entries (components/machines/draft-registry.tsx), never this wrapper's.
     const effect = code.slice(code.indexOf("useEffect("), code.indexOf("}, [hasSavedIdentity]);"));
@@ -1141,7 +1141,7 @@ describe("choosing the mode on a multi-mode machine", () => {
     expect(html).toContain('aria-pressed="true"');
   });
 
-  it("does NOT fall back to the first mode when the recorded one is not this machine's (#1369)", () => {
+  it("does NOT fall back to the first mode when the recorded one is not this machine's", () => {
     // Superseded contract: this used to fall back to the first mode, which showed a mode the record does not hold.
     const html = render({
       scope: SCOPE,
@@ -1911,7 +1911,7 @@ describe("the owner hint says what to send for an unlisted model", () => {
   });
 });
 
-describe("a recorded mode the unit does not offer is never shown as another mode (#1369, Vercel 01M6VEJJ83G4GZ10DFCKMJAEVP)", () => {
+describe("a recorded mode the unit does not offer is never shown as another mode", () => {
   const base = { scope: SCOPE, devices: [DEVICE], catalogue: CAT, persistence: DATABASE_PERSISTENCE };
 
   it("shows the unresolved state and no mode's fields", () => {
@@ -1919,7 +1919,7 @@ describe("a recorded mode the unit does not offer is never shown as another mode
     expect(html).toContain('data-testid="machine-mode-unresolved"');
     expect(html).toContain("Recorded mode not available on this machine");
     expect(html, "F3: the copy claims nothing about the record").not.toContain("nothing has been changed");
-    // The offered mode is listed as a CHOICE (the picker renders while unresolved, Insurance F1) but is never pressed, and no entry form is mounted.
+    // The offered mode is listed as a CHOICE (the picker renders while unresolved) but is never pressed, and no entry form is mounted.
     expect(html).toContain('data-testid="machine-mode-picker"');
     expect(html).toMatch(/aria-pressed="false"[^>]*data-testid="machine-mode-galvanic"|data-testid="machine-mode-galvanic"[^>]*aria-pressed="false"/);
     expect(html).not.toContain("machine-reading-entry");

@@ -525,7 +525,7 @@ describe("the create path's `saveUnresolved` is monotonic too", () => {
 
   it("the refusal branch SETS the flag, guarded by the result's own field", () => {
     expect(branch).toMatch(/res\.unresolved\)\s*\{[\s\S]*?setSaveUnresolved\(true\)/);
-    // A refusal AFTER a lost answer also holds the form (Codex 4488516837), so the flag is set on that path too.
+    // A refusal AFTER a lost answer also holds the form, so the flag is set on that path too.
     expect(branch).toMatch(/createAttemptRef\.current\.unresolved\) \{[\s\S]*?setSaveUnresolved\(true\)/);
   });
 

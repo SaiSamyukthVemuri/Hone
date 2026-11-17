@@ -4,7 +4,7 @@ import { recordSetupSubmission, type MachineDb } from "@/lib/machines/machine-qu
 import { isMissingCommand } from "@/lib/machines/save-attempt";
 
 // ===========================================================================
-// MIGRATION-FIRST ORDER CAN SLIP (0301; Privacy EH-1/EH-2)
+// MIGRATION-FIRST ORDER CAN SLIP (0301)
 //
 // recordSetupSubmission prefers the identity-recording wrapper. Only a
 // MISSING function (PGRST202 / 42883, so nothing ran) may send the same

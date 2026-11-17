@@ -1495,7 +1495,7 @@ export async function createTreatmentAreaWithEntryAction(
     !withSetup &&
     identity !== null &&
     (identity.machineId !== null || identity.profileId !== null);
-  // THE SAME CONTRACT A REMEMBERED CHOICE PASSES, BEFORE ANYTHING IS SENT (Codex, #1369 4498767101). The command only checks that
+  // THE SAME CONTRACT A REMEMBERED CHOICE PASSES, BEFORE ANYTHING IS SENT. The command only checks that
   // the unit is this studio's and not retired, so an impossible unit/mode pair would otherwise be stored with the new area.
   if (identityOnly) {
     const allowed = await checkIdentityChoice(supabase as unknown as MachineDb, { studioId: studio.id, practitionerId: practitioner.id }, {
@@ -1503,7 +1503,7 @@ export async function createTreatmentAreaWithEntryAction(
       modeKey: identity.modeKey,
       profileId: identity.profileId,
     });
-    // Codex, #1369 4499083273: a unit that is merely not available NOW (retired since) is left to the receipt-aware command, which
+    // A unit that is merely not available NOW (retired since) is left to the receipt-aware command, which
     // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
     if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
     if (!allowed.ok && allowed.reason !== "availability") return { ok: false, error: allowed.error, unresolved: false };
