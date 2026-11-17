@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { getE2eServiceId, seedE2eClient, sql } from "./helpers/seed";
+import { dayUrl, monthUrl, weekUrl } from "./hon48-support/calendar-urls";
 import {
   closeTeam, clientNameOf, openDrawerForColumn, prepareBooking, reservationCount, rows, setupFiveUserTeam,
   DRAWER, type Team,
@@ -72,9 +73,14 @@ test("the Day view shows every committed booking in its own practitioner's colum
     [t.seed.studioId],
   );
   expect(booked.length).toBeGreaterThanOrEqual(6);
+  // Every active practitioner of the studio: the sidebar restores a member's own-calendar-only selection on a link without `people`.
+  const everyone = (
+    await sql<{ id: string }>("select id from public.practitioners where studio_id=$1 and active order by id", [t.seed.studioId])
+  ).map((r) => r.id);
+  expect(everyone, "the five seeded practitioners are all listed").toEqual(expect.arrayContaining(t.users.map((u) => u.practitionerId)));
   for (const [i, u] of t.users.entries()) {
     const { page } = t.contexts[i];
-    await page.goto(`/calendar?view=day&day=${t.day}`);
+    await page.goto(dayUrl(t.day, everyone));
     for (const b of booked) {
       const col = page.locator(`[data-testid="team-day-column"][data-practitioner-id="${b.practitioner_id}"]`);
       await expect(col.getByRole("button").filter({ hasText: b.name }), `${u.key} Day: ${b.name}`).toHaveCount(1, { timeout: 20_000 });
@@ -85,6 +91,9 @@ test("the Day view shows every committed booking in its own practitioner's colum
 
 test("Week and Month show the committed bookings: the week total and the month day cell match the database", async () => {
   const owner = t.contexts[0].page;
+  const everyone = (
+    await sql<{ id: string }>("select id from public.practitioners where studio_id=$1 and active order by id", [t.seed.studioId])
+  ).map((r) => r.id);
   const [expected] = await sql<{ week: number; day: number }>(
     "select " +
       "(select count(*)::int from public.appointments where studio_id=$1 and status='confirmed' " +
@@ -95,14 +104,14 @@ test("Week and Month show the committed bookings: the week total and the month d
   expect(expected.day).toBeGreaterThanOrEqual(6);
 
   // WEEK: the owner's week reports every committed appointment of the week (all five calendars selected).
-  await owner.goto(`/calendar?view=week&day=${t.day}`);
+  await owner.goto(weekUrl(t.day, everyone));
   await expect(owner.getByRole("main")).toContainText(/all selected/i, { timeout: 20_000 });
   const weekText = await owner.getByRole("main").innerText();
   const weekCount = Number(/(\d+)\s+appointments?/i.exec(weekText)?.[1] ?? NaN);
   expect(weekCount, "the Week view's appointment total equals the database").toBe(expected.week);
 
   // MONTH: the day's cell shows its chips plus "+N more", together equal to the database count for that day.
-  await owner.goto(`/calendar?view=month&day=${t.day}`);
+  await owner.goto(monthUrl(t.day, everyone));
   const cell = owner.locator(`a[href*="day=${t.day}"]`).first();
   await expect(cell).toBeVisible({ timeout: 20_000 });
   const chips = await cell.locator("span[title]").count();
