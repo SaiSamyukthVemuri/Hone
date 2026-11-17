@@ -414,6 +414,21 @@ describe("the key never leaves the process (F1)", () => {
     expect(out).not.toContain(KEY);
     expect(out).not.toMatch(/abc\.def|zzz|eyJhbGci/);
   });
+  it("redact also removes the hosted URL, its host and the 20-character project ref", () => {
+    const url = `https://${REF}.supabase.co`;
+    const text = `fetch failed for ${url}/rest/v1/x (host ${REF}.supabase.co, project ${REF}) with ${KEY}`;
+    const out = redact(text, KEY, { url, ref: REF });
+    expect(out).not.toContain(REF);
+    expect(out).not.toContain("supabase.co");
+    expect(out).not.toContain(KEY);
+    expect(out).toContain("[redacted-url]");
+  });
+  it("redact removes a hosted-looking URL or host even when the target was not passed in", () => {
+    const other = "zyxwvutsrqponmlkjihg";
+    const out = redact(`error at https://${other}.supabase.co/rest/v1/y and ${other}.supabase.co`, KEY);
+    expect(out).not.toContain(other);
+    expect(out).not.toContain("supabase.co");
+  });
   it("the real client refuses a redirect and never calls anything but select reads and the one RPC", async () => {
     const seen: string[] = [];
     const fetchImpl = async (url: string, init: any) => { seen.push(`${init?.method ?? "GET"} ${url}`); return { status: 302, ok: false, json: async () => ({}) }; };

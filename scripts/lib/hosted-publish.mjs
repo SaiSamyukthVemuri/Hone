@@ -24,10 +24,21 @@ const refuse = (why) => { throw new Refusal(why); };
 export const sha256 = (s) => createHash("sha256").update(s).digest("hex");
 export const shortFingerprint = (s) => sha256(`hone-ref:${s}`).slice(0, 16);
 
-/** Redact the key, auth header values and anything JWT-shaped from any text that may be printed. */
-export function redact(text, key) {
+/**
+ * Redact the key, auth header values, anything JWT-shaped, and the hosted target (its URL, host and 20-character project ref) from any text
+ * that may be printed. The target is redacted as defence in depth: today the client throws only generic text, but a library error that echoed the
+ * URL must still not print which project this is.
+ */
+export function redact(text, key, target = {}) {
   let out = String(text ?? "");
   if (key) out = out.split(key).join("[redacted-key]");
+  const { url, ref } = target;
+  if (url) {
+    out = out.split(String(url)).join("[redacted-url]");
+    try { out = out.split(new URL(String(url)).host).join("[redacted-host]"); } catch { /* an unparseable URL has no host to redact */ }
+  }
+  if (ref) out = out.split(String(ref)).join("[redacted-ref]");
+  out = out.replace(/https?:\/\/[a-z0-9]{20}\.supabase\.co\b[^\s"']*/g, "[redacted-url]").replace(/\b[a-z0-9]{20}\.supabase\.co\b/g, "[redacted-host]");
   return out
     .replace(/eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g, "[redacted-jwt]")
     .replace(/((?:authorization|apikey)["']?\s*[:=]\s*["']?)(?:bearer\s+)?[^\s"',}]+/gi, "$1[redacted]");
@@ -164,7 +175,7 @@ export async function runHosted(d) {
   if (!key) refuse(`${KEY_VAR} is not set`);
   const urlRef = parseHostedUrl(d.env[URL_VAR]);
   const hostedUrl = d.env[URL_VAR];
-  const redactErr = (e) => redact(e instanceof Error ? e.message : e, key);
+  const redactErr = (e) => redact(e instanceof Error ? e.message : e, key, { url: hostedUrl, ref: urlRef });
   try {
     const claim = keyRefClaim(key);
     if (claim !== null && claim !== urlRef) refuse("the service key's project ref claim does not equal the hosted URL's project");
