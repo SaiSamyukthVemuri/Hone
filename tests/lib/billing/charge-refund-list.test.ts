@@ -116,8 +116,11 @@ describe("the fake provider is chosen only through the guard", () => {
     expect(assertAt).toBeGreaterThan(-1);
     expect(branchAt).toBeGreaterThan(assertAt);
   });
-  it("is the only module besides the charge seam that selects the fake client", () => {
-    const out = execSync("grep -rln 'createFakeStripe' lib app --include=*.ts --include=*.tsx || true", { encoding: "utf8" }).split("\n").filter(Boolean).sort();
+  it("no other server code selects the fake client: only this module, the charge seam and the fake itself (every tracked file outside tests, e2e and docs)", () => {
+    const out = execSync(
+      "git grep -l createFakeStripe -- . ':!tests' ':!e2e' ':!e2e-payment' ':!e2e-google' ':!e2e-mobile' ':!docs' ':!openwiki' || true",
+      { encoding: "utf8" },
+    ).split("\n").filter(Boolean).sort();
     expect(out).toEqual(["lib/billing/charge-refund-list.ts", "lib/stripe/e2e-fake-stripe.ts", "lib/stripe/session-payment-stripe.ts"]);
   });
 });
