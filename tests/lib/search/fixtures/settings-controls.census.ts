@@ -511,7 +511,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   },
   {
     page: "/settings/payments/fees",
-    label: "Cancellation and no-show fee amounts",
+    label: "Cancellation & no-show fees",
     role: "owner",
     decision: "searchable",
     entryId: "settings-fee-amounts",

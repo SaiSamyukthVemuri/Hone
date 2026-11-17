@@ -1,5 +1,5 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { getConsentTemplatesForStudio } from "@/lib/consent/queries";
+import { checkConsentTemplatesForStudio } from "@/lib/consent/queries";
 import { ConsentTemplatesEditor } from "./ConsentTemplatesEditor";
 import {
   OwnerOnlyNotice,
@@ -23,7 +23,8 @@ export default async function ConsentSettingsPage() {
   if (practitioner.role !== "owner") {
     return <OwnerOnlyNotice>Only studio owners can manage consent forms.</OwnerOnlyNotice>;
   }
-  const templates = await getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: true });
+  const check = await checkConsentTemplatesForStudio(studio.id, { includeCardAuthorization: true });
+  const templates = check.status === "ok" ? check.templates : [];
 
   return (
     <section className="flex flex-col gap-8">
@@ -35,6 +36,7 @@ export default async function ConsentSettingsPage() {
 
       <ConsentTemplatesEditor
         templates={templates}
+        unavailable={check.status === "unavailable"}
         createAction={createConsentTemplateAction}
         updateAction={updateConsentTemplateAction}
         setStatusAction={setConsentTemplateStatusAction}

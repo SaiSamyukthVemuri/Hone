@@ -503,10 +503,10 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
   },
   {
     id: "settings-fee-amounts",
-    title: "Cancellation and no-show fees",
+    title: "Cancellation & no-show fees",
     category: "Settings",
     href: "/settings/payments/fees",
-    description: "Late-cancellation and no-show fee amounts",
+    description: "Late-cancellation and no-show fee rules and on/off settings",
     keywords: ["fee amounts", "cancellation and no show fee amounts", "late cancellation fee", "cancellation fee", "no show fee", "fees"],
     visibility: "owner",
     priority: 412,

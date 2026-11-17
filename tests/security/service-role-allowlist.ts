@@ -104,6 +104,15 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/cron/stuck-fee-sweep/route.ts",
+    purpose: "Monitoring for the manual-fee feature: a non-mutating sweep that raises the critical ops alert for a stuck fee attempt.",
+    why:
+      "Rejects any request without the CRON_SECRET bearer (isAuthorizedCronRequest) before building a client, then calls " +
+      "sweepStuckFeeAttempts, which only READS payment_charge_attempts and ops_alerts and writes only an ops_alerts row through " +
+      "recordOpsAlertDurably. It never updates an attempt and never calls Stripe. It returns counts only.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "lib/waitlist/retention-run.ts",
     purpose: "HON-7 (0326): the daily route's scheduled erase of overdue waitlist decline answers, and the early crons' health check.",
     why:

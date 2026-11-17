@@ -172,9 +172,14 @@ export function PortalAccessCard({
                 </li>
               )}
             </ul>
-          ) : (
+          ) : pendingTasks.consentUnknown ? null : (
             <p className="mt-1 text-xs text-neutral-500">
               No pending portal tasks.
+            </p>
+          )}
+          {pendingTasks.consentUnknown && (
+            <p role="status" data-testid="portal-tasks-consent-unavailable" className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+              Couldn’t check consent forms. Reload to try again.
             </p>
           )}
         </div>

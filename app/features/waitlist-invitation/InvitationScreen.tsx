@@ -164,6 +164,7 @@ const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {
   not_permitted: "Your invitation doesn't cover that time. Please choose one of the times shown.",
   unavailable: "We couldn't complete that booking. Please try again in a moment.",
   note_invalid: "Your message can’t be saved as written. Please use plain text and try again.",
+  contact_invalid: "That phone number can’t be used. Please check it and try again.",
   feedback_unavailable: "We couldn't save that just now. Nothing has changed, so please try again.",
 };
 

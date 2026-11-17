@@ -226,12 +226,72 @@ describe("the DB snapshot and the pure resolver agree on the price law", () => {
     }
   });
 
-  it("a zero or negative custom price is 'no custom price recorded', not 'charge nothing'", async () => {
+  // 0354. Decision (platform operator, #1483): an explicitly recorded $0 custom price is a decided price and beats a positive
+  // menu price, in BOTH implementations.
+  it("a current $0 custom price is an AUTHORITATIVE zero over a positive menu price (0354)", async () => {
     const s = await studio("zero-custom");
     const { appointmentId, serviceName } = await seedAppointment(s, { servicePriceCents: 9000 });
     const today = await studioToday(s.studioId);
     await addPricing(s, serviceName!, 0, isoDaysFromToday(today, -1));
+    await bothAgree(s.studioId, appointmentId, 0);
+  });
+
+  it("a $0 custom price on a service with a NULL menu price is still a zero, not a missing price (0354)", async () => {
+    const s = await studio("zero-custom-nullmenu");
+    const { appointmentId, serviceName } = await seedAppointment(s, { servicePriceCents: null });
+    const today = await studioToday(s.studioId);
+    await addPricing(s, serviceName!, 0, isoDaysFromToday(today, -1));
+    await bothAgree(s.studioId, appointmentId, 0);
+  });
+
+  it("a FUTURE $0 custom price is ignored: the menu price decides (0354)", async () => {
+    const s = await studio("zero-future");
+    const { appointmentId, serviceName } = await seedAppointment(s, { servicePriceCents: 9000 });
+    const today = await studioToday(s.studioId);
+    await addPricing(s, serviceName!, 0, isoDaysFromToday(today, 5));
     await bothAgree(s.studioId, appointmentId, 9000);
+  });
+
+  it("the NEWER row decides between a $0 row and a positive row, in both directions (0354)", async () => {
+    const s = await studio("zero-newest");
+    const a = await seedAppointment(s, { servicePriceCents: 9000, serviceName: "Newest Zero" });
+    const today = await studioToday(s.studioId);
+    await addPricing(s, "Newest Zero", 6000, isoDaysFromToday(today, -30));
+    await addPricing(s, "Newest Zero", 0, isoDaysFromToday(today, -2));
+    await bothAgree(s.studioId, a.appointmentId, 0);
+    // A second studio: one client cannot hold two overlapping appointments.
+    const s2 = await studio("zero-newest-2");
+    const b = await seedAppointment(s2, { servicePriceCents: 9000, serviceName: "Newest Positive" });
+    await addPricing(s2, "Newest Positive", 0, isoDaysFromToday(today, -30));
+    await addPricing(s2, "Newest Positive", 8000, isoDaysFromToday(today, -2));
+    await bothAgree(s2.studioId, b.appointmentId, 8000);
+  });
+
+  it("a $0 row and a positive row EQUALLY current DISAGREE: NULL in both, never by row order (0354)", async () => {
+    const s = await studio("zero-tie");
+    const { appointmentId, serviceName } = await seedAppointment(s, { servicePriceCents: 9000 });
+    const today = await studioToday(s.studioId);
+    const d = isoDaysFromToday(today, -3);
+    await addPricing(s, serviceName!, 0, d);
+    await addPricing(s, serviceName!, 7000, d);
+    await bothAgree(s.studioId, appointmentId, null);
+  });
+
+  it("two equally current $0 rows agree: zero (0354)", async () => {
+    const s = await studio("zero-tie-agree");
+    const { appointmentId, serviceName } = await seedAppointment(s, { servicePriceCents: 9000 });
+    const today = await studioToday(s.studioId);
+    const d = isoDaysFromToday(today, -3);
+    await addPricing(s, serviceName!, 0, d);
+    await addPricing(s, serviceName!, 0, d);
+    await bothAgree(s.studioId, appointmentId, 0);
+  });
+
+  it("a NEGATIVE custom price cannot be stored (column CHECK): the SQL negative branch is defence for a hand-built row, and the resolver refuses one (unit-tested)", async () => {
+    const s = await studio("negative");
+    const { serviceName } = await seedAppointment(s, { servicePriceCents: 9000 });
+    const today = await studioToday(s.studioId);
+    await expect(addPricing(s, serviceName!, -100, isoDaysFromToday(today, -1))).rejects.toThrow(/check|violat/i);
   });
 
   it("service-name matching is normalized (case and surrounding space)", async () => {

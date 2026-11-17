@@ -24,6 +24,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { TIMES_FEEDBACK_NOTE_MAX, waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
+import { resolveContactChoice, type ContactChoiceInput } from "@/lib/waitlist/decline-contact-phone";
 import { validateNoTimesWork } from "@/lib/waitlist/decline-responses";
 import { dispatchDeclineOwnerEmail } from "@/lib/waitlist/decline-owner-email";
 import { waitlistBookingCommandEnabled } from "@/lib/booking/waitlist-booking-command";
@@ -1219,7 +1220,12 @@ export async function declineInvitationAction(
  * handed to the dispatcher. That call never throws and is not awaited past the response (`after`), so an email problem can never undo or delay
  * the decline; the daily cron is the safety net. The invitation id never reaches the browser.
  */
-export async function noTimesWorkAction(rawToken: string, why: string, better: string): Promise<InvitationViewState> {
+export async function noTimesWorkAction(
+  rawToken: string,
+  why: string,
+  better: string,
+  contact?: ContactChoiceInput,
+): Promise<InvitationViewState> {
   if (!waitlistDeclineAnswersEnabled()) return loadInvitationAction(rawToken);
   const gate = await limitPublicSlots({ headers: await headers(), slug: "invitation-no-times-work" });
   if (!gate.allowed) return { kind: "error", retryable: true };
@@ -1230,6 +1236,16 @@ export async function noTimesWorkAction(rawToken: string, why: string, better: s
   // The same rules as the form, re-checked here: the browser is not trusted. The database validates again.
   const checked = validateNoTimesWork({ why, better });
   if (!checked.ok) return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "note_invalid");
+  // CONTACT CHOICE, VALIDATION ONLY (HON-7). Nothing here stores, sends or keeps a number: no screen sends this argument yet, and the
+  // command below receives only the two answers. A choice that IS sent is checked by the same rules the stored column will hold, and a
+  // refusal names a class only. The entry's own number is not read here, so confirming "the number on file" is refused until the
+  // storage that holds a number is applied and read back; only a typed number can pass. The argument comes from the browser, so anything
+  // that is not a plain object (null, a string, a number, an array) is refused the same way and never reaches the rules.
+  const sent: unknown = contact;
+  const plain = typeof sent === "object" && sent !== null && !Array.isArray(sent);
+  if (sent !== undefined && (!plain || !resolveContactChoice(sent as ContactChoiceInput, null).ok)) {
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" }, "contact_invalid");
+  }
   const out = await declineWithAnswers({
     rawToken,
     rawCapability: capability,
