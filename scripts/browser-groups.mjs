@@ -272,6 +272,14 @@ export const BROWSER_GROUPS = {
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.
       "team-day-view.spec.ts",
+      // HON-48 five-user proof (opt-in: self-skips unless HON48_FIVE_USER_E2E=1, so a targeted lane lists it but runs nothing).
+      "hon48-five-user-booking.spec.ts",
+      "hon48-five-user-moves-blocks.spec.ts",
+      "hon48-five-user-denial.spec.ts",
+      "hon48-returning-client-lookup.spec.ts",
+      "hon48-tablet-phone-selection.spec.ts",
+      // HON-48 commit-visibility measurement rig (opt-in: self-skips unless HON48_TIMING_E2E=1).
+      "hon48-commit-visibility-timing.spec.ts",
     ],
   },
   owner_admin: {

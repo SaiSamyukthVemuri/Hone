@@ -255,7 +255,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 54: #1424's calendar-own-first.spec.ts joined `calendar`. RECORDED AS A DECISION per the note above. It is OPT-IN
     // (CAL_OWN_FIRST_E2E=1) and self-skips in every CI lane, so the cost is listing one skipped file: no added run time. The 12-case
     // 1280/390 matrix (about 9 minutes with a cold build) is run on demand, not in the targeted lane.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(54);
+    // Now 60: HON-48's six five-user proof specs (hon48-five-user-booking, -moves-blocks, -denial, hon48-tablet-phone-selection,
+    // hon48-returning-client-lookup, hon48-commit-visibility-timing) joined `calendar`. RECORDED AS A DECISION per the note above. All six are
+    // OPT-IN (HON48_FIVE_USER_E2E=1, or HON48_TIMING_E2E=1 for the timing rig) and self-skip in every CI lane, so the cost is listing six
+    // skipped files: no added run time. The set (about 11 minutes with a reused build) is run on demand on an owned stack.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(60);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
