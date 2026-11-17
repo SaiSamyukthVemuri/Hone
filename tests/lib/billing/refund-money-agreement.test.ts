@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { refundDisplayState, type RefundDisplayInput } from "@/lib/billing/refund-display-state";
 import { outstandingForAppointment, type OutstandingInput } from "@/lib/billing/outstanding-balance";
 
-// M23 (refund test matrix). The owner sees a refund in two places that are computed by two different functions: the
+// The owner sees a refund in two places that are computed by two different functions: the
 // refund panel (refundDisplayState) and the owner's balance (outstandingForAppointment, through its card-kept rule). They
 // are documented as "the same agreement rules", but nothing proved it. This runs every combination of the refund columns
 // through BOTH and asserts they never disagree about the money:
@@ -55,7 +55,7 @@ function bothViews(o: {
   return { display, balance };
 }
 
-describe("M23: the refund panel and the owner's balance agree on every refund-column combination", () => {
+describe("the refund panel and the owner's balance agree on every refund-column combination", () => {
   const cases: Array<[string, Parameters<typeof bothViews>[0]]> = [];
   for (const refundStatus of ours)
     for (const providerRefundStatus of provider)
