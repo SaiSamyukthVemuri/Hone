@@ -1152,7 +1152,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision waits for a field review of the payment-consent decisions and the metadata recorded with them.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the payment-consent decisions and the metadata recorded with them.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
@@ -1160,7 +1160,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. The export decision waits for a field review of the public-booking payment session state and provider identifiers it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. It is pending a field review of the public-booking payment session state and provider identifiers it carries.",
   },
   stripe_charge_attempts: {
     kind: "pending",
@@ -1168,7 +1168,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision waits for a field review of the Stripe charge identifiers and provider failure detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe charge identifiers and provider failure detail it carries.",
   },
   stripe_disputes: {
     kind: "pending",
@@ -1176,7 +1176,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision waits for a field review of the Stripe dispute identifiers and provider detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe dispute identifiers and provider detail it carries.",
   },
   stripe_payment_audit: {
     kind: "pending",
@@ -1184,7 +1184,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision waits for a field review of the free-form provider audit payloads it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the free-form provider audit payloads it carries.",
   },
   stripe_refund_attempts: {
     kind: "pending",
@@ -1192,7 +1192,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision waits for a field review of the Stripe refund identifiers and provider failure detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe refund identifiers and provider failure detail it carries.",
   },
   stripe_refunds: {
     kind: "pending",
@@ -1200,7 +1200,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in this CSV export. This export makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision waits for a field review of the Stripe refund identifiers it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe refund identifiers it carries.",
   },
 
   // deliberate_privacy
